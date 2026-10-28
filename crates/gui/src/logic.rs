@@ -14,6 +14,7 @@ use std::{
     },
     time::Duration,
 };
+use unicode_width::UnicodeWidthChar;
 
 /// Messages the UI thread sends to the editor logic thread.
 pub(super) enum GuiEvent {
@@ -125,6 +126,93 @@ pub(super) struct ChanIo {
     pub(super) geometry_symbols: Option<GeometrySymbols>,
 }
 
+fn echo_char_width(character: char, column: usize) -> usize {
+    match character {
+        '\n' | '\r' => 1,
+        '\t' => 8 - column % 8,
+        _ => UnicodeWidthChar::width(character).unwrap_or(1),
+    }
+}
+
+fn echo_input_cursor(text: &str, cursor_utf16: usize) -> Option<(usize, usize)> {
+    let mut utf16 = 0usize;
+    let mut characters = 0usize;
+    let mut columns = 0usize;
+    for character in text.chars() {
+        if utf16 == cursor_utf16 {
+            return Some((characters, columns));
+        }
+        let next = utf16.saturating_add(character.len_utf16());
+        if next > cursor_utf16 {
+            return None;
+        }
+        columns = columns.saturating_add(echo_char_width(character, columns));
+        characters += 1;
+        utf16 = next;
+    }
+    (utf16 == cursor_utf16).then_some((characters, columns))
+}
+
+fn fit_echo_text_at_cursor(
+    text: &str,
+    width: usize,
+    cursor_character: usize,
+    cursor_column: usize,
+) -> (String, usize, usize, usize, usize) {
+    if width == 0 {
+        return (String::new(), 0, 0, 0, 0);
+    }
+    let scroll_start = cursor_column.saturating_sub(width);
+    let scroll_end = scroll_start.saturating_add(width);
+    let mut rendered = String::new();
+    let mut source_column = 0usize;
+    let mut rendered_columns = 0usize;
+    let mut cursor_index = None;
+    for (index, raw_character) in text.chars().enumerate() {
+        if index == cursor_character {
+            cursor_index = Some(rendered.len());
+        }
+        let character = match raw_character {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        let char_width = echo_char_width(raw_character, source_column);
+        let char_end = source_column.saturating_add(char_width);
+        let visible_start = source_column.max(scroll_start);
+        let visible_end = char_end.min(scroll_end);
+        if char_width == 0 {
+            if (scroll_start..=scroll_end).contains(&source_column) {
+                rendered.push(character);
+            }
+        } else if visible_end > visible_start {
+            let visible_width = visible_end - visible_start;
+            if raw_character == '\t' || visible_start != source_column || visible_end != char_end {
+                rendered.push_str(&" ".repeat(visible_width));
+            } else {
+                rendered.push(character);
+            }
+            rendered_columns = rendered_columns.saturating_add(visible_width);
+        }
+        source_column = char_end;
+    }
+    if cursor_character >= text.chars().count() {
+        cursor_index = Some(rendered.len());
+    }
+    let cursor_column = cursor_column
+        .saturating_sub(scroll_start)
+        .min(width.saturating_sub(1));
+    let cursor_index = cursor_index.unwrap_or(rendered.len());
+    let visible_bytes = rendered.len();
+    rendered.push_str(&" ".repeat(width.saturating_sub(rendered_columns)));
+    (
+        rendered,
+        rendered_columns,
+        visible_bytes,
+        cursor_column,
+        cursor_index.min(visible_bytes),
+    )
+}
+
 impl GeometrySymbols {
     fn intern(i: &mut Interp) -> GeometrySymbols {
         GeometrySymbols {
@@ -168,7 +256,6 @@ impl ChanIo {
         reset_styles: bool,
         use_grid_cursor: bool,
     ) -> Grid {
-        let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
         let echo_row = self.rows.saturating_sub(1);
         let selected_cursor = use_grid_cursor
             .then(|| grid.cursors.iter().find(|cursor| cursor.selected).copied())
@@ -177,6 +264,34 @@ impl ChanIo {
             .then(|| grid.cursor.map(|(column, _)| column))
             .flatten();
         let fallback_cursor_index = use_grid_cursor.then_some(grid.cursor_index).flatten();
+        let input_cursor = if use_grid_cursor {
+            grid.input.as_ref().and_then(|input| {
+                (input.text.as_ref() == text)
+                    .then(|| echo_input_cursor(&input.text, input.cursor))
+                    .flatten()
+            })
+        } else {
+            None
+        };
+        let (shown, cursor_column, cursor_index) = match input_cursor {
+            Some((cursor_character, cursor_column)) => {
+                let (shown, _, _, cursor_column, cursor_index) =
+                    fit_echo_text_at_cursor(text, self.cols, cursor_character, cursor_column);
+                (shown, cursor_column, cursor_index)
+            }
+            None => {
+                let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
+                let cursor_column = selected_cursor
+                    .map(|cursor| cursor.column)
+                    .or(fallback_cursor_column)
+                    .unwrap_or(columns);
+                let cursor_index = selected_cursor
+                    .map(|cursor| cursor.index)
+                    .or(fallback_cursor_index)
+                    .unwrap_or(visible_bytes);
+                (shown, cursor_column, cursor_index.min(visible_bytes))
+            }
+        };
         grid.cursors.retain(|cursor| !cursor.selected);
         if let Some(last) = grid.rows.last_mut() {
             *last = shown;
@@ -196,21 +311,13 @@ impl ChanIo {
                 last.truncate(char_count);
             }
         }
-        let cursor_column = selected_cursor
-            .map(|cursor| cursor.column)
-            .or(fallback_cursor_column)
-            .unwrap_or(columns);
-        let cursor_index = selected_cursor
-            .map(|cursor| cursor.index)
-            .or(fallback_cursor_index)
-            .unwrap_or(visible_bytes);
         let cx = cursor_column.min(self.cols.saturating_sub(1));
         grid.cursor = Some((cx, echo_row));
-        grid.cursor_index = Some(cursor_index.min(visible_bytes));
+        grid.cursor_index = Some(cursor_index);
         if let Some(mut cursor) = selected_cursor {
             cursor.row = echo_row;
             cursor.column = cx;
-            cursor.index = cursor_index.min(visible_bytes);
+            cursor.index = cursor_index;
             cursor.after_index = None;
             grid.cursors.push(cursor);
         }
