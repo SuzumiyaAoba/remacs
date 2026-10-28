@@ -67,6 +67,11 @@ impl Render for EditorView {
             let _ = self.tx.send(GuiEvent::Resize(cols, rows));
         }
 
+        let default_background = self
+            .grid
+            .default_bg
+            .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
+            .unwrap_or(BG);
         let grid = self.grid.clone();
         let tx = self.tx.clone();
         let entity = cx.entity();
@@ -81,7 +86,7 @@ impl Render for EditorView {
         let composition_font = text_font.clone();
         div()
             .size_full()
-            .bg(rgb(BG))
+            .bg(rgb(default_background))
             .track_focus(&self.focus)
             .key_context("remacs")
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
@@ -125,7 +130,7 @@ impl Render for EditorView {
                                         if len == 0 {
                                             return;
                                         }
-                                        let (fg, bg) = style_colors(st);
+                                        let (fg, bg) = style_colors(st, default_background);
                                         let mut f = text_font.clone();
                                         if st.bold {
                                             f = f.bold();
@@ -230,7 +235,7 @@ impl Render for EditorView {
                                                 origin: point(bounds.left() + left, overline_y),
                                                 size: size(width, px(1.0)),
                                             },
-                                            style_colors(style).0,
+                                            style_colors(style, default_background).0,
                                         ));
                                     }
                                 }
@@ -281,7 +286,7 @@ impl Render for EditorView {
                                         origin,
                                         size: size(line.width.max(cell_width), line_height),
                                     },
-                                    rgb(BG),
+                                    rgb(default_background),
                                 ));
                                 let _ = line.paint(origin, line_height, window, _cx);
                                 origin.x += line.x_for_index(marked_cursor);
@@ -303,14 +308,20 @@ impl Render for EditorView {
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'
 /// swaps the two (default palette entries stand in for unset sides).
-fn style_colors(st: remacs_runtime::frontend::CellStyle) -> (Hsla, Option<Hsla>) {
+fn style_colors(
+    st: remacs_runtime::frontend::CellStyle,
+    default_background: u32,
+) -> (Hsla, Option<Hsla>) {
     let cc = |c: remacs_runtime::frontend::CellColor| -> Hsla {
         rgb(((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32).into()
     };
     let fg = st.fg.map(cc).unwrap_or_else(|| rgb(FG).into());
     let bg = st.bg.map(cc);
     if st.inverse {
-        (bg.unwrap_or_else(|| rgb(BG).into()), Some(fg))
+        (
+            bg.unwrap_or_else(|| rgb(default_background).into()),
+            Some(fg),
+        )
     } else {
         (fg, bg)
     }

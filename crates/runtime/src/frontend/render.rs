@@ -105,6 +105,8 @@ pub struct Grid {
     pub cursor: Option<(usize, usize)>,
     /// UTF-8 byte offset of the cursor in the rendered row at `cursor.1`.
     pub cursor_index: Option<usize>,
+    /// Default face background used outside the visible text rows.
+    pub default_bg: Option<CellColor>,
     /// Unicode text and visible positions for the active OS text client.
     pub input: Option<GridInput>,
 }
@@ -147,6 +149,7 @@ impl Grid {
             mode_rows: Vec::new(),
             cursor: None,
             cursor_index: None,
+            default_bg: None,
             input: None,
         }
     }
@@ -267,6 +270,7 @@ fn render_text_row<F>(
     hscroll: usize,
     width: usize,
     tab_width: usize,
+    default_style: CellStyle,
     mut style_at: F,
 ) -> RenderedRow
 where
@@ -275,7 +279,7 @@ where
     let chars: Vec<_> = text.chars().collect();
     let mut rendered = String::new();
     let mut char_attrs = Vec::new();
-    let mut cell_attrs = vec![CellStyle::default(); width];
+    let mut cell_attrs = vec![default_style; width];
     let mut source_offsets = vec![0; chars.len() + 1];
     let mut cell_offsets = vec![0; width + 1];
     let mut column = 0usize;
@@ -363,7 +367,7 @@ where
     for cell in visible_columns..width {
         cell_offsets[cell] = rendered.len();
         rendered.push(' ');
-        char_attrs.push(CellStyle::default());
+        char_attrs.push(default_style);
         cell_offsets[cell + 1] = rendered.len();
     }
     cell_offsets[width] = rendered.len();
@@ -907,7 +911,10 @@ fn render_grid_internal(
     cached_input: Option<&GridInput>,
 ) -> Grid {
     let mut rows = vec![String::new(); height];
-    let mut attrs = vec![vec![CellStyle::default(); width]; height];
+    let mut fctx = FaceCtx::new(i);
+    let default_style = fctx.builtin(i, "default", 0).finish();
+    let default_bg = default_style.bg;
+    let mut attrs = vec![vec![default_style; width]; height];
     let mut char_attrs = vec![Vec::new(); height];
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -927,11 +934,11 @@ fn render_grid_internal(
                 mode_rows,
                 cursor: cursor_pos,
                 cursor_index,
+                default_bg,
                 input,
             };
         }
     };
-    let mut fctx = FaceCtx::new(i);
     let fb = frame.borrow();
     let n_windows = fb.windows.len();
     let mini_height = 1usize;
@@ -1078,11 +1085,12 @@ fn render_grid_internal(
                 None => (EmacsText::new(), 0, 0, None),
             };
             visible_end = row_end;
-            let mut rendered = render_text_row(&line, hscroll, width, tab_width, |index| {
-                wf.as_ref()
-                    .map(|wf| style_at_pos(i, &mut fctx, wf, line_pos + index))
-                    .unwrap_or_default()
-            });
+            let mut rendered =
+                render_text_row(&line, hscroll, width, tab_width, default_style, |index| {
+                    wf.as_ref()
+                        .map(|wf| style_at_pos(i, &mut fctx, wf, line_pos + index))
+                        .unwrap_or(default_style)
+                });
             // Empty tail of the row: the line-end face extends its
             // background over it iff the face's :extend holds (GNU
             // extend_face_to_end_of_line).
@@ -1232,10 +1240,10 @@ fn render_grid_internal(
         .unwrap_or(8);
     if let Some(y) = rows.len().checked_sub(1) {
         let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil));
-        let rendered = render_text_row(&msg, 0, width, tab_width, |index| {
+        let rendered = render_text_row(&msg, 0, width, tab_width, default_style, |index| {
             wf.as_ref()
                 .map(|wf| style_at_pos(i, &mut fctx, wf, index))
-                .unwrap_or_default()
+                .unwrap_or(default_style)
         });
         if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
             && snapshot.buffer_id == buffer.borrow().id
@@ -1257,6 +1265,7 @@ fn render_grid_internal(
         mode_rows,
         cursor: cursor_pos,
         cursor_index,
+        default_bg,
         input,
     }
 }
