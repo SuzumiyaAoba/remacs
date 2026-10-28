@@ -1758,6 +1758,96 @@ is invoked interactively."
 ;; dependencies, and determining which packages cannot be removed
 ;; because they are dependencies.
 
+(defun package--compute-transaction-1 (packages order requirements seen)
+  "Resolve REQUIREMENTS, returning (PACKAGES . REVERSED-ORDER).
+ORDER contains the packages selected so far in reverse installation order.
+SEEN is used to report dependency cycles."
+  (if (null requirements)
+      (cons packages order)
+    (let* ((elt (car requirements))
+           (next-pkg (car elt))
+           (next-version (cadr elt))
+           (rest (cdr requirements))
+           (already (cl-find-if
+                     (lambda (pkg) (eq next-pkg (package-desc-name pkg)))
+                     packages)))
+      (cond
+       (already
+        (if (version-list-<= next-version (package-desc-version already))
+            (progn
+              (when (memq already seen)
+                (message "Dependency cycle going through %S"
+                         (package-desc-full-name already)))
+              (package--compute-transaction-1 packages order rest seen))
+          (error "Need package `%s-%s', but only %s is being installed"
+                 next-pkg (package-version-join next-version)
+                 (package-version-join (package-desc-version already)))))
+       ((package-installed-p next-pkg next-version)
+        (package--compute-transaction-1 packages order rest seen))
+       (t
+        (let ((pkg-descs (cdr (assq next-pkg package-archive-contents)))
+              candidates found-something problem)
+          (while pkg-descs
+            (let* ((pkg-desc (pop pkg-descs))
+                   (version (package-desc-version pkg-desc)))
+              (cond
+               ((version-list-< version next-version)
+                ;; Archive contents are sorted by priority, not version.
+                (unless found-something
+                  (setq found-something (package-version-join version))))
+               (t
+                (let ((disabled (package-disabled-p next-pkg version)))
+                  (if disabled
+                      (unless problem
+                        (setq problem
+                              (if (stringp disabled)
+                                  (format-message
+                                   "Package `%s' held at version %s, but version %s required"
+                                   next-pkg disabled
+                                   (package-version-join next-version))
+                                (format-message
+                                 "Required package `%s' is disabled" next-pkg)))
+                    (push pkg-desc candidates)))))))
+          (setq candidates (nreverse candidates))
+          (unless candidates
+            (cond
+             (problem (error "%s" problem))
+             (found-something
+              (error "Need package `%s-%s', but only %s is available"
+                     next-pkg (package-version-join next-version)
+                     found-something))
+             ((eq next-pkg 'emacs)
+              (error "This package requires Emacs version %s"
+                     (package-version-join next-version)))
+             (t
+              (error (if (not next-version)
+                         (format "Package `%s' is unavailable" next-pkg)
+                       (format "Package `%s' (version %s) is unavailable"
+                               next-pkg (package-version-join next-version)))))))
+          ;; A candidate is not committed until its dependencies AND the
+          ;; remaining requirements resolve.  Errors from either stage make
+          ;; this loop try the next available version.
+          (let ((last-error nil))
+            (catch 'package-transaction-resolved
+              (dolist (pkg-desc candidates)
+                (condition-case err
+                    (let* ((dependency-solution
+                            (package--compute-transaction-1
+                             (cons pkg-desc packages) order
+                             (package-desc-reqs pkg-desc)
+                             (cons pkg-desc seen)))
+                           (branch-order
+                            (cons pkg-desc (cdr dependency-solution))))
+                      (throw 'package-transaction-resolved
+                             (package--compute-transaction-1
+                              (car dependency-solution) branch-order rest seen)))
+                  (error
+                   (unless last-error
+                     (setq last-error err)))))
+              (if last-error
+                  (signal (car last-error) (cdr last-error))
+                (error "Unable to resolve package `%s'" next-pkg)))))))))
+
 (defun package-compute-transaction (packages requirements &optional seen)
   "Return a list of packages to be installed, including PACKAGES.
 PACKAGES should be a list of `package-desc'.
@@ -1773,84 +1863,9 @@ that must be installed.  Packages that are already installed are
 not included in this list.
 
 SEEN is used internally to detect infinite recursion."
-  ;; FIXME: We really should use backtracking to explore the whole
-  ;; search space (e.g. if foo require bar-1.3, and bar-1.4 requires toto-1.1
-  ;; whereas bar-1.3 requires toto-1.0 and the user has put a hold on toto-1.0:
-  ;; the current code might fail to see that it could install foo by using the
-  ;; older bar-1.3).
-  (dolist (elt requirements)
-    (let* ((next-pkg (car elt))
-           (next-version (cadr elt))
-           (already ()))
-      (dolist (pkg packages)
-        (if (eq next-pkg (package-desc-name pkg))
-            (setq already pkg)))
-      (when already
-        (if (version-list-<= next-version (package-desc-version already))
-            ;; `next-pkg' is already in `packages', but its position there
-            ;; means it might be installed too late: remove it from there, so
-            ;; we re-add it (along with its dependencies) at an earlier place
-            ;; below (bug#16994).
-            (if (memq already seen)     ;Avoid inf-loop on dependency cycles.
-                (message "Dependency cycle going through %S"
-                         (package-desc-full-name already))
-              (setq packages (delq already packages))
-              (setq already nil))
-          (error "Need package `%s-%s', but only %s is being installed"
-                 next-pkg (package-version-join next-version)
-                 (package-version-join (package-desc-version already)))))
-      (cond
-       (already nil)
-       ((package-installed-p next-pkg next-version) nil)
-
-       (t
-        ;; A package is required, but not installed.  It might also be
-        ;; blocked via `package-load-list'.
-        (let ((pkg-descs (cdr (assq next-pkg package-archive-contents)))
-              (found nil)
-              (found-something nil)
-              (problem nil))
-          (while (and pkg-descs (not found))
-            (let* ((pkg-desc (pop pkg-descs))
-                   (version (package-desc-version pkg-desc))
-                   (disabled (package-disabled-p next-pkg version)))
-              (cond
-               ((version-list-< version next-version)
-                ;; pkg-descs is sorted by priority, not version, so
-                ;; don't error just yet.
-                (unless found-something
-                  (setq found-something (package-version-join version))))
-               (disabled
-                (unless problem
-                  (setq problem
-                        (if (stringp disabled)
-                            (format-message
-                             "Package `%s' held at version %s, but version %s required"
-                             next-pkg disabled
-                             (package-version-join next-version))
-                          (format-message "Required package `%s' is disabled"
-                                          next-pkg)))))
-               (t (setq found pkg-desc)))))
-          (unless found
-            (cond
-             (problem (error "%s" problem))
-             (found-something
-              (error "Need package `%s-%s', but only %s is available"
-                     next-pkg (package-version-join next-version)
-                     found-something))
-             (t
-              (if (eq next-pkg 'emacs)
-                  (error "This package requires Emacs version %s"
-                         (package-version-join next-version))
-                (error (if (not next-version)
-                           (format "Package `%s' is unavailable" next-pkg)
-                         (format "Package `%s' (version %s) is unavailable"
-                                 next-pkg (package-version-join next-version))))))))
-          (setq packages
-                (package-compute-transaction (cons found packages)
-                                             (package-desc-reqs found)
-                                             (cons found seen))))))))
-  packages)
+  (let ((solution (package--compute-transaction-1
+                   packages nil requirements seen)))
+    (append (nreverse (cdr solution)) packages)))
 
 (defun package--find-non-dependencies ()
   "Return a list of installed packages which are not dependencies.
