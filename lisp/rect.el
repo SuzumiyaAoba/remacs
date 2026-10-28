@@ -443,10 +443,15 @@ no text on the right side of the rectangle."
   (goto-char start))
 
 (defun open-rectangle-line (startcol endcol fill)
-  (when (= (move-to-column startcol (if fill t 'coerce)) startcol)
-    (unless (and (not fill)
-                 (= (point) (line-end-position)))
-      (indent-to endcol))))
+  (let ((column (move-to-column startcol (if fill t 'coerce))))
+    (when (>= column startcol)
+      ;; If STARTCOL falls inside a wide character, open before that
+      ;; character so the rest of the row still shifts by the rectangle width.
+      (when (> column startcol)
+        (forward-char -1))
+      (unless (and (not fill)
+                   (= (point) (line-end-position)))
+        (insert (make-string (- endcol startcol) ?\s)))))
 
 (defun delete-whitespace-rectangle-line (startcol _endcol fill)
   (when (= (move-to-column startcol (if fill t 'coerce)) startcol)
@@ -623,16 +628,20 @@ rectangle which were empty."
 
 (defun clear-rectangle-line (startcol endcol fill)
   (let ((pt (line-end-position)))
-    (when (= (move-to-column startcol (if fill t 'coerce)) startcol)
-      (if (and (not fill)
-	       (<= (save-excursion (goto-char pt) (current-column)) endcol))
-	  (delete-region (point) pt)
-	;; else
-	(setq pt (point))
-	(move-to-column endcol t)
-	(setq endcol (current-column))
-	(delete-region pt (point))
-	(indent-to endcol)))))
+    (let ((column (move-to-column startcol (if fill t 'coerce))))
+      (when (>= column startcol)
+        ;; Clear a whole character if STARTCOL falls inside it.
+        (when (> column startcol)
+          (forward-char -1))
+        (if (and (not fill)
+                 (<= (save-excursion (goto-char pt) (current-column)) endcol))
+            (delete-region (point) pt)
+          ;; else
+          (setq pt (point))
+          (move-to-column endcol t)
+          (setq endcol (current-column))
+          (delete-region pt (point))
+          (indent-to endcol)))))
 
 ;; Line numbers for `rectangle-number-line-callback'.
 (defvar rectangle-number-line-counter)
