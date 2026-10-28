@@ -4156,7 +4156,7 @@ INTRO-END is the end of a `::' literal-block introducer."
               (setq end (min (point-max) (1+ (line-end-position))))
               (forward-line 1))
             (when (> end start)
-              (list intro-start start end)))))))
+              (list intro-start start end))))))))
 
 (defun rst-font-lock-match-quoted-literal-block (limit)
   "Find a quoted literal block introduced before LIMIT.
