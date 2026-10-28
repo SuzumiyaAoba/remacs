@@ -1379,9 +1379,8 @@ Ignore any paths that are unreadable or not directories."
 Any UN*X-style environment variables are evaluated first."
   (setq dir (expand-file-name (substitute-in-file-name dir)))
   ;; A path that ends with / matches all directories in it,
-  ;; including `.' and `..', so remove any trailing / !!!
-  (if (string= (substring dir -1) "/")
-      (setq dir (substring dir 0 -1)))
+  ;; including `.' and `..', so remove any trailing /, except a root.
+  (setq dir (directory-file-name dir))
   (if (memq system-type '(windows-nt ms-dos cygwin)) ; what else?
       ;; Match capitalization used by `file-name-directory':
       (setq dir (concat (file-name-directory dir)
