@@ -182,7 +182,10 @@ END is exclusive.
 If END is omitted, it defaults to the length of the sequence.  If
 START or END is negative, it counts from the end.  Signal an
 error if START or END are outside of the sequence (i.e too large
-if positive or too small if negative)."
+if positive or too small if negative).
+
+For character tables, the result is a vector because character
+tables cannot be resized."
   (cond
    ((or (stringp sequence) (vectorp sequence)) (substring sequence start end))
    ((bool-vector-p sequence)
@@ -277,7 +280,9 @@ Return a list of the results.
 
 (cl-defgeneric seq-drop (sequence n)
   "Remove the first N elements of SEQUENCE and return the resulting sequence.
-The result is a sequence of the same type as SEQUENCE.
+The result is a sequence of the same type as SEQUENCE, except that a
+character-table subsequence is returned as a vector because character
+tables cannot be resized.
 
 If N is a negative integer or zero, SEQUENCE is returned."
   (if (<= n 0)
@@ -288,7 +293,9 @@ If N is a negative integer or zero, SEQUENCE is returned."
 ;;;###autoload
 (cl-defgeneric seq-take (sequence n)
   "Return the sequence made of the first N elements of SEQUENCE.
-The result is a sequence of the same type as SEQUENCE.
+The result is a sequence of the same type as SEQUENCE, except that a
+character-table subsequence is returned as a vector because character
+tables cannot be resized.
 
 If N is a negative integer or zero, an empty sequence is
 returned."

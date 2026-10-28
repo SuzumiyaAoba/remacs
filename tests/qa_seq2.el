@@ -42,6 +42,12 @@
 ;; vectors too
 (qa (seq-take [a b c d] 2) [a b])
 (qa (seq-drop [a b c d] 2) [c d])
+;; Character tables have fixed size, so subsequences are vectors.
+(qa (let ((table (make-char-table 'generic nil)))
+      (list (sequencep table)
+            (type-of (seq-take table 2))
+            (type-of (seq-drop table (- (seq-length table) 2)))))
+    '(t vector vector))
 
 ;; == seq-take-while / drop-while ==
 (qa (seq-take-while #'evenp '(2 4 5 6)) '(2 4))
