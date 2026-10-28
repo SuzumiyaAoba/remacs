@@ -1167,12 +1167,18 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 
 ;; cd [dir]
 (defun shell-process-cd (arg)
-  (let ((new-dir (cond ((zerop (length arg)) (concat comint-file-name-prefix
-						     "~"))
-		       ((string-equal "-" arg) shell-last-dir)
+  (let ((old-dir default-directory)
+	(new-dir (cond ((zerop (length arg)) (concat comint-file-name-prefix
+							    "~"))
+		       ((string-equal "-" arg)
+			(let ((oldpwd (getenv "OLDPWD")))
+			  (or shell-last-dir
+			      (and oldpwd (> (length oldpwd) 0)
+				   (shell-prefixed-directory-name oldpwd))
+			      (error "OLDPWD not set"))))
 		       (t (shell-prefixed-directory-name arg)))))
-    (setq shell-last-dir default-directory)
     (shell-cd new-dir)
+    (setq shell-last-dir old-dir)
     (shell-dirstack-message)))
 
 ;; pushd [+n | dir]
