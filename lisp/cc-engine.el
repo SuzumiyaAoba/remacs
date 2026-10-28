@@ -11878,26 +11878,44 @@ This function might do hidden buffer changes."
 
 	;; Find the label end.
 	(goto-char kwd-end)
-	(setq label-type
-	      (if (and (c-syntactic-re-search-forward
-			;; Stop on chars that aren't allowed in expressions,
-			;; and on operator chars that would be meaningless
-			;; there.  FIXME: This doesn't cope with ?: operators.
-			"[;{=,@]\\|\\(\\=\\|[^:]\\):\\([^:]\\|\\'\\)"
-			limit t t nil 1)
-		       (match-beginning 2))
+	(let ((ternary-depth 0)
+	      colon-end
+	      done)
+	  (while (and (not done)
+		      (c-syntactic-re-search-forward
+		       ;; Stop on chars that aren't allowed in expressions,
+		       ;; and on operator chars that would be meaningless
+		       ;; there.  Skip colons paired with ?: operators.
+		       "[;{=,@?]\\|\\(\\=\\|[^:]\\):\\([^:]\\|\\'\\)"
+		       limit t t nil 1))
+	    (let ((colon (match-beginning 2))
+		  (char (char-after (match-beginning 0))))
+	      (cond
+	       (colon
+		(if (> ternary-depth 0)
+		    (progn
+		      (setq ternary-depth (1- ternary-depth))
+		      ;; The regexp consumes one character after a colon to
+		      ;; distinguish it from `::'.  Re-scan that character.
+		      (goto-char colon))
+		  (setq colon-end colon
+			done t)))
+	       ((eq char ??)
+		(setq ternary-depth (1+ ternary-depth)))
+	       (t (setq done t)))))
+	  (setq label-type
+		(if colon-end
+		    (progn		; there's a proper :
+		      (goto-char colon-end) ; just after the :
+		      (c-put-c-type-property (1- (point)) 'c-decl-end)
+		      t)
 
-		  (progn		; there's a proper :
-		    (goto-char (match-beginning 2)) ; just after the :
-		    (c-put-c-type-property (1- (point)) 'c-decl-end)
-		    t)
-
-		;; It's an unfinished label.  We consider the keyword enough
-		;; to recognize it as a label, so that it gets fontified.
-		;; Leave the point at the end of it, but don't put any
-		;; `c-decl-end' marker.
-		(goto-char kwd-end)
-		t))))
+		  ;; It's an unfinished label.  We consider the keyword enough
+		  ;; to recognize it as a label, so that it gets fontified.
+		  ;; Leave the point at the end of it, but don't put any
+		  ;; `c-decl-end' marker.
+		  (goto-char kwd-end)
+		  t))))
 
      ;; @private, @protected, @public, in Objective C, or similar.
      ((and c-opt-extra-label-key
