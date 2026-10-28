@@ -1249,6 +1249,12 @@ attendee's address matches the regexp in
       uid
     (concat "uid-" (secure-hash 'sha256 uid))))
 
+(defun diary-icalendar--safe-base64-prefix (data length)
+  "Return the first LENGTH characters of Base64 DATA as a path component."
+  ;; `_` is outside the RFC 4648 Base64 alphabet, so this mapping is
+  ;; unambiguous while avoiding `/`, which is a filename separator.
+  (subst-char-in-string ?/ ?_ (substring data 0 length)))
+
 (defun diary-icalendar-save-binary-attachment (base64-data dir &optional mimetype)
   "Decode and save BASE64-DATA to a new file in DIR.
 
@@ -1272,7 +1278,8 @@ The subdirectory will be created if necessary.  Returns the
          (max-chars (length base64-data))
          (prefix (if (zerop max-chars)
                      "empty"
-                   (substring base64-data 0 nchars)))
+                   (diary-icalendar--safe-base64-prefix
+                    base64-data nchars)))
          (empty-fallback-count 0)
          (extn (when mimetype
                  (concat "." (symbol-name
@@ -1286,7 +1293,8 @@ The subdirectory will be created if necessary.  Returns the
                 (prog1 (format "empty-%d" empty-fallback-count)
                   (cl-incf empty-fallback-count))
               (if (< nchars max-chars)
-                  (substring base64-data 0 nchars)
+                  (diary-icalendar--safe-base64-prefix
+                   base64-data nchars)
                 (number-to-string (random max-chars)))))
       (setq path (file-name-concat diary-icalendar-attachment-directory dir
                                    (concat prefix extn))))
