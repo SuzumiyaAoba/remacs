@@ -1,6 +1,6 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
-    frontend::{Grid, KeyIo, render_grid},
+    frontend::{Grid, InputEvent, KeyIo, render_grid},
     lisp::Interp,
 };
 use std::{
@@ -43,6 +43,26 @@ impl ChanIo {
 }
 
 impl KeyIo for ChanIo {
+    fn poll_input(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
+        if let Some(k) = self.pending.pop() {
+            return Ok(Some(InputEvent::Key(k)));
+        }
+        match self.events.recv_timeout(dur) {
+            Ok(GuiEvent::Key(k)) => Ok(Some(InputEvent::Key(k))),
+            Ok(GuiEvent::Text(text)) => Ok(Some(InputEvent::Text(text))),
+            Ok(GuiEvent::Resize(c, r)) => {
+                self.cols = c.max(10);
+                self.rows = r.max(3);
+                Ok(None)
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "gui window closed",
+            )),
+        }
+    }
+
     fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(k));

@@ -10,6 +10,12 @@ use std::time::Duration;
 
 use crate::lisp::Interp;
 
+/// Input from a front-end: a key event or text committed by the OS.
+pub enum InputEvent {
+    Key(i128),
+    Text(String),
+}
+
 /// Frontend-agnostic key/render interface used by the command loop
 /// and the nested minibuffer/isearch loops. The crossterm `Terminal`
 /// implements it directly; the gpui front-end implements it over a
@@ -18,6 +24,11 @@ pub trait KeyIo {
     /// Poll for a key event, waiting at most `dur`. Returns an Emacs
     /// key code (char + modifier bits).
     fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>>;
+    /// Poll for input while preserving committed text as text.
+    /// Key-only front-ends inherit this implementation.
+    fn poll_input(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
+        self.poll_key(dur).map(|key| key.map(InputEvent::Key))
+    }
     /// Push a key back onto the pending queue.
     fn unread(&mut self, k: i128);
     /// Repaint the whole frame.

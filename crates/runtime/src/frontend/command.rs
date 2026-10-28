@@ -1,8 +1,8 @@
 //! Shared editor command dispatch and nested minibuffer input loops.
-use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
-use super::KeyIo;
 #[cfg(test)]
 use super::render_grid;
+use super::{InputEvent, KeyIo};
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     editor::{CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER},
     lisp::{Interp, Value},
@@ -149,10 +149,10 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         term.borrow_mut().render(i)?;
         // Replayed macro events take priority over real input;
         // `executing-kbd-macro` clears once the queue drains.
-        let key = match i.macro_replay.pop_front() {
+        let input = match i.macro_replay.pop_front() {
             Some(k) => {
                 i.macro_replaying = true;
-                k
+                InputEvent::Key(k)
             }
             None => {
                 let ek = i.q("executing-kbd-macro");
@@ -161,13 +161,16 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 }
                 // Poll input. Sleep deadlines keep the UI responsive.
                 let timeout = Duration::from_millis(50);
-                match term.borrow_mut().poll_key(timeout)? {
-                    Some(k) => k,
+                match term.borrow_mut().poll_input(timeout)? {
+                    Some(input) => input,
                     None => continue,
                 }
             }
         };
-        dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?;
+        match input {
+            InputEvent::Key(key) => dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?,
+            InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+        }
         i.macro_replaying = false;
         // A command error while replaying a macro aborts the rest of
         // the replay; the queue was already cleared.
@@ -546,6 +549,44 @@ fn dispatch_key<T: KeyIo>(
     dispatch_key_core(i, key, keys, arg_mode, Some(&mut hook))
 }
 
+/// Insert text committed by the operating system without interpreting
+/// control characters such as newline and TAB as key bindings.
+fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mut bool) {
+    if text.is_empty() {
+        return;
+    }
+
+    // A committed-text event breaks an unfinished key sequence and has
+    // no numeric-prefix interpretation.
+    keys.clear();
+    *arg_mode = false;
+    let prefix_arg = i.q("prefix-arg");
+    let prefix = i.symbol_value(prefix_arg);
+    let current_prefix_arg = i.q("current-prefix-arg");
+    let _ = i.set_symbol(current_prefix_arg, prefix);
+    let _ = i.set_symbol(prefix_arg, Value::Nil);
+
+    let this_command = i.q("this-command");
+    let previous = i.symbol_value(this_command);
+    let last_command = i.q("last-command");
+    let _ = i.set_symbol(last_command, previous);
+    let self_insert = i.intern("self-insert-command");
+    let _ = i.set_symbol(this_command, Value::Sym(self_insert));
+    if let Some(ch) = text.chars().last() {
+        let last_event = i.q("last-command-event");
+        let _ = i.set_symbol(last_event, Value::Int(ch as i128));
+    }
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
+
+    if i.current_buffer_ref().is_some() {
+        match crate::buffer::primitives::chg_insert_pt(i, text, false) {
+            Ok(_) => post_command_undo_boundary(i),
+            Err(flow) => report_flow(i, flow),
+        }
+    }
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+}
+
 /// The front-end-independent half of `minibuf_loop' for a canned/
 /// scripted input source: dispatch one `MinibufInput::Key' through
 /// the minibuffer's real keymaps.  `minibuf_read' owns `keys'/
@@ -656,16 +697,27 @@ fn minibuf_loop<T: KeyIo>(
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
-        let code = match term.borrow_mut().poll_key(Duration::from_millis(50)) {
-            Ok(Some(k)) => k,
+        let input = match {
+            let mut t = term.borrow_mut();
+            if single {
+                t.poll_key(Duration::from_millis(50))
+                    .map(|key| key.map(InputEvent::Key))
+            } else {
+                t.poll_input(Duration::from_millis(50))
+            }
+        } {
+            Ok(Some(input)) => input,
             Ok(None) => continue,
             Err(e) => return Err(i.error(format!("minibuffer input: {e}"))),
         };
-        if single {
-            return Ok(MinibufInput::Key(code));
-        }
-        if let Err(e) = dispatch_key(term, i, code, &mut keys, &mut arg_mode) {
-            return Err(i.error(format!("minibuffer input: {e}")));
+        match input {
+            InputEvent::Key(code) if single => return Ok(MinibufInput::Key(code)),
+            InputEvent::Key(code) => {
+                if let Err(e) = dispatch_key(term, i, code, &mut keys, &mut arg_mode) {
+                    return Err(i.error(format!("minibuffer input: {e}")));
+                }
+            }
+            InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
         }
         if let Some(f) = i.minibuf_exit_fn.take() {
             return Ok(MinibufInput::Call(f));
