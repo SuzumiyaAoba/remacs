@@ -1,17 +1,17 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
-        MousePosition, fit_text_to_cells, render_frame_grid_with_input_cached,
-        render_grid_with_input_cached,
+        Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
+        fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
+        render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
 };
 use std::{
+    collections::HashMap,
     io,
     ops::Range,
     rc::Rc,
-    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -22,6 +22,16 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 
 pub(super) const COLOR_DROP_PREFIX: &str = "\u{1f}remacs-color-drop:";
+
+fn same_mouse_face_position(left: Option<MousePosition>, right: Option<MousePosition>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.buffer_id == right.buffer_id && left.buffer_position == right.buffer_position
+        }
+        _ => false,
+    }
+}
 
 /// Messages the UI thread sends to the editor logic thread.
 pub(super) enum GuiEvent {
@@ -51,6 +61,10 @@ pub(super) enum GuiEvent {
     },
     Resize(usize, usize),
     Geometry(GuiGeometry),
+    MouseMove {
+        frame_id: Option<usize>,
+        position: Option<MousePosition>,
+    },
     MouseDown {
         button: MouseButton,
         click_count: usize,
@@ -131,6 +145,16 @@ impl FrameEventSender {
             None => event,
         };
         self.sender.send(event)
+    }
+
+    pub(super) fn send_mouse_move(
+        &self,
+        position: Option<MousePosition>,
+    ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.sender.send(GuiEvent::MouseMove {
+            frame_id: self.frame_id.get(),
+            position,
+        })
     }
 }
 
@@ -452,6 +476,8 @@ pub(super) struct ChanIo {
     pending_power_off: bool,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
+    mouse_positions: HashMap<usize, MousePosition>,
+    mouse_position: Option<MousePosition>,
     pub(super) scroll_remainder: f32,
 }
 
@@ -585,6 +611,32 @@ fn frame_system_is_graphical(i: &Interp, frame: &remacs_runtime::editor::FrameRe
 }
 
 impl ChanIo {
+    fn update_mouse_face_position(
+        &mut self,
+        frame_id: Option<usize>,
+        position: Option<MousePosition>,
+    ) {
+        let changed = if let Some(frame_id) = frame_id {
+            let previous = self.mouse_positions.get(&frame_id).copied();
+            if same_mouse_face_position(previous, position) {
+                false
+            } else {
+                if let Some(position) = position {
+                    self.mouse_positions.insert(frame_id, position);
+                } else {
+                    self.mouse_positions.remove(&frame_id);
+                }
+                true
+            }
+        } else if same_mouse_face_position(self.mouse_position, position) {
+            false
+        } else {
+            self.mouse_position = position;
+            true
+        };
+        self.render_requested |= changed;
+    }
+
     fn receive_event(&mut self, dur: Duration) -> io::Result<Option<GuiEvent>> {
         match self.events.recv_timeout(dur) {
             Ok(event) => Ok(Some(self.unwrap_frame_event(event))),
@@ -826,6 +878,13 @@ impl KeyIo for ChanIo {
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 Ok(None)
             }
+            GuiEvent::MouseMove {
+                frame_id,
+                position,
+            } => {
+                self.update_mouse_face_position(frame_id, position);
+                Ok(None)
+            }
             GuiEvent::MouseDown {
                 button,
                 click_count,
@@ -946,6 +1005,13 @@ impl KeyIo for ChanIo {
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 Ok(None)
             }
+            GuiEvent::MouseMove {
+                frame_id,
+                position,
+            } => {
+                self.update_mouse_face_position(frame_id, position);
+                Ok(None)
+            }
             GuiEvent::MouseDown {
                 button,
                 click_count,
@@ -985,6 +1051,7 @@ impl KeyIo for ChanIo {
         let live_ids: std::collections::HashSet<_> =
             live_frames.iter().map(|frame| frame.borrow().id).collect();
         self.frame_grids.retain(|id, _| live_ids.contains(id));
+        self.mouse_positions.retain(|id, _| live_ids.contains(id));
         let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
         let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
         let mut selected_grid = None;
@@ -1066,7 +1133,15 @@ impl KeyIo for ChanIo {
                     .frame_grids
                     .get(&frame_id)
                     .and_then(|grid| grid.input.as_ref());
-                let grid = render_frame_grid_with_input_cached(i, frame, width, height, cached);
+                let mouse_position = self.mouse_positions.get(&frame_id).copied();
+                let grid = render_frame_grid_with_mouse_position_cached(
+                    i,
+                    frame,
+                    width,
+                    height,
+                    cached,
+                    mouse_position,
+                );
                 if Some(frame_id) == selected_id {
                     selected_grid = Some(grid.clone());
                 }
@@ -1116,7 +1191,13 @@ impl KeyIo for ChanIo {
             Some(grid) => grid,
             None => {
                 let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
-                render_grid_with_input_cached(i, self.cols, self.rows, cached)
+                render_grid_with_mouse_position_cached(
+                    i,
+                    self.cols,
+                    self.rows,
+                    cached,
+                    self.mouse_position,
+                )
             }
         };
         self.send_grid(grid)
@@ -1167,10 +1248,17 @@ impl KeyIo for ChanIo {
                 .frame_grids
                 .get(&frame_id)
                 .and_then(|grid| grid.input.as_ref());
-            render_frame_grid_with_input_cached(i, frame, cols, rows, cached)
+            render_frame_grid_with_mouse_position_cached(
+                i,
+                frame,
+                cols,
+                rows,
+                cached,
+                self.mouse_positions.get(&frame_id).copied(),
+            )
         } else {
             let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
-            render_grid_with_input_cached(i, cols, rows, cached)
+            render_grid_with_mouse_position_cached(i, cols, rows, cached, self.mouse_position)
         };
         let grid = self.echo_grid(grid, text, false, true);
         self.send_grid(grid)
@@ -1371,6 +1459,8 @@ fn start_logic_inner(
                     None
                 },
                 mouse_down: None,
+                mouse_positions: HashMap::new(),
+                mouse_position: None,
                 scroll_remainder: 0.0,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);

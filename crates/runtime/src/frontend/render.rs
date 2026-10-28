@@ -1,4 +1,5 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
+use super::MousePosition;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
@@ -2511,6 +2512,7 @@ struct FaceCtx {
     // Symbol ids for property names (SymId::MAX = missing).
     face: u32,
     font_lock_face: u32,
+    mouse_face: u32,
     mark_active: u32,
     inherit: u32,
     invisible: u32,
@@ -2584,6 +2586,7 @@ impl FaceCtx {
         FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
+            mouse_face: sym("mouse-face"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
             invisible: sym("invisible"),
@@ -2984,6 +2987,8 @@ struct WindowFaces {
     /// insertion index).  Later-inserted props merge on top (GNU's
     /// interval "last write wins").
     prop_faces: Vec<(usize, usize, Value, usize)>,
+    /// The active mouse-face run from the hovered text or overlay.
+    mouse_face: Option<(usize, usize, Value)>,
     /// `help-echo` text-property runs and overlay values for hover tooltips.
     help_echo_props: Vec<(usize, usize, Value, usize)>,
     help_echo_overlays: Vec<(crate::buffer::Overlay, Value)>,
@@ -3015,8 +3020,12 @@ fn window_faces(
     ctx: &FaceCtx,
     b: &std::rc::Rc<std::cell::RefCell<Buffer>>,
     win: &Value,
+    mouse_position: Option<MousePosition>,
 ) -> WindowFaces {
     let bb = b.borrow();
+    let mouse_position = mouse_position
+        .filter(|position| position.buffer_id == bb.id)
+        .map(|position| position.buffer_position);
     // Region: GNU shows it between the mark and the buffer's point
     // while `mark-active' is non-nil.
     let region = {
@@ -3200,6 +3209,47 @@ fn window_faces(
         .filter(|tp| tp.prop == ctx.invisible)
         .map(|tp| (tp.start, tp.end, tp.value.clone()))
         .collect();
+    let mouse_face_prop = mouse_position.and_then(|position| {
+        properties
+            .iter()
+            .enumerate()
+            .filter(|(_, tp)| {
+                tp.prop == ctx.mouse_face
+                    && !tp.value.is_nil()
+                    && position >= tp.start
+                    && position < tp.end
+            })
+            .max_by_key(|(index, _)| *index)
+            .map(|(_, tp)| (tp.start, tp.end, tp.value.clone()))
+    });
+    let mouse_face_overlay = mouse_position.and_then(|position| {
+        let candidates: Vec<_> = bb
+            .overlays
+            .iter()
+            .enumerate()
+            .filter(|(_, overlay)| {
+                overlay.buffer == Some(bb.id)
+                    && overlay.start <= position
+                    && position < overlay.end
+                    && overlay.matches_window(i, win)
+            })
+            .filter_map(|(slot, overlay)| {
+                let face = overlay.property(i, &Value::Sym(ctx.mouse_face));
+                (!face.is_nil()).then_some((overlay, slot, face))
+            })
+            .collect();
+        let mut order: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .map(|(candidate, (overlay, _, _))| (*overlay, candidate))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        order.last().map(|(_, candidate)| {
+            let (overlay, _, face) = &candidates[*candidate];
+            (overlay.start, overlay.end, face.clone())
+        })
+    });
+    let mouse_face = mouse_face_overlay.or(mouse_face_prop);
     let invisibility_spec = i
         .buffer_local_toplevel_value(ctx.buffer_invisibility_spec, bb.id)
         .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
@@ -3228,6 +3278,7 @@ fn window_faces(
     WindowFaces {
         overlays,
         prop_faces,
+        mouse_face,
         help_echo_props,
         help_echo_overlays,
         display_props,
@@ -3654,6 +3705,20 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
         let face = wf.overlays[index].1.clone();
         mix.merge(&ctx.face_value(i, &face, 0));
     }
+    if let Some((start, end, face)) = &wf.mouse_face
+        && pos >= *start
+        && pos < *end
+    {
+        let mut mouse_face = ctx.face_value(i, face, 0);
+        // GNU keeps the underlying text metrics while applying mouse-face.
+        mouse_face.font_family = None;
+        mouse_face.font_weight = None;
+        mouse_face.font_width = None;
+        mouse_face.font_height = None;
+        mouse_face.bold = None;
+        mouse_face.italic = None;
+        mix.merge(&mouse_face);
+    }
     mix.finish()
 }
 
@@ -3663,7 +3728,7 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
 /// minimal amount to show point, and recentered when point sits more
 /// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
-    render_grid_internal(i, width, height, false, None, None)
+    render_grid_internal(i, width, height, false, None, None, None)
 }
 
 /// Render a GUI input grid, reusing TEXT from a previous snapshot when
@@ -3674,7 +3739,18 @@ pub fn render_grid_with_input_cached(
     height: usize,
     cached: Option<&GridInput>,
 ) -> Grid {
-    render_grid_internal(i, width, height, true, cached, None)
+    render_grid_internal(i, width, height, true, cached, None, None)
+}
+
+/// Render a GUI input grid with mouse-face highlighting at MOUSE_POSITION.
+pub fn render_grid_with_mouse_position_cached(
+    i: &Interp,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    render_grid_internal(i, width, height, true, cached, None, mouse_position)
 }
 
 /// Render FRAME without changing the interpreter's selected frame. This is
@@ -3690,7 +3766,32 @@ pub fn render_frame_grid_with_input_cached(
         .selected_frame
         .as_ref()
         .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, frame));
-    render_grid_internal(i, width, height, include_input, cached, Some(frame))
+    render_grid_internal(i, width, height, include_input, cached, Some(frame), None)
+}
+
+/// Render FRAME with mouse-face highlighting at MOUSE_POSITION without
+/// changing the interpreter's selected frame.
+pub fn render_frame_grid_with_mouse_position_cached(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    let include_input = i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, frame));
+    render_grid_internal(
+        i,
+        width,
+        height,
+        include_input,
+        cached,
+        Some(frame),
+        mouse_position,
+    )
 }
 
 fn render_grid_internal(
@@ -3700,6 +3801,7 @@ fn render_grid_internal(
     include_input: bool,
     cached_input: Option<&GridInput>,
     frame_override: Option<&crate::editor::FrameRef>,
+    mouse_position: Option<MousePosition>,
 ) -> Grid {
     let mut rows = vec![String::new(); height];
     let mut fctx = FaceCtx::new(i);
@@ -4279,7 +4381,7 @@ fn render_grid_internal(
         let wf = i
             .buffers
             .get(buf_id)
-            .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone())));
+            .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
         let mode_point = i.buffers.get(buf_id).map_or(0, |buffer| {
             let bb = buffer.borrow();
             (if selected_window {
@@ -4801,7 +4903,7 @@ fn render_grid_internal(
         .map(|buffer| buffer_tab_width(i, buffer.borrow().id))
         .unwrap_or(8);
     if let Some(y) = rows.len().checked_sub(1) {
-        let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil));
+        let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil, mouse_position));
         let rendered = render_text_row(
             &msg,
             0,

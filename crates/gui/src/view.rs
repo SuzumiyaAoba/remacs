@@ -195,6 +195,7 @@ pub(super) struct EditorView {
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
     focus_subscriptions: Vec<Subscription>,
+    mouse_face_position: Rc<Cell<Option<(usize, usize)>>>,
     auto_raise: Rc<Cell<bool>>,
     auto_lower: Rc<Cell<bool>>,
     last_window_active: Option<bool>,
@@ -235,6 +236,7 @@ impl EditorView {
             scroll_bar_drag: None,
             toolbar_pressed: false,
             focus_subscriptions: Vec::new(),
+            mouse_face_position: Rc::new(Cell::new(None)),
             auto_raise: Rc::new(Cell::new(false)),
             auto_lower: Rc::new(Cell::new(false)),
             last_window_active: None,
@@ -249,6 +251,7 @@ impl EditorView {
 
     pub(super) fn set_frame_id(&self, frame_id: usize) {
         self.tx.set_frame_id(frame_id);
+        self.mouse_face_position.set(None);
     }
 
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
@@ -452,6 +455,8 @@ impl Render for EditorView {
             .as_ref()
             .and_then(|range| input::visible_input_position(&self.grid, range.start, false));
         let composition_font = text_font.clone();
+        let mouse_face_exit_position = self.mouse_face_position.clone();
+        let mouse_face_exit_tx = self.tx.clone();
         div()
             .size_full()
             .bg(rgb(default_background))
@@ -606,6 +611,17 @@ impl Render for EditorView {
             )
             .on_mouse_move(cx.listener(
                 move |this, event: &MouseMoveEvent, window, cx| {
+                    let position = input::mouse_position_for_point(
+                        &this.grid,
+                        event.position,
+                        window,
+                    );
+                    let target = position.map(|position| {
+                        (position.buffer_id, position.buffer_position)
+                    });
+                    if this.mouse_face_position.replace(target) != target {
+                        let _ = this.tx.send_mouse_move(position);
+                    }
                     if !event.dragging() {
                         return;
                     }
@@ -837,6 +853,15 @@ impl Render for EditorView {
                         (shaped, grid)
                     },
                     move |bounds, (lines, grid), window, _cx| {
+                        window.on_mouse_event(
+                            move |_: &MouseExitEvent, phase, _window, _cx| {
+                                if phase == DispatchPhase::Bubble
+                                    && mouse_face_exit_position.replace(None).is_some()
+                                {
+                                    let _ = mouse_face_exit_tx.send_mouse_move(None);
+                                }
+                            },
+                        );
                         window.handle_input(&focus, ElementInputHandler::new(bounds, entity), _cx);
                         for (y, line) in lines.iter().enumerate() {
                             let origin =
