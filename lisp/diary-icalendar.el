@@ -3718,7 +3718,7 @@ and `diary-icalendar-import-vjournal-as-nonmarking' is non-nil."
                       displayed-year)))
           (when (and year (or rdate rrule))
             (let* ((low (list 1 1 year))
-                   (high (list 12 31 year))
+                   (high (list 1 1 (1+ year)))
                    (recs (icalendar-recur-recurrences-in-window-w/end-times
                           low high component start-tz)))
               (dolist (rec recs)
