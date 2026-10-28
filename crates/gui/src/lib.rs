@@ -1,6 +1,7 @@
 //! GPUI frontend. The evaluator lives on a separate logic thread.
 use gpui::*;
 use std::io;
+use std::sync::{Arc, Mutex};
 mod keys;
 mod logic;
 mod view;
@@ -24,6 +25,8 @@ pub fn run_gui_with_dump(
         arguments.to_vec(),
     )?;
 
+    let open_error = Arc::new(Mutex::new(None));
+    let app_open_error = Arc::clone(&open_error);
     Application::new().run(move |cx: &mut App| {
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -31,7 +34,7 @@ pub fn run_gui_with_dump(
             }
         })
         .detach();
-        cx.open_window(
+        if let Err(error) = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -44,11 +47,17 @@ pub fn run_gui_with_dump(
                 cx.activate(false);
                 cx.new(|cx| build_editor_view(window, cx, event_tx, grid_rx))
             },
-        )
-        .map_err(|e| eprintln!("remacs: cannot open window: {e}"))
-        .ok();
+        ) {
+            let message = format!("remacs: cannot open window: {error}");
+            eprintln!("{message}");
+            *app_open_error.lock().unwrap() = Some(message);
+            cx.quit();
+        }
     });
-    Ok(())
+    match open_error.lock().unwrap().take() {
+        Some(message) => Err(io::Error::new(io::ErrorKind::Other, message)),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
