@@ -1199,10 +1199,28 @@ easily repeat a find command."
 
 ;; User-friendly interactive API.
 
+(defun grep--file-patterns (files)
+  "Return FILES as patterns, splitting only known alias expansions."
+  (cond ((not (and (stringp files) (not (string= files "")))) nil)
+        ((member files (mapcar #'cdr grep-files-aliases))
+         (split-string files nil t))
+        (t (list files))))
+
+(defun grep--shell-quote-file-pattern (pattern)
+  "Quote whitespace in shell wildcard PATTERN while leaving wildcards active."
+  (replace-regexp-in-string
+   "[ \t\n]"
+   (lambda (space) (shell-quote-argument space grep-quoting-style))
+   pattern t t))
+
+(defun grep--shell-quote-files (files)
+  "Return shell arguments for wildcard FILES."
+  (mapconcat #'grep--shell-quote-file-pattern (grep--file-patterns files) " "))
+
 (defconst grep-expand-keywords
   '(("<C>" . (mapconcat #'identity opts " "))
     ("<D>" . (or dir "."))
-    ("<F>" . files)
+    ("<F>" . (if files-raw files (grep--shell-quote-files files)))
     ("<N>" . (null-device))
     ("<X>" . excl)
     ("<R>" . (shell-quote-argument (or regexp "") grep-quoting-style)))
@@ -1211,10 +1229,10 @@ If car of an element matches, the cdr is evalled in order to get the
 substitution string.
 
 The substitution is based on variables bound dynamically, and
-these include `opts', `dir', `files', `null-device', `excl' and
-`regexp'.")
+these include `opts', `dir', `files', `files-raw', `null-device',
+`excl' and `regexp'.")
 
-(defun grep-expand-template (template &optional regexp files dir excl more-opts)
+(defun grep-expand-template (template &optional regexp files dir excl more-opts files-raw)
   "Expand grep COMMAND string replacing <C>, <D>, <F>, <R>, and <X>."
   (let* ((command template)
          (env `((opts . ,(let ((opts more-opts))
@@ -1230,6 +1248,7 @@ these include `opts', `dir', `files', `null-device', `excl' and
                 (excl . ,excl)
                 (dir . ,dir)
                 (files . ,files)
+                (files-raw . ,files-raw)
                 (regexp . ,regexp)))
          (case-fold-search nil))
     (dolist (kw grep-expand-keywords command)
@@ -1521,7 +1540,7 @@ to indicate whether the grep should be case sensitive or not."
              " " find-name-arg " "
              (mapconcat
               (lambda (x) (shell-quote-argument x grep-quoting-style))
-              (split-string files)
+              (grep--file-patterns files)
               (concat " -o " find-name-arg " "))
              " "
              (shell-quote-argument ")" grep-quoting-style)
@@ -1545,7 +1564,8 @@ to indicate whether the grep should be case sensitive or not."
       (when (and (not rgrep-find-ignores-in-<f>) ignored-files-arg)
         (concat (shell-quote-argument "!" grep-quoting-style) " -type d "
                 ignored-files-arg
-                " -prune -o "))))))
+                " -prune -o ")))
+     nil t)))
 
 (defun grep-find-toggle-abbreviation ()
   "Toggle showing the hidden part of rgrep/lgrep/zrgrep command line."
