@@ -240,8 +240,17 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
            "[+-][0-9][0-9]:?[0-9][0-9]"
            (lambda (match) (make-string (length match) 32))
            date-without-time t t))
+         (day-of-month
+          (and (string-match
+                "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]?\\)\\(?:[^0-9]\\|$\\)"
+                date-without-zone)
+               (string-to-number (match-string 1 date-without-zone))))
          (start 0)
          year-range)
+    ;; RFC 6265 processes the day-of-month token before considering a year.
+    ;; An out-of-range two-digit day must not be reinterpreted as a year.
+    (when (and day-of-month (not (<= 1 day-of-month 31)))
+      (error "Invalid cookie date: %s" date))
     (while (and (not year-range)
                 (string-match
                  "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]\\)\\(?:$\\|[^0-9]\\)"
