@@ -605,8 +605,9 @@ The following %-sequences are provided:
                      (if (eq (char-after (match-beginning 1)) ?C)
                          voltage-now 1))))
 	  (goto-char (point-min))
-	  (when (re-search-forward "POWER_SUPPLY_TEMP=\\([0-9]*\\)$" nil t)
-	    (setq temperature (match-string 1)))
+	  (when (re-search-forward "POWER_SUPPLY_TEMP=\\(-?[0-9]+\\)$" nil t)
+	    (setq temperature
+	          (format "%.1f" (/ (string-to-number (match-string 1)) 10.0))))
 	  (goto-char (point-min))
 	  (let (full-string now-string)
 	    ;; Sysfs may list either charge (mAh) or energy (mWh).
