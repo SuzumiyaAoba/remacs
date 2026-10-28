@@ -1414,7 +1414,7 @@ If FORCE is non-nil and no process found, create one."
 (defun sh-cd-here ()
   "Change directory in the current interaction shell to the current one."
   (interactive)
-  (sh-send-text (concat "cd " default-directory)))
+  (sh-send-text (concat "cd " (shell-quote-argument default-directory))))
 
 (defun sh-send-line-or-region-and-step ()
   "Send the current line to the inferior shell and step to the next line.
