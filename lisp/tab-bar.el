@@ -2247,10 +2247,15 @@ for the last tab on a frame is determined by
          (current-index (tab-bar--current-tab-index tabs))
          (close-index (if (integerp tab-number) (1- tab-number) current-index))
          (last-tab-p (= 1 (length tabs)))
-         (prevent-close (run-hook-with-args-until-success
-                         'tab-bar-tab-prevent-close-functions
-                         (nth close-index tabs)
-                         last-tab-p)))
+         (prevent-close
+          (progn
+            (when (and (integerp tab-number)
+                       (or (< tab-number 1) (> tab-number (length tabs))))
+              (user-error "Invalid tab number: %s" tab-number))
+            (run-hook-with-args-until-success
+             'tab-bar-tab-prevent-close-functions
+             (nth close-index tabs)
+             last-tab-p))))
 
     (unless prevent-close
       (run-hook-with-args 'tab-bar-tab-pre-close-functions
