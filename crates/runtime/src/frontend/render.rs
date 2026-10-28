@@ -371,6 +371,10 @@ fn display_columns_of(chars: impl Iterator<Item = EmacsChar>, tab_width: usize) 
     let tab_width = tab_width.max(1);
     let mut columns = 0usize;
     for ch in chars {
+        if ch.byte8().is_some() {
+            columns = columns.saturating_add(4);
+            continue;
+        }
         let ch = ch.unicode().unwrap_or('\u{fffd}');
         let width = if ch == '\t' {
             tab_width - columns % tab_width
@@ -401,11 +405,14 @@ fn wrap_ranges(
     let mut column = 0usize;
     let tab_width = tab_width.max(1);
     for (index, character) in chars.iter().enumerate() {
+        let byte8 = character.byte8().is_some();
         let code = character.code();
         let character = character.unicode().unwrap_or('\u{fffd}');
         let control_character = code < 0x20 || code == 0x7f;
         let mut character_width = if character == '\t' {
             tab_width - column % tab_width
+        } else if byte8 {
+            4
         } else if ctl_arrow && control_character {
             2
         } else {
@@ -2501,25 +2508,47 @@ fn composition_display_replacement(value: &Value) -> Option<DisplayReplacement> 
     (!text.is_empty()).then_some(DisplayReplacement::Text(text))
 }
 
-fn display_table_text(value: &Value) -> Option<String> {
-    fn append_character(text: &mut String, value: &Value) {
+fn raw_byte_text(i: &Interp, buffer_id: usize, byte: u8) -> String {
+    if buffer_setting(i, "display-raw-bytes-as-hex", buffer_id).truthy() {
+        format!("\\x{byte:02x}")
+    } else {
+        format!("\\{byte:03o}")
+    }
+}
+
+fn emacs_character_display_text(i: &Interp, buffer_id: usize, character: EmacsChar) -> String {
+    if let Some(byte) = character.byte8() {
+        raw_byte_text(i, buffer_id, byte)
+    } else {
+        character.unicode().unwrap_or('\u{fffd}').to_string()
+    }
+}
+
+fn display_table_text(i: &Interp, buffer_id: usize, value: &Value) -> Option<String> {
+    fn append_character(i: &Interp, buffer_id: usize, text: &mut String, value: &Value) {
         if let Value::Int(code) = value
             && let Ok(code) = u32::try_from(*code)
             && let Some(character) = EmacsChar::new(code)
         {
-            text.push(character.unicode().unwrap_or('\u{fffd}'));
+            text.push_str(&emacs_character_display_text(i, buffer_id, character));
         }
     }
     match value {
         Value::Int(code) => {
             let code = u32::try_from(*code).ok()?;
-            Some(EmacsChar::new(code)?.unicode().unwrap_or('\u{fffd}').to_string())
+            Some(emacs_character_display_text(i, buffer_id, EmacsChar::new(code)?))
         }
-        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+        Value::Str(string) => Some(
+            string
+                .borrow()
+                .chars()
+                .map(|character| emacs_character_display_text(i, buffer_id, character))
+                .collect(),
+        ),
         Value::Vec(vector) => {
             let mut text = String::new();
             for character in vector.borrow().iter() {
-                append_character(&mut text, character);
+                append_character(i, buffer_id, &mut text, character);
             }
             Some(text)
         }
@@ -2527,7 +2556,7 @@ fn display_table_text(value: &Value) -> Option<String> {
             let characters = value.list_to_vec().ok()?;
             let mut text = String::new();
             for character in &characters {
-                append_character(&mut text, character);
+                append_character(i, buffer_id, &mut text, character);
             }
             Some(text)
         }
@@ -2537,6 +2566,7 @@ fn display_table_text(value: &Value) -> Option<String> {
 
 fn display_table_replacement(
     i: &Interp,
+    buffer_id: usize,
     faces: &WindowFaces,
     character: EmacsChar,
 ) -> Option<DisplayReplacement> {
@@ -2546,11 +2576,21 @@ fn display_table_replacement(
         if replacement.is_nil() {
             continue;
         }
-        if let Some(text) = display_table_text(&replacement) {
+        if let Some(text) = display_table_text(i, buffer_id, &replacement) {
             return Some(DisplayReplacement::Text(text));
         }
     }
     None
+}
+
+fn raw_byte_replacement(
+    i: &Interp,
+    buffer_id: usize,
+    character: EmacsChar,
+) -> Option<DisplayReplacement> {
+    character
+        .byte8()
+        .map(|byte| DisplayReplacement::Text(raw_byte_text(i, buffer_id, byte)))
 }
 
 fn ctl_arrow_replacement(character: EmacsChar, ctl_arrow: bool) -> Option<DisplayReplacement> {
@@ -3186,7 +3226,11 @@ fn render_grid_internal(
                             .or_else(|| {
                                 let wf = wf.as_ref()?;
                                 let character = *segment_chars.get(index)?;
-                                display_table_replacement(i, wf, character)
+                                display_table_replacement(i, buf_id, wf, character)
+                            })
+                            .or_else(|| {
+                                let character = *segment_chars.get(index)?;
+                                raw_byte_replacement(i, buf_id, character)
                             })
                             .or_else(|| {
                                 segment_chars
