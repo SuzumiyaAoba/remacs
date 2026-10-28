@@ -1141,12 +1141,15 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 
 ;; popd [+n]
 (defun shell-process-popd (arg)
-  (let ((num (or (shell-extract-num arg) 0)))
-    (cond ((and num (= num 0) shell-dirstack)
+  (let* ((index (shell-extract-num arg))
+         (num (if (and index (< index 0))
+                  (+ (length shell-dirstack) index)
+                (or index 0))))
+    (cond ((and (null index) shell-dirstack)
 	   (shell-cd (shell-prefixed-directory-name (car shell-dirstack)))
 	   (setq shell-dirstack (cdr shell-dirstack))
 	   (shell-dirstack-message))
-	  ((and num (> num 0) (<= num (length shell-dirstack)))
+	  ((and index (> num 0) (<= num (length shell-dirstack)))
 	   (let* ((ds (cons nil shell-dirstack))
 		  (cell (nthcdr (1- num) ds)))
 	     (rplacd cell (cdr (cdr cell)))
@@ -1183,7 +1186,10 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 
 ;; pushd [+n | dir]
 (defun shell-process-pushd (arg)
-  (let ((num (shell-extract-num arg)))
+  (let* ((index (shell-extract-num arg))
+	 (num (and index (if (< index 0)
+			     (+ (length shell-dirstack) index)
+			   index))))
     (cond ((zerop (length arg))
 	   ;; no arg -- swap pwd and car of stack unless shell-pushd-tohome
 	   (cond (shell-pushd-tohome
@@ -1197,7 +1203,7 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 		  (message "Directory stack empty."))))
 	  ((numberp num)
 	   ;; pushd +n
-	   (cond ((> num (length shell-dirstack))
+	   (cond ((or (< num 0) (> num (length shell-dirstack)))
 		  (message "Directory stack not that deep."))
 		 ((= num 0)
 		  (error "Couldn't cd"))
@@ -1225,9 +1231,9 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 		 (setq shell-dirstack (cons old-wd shell-dirstack)))
 	     (shell-dirstack-message))))))
 
-;; If STR is of the form +n, for n>0, return n. Otherwise, nil.
+;; If STR is of the form +N or -N, return its signed numeric value.
 (defun shell-extract-num (str)
-  (and (string-match "^\\+[1-9][0-9]*$" str)
+  (and (string-match "\\`[+-][0-9]+\\'" str)
        (string-to-number str)))
 
 (defun shell-cd (dir)
