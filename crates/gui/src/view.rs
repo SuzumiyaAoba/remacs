@@ -106,6 +106,27 @@ fn send_scroll_bar_event(
     });
 }
 
+fn file_drop_uri(path: &std::path::Path) -> String {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    let mut uri = String::from("file://");
+    for byte in absolute.to_string_lossy().bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':')
+        {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
 fn tool_bar_command_at(
     items: &[GridToolBarItem],
     point: Point<Pixels>,
@@ -352,6 +373,9 @@ impl Render for EditorView {
         let scroll_grid = grid.clone();
         let scroll_tx = self.tx.clone();
         let scroll_bar_tx = self.tx.clone();
+        let file_drop_tx = self.tx.clone();
+        let text_drop_tx = self.tx.clone();
+        let external_text_drop_tx = self.tx.clone();
         let left_mouse_down_tx = self.tx.clone();
         let left_mouse_down_grid = mouse_grid.clone();
         let left_mouse_up_tx = self.tx.clone();
@@ -375,6 +399,60 @@ impl Render for EditorView {
             .bg(rgb(default_background))
             .track_focus(&self.focus)
             .key_context("remacs")
+            .id("remacs-editor-drop-target")
+            .on_drop(cx.listener(
+                move |this, paths: &ExternalPaths, window, cx| {
+                    let urls = paths
+                        .paths()
+                        .iter()
+                        .map(|path| file_drop_uri(path))
+                        .collect::<Vec<_>>();
+                    let position = input::mouse_position_for_point(
+                        &this.grid,
+                        window.mouse_position(),
+                        window,
+                    );
+                    let _ = file_drop_tx.send(GuiEvent::Drop {
+                        position,
+                        urls,
+                        action: "copy".to_owned(),
+                    });
+                    window.prevent_default();
+                    cx.stop_propagation();
+                },
+            ))
+            .on_drop(cx.listener(
+                move |this, text: &String, window, cx| {
+                    let position = input::mouse_position_for_point(
+                        &this.grid,
+                        window.mouse_position(),
+                        window,
+                    );
+                    let _ = text_drop_tx.send(GuiEvent::Drop {
+                        position,
+                        urls: vec![text.clone()],
+                        action: "copy".to_owned(),
+                    });
+                    window.prevent_default();
+                    cx.stop_propagation();
+                },
+            ))
+            .on_drop(cx.listener(
+                move |this, text: &ExternalText, window, cx| {
+                    let position = input::mouse_position_for_point(
+                        &this.grid,
+                        window.mouse_position(),
+                        window,
+                    );
+                    let _ = external_text_drop_tx.send(GuiEvent::Drop {
+                        position,
+                        urls: vec![text.0.clone()],
+                        action: "copy".to_owned(),
+                    });
+                    window.prevent_default();
+                    cx.stop_propagation();
+                },
+            ))
             .on_action(cx.listener(
                 |this: &mut EditorView, action: &RunMenuCommand, _window, _cx| {
                     let _ = this

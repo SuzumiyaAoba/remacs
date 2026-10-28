@@ -26,6 +26,11 @@ pub(super) enum GuiEvent {
     MenuCommand(String),
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
+    Drop {
+        position: Option<MousePosition>,
+        urls: Vec<String>,
+        action: String,
+    },
     Resize(usize, usize),
     Geometry(GuiGeometry),
     MouseDown {
@@ -393,6 +398,15 @@ impl KeyIo for ChanIo {
             Ok(GuiEvent::ReplaceText { range, text }) => {
                 Ok(Some(InputEvent::ReplaceText { range, text }))
             }
+            Ok(GuiEvent::Drop {
+                position,
+                urls,
+                action,
+            }) => Ok(Some(InputEvent::Drop {
+                position,
+                urls,
+                action,
+            })),
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);
@@ -493,6 +507,7 @@ impl KeyIo for ChanIo {
                 self.pending.extend(chars.rev());
                 Ok(first)
             }
+            Ok(GuiEvent::Drop { .. }) => Ok(None),
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);

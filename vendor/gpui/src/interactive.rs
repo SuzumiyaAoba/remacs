@@ -510,6 +510,16 @@ impl Render for ExternalPaths {
     }
 }
 
+/// Text dragged into the window from an external application.
+#[derive(Debug, Clone)]
+pub struct ExternalText(pub String);
+
+impl Render for ExternalText {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// A file drop event from the platform, generated when files are dragged and dropped onto the window.
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {
@@ -542,6 +552,38 @@ impl InputEvent for FileDropEvent {
 }
 impl MouseEvent for FileDropEvent {}
 
+/// A text string dragged into the window from the operating system.
+#[derive(Debug, Clone)]
+pub enum TextDropEvent {
+    /// Text has entered the window.
+    Entered {
+        /// The position of the mouse relative to the window.
+        position: Point<Pixels>,
+        /// The text being dragged.
+        text: String,
+    },
+    /// Text is being dragged over the window.
+    Pending {
+        /// The position of the mouse relative to the window.
+        position: Point<Pixels>,
+    },
+    /// Text was dropped on the window.
+    Submit {
+        /// The position of the mouse relative to the window.
+        position: Point<Pixels>,
+    },
+    /// The drag was cancelled or left the window.
+    Exited,
+}
+
+impl Sealed for TextDropEvent {}
+impl InputEvent for TextDropEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::TextDrop(self)
+    }
+}
+impl MouseEvent for TextDropEvent {}
+
 /// An enum corresponding to all kinds of platform input events.
 #[derive(Clone, Debug)]
 pub enum PlatformInput {
@@ -563,6 +605,8 @@ pub enum PlatformInput {
     ScrollWheel(ScrollWheelEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
+    /// Text was dragged and dropped onto the window.
+    TextDrop(TextDropEvent),
 }
 
 impl PlatformInput {
@@ -577,6 +621,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
+            PlatformInput::TextDrop(event) => Some(event),
         }
     }
 
@@ -591,6 +636,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::FileDrop(_) => None,
+            PlatformInput::TextDrop(_) => None,
         }
     }
 }

@@ -27,6 +27,11 @@ pub enum InputEvent {
     /// Execute a GUI action with pre-supplied interactive arguments.
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
+    Drop {
+        position: Option<MousePosition>,
+        urls: Vec<String>,
+        action: String,
+    },
     MouseDown(MouseInput),
     Mouse(MouseInput),
     /// A wheel/trackpad event, with line count normalized by the front-end.

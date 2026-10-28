@@ -207,6 +207,15 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::CommandArgs { command, args } => {
                 dispatch_frontend_command_with_args(i, &command, &args, &mut keys, &mut arg_mode)
             }
+            InputEvent::Drop {
+                position,
+                urls,
+                action,
+            } => {
+                if let Err(flow) = dispatch_drop(i, position, &urls, &action) {
+                    report_flow(i, flow);
+                }
+            }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
@@ -835,6 +844,47 @@ fn dispatch_scroll_bar(
     }
 }
 
+fn dispatch_drop(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    urls: &[String],
+    action: &str,
+) -> Result<(), crate::lisp::Flow> {
+    if urls.is_empty() {
+        return Ok(());
+    }
+    let Some(frame) = i.selected_frame.clone() else {
+        return Ok(());
+    };
+    let window = frame.borrow().selected.clone();
+    let buffer_id = window.borrow().buffer;
+    if let Some(position) = position.filter(|position| position.buffer_id == buffer_id)
+        && let Some(buffer) = i.buffers.get(buffer_id)
+    {
+        let point = {
+            let mut buffer = buffer.borrow_mut();
+            buffer.set_point(position.buffer_position);
+            buffer.point()
+        };
+        let mut window = window.borrow_mut();
+        window.point = point;
+        crate::editor::set_window_old_point(i, &mut window, point);
+    }
+
+    let require = Value::Sym(i.q("require"));
+    let feature = Value::Sym(i.q("dnd"));
+    i.apply(&require, vec![feature])?;
+    let handler = Value::Sym(i.q("dnd-handle-multiple-urls"));
+    let urls = Value::list(urls.iter().cloned().map(Value::string).collect());
+    let action = Value::Sym(i.intern(action));
+    i.apply(
+        &handler,
+        vec![Value::Window(window.clone()), urls, action],
+    )?;
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+    Ok(())
+}
+
 fn mouse_event(i: &mut Interp, mouse: MouseInput) -> Option<(i128, Value)> {
     let drag = mouse.start.buffer_id != mouse.end.buffer_id
         || mouse.start.buffer_position != mouse.end.buffer_position;
@@ -1247,6 +1297,15 @@ fn minibuf_loop<T: KeyIo>(
             }
             InputEvent::CommandArgs { command, args } => {
                 dispatch_frontend_command_with_args(i, &command, &args, &mut keys, &mut arg_mode)
+            }
+            InputEvent::Drop {
+                position,
+                urls,
+                action,
+            } => {
+                if let Err(flow) = dispatch_drop(i, position, &urls, &action) {
+                    return Err(flow);
+                }
             }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)

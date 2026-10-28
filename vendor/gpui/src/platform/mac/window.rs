@@ -4,7 +4,8 @@ use crate::{
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, Timer, WindowAppearance, WindowBackgroundAppearance,
+    SharedString, Size, SystemWindowTab, TextDropEvent, Timer, WindowAppearance,
+    WindowBackgroundAppearance,
     WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
     dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
 };
@@ -12,7 +13,8 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
+        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard,
+        NSPasteboardTypeString, NSScreen,
         NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
         NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
@@ -410,6 +412,7 @@ struct MacWindowState {
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
+    external_text_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
@@ -667,11 +670,10 @@ impl MacWindow {
                 target_screen,
             );
             assert!(!native_window.is_null());
-            let () = msg_send![
-                native_window,
-                registerForDraggedTypes:
-                    NSArray::arrayWithObject(nil, NSFilenamesPboardType)
-            ];
+            let drag_types: id = msg_send![class!(NSMutableArray), array];
+            let () = msg_send![drag_types, addObject: NSFilenamesPboardType];
+            let () = msg_send![drag_types, addObject: NSPasteboardTypeString];
+            let () = msg_send![native_window, registerForDraggedTypes: drag_types];
             let () = msg_send![
                 native_window,
                 setReleasedWhenClosed: NO
@@ -717,6 +719,7 @@ impl MacWindow {
                 keystroke_for_do_command: None,
                 do_command_handled: None,
                 external_files_dragged: false,
+                external_text_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 move_tab_to_new_window_callback: None,
@@ -2366,11 +2369,27 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
-    if let Some(event) =
-        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
-        && send_new_event(&window_state, event)
+    if let Some(paths) = paths {
+        if send_new_event(
+            &window_state,
+            PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }),
+        ) {
+            let mut state = window_state.lock();
+            state.external_files_dragged = true;
+            state.external_text_dragged = false;
+            return NSDragOperationCopy;
+        }
+        return NSDragOperationNone;
+    }
+    if let Some(text) = external_text_from_event(dragging_info)
+        && send_new_event(
+            &window_state,
+            PlatformInput::TextDrop(TextDropEvent::Entered { position, text }),
+        )
     {
-        window_state.lock().external_files_dragged = true;
+        let mut state = window_state.lock();
+        state.external_files_dragged = true;
+        state.external_text_dragged = true;
         return NSDragOperationCopy;
     }
     NSDragOperationNone
@@ -2379,10 +2398,12 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    if send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Pending { position }),
-    ) {
+    let event = if window_state.lock().external_text_dragged {
+        PlatformInput::TextDrop(TextDropEvent::Pending { position })
+    } else {
+        PlatformInput::FileDrop(FileDropEvent::Pending { position })
+    };
+    if send_new_event(&window_state, event) {
         NSDragOperationCopy
     } else {
         NSDragOperationNone
@@ -2391,21 +2412,33 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
 
 extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Exited),
-    );
-    window_state.lock().external_files_dragged = false;
+    let text_dragged = window_state.lock().external_text_dragged;
+    if text_dragged {
+        send_new_event(
+            &window_state,
+            PlatformInput::TextDrop(TextDropEvent::Exited),
+        );
+    } else {
+        send_new_event(
+            &window_state,
+            PlatformInput::FileDrop(FileDropEvent::Exited),
+        );
+    }
+    let mut state = window_state.lock();
+    state.external_files_dragged = false;
+    state.external_text_dragged = false;
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Submit { position }),
-    )
-    .to_objc()
+    let text_dragged = window_state.lock().external_text_dragged;
+    let event = if text_dragged {
+        PlatformInput::TextDrop(TextDropEvent::Submit { position })
+    } else {
+        PlatformInput::FileDrop(FileDropEvent::Submit { position })
+    };
+    send_new_event(&window_state, event).to_objc()
 }
 
 fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
@@ -2425,12 +2458,33 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
     Some(ExternalPaths(paths))
 }
 
+fn external_text_from_event(dragging_info: *mut Object) -> Option<String> {
+    let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
+    let text = unsafe { NSPasteboard::stringForType(pasteboard, NSPasteboardTypeString) };
+    if text == nil {
+        return None;
+    }
+    let string = unsafe { NSString::UTF8String(text) };
+    (!string.is_null()).then(|| unsafe { CStr::from_ptr(string).to_string_lossy().into_owned() })
+}
+
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    send_new_event(
-        &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Exited),
-    );
+    let text_dragged = window_state.lock().external_text_dragged;
+    if text_dragged {
+        send_new_event(
+            &window_state,
+            PlatformInput::TextDrop(TextDropEvent::Exited),
+        );
+    } else {
+        send_new_event(
+            &window_state,
+            PlatformInput::FileDrop(FileDropEvent::Exited),
+        );
+    }
+    let mut state = window_state.lock();
+    state.external_files_dragged = false;
+    state.external_text_dragged = false;
 }
 
 async fn synthetic_drag(

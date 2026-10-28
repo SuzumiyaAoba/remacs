@@ -650,6 +650,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::Text(text) => Some(text),
             GuiEvent::CommandArgs { .. } => None,
+            GuiEvent::Drop { .. } => None,
             GuiEvent::Resize(..) => None,
             GuiEvent::Geometry(_) => None,
             GuiEvent::Scroll { .. } => None,
@@ -668,6 +669,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::Key(code) => Some(code),
             GuiEvent::CommandArgs { .. } => None,
+            GuiEvent::Drop { .. } => None,
             GuiEvent::Resize(..) => None,
             GuiEvent::Geometry(_) => None,
             GuiEvent::Scroll { .. } => None,
