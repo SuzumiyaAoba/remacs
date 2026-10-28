@@ -509,8 +509,15 @@ If SOURCE, mark the entry with this as the source."
 	  (skip-chars-forward " \t")
 	  (setq save-pos (point))
 	  (skip-chars-forward "^;\n")
-	  ;; skip \;
-	  (while (eq (char-before) ?\\)
+	  ;;Remacs: only an odd run of backslashes escapes the semicolon.
+	  (while (and (eq (char-after) ?;)
+		      (let ((backslashes 0))
+			(save-excursion
+			  (while (and (> (point) save-pos)
+				      (eq (char-before) ?\\))
+			    (setq backslashes (1+ backslashes))
+			    (backward-char)))
+			(= (% backslashes 2) 1)))
 	    (delete-char -1)
 	    (forward-char)
 	    (skip-chars-forward "^;\n"))

@@ -662,6 +662,7 @@ qa!(qa_string_fill_sentence_spacing, "qa_string_fill_sentence_spacing.el");
 qa!(qa_string_version_nil, "qa_string_version_nil.el");
 qa!(qa_string_version_file_order, "qa_string_version_file_order.el");
 qa!(qa_file_name_nondirectory_handler, "qa_file_name_nondirectory_handler.el");
+qa!(qa_mailcap_even_backslashes, "qa_mailcap_even_backslashes.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");
 qa!(qa_file_name_nondirectory_byte_kind, "qa_file_name_nondirectory_byte_kind.el");
 qa!(qa_file_name_directory_byte_kind, "qa_file_name_directory_byte_kind.el");
