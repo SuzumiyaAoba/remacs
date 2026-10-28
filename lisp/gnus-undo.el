@@ -145,10 +145,9 @@
     ;; We are not at a boundary...
     (setq gnus-undo-boundary-inhibit t)))
 
-(defun gnus-undo (_n)
+(defun gnus-undo (n)
   "Undo some previous changes in Gnus buffers.
-Repeat this command to undo more changes."
-  ;; FIXME: A numeric argument should serve as a repeat count.
+With numeric argument N, undo N actions.  Repeat this command to undo more."
   (interactive "p")
   (unless gnus-undo-mode
     (error "Undoing is not enabled in this buffer"))
@@ -156,12 +155,13 @@ Repeat this command to undo more changes."
   (unless (and (eq last-command 'gnus-undo)
                gnus-undo-last)
     (setq gnus-undo-last gnus-undo-actions))
-  (let ((action (pop gnus-undo-last)))
-    (unless action
-      (error "Nothing further to undo"))
-    (setq gnus-undo-actions (delq action gnus-undo-actions))
-    (setq gnus-undo-boundary t)
-    (mapc #'funcall action)))
+  (dotimes (_ n)
+    (let ((action (pop gnus-undo-last)))
+      (unless action
+        (error "Nothing further to undo"))
+      (setq gnus-undo-actions (delq action gnus-undo-actions))
+      (setq gnus-undo-boundary t)
+      (mapc #'funcall action))))
 
 (provide 'gnus-undo)
 
