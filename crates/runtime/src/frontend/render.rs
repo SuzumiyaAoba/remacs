@@ -2859,16 +2859,19 @@ fn render_grid_internal(
                 };
                 if wrap_lines && content_width > 0 {
                     let new_start_line = bb.text.line_of_pos(new_start);
-                    let new_start_line_pos = bb.text.line_start(new_start_line);
+                    let new_start_line_pos = bb.text.line_start(new_start_line).max(bb.begv);
                     let start_offset = new_start.saturating_sub(new_start_line_pos);
-                    let point_line_pos = bb.text.line_start(pt_line);
+                    let point_line_pos = bb.text.line_start(pt_line).max(bb.begv);
                     let point_index = pt.saturating_sub(point_line_pos);
                     let mut recent_starts = VecDeque::new();
                     let mut visual_row = 0usize;
                     let mut point_visual_row = None;
                     'lines: for line_number in new_start_line..=pt_line {
-                        let line_pos = bb.text.line_start(line_number);
-                        let line_end = bb.text.line_end(line_pos);
+                        let line_pos = bb.text.line_start(line_number).max(bb.begv);
+                        if line_pos > bb.zv {
+                            break;
+                        }
+                        let line_end = bb.text.line_end(line_pos).min(bb.zv);
                         let line = bb.text.substring(line_pos, line_end);
                         let line_len = line.chars().count();
                         for range in wrap_ranges(&line, content_width, tab_width) {
@@ -2997,10 +3000,19 @@ fn render_grid_internal(
                 match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
-                    let ls = bb.text.line_start(bb.text.line_of_pos(start) + row);
-                    let le = bb.text.line_end(ls);
-                    let row_end = if le < bb.text_len() && bb.text.char_at(le) == '\n' {
-                        le + 1
+                    let line_index = bb.text.line_of_pos(start) + row;
+                    let physical_start = bb.text.line_start(line_index);
+                    if physical_start > bb.zv {
+                        break;
+                    }
+                    let physical_end = bb.text.line_end(physical_start);
+                    let ls = physical_start.max(bb.begv);
+                    let le = physical_end.min(bb.zv);
+                    let row_end = if le == physical_end
+                        && physical_end < bb.text_len()
+                        && bb.text.char_at(physical_end) == '\n'
+                    {
+                        physical_end + 1
                     } else {
                         le
                     };
@@ -3011,14 +3023,14 @@ fn render_grid_internal(
                     }
                     .clamp(bb.begv, bb.zv);
                     let point_line_number = bb.text.line_of_pos(point);
-                    let point_line = bb.text.line_start(point_line_number);
-                    let point_index = (point_line == ls).then(|| point - ls);
+                    let point_index = (point_line_number == line_index && point >= ls)
+                        .then(|| point - ls);
                     (
                         bb.text.substring(ls, le),
                         ls,
                         row_end,
                         point_index,
-                        bb.text.line_of_pos(ls) + 1,
+                        line_index + 1,
                         point_line_number,
                     )
                 }
