@@ -1,5 +1,5 @@
 ;;; -*- lexical-binding: nil; -*-
-;; string-fill keeps only one trailing newline (#420).
-(qa (string-fill "abc\n\n" 80) "abc\n")
-(qa (string-fill "abc\n\n\n" 80) "abc\n")
+;; string-fill preserves trailing blank lines (GNU Emacs 31.1).
+(qa (string-fill "abc\n\n" 80) "abc\n\n")
+(qa (string-fill "abc\n\n\n" 80) "abc\n\n\n")
 (princ (qa--done))
