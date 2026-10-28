@@ -488,6 +488,21 @@ Usually just deletes the appointment buffer."
 (defconst appt-time-regexp
   "[0-9]?[0-9]\\(h\\([0-9][0-9]\\)?\\|[:.][0-9][0-9]\\)\\(am\\|pm\\)?")
 
+(defun appt--valid-time-string-p (time)
+  "Return non-nil if TIME is a complete, valid clock time."
+  (and (string-match-p (concat "\\`" appt-time-regexp "\\'") time)
+       (let* ((hour (progn
+                      (string-match "\\`[0-9]?[0-9]" time)
+                      (string-to-number (match-string 0 time))))
+              (minute (if (string-match "[h:.]\\([0-9][0-9]\\)" time)
+                          (string-to-number (match-string 1 time))
+                        0))
+              (am-pm (string-match-p "\\(?:am\\|pm\\)\\'" time)))
+         (and (<= 0 minute 59)
+              (if am-pm
+                  (<= 1 hour 12)
+                (<= 0 hour 23)))))
+
 ;;;###autoload
 (defun appt-add (time msg &optional warntime)
   "Add an appointment for today at TIME with message MSG.
@@ -496,12 +511,12 @@ Optional argument WARNTIME is an integer (or string) giving the number
 of minutes before the appointment at which to start warning.
 The default is `appt-message-warning-time'."
   (interactive (list (let ((time (read-string "Time (hh:mm[am/pm]): ")))
-                       (unless (string-match-p appt-time-regexp time)
+                       (unless (appt--valid-time-string-p time)
                          (user-error "Unacceptable time-string"))
                        time)
                      (read-string "Message: ")
                      (read-string "Minutes before the appointment to start warning: ")))
-  (unless (string-match-p appt-time-regexp time)
+  (unless (appt--valid-time-string-p time)
     (user-error "Unacceptable time-string"))
   (and (stringp warntime)
        (setq warntime (unless (string-equal warntime "")
