@@ -11854,8 +11854,11 @@ Returns nil if no threads were there to be hidden."
 	       (or (zerop (gnus-summary-next-thread 1 t))
 		   (goto-char (point-max))))
       (if (and (> (point) start)
-	       ;; FIXME: this should actually search for a non-invisible \n.
-	       (search-backward "\n" start t))
+	       (let ((found nil))
+		 (while (and (not found) (search-backward "\n" start t))
+		   (unless (invisible-p (point))
+		     (setq found t)))
+		 found))
 	  (progn
 	    (when (> (point) starteol)
 	      (remove-overlays starteol (point) 'invisible 'gnus-sum)
