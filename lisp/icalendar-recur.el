@@ -1212,6 +1212,30 @@ subinterval of the same type as DTSTART."
 ;; rule describing the set has a COUNT clause, we can enumerate the
 ;; recurrences in each interval starting from the beginning of the set
 ;; (`icalendar-recur-recurrences-to-count').
+(defun icalendar-recur--rule-recurrences-in-interval
+    (interval rrule dtstart vtimezone)
+  "Return the RRULE-generated recurrences of INTERVAL.
+RDATE and EXDATE values are ignored."
+  (let* (;; Start by generating all the recurrences matching the
+         ;; BY* clauses except for BYSETPOS:
+         (subs (icalendar-recur-refine-from-clauses interval rrule dtstart
+                                                    vtimezone))
+         (sub-recs (icalendar-recur-subintervals-to-recurrences
+                    subs dtstart vtimezone))
+         ;; Apply any BYSETPOS clause to this set:
+         (keep-indices (icalendar-rrule-by* 'BYSETPOS rrule))
+         (pos-recs (if keep-indices
+                       (icalendar-recur-bysetpos-filter keep-indices sub-recs)
+                     sub-recs))
+         ;; Remove any recurrences before DTSTART or after UNTIL
+         ;; (both of which are inclusive bounds):
+         (until (icalendar-rrule-until rrule)))
+    (seq-filter
+     (lambda (rec) (and (icalendar-date/time<= dtstart rec)
+                        (or (not until)
+                            (icalendar-date/time<= rec until))))
+     pos-recs)))
+
 (defun icalendar-recur-recurrences-in-interval (interval component &optional vtimezone nmax)
   "Return a list of the recurrences of COMPONENT in INTERVAL.
 
@@ -1264,29 +1288,11 @@ retrieved on subsequent calls with the same arguments."
                                                  component)))))
         (let ((cached (icalendar-recur--set-get-interval component interval)))
           (cond ((eq cached :none) nil)
-                (cached cached)
+                (cached (if nmax (take nmax cached) cached))
                 (t
-                 (let* (;; Start by generating all the recurrences matching the
-                        ;; BY* clauses except for BYSETPOS:
-                        (subs (icalendar-recur-refine-from-clauses interval rrule dtstart
-                                                       vtimezone))
-                        (sub-recs (icalendar-recur-subintervals-to-recurrences subs dtstart
-                                                                   vtimezone))
-                        ;; Apply any BYSETPOS clause to this set:
-                        (keep-indices (icalendar-rrule-by* 'BYSETPOS rrule))
-                        (pos-recs
-                         (if keep-indices
-                             (icalendar-recur-bysetpos-filter keep-indices sub-recs)
-                           sub-recs))
-                        ;; Remove any recurrences before DTSTART or after UNTIL
-                        ;; (both of which are inclusive bounds):
-                        (until (icalendar-rrule-until rrule))
-                        (until-recs
-                         (seq-filter
-                          (lambda (rec) (and (icalendar-date/time<= dtstart rec)
-                                             (or (not until)
-                                                 (icalendar-date/time<= rec until))))
-                          pos-recs))
+                 (let* ((until-recs
+                         (icalendar-recur--rule-recurrences-in-interval
+                          interval rrule dtstart vtimezone))
                         ;; Include any values in the interval from the
                         ;; RDATE property:
                         (low (icalendar-recur-interval-low interval))
@@ -1319,16 +1325,12 @@ retrieved on subsequent calls with the same arguments."
                               (lambda (rec) (not (member rec exdates)))
                               included-recs)
                            included-recs))
-                        ;; Limit to the first NMAX recurrences if requested.
-                        ;; `icalendar-recur-recurrences-to-count' provides NMAX so as not to
-                        ;; store more recurrences in the final interval than the
-                        ;; COUNT clause allows:
-                        (nmax-recs
-                         (if nmax (take nmax all-recs)
-                           all-recs)))
-                   ;; Store and return the computed recurrences:
+                        (nmax-recs (if nmax (take nmax all-recs)
+                                     all-recs)))
+                   ;; Cache the complete interval so later calls with a
+                   ;; different NMAX do not see a truncated recurrence set.
                    (icalendar-recur--set-put-interval component interval
-                                          (or nmax-recs :none))
+                                                     (or all-recs :none))
                    nmax-recs)))))))
 
 (defun icalendar-recur-recurrences-in-window (lower upper component &optional vtimezone)
@@ -1449,7 +1451,8 @@ UTC offsets local to that time zone."
       ((icalendar-dtstart :value dtstart)
        (icalendar-tzoffsetfrom :value offset-from)
        (icalendar-rrule :value rrule)
-       (icalendar-rdate :all rdate-nodes))
+       (icalendar-rdate :all rdate-nodes)
+       (icalendar-exdate :all exdate-nodes))
     (when (memq (icalendar-ast-node-type component) '(icalendar-standard icalendar-daylight))
       ;; in time zone observances, set the zone field in dtstart
       ;; from the TZOFFSETFROM property:
@@ -1462,15 +1465,36 @@ UTC offsets local to that time zone."
       (error "No recurrence data in component: %s" component))
     (unless (icalendar-rrule-count rrule)
       (error "Recurrence rule has no COUNT clause"))
-    (let ((count (icalendar-rrule-count rrule))
-          (int (icalendar-recur-nth-interval 0 dtstart rrule vtimezone))
-          recs)
-      (while (length< recs count)
-        (setq recs
-              (nconc recs (icalendar-recur-recurrences-in-interval int component vtimezone
-                                                       (- count (length recs)))))
+    (let* ((count (icalendar-rrule-count rrule))
+           (int (icalendar-recur-nth-interval 0 dtstart rrule vtimezone))
+           (rdates
+            (mapcar #'icalendar-ast-node-value
+                    (apply #'append
+                           (mapcar #'icalendar-ast-node-value rdate-nodes))))
+           (exdates
+            (mapcar #'icalendar-ast-node-value
+                    (apply #'append
+                           (mapcar #'icalendar-ast-node-value exdate-nodes))))
+           rule-recs recs)
+      ;; COUNT limits DTSTART/RRULE instances.  RDATEs are added only after
+      ;; that set has been enumerated, and EXDATEs are applied to the union.
+      (while (length< rule-recs count)
+        (setq rule-recs
+              (nconc rule-recs
+                     (take (- count (length rule-recs))
+                           (icalendar-recur--rule-recurrences-in-interval
+                            int rrule dtstart vtimezone))))
         (setq int (icalendar-recur-next-interval int rrule vtimezone)))
-      recs)))
+      (setq recs
+            (append rule-recs
+                    (seq-filter (lambda (rec)
+                                  (not (cl-typep rec 'icalendar-period)))
+                                rdates)))
+      (setq recs
+            (if exdates
+                (seq-filter (lambda (rec) (not (member rec exdates))) recs)
+              recs))
+      (sort (seq-uniq recs) #'icalendar-date/time<))))
 
 
 
