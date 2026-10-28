@@ -140,6 +140,15 @@ pub struct GridToolBarItem {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridTabBarItem {
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+    pub command: String,
+    pub argument: Option<i128>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridHelpEcho {
     pub row: usize,
     pub left: usize,
@@ -299,6 +308,7 @@ pub struct Grid {
     pub images: Vec<GridImage>,
     pub menus: Vec<GridMenu>,
     pub tool_bar_items: Vec<GridToolBarItem>,
+    pub tab_bar_items: Vec<GridTabBarItem>,
     pub help_echoes: Vec<GridHelpEcho>,
     pub tooltip: Option<String>,
     pub scroll_bars: Vec<GridScrollBar>,
@@ -359,6 +369,7 @@ impl Grid {
             images: Vec::new(),
             menus: Vec::new(),
             tool_bar_items: Vec::new(),
+            tab_bar_items: Vec::new(),
             help_echoes: Vec::new(),
             tooltip: None,
             scroll_bars: Vec::new(),
@@ -1396,6 +1407,7 @@ fn render_tool_bar(
     i: &Interp,
     width: usize,
     rows: usize,
+    row_offset: usize,
     default_style: CellStyle,
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
@@ -1407,7 +1419,7 @@ fn render_tool_bar(
     if background.bg.is_none() {
         background.bg = default_style.bg.or(Some(CellColor(0x33, 0x36, 0x3a)));
     }
-    for row in screen.iter_mut().take(rows) {
+    for row in screen.iter_mut().skip(row_offset).take(rows) {
         for cell in row {
             *cell = ScreenCell {
                 chars: Vec::new(),
@@ -1477,7 +1489,8 @@ fn render_tool_bar(
         });
         let cell_styles = vec![button_style; button_width];
         let character_styles = text.chars().map(|_| button_style).collect::<Vec<_>>();
-        if let Some(screen_row) = screen.get_mut(row) {
+        let screen_row_index = row_offset.saturating_add(row);
+        if let Some(screen_row) = screen.get_mut(screen_row_index) {
             place_text_row(
                 screen_row,
                 column,
@@ -1487,12 +1500,222 @@ fn render_tool_bar(
             );
         }
         items.push(GridToolBarItem {
-            row,
+            row: screen_row_index,
             left: column,
             width: button_width,
             command: i.symbol_name(command),
         });
         column = column.saturating_add(button_width).saturating_add(1);
+    }
+    items
+}
+
+fn tab_entry_parameter(i: &Interp, entry: &Value, name: &str) -> Value {
+    let Some(property) = i.q_soft(name) else {
+        return Value::Nil;
+    };
+    let Ok(items) = entry.list_to_vec() else {
+        return Value::Nil;
+    };
+    items
+        .into_iter()
+        .find_map(|item| {
+            let Value::Cons(cell) = item else {
+                return None;
+            };
+            let cell = cell.borrow();
+            matches!(cell.car, Value::Sym(symbol) if symbol == property)
+                .then(|| cell.cdr.clone())
+        })
+        .unwrap_or(Value::Nil)
+}
+
+fn render_tab_bar(
+    i: &Interp,
+    frame_params: &Value,
+    width: usize,
+    rows: usize,
+    row_offset: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridTabBarItem> {
+    let mut background = faces.builtin(i, "tab-bar", 0).finish();
+    if background.fg.is_none() {
+        background.fg = default_style.fg;
+    }
+    if background.bg.is_none() {
+        background.bg = default_style.bg.or(Some(CellColor(0x2d, 0x30, 0x33)));
+    }
+    for row in screen.iter_mut().skip(row_offset).take(rows) {
+        for cell in row {
+            *cell = ScreenCell {
+                chars: Vec::new(),
+                style: background,
+                occupied: true,
+                continuation: false,
+            };
+        }
+    }
+
+    let tabs = i
+        .q_soft("tabs")
+        .map(|property| crate::lisp::eval::plist_get(frame_params, property))
+        .and_then(|value| value.list_to_vec().ok())
+        .unwrap_or_default();
+    let tab_count = tabs.len().max(1);
+    let close_setting = mode_line_variable(i, i.current_buffer, "tab-bar-close-button-show")
+        .unwrap_or(Value::Nil);
+    let close_button = mode_line_variable(i, i.current_buffer, "tab-bar-close-button")
+        .and_then(|value| match value {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        })
+        .unwrap_or_else(|| " ×".to_owned());
+    let mut items = Vec::new();
+    let mut row = 0usize;
+    let mut column = 0usize;
+
+    for index in 0..tab_count {
+        let tab = tabs.get(index);
+        let current = tab.is_none_or(|tab| {
+            matches!(tab, Value::Cons(cell)
+                if matches!(cell.borrow().car, Value::Sym(symbol) if i.symbol_name(symbol) == "current-tab"))
+        });
+        let name = tab
+            .map(|tab| tab_entry_parameter(i, tab, "name"))
+            .unwrap_or_else(|| {
+                i.buffers
+                    .get(i.current_buffer)
+                    .map(|buffer| Value::string(buffer.borrow().name.clone()))
+                    .unwrap_or(Value::Nil)
+            });
+        let name = match name {
+            Value::Str(name) => name.borrow().to_unicode_lossy(),
+            _ => format!("Tab {}", index.saturating_add(1)),
+        };
+        let close_visible = match &close_setting {
+            Value::Nil => false,
+            Value::Sym(symbol) if i.symbol_name(*symbol) == "selected" => current,
+            Value::Sym(symbol) if i.symbol_name(*symbol) == "non-selected" => !current,
+            _ => close_setting.truthy(),
+        };
+        let label_width = name
+            .chars()
+            .map(display_char_width)
+            .sum::<usize>()
+            .saturating_add(2)
+            .max(3);
+        let close_width = if close_visible {
+            close_button.chars().map(display_char_width).sum::<usize>()
+        } else {
+            0
+        };
+        let button_width = label_width
+            .saturating_add(close_width)
+            .min(width.max(1));
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row >= rows || width == 0 {
+            break;
+        }
+        let mut style = faces
+            .builtin(i, if current { "tab-bar-tab" } else { "tab-bar-tab-inactive" }, 0)
+            .finish();
+        if style.fg.is_none() {
+            style.fg = background.fg;
+        }
+        if style.bg.is_none() {
+            style.bg = background.bg;
+        }
+        style.box_style = Some(BoxStyle {
+            vertical_width: 1,
+            horizontal_width: 1,
+            color: style.fg,
+            kind: BoxStyleKind::Released,
+        });
+        let label = if close_visible {
+            format!(" {name}{close_button} ")
+        } else {
+            format!(" {name} ")
+        };
+        let label = fit_text_to_cells_with_tab_width(&label, button_width, 8).0;
+        let cell_styles = vec![style; button_width];
+        let character_styles = label.chars().map(|_| style).collect::<Vec<_>>();
+        let screen_row = row_offset.saturating_add(row);
+        if let Some(screen_row) = screen.get_mut(screen_row) {
+            place_text_row(screen_row, column, &label, &cell_styles, &character_styles);
+        }
+        items.push(GridTabBarItem {
+            row: screen_row,
+            left: column,
+            width: label_width.min(button_width),
+            command: "tab-bar-select-tab".to_owned(),
+            argument: Some(index.saturating_add(1) as i128),
+        });
+        if close_visible && close_width > 0 {
+            items.push(GridTabBarItem {
+                row: screen_row,
+                left: column.saturating_add(label_width.min(button_width)),
+                width: close_width.min(button_width.saturating_sub(label_width.min(button_width))),
+                command: "tab-bar-close-tab".to_owned(),
+                argument: Some(index.saturating_add(1) as i128),
+            });
+        }
+        column = column.saturating_add(button_width).saturating_add(1);
+    }
+
+    let new_button_show = mode_line_variable(i, i.current_buffer, "tab-bar-new-button-show")
+        .unwrap_or(Value::t())
+        .truthy();
+    if new_button_show && width > 0 {
+        let label = mode_line_variable(i, i.current_buffer, "tab-bar-new-button")
+            .and_then(|value| match value {
+                Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+                _ => None,
+            })
+            .unwrap_or_else(|| " + ".to_owned());
+        let button_width = label
+            .chars()
+            .map(display_char_width)
+            .sum::<usize>()
+            .max(1)
+            .min(width);
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row < rows {
+            let mut style = faces.builtin(i, "tab-bar-tab-inactive", 0).finish();
+            if style.fg.is_none() {
+                style.fg = background.fg;
+            }
+            if style.bg.is_none() {
+                style.bg = background.bg;
+            }
+            style.box_style = Some(BoxStyle {
+                vertical_width: 1,
+                horizontal_width: 1,
+                color: style.fg,
+                kind: BoxStyleKind::Released,
+            });
+            let label = fit_text_to_cells_with_tab_width(&label, button_width, 8).0;
+            let cell_styles = vec![style; button_width];
+            let character_styles = label.chars().map(|_| style).collect::<Vec<_>>();
+            let screen_row = row_offset.saturating_add(row);
+            if let Some(screen_row) = screen.get_mut(screen_row) {
+                place_text_row(screen_row, column, &label, &cell_styles, &character_styles);
+            }
+            items.push(GridTabBarItem {
+                row: screen_row,
+                left: column,
+                width: button_width,
+                command: "tab-bar-new-tab".to_owned(),
+                argument: None,
+            });
+        }
     }
     items
 }
@@ -3325,6 +3548,7 @@ fn render_grid_internal(
     let mut images = Vec::new();
     let menus = render_menu_bar(i);
     let mut tool_bar_items = Vec::new();
+    let mut tab_bar_items = Vec::new();
     let mut help_echoes = Vec::new();
     let tooltip = i.gui_tip.clone();
     let mut scroll_bars = Vec::new();
@@ -3350,6 +3574,7 @@ fn render_grid_internal(
                 images,
                 menus,
                 tool_bar_items,
+                tab_bar_items,
                 help_echoes,
                 tooltip,
                 scroll_bars,
@@ -3396,9 +3621,16 @@ fn render_grid_internal(
     } else {
         0
     };
+    let tab_bar_rows = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "tab-bar-lines", 0)
+            .min(height.saturating_sub(mini_height + tool_bar_rows))
+    } else {
+        0
+    };
+    let chrome_rows = tool_bar_rows.saturating_add(tab_bar_rows);
     let body_height = height
         .saturating_sub(mini_height)
-        .saturating_sub(tool_bar_rows);
+        .saturating_sub(chrome_rows);
     let (root_left, root_top, root_width, root_height) = fb
         .root
         .as_ref()
@@ -3423,11 +3655,24 @@ fn render_grid_internal(
     let mut screen_rows: Vec<Vec<ScreenCell>> = (0..height)
         .map(|_| (0..width).map(|_| ScreenCell::new(default_style)).collect())
         .collect();
+    if tab_bar_rows > 0 {
+        tab_bar_items = render_tab_bar(
+            i,
+            &fb.params,
+            width,
+            tab_bar_rows,
+            0,
+            default_style,
+            &mut fctx,
+            &mut screen_rows,
+        );
+    }
     if tool_bar_rows > 0 {
         tool_bar_items = render_tool_bar(
             i,
             width,
             tool_bar_rows,
+            tab_bar_rows,
             default_style,
             &mut fctx,
             &mut screen_rows,
@@ -3466,7 +3711,7 @@ fn render_grid_internal(
         };
         let raw_window_left = scale_edge(raw_left, root_left, scale_x, width);
         let raw_window_top = scale_edge(raw_top, root_top, scale_y, body_height)
-            .saturating_add(tool_bar_rows);
+            .saturating_add(chrome_rows);
         let raw_window_right = scale_edge(
             raw_left.saturating_add(raw_width),
             root_left,
@@ -3479,7 +3724,7 @@ fn render_grid_internal(
             scale_y,
             body_height,
         )
-        .saturating_add(tool_bar_rows);
+        .saturating_add(chrome_rows);
         let raw_window_width = raw_window_right.saturating_sub(raw_window_left);
         let raw_window_height = raw_window_bottom
             .saturating_sub(raw_window_top)
@@ -4472,6 +4717,7 @@ fn render_grid_internal(
         images,
         menus,
         tool_bar_items,
+        tab_bar_items,
         help_echoes,
         tooltip,
         scroll_bars,

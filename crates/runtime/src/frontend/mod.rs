@@ -24,6 +24,8 @@ pub enum InputEvent {
     Text(String),
     /// Execute a command selected from a native GUI menu.
     Command(String),
+    /// Execute a GUI action with pre-supplied interactive arguments.
+    CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
     MouseDown(MouseInput),
     Mouse(MouseInput),
@@ -124,7 +126,7 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridCursor, GridCursorShape, GridImage,
     GridHelpEcho, GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu,
-    GridMenuItem, GridToolBarItem,
+    GridMenuItem, GridTabBarItem, GridToolBarItem,
     GridScrollBar, GridScrollBarOrientation, fit_text_to_cells, render_grid,
     render_grid_with_input_cached,
 };

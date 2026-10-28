@@ -24,6 +24,7 @@ pub(super) enum GuiEvent {
     Key(i128),
     Text(String),
     MenuCommand(String),
+    CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
     Resize(usize, usize),
     Geometry(GuiGeometry),
@@ -386,6 +387,9 @@ impl KeyIo for ChanIo {
             Ok(GuiEvent::Key(k)) => Ok(Some(InputEvent::Key(k))),
             Ok(GuiEvent::Text(text)) => Ok(Some(InputEvent::Text(text))),
             Ok(GuiEvent::MenuCommand(command)) => Ok(Some(InputEvent::Command(command))),
+            Ok(GuiEvent::CommandArgs { command, args }) => {
+                Ok(Some(InputEvent::CommandArgs { command, args }))
+            }
             Ok(GuiEvent::ReplaceText { range, text }) => {
                 Ok(Some(InputEvent::ReplaceText { range, text }))
             }
@@ -482,6 +486,7 @@ impl KeyIo for ChanIo {
                 Ok(first)
             }
             Ok(GuiEvent::MenuCommand(_)) => Ok(None),
+            Ok(GuiEvent::CommandArgs { .. }) => Ok(None),
             Ok(GuiEvent::ReplaceText { text, .. }) => {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();

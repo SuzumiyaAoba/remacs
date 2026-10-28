@@ -204,6 +204,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
+            InputEvent::CommandArgs { command, args } => {
+                dispatch_frontend_command_with_args(i, &command, &args, &mut keys, &mut arg_mode)
+            }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
@@ -613,9 +616,23 @@ fn dispatch_frontend_command(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) {
+    dispatch_frontend_command_with_args(i, command, &[], keys, arg_mode);
+}
+
+fn dispatch_frontend_command_with_args(
+    i: &mut Interp,
+    command: &str,
+    args: &[i128],
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
     keys.clear();
     *arg_mode = false;
     let command = Value::Sym(i.intern(command));
+    let saved_args = std::mem::replace(
+        &mut i.command_args,
+        args.iter().copied().map(Value::Int).collect(),
+    );
     let this_command = i.q("this-command");
     let previous = i.symbol_value(this_command);
     let last_command = i.q("last-command");
@@ -636,6 +653,7 @@ fn dispatch_frontend_command(
     }
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
     i.kbd_macro_mark = i.kbd_macro_events.len();
+    i.command_args = saved_args;
 }
 
 fn dispatch_key<T: KeyIo>(
@@ -1226,6 +1244,9 @@ fn minibuf_loop<T: KeyIo>(
             InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
+            }
+            InputEvent::CommandArgs { command, args } => {
+                dispatch_frontend_command_with_args(i, &command, &args, &mut keys, &mut arg_mode)
             }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)

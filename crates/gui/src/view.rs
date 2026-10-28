@@ -9,7 +9,7 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
-    GridScrollBar, GridScrollBarOrientation, GridToolBarItem,
+    GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
     MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
@@ -118,6 +118,25 @@ fn tool_bar_command_at(
         .iter()
         .find(|item| item.row == row && column >= item.left && column < item.left + item.width)
         .map(|item| item.command.clone())
+}
+
+fn tab_bar_command_at(
+    items: &[GridTabBarItem],
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> Option<(String, Vec<i128>)> {
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
+    let row = (f32::from(point.y) / f32::from(line_height)).floor().max(0.0) as usize;
+    items
+        .iter()
+        .find(|item| item.row == row && column >= item.left && column < item.left + item.width)
+        .map(|item| {
+            (
+                item.command.clone(),
+                item.argument.into_iter().collect(),
+            )
+        })
 }
 
 #[derive(Clone, PartialEq, gpui::Action)]
@@ -375,6 +394,18 @@ impl Render for EditorView {
                         ) {
                             this.toolbar_pressed = true;
                             let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
+                        if let Some((command, args)) = tab_bar_command_at(
+                            &left_mouse_down_grid.tab_bar_items,
+                            event.position,
+                            cell_width,
+                            line_height,
+                        ) {
+                            this.toolbar_pressed = true;
+                            let _ = left_mouse_down_tx.send(GuiEvent::CommandArgs { command, args });
                             window.prevent_default();
                             cx.stop_propagation();
                             return;
