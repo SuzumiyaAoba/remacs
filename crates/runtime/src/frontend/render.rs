@@ -2534,6 +2534,7 @@ struct FaceCtx {
     mouse_face: u32,
     pointer: u32,
     line_spacing: u32,
+    line_height: u32,
     mark_active: u32,
     inherit: u32,
     invisible: u32,
@@ -2610,6 +2611,7 @@ impl FaceCtx {
             mouse_face: sym("mouse-face"),
             pointer: sym("pointer"),
             line_spacing: sym("line-spacing"),
+            line_height: sym("line-height"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
             invisible: sym("invisible"),
@@ -3018,6 +3020,10 @@ struct WindowFaces {
     line_spacing_props: Vec<(usize, usize, Value, usize)>,
     /// Newline line-spacing overlay properties, with window restrictions applied.
     line_spacing_overlays: Vec<(crate::buffer::Overlay, Value)>,
+    /// Newline line-height text-property runs.
+    line_height_props: Vec<(usize, usize, Value, usize)>,
+    /// Newline line-height overlay properties, with window restrictions applied.
+    line_height_overlays: Vec<(crate::buffer::Overlay, Value)>,
     /// `help-echo` text-property runs and overlay values for hover tooltips.
     help_echo_props: Vec<(usize, usize, Value, usize)>,
     help_echo_overlays: Vec<(crate::buffer::Overlay, Value)>,
@@ -3336,6 +3342,25 @@ fn window_faces(
             (!spacing.is_nil()).then(|| (overlay.clone(), spacing))
         })
         .collect();
+    let line_height_props = properties
+        .iter()
+        .enumerate()
+        .filter(|(_, tp)| tp.prop == ctx.line_height)
+        .map(|(index, tp)| (tp.start, tp.end, tp.value.clone(), index))
+        .collect();
+    let line_height_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| {
+            overlay.buffer == Some(bb.id)
+                && overlay.start < overlay.end
+                && overlay.matches_window(i, win)
+        })
+        .filter_map(|overlay| {
+            let height = overlay.property(i, &Value::Sym(ctx.line_height));
+            (!height.is_nil()).then(|| (overlay.clone(), height))
+        })
+        .collect();
     let invisibility_spec = i
         .buffer_local_toplevel_value(ctx.buffer_invisibility_spec, bb.id)
         .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
@@ -3368,6 +3393,8 @@ fn window_faces(
         pointer,
         line_spacing_props,
         line_spacing_overlays,
+        line_height_props,
+        line_height_overlays,
         help_echo_props,
         help_echo_overlays,
         display_props,
@@ -3456,6 +3483,86 @@ fn line_spacing_at_pos(
         .max_by_key(|(_, _, _, insertion)| *insertion)
         .and_then(|(_, _, value, _)| line_spacing_pixels(value, default_line_height));
     default_spacing.max(overlay_spacing.or(property_spacing).unwrap_or(default_spacing))
+}
+
+#[derive(Clone, Copy)]
+enum LineHeightProperty {
+    ContentsOnly,
+    Minimum(usize),
+    Total(usize),
+}
+
+fn height_spec_pixels(value: &Value, default_line_height: usize) -> Option<usize> {
+    match value {
+        Value::Int(height) if *height > 0 => usize::try_from(*height).ok(),
+        Value::Float(ratio) if (**ratio).is_finite() && **ratio > 0.0 => {
+            Some((**ratio * default_line_height as f64).round().min(usize::MAX as f64) as usize)
+        }
+        Value::Cons(_) => {
+            let Value::Cons(cons) = value else {
+                unreachable!()
+            };
+            let (face, ratio) = {
+                let cons = cons.borrow();
+                (cons.car.clone(), cons.cdr.clone())
+            };
+            let ratio = match ratio {
+                Value::Nil => 1.0,
+                Value::Int(ratio) => ratio as f64,
+                Value::Float(ratio) => *ratio,
+                _ => return None,
+            };
+            let _ = face;
+            (ratio.is_finite() && ratio > 0.0).then(|| {
+                (ratio * default_line_height as f64)
+                    .round()
+                    .min(usize::MAX as f64) as usize
+            })
+        }
+        _ => None,
+    }
+}
+
+fn line_height_property(value: &Value, default_line_height: usize) -> Option<LineHeightProperty> {
+    if matches!(value, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
+        return Some(LineHeightProperty::ContentsOnly);
+    }
+    if let Value::Cons(_) = value
+        && let Ok(items) = value.list_to_vec()
+        && items.len() == 2
+        && let Some(total) = height_spec_pixels(&items[1], default_line_height)
+    {
+        return Some(LineHeightProperty::Total(total));
+    }
+    height_spec_pixels(value, default_line_height).map(LineHeightProperty::Minimum)
+}
+
+fn line_height_at_pos(
+    i: &Interp,
+    faces: &WindowFaces,
+    position: usize,
+    default_line_height: usize,
+) -> Option<LineHeightProperty> {
+    let mut overlays: Vec<_> = faces
+        .line_height_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| position >= overlay.start && position < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    let overlay_value = overlays
+        .last()
+        .map(|(_, index)| &faces.line_height_overlays[*index].1);
+    let property_value = faces
+        .line_height_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| *insertion)
+        .map(|(_, _, value, _)| value);
+    overlay_value
+        .or(property_value)
+        .and_then(|value| line_height_property(value, default_line_height))
 }
 
 fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
@@ -4733,11 +4840,33 @@ fn render_grid_internal(
                 } else {
                     default_line_spacing
                 };
+                let explicit_line_height = if graphical
+                    && segment_end == line_len
+                    && row_end > line_pos.saturating_add(line_len)
+                {
+                    wf.as_ref().and_then(|faces| {
+                        line_height_at_pos(
+                            i,
+                            faces,
+                            line_pos.saturating_add(line_len),
+                            frame_char_height,
+                        )
+                    })
+                } else {
+                    None
+                };
+                let display_row_height = match explicit_line_height {
+                    Some(LineHeightProperty::ContentsOnly) => frame_char_height,
+                    Some(LineHeightProperty::Total(total)) => frame_char_height.max(total),
+                    Some(LineHeightProperty::Minimum(height)) => frame_char_height
+                        .max(height)
+                        .saturating_add(newline_spacing),
+                    None => frame_char_height.saturating_add(newline_spacing),
+                };
                 if let Some(row_height) = row_heights.get_mut(y) {
                     // Grid rows are shared across side-by-side windows, so
                     // reserve enough height for the tallest row at this y.
-                    *row_height = (*row_height)
-                        .max(frame_char_height.saturating_add(newline_spacing));
+                    *row_height = (*row_height).max(display_row_height);
                 }
                 visible_end = if segment_end == line_len {
                     row_end
