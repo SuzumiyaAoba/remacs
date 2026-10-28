@@ -3646,15 +3646,28 @@ overlap DATE."
                      (icalendar-rdate include)
                      (icalendar-exdate exclude)))
          (date (icalendar-date/time-to-date date))
-         (local-lower (diary-icalendar--local-midnight date))
-         (local-upper (diary-icalendar--local-midnight
-                       (icalendar-date-add date :day 1)))
-         ;; Recurrences are in VTIMEZONE; make the local-day window
-         ;; comparable as absolute times in that zone.
-         (lower (icalendar-recur-tz-decode-time
-                 (encode-time local-lower) vtimezone))
-         (upper (icalendar-recur-tz-decode-time
-                 (encode-time local-upper) vtimezone))
+         (local-lower
+          (if (and (null vtimezone)
+                   (null (icalendar-date/time-zone start)))
+              (icalendar-date-to-date-time date)
+            (diary-icalendar--local-midnight date)))
+         (local-upper
+          (if (and (null vtimezone)
+                   (null (icalendar-date/time-zone start)))
+              (icalendar-date-to-date-time
+               (icalendar-date-add date :day 1))
+            (diary-icalendar--local-midnight
+             (icalendar-date-add date :day 1))))
+         ;; Convert the local-day window into VTIMEZONE when available;
+         ;; floating date-times compare by their local clock fields.
+         (lower (if vtimezone
+                    (icalendar-recur-tz-decode-time
+                     (encode-time local-lower) vtimezone)
+                  local-lower))
+         (upper (if vtimezone
+                    (icalendar-recur-tz-decode-time
+                     (encode-time local-upper) vtimezone)
+                  local-upper))
          (search-lower (if duration
                            (icalendar-date/time-add-duration
                             lower (diary-icalendar--negate-duration duration)
@@ -3717,7 +3730,10 @@ be an `icalendar-vtimezone' used to calculate local-time recurrences."
   ;; would be better than the current
   ;;   :rule '((FREQ MONTHLY) (BYDAY ((0 . 1))))
   (with-no-warnings (defvar date) (defvar entry))
-  (when (icalendar-date<= start date)
+  (when (icalendar-date<=
+         (icalendar-date/time-to-date
+          (diary-icalendar-date/time-to-local start vtimezone))
+         date)
     (cl-typecase start
       (icalendar-date
        (let* ((vevent (icalendar-make-vevent
@@ -3732,11 +3748,11 @@ be an `icalendar-vtimezone' used to calculate local-time recurrences."
             (when (member date (icalendar-recur-recurrences-in-interval interval vevent))
               entry)))
       (icalendar-date-time
-       (if vtimezone
+       (if (or vtimezone (null (icalendar-date/time-zone start)))
            (diary-icalendar--rrule-entries-for-date
             date entry rule start duration include exclude vtimezone)
-         ;; Without a VTIMEZONE, retain the existing date-only
-         ;; approximation for date-time recurrence rules.
+         ;; Without VTIMEZONE, retain the existing date-only approximation
+         ;; for date-times with an explicit UTC or fixed-offset zone.
          (let* ((date-rule (copy-sequence rule))
                 (start-date (icalendar-date-time-to-date start))
                 (include-dates (mapcar #'icalendar-date-time-to-date include))
