@@ -39,7 +39,7 @@
       ;; If it ends with a '/.' or '/..', tack on a trailing '/' sot hat
       ;; the tests that follow are not too complicated in terms of
       ;; looking for '..' or '../', etc.
-      (if (string-match "/\\.+$" new)
+      (if (string-match "/\\.\\{1,2\\}$" new)
           (setq new (concat new "/")))
 
       ;; Remove '/./' first
