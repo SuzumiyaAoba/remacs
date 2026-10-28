@@ -544,19 +544,27 @@ If multiple rules match, only first one is executed.")
               ('after-stay (save-excursion (funcall nl-after)))
               ('around (funcall nl-before) (funcall nl-after))))))))
 
+(defun electric-layout--update-hook ()
+  "Install the post-insert hook while Electric Layout is active anywhere."
+  (if (or (default-value 'electric-layout-mode)
+          (catch 'enabled
+            (dolist (buf (buffer-list))
+              (with-current-buffer buf
+                (when electric-layout-mode
+                  (throw 'enabled t)))))
+      (add-hook 'post-self-insert-hook
+                #'electric-layout-post-self-insert-function
+                40)
+    (remove-hook 'post-self-insert-hook
+                 #'electric-layout-post-self-insert-function)))
+
 ;;;###autoload
 (define-minor-mode electric-layout-mode
   "Automatically insert newlines around some chars.
 
 The variable `electric-layout-rules' says when and how to insert newlines."
   :global t :group 'electricity
-  (cond (electric-layout-mode
-         (add-hook 'post-self-insert-hook
-                   #'electric-layout-post-self-insert-function
-                   40))
-        (t
-         (remove-hook 'post-self-insert-hook
-                      #'electric-layout-post-self-insert-function))))
+  (electric-layout--update-hook))
 
 ;;;###autoload
 (define-minor-mode electric-layout-local-mode
@@ -570,7 +578,8 @@ The variable `electric-layout-rules' says when and how to insert newlines."
     ;; Locally enabled, but globally disabled.
     (electric-layout-mode 1)		  ; Setup the hooks.
     (setq-default electric-layout-mode nil) ; But keep it globally disabled.
-    )))
+    ))
+  (electric-layout--update-hook))
 
 ;;; Electric quoting.
 
