@@ -1162,16 +1162,38 @@ requires quoting, e.g. `\\[quoted-insert]<space>'."
      (apply-partially #'project--find-regexp-in-files regexp files)
      nil)))
 
+(defun project--rebase-rooted-ignore (ignore relative-dir)
+  "Rebase root-relative IGNORE for RELATIVE-DIR, or return nil.
+IGNORE starts with \"./\".  RELATIVE-DIR is relative to the project root."
+  (let ((path (substring ignore 2))
+        (relative-dir
+         (file-name-as-directory (string-remove-prefix "./" relative-dir))))
+    (cond
+     ((string-empty-p path) "./")
+     ((string-prefix-p relative-dir path)
+      (concat "./" (substring path (length relative-dir))))
+     ;; A rooted ignore of an ancestor directory covers all of DIR.
+     ((string-prefix-p (file-name-as-directory path) relative-dir) "./")
+     (t nil))))
+
 (defun project--dir-ignores (project dir)
-  (let ((root (project-root project)))
-    (if (not (file-in-directory-p dir root))
-        (project-ignores nil nil)       ;The defaults.
+  (let* ((root (file-name-as-directory (project-root project)))
+         (dir (file-name-as-directory dir)))
+    (if (not (or (file-equal-p dir root)
+                 (file-in-directory-p dir root)))
+        (project-ignores nil nil)       ; The defaults.
       (let ((ignores (project-ignores project root)))
         (if (file-equal-p root dir)
             ignores
-          ;; FIXME: Update the "rooted" ignores to relate to DIR instead.
-          (cl-delete-if (lambda (str) (string-prefix-p "./" str))
-                        ignores))))))
+          (let ((relative-dir (file-name-as-directory
+                               (file-relative-name dir root))))
+            (delq nil
+                  (mapcar (lambda (ignore)
+                            (if (string-prefix-p "./" ignore)
+                                (project--rebase-rooted-ignore
+                                 ignore relative-dir)
+                              ignore))
+                          ignores)))))))
 
 ;;;###autoload
 (defun project-or-external-find-regexp (regexp)
