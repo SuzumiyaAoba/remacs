@@ -6,7 +6,9 @@ use super::{
 };
 use gpui::*;
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
-use remacs_runtime::frontend::{Grid, MouseButton as RemacsMouseButton};
+use remacs_runtime::frontend::{
+    BoxStyle, BoxStyleKind, CellColor, Grid, MouseButton as RemacsMouseButton,
+};
 use std::sync::mpsc::Sender;
 mod input;
 use input::TextInputState;
@@ -419,6 +421,15 @@ impl Render for EditorView {
                             let origin =
                                 point(bounds.left(), bounds.top() + line_height * (y as f32));
                             let _ = line.paint(origin, line_height, window, _cx);
+                            paint_face_boxes(
+                                &grid,
+                                y,
+                                line,
+                                bounds,
+                                line_height,
+                                default_background,
+                                window,
+                            );
                             let char_styles = grid
                                 .char_attrs
                                 .get(y)
@@ -681,6 +692,214 @@ fn mouse_modifier_bits(modifiers: &Modifiers) -> i128 {
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'
 /// swaps the two (default palette entries stand in for unset sides).
+fn paint_face_boxes(
+    grid: &Grid,
+    row_index: usize,
+    line: &ShapedLine,
+    bounds: Bounds<Pixels>,
+    line_height: Pixels,
+    default_background: u32,
+    window: &mut Window,
+) {
+    let Some(text) = grid.rows.get(row_index) else {
+        return;
+    };
+    let Some(styles) = grid
+        .char_attrs
+        .get(row_index)
+        .filter(|styles| !styles.is_empty())
+        .or_else(|| grid.attrs.get(row_index))
+    else {
+        return;
+    };
+    let mut current: Option<(BoxStyle, Option<CellColor>, Option<CellColor>, usize, usize)> = None;
+    for (index, (byte, character)) in text.char_indices().enumerate() {
+        let style = styles.get(index).copied().unwrap_or_default();
+        let Some(box_style) = style.box_style else {
+            if let Some((box_style, fg, bg, start, end)) = current.take() {
+                paint_box_run(
+                    line,
+                    bounds,
+                    row_index,
+                    line_height,
+                    box_style,
+                    fg,
+                    bg,
+                    start,
+                    end,
+                    default_background,
+                    window,
+                );
+            }
+            continue;
+        };
+        let end = byte + character.len_utf8();
+        match &mut current {
+            Some((active, fg, bg, _, active_end))
+                if *active == box_style && *fg == style.fg && *bg == style.bg =>
+            {
+                *active_end = end;
+            }
+            _ => {
+                if let Some((box_style, fg, bg, start, end)) = current.take() {
+                    paint_box_run(
+                        line,
+                        bounds,
+                        row_index,
+                        line_height,
+                        box_style,
+                        fg,
+                        bg,
+                        start,
+                        end,
+                        default_background,
+                        window,
+                    );
+                }
+                current = Some((box_style, style.fg, style.bg, byte, end));
+            }
+        }
+    }
+    if let Some((box_style, fg, bg, start, end)) = current {
+        paint_box_run(
+            line,
+            bounds,
+            row_index,
+            line_height,
+            box_style,
+            fg,
+            bg,
+            start,
+            end,
+            default_background,
+            window,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_box_run(
+    line: &ShapedLine,
+    bounds: Bounds<Pixels>,
+    row_index: usize,
+    line_height: Pixels,
+    box_style: BoxStyle,
+    foreground: Option<CellColor>,
+    background: Option<CellColor>,
+    start: usize,
+    end: usize,
+    default_background: u32,
+    window: &mut Window,
+) {
+    let x1 = line.x_for_index(start);
+    let x2 = line.x_for_index(end);
+    let left = x1.min(x2);
+    let right = x1.max(x2);
+    if right <= left {
+        return;
+    }
+
+    let default_foreground = CellColor(
+        ((FG >> 16) & 0xff) as u8,
+        ((FG >> 8) & 0xff) as u8,
+        (FG & 0xff) as u8,
+    );
+    let default_background = CellColor(
+        ((default_background >> 16) & 0xff) as u8,
+        ((default_background >> 8) & 0xff) as u8,
+        (default_background & 0xff) as u8,
+    );
+    let base = box_style.color.unwrap_or_else(|| match box_style.kind {
+        BoxStyleKind::Flat => foreground.unwrap_or(default_foreground),
+        BoxStyleKind::Released | BoxStyleKind::Pressed => background.unwrap_or(default_background),
+    });
+    let base = color_rgb(base);
+    let (top_color, right_color, bottom_color, left_color) = match box_style.kind {
+        BoxStyleKind::Flat => (base, base, base, base),
+        BoxStyleKind::Released => (
+            shade_color(base, 1.35),
+            shade_color(base, 0.65),
+            shade_color(base, 0.65),
+            shade_color(base, 1.35),
+        ),
+        BoxStyleKind::Pressed => (
+            shade_color(base, 0.65),
+            shade_color(base, 1.35),
+            shade_color(base, 1.35),
+            shade_color(base, 0.65),
+        ),
+    };
+    let vertical = px(f32::from(box_style.vertical_width.unsigned_abs()));
+    let horizontal = px(f32::from(box_style.horizontal_width.unsigned_abs()));
+    let origin_y = bounds.top() + line_height * row_index as f32;
+    let left_x = bounds.left() + left;
+    let right_x = bounds.left() + right;
+    let vertical_inset = box_style.vertical_width < 0;
+    let horizontal_inset = box_style.horizontal_width < 0;
+    let (left_x, right_x) = if vertical_inset {
+        (left_x, right_x - vertical)
+    } else {
+        (left_x - vertical / 2.0, right_x - vertical / 2.0)
+    };
+    let (top_y, bottom_y) = if horizontal_inset {
+        (origin_y, origin_y + line_height - horizontal)
+    } else {
+        (
+            origin_y - horizontal / 2.0,
+            origin_y + line_height - horizontal / 2.0,
+        )
+    };
+
+    let mut paint_rect = |x: Pixels, y: Pixels, width: Pixels, height: Pixels, color: u32| {
+        if width > px(0.0) && height > px(0.0) {
+            window.paint_quad(fill(
+                Bounds {
+                    origin: point(x, y),
+                    size: size(width, height),
+                },
+                rgb(color),
+            ));
+        }
+    };
+    paint_rect(
+        left_x,
+        top_y,
+        right_x - left_x + vertical,
+        horizontal,
+        top_color,
+    );
+    paint_rect(
+        left_x,
+        bottom_y,
+        right_x - left_x + vertical,
+        horizontal,
+        bottom_color,
+    );
+    paint_rect(
+        left_x,
+        top_y,
+        vertical,
+        bottom_y - top_y + horizontal,
+        left_color,
+    );
+    paint_rect(
+        right_x,
+        top_y,
+        vertical,
+        bottom_y - top_y + horizontal,
+        right_color,
+    );
+}
+
+fn color_rgb(color: CellColor) -> u32 {
+    ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
+}
+
+fn shade_color(color: u32, factor: f32) -> u32 {
+    let shade = |shift: u32| (((color >> shift) & 0xff) as f32 * factor).clamp(0.0, 255.0) as u32;
+    (shade(16) << 16) | (shade(8) << 8) | shade(0)
+}
+
 fn style_colors(
     st: remacs_runtime::frontend::CellStyle,
     default_background: u32,

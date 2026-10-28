@@ -13,6 +13,35 @@ use unicode_width::UnicodeWidthChar;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct CellColor(pub u8, pub u8, pub u8);
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum BoxStyleKind {
+    #[default]
+    Flat,
+    Released,
+    Pressed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct BoxStyle {
+    /// Left and right border widths. Negative widths are drawn inside.
+    pub vertical_width: i16,
+    /// Top and bottom border widths. Negative widths are drawn inside.
+    pub horizontal_width: i16,
+    pub color: Option<CellColor>,
+    pub kind: BoxStyleKind,
+}
+
+impl Default for BoxStyle {
+    fn default() -> Self {
+        BoxStyle {
+            vertical_width: 1,
+            horizontal_width: 1,
+            color: None,
+            kind: BoxStyleKind::Flat,
+        }
+    }
+}
+
 /// The merged face attributes for one screen cell.  `Option' fields
 /// are tri-state during merging (None = unspecified, Some(false) =
 /// explicitly cleared) and collapsed to plain bools once merged.
@@ -28,6 +57,7 @@ pub struct CellStyle {
     pub font_width: Option<u8>,
     /// Explicit font height in tenths of a point.
     pub font_height: Option<u16>,
+    pub box_style: Option<BoxStyle>,
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
@@ -75,6 +105,7 @@ struct StyleMix {
     font_weight: Option<u16>,
     font_width: Option<u8>,
     font_height: Option<u16>,
+    box_style: Option<Option<BoxStyle>>,
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
@@ -99,6 +130,7 @@ impl StyleMix {
             font_weight,
             font_width,
             font_height,
+            box_style,
             bold,
             italic,
             underline,
@@ -117,6 +149,7 @@ impl StyleMix {
             font_weight: self.font_weight,
             font_width: self.font_width,
             font_height: self.font_height,
+            box_style: self.box_style.flatten(),
             bold: self.bold.unwrap_or(false),
             italic: self.italic.unwrap_or(false),
             underline: self.underline.unwrap_or(false),
@@ -136,6 +169,7 @@ impl PartialEq for StyleMix {
             && self.font_weight == o.font_weight
             && self.font_width == o.font_width
             && self.font_height == o.font_height
+            && self.box_style == o.box_style
             && self.bold == o.bold
             && self.italic == o.italic
             && self.underline == o.underline
@@ -850,6 +884,9 @@ struct FaceCtx {
     font_lock_face: u32,
     mark_active: u32,
     inherit: u32,
+    box_color: u32,
+    box_line_width: u32,
+    box_style: u32,
     /// `color-name-rgb-alist' folded into (canonical name -> rgb).
     colors: HashMap<EmacsText, (u8, u8, u8)>,
     /// Face family names interned for compact, copyable cell styles.
@@ -918,6 +955,9 @@ impl FaceCtx {
             font_lock_face: sym("font-lock-face"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
+            box_color: sym(":color"),
+            box_line_width: sym(":line-width"),
+            box_style: sym(":style"),
             colors,
             font_families: Vec::new(),
             font_family_ids: HashMap::new(),
@@ -967,6 +1007,47 @@ impl FaceCtx {
         self.font_families.push(family.clone());
         self.font_family_ids.insert(family, id);
         Some(id)
+    }
+
+    fn parse_box_style(&self, i: &Interp, value: &Value) -> Option<BoxStyle> {
+        if value.is_nil() {
+            return None;
+        }
+        let mut style = BoxStyle::default();
+        match value {
+            Value::Str(_) => style.color = self.color(value),
+            Value::Cons(_) => {
+                let line_width = crate::lisp::eval::plist_get(value, self.box_line_width);
+                if let Value::Int(width) = line_width {
+                    let width = width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
+                    style.vertical_width = width;
+                    style.horizontal_width = width;
+                } else if let Value::Cons(widths) = line_width {
+                    let (vertical, horizontal) = {
+                        let widths = widths.borrow();
+                        (widths.car.int(), widths.cdr.int())
+                    };
+                    if let Some(width) = vertical {
+                        style.vertical_width =
+                            width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
+                    }
+                    if let Some(width) = horizontal {
+                        style.horizontal_width =
+                            width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
+                    }
+                }
+                style.color = self.color(&crate::lisp::eval::plist_get(value, self.box_color));
+                if let Value::Sym(box_style) = crate::lisp::eval::plist_get(value, self.box_style) {
+                    style.kind = match i.symbol_name(box_style).as_str() {
+                        "released-button" => BoxStyleKind::Released,
+                        "pressed-button" => BoxStyleKind::Pressed,
+                        _ => BoxStyleKind::Flat,
+                    };
+                }
+            }
+            _ => {}
+        }
+        Some(style)
     }
 
     /// Merge one named face's attributes (spec layer first, then the
@@ -1043,6 +1124,7 @@ impl FaceCtx {
                 }
                 ":width" => mix.font_width = font_width_percent(i, v),
                 ":height" => mix.font_height = font_height_tenths(v),
+                ":box" => mix.box_style = Some(self.parse_box_style(i, v)),
                 ":slant" => mix.italic = Some(slant_italic(i, v)),
                 ":underline" => mix.underline = Some(v.truthy()),
                 ":overline" => mix.overline = Some(v.truthy()),
