@@ -3512,20 +3512,23 @@ Also applies to `magic-fallback-mode-alist'.")
 If CASE-INSENSITIVE, the file system of file NAME is case-insensitive."
   (let (mode)
     (while name
-      (let ((newmode
-             (if case-insensitive
-                 ;; Filesystem is case-insensitive.
-                 (let ((case-fold-search t))
+      (let* ((newmode
+              (if case-insensitive
+                  ;; Filesystem is case-insensitive.
+                  (let ((case-fold-search t))
+                    (assoc-default name alist 'string-match))
+                ;; Filesystem is case-sensitive.
+                (or
+                 ;; First match case-sensitively.
+                 (let ((case-fold-search nil))
                    (assoc-default name alist 'string-match))
-               ;; Filesystem is case-sensitive.
-               (or
-                ;; First match case-sensitively.
-                (let ((case-fold-search nil))
-                  (assoc-default name alist 'string-match))
-                ;; Fallback to case-insensitive match.
-                (and auto-mode-case-fold
-                     (let ((case-fold-search t))
-                       (assoc-default name alist 'string-match)))))))
+                 ;; Fallback to case-insensitive match.
+                 (and auto-mode-case-fold
+                      (let ((case-fold-search t))
+                        (assoc-default name alist 'string-match)))))
+             ;; Save the match position before running an earlier mode,
+             ;; which can change match data.
+             (match-pos (and newmode (match-beginning 0))))
         (when newmode
           (when mode
             ;; We had already found a mode but in a (REGEXP MODE t)
@@ -3541,7 +3544,7 @@ If CASE-INSENSITIVE, the file system of file NAME is case-insensitive."
                  (cadr newmode))
             ;; It's a (REGEXP MODE t): Keep looking but remember the MODE.
             (setq mode (car newmode)
-                  name (substring name 0 (match-beginning 0)))
+                  name (substring name 0 match-pos))
           (setq name nil))))
     mode))
 
