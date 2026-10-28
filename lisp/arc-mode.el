@@ -931,9 +931,20 @@ If FNAME can be uniquely created in DIR, it is returned unaltered.
 If FNAME is something our underlying filesystem can't grok, or if another
 file by that name already exists in DIR, a unique new name is generated
 using `make-temp-file', and the generated name is returned."
+  (let ((path-name (if (memq system-type '(ms-dos windows-nt cygwin))
+                       (subst-char-in-string ?\\ ?/ fname)
+                     fname)))
+    (when (string-match "\\(?:\\`\\|/\\)\\.\\.\\(?:/\\|\\'\\)"
+                        path-name)
+      (error "Invalid archive member path: %s" fname)))
   (if (file-name-absolute-p fname)
       ;; We need a file name relative to the filesystem root.
-      (setq fname (substring fname (1+ (string-search "/" fname)))))
+      (setq fname
+            (if (string-match "\\`/" fname)
+                (replace-regexp-in-string "\\`/+" "" fname)
+              (file-name-nondirectory fname))))
+  (when (string= fname "")
+    (error "Invalid archive member path: %s" fname))
   (let ((fullname (expand-file-name fname dir))
 	(alien (string-match file-name-invalid-regexp fname))
 	(tmpfile
@@ -1004,17 +1015,31 @@ using `make-temp-file', and the generated name is returned."
 
 (defun archive-delete-local (name)
   "Delete file NAME and its parents up to and including `archive-tmpdir'."
-  (let ((again t)
-	(top (directory-file-name (file-name-as-directory archive-tmpdir))))
-    (condition-case nil
-	(delete-file name)
-      (error nil))
-    (while again
-      (setq name (directory-file-name (file-name-directory name)))
-      (condition-case nil
-	  (delete-directory name t)
-	(error nil))
-      (if (string= name top) (setq again nil)))))
+  (let* ((top (directory-file-name
+               (file-name-as-directory (expand-file-name archive-tmpdir))))
+         (name (directory-file-name (expand-file-name name)))
+         (top-prefix (file-name-as-directory top)))
+    ;; Do not follow an archive-controlled path outside `archive-tmpdir'.
+    ;; The lexical check keeps cleanup from walking through a symlinked
+    ;; path whose true name happens to point back inside the temp directory.
+    (when (and (or (string= name top)
+                   (string-prefix-p top-prefix name))
+               (or (string= name top)
+                   (condition-case nil
+                       (file-in-directory-p name top)
+                     (error nil))))
+      (if (string= name top)
+          (condition-case nil
+              (delete-directory name t)
+            (error nil))
+        (condition-case nil
+            (delete-file name)
+          (error nil))
+        (while (not (string= name top))
+          (setq name (directory-file-name (file-name-directory name)))
+          (condition-case nil
+              (delete-directory name t)
+            (error nil)))))))
 ;; -------------------------------------------------------------------------
 ;;; Section: Member extraction
 
