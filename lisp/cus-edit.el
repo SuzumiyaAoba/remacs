@@ -459,9 +459,14 @@
     map)
   "Keymap used inside editable fields in customization buffers.")
 
-;; FIXME: Doesn't this affect all `editable-field's ever?  Why not set
-;; the right keymap right away when we (define-widget 'editable-field ...)?
-(widget-put (get 'editable-field 'widget-type) :keymap custom-field-keymap)
+(defun custom--widget-setup ()
+  "Use Customize key bindings for standard fields in `Custom-mode'."
+  (when (eq major-mode 'Custom-mode)
+    (dolist (field widget-field-new)
+      (when (eq (widget-get field :keymap) widget-field-keymap)
+        (widget-put field :keymap custom-field-keymap))))
+
+(advice-add 'widget-setup :before #'custom--widget-setup)
 
 ;;; Utilities.
 
