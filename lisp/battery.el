@@ -922,7 +922,8 @@ The following %-sequences are provided:
 %h Remaining time (to charge or discharge) in hours
 %t Remaining time (to charge or discharge) in the form `h:min'"
   (let ((count 0) props type line-status state load temperature
-        secs mins hrs total-energy total-rate total-tte total-ttf)
+        secs mins hrs total-energy total-energy-full total-weighted-energy
+        total-weighted-count total-rate total-tte total-ttf)
     ;; Merge information from all available or specified UPower
     ;; devices like other `battery-status-function's.
     (dolist (device (battery--upower-devices))
@@ -940,21 +941,32 @@ The following %-sequences are provided:
         (setq count (1+ count))
         (setq state (battery--upower-state props state))
         (let ((energy  (cdr (assoc "Energy"      props)))
+              (energy-full (cdr (assoc "EnergyFull" props)))
               (rate    (cdr (assoc "EnergyRate"  props)))
               (percent (cdr (assoc "Percentage"  props)))
               (temp    (cdr (assoc "Temperature" props)))
               (tte     (cdr (assoc "TimeToEmpty" props)))
               (ttf     (cdr (assoc "TimeToFull"  props))))
           (when energy  (setq total-energy (+ (or total-energy 0) energy)))
+          (when (and energy-full (> energy-full 0) (or energy percent))
+            (setq total-weighted-count (1+ (or total-weighted-count 0)))
+            (setq total-energy-full (+ (or total-energy-full 0) energy-full))
+            (setq total-weighted-energy
+                  (+ (or total-weighted-energy 0)
+                     (or energy (* energy-full (/ percent 100.0))))))
           (when rate    (setq total-rate   (+ (or total-rate   0) rate)))
           (when percent (setq load         (+ (or load         0) percent)))
           (when temp    (setq temperature  (+ (or temperature  0) temp)))
           (when tte     (setq total-tte    (+ (or total-tte    0) tte)))
           (when ttf     (setq total-ttf    (+ (or total-ttf    0) ttf)))))))
-    (when (> count 1)
-      ;; Averages over multiple batteries.
-      (when load (setq load (/ load count)))
-      (when temperature (setq temperature (/ temperature count))))
+    (cond
+     ((and (> count 0)
+           (= (or total-weighted-count 0) count)
+           (> (or total-energy-full 0) 0))
+      (setq load (* 100.0 (/ total-weighted-energy total-energy-full)))
+     (load (setq load (/ load count))))
+    (when (and (> count 1) temperature)
+      (setq temperature (/ temperature count)))
     (when (setq secs (if (eq line-status 'online) total-ttf total-tte))
       (setq mins (/ secs 60))
       (setq hrs (/ secs 3600)))
