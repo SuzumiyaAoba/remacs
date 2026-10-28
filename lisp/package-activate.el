@@ -411,7 +411,10 @@ Newer versions are always activated, regardless of FORCE."
     (cond
      ;; If no such package is found, maybe it's built-in.
      ((null pkg-desc)
-      (package-built-in-p package))
+      (let ((builtin (package-built-in-p package)))
+        (when builtin
+          (add-to-list 'package-activated-list package))
+        builtin))
      ;; If the package is already activated, just return t.
      ((and (memq package package-activated-list) (not force))
       t)
