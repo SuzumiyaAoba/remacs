@@ -382,7 +382,12 @@ fn display_columns_of(chars: impl Iterator<Item = EmacsChar>, tab_width: usize) 
     columns
 }
 
-fn wrap_ranges(text: &EmacsText, width: usize, tab_width: usize) -> Vec<Range<usize>> {
+fn wrap_ranges(
+    text: &EmacsText,
+    width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+) -> Vec<Range<usize>> {
     let chars: Vec<_> = text.chars().collect();
     if chars.is_empty() {
         return vec![0..0];
@@ -396,9 +401,13 @@ fn wrap_ranges(text: &EmacsText, width: usize, tab_width: usize) -> Vec<Range<us
     let mut column = 0usize;
     let tab_width = tab_width.max(1);
     for (index, character) in chars.iter().enumerate() {
+        let code = character.code();
         let character = character.unicode().unwrap_or('\u{fffd}');
+        let control_character = code < 0x20 || code == 0x7f;
         let mut character_width = if character == '\t' {
             tab_width - column % tab_width
+        } else if ctl_arrow && control_character {
+            2
         } else {
             display_char_width(character)
         };
@@ -2544,6 +2553,15 @@ fn display_table_replacement(
     None
 }
 
+fn ctl_arrow_replacement(character: EmacsChar, ctl_arrow: bool) -> Option<DisplayReplacement> {
+    let code = character.code();
+    if !ctl_arrow || (code >= 0x20 && code != 0x7f) || matches!(code, 0x09 | 0x0a) {
+        return None;
+    }
+    let caret = char::from_u32(code ^ 0x40)?;
+    Some(DisplayReplacement::Text(format!("^{caret}")))
+}
+
 fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
     if matches!(spec, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
         return if property.is_nil() {
@@ -2785,6 +2803,7 @@ fn render_grid_internal(
         let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
+        let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
         let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
         let mode_line_format = buffer_setting(i, "mode-line-format", buf_id);
         let mode_line_enabled = !mode_line_format.is_nil();
@@ -2893,7 +2912,7 @@ fn render_grid_internal(
                         let line_end = bb.text.line_end(line_pos).min(bb.zv);
                         let line = bb.text.substring(line_pos, line_end);
                         let line_len = line.chars().count();
-                        for range in wrap_ranges(&line, content_width, tab_width) {
+                        for range in wrap_ranges(&line, content_width, tab_width, ctl_arrow) {
                             if line_number == new_start_line
                                 && range.end <= start_offset
                                 && range.end < line_len
@@ -3068,7 +3087,7 @@ fn render_grid_internal(
             }
             let line_len = line.chars().count();
             let ranges = if wrap_lines {
-                wrap_ranges(&line, content_width, tab_width)
+                wrap_ranges(&line, content_width, tab_width, ctl_arrow)
             } else {
                 vec![0..line_len]
             };
@@ -3168,6 +3187,11 @@ fn render_grid_internal(
                                 let wf = wf.as_ref()?;
                                 let character = *segment_chars.get(index)?;
                                 display_table_replacement(i, wf, character)
+                            })
+                            .or_else(|| {
+                                segment_chars
+                                    .get(index)
+                                    .and_then(|character| ctl_arrow_replacement(*character, ctl_arrow))
                             })
                     },
                     |index| {
