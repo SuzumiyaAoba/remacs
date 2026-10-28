@@ -18,11 +18,46 @@ pub trait ClipboardBackend {
     fn write_text(&self, text: String) -> Result<(), String>;
 }
 
-/// Input from a front-end: a key event or text committed by the OS.
+/// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),
     Text(String),
     ReplaceText { range: Range<usize>, text: String },
+    MouseDown(MouseInput),
+    Mouse(MouseInput),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// A text position mapped from the front-end's most recent grid snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MousePosition {
+    pub buffer_id: usize,
+    /// Zero-based character position in BUFFER.
+    pub buffer_position: usize,
+    /// UTF-16 offset used by the native text input APIs.
+    pub utf16_offset: usize,
+    /// Pixel coordinates relative to the front-end's text area.
+    pub x: i128,
+    pub y: i128,
+    /// Display row and character column.
+    pub row: usize,
+    pub column: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseInput {
+    pub button: MouseButton,
+    pub click_count: usize,
+    /// Emacs keyboard modifier bits for the event.
+    pub modifiers: i128,
+    pub start: MousePosition,
+    pub end: MousePosition,
 }
 
 /// Frontend-agnostic key/render interface used by the command loop

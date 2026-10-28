@@ -5,7 +5,8 @@ use super::{
     monitor::monitor_geometry,
 };
 use gpui::*;
-use remacs_runtime::frontend::Grid;
+use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
+use remacs_runtime::frontend::{Grid, MouseButton as RemacsMouseButton};
 use std::sync::mpsc::Sender;
 mod input;
 use input::TextInputState;
@@ -187,6 +188,15 @@ impl Render for EditorView {
             .unwrap_or(BG);
         let grid = self.grid.clone();
         let tx = self.tx.clone();
+        let mouse_grid = grid.clone();
+        let left_mouse_down_tx = self.tx.clone();
+        let left_mouse_down_grid = mouse_grid.clone();
+        let left_mouse_up_tx = self.tx.clone();
+        let left_mouse_up_grid = mouse_grid.clone();
+        let middle_mouse_down_tx = self.tx.clone();
+        let middle_mouse_down_grid = mouse_grid.clone();
+        let middle_mouse_up_tx = self.tx.clone();
+        let middle_mouse_up_grid = mouse_grid;
         let entity = cx.entity();
         let focus = self.focus.clone();
         let marked = self.input.marked.clone();
@@ -202,6 +212,54 @@ impl Render for EditorView {
             .bg(rgb(default_background))
             .track_focus(&self.focus)
             .key_context("remacs")
+            .on_mouse_down(MouseButton::Left, move |event, window, _cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&left_mouse_down_grid, event.position, window)
+                {
+                    let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
+                        button: RemacsMouseButton::Left,
+                        click_count: event.click_count,
+                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        position,
+                    });
+                }
+            })
+            .on_mouse_up(MouseButton::Left, move |event, window, _cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&left_mouse_up_grid, event.position, window)
+                {
+                    let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
+                        button: RemacsMouseButton::Left,
+                        click_count: event.click_count,
+                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        position,
+                    });
+                }
+            })
+            .on_mouse_down(MouseButton::Middle, move |event, window, _cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&middle_mouse_down_grid, event.position, window)
+                {
+                    let _ = middle_mouse_down_tx.send(GuiEvent::MouseDown {
+                        button: RemacsMouseButton::Middle,
+                        click_count: event.click_count,
+                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        position,
+                    });
+                }
+            })
+            .on_mouse_up(MouseButton::Middle, move |event, window, _cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&middle_mouse_up_grid, event.position, window)
+                {
+                    let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
+                        button: RemacsMouseButton::Middle,
+                        click_count: event.click_count,
+                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        position,
+                    });
+                }
+            })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 // Printable text is delivered by the OS input handler. Sending
                 // it here as well would insert ordinary ASCII twice.
@@ -551,6 +609,23 @@ fn visible_grid_selection(grid: &Grid) -> std::ops::Range<usize> {
         .sum();
     let position = line_start + text[..byte].encode_utf16().count();
     position..position
+}
+
+fn mouse_modifier_bits(modifiers: &Modifiers) -> i128 {
+    let mut bits = 0;
+    if modifiers.control {
+        bits |= CHAR_CTL;
+    }
+    if modifiers.alt {
+        bits |= CHAR_META;
+    }
+    if modifiers.shift {
+        bits |= CHAR_SHIFT;
+    }
+    if modifiers.platform {
+        bits |= CHAR_SUPER;
+    }
+    bits
 }
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'

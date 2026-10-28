@@ -101,6 +101,151 @@ fn point(i: &Interp) -> usize {
     i.current_buffer_ref().unwrap().borrow().point()
 }
 
+fn mouse_position(i: &Interp, character: usize) -> MousePosition {
+    let buffer_id = i.current_buffer_ref().unwrap().borrow().id;
+    MousePosition {
+        buffer_id,
+        buffer_position: character,
+        utf16_offset: character,
+        x: character as i128,
+        y: 0,
+        row: 0,
+        column: character,
+    }
+}
+
+fn dispatch_test_mouse(i: &mut Interp, mouse: MouseInput) {
+    let (frontend, _) = test_term(80, 25);
+    let term = Rc::new(RefCell::new(frontend));
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    dispatch_mouse(&term, i, mouse, &mut keys, &mut arg_mode).unwrap();
+}
+
+#[test]
+fn mouse_click_moves_point_to_hit_tested_position() {
+    let mut i = interp_with_frame("alpha beta\n");
+    i.eval_str("(require 'mouse) (setq mouse-1-click-follows-link nil)")
+        .unwrap();
+    let position = mouse_position(&i, 7);
+    dispatch_test_mouse(
+        &mut i,
+        MouseInput {
+            button: MouseButton::Left,
+            click_count: 1,
+            modifiers: 0,
+            start: position,
+            end: position,
+        },
+    );
+    assert_eq!(point(&i), 7);
+}
+
+#[test]
+fn double_and_triple_mouse_clicks_select_word_and_line() {
+    let mut double = interp_with_frame("alpha beta\nsecond line\n");
+    double
+        .eval_str("(require 'mouse) (setq mouse-1-click-follows-link nil)")
+        .unwrap();
+    let position = mouse_position(&double, 2);
+    dispatch_test_mouse(
+        &mut double,
+        MouseInput {
+            button: MouseButton::Left,
+            click_count: 2,
+            modifiers: 0,
+            start: position,
+            end: position,
+        },
+    );
+    let selected = double
+        .eval_str("(buffer-substring-no-properties (region-beginning) (region-end))")
+        .unwrap();
+    assert_eq!(double.prin1_to_string(&selected), "\"alpha\"");
+
+    let mut triple = interp_with_frame("alpha beta\nsecond line\n");
+    triple
+        .eval_str("(require 'mouse) (setq mouse-1-click-follows-link nil)")
+        .unwrap();
+    let position = mouse_position(&triple, 2);
+    dispatch_test_mouse(
+        &mut triple,
+        MouseInput {
+            button: MouseButton::Left,
+            click_count: 3,
+            modifiers: 0,
+            start: position,
+            end: position,
+        },
+    );
+    let selected = triple
+        .eval_str("(buffer-substring-no-properties (region-beginning) (region-end))")
+        .unwrap();
+    assert!(triple.prin1_to_string(&selected).starts_with("\"alpha beta"));
+    assert!(!triple.prin1_to_string(&selected).contains("second"));
+
+    let mut drag = interp_with_frame("alpha beta\n");
+    drag.eval_str("(require 'mouse)").unwrap();
+    let start = mouse_position(&drag, 1);
+    let end = mouse_position(&drag, 7);
+    dispatch_test_mouse(
+        &mut drag,
+        MouseInput {
+            button: MouseButton::Left,
+            click_count: 1,
+            modifiers: 0,
+            start,
+            end,
+        },
+    );
+    let selected = drag
+        .eval_str("(buffer-substring-no-properties (region-beginning) (region-end))")
+        .unwrap();
+    assert_eq!(drag.prin1_to_string(&selected), "\"lpha b\"");
+}
+
+#[test]
+fn mouse_1_link_click_translates_to_mouse_2_at_the_same_position() {
+    let mut i = interp_with_frame("link body\n");
+    i.eval_str(
+        r#"
+        (require 'mouse)
+        (setq mouse-1-click-follows-link t qa-mouse-link-followed nil)
+        (put-text-property 1 5 'follow-link t)
+        (define-key global-map [mouse-2]
+          (lambda (event) (interactive "e") (setq qa-mouse-link-followed 'global)))
+        (let ((map (make-sparse-keymap)))
+          (define-key map [mouse-2]
+            (lambda (event) (interactive "e") (setq qa-mouse-link-followed 'local)))
+          (put-text-property 1 5 'keymap map))
+    "#,
+    )
+    .unwrap();
+    let position = mouse_position(&i, 2);
+    dispatch_mouse_down(
+        &mut i,
+        MouseInput {
+            button: MouseButton::Left,
+            click_count: 1,
+            modifiers: 0,
+            start: position,
+            end: position,
+        },
+    );
+    dispatch_test_mouse(
+        &mut i,
+        MouseInput {
+            button: MouseButton::Left,
+            click_count: 1,
+            modifiers: 0,
+            start: position,
+            end: position,
+        },
+    );
+    let followed = i.eval_str("qa-mouse-link-followed").unwrap();
+    assert_eq!(i.prin1_to_string(&followed), "local");
+}
+
 #[test]
 fn isearch_chars_move_point_to_match() {
     let mut i = isearch_interp("one two one\n");

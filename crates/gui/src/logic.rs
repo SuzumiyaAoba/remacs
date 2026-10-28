@@ -1,6 +1,9 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
-    frontend::{Grid, InputEvent, KeyIo, fit_text_to_cells, render_grid_with_input_cached},
+    frontend::{
+        Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, fit_text_to_cells,
+        render_grid_with_input_cached,
+    },
     lisp::{Interp, Value},
 };
 use std::{
@@ -23,6 +26,18 @@ pub(super) enum GuiEvent {
     ReplaceText { range: Range<usize>, text: String },
     Resize(usize, usize),
     Geometry(GuiGeometry),
+    MouseDown {
+        button: MouseButton,
+        click_count: usize,
+        modifiers: i128,
+        position: MousePosition,
+    },
+    MouseUp {
+        button: MouseButton,
+        click_count: usize,
+        modifiers: i128,
+        position: MousePosition,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -124,6 +139,7 @@ pub(super) struct ChanIo {
     pub(super) render_requested: bool,
     pub(super) geometry: Option<GuiGeometry>,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
+    pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
 }
 
 fn echo_char_width(character: char, column: usize) -> usize {
@@ -235,6 +251,29 @@ impl GeometrySymbols {
 }
 
 impl ChanIo {
+    fn mouse_input(
+        &mut self,
+        button: MouseButton,
+        click_count: usize,
+        modifiers: i128,
+        end: MousePosition,
+    ) -> MouseInput {
+        let down = self
+            .mouse_down
+            .take()
+            .filter(|(down_button, _, _, _)| *down_button == button);
+        let (start, down_click_count, down_modifiers) = down
+            .map(|(_, click_count, modifiers, position)| (position, click_count, modifiers))
+            .unwrap_or((end, click_count, 0));
+        MouseInput {
+            button,
+            click_count: click_count.max(down_click_count).max(1),
+            modifiers: modifiers | down_modifiers,
+            start,
+            end,
+        }
+    }
+
     pub(super) fn send_grid(&mut self, grid: Grid) -> io::Result<()> {
         if !grid.blink_cursor && self.last.as_ref().is_some_and(|last| last == &grid) {
             return Ok(());
@@ -349,6 +388,32 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
+            Ok(GuiEvent::MouseDown {
+                button,
+                click_count,
+                modifiers,
+                position,
+            }) => {
+                self.mouse_down = Some((button, click_count, modifiers, position));
+                Ok(Some(InputEvent::MouseDown(MouseInput {
+                    button,
+                    click_count: click_count.max(1),
+                    modifiers,
+                    start: position,
+                    end: position,
+                })))
+            }
+            Ok(GuiEvent::MouseUp {
+                button,
+                click_count,
+                modifiers,
+                position,
+            }) => Ok(Some(InputEvent::Mouse(self.mouse_input(
+                button,
+                click_count,
+                modifiers,
+                position,
+            )))),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -386,6 +451,19 @@ impl KeyIo for ChanIo {
                 self.rows = geometry.rows.max(3);
                 self.geometry = Some(geometry);
                 self.render_requested = true;
+                Ok(None)
+            }
+            Ok(GuiEvent::MouseDown {
+                button,
+                click_count,
+                modifiers,
+                position,
+            }) => {
+                self.mouse_down = Some((button, click_count, modifiers, position));
+                Ok(None)
+            }
+            Ok(GuiEvent::MouseUp { .. }) => {
+                self.mouse_down = None;
                 Ok(None)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
@@ -624,6 +702,7 @@ fn start_logic_inner(
                 } else {
                     None
                 },
+                mouse_down: None,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
             // grid_tx drops here → the UI pump below quits the app.

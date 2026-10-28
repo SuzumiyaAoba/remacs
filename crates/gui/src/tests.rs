@@ -5,7 +5,7 @@ use super::{
 };
 use gpui::{EntityInputHandler, Keystroke, Modifiers};
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
-use remacs_runtime::frontend::{Grid, KeyIo};
+use remacs_runtime::frontend::{Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
 use remacs_runtime::lisp::Interp;
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
@@ -240,6 +240,7 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             render_requested: false,
             geometry: None,
             geometry_symbols: None,
+            mouse_down: None,
         },
         etx,
         grx,
@@ -278,6 +279,63 @@ fn chanio_disconnect_errors() {
     let (mut io, tx, _grx) = chan_pair();
     drop(tx);
     assert!(io.poll_key(Duration::from_millis(10)).is_err());
+}
+
+#[test]
+fn chanio_mouse_click_keeps_down_position_and_modifiers() {
+    let (mut io, tx, _grx) = chan_pair();
+    let start = MousePosition {
+        buffer_id: 7,
+        buffer_position: 4,
+        utf16_offset: 4,
+        x: 31,
+        y: 12,
+        row: 0,
+        column: 4,
+    };
+    let end = MousePosition {
+        buffer_position: 9,
+        utf16_offset: 9,
+        x: 58,
+        row: 0,
+        column: 9,
+        ..start
+    };
+    tx.send(GuiEvent::MouseDown {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: CHAR_SHIFT,
+        position: start,
+    })
+    .unwrap();
+    assert!(matches!(
+        io.poll_input(Duration::from_millis(10)).unwrap(),
+        Some(InputEvent::MouseDown(MouseInput {
+            button: MouseButton::Left,
+            modifiers: CHAR_SHIFT,
+            start: down,
+            end: same,
+            ..
+        })) if down == start && same == start
+    ));
+
+    tx.send(GuiEvent::MouseUp {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        position: end,
+    })
+    .unwrap();
+    assert!(matches!(
+        io.poll_input(Duration::from_millis(10)).unwrap(),
+        Some(InputEvent::Mouse(MouseInput {
+            button: MouseButton::Left,
+            modifiers,
+            start: down,
+            end: up,
+            ..
+        })) if modifiers == CHAR_SHIFT && down == start && up == end
+    ));
 }
 
 #[test]
@@ -593,6 +651,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::Text(text) => Some(text),
             GuiEvent::Resize(..) => None,
             GuiEvent::Geometry(_) => None,
+            GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. } => None,
             GuiEvent::Key(code) => panic!("plain text also produced key {code}"),
             GuiEvent::ReplaceText { range, text } => {
                 panic!("plain text also produced ranged replacement {range:?}: {text:?}")
@@ -607,6 +666,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::Key(code) => Some(code),
             GuiEvent::Resize(..) => None,
             GuiEvent::Geometry(_) => None,
+            GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. } => None,
             GuiEvent::Text(text) => panic!("command also inserted {text:?}"),
             GuiEvent::ReplaceText { range, text } => {
                 panic!("command also replaced {range:?} with {text:?}")

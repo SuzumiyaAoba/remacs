@@ -1,10 +1,10 @@
 //! Shared editor command dispatch and nested minibuffer input loops.
 #[cfg(test)]
 use super::render_grid;
-use super::{InputEvent, KeyIo};
+use super::{InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
-    editor::{CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER},
+    editor::{CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER},
     lisp::{Interp, Value},
 };
 use std::io;
@@ -37,7 +37,15 @@ pub fn run_batch_editor(i: &mut Interp) -> Result<(), crate::lisp::Flow> {
             let mut flow = None;
             let codes = crate::editor::key_seq(i, &Value::vector(vec![event]))?;
             for key in codes {
-                dispatch_key_core_inner(i, key, &mut keys, &mut arg_mode, None, Some(&mut flow))
+                dispatch_key_core_inner(
+                    i,
+                    key,
+                    &mut keys,
+                    &mut arg_mode,
+                    None,
+                    Some(&mut flow),
+                    None,
+                )
                     .map_err(|error| i.error(&error.to_string()))?;
                 if flow.is_some() {
                     break;
@@ -196,6 +204,8 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
+            InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse),
+            InputEvent::Mouse(mouse) => dispatch_mouse(&term, i, mouse, &mut keys, &mut arg_mode)?,
         }
         render_needed = true;
         i.macro_replaying = false;
@@ -223,7 +233,7 @@ pub fn dispatch_key_core(
     arg_mode: &mut bool,
     isearch: Option<&mut dyn FnMut(&mut Interp, bool, bool) -> io::Result<()>>,
 ) -> io::Result<()> {
-    dispatch_key_core_inner(i, key, keys, arg_mode, isearch, None)
+    dispatch_key_core_inner(i, key, keys, arg_mode, isearch, None, None)
 }
 
 fn dispatch_key_core_inner(
@@ -233,6 +243,7 @@ fn dispatch_key_core_inner(
     arg_mode: &mut bool,
     mut isearch: Option<&mut dyn FnMut(&mut Interp, bool, bool) -> io::Result<()>>,
     mut command_flow: Option<&mut Option<crate::lisp::Flow>>,
+    command_event: Option<&Value>,
 ) -> io::Result<()> {
     {
         if *arg_mode {
@@ -241,7 +252,7 @@ fn dispatch_key_core_inner(
             let cu = key == 21;
             if digit || minus || cu {
                 let lce = i.q("last-command-event");
-                let _ = i.set_symbol(lce, Value::Int(key));
+                let _ = i.set_symbol(lce, command_event.cloned().unwrap_or(Value::Int(key)));
                 let name = if cu {
                     "universal-argument"
                 } else {
@@ -266,7 +277,9 @@ fn dispatch_key_core_inner(
         }
         let seq = Value::vector(keys.iter().map(|k| Value::Int(*k)).collect());
         // Look up the key sequence.
-        let binding = lookup_command(i, &seq);
+        let binding = command_event
+            .map(|event| lookup_command_at_event(i, &seq, event))
+            .unwrap_or_else(|| lookup_command(i, &seq));
         match binding {
             LookupResult::Command(raw_cmd) => {
                 // GNU command_loop_1: a symbol binding is checked
@@ -282,7 +295,7 @@ fn dispatch_key_core_inner(
                 };
                 keys.clear();
                 let lce = i.q("last-command-event");
-                let _ = i.set_symbol(lce, Value::Int(key));
+                let _ = i.set_symbol(lce, command_event.cloned().unwrap_or(Value::Int(key)));
                 let this_cmd = i.q("this-command");
                 let prev = i.symbol_value(this_cmd);
                 let lc = i.q("last-command");
@@ -325,6 +338,11 @@ fn dispatch_key_core_inner(
                 let mut boundary = false;
                 let result = if skip_command {
                     Ok(Value::Nil)
+                } else if let Some(event) = command_event {
+                    i.command_execute_with_keys(
+                        &cmd,
+                        &Value::vector(vec![event.clone()]),
+                    )
                 } else {
                     i.command_execute(&cmd)
                 };
@@ -574,6 +592,229 @@ fn dispatch_key<T: KeyIo>(
 ) -> io::Result<()> {
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
     dispatch_key_core(i, key, keys, arg_mode, Some(&mut hook))
+}
+
+fn dispatch_mouse<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    mouse: MouseInput,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let Some((mut key, mut event)) = mouse_event(i, mouse) else {
+        return Ok(());
+    };
+    let last_input = i.q("last-input-event");
+    i.store_internal_value(last_input, event.clone());
+
+    let drag = mouse.start.buffer_id != mouse.end.buffer_id
+        || mouse.start.buffer_position != mouse.end.buffer_position;
+    let click_count = mouse.click_count.max(1);
+    if mouse.button == MouseButton::Left && !drag {
+        if let Some(translated) = translate_mouse_click(i) {
+            event = translated;
+            if let Some(translated_key) = event_key_code(i, &event) {
+                key = translated_key;
+            }
+        }
+    }
+
+    // The normal mouse-1 command moves point.  For an otherwise-unbound
+    // double/triple click, preserve that binding and supply its existing
+    // PROMOTE-TO-REGION interactive argument so mouse-set-point delegates
+    // the selection to mouse-set-region / mouse-start-end.
+    let mut promote_click = false;
+    if mouse.button == MouseButton::Left && !drag && click_count > 1 {
+        let specific = lookup_command_at_event(
+            i,
+            &Value::vector(vec![Value::Int(key)]),
+            &event,
+        );
+        if matches!(specific, LookupResult::None) {
+            let base_name = mouse_event_name("mouse-1", mouse.modifiers);
+            let base_key = crate::editor::event_code_for(&base_name);
+            let base = lookup_command_at_event(
+                i,
+                &Value::vector(vec![Value::Int(base_key)]),
+                &event,
+            );
+            if matches!(&base, LookupResult::Command(Value::Sym(id))
+                if i.symbol_name(*id) == "mouse-set-point")
+            {
+                key = base_key;
+                promote_click = true;
+            }
+        }
+    }
+    if promote_click && keys.is_empty() && !*arg_mode {
+        let prefix_arg = i.q("prefix-arg");
+        let _ = i.set_symbol(prefix_arg, Value::Int(1));
+    }
+
+    let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
+    dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
+}
+
+fn dispatch_mouse_down(i: &mut Interp, mouse: MouseInput) {
+    let number = match mouse.button {
+        MouseButton::Left => 1,
+        MouseButton::Middle => 2,
+        MouseButton::Right => 3,
+    };
+    let base = match mouse.click_count {
+        2 => format!("double-down-mouse-{number}"),
+        3 => format!("triple-down-mouse-{number}"),
+        _ => format!("down-mouse-{number}"),
+    };
+    let name = mouse_event_name(&base, mouse.modifiers);
+    let event = Value::list(vec![
+        Value::Sym(i.intern(&name)),
+        mouse_position_value(i, mouse.end).unwrap_or(Value::Nil),
+        Value::Int(mouse.click_count.max(1) as i128),
+    ]);
+    let last_input = i.q("last-input-event");
+    i.store_internal_value(last_input, event);
+
+    if mouse.button == MouseButton::Left {
+        let helper = i.intern("mouse--down-1-maybe-follows-link");
+        if i.fbound_p(helper)
+            && let Err(flow) = i.apply(&Value::Sym(helper), vec![])
+        {
+            report_flow(i, flow);
+        }
+    }
+}
+
+fn mouse_event(i: &mut Interp, mouse: MouseInput) -> Option<(i128, Value)> {
+    let drag = mouse.start.buffer_id != mouse.end.buffer_id
+        || mouse.start.buffer_position != mouse.end.buffer_position;
+    let base = match (mouse.button, drag) {
+        (MouseButton::Left, false) => "mouse-1",
+        (MouseButton::Middle, false) => "mouse-2",
+        (MouseButton::Right, false) => "mouse-3",
+        (MouseButton::Left, true) => "drag-mouse-1",
+        (MouseButton::Middle, true) => "drag-mouse-2",
+        (MouseButton::Right, true) => "drag-mouse-3",
+    };
+    let base = if !drag {
+        match mouse.click_count {
+            2 => format!("double-{base}"),
+            3 => format!("triple-{base}"),
+            _ => base.to_string(),
+        }
+    } else {
+        base.to_string()
+    };
+    let name = mouse_event_name(&base, mouse.modifiers);
+    let event_symbol = Value::Sym(i.intern(&name));
+    let key = crate::editor::event_code_for(&name);
+    let event = if drag {
+        Value::list(vec![
+            event_symbol,
+            mouse_position_value(i, mouse.start)?,
+            mouse_position_value(i, mouse.end)?,
+        ])
+    } else {
+        Value::list(vec![
+            event_symbol,
+            mouse_position_value(i, mouse.end)?,
+            Value::Int(mouse.click_count.max(1) as i128),
+        ])
+    };
+    Some((key, event))
+}
+
+fn mouse_event_name(base: &str, modifiers: i128) -> String {
+    let mut name = String::new();
+    for (bit, prefix) in [
+        (CHAR_ALT, "A-"),
+        (CHAR_CTL, "C-"),
+        (CHAR_HYPER, "H-"),
+        (CHAR_META, "M-"),
+        (CHAR_SHIFT, "S-"),
+        (CHAR_SUPER, "s-"),
+    ] {
+        if modifiers & bit != 0 {
+            name.push_str(prefix);
+        }
+    }
+    name.push_str(base);
+    name
+}
+
+fn translate_mouse_click(i: &mut Interp) -> Option<Value> {
+    let helper = i.intern("mouse--click-1-maybe-follows-link");
+    if !i.fbound_p(helper) {
+        return None;
+    }
+    match i.apply(&Value::Sym(helper), vec![]) {
+        Ok(Value::Vec(events)) => events.borrow().first().cloned(),
+        Ok(_) => None,
+        Err(flow) => {
+            report_flow(i, flow);
+            None
+        }
+    }
+}
+
+fn event_key_code(i: &mut Interp, event: &Value) -> Option<i128> {
+    let event_type = match event {
+        Value::Cons(cell) => cell.borrow().car.clone(),
+        _ => event.clone(),
+    };
+    crate::editor::key_seq_elt(i, &event_type).ok().flatten()
+}
+
+fn lookup_command_at_event(i: &mut Interp, seq: &Value, event: &Value) -> LookupResult {
+    let Some(position) = mouse_event_position(event) else {
+        return lookup_command(i, seq);
+    };
+    let key_binding = Value::Sym(i.intern("key-binding"));
+    let binding = i
+        .apply(
+            &key_binding,
+            vec![seq.clone(), Value::Nil, Value::Nil, position],
+        )
+        .unwrap_or(Value::Nil);
+    if binding.is_nil() {
+        LookupResult::None
+    } else if let Value::Cons(cell) = &binding
+        && i.sym_is(&cell.borrow().car, i.q_soft("keymap").unwrap_or(u32::MAX))
+    {
+        LookupResult::Prefix
+    } else {
+        LookupResult::Command(binding)
+    }
+}
+
+fn mouse_event_position(event: &Value) -> Option<Value> {
+    let fields = event.list_to_vec().ok()?;
+    let posn = fields.get(1)?.list_to_vec().ok()?;
+    matches!(posn.get(1), Some(Value::Int(_))).then(|| posn[1].clone())
+}
+
+fn mouse_position_value(i: &Interp, position: MousePosition) -> Option<Value> {
+    let frame = i.selected_frame.as_ref()?;
+    let (window, selected) = {
+        let frame = frame.borrow();
+        let window = frame
+            .windows
+            .iter()
+            .find(|window| window.borrow().buffer == position.buffer_id)
+            .cloned();
+        (window, frame.selected.clone())
+    };
+    let window = window.or_else(|| {
+        let selected_window = selected;
+        let selected = selected_window.borrow();
+        (selected.buffer == position.buffer_id).then(|| selected_window.clone())
+    })?;
+    Some(Value::list(vec![
+        Value::Window(window),
+        Value::Int(position.buffer_position.saturating_add(1) as i128),
+        Value::cons(Value::Int(position.x), Value::Int(position.y)),
+        Value::Int(0),
+    ]))
 }
 
 /// Insert text committed by the operating system without interpreting
@@ -844,6 +1085,13 @@ fn minibuf_loop<T: KeyIo>(
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
+            InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse),
+            InputEvent::Mouse(mouse) if !single => {
+                if let Err(e) = dispatch_mouse(term, i, mouse, &mut keys, &mut arg_mode) {
+                    return Err(i.error(format!("minibuffer input: {e}")));
+                }
+            }
+            InputEvent::Mouse(_) => {}
         }
         render_needed = true;
         if let Some(f) = i.minibuf_exit_fn.take() {

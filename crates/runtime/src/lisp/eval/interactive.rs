@@ -39,6 +39,17 @@ impl Interp {
     /// Execute a command by name (M-x dispatch entry point).
     /// The editor's command loop calls this with the command symbol.
     pub fn command_execute(&mut self, cmd: &Value) -> EvalResult {
+        self.command_execute_with_keys(cmd, &Value::Nil)
+    }
+
+    /// Execute a command while supplying the raw events that triggered it.
+    /// Mouse commands need the event object for interactive `e' arguments;
+    /// ordinary keyboard dispatch uses `command_execute` above.
+    pub(crate) fn command_execute_with_keys(
+        &mut self,
+        cmd: &Value,
+        keys: &Value,
+    ) -> EvalResult {
         // GNU `command-execute' (simple.el): a command symbol whose
         // `disabled' property is non-nil is not run; instead
         // `disabled-command-function' (a hook var naming a function,
@@ -70,7 +81,7 @@ impl Interp {
         if matches!(cmd, Value::Str(_) | Value::Vec(_)) {
             return crate::editor::f_execute_kbd_macro_pub(self, vec![cmd.clone()].into());
         }
-        self.call_interactively(cmd)
+        self.call_interactively_with_keys(cmd, keys)
     }
 
     /// GNU call-interactively resolves the interactive form (and autoloads)

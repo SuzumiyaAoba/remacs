@@ -8,7 +8,7 @@ use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
-use remacs_runtime::frontend::{Grid, GridInput};
+use remacs_runtime::frontend::{Grid, GridInput, MousePosition};
 
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
@@ -67,6 +67,42 @@ pub(super) fn visible_input_position(
             .get(relative)
             .copied()
             .map(|byte| (row.row, byte))
+    })
+}
+
+pub(super) fn mouse_position_for_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    window: &mut Window,
+) -> Option<MousePosition> {
+    let input = grid.input.as_ref()?;
+    let row = (f32::from(point.y) / LINE_HEIGHT).floor().max(0.0) as usize;
+    let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
+    let line = grid.rows.get(row)?;
+    let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
+    let (character, _) = input_row
+        .source_offsets
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, source_offset)| source_offset.abs_diff(byte))?;
+    let buffer_position = input_row
+        .buffer_start
+        .saturating_add(character)
+        .min(input.text.chars().count());
+    let utf16_offset = input
+        .text
+        .chars()
+        .take(buffer_position)
+        .map(char::len_utf16)
+        .sum();
+    Some(MousePosition {
+        buffer_id: input.buffer_id,
+        buffer_position,
+        utf16_offset,
+        x: f32::from(point.x).round() as i128,
+        y: f32::from(point.y).round() as i128,
+        row,
+        column: character,
     })
 }
 
@@ -492,11 +528,11 @@ impl EntityInputHandler for EditorView {
 
     fn character_index_for_point(
         &mut self,
-        _point: Point<Pixels>,
-        _window: &mut Window,
+        point: Point<Pixels>,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        None
+        mouse_position_for_point(&self.grid, point, window).map(|position| position.utf16_offset)
     }
 }
 
