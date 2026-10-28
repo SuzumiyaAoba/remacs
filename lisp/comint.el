@@ -3760,16 +3760,15 @@ This is useful, for instance, for insertion into Help mode buffers.
 You probably want to set it locally to the output buffer.")
 
 (defvar comint-redirect-previous-input-string nil
-  "Last redirected line of text.
-Allows detection of the end of the redirection in case the
-completion string is split between two output segments.")
+  "Output received during the current redirection.
+This is kept so `comint-redirect-finished-regexp' can span chunks.")
 
 (defvar comint-redirect-previous-filtered-input-string nil
-  "Filtered form of the previous input string.
-This is used to remove a finished prompt split across output segments.")
+  "Filtered output received during the current redirection.
+This is kept to remove a finished prompt split across chunks.")
 
 (defvar comint-redirect-previous-output-regions nil
-  "Markers delimiting the previous redirected text in each output buffer.")
+  "Output chunk text and markers, grouped by output buffer.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions
@@ -3814,40 +3813,48 @@ and does not normally need to be invoked by the end user or programmer."
 
 (defun comint-redirect--release-output-regions (regions)
   "Detach the markers in REGIONS from their buffers."
-  (dolist (region regions)
-    (set-marker (car region) nil)
-    (set-marker (cadr region) nil)))
+  (dolist (group regions)
+    (dolist (region (cdr group))
+      (set-marker (nth 2 region) nil)
+      (set-marker (nth 3 region) nil))))
 
-(defun comint-redirect--delete-output-region (regions string start end)
-  "Delete part of STRING from the output regions in REGIONS.
-START and END are character offsets in STRING."
+(defun comint-redirect--delete-output-region (regions start end)
+  "Delete the text in REGIONS between cumulative offsets START and END."
   (when (< start end)
     (let ((subvert-readonly comint-redirect-subvert-readonly))
-      (dolist (region regions)
-        (let* ((start-marker (car region))
-               (end-marker (cadr region))
-               (buffer (marker-buffer start-marker))
-               (start-position (marker-position start-marker))
-               (end-position (marker-position end-marker)))
-          (when (and buffer
-                     (eq buffer (marker-buffer end-marker))
-                     start-position end-position
-                     (<= 0 start end (length string)))
-            (with-current-buffer buffer
-              (save-excursion
-                (when (<= (point-min) start-position end-position (point-max))
-                  (let ((inhibit-read-only subvert-readonly))
-                    (when (and (= (- end-position start-position) (length string))
+      (dolist (group regions)
+        (let ((buffer (car group)))
+          (dolist (region (cdr group))
+            (let* ((offset (nth 0 region))
+                   (string (nth 1 region))
+                   (start-marker (nth 2 region))
+                   (end-marker (nth 3 region))
+                   (start-position (marker-position start-marker))
+                   (end-position (marker-position end-marker))
+                   (region-end (+ offset (length string)))
+                   (delete-start (max start offset))
+                   (delete-end (min end region-end)))
+              (when (and (< delete-start delete-end)
+                         (buffer-live-p buffer)
+                         (eq buffer (marker-buffer start-marker))
+                         (eq buffer (marker-buffer end-marker))
+                         start-position end-position)
+                (with-current-buffer buffer
+                  (save-excursion
+                    (when (and (<= (point-min) start-position end-position (point-max))
+                               (= (- end-position start-position) (length string))
                                (equal (buffer-substring-no-properties
                                        start-position end-position)
                                       (substring-no-properties string)))
-                      (delete-region (+ start-position start)
-                                     (+ start-position end))))))))))))
+                      (let ((inhibit-read-only subvert-readonly))
+                        (delete-region
+                         (+ start-position (- delete-start offset))
+                         (+ start-position (- delete-end offset)))))))))))))
 
 (defun comint-redirect-cleanup ()
   "End a Comint redirection.  See `comint-redirect-send-command'."
   (interactive nil comint-mode)
-  ;; Release the last redirected string
+  ;; Release the redirected output history.
   (setq comint-redirect-previous-input-string nil)
   (setq comint-redirect-previous-filtered-input-string nil)
   (comint-redirect--release-output-regions
@@ -3918,72 +3925,86 @@ This function does not need to be invoked by the end user."
 	(setq functions (cdr functions))))
 
     ;; Clobber `comint-redirect-finished-regexp'.  The regexp can span
-    ;; two output segments, so remove its part in the previous segment
-    ;; from the output buffers as well as its part in this one.
+    ;; any number of output segments.  Retain the output history until
+    ;; completion so both detection and removal cover all of them.
     (setq previous-filtered-input-string
           (or comint-redirect-previous-filtered-input-string ""))
+    (setq filtered-input-string (or filtered-input-string ""))
+    (setq completed
+          (string-match comint-redirect-finished-regexp
+                        (concat comint-redirect-previous-input-string
+                                input-string)))
     (unless comint-redirect-insert-matching-regexp
-      (let* ((previous-length (length previous-filtered-input-string))
-             (combined-input-string
-              (concat previous-filtered-input-string filtered-input-string)))
-        (when (string-match comint-redirect-finished-regexp
-                            combined-input-string)
-          (let* ((start (match-beginning 0))
-                 (end (match-end 0))
-                 (previous-start start)
-                 (previous-end (min end previous-length))
-                 (current-start (max 0 (- start previous-length)))
-                 (current-end (max 0 (- end previous-length))))
-            (comint-redirect--delete-output-region
-             comint-redirect-previous-output-regions
-             previous-filtered-input-string previous-start previous-end)
-            (setq filtered-input-string
-                  (concat (substring filtered-input-string 0 current-start)
-                          (substring filtered-input-string current-end)))))))
+      (if completed
+          (let* ((previous-length (length previous-filtered-input-string))
+                 (combined-input-string
+                  (concat previous-filtered-input-string filtered-input-string)))
+            (when (string-match comint-redirect-finished-regexp
+                                combined-input-string)
+              (let* ((start (match-beginning 0))
+                     (end (match-end 0))
+                     (previous-end (min end previous-length))
+                     (current-start (max 0 (- start previous-length)))
+                     (current-end (max 0 (- end previous-length))))
+                (comint-redirect--delete-output-region
+                 comint-redirect-previous-output-regions start previous-end)
+                (setq filtered-input-string
+                      (concat (substring filtered-input-string 0 current-start)
+                              (substring filtered-input-string current-end)))))
+        ;; Preserve the usual single-chunk filtering when the raw input
+        ;; has not completed the redirection yet.
+        (when (string-match comint-redirect-finished-regexp filtered-input-string)
+          (setq filtered-input-string
+                (replace-match "" nil nil filtered-input-string)))))
 
     ;; Send output to all registered buffers
     (save-excursion
       (dolist (buf output-buffer-list)
-	;; Set this buffer to the output buffer
-	(set-buffer (get-buffer-create buf))
-	;; Go to the end of the buffer
-	(goto-char (point-max))
-	;; Insert the output
-	(let ((start (copy-marker (point)))
-              (inhibit-read-only comint-redirect-subvert-readonly))
-          (insert filtered-input-string)
-          (push (list start (copy-marker (point))) output-regions))))
+        ;; Set this buffer to the output buffer
+        (set-buffer (get-buffer-create buf))
+        ;; Go to the end of the buffer
+        (goto-char (point-max))
+        ;; Insert the output
+        (let* ((start (copy-marker (point)))
+               (offset (length previous-filtered-input-string))
+               (text filtered-input-string)
+               (inhibit-read-only comint-redirect-subvert-readonly))
+          (insert text)
+          (push (list (current-buffer)
+                      (list offset text start (copy-marker (point))))
+                output-regions))))
+
+    ;; Add the current chunk's markers to the history for each buffer.
+    (dolist (region (nreverse output-regions))
+      (let* ((buffer (car region))
+             (chunk (cadr region))
+             (group (assq buffer comint-redirect-previous-output-regions)))
+        (if group
+            (setcdr group (nconc (cdr group) (list chunk)))
+          (push (cons buffer (list chunk))
+                comint-redirect-previous-output-regions))))
 
     ;; Message
     (and comint-redirect-verbose
-	 (message "Redirected output to buffer(s) %s" output-buffer-list))
+         (message "Redirected output to buffer(s) %s" output-buffer-list))
 
     ;; If we see the prompt, tidy up
     ;; We'll look for the prompt in the original string, so nobody can
     ;; clobber it
-    (setq completed (string-match comint-redirect-finished-regexp
-                                  (concat comint-redirect-previous-input-string
-                                          input-string)))
-
-    ;; Replace markers for the previous segment after they have served to
-    ;; remove any part of a split prompt.
-    (comint-redirect--release-output-regions
-     comint-redirect-previous-output-regions)
-    (setq comint-redirect-previous-output-regions (nreverse output-regions))
-
     (when completed
       (and comint-redirect-verbose
-	   (message "Redirection completed"))
+           (message "Redirection completed"))
       (comint-redirect-cleanup)
       (run-hooks 'comint-redirect-hook))
     (unless completed
-      (setq comint-redirect-previous-input-string input-string
+      (setq comint-redirect-previous-input-string
+            (concat comint-redirect-previous-input-string input-string)
             comint-redirect-previous-filtered-input-string
-            filtered-input-string))
+            (concat previous-filtered-input-string filtered-input-string)))
 
     ;; Echo input?
     (if comint-redirect-echo-input
-	filtered-input-string
+        filtered-input-string
       "")))
 
 ;;;###autoload
