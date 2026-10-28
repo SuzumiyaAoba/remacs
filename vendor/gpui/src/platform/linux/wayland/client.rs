@@ -1274,6 +1274,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
+                    changed_modifier: None,
+                    changed_modifier_is_down: None,
                     capslock: state.capslock,
                 });
                 drop(state);

@@ -134,6 +134,7 @@ pub fn run_gui_with_dump(
                         for snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
+                            let modifier_mapping = snapshot.modifier_mapping;
                             let fullscreen = snapshot.fullscreen.clone();
                             let frame_size = (snapshot.width, snapshot.height);
                             let frame_left = snapshot.left;
@@ -161,8 +162,12 @@ pub fn run_gui_with_dump(
                                     frame_behaviors.get(&frame_id) != Some(&behavior);
                                 let requested_behavior = behavior.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
+                                    let modifier_mapping_changed =
+                                        view.set_modifier_mapping(modifier_mapping);
                                     if view.grid != grid || grid.blink_cursor {
                                         view.grid = grid;
+                                        cx.notify();
+                                    } else if modifier_mapping_changed {
                                         cx.notify();
                                     }
                                     if requested_fullscreen.is_none() {
@@ -203,11 +208,13 @@ pub fn run_gui_with_dump(
                             if let Some(handle) = primary_window.take() {
                                 let initial_fullscreen = fullscreen.clone();
                                 let initial_behavior = behavior.clone();
+                                let initial_modifier_mapping = modifier_mapping;
                                 let initial_left = frame_left;
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
                                     view.grid = grid;
+                                    view.set_modifier_mapping(initial_modifier_mapping);
                                     if initial_fullscreen.is_none() {
                                         apply_frame_snapshot_bounds(
                                             view,
@@ -243,16 +250,19 @@ pub fn run_gui_with_dump(
                             }
 
                             let options = frame_window_options(&snapshot, &windows, cx);
+                            let modifier_mapping = snapshot.modifier_mapping;
                             let event_tx = event_tx.clone();
                             let handle = match cx.open_window(options, move |window, app| {
                                 app.new(|cx| {
-                                    build_managed_editor_view(
+                                    let mut view = build_managed_editor_view(
                                         window,
                                         cx,
                                         event_tx,
                                         Some(frame_id),
                                         Some(grid),
-                                    )
+                                    );
+                                    view.set_modifier_mapping(modifier_mapping);
+                                    view
                                 })
                             }) {
                                 Ok(handle) => handle,

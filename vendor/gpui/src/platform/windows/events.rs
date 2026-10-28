@@ -1320,6 +1320,8 @@ where
             state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                changed_modifier: None,
+                changed_modifier_is_down: None,
                 capslock: current_capslock(),
             }))
         }
@@ -1338,6 +1340,8 @@ where
             state.last_reported_capslock = Some(capslock);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                changed_modifier: None,
+                changed_modifier_is_down: None,
                 capslock,
             }))
         }

@@ -788,6 +788,8 @@ impl VisualTestContext {
     pub fn simulate_modifiers_change(&mut self, modifiers: Modifiers) {
         self.simulate_event(ModifiersChangedEvent {
             modifiers,
+            changed_modifier: None,
+            changed_modifier_is_down: None,
             capslock: Capslock { on: false },
         })
     }
@@ -796,6 +798,8 @@ impl VisualTestContext {
     pub fn simulate_capslock_change(&mut self, on: bool) {
         self.simulate_event(ModifiersChangedEvent {
             modifiers: Modifiers::none(),
+            changed_modifier: None,
+            changed_modifier_is_down: None,
             capslock: Capslock { on },
         })
     }

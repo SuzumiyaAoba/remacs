@@ -1926,14 +1926,20 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
                 capslock,
+                changed_modifier,
+                changed_modifier_is_down,
             }) => {
                 // Only raise modifiers changed event when they have actually changed
                 if let Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: prev_modifiers,
                     capslock: prev_capslock,
+                    changed_modifier: prev_changed_modifier,
+                    changed_modifier_is_down: prev_changed_modifier_is_down,
                 })) = &lock.previous_modifiers_changed_event
                     && prev_modifiers == modifiers
                     && prev_capslock == capslock
+                    && prev_changed_modifier == changed_modifier
+                    && prev_changed_modifier_is_down == changed_modifier_is_down
                 {
                     return;
                 }

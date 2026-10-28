@@ -10044,7 +10044,7 @@ pub const CHAR_CTL: i128 = 0x0400_0000;
 pub const CHAR_SHIFT: i128 = 0x0200_0000;
 pub const CHAR_HYPER: i128 = 0x0100_0000;
 pub const CHAR_SUPER: i128 = 0x0080_0000;
-pub(crate) const CHAR_ALT: i128 = 0x0040_0000;
+pub const CHAR_ALT: i128 = 0x0040_0000;
 
 /// Parse one `kbd` token into `Value` events: `Value::Int` for
 /// character events (control folded Emacs-style, remaining

@@ -976,6 +976,8 @@ impl X11Client {
                     focused_window.handle_input(PlatformInput::ModifiersChanged(
                         ModifiersChangedEvent {
                             modifiers,
+                            changed_modifier: None,
+                            changed_modifier_is_down: None,
                             capslock,
                         },
                     ));

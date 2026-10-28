@@ -1,7 +1,8 @@
 use crate::{
-    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
-    PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, ModifierKey, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
+    TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -119,8 +120,21 @@ impl PlatformInput {
 
             match event_type {
                 NSEventType::NSFlagsChanged => {
+                    let flags = native_event.modifierFlags().bits();
+                    let (changed_modifier, changed_modifier_is_down) =
+                        match native_event.keyCode() {
+                            59 => (Some(ModifierKey::LeftControl), Some(flags & 0x000001 != 0)),
+                            62 => (Some(ModifierKey::RightControl), Some(flags & 0x002000 != 0)),
+                            58 => (Some(ModifierKey::LeftAlt), Some(flags & 0x000020 != 0)),
+                            61 => (Some(ModifierKey::RightAlt), Some(flags & 0x000040 != 0)),
+                            55 => (Some(ModifierKey::LeftCommand), Some(flags & 0x000008 != 0)),
+                            54 => (Some(ModifierKey::RightCommand), Some(flags & 0x000010 != 0)),
+                            _ => (None, None),
+                        };
                     Some(Self::ModifiersChanged(ModifiersChangedEvent {
                         modifiers: read_modifiers(native_event),
+                        changed_modifier,
+                        changed_modifier_is_down,
                         capslock: Capslock {
                             on: native_event
                                 .modifierFlags()

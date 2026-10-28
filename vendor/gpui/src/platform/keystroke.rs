@@ -469,6 +469,23 @@ pub struct Modifiers {
     pub function: bool,
 }
 
+/// Physical modifier key that changed state, when the platform can report it.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum ModifierKey {
+    /// The left Control key on a platform that distinguishes sides.
+    LeftControl,
+    /// The right Control key on a platform that distinguishes sides.
+    RightControl,
+    /// The left Alt or Option key on a platform that distinguishes sides.
+    LeftAlt,
+    /// The right Alt or Option key on a platform that distinguishes sides.
+    RightAlt,
+    /// The left Command key on macOS.
+    LeftCommand,
+    /// The right Command key on macOS.
+    RightCommand,
+}
+
 impl Modifiers {
     /// Returns whether any modifier key is pressed.
     pub fn modified(&self) -> bool {

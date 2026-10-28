@@ -1,12 +1,15 @@
 //! GPUI view construction and painting of frontend-neutral grids.
 use super::{
-    keys::{command_keystroke, keystroke_to_code, unicode_key_text},
+    keys::{
+        ModifierMapping, PhysicalModifierState, command_keystroke_with_mapping,
+        keystroke_to_code_with_mapping, modifier_state_after_change, mouse_modifier_bits,
+        pass_text_to_os, unicode_key_text,
+    },
     logic::{COLOR_DROP_PREFIX, FrameEventSender, GuiEvent, GuiGeometry},
     monitor::monitor_geometry,
 };
 use gpui::*;
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
-use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
     GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
@@ -285,6 +288,8 @@ pub(super) struct EditorView {
     tx: FrameEventSender,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
+    modifier_mapping: ModifierMapping,
+    physical_modifier_state: Rc<Cell<PhysicalModifierState>>,
     installed_menus: Vec<GridMenu>,
     window_title: Option<String>,
     pub(super) cols: usize,
@@ -331,6 +336,8 @@ impl EditorView {
             tx: FrameEventSender::new(tx, frame_id),
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
+            modifier_mapping: ModifierMapping::default(),
+            physical_modifier_state: Rc::new(Cell::new(PhysicalModifierState::default())),
             installed_menus: Vec::new(),
             window_title: None,
             cols: 80,
@@ -365,6 +372,17 @@ impl EditorView {
         self.geometry = None;
         self.runtime_frame_size = None;
         self.runtime_frame_position = None;
+    }
+
+    pub(super) fn set_modifier_mapping(
+        &mut self,
+        mapping: ModifierMapping,
+    ) -> bool {
+        if self.modifier_mapping == mapping {
+            return false;
+        }
+        self.modifier_mapping = mapping;
+        true
     }
 
     pub(super) fn native_position(&self) -> Option<(i128, i128)> {
@@ -624,6 +642,9 @@ impl Render for EditorView {
             .default_bg
             .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
             .unwrap_or(BG);
+        let modifier_mapping = self.modifier_mapping;
+        let physical_modifier_state = self.physical_modifier_state.clone();
+        let key_modifier_state = physical_modifier_state.clone();
         let bell_flash = self.bell_flash;
         let mouse_cursor = gpui_cursor_style(self.grid.hover_cursor);
         let grid = self.grid.clone();
@@ -644,16 +665,23 @@ impl Render for EditorView {
         let external_text_drop_tx = self.tx.clone();
         let left_mouse_down_tx = self.tx.clone();
         let left_mouse_down_grid = mouse_grid.clone();
+        let left_mouse_down_modifiers = physical_modifier_state.clone();
         let left_mouse_up_tx = self.tx.clone();
         let left_mouse_up_grid = mouse_grid.clone();
+        let left_mouse_up_modifiers = physical_modifier_state.clone();
         let middle_mouse_down_tx = self.tx.clone();
         let middle_mouse_down_grid = mouse_grid.clone();
+        let middle_mouse_down_modifiers = physical_modifier_state.clone();
         let middle_mouse_up_tx = self.tx.clone();
         let middle_mouse_up_grid = mouse_grid;
+        let middle_mouse_up_modifiers = physical_modifier_state.clone();
         let right_mouse_down_tx = self.tx.clone();
         let right_mouse_down_grid = scroll_grid.clone();
+        let right_mouse_down_modifiers = physical_modifier_state.clone();
         let right_mouse_up_tx = self.tx.clone();
         let right_mouse_up_grid = scroll_grid.clone();
+        let right_mouse_up_modifiers = physical_modifier_state.clone();
+        let scroll_modifiers = physical_modifier_state.clone();
         let entity = cx.entity();
         let focus = self.focus.clone();
         let marked = self.input.marked.clone();
@@ -812,7 +840,11 @@ impl Render for EditorView {
                             let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
                                 button: RemacsMouseButton::Left,
                                 click_count: event.click_count,
-                                modifiers: mouse_modifier_bits(&event.modifiers),
+                                modifiers: mouse_modifier_bits(
+                                    &event.modifiers,
+                                    modifier_mapping,
+                                    left_mouse_down_modifiers.get(),
+                                ),
                                 position,
                             });
                         }
@@ -874,7 +906,11 @@ impl Render for EditorView {
                         let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
                             button: RemacsMouseButton::Left,
                             click_count: event.click_count,
-                            modifiers: mouse_modifier_bits(&event.modifiers),
+                            modifiers: mouse_modifier_bits(
+                                &event.modifiers,
+                                modifier_mapping,
+                                left_mouse_up_modifiers.get(),
+                            ),
                             position,
                         });
                     }
@@ -887,7 +923,11 @@ impl Render for EditorView {
                     let _ = middle_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Middle,
                         click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        modifiers: mouse_modifier_bits(
+                            &event.modifiers,
+                            modifier_mapping,
+                            middle_mouse_down_modifiers.get(),
+                        ),
                         position,
                     });
                 }
@@ -899,7 +939,11 @@ impl Render for EditorView {
                     let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Middle,
                         click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        modifiers: mouse_modifier_bits(
+                            &event.modifiers,
+                            modifier_mapping,
+                            middle_mouse_up_modifiers.get(),
+                        ),
                         position,
                     });
                 }
@@ -911,7 +955,11 @@ impl Render for EditorView {
                     let _ = right_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Right,
                         click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        modifiers: mouse_modifier_bits(
+                            &event.modifiers,
+                            modifier_mapping,
+                            right_mouse_down_modifiers.get(),
+                        ),
                         position,
                     });
                 }
@@ -923,7 +971,11 @@ impl Render for EditorView {
                     let _ = right_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Right,
                         click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        modifiers: mouse_modifier_bits(
+                            &event.modifiers,
+                            modifier_mapping,
+                            right_mouse_up_modifiers.get(),
+                        ),
                         position,
                     });
                 }
@@ -937,7 +989,11 @@ impl Render for EditorView {
                     if delta_lines != 0.0 {
                         let _ = scroll_tx.send(GuiEvent::Scroll {
                             delta_lines,
-                            modifiers: mouse_modifier_bits(&event.modifiers),
+                            modifiers: mouse_modifier_bits(
+                                &event.modifiers,
+                                modifier_mapping,
+                                scroll_modifiers.get(),
+                            ),
                             position,
                         });
                     }
@@ -948,13 +1004,25 @@ impl Render for EditorView {
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
                 // Printable text is delivered by the OS input handler. Sending
                 // it here as well would insert ordinary ASCII twice.
-                if command_keystroke(&event.keystroke)
-                    && let Some(code) = keystroke_to_code(&event.keystroke)
+                if command_keystroke_with_mapping(
+                    &event.keystroke,
+                    modifier_mapping,
+                    key_modifier_state.get(),
+                ) && let Some(code) = keystroke_to_code_with_mapping(
+                    &event.keystroke,
+                    modifier_mapping,
+                    key_modifier_state.get(),
+                )
                 {
                     let _ = tx.send(GuiEvent::Key(code));
                     window.prevent_default();
                     cx.stop_propagation();
-                } else if let Some(text) = unicode_key_text(&event.keystroke) {
+                } else if pass_text_to_os(
+                    &event.keystroke,
+                    modifier_mapping,
+                    key_modifier_state.get(),
+                ) && let Some(text) = unicode_key_text(&event.keystroke)
+                {
                     // Some macOS text injection paths report non-ASCII text
                     // as a key event without calling the input client.
                     let _ = tx.send(GuiEvent::Text(text.to_owned()));
@@ -1067,6 +1135,18 @@ impl Render for EditorView {
                         (shaped, grid)
                     },
                     move |bounds, (lines, grid), window, _cx| {
+                        let modifier_state = physical_modifier_state.clone();
+                        window.on_modifiers_changed(move |event, _window, _cx| {
+                            if let (Some(changed), Some(is_down)) =
+                                (event.changed_modifier, event.changed_modifier_is_down)
+                            {
+                                modifier_state.set(modifier_state_after_change(
+                                    modifier_state.get(),
+                                    changed,
+                                    is_down,
+                                ));
+                            }
+                        });
                         window.on_mouse_event(
                             move |_: &MouseExitEvent, phase, _window, _cx| {
                                 if phase == DispatchPhase::Bubble
@@ -1512,23 +1592,6 @@ fn visible_grid_selection(grid: &Grid) -> std::ops::Range<usize> {
         .sum();
     let position = line_start + text[..byte].encode_utf16().count();
     position..position
-}
-
-fn mouse_modifier_bits(modifiers: &Modifiers) -> i128 {
-    let mut bits = 0;
-    if modifiers.control {
-        bits |= CHAR_CTL;
-    }
-    if modifiers.alt {
-        bits |= CHAR_META;
-    }
-    if modifiers.shift {
-        bits |= CHAR_SHIFT;
-    }
-    if modifiers.platform {
-        bits |= CHAR_SUPER;
-    }
-    bits
 }
 
 fn stipple_bit(stipple: &GridStipple, x: usize, y: usize) -> bool {
