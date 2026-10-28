@@ -1,7 +1,7 @@
 //! GPUI view construction and painting of frontend-neutral grids.
 use super::{
     keys::{command_keystroke, keystroke_to_code, unicode_key_text},
-    logic::{GuiEvent, GuiGeometry},
+    logic::{FrameEventSender, GuiEvent, GuiGeometry},
     monitor::monitor_geometry,
 };
 use gpui::*;
@@ -93,7 +93,7 @@ fn scroll_bar_offset(bar: &GridScrollBar, point: Point<Pixels>, pointer_offset: 
 }
 
 fn send_scroll_bar_event(
-    tx: &Sender<GuiEvent>,
+    tx: &FrameEventSender,
     bar: &GridScrollBar,
     point: Point<Pixels>,
     pointer_offset: f32,
@@ -181,7 +181,7 @@ struct RunMenuCommand {
 }
 
 pub(super) struct EditorView {
-    tx: Sender<GuiEvent>,
+    tx: FrameEventSender,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
     installed_menus: Vec<GridMenu>,
@@ -208,8 +208,16 @@ pub(super) struct EditorView {
 
 impl EditorView {
     pub(super) fn new(tx: Sender<GuiEvent>, cx: &mut Context<Self>) -> Self {
+        Self::new_for_frame(tx, None, cx)
+    }
+
+    pub(super) fn new_for_frame(
+        tx: Sender<GuiEvent>,
+        frame_id: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         EditorView {
-            tx,
+            tx: FrameEventSender::new(tx, frame_id),
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
             installed_menus: Vec::new(),
@@ -228,6 +236,10 @@ impl EditorView {
             #[cfg(target_os = "macos")]
             accessibility_snapshot: None,
         }
+    }
+
+    pub(super) fn set_frame_id(&self, frame_id: usize) {
+        self.tx.set_frame_id(frame_id);
     }
 }
 
@@ -1452,5 +1464,23 @@ pub(super) fn build_editor_view(
         let _ = cx.update(|_window, cx| cx.quit());
     })
     .detach();
+    view
+}
+
+/// Build a view whose grid is managed by the application-level frame pump.
+/// Unlike the single-window test helper above, this view does not own a
+/// receiver; the app updates it by frame id.
+pub(super) fn build_managed_editor_view(
+    window: &mut Window,
+    cx: &mut Context<EditorView>,
+    event_tx: Sender<GuiEvent>,
+    frame_id: Option<usize>,
+    grid: Option<Grid>,
+) -> EditorView {
+    let mut view = EditorView::new_for_frame(event_tx, frame_id, cx);
+    if let Some(grid) = grid {
+        view.grid = grid;
+    }
+    view.focus.focus(window);
     view
 }

@@ -3663,7 +3663,7 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
 /// minimal amount to show point, and recentered when point sits more
 /// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
-    render_grid_internal(i, width, height, false, None)
+    render_grid_internal(i, width, height, false, None, None)
 }
 
 /// Render a GUI input grid, reusing TEXT from a previous snapshot when
@@ -3674,7 +3674,23 @@ pub fn render_grid_with_input_cached(
     height: usize,
     cached: Option<&GridInput>,
 ) -> Grid {
-    render_grid_internal(i, width, height, true, cached)
+    render_grid_internal(i, width, height, true, cached, None)
+}
+
+/// Render FRAME without changing the interpreter's selected frame. This is
+/// used by multi-window front-ends to keep every native frame up to date.
+pub fn render_frame_grid_with_input_cached(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+) -> Grid {
+    let include_input = i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, frame));
+    render_grid_internal(i, width, height, include_input, cached, Some(frame))
 }
 
 fn render_grid_internal(
@@ -3683,6 +3699,7 @@ fn render_grid_internal(
     height: usize,
     include_input: bool,
     cached_input: Option<&GridInput>,
+    frame_override: Option<&crate::editor::FrameRef>,
 ) -> Grid {
     let mut rows = vec![String::new(); height];
     let mut fctx = FaceCtx::new(i);
@@ -3709,8 +3726,8 @@ fn render_grid_internal(
     } else {
         None
     };
-    let frame = match &i.selected_frame {
-        Some(f) => f.clone(),
+    let frame = match frame_override.cloned().or_else(|| i.selected_frame.clone()) {
+        Some(f) => f,
         None => {
             return Grid {
                 title: "Remacs".to_owned(),

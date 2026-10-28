@@ -110,6 +110,13 @@ pub trait KeyIo {
     fn take_render_request(&mut self) -> bool {
         false
     }
+    /// Frame whose native window produced the most recently polled input.
+    /// Multi-window front-ends use this to select the corresponding Lisp
+    /// frame before dispatching the input. Single-window front-ends inherit
+    /// the default.
+    fn take_frame_selection(&mut self) -> Option<usize> {
+        None
+    }
     /// Show TEXT in the echo area (minibuffer prompt/status).
     fn draw_echo(&mut self, text: &str) -> io::Result<()>;
     /// Show minibuffer text while retaining front-end style information.
@@ -133,5 +140,5 @@ pub use render::{
     GridHelpEcho, GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu,
     GridMenuItem, GridPopupMenuItem, GridTabBarItem, GridToolBarItem,
     GridScrollBar, GridScrollBarOrientation, fit_text_to_cells, render_grid,
-    render_grid_with_input_cached,
+    render_frame_grid_with_input_cached, render_grid_with_input_cached,
 };

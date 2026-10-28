@@ -2,7 +2,8 @@
 use remacs_runtime::{
     frontend::{
         Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
-        MousePosition, fit_text_to_cells, render_grid_with_input_cached,
+        MousePosition, fit_text_to_cells, render_frame_grid_with_input_cached,
+        render_grid_with_input_cached,
     },
     lisp::{Interp, Value},
 };
@@ -10,6 +11,7 @@ use std::{
     io,
     ops::Range,
     rc::Rc,
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -21,6 +23,11 @@ use unicode_width::UnicodeWidthChar;
 
 /// Messages the UI thread sends to the editor logic thread.
 pub(super) enum GuiEvent {
+    /// Input emitted by a particular native frame window.
+    ForFrame {
+        frame_id: usize,
+        event: Box<GuiEvent>,
+    },
     Key(i128),
     Text(String),
     MenuCommand(String),
@@ -56,6 +63,51 @@ pub(super) enum GuiEvent {
         offset: usize,
         max_offset: usize,
     },
+}
+
+#[derive(Clone)]
+pub(super) struct FrameEventSender {
+    sender: Sender<GuiEvent>,
+    frame_id: Rc<std::cell::Cell<Option<usize>>>,
+}
+
+impl FrameEventSender {
+    pub(super) fn new(sender: Sender<GuiEvent>, frame_id: Option<usize>) -> Self {
+        Self {
+            sender,
+            frame_id: Rc::new(std::cell::Cell::new(frame_id)),
+        }
+    }
+
+    pub(super) fn set_frame_id(&self, frame_id: usize) {
+        self.frame_id.set(Some(frame_id));
+    }
+
+    pub(super) fn send(&self, event: GuiEvent) -> Result<(), mpsc::SendError<GuiEvent>> {
+        let event = match self.frame_id.get() {
+            Some(frame_id) => GuiEvent::ForFrame {
+                frame_id,
+                event: Box::new(event),
+            },
+            None => event,
+        };
+        self.sender.send(event)
+    }
+}
+
+/// A frame's render snapshot, sent from the logic thread to the GPUI thread.
+/// It contains no Lisp objects, keeping the `Interp` on its logic thread.
+#[derive(Clone)]
+pub(super) struct FrameSnapshot {
+    pub frame_id: usize,
+    pub name: String,
+    pub parent_frame: Option<usize>,
+    pub width: usize,
+    pub height: usize,
+    pub left: Option<i128>,
+    pub top: Option<i128>,
+    pub undecorated: bool,
+    pub grid: Grid,
 }
 
 #[derive(Clone, PartialEq)]
@@ -146,6 +198,8 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
 pub(super) struct ChanIo {
     pub(super) events: Receiver<GuiEvent>,
     pub(super) grids: smol::channel::Sender<Grid>,
+    pub(super) legacy_grid_output: bool,
+    pub(super) frame_updates: Option<smol::channel::Sender<Vec<FrameSnapshot>>>,
     /// Keys pushed back via `unread` (unread-command-events).
     pub(super) pending: Vec<i128>,
     pub(super) cols: usize,
@@ -156,6 +210,13 @@ pub(super) struct ChanIo {
     /// a fresh grid on the next command-loop iteration.
     pub(super) render_requested: bool,
     pub(super) geometry: Option<GuiGeometry>,
+    frame_sizes: HashMap<usize, (usize, usize)>,
+    frame_geometries: HashMap<usize, GuiGeometry>,
+    frame_grids: HashMap<usize, Grid>,
+    latest_snapshots: Vec<FrameSnapshot>,
+    active_frame_id: Option<usize>,
+    primary_frame_id: Option<usize>,
+    pending_frame_selection: Option<usize>,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
     pub(super) scroll_remainder: f32,
@@ -269,7 +330,63 @@ impl GeometrySymbols {
     }
 }
 
+fn frame_parameter_value(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+    name: &str,
+) -> Value {
+    let Some(symbol) = i.intern_soft(name) else {
+        return Value::Nil;
+    };
+    remacs_runtime::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(symbol))
+}
+
+fn frame_system_is_graphical(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> bool {
+    match frame_parameter_value(i, frame, "window-system") {
+        Value::Sym(system) => matches!(
+            i.symbol_name(system).as_str(),
+            "x" | "w32" | "ns" | "pgtk" | "haiku" | "android" | "gpui"
+        ),
+        _ => false,
+    }
+}
+
 impl ChanIo {
+    fn receive_event(&mut self, dur: Duration) -> io::Result<Option<GuiEvent>> {
+        match self.events.recv_timeout(dur) {
+            Ok(event) => Ok(Some(self.unwrap_frame_event(event))),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "gui window closed",
+            )),
+        }
+    }
+
+    fn unwrap_frame_event(&mut self, event: GuiEvent) -> GuiEvent {
+        match event {
+            GuiEvent::ForFrame { frame_id, event } => {
+                self.active_frame_id = Some(frame_id);
+                self.pending_frame_selection = Some(frame_id);
+                *event
+            }
+            event => event,
+        }
+    }
+
+    fn update_size(&mut self, frame_id: Option<usize>, cols: usize, rows: usize) {
+        let size = (cols.max(10), rows.max(3));
+        if let Some(frame_id) = frame_id {
+            self.frame_sizes.insert(frame_id, size);
+            if Some(frame_id) == self.active_frame_id || Some(frame_id) == self.primary_frame_id {
+                (self.cols, self.rows) = size;
+            }
+        } else {
+            (self.cols, self.rows) = size;
+        }
+        self.render_requested = true;
+    }
+
     fn mouse_input(
         &mut self,
         button: MouseButton,
@@ -294,16 +411,31 @@ impl ChanIo {
     }
 
     pub(super) fn send_grid(&mut self, grid: Grid) -> io::Result<()> {
-        if !grid.blink_cursor && self.last.as_ref().is_some_and(|last| last == &grid) {
-            return Ok(());
+        let changed = grid.blink_cursor || self.last.as_ref() != Some(&grid);
+        if let Some(frame_id) = self.active_frame_id
+            && let Some(snapshot) = self
+                .latest_snapshots
+                .iter_mut()
+                .find(|snapshot| snapshot.frame_id == frame_id)
+        {
+            snapshot.grid = grid.clone();
+            self.frame_grids.insert(frame_id, grid.clone());
+            if let Some(updates) = &self.frame_updates {
+                updates
+                    .force_send(self.latest_snapshots.clone())
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
+                    })?;
+            }
         }
-        // Latest-wins: force_send displaces the oldest queued frame
-        // when the bounded channel is full.
-        let g = grid.clone();
-        self.last = Some(grid);
-        self.grids
-            .force_send(g)
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed"))?;
+        self.last = Some(grid.clone());
+        if self.legacy_grid_output && changed {
+            // Latest-wins: force_send displaces the oldest queued frame
+            // when the bounded channel is full.
+            self.grids
+                .force_send(grid)
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed"))?;
+        }
         Ok(())
     }
 
@@ -388,44 +520,48 @@ impl KeyIo for ChanIo {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(InputEvent::Key(k)));
         }
-        match self.events.recv_timeout(dur) {
-            Ok(GuiEvent::Key(k)) => Ok(Some(InputEvent::Key(k))),
-            Ok(GuiEvent::Text(text)) => Ok(Some(InputEvent::Text(text))),
-            Ok(GuiEvent::MenuCommand(command)) => Ok(Some(InputEvent::Command(command))),
-            Ok(GuiEvent::CommandArgs { command, args }) => {
+        let Some(event) = self.receive_event(dur)? else {
+            return Ok(None);
+        };
+        match event {
+            GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
+            GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
+            GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
+            GuiEvent::MenuCommand(command) => Ok(Some(InputEvent::Command(command))),
+            GuiEvent::CommandArgs { command, args } => {
                 Ok(Some(InputEvent::CommandArgs { command, args }))
             }
-            Ok(GuiEvent::ReplaceText { range, text }) => {
+            GuiEvent::ReplaceText { range, text } => {
                 Ok(Some(InputEvent::ReplaceText { range, text }))
             }
-            Ok(GuiEvent::Drop {
+            GuiEvent::Drop {
                 position,
                 urls,
                 action,
-            }) => Ok(Some(InputEvent::Drop {
+            } => Ok(Some(InputEvent::Drop {
                 position,
                 urls,
                 action,
             })),
-            Ok(GuiEvent::Resize(c, r)) => {
-                self.cols = c.max(10);
-                self.rows = r.max(3);
-                self.render_requested = true;
+            GuiEvent::Resize(c, r) => {
+                self.update_size(self.active_frame_id, c, r);
                 Ok(None)
             }
-            Ok(GuiEvent::Geometry(geometry)) => {
-                self.cols = geometry.cols.max(10);
-                self.rows = geometry.rows.max(3);
-                self.geometry = Some(geometry);
-                self.render_requested = true;
+            GuiEvent::Geometry(geometry) => {
+                if let Some(frame_id) = self.active_frame_id {
+                    self.frame_geometries.insert(frame_id, geometry.clone());
+                } else {
+                    self.geometry = Some(geometry.clone());
+                }
+                self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 Ok(None)
             }
-            Ok(GuiEvent::MouseDown {
+            GuiEvent::MouseDown {
                 button,
                 click_count,
                 modifiers,
                 position,
-            }) => {
+            } => {
                 self.mouse_down = Some((button, click_count, modifiers, position));
                 Ok(Some(InputEvent::MouseDown(MouseInput {
                     button,
@@ -435,22 +571,22 @@ impl KeyIo for ChanIo {
                     end: position,
                 })))
             }
-            Ok(GuiEvent::MouseUp {
+            GuiEvent::MouseUp {
                 button,
                 click_count,
                 modifiers,
                 position,
-            }) => Ok(Some(InputEvent::Mouse(self.mouse_input(
+            } => Ok(Some(InputEvent::Mouse(self.mouse_input(
                 button,
                 click_count,
                 modifiers,
                 position,
             )))),
-            Ok(GuiEvent::Scroll {
+            GuiEvent::Scroll {
                 delta_lines,
                 modifiers,
                 position,
-            }) => {
+            } => {
                 if !delta_lines.is_finite() {
                     return Ok(None);
                 }
@@ -468,22 +604,17 @@ impl KeyIo for ChanIo {
                     }))
                 }
             }
-            Ok(GuiEvent::ScrollBar {
+            GuiEvent::ScrollBar {
                 window_id,
                 orientation,
                 offset,
                 max_offset,
-            }) => Ok(Some(InputEvent::ScrollBar {
+            } => Ok(Some(InputEvent::ScrollBar {
                 window_id,
                 orientation,
                 offset,
                 max_offset,
             })),
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "gui window closed",
-            )),
         }
     }
 
@@ -491,56 +622,55 @@ impl KeyIo for ChanIo {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(k));
         }
-        match self.events.recv_timeout(dur) {
-            Ok(GuiEvent::Key(k)) => Ok(Some(k)),
-            Ok(GuiEvent::Text(text)) => {
+        let Some(event) = self.receive_event(dur)? else {
+            return Ok(None);
+        };
+        match event {
+            GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
+            GuiEvent::Key(k) => Ok(Some(k)),
+            GuiEvent::Text(text) => {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();
                 self.pending.extend(chars.rev());
                 Ok(first)
             }
-            Ok(GuiEvent::MenuCommand(_)) => Ok(None),
-            Ok(GuiEvent::CommandArgs { .. }) => Ok(None),
-            Ok(GuiEvent::ReplaceText { text, .. }) => {
+            GuiEvent::MenuCommand(_) => Ok(None),
+            GuiEvent::CommandArgs { .. } => Ok(None),
+            GuiEvent::ReplaceText { text, .. } => {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();
                 self.pending.extend(chars.rev());
                 Ok(first)
             }
-            Ok(GuiEvent::Drop { .. }) => Ok(None),
-            Ok(GuiEvent::Resize(c, r)) => {
-                self.cols = c.max(10);
-                self.rows = r.max(3);
-                self.render_requested = true;
+            GuiEvent::Drop { .. } => Ok(None),
+            GuiEvent::Resize(c, r) => {
+                self.update_size(self.active_frame_id, c, r);
                 Ok(None)
             }
-            Ok(GuiEvent::Geometry(geometry)) => {
-                self.cols = geometry.cols.max(10);
-                self.rows = geometry.rows.max(3);
-                self.geometry = Some(geometry);
-                self.render_requested = true;
+            GuiEvent::Geometry(geometry) => {
+                if let Some(frame_id) = self.active_frame_id {
+                    self.frame_geometries.insert(frame_id, geometry.clone());
+                } else {
+                    self.geometry = Some(geometry.clone());
+                }
+                self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 Ok(None)
             }
-            Ok(GuiEvent::MouseDown {
+            GuiEvent::MouseDown {
                 button,
                 click_count,
                 modifiers,
                 position,
-            }) => {
+            } => {
                 self.mouse_down = Some((button, click_count, modifiers, position));
                 Ok(None)
             }
-            Ok(GuiEvent::MouseUp { .. }) => {
+            GuiEvent::MouseUp { .. } => {
                 self.mouse_down = None;
                 Ok(None)
             }
-            Ok(GuiEvent::ScrollBar { .. }) => Ok(None),
-            Ok(GuiEvent::Scroll { .. }) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "gui window closed",
-            )),
+            GuiEvent::ScrollBar { .. } => Ok(None),
+            GuiEvent::Scroll { .. } => Ok(None),
         }
     }
 
@@ -549,64 +679,142 @@ impl KeyIo for ChanIo {
     }
 
     fn render(&mut self, i: &Interp) -> io::Result<()> {
-        if let (Some(geometry), Some(keys)) = (&self.geometry, self.geometry_symbols)
-            && let Some(frame) = i.selected_frame.as_ref()
-        {
-            let frames = Value::list(
-                i.frames
-                    .iter()
-                    .filter(|frame| !frame.borrow().dead)
-                    .cloned()
-                    .map(Value::Frame)
-                    .collect(),
-            );
-            let mut monitors = Vec::with_capacity(geometry.monitors.len());
-            for monitor in &geometry.monitors {
-                let monitor_frames = if geometry
-                    .current_display_id
-                    .is_none_or(|display_id| display_id == monitor.display_id)
-                {
-                    frames.clone()
-                } else {
-                    Value::Nil
-                };
-                let attr = |key, values: [i128; 4]| {
-                    let mut fields = Vec::with_capacity(5);
-                    fields.push(Value::Sym(key));
-                    fields.extend(values.into_iter().map(Value::Int));
-                    Value::list(fields)
-                };
-                monitors.push(Value::list(vec![
-                    attr(keys.geometry, monitor.geometry),
-                    attr(keys.workarea, monitor.workarea),
-                    Value::list(vec![
-                        Value::Sym(keys.mm_size),
-                        monitor.mm_size[0].map(Value::Int).unwrap_or(Value::Nil),
-                        monitor.mm_size[1].map(Value::Int).unwrap_or(Value::Nil),
-                    ]),
-                    Value::list(vec![Value::Sym(keys.frames), monitor_frames]),
-                ]));
-            }
-            let mut params = frame.borrow().params.clone();
-            for (key, value) in [
-                (keys.pixel_width, Value::Int(geometry.pixel_width)),
-                (keys.pixel_height, Value::Int(geometry.pixel_height)),
-                (keys.char_width, Value::Int(geometry.char_width)),
-                (keys.char_height, Value::Int(geometry.char_height)),
-                (keys.grid_cols, Value::Int(geometry.cols as i128)),
-                (keys.grid_rows, Value::Int(geometry.rows as i128)),
-                (keys.frame_left, Value::Int(geometry.frame_left)),
-                (keys.frame_top, Value::Int(geometry.frame_top)),
-                (keys.scale_factor, Value::float(geometry.scale_factor)),
-                (keys.monitor_attributes, Value::list(monitors)),
-            ] {
-                params =
-                    remacs_runtime::lisp::eval::plist_put_front(&params, &Value::Sym(key), value);
-            }
-            frame.borrow_mut().params = params;
+        if let Some(frame) = i.selected_frame.as_ref() {
+            self.active_frame_id = Some(frame.borrow().id);
         }
-        let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
-        let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
+        if self.primary_frame_id.is_none() {
+            self.primary_frame_id = i.frames.first().map(|frame| frame.borrow().id);
+        }
+
+        let live_frames: Vec<_> = i
+            .frames
+            .iter()
+            .filter(|frame| !frame.borrow().dead)
+            .cloned()
+            .collect();
+        let live_ids: std::collections::HashSet<_> =
+            live_frames.iter().map(|frame| frame.borrow().id).collect();
+        self.frame_grids.retain(|id, _| live_ids.contains(id));
+        let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
+        let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
+        let mut selected_grid = None;
+        let mut snapshots = Vec::new();
+
+        for frame in &live_frames {
+            let (frame_id, frame_width, frame_height) = {
+                let frame = frame.borrow();
+                (frame.id, frame.width, frame.height)
+            };
+            let (width, height) = *self
+                .frame_sizes
+                .entry(frame_id)
+                .or_insert((frame_width, frame_height));
+            if (frame_width, frame_height) != (width, height) {
+                remacs_runtime::editor::reflow_frame_windows(frame, width, height);
+                let mut frame = frame.borrow_mut();
+                frame.width = width;
+                frame.height = height;
+            }
+
+            let geometry = self.frame_geometries.get(&frame_id).cloned().or_else(|| {
+                (Some(frame_id) == self.primary_frame_id)
+                    .then(|| self.geometry.clone())
+                    .flatten()
+            });
+            if let (Some(geometry), Some(keys)) = (geometry, self.geometry_symbols) {
+                let mut monitors = Vec::with_capacity(geometry.monitors.len());
+                for monitor in &geometry.monitors {
+                    let monitor_frames = if geometry
+                        .current_display_id
+                        .is_none_or(|display_id| display_id == monitor.display_id)
+                    {
+                        all_frames.clone()
+                    } else {
+                        Value::Nil
+                    };
+                    let attr = |key, values: [i128; 4]| {
+                        let mut fields = Vec::with_capacity(5);
+                        fields.push(Value::Sym(key));
+                        fields.extend(values.into_iter().map(Value::Int));
+                        Value::list(fields)
+                    };
+                    monitors.push(Value::list(vec![
+                        attr(keys.geometry, monitor.geometry),
+                        attr(keys.workarea, monitor.workarea),
+                        Value::list(vec![
+                            Value::Sym(keys.mm_size),
+                            monitor.mm_size[0].map(Value::Int).unwrap_or(Value::Nil),
+                            monitor.mm_size[1].map(Value::Int).unwrap_or(Value::Nil),
+                        ]),
+                        Value::list(vec![Value::Sym(keys.frames), monitor_frames]),
+                    ]));
+                }
+                let mut params = frame.borrow().params.clone();
+                for (key, value) in [
+                    (keys.pixel_width, Value::Int(geometry.pixel_width)),
+                    (keys.pixel_height, Value::Int(geometry.pixel_height)),
+                    (keys.char_width, Value::Int(geometry.char_width)),
+                    (keys.char_height, Value::Int(geometry.char_height)),
+                    (keys.grid_cols, Value::Int(geometry.cols as i128)),
+                    (keys.grid_rows, Value::Int(geometry.rows as i128)),
+                    (keys.frame_left, Value::Int(geometry.frame_left)),
+                    (keys.frame_top, Value::Int(geometry.frame_top)),
+                    (keys.scale_factor, Value::float(geometry.scale_factor)),
+                    (keys.monitor_attributes, Value::list(monitors)),
+                ] {
+                    params = remacs_runtime::lisp::eval::plist_put_front(
+                        &params,
+                        &Value::Sym(key),
+                        value,
+                    );
+                }
+                frame.borrow_mut().params = params;
+            }
+
+            if self.frame_updates.is_some() && frame_system_is_graphical(i, frame) {
+                let cached = self
+                    .frame_grids
+                    .get(&frame_id)
+                    .and_then(|grid| grid.input.as_ref());
+                let grid = render_frame_grid_with_input_cached(i, frame, width, height, cached);
+                if Some(frame_id) == selected_id {
+                    selected_grid = Some(grid.clone());
+                }
+                self.frame_grids.insert(frame_id, grid.clone());
+                let parent_frame = match frame_parameter_value(i, frame, "parent-frame") {
+                    Value::Frame(parent) if !parent.borrow().dead => Some(parent.borrow().id),
+                    _ => None,
+                };
+                let name = frame.borrow().name.borrow().to_string();
+                let int_param = |name: &str| frame_parameter_value(i, frame, name).int();
+                snapshots.push(FrameSnapshot {
+                    frame_id,
+                    name,
+                    parent_frame,
+                    width,
+                    height,
+                    left: int_param("left"),
+                    top: int_param("top"),
+                    undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
+                    grid,
+                });
+            }
+        }
+
+        self.latest_snapshots = snapshots.clone();
+        if let Some(updates) = &self.frame_updates {
+            updates.force_send(snapshots).map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
+            })?;
+        }
+
+        let grid = match selected_grid {
+            Some(grid) => grid,
+            None => {
+                let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
+                render_grid_with_input_cached(i, self.cols, self.rows, cached)
+            }
+        };
         self.send_grid(grid)
     }
 
@@ -616,6 +824,10 @@ impl KeyIo for ChanIo {
 
     fn take_render_request(&mut self) -> bool {
         std::mem::take(&mut self.render_requested)
+    }
+
+    fn take_frame_selection(&mut self) -> Option<usize> {
+        self.pending_frame_selection.take()
     }
 
     fn draw_echo(&mut self, text: &str) -> io::Result<()> {
@@ -628,14 +840,26 @@ impl KeyIo for ChanIo {
     }
 
     fn draw_echo_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
-        let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
-        let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
+        let (cols, rows) = self.size();
+        let grid = if let Some(frame) = i.selected_frame.as_ref() {
+            let frame_id = frame.borrow().id;
+            let cached = self
+                .frame_grids
+                .get(&frame_id)
+                .and_then(|grid| grid.input.as_ref());
+            render_frame_grid_with_input_cached(i, frame, cols, rows, cached)
+        } else {
+            let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
+            render_grid_with_input_cached(i, cols, rows, cached)
+        };
         let grid = self.echo_grid(grid, text, false, true);
         self.send_grid(grid)
     }
 
     fn size(&self) -> (usize, usize) {
-        (self.cols, self.rows)
+        self.active_frame_id
+            .and_then(|frame_id| self.frame_sizes.get(&frame_id).copied())
+            .unwrap_or((self.cols, self.rows))
     }
 }
 
@@ -650,8 +874,8 @@ impl KeyIo for ChanIo {
 pub(super) fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _clipboard_requests) =
-        start_logic_inner(files, None, Vec::new(), false)?;
+    let (events, grids, _frame_updates, _clipboard_requests) =
+        start_logic_inner(files, None, Vec::new(), false, true, false)?;
     Ok((events, grids))
 }
 
@@ -661,8 +885,8 @@ pub(super) fn start_logic_with_dump_for_test(
     dump_file: Option<String>,
     arguments: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _clipboard_requests) =
-        start_logic_inner(files, dump_file, arguments, false)?;
+    let (events, grids, _frame_updates, _clipboard_requests) =
+        start_logic_inner(files, dump_file, arguments, false, true, false)?;
     Ok((events, grids))
 }
 
@@ -694,7 +918,24 @@ pub(super) fn start_logic_with_dump(
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
-    start_logic_inner(files, dump_file, arguments, true)
+    let (events, grids, _frame_updates, clipboard) =
+        start_logic_inner(files, dump_file, arguments, true, true, false)?;
+    Ok((events, grids, clipboard))
+}
+
+pub(super) fn start_logic_with_frames(
+    files: Vec<String>,
+    dump_file: Option<String>,
+    arguments: Vec<String>,
+) -> io::Result<(
+    Sender<GuiEvent>,
+    smol::channel::Receiver<Vec<FrameSnapshot>>,
+    smol::channel::Receiver<ClipboardRequest>,
+)> {
+    let (events, grids, frame_updates, clipboard) =
+        start_logic_inner(files, dump_file, arguments, true, false, true)?;
+    drop(grids);
+    Ok((events, frame_updates, clipboard))
 }
 
 fn start_logic_inner(
@@ -702,15 +943,19 @@ fn start_logic_inner(
     dump_file: Option<String>,
     arguments: Vec<String>,
     enable_gui_selections: bool,
+    legacy_grid_output: bool,
+    enable_frame_updates: bool,
 ) -> io::Result<(
     Sender<GuiEvent>,
     smol::channel::Receiver<Grid>,
+    smol::channel::Receiver<Vec<FrameSnapshot>>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
     let wait_for_dump = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
     let (event_tx, event_rx) = mpsc::channel::<GuiEvent>();
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
+    let (frame_updates_tx, frame_updates_rx) = smol::channel::bounded::<Vec<FrameSnapshot>>(1);
     let (clipboard_tx, clipboard_rx) = smol::channel::unbounded::<ClipboardRequest>();
     let clipboard_ready = Arc::new(AtomicBool::new(false));
     clipboard_tx
@@ -750,23 +995,33 @@ fn start_logic_inner(
                 let _ = startup_tx.send(Err(message));
                 return;
             }
-            #[cfg(target_os = "macos")]
             if enable_gui_selections {
-                // Startup still uses the shared terminal initializer; set
-                // NS identity afterward so generic selection methods dispatch
-                // without running native AppKit window initialization.
-                configure_ns_window_system(&mut i);
+                configure_gui_window_system(&mut i);
             }
             let _ = startup_tx.send(Ok(()));
+            let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
+            let mut frame_sizes = HashMap::new();
+            if let Some(frame_id) = selected_frame_id {
+                frame_sizes.insert(frame_id, (80, 24));
+            }
             let io = ChanIo {
                 events: event_rx,
                 grids: grid_tx,
+                legacy_grid_output,
+                frame_updates: enable_frame_updates.then_some(frame_updates_tx),
                 pending: Vec::new(),
                 cols: 80,
                 rows: 24,
                 last: None,
                 render_requested: false,
                 geometry: None,
+                frame_sizes,
+                frame_geometries: HashMap::new(),
+                frame_grids: HashMap::new(),
+                latest_snapshots: Vec::new(),
+                active_frame_id: selected_frame_id,
+                primary_frame_id: selected_frame_id,
+                pending_frame_selection: None,
                 geometry_symbols: if enable_gui_selections {
                     Some(GeometrySymbols::intern(&mut i))
                 } else {
@@ -776,7 +1031,7 @@ fn start_logic_inner(
                 scroll_remainder: 0.0,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
-            // grid_tx drops here → the UI pump below quits the app.
+            // The frame update sender drops here → the UI pump quits the app.
         })
         .map_err(io::Error::other)?;
     if wait_for_dump {
@@ -785,15 +1040,17 @@ fn start_logic_inner(
             .map_err(io::Error::other)?
             .map_err(io::Error::other)?;
     }
-    Ok((event_tx, grid_rx, clipboard_rx))
+    Ok((event_tx, grid_rx, frame_updates_rx, clipboard_rx))
 }
 
-#[cfg(target_os = "macos")]
-fn configure_ns_window_system(i: &mut Interp) {
+fn configure_gui_window_system(i: &mut Interp) {
     let window_system = i.intern("window-system");
     let initial_window_system = i.intern("initial-window-system");
-    let ns = i.intern("ns");
-    let value = remacs_runtime::lisp::Value::Sym(ns);
+    #[cfg(target_os = "macos")]
+    let system = "ns";
+    #[cfg(not(target_os = "macos"))]
+    let system = "gpui";
+    let value = remacs_runtime::lisp::Value::Sym(i.intern(system));
     let _ = i.set_symbol_default(window_system, value.clone());
     let _ = i.set_symbol_default(initial_window_system, value.clone());
     if let Some(frame) = i.selected_frame.clone() {

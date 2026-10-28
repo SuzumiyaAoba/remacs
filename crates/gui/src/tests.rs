@@ -233,14 +233,24 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
         ChanIo {
             events: erx,
             grids: gtx,
+            legacy_grid_output: true,
+            frame_updates: None,
             pending: Vec::new(),
             cols: 80,
             rows: 24,
             last: None,
             render_requested: false,
             geometry: None,
+            frame_sizes: std::collections::HashMap::new(),
+            frame_geometries: std::collections::HashMap::new(),
+            frame_grids: std::collections::HashMap::new(),
+            latest_snapshots: Vec::new(),
+            active_frame_id: None,
+            primary_frame_id: None,
+            pending_frame_selection: None,
             geometry_symbols: None,
             mouse_down: None,
+            scroll_remainder: 0.0,
         },
         etx,
         grx,
@@ -648,6 +658,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let text: String = rx
         .try_iter()
         .filter_map(|event| match event {
+            GuiEvent::ForFrame { .. } => None,
             GuiEvent::Text(text) => Some(text),
             GuiEvent::CommandArgs { .. } => None,
             GuiEvent::Drop { .. } => None,
@@ -667,6 +678,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let codes: Vec<_> = rx
         .try_iter()
         .filter_map(|event| match event {
+            GuiEvent::ForFrame { .. } => None,
             GuiEvent::Key(code) => Some(code),
             GuiEvent::CommandArgs { .. } => None,
             GuiEvent::Drop { .. } => None,

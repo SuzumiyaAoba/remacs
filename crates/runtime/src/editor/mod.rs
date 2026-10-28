@@ -434,7 +434,7 @@ impl Frame {
 /// Reflow the selected frame's window tree to the front-end's current
 /// cell dimensions. Child ratios are preserved by `relay_children`, so a
 /// native resize changes live window sizes before redisplay notifications.
-pub(crate) fn reflow_frame_windows(frame: &FrameRef, width: usize, height: usize) {
+pub fn reflow_frame_windows(frame: &FrameRef, width: usize, height: usize) {
     let width = width.max(1);
     let height = height.max(2);
     let (root, minibuffer, root_top) = {
@@ -6552,11 +6552,80 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.error("Unknown terminal type"));
     }
     // On a tty, a "new frame" is a new full-screen view sharing the tty.
+    // A graphical frontend consumes the same frame object and creates its
+    // native window from the stored parameters after this call returns.
+    let selected = i.selected_frame.clone();
     let buf = i.current_buffer;
-    let f = Frame::new_tty(buf, buf, 80, 25);
+    let minibuf = selected
+        .as_ref()
+        .and_then(|frame| frame.borrow().minibuffer.clone())
+        .map(|window| window.borrow().buffer)
+        .unwrap_or(buf);
+    let default_size = selected
+        .as_ref()
+        .map(|frame| {
+            let frame = frame.borrow();
+            (frame.width, frame.height)
+        })
+        .unwrap_or((80, 25));
+    let mut width = default_size.0;
+    let mut height = default_size.1;
+    let mut parameters = pl.clone();
+    if let Ok(entries) = pl.list_to_vec() {
+        let mut has_window_system = false;
+        for entry in entries {
+            let Value::Cons(pair) = entry else {
+                continue;
+            };
+            let (key, value) = {
+                let pair = pair.borrow();
+                (pair.car.clone(), pair.cdr.clone())
+            };
+            let name = match key {
+                Value::Sym(symbol) => i.symbol_name(symbol),
+                _ => continue,
+            };
+            match name.as_str() {
+                "width" => {
+                    if let Some(value) = value.int().filter(|value| *value > 0) {
+                        width = value as usize;
+                    }
+                }
+                "height" => {
+                    if let Some(value) = value.int().filter(|value| *value > 1) {
+                        height = value as usize;
+                    }
+                }
+                "window-system" => has_window_system = true,
+                _ => {}
+            }
+        }
+        if !has_window_system
+            && let Some(frame) = &selected
+        {
+            let window_system = frame_parameter_value(i, frame, "window-system");
+            if !window_system.is_nil() {
+                parameters = Value::cons(
+                    Value::cons(Value::Sym(i.intern("window-system")), window_system),
+                    parameters,
+                );
+            }
+        }
+    }
+    let f = Frame::new_tty(buf, minibuf, width, height);
     let name = next_frame_name(i);
     f.borrow_mut().name = crate::lisp::Value::string_ref(name);
+    if let Err(flow) = f_modify_frame_parameters(
+        i,
+        vec![Value::Frame(f.clone()), parameters].into(),
+    ) {
+        f.borrow_mut().dead = true;
+        return Err(flow);
+    }
     i.frames.push(f.clone());
+    f.borrow_mut().width = width;
+    f.borrow_mut().height = height;
+    reflow_frame_windows(&f, width, height);
     Ok(Value::Frame(f))
 }
 

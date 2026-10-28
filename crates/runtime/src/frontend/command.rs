@@ -192,7 +192,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 }
                 // Poll input. Sleep deadlines keep the UI responsive.
                 let timeout = Duration::from_millis(50);
-                match term.borrow_mut().poll_input(timeout)? {
+                let polled = term.borrow_mut().poll_input(timeout)?;
+                apply_frame_selection(&term, i);
+                match polled {
                     Some(input) => input,
                     None => continue,
                 }
@@ -252,6 +254,37 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         }
     }
     Ok(())
+}
+
+/// Apply the frame selected by a native window before dispatching its event.
+/// The runtime stays independent of GPUI; front-ends communicate only the
+/// stable frame id through `KeyIo`.
+pub(super) fn apply_frame_selection<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) {
+    let Some(frame_id) = term.borrow_mut().take_frame_selection() else {
+        return;
+    };
+    let Some(frame) = i
+        .frames
+        .iter()
+        .find(|frame| frame.borrow().id == frame_id)
+        .cloned()
+    else {
+        return;
+    };
+    if i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame))
+    {
+        return;
+    }
+    let select_frame = Value::Sym(i.intern("select-frame"));
+    if let Err(flow) = i.apply(&select_frame, vec![Value::Frame(frame)]) {
+        report_flow(i, flow);
+    }
 }
 
 /// Process one key event: extend the key sequence, look up the
@@ -1290,7 +1323,7 @@ fn minibuf_loop<T: KeyIo>(
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
-        let input = match {
+        let polled = {
             let mut t = term.borrow_mut();
             if single {
                 t.poll_key(Duration::from_millis(50))
@@ -1298,7 +1331,9 @@ fn minibuf_loop<T: KeyIo>(
             } else {
                 t.poll_input(Duration::from_millis(50))
             }
-        } {
+        };
+        apply_frame_selection(term, i);
+        let input = match polled {
             Ok(Some(input)) => input,
             Ok(None) => continue,
             Err(e) => return Err(i.error(format!("minibuffer input: {e}"))),
