@@ -237,7 +237,7 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
            date t t))
          (date-without-zone
           (replace-regexp-in-string
-           "[+-][0-9][0-9]:?[0-9][0-9]"
+           "\\(?:^\\|[^[:alnum:]]\\)[+-][0-9][0-9]:?[0-9][0-9]\\(?:$\\|[^0-9]\\)"
            (lambda (match) (make-string (length match) 32))
            date-without-time t t))
          (day-of-month
@@ -245,12 +245,19 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
                 "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]?\\)\\(?:[^0-9]\\|$\\)"
                 date-without-zone)
                (string-to-number (match-string 1 date-without-zone))))
+         (date-with-hyphen-delimiters (copy-sequence date))
          (start 0)
          year-range)
     ;; RFC 6265 processes the day-of-month token before considering a year.
     ;; An out-of-range two-digit day must not be reinterpreted as a year.
     (when (and day-of-month (not (<= 1 day-of-month 31)))
       (error "Invalid cookie date: %s" date))
+    ;; Hyphen is an RFC 6265 date-token delimiter.  Leave signed numeric
+    ;; timezone offsets intact; they were blanked in DATE-WITHOUT-ZONE.
+    (while (string-match "-" date-without-zone start)
+      (aset date-with-hyphen-delimiters (match-beginning 0) 32)
+      (setq start (match-end 0)))
+    (setq start 0)
     (while (and (not year-range)
                 (string-match
                  "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]\\)\\(?:$\\|[^0-9]\\)"
@@ -262,10 +269,10 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
           (setq start (match-end 1)))))
     (date-to-time
      (if year-range
-         (concat (substring date 0 (nth 0 year-range))
+         (concat (substring date-with-hyphen-delimiters 0 (nth 0 year-range))
                  (number-to-string (+ 2000 (nth 2 year-range)))
-                 (substring date (nth 1 year-range)))
-       date))))
+                 (substring date-with-hyphen-delimiters (nth 1 year-range)))
+       date-with-hyphen-delimiters))))
 
 (defun url-cookie-expired-p (cookie)
   "Return non-nil if COOKIE is expired."
