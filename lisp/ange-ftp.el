@@ -4690,14 +4690,16 @@ NEWNAME should be the name to give the new compressed or uncompressed file.")
     (if (not parsed)
 	(ange-ftp-real-shell-command command output-buffer error-buffer)
       (if (> (length name) 0)		; else it's $HOME
-	  (setq command (concat "cd " name "; " command)))
+	  (setq command (concat "cd " (shell-quote-argument name 'posix)
+				"; " command)))
       ;; Remove port from the hostname
       (when (string-match "\\(.*\\)#" host)
 	(setq host (match-string 1 host)))
       (setq command
-	    (format  "%s %s \"%s\""	; remsh -l USER does not work well
-					; on a hp-ux machine I tried
-		     remote-shell-program host command))
+	    (format "%s %s %s"
+		    (shell-quote-argument remote-shell-program)
+		    (shell-quote-argument host)
+		    (shell-quote-argument command)))
       (ange-ftp-message "Remote command `%s' ..." command)
       ;; Cannot call ange-ftp-real-dired-run-shell-command here as it
       ;; would prepend "cd default-directory" --- which bombs because
