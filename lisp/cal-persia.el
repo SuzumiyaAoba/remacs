@@ -32,7 +32,7 @@
 (require 'calendar)
 
 (defconst calendar-persian-month-name-array
-  ["Farvardin" "Ordibehest" "Xordad" "Tir" "Mordad" "Sahrivar" "Mehr" "Aban"
+  ["Farvardin" "Ordibehesht" "Xordad" "Tir" "Mordad" "Shahrivar" "Mehr" "Aban"
    "Azar" "Dey" "Bahman" "Esfand"]
   "Names of the months in the Persian calendar.")
 
