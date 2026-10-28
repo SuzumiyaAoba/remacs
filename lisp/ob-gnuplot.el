@@ -309,7 +309,7 @@ then create one.  Return the initialized session.  The current
   (unless (stringp s)
     (setq s (format "%s" s)))
   (if (string-match org-table-number-regexp s) s
-    (if (string-match org-ts-regexp3 s)
+    (if (string-match (concat "\\`" org-ts-regexp3 "\\'") s)
 	(org-babel-gnuplot-quote-timestamp-field s)
       (if (zerop (length s))
 	  (or *org-babel-gnuplot-missing* s)

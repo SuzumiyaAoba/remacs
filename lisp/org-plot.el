@@ -137,7 +137,7 @@ will be added.  Returns the resulting property list."
 (defun org-plot-quote-tsv-field (s)
   "Quote field S for export to gnuplot."
   (if (string-match org-table-number-regexp s) s
-    (if (string-match org-ts-regexp3 s)
+    (if (string-match (concat "\\`" org-ts-regexp3 "\\'") s)
 	(org-plot-quote-timestamp-field s)
       (concat "\"" (org-plot--gnuplot-quote-double-string s) "\""))))
 
