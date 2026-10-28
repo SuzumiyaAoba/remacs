@@ -159,6 +159,17 @@ Pass PARAMS through to `orgtbl-to-generic' when exporting TABLE."
 	        params)))))
   nil)
 
+(defun org-plot--grid-cell-value (value row column)
+  "Convert numeric grid VALUE at ROW and COLUMN, rejecting text cells."
+  (let ((value (if (stringp value) (string-trim value) value)))
+    (unless (and (stringp value)
+                 (string-match-p
+                  "\\`[-+]?\\(?:[0-9]+\\(?:\\.[0-9]*\\)?\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
+                  value))
+      (user-error "Non-numeric Org Plot grid value at row %d, column %d: %s"
+                  (1+ row) (1+ column) value))
+    (string-to-number value)))
+
 (defun org-plot/gnuplot-to-grid-data (table data-file params)
   "Export the data in TABLE to DATA-FILE for gnuplot.
 This means in a format appropriate for grid plotting by gnuplot.
@@ -197,14 +208,14 @@ and dependent variables."
 	    front-edge back-edge)
 	(dotimes (col num-cols)
 	  (dotimes (row num-rows)
-	    (setf back-edge
-		  (concat back-edge
-			  (funcall gnuplot-row (- col 1) row
-				   (string-to-number (nth col (nth row table))))))
-	    (setf front-edge
-		  (concat front-edge
-			  (funcall gnuplot-row col row
-				   (string-to-number (nth col (nth row table)))))))
+	    (let ((value (org-plot--grid-cell-value
+			  (nth col (nth row table)) row col)))
+	      (setf back-edge
+		    (concat back-edge
+			    (funcall gnuplot-row (- col 1) row value)))
+	      (setf front-edge
+		    (concat front-edge
+			    (funcall gnuplot-row col row value)))))
 	  ;; only insert once per row
 	  (insert back-edge) (insert "\n") ;; back edge
 	  (insert front-edge) (insert "\n") ;; front edge
