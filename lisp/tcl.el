@@ -394,6 +394,25 @@ This variable is generally set from `tcl-proc-regexp',
 (eval-and-compile
   (defconst tcl--word-delimiters "[;{ \t\n"))
 
+(defun tcl--inside-command-substitution-p (string-start pos)
+  "Return non-nil if POS is inside a bracketed command in STRING-START."
+  (let ((depth 0)
+        (quoted nil)
+        (escaped nil))
+    (save-excursion
+      (goto-char (1+ string-start))
+      (while (< (point) pos)
+        (let ((char (char-after)))
+          (cond
+           (escaped (setq escaped nil))
+           ((eq char ?\\) (setq escaped t))
+           (quoted (when (eq char ?\") (setq quoted nil)))
+           ((eq char ?\[) (setq depth (1+ depth)))
+           ((eq char ?\]) (setq depth (max 0 (1- depth))))
+           ((and (> depth 0) (eq char ?\")) (setq quoted t))))
+        (forward-char))
+      (> depth 0)))
+
 (defun tcl--syntax-of-quote (pos)
   "Decide whether a double quote opens a string or not."
   ;; This is pretty tricky, because strings can be written as "..."
@@ -404,7 +423,12 @@ This variable is generally set from `tcl-proc-regexp',
   (save-excursion
     (let ((ppss (syntax-ppss pos)))
       (cond
-       ((nth 8 ppss) nil) ;; Within a string or a comment.
+       ((nth 8 ppss)
+        (if (and (nth 3 ppss)
+                 (tcl--inside-command-substitution-p (nth 8 ppss) pos))
+            ;; Don't let a nested command's quote close the outer string.
+            (string-to-syntax ".")
+          nil))
        ((not (memq (char-before pos)
                    (cons nil
                          (eval-when-compile
@@ -444,7 +468,7 @@ This variable is generally set from `tcl-proc-regexp',
             (string-to-syntax "."))))))))
 
 (defconst tcl-syntax-propertize-function
-  ;; FIXME: Handle the [...] commands nested inside "..." strings.
+  ;; Preserve the outer string across quotes inside [...] substitutions.
   (syntax-propertize-rules
    ;; Tcl folds backslash-newline before parsing, including inside comments.
    ((concat (regexp-quote "\\") "\\(\n\\)[ \t]*") (1 " "))
