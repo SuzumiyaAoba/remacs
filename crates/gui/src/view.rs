@@ -23,6 +23,7 @@ pub(super) struct EditorView {
     tx: Sender<GuiEvent>,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
+    window_title: Option<String>,
     pub(super) cols: usize,
     rows: usize,
     input: TextInputState,
@@ -47,6 +48,7 @@ impl EditorView {
             tx,
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
+            window_title: None,
             cols: 80,
             rows: 24,
             input: TextInputState::default(),
@@ -64,6 +66,11 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
+            window.set_window_title(&self.grid.title);
+            self.window_title = Some(self.grid.title.clone());
+        }
+
         let text_font = font("Menlo");
         let font_size = px(FONT_SIZE);
         let line_height = px(LINE_HEIGHT);

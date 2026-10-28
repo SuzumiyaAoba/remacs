@@ -119,6 +119,8 @@ impl PartialEq for StyleMix {
 /// rows, and cursor positions for terminals and shaped GUI text.
 #[derive(Clone, PartialEq)]
 pub struct Grid {
+    /// Native frame title computed from `frame-title-format`.
+    pub title: String,
     pub rows: Vec<String>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
@@ -170,6 +172,7 @@ impl Grid {
     /// An all-default grid of WIDTH × HEIGHT cells.
     pub fn blank(width: usize, height: usize) -> Grid {
         Grid {
+            title: "Remacs".to_owned(),
             rows: vec![String::new(); height],
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -393,6 +396,115 @@ fn blink_cursor_settings(i: &Interp) -> (bool, f64) {
         enabled,
         interval.filter(|value| *value > 0.0).unwrap_or(0.5),
     )
+}
+
+struct FrameTitleContext<'a> {
+    buffer_name: &'a str,
+    file_name: Option<&'a str>,
+    frame_name: &'a str,
+    modified: bool,
+}
+
+fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
+    let mut title = String::with_capacity(format.len());
+    let mut chars = format.chars();
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            title.push(character);
+            continue;
+        }
+        let Some(specifier) = chars.next() else {
+            title.push('%');
+            break;
+        };
+        match specifier {
+            '%' => title.push('%'),
+            'b' => title.push_str(context.buffer_name),
+            'f' => title.push_str(context.file_name.unwrap_or(context.buffer_name)),
+            'F' => title.push_str(context.frame_name),
+            '*' | '+' => title.push(if context.modified { '*' } else { '-' }),
+            '-' => title.push('-'),
+            other => {
+                title.push('%');
+                title.push(other);
+            }
+        }
+    }
+    title
+}
+
+fn format_frame_title_value(
+    i: &Interp,
+    value: &Value,
+    context: &FrameTitleContext<'_>,
+    depth: usize,
+) -> String {
+    if depth >= 32 {
+        return String::new();
+    }
+    match value {
+        Value::Nil => String::new(),
+        Value::Str(string) => {
+            format_frame_title_string(&string.borrow().to_unicode_lossy(), context)
+        }
+        Value::Sym(symbol) => {
+            if i.symbol_name(*symbol) == "t" {
+                return context.buffer_name.to_owned();
+            }
+            let symbol_value = i.symbol_value(*symbol);
+            if matches!(&symbol_value, Value::Sym(other) if other == symbol) {
+                i.symbol_name(*symbol).to_string()
+            } else {
+                format_frame_title_value(i, &symbol_value, context, depth + 1)
+            }
+        }
+        Value::Cons(_) => value
+            .list_to_vec()
+            .map(|elements| {
+                elements
+                    .iter()
+                    .map(|element| format_frame_title_value(i, element, context, depth + 1))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Value::Int(number) => number.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
+    let buffer_id = frame.selected.borrow().buffer;
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return frame.name.borrow().to_unicode_lossy();
+    };
+    let (buffer_name, file_name, modified) = {
+        let buffer = buffer.borrow();
+        (
+            buffer.name.to_unicode_lossy(),
+            buffer
+                .file_name
+                .as_ref()
+                .map(|name| name.to_unicode_lossy()),
+            buffer.is_modified(),
+        )
+    };
+    let frame_name = frame.name.borrow().to_unicode_lossy();
+    let context = FrameTitleContext {
+        buffer_name: &buffer_name,
+        file_name: file_name.as_deref(),
+        frame_name: &frame_name,
+        modified,
+    };
+    let Some(format) = i
+        .q_soft("frame-title-format")
+        .map(|symbol| i.symbol_value(symbol))
+    else {
+        return buffer_name;
+    };
+    if matches!(format, Value::Nil) {
+        return buffer_name;
+    }
+    format_frame_title_value(i, &format, &context, 0)
 }
 
 struct RenderedRow {
@@ -1189,6 +1301,7 @@ fn render_grid_internal(
         Some(f) => f.clone(),
         None => {
             return Grid {
+                title: "Remacs".to_owned(),
                 rows,
                 attrs,
                 char_attrs,
@@ -1204,6 +1317,7 @@ fn render_grid_internal(
         }
     };
     let fb = frame.borrow();
+    let title = frame_title(i, &fb);
     let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let mini_height = 1usize;
     let body_height = height.saturating_sub(mini_height);
@@ -1642,6 +1756,7 @@ fn render_grid_internal(
         }
     }
     Grid {
+        title,
         rows,
         attrs,
         char_attrs,
