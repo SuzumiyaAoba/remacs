@@ -1251,15 +1251,12 @@ these include `opts', `dir', `files', `files-raw', `null-device',
                 (files-raw . ,files-raw)
                 (regexp . ,regexp)))
          (case-fold-search nil))
-    (dolist (kw grep-expand-keywords command)
-      (if (string-match (car kw) command)
-	  (setq command
-		(replace-match
-		 (or (if (symbolp (cdr kw))
-			 (eval (cdr kw) env)
-		       (save-match-data (eval (cdr kw) env)))
-		     "")
-		 t t command))))))
+    (replace-regexp-in-string
+     (regexp-opt (mapcar #'car grep-expand-keywords))
+     (lambda (match)
+       (let ((form (cdr (assoc match grep-expand-keywords))))
+         (or (save-match-data (eval form env)) "")))
+     command t t)))
 
 (defun grep-read-regexp ()
   "Read regexp arg for interactive grep using `read-regexp'."
