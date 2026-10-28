@@ -635,7 +635,8 @@ The following %-sequences are provided:
 				 energy-now
 			       (- energy-full energy-now))))
 	      (setq hours (/ remaining power-now)))))))
-    (when (and (> energy-full 0) (> energy-now 0))
+    ;; A zero ENERGY-NOW is a real empty-battery reading, not missing data.
+    (when (and (> energy-full 0) (>= energy-now 0))
       (setq percentage-now (/ (* 100 energy-now) energy-full)))
     (list (cons ?c (if (or (> energy-full 0) (> energy-now 0))
                        (number-to-string (/ energy-now voltage-now))
