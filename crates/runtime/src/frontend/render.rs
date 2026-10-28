@@ -650,6 +650,300 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
     format_frame_title_value(i, &format, &context, 0)
 }
 
+struct ModeLineContext {
+    buffer_name: String,
+    file_name: String,
+    mode_name: String,
+    modified: bool,
+    read_only: bool,
+    line: usize,
+    column: usize,
+    line_count: usize,
+    buffer_size: usize,
+    point_offset: usize,
+    narrowed: bool,
+}
+
+fn mode_line_variable(i: &Interp, buffer_id: usize, name: &str) -> Option<Value> {
+    let id = i.q_soft(name)?;
+    i.buffer_local_toplevel_value(id, buffer_id)
+        .or_else(|| i.default_toplevel_value(id))
+}
+
+fn fit_mode_line_field(field: &str, width: usize, left_align: bool) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let characters: Vec<_> = field.chars().collect();
+    if characters.len() > width {
+        if width >= 3 {
+            return format!("{}…", characters[..width - 1].iter().collect::<String>());
+        }
+        return characters[..width].iter().collect();
+    }
+    let padding = " ".repeat(width - characters.len());
+    if left_align {
+        format!("{field}{padding}")
+    } else {
+        format!("{padding}{field}")
+    }
+}
+
+fn format_mode_line_string(value: &str, context: &ModeLineContext) -> String {
+    let characters: Vec<_> = value.chars().collect();
+    let mut output = String::new();
+    let mut index = 0usize;
+    while index < characters.len() {
+        if characters[index] != '%' {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        index += 1;
+        if index >= characters.len() {
+            output.push('%');
+            break;
+        }
+        if characters[index] == '%' {
+            output.push('%');
+            index += 1;
+            continue;
+        }
+        let left_align = characters[index] == '-';
+        if left_align {
+            index += 1;
+        }
+        let mut width = 0usize;
+        let mut has_width = false;
+        while index < characters.len() && characters[index].is_ascii_digit() {
+            has_width = true;
+            width = width
+                .saturating_mul(10)
+                .saturating_add(characters[index].to_digit(10).unwrap_or(0) as usize);
+            index += 1;
+        }
+        let mut precision = None;
+        if index < characters.len() && characters[index] == '.' {
+            index += 1;
+            let mut value = 0usize;
+            while index < characters.len() && characters[index].is_ascii_digit() {
+                value = value
+                    .saturating_mul(10)
+                    .saturating_add(characters[index].to_digit(10).unwrap_or(0) as usize);
+                index += 1;
+            }
+            precision = Some(value);
+        }
+        if index >= characters.len() {
+            output.push('%');
+            break;
+        }
+        let specifier = characters[index];
+        index += 1;
+        let mut field = match specifier {
+            'b' => context.buffer_name.clone(),
+            'f' => context.file_name.clone(),
+            'm' | 'M' => context.mode_name.clone(),
+            'l' => context.line.to_string(),
+            'c' => context.column.to_string(),
+            'C' => context.column.saturating_add(1).to_string(),
+            'L' => context.line_count.to_string(),
+            'I' => context.buffer_size.to_string(),
+            'p' | 'P' => {
+                if context.buffer_size == 0 {
+                    "All".to_owned()
+                } else if context.point_offset == 0 {
+                    "Top".to_owned()
+                } else if context.point_offset >= context.buffer_size {
+                    "Bot".to_owned()
+                } else {
+                    let percentage = context.point_offset.saturating_mul(100)
+                        / context.buffer_size.max(1);
+                    format!("{percentage:2}%")
+                }
+            }
+            'n' => {
+                if context.narrowed {
+                    " Narrow".to_owned()
+                } else {
+                    String::new()
+                }
+            }
+            '*' => {
+                if context.read_only {
+                    "%".to_owned()
+                } else if context.modified {
+                    "*".to_owned()
+                } else {
+                    "-".to_owned()
+                }
+            }
+            '+' => {
+                if context.modified {
+                    "*"
+                } else {
+                    "-"
+                }
+                .to_owned()
+            }
+            '[' | ']' | 'e' | 's' => String::new(),
+            other => other.to_string(),
+        };
+        if let Some(maximum) = precision {
+            field = field.chars().take(maximum).collect();
+        }
+        if has_width {
+            field = fit_mode_line_field(&field, width, left_align);
+        }
+        output.push_str(&field);
+    }
+    output
+}
+
+fn format_mode_line_minor_modes(
+    i: &Interp,
+    buffer_id: usize,
+    context: &ModeLineContext,
+    depth: usize,
+) -> String {
+    let Some(alist) = mode_line_variable(i, buffer_id, "minor-mode-alist") else {
+        return String::new();
+    };
+    let Ok(entries) = alist.list_to_vec() else {
+        return String::new();
+    };
+    let mut output = String::new();
+    for entry in entries {
+        let Ok(parts) = entry.list_to_vec() else {
+            continue;
+        };
+        let Some(Value::Sym(mode)) = parts.first() else {
+            continue;
+        };
+        let active = mode_line_variable(i, buffer_id, &i.symbol_name(*mode))
+            .unwrap_or(Value::Nil)
+            .truthy();
+        if active {
+            for value in parts.iter().skip(1) {
+                output.push_str(&format_mode_line_value(
+                    i,
+                    buffer_id,
+                    value,
+                    context,
+                    depth + 1,
+                ));
+            }
+        }
+    }
+    output
+}
+
+fn format_mode_line_value(
+    i: &Interp,
+    buffer_id: usize,
+    value: &Value,
+    context: &ModeLineContext,
+    depth: usize,
+) -> String {
+    if depth > 32 {
+        return String::new();
+    }
+    match value {
+        Value::Nil => String::new(),
+        Value::Str(string) => {
+            format_mode_line_string(&string.borrow().to_unicode_lossy(), context)
+        }
+        Value::Int(number) => number.to_string(),
+        Value::Float(number) => number.to_string(),
+        Value::Sym(symbol) => {
+            if i.symbol_name(*symbol) == "mode-line-minor-modes" {
+                return format_mode_line_minor_modes(i, buffer_id, context, depth + 1);
+            }
+            let Some(value) = mode_line_variable(i, buffer_id, &i.symbol_name(*symbol)) else {
+                return String::new();
+            };
+            if matches!(value, Value::Sym(id) if id == *symbol) {
+                return String::new();
+            }
+            format_mode_line_value(i, buffer_id, &value, context, depth + 1)
+        }
+        Value::Cons(_) => {
+            let Ok(elements) = value.list_to_vec() else {
+                return String::new();
+            };
+            if elements.is_empty() {
+                return String::new();
+            }
+            if let Value::Sym(head) = &elements[0] {
+                match i.symbol_name(*head).as_str() {
+                    ":eval" => return String::new(),
+                    ":propertize" => {
+                        return elements.get(1).map_or_else(String::new, |body| {
+                            format_mode_line_value(i, buffer_id, body, context, depth + 1)
+                        });
+                    }
+                    _ => {}
+                }
+                if elements.len() > 1 {
+                    let condition = mode_line_variable(i, buffer_id, &i.symbol_name(*head))
+                        .unwrap_or(Value::Nil)
+                        .truthy();
+                    if condition {
+                        if elements.len() == 2 {
+                            return format_mode_line_value(
+                                i,
+                                buffer_id,
+                                &elements[1],
+                                context,
+                                depth + 1,
+                            );
+                        }
+                        return elements[1..]
+                            .iter()
+                            .map(|element| {
+                                format_mode_line_value(
+                                    i,
+                                    buffer_id,
+                                    element,
+                                    context,
+                                    depth + 1,
+                                )
+                            })
+                            .collect();
+                    }
+                    if elements.len() >= 3 {
+                        return format_mode_line_value(
+                            i,
+                            buffer_id,
+                            elements.last().unwrap_or(&Value::Nil),
+                            context,
+                            depth + 1,
+                        );
+                    }
+                    return String::new();
+                }
+            }
+            let start = if matches!(elements[0], Value::Int(_)) {
+                1
+            } else {
+                0
+            };
+            elements[start..]
+                .iter()
+                .map(|element| {
+                    format_mode_line_value(i, buffer_id, element, context, depth + 1)
+                })
+                .collect()
+        }
+        Value::Vec(vector) => vector
+            .borrow()
+            .iter()
+            .map(|element| format_mode_line_value(i, buffer_id, element, context, depth + 1))
+            .collect(),
+        _ => String::new(),
+    }
+}
+
 struct RenderedRow {
     text: String,
     cell_attrs: Vec<CellStyle>,
@@ -2241,6 +2535,8 @@ fn render_grid_internal(
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
+        let mode_line_format = buffer_setting(i, "mode-line-format", buf_id);
+        let mode_line_enabled = !mode_line_format.is_nil();
         let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
         let line_number_offset = match buffer_setting(i, "display-line-numbers-offset", buf_id) {
             Value::Int(offset) => offset,
@@ -2273,7 +2569,7 @@ fn render_grid_internal(
         };
         let content_left = window_left.saturating_add(gutter_width);
         let content_width = window_width.saturating_sub(gutter_width);
-        let text_rows = window_height.saturating_sub(1);
+        let text_rows = window_height.saturating_sub(usize::from(mode_line_enabled));
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
         // away, and likewise `hscroll' horizontally (GNU
@@ -2682,8 +2978,8 @@ fn render_grid_internal(
         w.borrow_mut().redisplay_end = Some((buf_id, tick, start, visible_end));
         // Mode line.
         let my = window_top + text_rows;
-        if my < body_height {
-            let (name, modified, point_line, point_col) = match i.buffers.get(buf_id) {
+        if mode_line_enabled && my < body_height {
+            let mode_context = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
                     let point = if selected_window {
@@ -2692,29 +2988,51 @@ fn render_grid_internal(
                         w.borrow().point
                     }
                     .clamp(bb.begv, bb.zv);
+                    let first_line = bb.text.line_of_pos(bb.begv);
                     let point_line = bb.text.line_of_pos(point);
+                    let last_line = bb.text.line_of_pos(bb.zv);
                     let point_line_start = bb.text.line_start(point_line);
-                    (
-                        bb.name.clone(),
-                        bb.is_modified(),
-                        point_line + 1,
-                        display_columns(&bb.text.substring(point_line_start, point), tab_width),
-                    )
+                    let mode_name = match buffer_setting(i, "mode-name", buf_id) {
+                        Value::Str(name) => name.borrow().to_unicode_lossy(),
+                        Value::Sym(name) => i.symbol_name(name),
+                        value => i.princ_to_string(&value).to_unicode_lossy(),
+                    };
+                    ModeLineContext {
+                        buffer_name: bb.name.to_unicode_lossy(),
+                        file_name: bb
+                            .file_name
+                            .as_ref()
+                            .map(|name| name.to_unicode_lossy())
+                            .unwrap_or_default(),
+                        mode_name,
+                        modified: bb.is_modified(),
+                        read_only: buffer_setting(i, "buffer-read-only", buf_id).truthy(),
+                        line: point_line.saturating_sub(first_line).saturating_add(1),
+                        column: display_columns(
+                            &bb.text.substring(point_line_start, point),
+                            tab_width,
+                        ),
+                        line_count: last_line.saturating_sub(first_line).saturating_add(1),
+                        buffer_size: bb.zv.saturating_sub(bb.begv),
+                        point_offset: point.saturating_sub(bb.begv),
+                        narrowed: bb.begv > 0 || bb.zv < bb.text_len(),
+                    }
                 }
-                None => ("???".into(), false, 0, 0),
+                None => ModeLineContext {
+                    buffer_name: "???".to_owned(),
+                    file_name: String::new(),
+                    mode_name: String::new(),
+                    modified: false,
+                    read_only: false,
+                    line: 0,
+                    column: 0,
+                    line_count: 0,
+                    buffer_size: 0,
+                    point_offset: 0,
+                    narrowed: false,
+                },
             };
-            let mode = format!(
-                "--{}- {}   L{} C{}{}",
-                if modified { "**" } else { "--" },
-                name,
-                point_line,
-                point_col,
-                if std::rc::Rc::ptr_eq(w, &fb.selected) {
-                    "  [sel]"
-                } else {
-                    ""
-                }
-            );
+            let mode = format_mode_line_value(i, buf_id, &mode_line_format, &mode_context, 0);
             // GNU draws mode lines under `mode-line-active' on the
             // selected window, `mode-line-inactive' elsewhere — both
             // resolve through `mode-line' (inverse on a mono tty).
