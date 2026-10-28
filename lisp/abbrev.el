@@ -934,11 +934,13 @@ This setting only applies if `abbrev-suggest' is non-nil."
 
 (defun abbrev--suggest-get-active-tables-including-parents ()
   "Return a list of all active abbrev tables, including parent tables."
-  (let* ((tables (abbrev--active-tables))
-	 (all tables))
-    (dolist (table tables)
-      (setq all (append (abbrev-table-get table :parents) all)))
-    all))
+  (let ((tables (abbrev--active-tables)) all)
+    (while tables
+      (let ((table (pop tables)))
+        (unless (memq table all)
+          (push table all)
+          (setq tables (append (abbrev-table-get table :parents) tables)))))
+    (nreverse all)))
 
 (defun abbrev--suggest-get-active-abbrev-expansions ()
   "Return a list of all the active abbrev expansions.
