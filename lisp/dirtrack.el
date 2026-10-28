@@ -154,6 +154,9 @@ Second is a number, the regexp group to match."
   "Hook that is called when a directory change is made."
   :type 'hook)
 
+(defvar-local dirtrack--pending-input ""
+  "Unmatched process output retained for split-prompt detection.")
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions
@@ -187,7 +190,10 @@ tracking `cd' and similar commands which change the shell working
 directory."
   :lighter nil
   (if dirtrack-mode
-      (add-hook 'comint-preoutput-filter-functions 'dirtrack nil t)
+      (progn
+        (setq-local dirtrack--pending-input "")
+        (add-hook 'comint-preoutput-filter-functions 'dirtrack nil t))
+    (setq-local dirtrack--pending-input nil)
     (remove-hook 'comint-preoutput-filter-functions 'dirtrack t)))
 
 
@@ -217,12 +223,20 @@ from `default-directory'."
   (when (and dirtrack-mode
 	     (not (eq (point) (point-min)))) ; there must be output
     (save-excursion ; What's this for? -- cyd
-      (if (not (string-match (nth 0 dirtrack-list) input))
-	  ;; No match
-	  (dirtrack-debug-message
-	   "Input failed to match `dirtrack-list': " input)
-	(let ((prompt-path (match-string (nth 1 dirtrack-list) input))
-	      temp)
+      (setq dirtrack--pending-input
+            (concat dirtrack--pending-input input))
+	(let ((prompt-input
+	       (cond ((string-match (nth 0 dirtrack-list) dirtrack--pending-input)
+		      dirtrack--pending-input)
+	             ((string-match (nth 0 dirtrack-list) input) input))))
+	  (if (not prompt-input)
+	      ;; No match
+	      (dirtrack-debug-message
+	       "Input failed to match `dirtrack-list': " input)
+	    (let ((prompt-path
+		   (match-string (nth 1 dirtrack-list) prompt-input))
+		  temp)
+	      (setq dirtrack--pending-input "")
 	  (cond
 	   ;; Don't do anything for empty string
 	   ((string-equal prompt-path "")
@@ -260,7 +274,7 @@ from `default-directory'."
 				(concat prompt-path "\n" default-directory)))
 	    (shell-process-cd (concat (match-string 2 temp)
 				      prompt-path))
-	    (run-hooks 'dirtrack-directory-change-hook)))))))
+	    (run-hooks 'dirtrack-directory-change-hook))))))))
   input)
 
 (provide 'dirtrack)
