@@ -144,17 +144,8 @@
 ;;  all tried expansions so far.  The try-function can check this
 ;;  variable to see whether an expansion has already been tried
 ;;  (hint: `he-string-member').
-;;
-;;  Known bugs
-;;
-;;  It may happen that some completion suggestion occurs twice, in
-;;  spite of the use of `he-tried-table' to prevent that.  This is
-;;  because different try-functions may try to complete different
-;;  lengths of text, and thus put different amounts of the
-;;  text in `he-tried-table'.  Anyway this seems to occur seldom enough
-;;  not to be too disturbing.  Also it should NOT be possible for the
-;;  opposite situation to occur, that `hippie-expand' misses some
-;;  suggestion because it thinks it has already tried it.
+;;  The driver also tracks the complete buffer result, so try-functions
+;;  that replace different spans don't offer duplicate visible text.
 ;;
 ;;  Acknowledgment
 ;;
@@ -186,6 +177,9 @@
 (defvar he-expand-list ())
 
 (defvar he-tried-table ())
+
+;; Hashes of complete buffer contents produced during this expansion cycle.
+(defvar he-tried-buffer-hashes nil)
 
 (defvar he-search-loc (make-marker))
 
@@ -270,15 +264,29 @@ undoes the expansion."
 	(if first
 	    (progn
 	      (setq he-num -1)
-	      (setq he-tried-table nil)))
+	      (setq he-tried-table nil
+	            he-tried-buffer-hashes
+	            (list (secure-hash 'sha256 (current-buffer)
+                               (point-min) (point-max)))))
 	(if arg
 	    (if (not first) (he-reset-string))
 	    (setq arg 0))
-	(let ((i (max (+ he-num arg) 0)))
-	  (while (not (or (>= i (length hippie-expand-try-functions-list))
-			  (apply (nth i hippie-expand-try-functions-list)
-				 (list (= he-num i)))))
-	    (setq i (1+ i)))
+	(let ((i (max (+ he-num arg) 0))
+	      done)
+	  (while (and (< i (length hippie-expand-try-functions-list))
+               (not done))
+	    (if (apply (nth i hippie-expand-try-functions-list)
+		       (list (= he-num i)))
+	        (let ((hash (secure-hash 'sha256 (current-buffer)
+                                 (point-min) (point-max))))
+	          (if (member hash he-tried-buffer-hashes)
+	              (progn
+	                (he-reset-string)
+	                ;; Retry this function for its next candidate.
+	                (setq he-num i))
+	            (push hash he-tried-buffer-hashes)
+	            (setq done t)))
+	      (setq i (1+ i))))
 	  (setq he-num i))
 	(if (>= he-num (length hippie-expand-try-functions-list))
 	    (progn
