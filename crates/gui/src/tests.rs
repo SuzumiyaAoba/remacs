@@ -651,6 +651,8 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::Text(text) => Some(text),
             GuiEvent::Resize(..) => None,
             GuiEvent::Geometry(_) => None,
+            GuiEvent::Scroll { .. } => None,
+            GuiEvent::ScrollBar { .. } => None,
             GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. } => None,
             GuiEvent::Key(code) => panic!("plain text also produced key {code}"),
             GuiEvent::ReplaceText { range, text } => {
@@ -666,6 +668,8 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::Key(code) => Some(code),
             GuiEvent::Resize(..) => None,
             GuiEvent::Geometry(_) => None,
+            GuiEvent::Scroll { .. } => None,
+            GuiEvent::ScrollBar { .. } => None,
             GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. } => None,
             GuiEvent::Text(text) => panic!("command also inserted {text:?}"),
             GuiEvent::ReplaceText { range, text } => {

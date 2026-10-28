@@ -131,6 +131,29 @@ pub struct GridMenuItem {
     pub separator: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GridScrollBarOrientation {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridScrollBar {
+    pub window_id: usize,
+    pub buffer_id: usize,
+    pub orientation: GridScrollBarOrientation,
+    /// Frame-local pixel position and extent.
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub height: usize,
+    /// Thumb position and extent along the track's scrolling axis.
+    pub thumb_start: usize,
+    pub thumb_size: usize,
+    /// Maximum logical scroll offset represented by the track.
+    pub max_offset: usize,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -243,6 +266,7 @@ pub struct Grid {
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
     pub menus: Vec<GridMenu>,
+    pub scroll_bars: Vec<GridScrollBar>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -299,6 +323,7 @@ impl Grid {
             rows: vec![String::new(); height],
             images: Vec::new(),
             menus: Vec::new(),
+            scroll_bars: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -1276,6 +1301,39 @@ fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
             items: item.items,
         })
         .collect()
+}
+
+fn scroll_thumb(
+    track_length: usize,
+    total: usize,
+    visible: usize,
+    offset: usize,
+    minimum_size: usize,
+) -> Option<(usize, usize)> {
+    if track_length == 0 || visible == 0 || total == 0 {
+        return None;
+    }
+    let max_offset = total.saturating_sub(visible);
+    let thumb_size = if max_offset == 0 {
+        track_length
+    } else {
+        track_length
+            .saturating_mul(visible)
+            .checked_div(total)
+            .unwrap_or(0)
+            .max(minimum_size)
+            .min(track_length)
+    };
+    let travel = track_length.saturating_sub(thumb_size);
+    let thumb_start = if max_offset == 0 {
+        0
+    } else {
+        travel
+            .saturating_mul(offset.min(max_offset))
+            .checked_div(max_offset)
+            .unwrap_or(0)
+    };
+    Some((thumb_start, thumb_size))
 }
 
 struct RenderedRow {
@@ -3018,6 +3076,7 @@ fn render_grid_internal(
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
     let menus = render_menu_bar(i);
+    let mut scroll_bars = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let mut positioned_cursors = Vec::new();
@@ -3039,6 +3098,7 @@ fn render_grid_internal(
                 rows,
                 images,
                 menus,
+                scroll_bars,
                 attrs,
                 char_attrs,
                 mode_rows,
@@ -3064,6 +3124,7 @@ fn render_grid_internal(
             _ => None,
         })
         .unwrap_or(8);
+    let frame_char_height = crate::editor::frame_char_height(i, &frame).max(1);
     let default_fringe_left = if graphical {
         frame_fringe_pixels(i, &fb.params, "left-fringe")
     } else {
@@ -3104,6 +3165,8 @@ fn render_grid_internal(
 
     for w in &fb.windows {
         let (
+            window_id,
+            minibuffer_window,
             buf_id,
             start,
             hscroll,
@@ -3116,6 +3179,8 @@ fn render_grid_internal(
         ) = {
             let wb = w.borrow();
             (
+                wb.id,
+                wb.minibuffer,
                 wb.buffer,
                 wb.start,
                 wb.hscroll,
@@ -3127,21 +3192,62 @@ fn render_grid_internal(
                 wb.fringes,
             )
         };
-        let window_left = scale_edge(raw_left, root_left, scale_x, width);
-        let window_top = scale_edge(raw_top, root_top, scale_y, body_height);
-        let window_right = scale_edge(
+        let raw_window_left = scale_edge(raw_left, root_left, scale_x, width);
+        let raw_window_top = scale_edge(raw_top, root_top, scale_y, body_height);
+        let raw_window_right = scale_edge(
             raw_left.saturating_add(raw_width),
             root_left,
             scale_x,
             width,
         );
-        let window_bottom = scale_edge(
+        let raw_window_bottom = scale_edge(
             raw_top.saturating_add(raw_height),
             root_top,
             scale_y,
             body_height,
         );
-        let window_width = window_right.saturating_sub(window_left);
+        let raw_window_width = raw_window_right.saturating_sub(raw_window_left);
+        let raw_window_height = raw_window_bottom
+            .saturating_sub(raw_window_top)
+            .max(2)
+            .min(body_height.saturating_sub(raw_window_top));
+        let (
+            scroll_width,
+            vertical_scroll_side,
+            scroll_height,
+            horizontal_scroll_side,
+            _,
+        ) = crate::editor::winxtra::window_scroll_bar_settings(i, w);
+        let vertical_scroll_cells = if vertical_scroll_side.is_some() {
+            scroll_width
+                .unwrap_or(0)
+                .div_ceil(frame_char_width)
+                .min(raw_window_width)
+        } else {
+            0
+        };
+        let horizontal_scroll_rows = if horizontal_scroll_side.is_some() {
+            scroll_height
+                .unwrap_or(0)
+                .div_ceil(frame_char_height)
+                .min(raw_window_height)
+        } else {
+            0
+        };
+        let left_scroll_cells = if vertical_scroll_side == Some(true) {
+            vertical_scroll_cells
+        } else {
+            0
+        };
+        let top_scroll_rows = if horizontal_scroll_side == Some(true) {
+            horizontal_scroll_rows
+        } else {
+            0
+        };
+        let window_left = raw_window_left.saturating_add(left_scroll_cells);
+        let window_top = raw_window_top.saturating_add(top_scroll_rows);
+        let window_width = raw_window_width.saturating_sub(vertical_scroll_cells);
+        let window_height = raw_window_height.saturating_sub(horizontal_scroll_rows);
         let (fringe_left_pixels, fringe_right_pixels) = if graphical {
             fringes
                 .map(|(left, right, _, _)| {
@@ -3171,11 +3277,6 @@ fn render_grid_internal(
             .saturating_add(margin_left);
         let content_width_with_margins =
             width_after_fringes.saturating_sub(margin_left.saturating_add(margin_right));
-        let available_height = body_height.saturating_sub(window_top);
-        let window_height = window_bottom
-            .saturating_sub(window_top)
-            .max(2)
-            .min(available_height);
         if window_width == 0 || window_height == 0 {
             continue;
         }
@@ -3257,9 +3358,14 @@ fn render_grid_internal(
         // are redisplay state, so updating them here is correct).
         let (start, hscroll) = match i.buffers.get(buf_id) {
             Some(b) if text_rows > 0 => {
-                let (suspend_hs, old_pt, min_hs) = {
+                let (suspend_hs, suspend_vs, old_pt, min_hs) = {
                     let wb = w.borrow();
-                    (wb.suspend_hscroll, wb.old_point_position(), wb.min_hscroll)
+                    (
+                        wb.suspend_hscroll,
+                        wb.suspend_vscroll,
+                        wb.old_point_position(),
+                        wb.min_hscroll,
+                    )
                 };
                 let bb = b.borrow();
                 let pt = (if std::rc::Rc::ptr_eq(w, &fb.selected) {
@@ -3275,12 +3381,18 @@ fn render_grid_internal(
                 if wb_mut.suspend_hscroll && pt != old_pt {
                     wb_mut.suspend_hscroll = false;
                 }
+                if wb_mut.suspend_vscroll && pt != old_pt {
+                    wb_mut.suspend_vscroll = false;
+                }
                 wb_mut.record_old_point(pt);
                 drop(wb_mut);
                 let suspend_hs = suspend_hs && pt == old_pt;
+                let suspend_vs = suspend_vs && pt == old_pt;
                 let pt_line = bb.text.line_of_pos(pt);
                 let start_line = bb.text.line_of_pos(start);
-                let mut new_start = if pt_line < start_line {
+                let mut new_start = if suspend_vs {
+                    start
+                } else if pt_line < start_line {
                     let up = start_line - pt_line;
                     if up > text_rows {
                         bb.text.line_start(pt_line.saturating_sub(text_rows / 2))
@@ -3297,7 +3409,7 @@ fn render_grid_internal(
                 } else {
                     start
                 };
-                if wrap_lines && content_width > 0 {
+                if wrap_lines && content_width > 0 && !suspend_vs {
                     let new_start_line = bb.text.line_of_pos(new_start);
                     let new_start_line_pos = bb.text.line_start(new_start_line).max(bb.begv);
                     let start_offset = new_start.saturating_sub(new_start_line_pos);
@@ -3383,6 +3495,103 @@ fn render_grid_internal(
             }
             _ => (start, hscroll),
         };
+        if graphical && !minibuffer_window {
+            let (first_line, last_line) = i
+                .buffers
+                .get(buf_id)
+                .map(|buffer| {
+                    let bb = buffer.borrow();
+                    (bb.text.line_of_pos(bb.begv), bb.text.line_of_pos(bb.zv))
+                })
+                .unwrap_or((0, 0));
+            let total_lines = last_line.saturating_sub(first_line).saturating_add(1);
+            let top_line = i
+                .buffers
+                .get(buf_id)
+                .map(|buffer| buffer.borrow().text.line_of_pos(start));
+            if let (Some(side), Some(bar_width), Some(top_line)) =
+                (vertical_scroll_side, scroll_width, top_line)
+                && bar_width > 0
+                && text_rows > 0
+            {
+                let track_height = text_rows.saturating_mul(frame_char_height);
+                if let Some((thumb_start, thumb_size)) = scroll_thumb(
+                    track_height,
+                    total_lines,
+                    text_rows,
+                    top_line.saturating_sub(first_line),
+                    frame_char_height.saturating_mul(2),
+                ) {
+                    let bar_left = if side {
+                        raw_window_left.saturating_mul(frame_char_width)
+                    } else {
+                        raw_window_right
+                            .saturating_mul(frame_char_width)
+                            .saturating_sub(bar_width)
+                    };
+                    scroll_bars.push(GridScrollBar {
+                        window_id,
+                        buffer_id: buf_id,
+                        orientation: GridScrollBarOrientation::Vertical,
+                        left: bar_left,
+                        top: content_top.saturating_mul(frame_char_height),
+                        width: bar_width,
+                        height: track_height,
+                        thumb_start,
+                        thumb_size,
+                        max_offset: total_lines.saturating_sub(text_rows),
+                    });
+                }
+            }
+            if let (Some(side), Some(bar_height)) = (horizontal_scroll_side, scroll_height)
+                && bar_height > 0
+                && content_width > 0
+                && text_rows > 0
+                && !wrap_lines
+            {
+                let max_columns = i.buffers.get(buf_id).map_or(0, |buffer| {
+                    let bb = buffer.borrow();
+                    let first = bb.text.line_of_pos(bb.begv);
+                    let last = bb.text.line_of_pos(bb.zv);
+                    (first..=last)
+                        .map(|line| {
+                            let line_start = bb.text.line_start(line).max(bb.begv);
+                            let line_end = bb.text.line_end(line_start).min(bb.zv);
+                            display_columns(&bb.text.substring(line_start, line_end), tab_width)
+                        })
+                        .max()
+                        .unwrap_or(0)
+                });
+                let track_width = content_width.saturating_mul(frame_char_width);
+                if let Some((thumb_start, thumb_size)) = scroll_thumb(
+                    track_width,
+                    max_columns,
+                    content_width,
+                    hscroll,
+                    frame_char_width.saturating_mul(2),
+                ) {
+                    let top = if side {
+                        raw_window_top.saturating_mul(frame_char_height)
+                    } else {
+                        raw_window_bottom
+                            .saturating_mul(frame_char_height)
+                            .saturating_sub(bar_height)
+                    };
+                    scroll_bars.push(GridScrollBar {
+                        window_id,
+                        buffer_id: buf_id,
+                        orientation: GridScrollBarOrientation::Horizontal,
+                        left: content_left.saturating_mul(frame_char_width),
+                        top,
+                        width: track_width,
+                        height: bar_height,
+                        thumb_start,
+                        thumb_size,
+                        max_offset: max_columns.saturating_sub(content_width),
+                    });
+                }
+            }
+        }
         // Per-window face context (overlays, text props, region).
         let wf = i
             .buffers
@@ -3933,6 +4142,7 @@ fn render_grid_internal(
         rows,
         images,
         menus,
+        scroll_bars,
         attrs,
         char_attrs,
         mode_rows,

@@ -1,7 +1,7 @@
 //! Shared editor command dispatch and nested minibuffer input loops.
 #[cfg(test)]
 use super::render_grid;
-use super::{InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
+use super::{GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     editor::{CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER},
@@ -224,6 +224,12 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 &mut keys,
                 &mut arg_mode,
             )?,
+            InputEvent::ScrollBar {
+                window_id,
+                orientation,
+                offset,
+                max_offset,
+            } => dispatch_scroll_bar(i, window_id, orientation, offset, max_offset),
         }
         render_needed = true;
         i.macro_replaying = false;
@@ -759,6 +765,58 @@ fn dispatch_mouse_down(i: &mut Interp, mouse: MouseInput) {
     }
 }
 
+fn dispatch_scroll_bar(
+    i: &mut Interp,
+    window_id: usize,
+    orientation: GridScrollBarOrientation,
+    offset: usize,
+    max_offset: usize,
+) {
+    let Some(frame) = i.selected_frame.clone() else {
+        return;
+    };
+    let windows = {
+        let fb = frame.borrow();
+        fb.windows
+            .iter()
+            .chain(fb.minibuffer.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let Some(window) = windows
+        .into_iter()
+        .find(|window| window.borrow().id == window_id && !window.borrow().dead)
+    else {
+        return;
+    };
+    let buffer_id = window.borrow().buffer;
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return;
+    };
+    match orientation {
+        GridScrollBarOrientation::Vertical => {
+            let (begv, zv, target) = {
+                let bb = buffer.borrow();
+                let first_line = bb.text.line_of_pos(bb.begv);
+                let last_line = bb.text.line_of_pos(bb.zv);
+                let available = last_line.saturating_sub(first_line);
+                let line = first_line.saturating_add(offset.min(max_offset).min(available));
+                (bb.begv, bb.zv, bb.text.line_start(line).max(bb.begv))
+            };
+            let mut wb = window.borrow_mut();
+            wb.start = target.clamp(begv, zv);
+            wb.suspend_vscroll = true;
+            wb.redisplay_end = None;
+        }
+        GridScrollBarOrientation::Horizontal => {
+            let mut wb = window.borrow_mut();
+            wb.hscroll = offset.min(max_offset);
+            wb.suspend_hscroll = true;
+            wb.redisplay_end = None;
+        }
+    }
+}
+
 fn mouse_event(i: &mut Interp, mouse: MouseInput) -> Option<(i128, Value)> {
     let drag = mouse.start.buffer_id != mouse.end.buffer_id
         || mouse.start.buffer_position != mouse.end.buffer_position;
@@ -1199,6 +1257,12 @@ fn minibuf_loop<T: KeyIo>(
                 }
             }
             InputEvent::MouseWheel { .. } => {}
+            InputEvent::ScrollBar {
+                window_id,
+                orientation,
+                offset,
+                max_offset,
+            } => dispatch_scroll_bar(i, window_id, orientation, offset, max_offset),
         }
         render_needed = true;
         if let Some(f) = i.minibuf_exit_fn.take() {

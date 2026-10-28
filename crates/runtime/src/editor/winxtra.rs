@@ -6,9 +6,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::editor::{
-    FrameRef, WindowRef, f_window_list, frame_any, frame_live, frame_of,
-    frame_of_window, is_terminal, relay_children, sel_frame, sel_window, terminal_token, w_parent,
-    w_siblings, win_any, win_err_live, win_err_valid, win_live, win_of, win_valid,
+    FrameRef, HorizontalScrollBarType, VerticalScrollBarType, WindowRef, f_window_list, frame_any,
+    frame_live, frame_of, frame_of_window, is_terminal, relay_children, sel_frame, sel_window,
+    terminal_token, w_parent, w_siblings, win_any, win_err_live, win_err_valid, win_live, win_of,
+    win_valid,
 };
 use crate::lisp::builtins::{S, arg, want_int};
 use crate::lisp::error::{EvalResult, Flow};
@@ -280,6 +281,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("set-window-margins", 2, 3, f_set_window_margins, ""),
     S!("window-scroll-bars", 0, 1, f_window_scroll_bars, ""),
+    S!("window-scroll-bar-width", 0, 1, f_window_scroll_bar_width, ""),
+    S!("window-scroll-bar-height", 0, 1, f_window_scroll_bar_height, ""),
     S!("set-window-scroll-bars", 1, 6, f_set_window_scroll_bars, ""),
     S!(
         "window-current-scroll-bars",
@@ -443,8 +446,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-internal-border-width", 0, 1, f_zero_framep, ""),
     S!("frame-right-divider-width", 0, 1, f_zero_framep, ""),
     S!("frame-bottom-divider-width", 0, 1, f_zero_framep, ""),
-    S!("frame-scroll-bar-width", 0, 1, f_zero_framep, ""),
-    S!("frame-scroll-bar-height", 0, 1, f_zero_framep, ""),
+    S!("frame-scroll-bar-width", 0, 1, f_frame_scroll_bar_width, ""),
+    S!("frame-scroll-bar-height", 0, 1, f_frame_scroll_bar_height, ""),
     S!("frame-child-frame-border-width", 0, 1, f_zero_framep, ""),
     S!("frame-scale-factor", 0, 1, f_frame_scale_factor, ""),
     S!(
@@ -775,28 +778,403 @@ fn f_frame_char_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// `window-scroll-bars' — window-live-p check; batch GNU reports
 /// (WIDTH COLS VT HEIGHT LINES HT PERSISTENT) = (nil 0 t nil 0 t nil)
 /// on a tty frame with no scroll bars.
-fn f_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::list(vec![
-            Value::Nil,
-            Value::Int(0),
-            Value::t(),
-            Value::Nil,
-            Value::Int(0),
-            Value::t(),
-            Value::Nil,
-        ])),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
+fn frame_scroll_parameter(i: &Interp, frame: &FrameRef, name: &str) -> Option<Value> {
+    let property = i.q_soft(name)?;
+    let params = frame.borrow().params.clone();
+    let mut rest = params;
+    while let Value::Cons(cell) = rest {
+        let pair = cell.borrow();
+        let key = pair.car.clone();
+        let value = pair.cdr.clone();
+        drop(pair);
+        let Value::Cons(value_cell) = value else {
+            break;
+        };
+        let value = value_cell.borrow().car.clone();
+        if matches!(key, Value::Sym(id) if id == property) {
+            return Some(value);
+        }
+        rest = value_cell.borrow().cdr.clone();
     }
+    None
+}
+
+fn scroll_side(i: &Interp, value: &Value, first: &str, second: &str) -> Option<bool> {
+    match value {
+        Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+            name if name == first => Some(true),
+            name if name == second => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn frame_vertical_scroll_side(i: &Interp, value: &Value) -> Option<bool> {
+    match value {
+        Value::Nil => None,
+        Value::Sym(symbol) if matches!(i.symbol_name(*symbol).as_str(), "left" | "right") => {
+            scroll_side(i, value, "left", "right")
+        }
+        _ => i
+            .q_soft("default-frame-scroll-bars")
+            .and_then(|symbol| scroll_side(i, &i.symbol_value(symbol), "left", "right")),
+    }
+}
+
+fn frame_horizontal_scroll_side(value: &Value) -> Option<bool> {
+    match value {
+        Value::Nil => None,
+        _ if value.truthy() => Some(false),
+        _ => None,
+    }
+}
+
+fn buffer_scroll_parameter(i: &Interp, window: &WindowRef, name: &str) -> Option<Value> {
+    let symbol = i.q_soft(name)?;
+    let buffer_id = window.borrow().buffer;
+    i.buffer_local_toplevel_value(symbol, buffer_id)
+        .or_else(|| i.default_toplevel_value(symbol))
+}
+
+fn buffer_vertical_scroll_side(
+    i: &Interp,
+    value: Option<&Value>,
+    frame_default: Option<bool>,
+) -> Option<bool> {
+    match value {
+        Some(Value::Nil) => None,
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "left" => Some(true),
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "right" => Some(false),
+        _ => frame_default,
+    }
+}
+
+fn buffer_horizontal_scroll_side(
+    i: &Interp,
+    value: Option<&Value>,
+    frame_default: Option<bool>,
+) -> Option<bool> {
+    match value {
+        Some(Value::Nil) => None,
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "bottom" => Some(false),
+        _ => frame_default,
+    }
+}
+
+fn buffer_vertical_scroll_type(i: &Interp, value: Option<&Value>) -> VerticalScrollBarType {
+    match value {
+        Some(Value::Nil) => VerticalScrollBarType::Disabled,
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "left" => {
+            VerticalScrollBarType::Left
+        }
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "right" => {
+            VerticalScrollBarType::Right
+        }
+        _ => VerticalScrollBarType::FrameDefault,
+    }
+}
+
+fn buffer_horizontal_scroll_type(
+    i: &Interp,
+    value: Option<&Value>,
+) -> HorizontalScrollBarType {
+    match value {
+        Some(Value::Nil) => HorizontalScrollBarType::Disabled,
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "bottom" => {
+            HorizontalScrollBarType::Bottom
+        }
+        _ => HorizontalScrollBarType::FrameDefault,
+    }
+}
+
+fn window_vertical_scroll_type_argument(
+    i: &mut Interp,
+    value: &Value,
+) -> Result<VerticalScrollBarType, Flow> {
+    match value {
+        Value::Nil => Ok(VerticalScrollBarType::Disabled),
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "t" => {
+            Ok(VerticalScrollBarType::FrameDefault)
+        }
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "left" => {
+            Ok(VerticalScrollBarType::Left)
+        }
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "right" => {
+            Ok(VerticalScrollBarType::Right)
+        }
+        _ => Err(i.wrong_type_mut("scroll-bar-type-p", value)),
+    }
+}
+
+fn window_horizontal_scroll_type_argument(
+    i: &mut Interp,
+    value: &Value,
+) -> Result<HorizontalScrollBarType, Flow> {
+    match value {
+        Value::Nil => Ok(HorizontalScrollBarType::Disabled),
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "t" => {
+            Ok(HorizontalScrollBarType::FrameDefault)
+        }
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "bottom" => {
+            Ok(HorizontalScrollBarType::Bottom)
+        }
+        _ => Err(i.wrong_type_mut("scroll-bar-type-p", value)),
+    }
+}
+
+pub(crate) fn window_scroll_bar_settings(
+    i: &Interp,
+    window: &WindowRef,
+) -> (Option<usize>, Option<bool>, Option<usize>, Option<bool>, bool) {
+    let stored = window.borrow().scroll_bars;
+    let frame = frame_of_window(i, window);
+    let graphical = frame
+        .as_ref()
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame));
+    let frame_vertical_width = match frame
+        .as_ref()
+        .and_then(|frame| frame_scroll_parameter(i, frame, "scroll-bar-width"))
+    {
+        Some(Value::Int(width)) => usize::try_from(width.max(0)).unwrap_or(usize::MAX),
+        _ => 16,
+    };
+    let vertical_value = frame
+        .as_ref()
+        .and_then(|frame| frame_scroll_parameter(i, frame, "vertical-scroll-bars"))
+        .unwrap_or_else(|| {
+            i.q_soft("default-frame-scroll-bars")
+                .map(|symbol| i.symbol_value(symbol))
+                .unwrap_or(Value::Nil)
+        });
+    let frame_vertical_side = frame_vertical_scroll_side(i, &vertical_value);
+    let vertical_scroll_value = buffer_scroll_parameter(i, window, "vertical-scroll-bar");
+    let frame_horizontal_height = match frame
+        .as_ref()
+        .and_then(|frame| frame_scroll_parameter(i, frame, "scroll-bar-height"))
+    {
+        Some(Value::Int(height)) => usize::try_from(height.max(0)).unwrap_or(usize::MAX),
+        _ => 8,
+    };
+    let frame_horizontal_side = frame_horizontal_scroll_side(
+        &frame
+            .as_ref()
+            .and_then(|frame| frame_scroll_parameter(i, frame, "horizontal-scroll-bars"))
+            .unwrap_or(Value::Nil),
+    );
+    let horizontal_scroll_value = buffer_scroll_parameter(i, window, "horizontal-scroll-bar");
+    let buffer_vertical_side = buffer_vertical_scroll_side(
+        i,
+        vertical_scroll_value.as_ref(),
+        frame_vertical_side,
+    );
+    let buffer_horizontal_side = buffer_horizontal_scroll_side(
+        i,
+        horizontal_scroll_value.as_ref(),
+        frame_horizontal_side,
+    );
+    let buffer_vertical_width = buffer_scroll_parameter(i, window, "scroll-bar-width")
+        .and_then(|value| match value {
+            Value::Int(width) => Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX)),
+            _ => None,
+        })
+        .unwrap_or(frame_vertical_width);
+    let buffer_horizontal_height = buffer_scroll_parameter(i, window, "scroll-bar-height")
+        .and_then(|value| match value {
+            Value::Int(height) => Some(usize::try_from(height.max(0)).unwrap_or(usize::MAX)),
+            _ => None,
+        })
+        .unwrap_or(frame_horizontal_height);
+    let settings = match stored {
+        Some((width, vertical_type, height, horizontal_type, persistent)) => {
+            let vertical_side = match vertical_type {
+                VerticalScrollBarType::FrameDefault => frame_vertical_side,
+                VerticalScrollBarType::Disabled => None,
+                VerticalScrollBarType::Left => Some(true),
+                VerticalScrollBarType::Right => Some(false),
+            };
+            let horizontal_side = match horizontal_type {
+                HorizontalScrollBarType::FrameDefault => frame_horizontal_side,
+                HorizontalScrollBarType::Disabled => None,
+                HorizontalScrollBarType::Bottom => Some(false),
+            };
+            (
+                Some(width.unwrap_or(frame_vertical_width)),
+                vertical_side,
+                Some(height.unwrap_or(frame_horizontal_height)),
+                horizontal_side,
+                persistent,
+            )
+        }
+        None => (
+            Some(buffer_vertical_width),
+            buffer_vertical_side,
+            Some(buffer_horizontal_height),
+            buffer_horizontal_side,
+            false,
+        ),
+    };
+    if graphical {
+        settings
+    } else {
+        (None, None, None, None, false)
+    }
+}
+
+fn f_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    let frame = frame_of_window(i, &window);
+    let char_width = frame.as_ref().map_or(1, |frame| {
+        crate::editor::frame_char_width(i, frame).max(1)
+    });
+    let char_height = frame.as_ref().map_or(1, |frame| {
+        crate::editor::frame_char_height(i, frame).max(1)
+    });
+    let stored = window.borrow().scroll_bars;
+    let (width, vertical, height, horizontal, persistent) =
+        stored.unwrap_or_else(|| {
+            let width = buffer_scroll_parameter(i, &window, "scroll-bar-width")
+                .and_then(|value| match value {
+                    Value::Int(width) => {
+                        Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX))
+                    }
+                    _ => None,
+                });
+            let vertical = buffer_vertical_scroll_type(
+                i,
+                buffer_scroll_parameter(i, &window, "vertical-scroll-bar").as_ref(),
+            );
+            let height = buffer_scroll_parameter(i, &window, "scroll-bar-height")
+                .and_then(|value| match value {
+                    Value::Int(height) => {
+                        Some(usize::try_from(height.max(0)).unwrap_or(usize::MAX))
+                    }
+                    _ => None,
+                });
+            let horizontal = buffer_horizontal_scroll_type(
+                i,
+                buffer_scroll_parameter(i, &window, "horizontal-scroll-bar").as_ref(),
+            );
+            (width, vertical, height, horizontal, false)
+        });
+    let (effective_width, effective_vertical, effective_height, effective_horizontal, _) =
+        window_scroll_bar_settings(i, &window);
+    let cols = if effective_vertical.is_some() {
+        effective_width
+            .map(|width| width.div_ceil(char_width))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let lines = if effective_horizontal.is_some() {
+        effective_height
+            .map(|height| height.div_ceil(char_height))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    Ok(Value::list(vec![
+        width.map_or(Value::Nil, |width| Value::Int(width as i128)),
+        Value::Int(cols as i128),
+        match vertical {
+            VerticalScrollBarType::FrameDefault => Value::t(),
+            VerticalScrollBarType::Disabled => Value::Nil,
+            VerticalScrollBarType::Left => Value::Sym(i.intern("left")),
+            VerticalScrollBarType::Right => Value::Sym(i.intern("right")),
+        },
+        height.map_or(Value::Nil, |height| Value::Int(height as i128)),
+        Value::Int(lines as i128),
+        match horizontal {
+            HorizontalScrollBarType::FrameDefault => Value::t(),
+            HorizontalScrollBarType::Disabled => Value::Nil,
+            HorizontalScrollBarType::Bottom => Value::Sym(i.intern("bottom")),
+        },
+        Value::from_bool(persistent),
+    ]))
+}
+
+pub(crate) fn f_window_scroll_bar_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    let (width, vertical, _, _, _) = window_scroll_bar_settings(i, &window);
+    Ok(Value::Int(if vertical.is_some() {
+        width.unwrap_or(0) as i128
+    } else {
+        0
+    }))
+}
+
+pub(crate) fn f_window_scroll_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    let (_, _, height, horizontal, _) = window_scroll_bar_settings(i, &window);
+    Ok(Value::Int(if horizontal.is_some() {
+        height.unwrap_or(0) as i128
+    } else {
+        0
+    }))
+}
+
+fn frame_scroll_bar_dimensions(i: &Interp, frame: &FrameRef) -> (usize, usize) {
+    if !crate::editor::frame_is_graphical(i, frame) {
+        return (0, 0);
+    }
+    let vertical_value = frame_scroll_parameter(i, frame, "vertical-scroll-bars").unwrap_or_else(
+        || {
+            i.q_soft("default-frame-scroll-bars")
+                .map(|symbol| i.symbol_value(symbol))
+                .unwrap_or(Value::Nil)
+        },
+    );
+    let vertical = frame_vertical_scroll_side(i, &vertical_value);
+    let horizontal = frame_horizontal_scroll_side(
+        &frame_scroll_parameter(i, frame, "horizontal-scroll-bars").unwrap_or(Value::Nil),
+    );
+    let width = match frame_scroll_parameter(i, frame, "scroll-bar-width") {
+        Some(Value::Int(width)) => usize::try_from(width.max(0)).unwrap_or(usize::MAX),
+        _ => 16,
+    };
+    let height = match frame_scroll_parameter(i, frame, "scroll-bar-height") {
+        Some(Value::Int(height)) => usize::try_from(height.max(0)).unwrap_or(usize::MAX),
+        _ => 8,
+    };
+    (
+        if vertical.is_some() {
+            width
+        } else {
+            0
+        },
+        if horizontal.is_some() {
+            height
+        } else {
+            0
+        },
+    )
+}
+
+fn f_frame_scroll_bar_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(frame_scroll_bar_dimensions(i, &frame).0 as i128))
+}
+
+fn f_frame_scroll_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(frame_scroll_bar_dimensions(i, &frame).1 as i128))
 }
 
 /// `window-current-scroll-bars' — GNU window.el `window-normalize-window
 /// window t' → plain "N is not a live window"; tty batch is (nil . nil).
 fn f_window_current_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::cons(Value::Nil, Value::Nil)),
-        ref other => Err(err_not_live_window(i, other)),
-    }
+    let window = win_err_live(i, &arg(&a, 0))?;
+    let (_, vertical, _, horizontal, _) = window_scroll_bar_settings(i, &window);
+    Ok(Value::cons(
+        vertical.map_or(Value::Nil, |left| {
+            Value::Sym(i.intern(if left { "left" } else { "right" }))
+        }),
+        if horizontal.is_some() {
+            Value::Sym(i.intern("bottom"))
+        } else {
+            Value::Nil
+        },
+    ))
 }
 
 fn f_sel_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -2854,10 +3232,27 @@ fn f_set_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// `set-window-scroll-bars' — window-live-p check; GNU returns nil.
 fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
+    let window = win_live(i, &a[0])?;
+    let width = match arg(&a, 1) {
+        Value::Nil => None,
+        Value::Int(width) => Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX)),
+        other => return Err(i.wrong_type_mut("integer-or-nil", &other)),
+    };
+    let vertical = window_vertical_scroll_type_argument(i, &arg(&a, 2))?;
+    let height = match arg(&a, 3) {
+        Value::Nil => None,
+        Value::Int(height) => Some(usize::try_from(height.max(0)).unwrap_or(usize::MAX)),
+        other => return Err(i.wrong_type_mut("integer-or-nil", &other)),
+    };
+    let horizontal = window_horizontal_scroll_type_argument(i, &arg(&a, 4))?;
+    window.borrow_mut().scroll_bars = Some((
+        width,
+        vertical,
+        height,
+        horizontal,
+        arg(&a, 5).truthy(),
+    ));
+    Ok(Value::Nil)
 }
 
 /// `raise-frame'/`lower-frame'/`iconify-frame' — frame-live-p check,

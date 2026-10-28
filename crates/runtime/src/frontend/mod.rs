@@ -34,6 +34,13 @@ pub enum InputEvent {
         position: MousePosition,
         line_count: usize,
     },
+    /// Move a window's vertical or horizontal scroll bar to a logical offset.
+    ScrollBar {
+        window_id: usize,
+        orientation: GridScrollBarOrientation,
+        offset: usize,
+        max_offset: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +124,6 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridCursor, GridCursorShape, GridImage,
     GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu, GridMenuItem,
-    fit_text_to_cells, render_grid,
+    GridScrollBar, GridScrollBarOrientation, fit_text_to_cells, render_grid,
     render_grid_with_input_cached,
 };

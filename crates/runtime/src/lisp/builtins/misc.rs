@@ -161,7 +161,7 @@ use compat::{
     f_network_lookup_address_info, f_process_arg_err, f_profiler_cpu_running_p,
     f_re_describe_compiled, f_send_string_to_terminal, f_set_output_flow_control, f_signal_names,
     f_version_list_not_zero, f_x_close_connection, f_x_get_resource, f_x_open_connection,
-    f_x_parse_geometry, f_x_show_tip, f_zero_winlive,
+    f_x_parse_geometry, f_x_show_tip,
 };
 mod buffers;
 use buffers::{
@@ -1623,8 +1623,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_mouse_position_root,
         ""
     ),
-    S!("window-scroll-bar-width", 0, 1, f_zero_winlive, ""),
-    S!("window-scroll-bar-height", 0, 1, f_zero_winlive, ""),
     S!("line-number-display-width", 0, 1, f_zero, ""),
     // `move-to-window-line' is a Lisp-level defun in GNU, not a subr.
     S!(

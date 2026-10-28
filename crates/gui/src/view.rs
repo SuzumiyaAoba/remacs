@@ -8,7 +8,7 @@ use gpui::*;
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
-    MouseButton as RemacsMouseButton,
+    GridScrollBar, GridScrollBarOrientation, MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 mod input;
@@ -21,6 +21,78 @@ const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
+
+#[derive(Clone, Copy)]
+struct ScrollBarDrag {
+    window_id: usize,
+    orientation: GridScrollBarOrientation,
+    pointer_offset: f32,
+}
+
+fn scroll_bar_axis(bar: &GridScrollBar, point: Point<Pixels>) -> f32 {
+    let coordinate = match bar.orientation {
+        GridScrollBarOrientation::Vertical => point.y,
+        GridScrollBarOrientation::Horizontal => point.x,
+    };
+    let origin = match bar.orientation {
+        GridScrollBarOrientation::Vertical => bar.top,
+        GridScrollBarOrientation::Horizontal => bar.left,
+    };
+    f32::from(coordinate) - origin as f32
+}
+
+fn scroll_bar_hit(grid: &Grid, point: Point<Pixels>) -> Option<(GridScrollBar, f32)> {
+    let x = f32::from(point.x);
+    let y = f32::from(point.y);
+    grid.scroll_bars.iter().find_map(|bar| {
+        let left = bar.left as f32;
+        let top = bar.top as f32;
+        let right = left + bar.width as f32;
+        let bottom = top + bar.height as f32;
+        if x < left || x >= right || y < top || y >= bottom {
+            return None;
+        }
+        let axis = scroll_bar_axis(bar, point);
+        let pointer_offset = if axis >= bar.thumb_start as f32
+            && axis < bar.thumb_start.saturating_add(bar.thumb_size) as f32
+        {
+            axis - bar.thumb_start as f32
+        } else {
+            bar.thumb_size as f32 / 2.0
+        };
+        Some((bar.clone(), pointer_offset))
+    })
+}
+
+fn scroll_bar_offset(bar: &GridScrollBar, point: Point<Pixels>, pointer_offset: f32) -> usize {
+    let axis = scroll_bar_axis(bar, point);
+    let track_length = match bar.orientation {
+        GridScrollBarOrientation::Vertical => bar.height,
+        GridScrollBarOrientation::Horizontal => bar.width,
+    };
+    let travel = track_length.saturating_sub(bar.thumb_size);
+    if travel == 0 || bar.max_offset == 0 {
+        return 0;
+    }
+    let thumb_start = (axis - pointer_offset).clamp(0.0, travel as f32);
+    ((thumb_start / travel as f32) * bar.max_offset as f32)
+        .round()
+        .clamp(0.0, bar.max_offset as f32) as usize
+}
+
+fn send_scroll_bar_event(
+    tx: &Sender<GuiEvent>,
+    bar: &GridScrollBar,
+    point: Point<Pixels>,
+    pointer_offset: f32,
+) {
+    let _ = tx.send(GuiEvent::ScrollBar {
+        window_id: bar.window_id,
+        orientation: bar.orientation,
+        offset: scroll_bar_offset(bar, point, pointer_offset),
+        max_offset: bar.max_offset,
+    });
+}
 
 #[derive(Clone, PartialEq, gpui::Action)]
 #[action(namespace = remacs, no_json)]
@@ -39,6 +111,7 @@ pub(super) struct EditorView {
     input: TextInputState,
     cell_width: Pixels,
     geometry: Option<GuiGeometry>,
+    scroll_bar_drag: Option<ScrollBarDrag>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -65,6 +138,7 @@ impl EditorView {
             input: TextInputState::default(),
             cell_width: px(8.0),
             geometry: None,
+            scroll_bar_drag: None,
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -228,6 +302,7 @@ impl Render for EditorView {
         let mouse_grid = grid.clone();
         let scroll_grid = grid.clone();
         let scroll_tx = self.tx.clone();
+        let scroll_bar_tx = self.tx.clone();
         let left_mouse_down_tx = self.tx.clone();
         let left_mouse_down_grid = mouse_grid.clone();
         let left_mouse_up_tx = self.tx.clone();
@@ -258,30 +333,87 @@ impl Render for EditorView {
                         .send(GuiEvent::MenuCommand(action.command.clone()));
                 },
             ))
-            .on_mouse_down(MouseButton::Left, move |event, window, _cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&left_mouse_down_grid, event.position, window)
-                {
-                    let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
-                        button: RemacsMouseButton::Left,
-                        click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(&event.modifiers),
-                        position,
-                    });
-                }
-            })
-            .on_mouse_up(MouseButton::Left, move |event, window, _cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&left_mouse_up_grid, event.position, window)
-                {
-                    let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
-                        button: RemacsMouseButton::Left,
-                        click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(&event.modifiers),
-                        position,
-                    });
-                }
-            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        if let Some((bar, pointer_offset)) =
+                            scroll_bar_hit(&left_mouse_down_grid, event.position)
+                        {
+                            this.scroll_bar_drag = Some(ScrollBarDrag {
+                                window_id: bar.window_id,
+                                orientation: bar.orientation,
+                                pointer_offset,
+                            });
+                            send_scroll_bar_event(
+                                &left_mouse_down_tx,
+                                &bar,
+                                event.position,
+                                pointer_offset,
+                            );
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
+                        if let Some(position) = input::mouse_position_for_point(
+                            &left_mouse_down_grid,
+                            event.position,
+                            window,
+                        ) {
+                            let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
+                                button: RemacsMouseButton::Left,
+                                click_count: event.click_count,
+                                modifiers: mouse_modifier_bits(&event.modifiers),
+                                position,
+                            });
+                        }
+                    },
+                ),
+            )
+            .on_mouse_move(cx.listener(
+                move |this, event: &MouseMoveEvent, window, cx| {
+                    if !event.dragging() {
+                        return;
+                    }
+                    let Some(drag) = this.scroll_bar_drag else {
+                        return;
+                    };
+                    if let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
+                        bar.window_id == drag.window_id && bar.orientation == drag.orientation
+                    }) {
+                        send_scroll_bar_event(
+                            &scroll_bar_tx,
+                            bar,
+                            event.position,
+                            drag.pointer_offset,
+                        );
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    }
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    if this.scroll_bar_drag.take().is_some() {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if let Some(position) = input::mouse_position_for_point(
+                        &left_mouse_up_grid,
+                        event.position,
+                        window,
+                    ) {
+                        let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
+                            button: RemacsMouseButton::Left,
+                            click_count: event.click_count,
+                            modifiers: mouse_modifier_bits(&event.modifiers),
+                            position,
+                        });
+                    }
+                }),
+            )
             .on_mouse_down(MouseButton::Middle, move |event, window, _cx| {
                 if let Some(position) =
                     input::mouse_position_for_point(&middle_mouse_down_grid, event.position, window)
@@ -667,6 +799,46 @@ impl Render for EditorView {
                                     ));
                                 }
                             }
+                        }
+                        for bar in &grid.scroll_bars {
+                            let track_origin = point(
+                                bounds.left() + px(bar.left as f32),
+                                bounds.top() + px(bar.top as f32),
+                            );
+                            let track_size = size(px(bar.width as f32), px(bar.height as f32));
+                            if bar.width == 0 || bar.height == 0 {
+                                continue;
+                            }
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: track_origin,
+                                    size: track_size,
+                                },
+                                rgb(0x303438),
+                            ));
+                            let (thumb_origin, thumb_size) = match bar.orientation {
+                                GridScrollBarOrientation::Vertical => (
+                                    point(
+                                        track_origin.x,
+                                        track_origin.y + px(bar.thumb_start as f32),
+                                    ),
+                                    size(px(bar.width as f32), px(bar.thumb_size as f32)),
+                                ),
+                                GridScrollBarOrientation::Horizontal => (
+                                    point(
+                                        track_origin.x + px(bar.thumb_start as f32),
+                                        track_origin.y,
+                                    ),
+                                    size(px(bar.thumb_size as f32), px(bar.height as f32)),
+                                ),
+                            };
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: thumb_origin,
+                                    size: thumb_size,
+                                },
+                                rgb(0x747a80),
+                            ));
                         }
                     },
                 )

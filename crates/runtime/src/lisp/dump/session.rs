@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::graph::{Decoder, Encoder, Node, Ref, Result, decode_text, encode_text};
 use super::runtime::Runtime;
 use crate::buffer::{BufferSet, SharedText};
+use crate::editor::{HorizontalScrollBarType, VerticalScrollBarType};
 use crate::lisp::value::*;
 use crate::lisp::{Interp, memory};
 
@@ -146,10 +147,20 @@ struct WindowData {
     #[serde(default)]
     fringes: Option<(Option<usize>, Option<usize>, bool, bool)>,
     suspend_hscroll: bool,
+    #[serde(default)]
+    suspend_vscroll: bool,
     old_point: usize,
     #[serde(default)]
     old_point_marker: Option<Ref>,
     min_hscroll: usize,
+    #[serde(default)]
+    scroll_bars: Option<(
+        Option<usize>,
+        VerticalScrollBarType,
+        Option<usize>,
+        HorizontalScrollBarType,
+        bool,
+    )>,
     use_time: u64,
     prev_buffers: Ref,
     next_buffers: Ref,
@@ -481,9 +492,11 @@ impl Image {
             w.margins = data.margins;
             w.fringes = data.fringes;
             w.suspend_hscroll = data.suspend_hscroll;
+            w.suspend_vscroll = data.suspend_vscroll;
             w.old_point = data.old_point;
             w.old_point_marker = old_point_marker;
             w.min_hscroll = data.min_hscroll;
+            w.scroll_bars = data.scroll_bars;
             w.use_time = data.use_time;
             w.prev_buffers = prev_buffers;
             w.next_buffers = next_buffers;
@@ -960,9 +973,11 @@ impl Image {
             margins: w.margins,
             fringes: w.fringes,
             suspend_hscroll: w.suspend_hscroll,
+            suspend_vscroll: w.suspend_vscroll,
             old_point: w.old_point_position(),
             old_point_marker: if w.old_point_marker.is_nil() { None } else { Some(e.value(&w.old_point_marker)?) },
             min_hscroll: w.min_hscroll,
+            scroll_bars: w.scroll_bars,
             use_time: w.use_time,
             prev_buffers: e.value(&w.prev_buffers)?,
             next_buffers: e.value(&w.next_buffers)?,

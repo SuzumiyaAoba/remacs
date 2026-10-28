@@ -1,8 +1,8 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, fit_text_to_cells,
-        render_grid_with_input_cached,
+        Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
+        MousePosition, fit_text_to_cells, render_grid_with_input_cached,
     },
     lisp::{Interp, Value},
 };
@@ -43,6 +43,12 @@ pub(super) enum GuiEvent {
         delta_lines: f32,
         modifiers: i128,
         position: MousePosition,
+    },
+    ScrollBar {
+        window_id: usize,
+        orientation: GridScrollBarOrientation,
+        offset: usize,
+        max_offset: usize,
     },
 }
 
@@ -444,6 +450,17 @@ impl KeyIo for ChanIo {
                     }))
                 }
             }
+            Ok(GuiEvent::ScrollBar {
+                window_id,
+                orientation,
+                offset,
+                max_offset,
+            }) => Ok(Some(InputEvent::ScrollBar {
+                window_id,
+                orientation,
+                offset,
+                max_offset,
+            })),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -497,6 +514,7 @@ impl KeyIo for ChanIo {
                 self.mouse_down = None;
                 Ok(None)
             }
+            Ok(GuiEvent::ScrollBar { .. }) => Ok(None),
             Ok(GuiEvent::Scroll { .. }) => Ok(None),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(

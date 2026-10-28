@@ -35,6 +35,21 @@ pub(crate) fn window_configuration_object(value: &Value) -> bool {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum VerticalScrollBarType {
+    FrameDefault,
+    Disabled,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HorizontalScrollBarType {
+    FrameDefault,
+    Disabled,
+    Bottom,
+}
+
 fn register_window_configuration(value: &Value) {
     if let Value::Record(record) = value {
         WINDOW_CONFIGURATIONS.with(|objects| {
@@ -76,6 +91,8 @@ pub struct Window {
     /// `set-window-hscroll'; auto-hscroll stays off until point
     /// changes (compared against `old_point' at redisplay).
     pub suspend_hscroll: bool,
+    /// Suppress automatic vertical scrolling until WINDOW's point moves.
+    pub suspend_vscroll: bool,
     /// Last redisplay position, used as a cache before a marker is attached.
     pub old_point: usize,
     /// GNU old_pointm: the past point position, tracking buffer edits.
@@ -93,6 +110,14 @@ pub struct Window {
     pub margins: (usize, usize),
     /// Per-window fringe widths in pixels and placement flags.
     pub fringes: Option<(Option<usize>, Option<usize>, bool, bool)>,
+    /// Per-window vertical/horizontal scroll bar geometry in pixels.
+    pub scroll_bars: Option<(
+        Option<usize>,
+        VerticalScrollBarType,
+        Option<usize>,
+        HorizontalScrollBarType,
+        bool,
+    )>,
     /// `window-use-time': tick of the last creation/selection.
     pub use_time: u64,
     /// Buffers previously shown here — list of
@@ -250,7 +275,9 @@ impl Window {
                 params: Value::Nil,
                 margins: (0, 0),
                 fringes: None,
+                scroll_bars: None,
                 suspend_hscroll: false,
+                suspend_vscroll: false,
                 old_point: 0,
                 old_point_marker: Value::Nil,
                 min_hscroll: 0,
