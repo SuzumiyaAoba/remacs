@@ -45,10 +45,11 @@ pub(super) fn keystroke_to_code(ks: &Keystroke) -> Option<i128> {
             if c.is_ascii_uppercase() && ks.modifiers.shift {
                 mods &= !CHAR_SHIFT;
             }
-            if mods & CHAR_CTL != 0 && (c as i128) < 128 {
-                // Emacs folds C-<ascii> to the control char (C-u → 21).
+            if mods & CHAR_CTL != 0 && (matches!(c, '@'..='_') || matches!(c, 'a'..='z')) {
+                // GNU folds C-@.._ and C-a..z. Other ASCII events
+                // (including C-? and C-/, C--, and C-4) keep CHAR_CTL.
                 mods &= !CHAR_CTL;
-                if c == '?' { 127 } else { (c as i128) & 0x1f }
+                (c as i128) & 0x1f
             } else {
                 c as i128
             }
