@@ -108,8 +108,9 @@ If the specified port number is the default, return nil."
       (and (<= ?0 byte) (<= byte ?9))
       (memq byte '(?- ?. ?_ ?~))))
 
-(defun url-parse--decode-unreserved (string)
-  "Decode percent-encoded unreserved octets in STRING only."
+(defun url-parse--normalize-host (string)
+  "Decode unreserved escapes and lowercase host data in STRING.
+Leave reserved percent-encoded octets unchanged."
   (let ((start 0)
 	(result ""))
     (while (string-match "%[0-9A-Fa-f][0-9A-Fa-f]" string start)
@@ -117,12 +118,12 @@ If the specified port number is the default, return nil."
 	     (finish (match-end 0))
 	     (byte (string-to-number (substring string (1+ begin) finish) 16)))
 	(setq result (concat result
-			     (substring string start begin)
+			     (downcase (substring string start begin))
 			     (if (url-parse--unreserved-byte-p byte)
-				 (string byte)
+				 (downcase (string byte))
 			       (substring string begin finish)))
 	      start finish)))
-    (concat result (substring string start))))
+    (concat result (downcase (substring string start)))))
 
 ;;;###autoload
 (defun url-generic-parse-url (url)
@@ -210,8 +211,7 @@ parses to
 	    (cond ((equal port "")
 		   (setq port nil))
 		  (port
-		   (setq port (string-to-number port))))
-            (setq host (downcase host)))
+		   (setq port (string-to-number port)))))
 
 	  ;; Now point is on the / ? or # which terminates the
 	  ;; authority, or at the end of the URI, or (if there is no
@@ -246,7 +246,7 @@ parses to
 	      (delete-region opoint (point-max))))
 
           (when host
-            (setq host (url-parse--decode-unreserved host)))
+            (setq host (url-parse--normalize-host host)))
 
           (url-parse-make-urlobj scheme user pass host port file
 				 fragment nil full))))))
