@@ -1994,36 +1994,34 @@ concatenated and the result truncated."
 If KILL (interactively, the prefix), kill the buffers instead of
 hiding them."
   (interactive "P")
-  ;; FIXME: We need to record the associations between each
-  ;; calendar-mode buffer and its auxiliary buffers explicitly.  For the
-  ;; moment, don't handle buffers from `calendar-buffer-list' when
-  ;; exiting a calendar-mode buffer not named `calendar-buffer'.
-  (if (and (derived-mode-p 'calendar-mode)
-           (not (equal (current-buffer) (get-buffer calendar-buffer))))
-      (quit-windows-on nil kill)
-    (let ((diary-buffer (get-file-buffer diary-file))
-          (calendar-buffers (calendar-buffer-list)))
-      (when (or (not diary-buffer)
-                (not (buffer-modified-p diary-buffer))
-                (yes-or-no-p
-                 "Diary modified; do you really want to exit the calendar? "))
-        (if (and calendar-setup (display-multi-frame-p))
-            ;; FIXME: replace this cruft with the `quit-restore' window property
-            (dolist (w (window-list-1 nil nil t))
-              (if (and (memq (window-buffer w) calendar-buffers)
-                       (window-dedicated-p w))
-                  (if (eq (window-deletable-p w) 'frame)
-		      (if calendar-remove-frame-by-deleting
-			  (delete-frame (window-frame w))
-		        (iconify-frame (window-frame w)))
-		    (quit-window kill w))))
-          (dolist (b calendar-buffers)
-            (quit-windows-on b kill)))
-        ;; Finally, kill non-displayed buffers (if requested).
-        (when kill
-          (dolist (b calendar-buffers)
-            (when (buffer-live-p b)
-              (kill-buffer b))))))))
+  (let ((diary-buffer (get-file-buffer diary-file))
+        (calendar-buffers (calendar-buffer-list)))
+    ;; `calendar-buffer-list' names the main calendar buffer, but callers
+    ;; may have entered `calendar-mode' in another buffer.
+    (when (and (derived-mode-p 'calendar-mode)
+               (not (memq (current-buffer) calendar-buffers)))
+      (push (current-buffer) calendar-buffers))
+    (when (or (not diary-buffer)
+              (not (buffer-modified-p diary-buffer))
+              (yes-or-no-p
+               "Diary modified; do you really want to exit the calendar? "))
+      (if (and calendar-setup (display-multi-frame-p))
+          ;; FIXME: replace this cruft with the `quit-restore' window property
+          (dolist (w (window-list-1 nil nil t))
+            (if (and (memq (window-buffer w) calendar-buffers)
+                     (window-dedicated-p w))
+                (if (eq (window-deletable-p w) 'frame)
+		    (if calendar-remove-frame-by-deleting
+			(delete-frame (window-frame w))
+		      (iconify-frame (window-frame w)))
+		  (quit-window kill w))))
+        (dolist (b calendar-buffers)
+          (quit-windows-on b kill)))
+      ;; Finally, kill non-displayed buffers (if requested).
+      (when kill
+        (dolist (b calendar-buffers)
+          (when (buffer-live-p b)
+            (kill-buffer b)))))))
 
 (defun calendar-current-date (&optional offset)
   "Return the current date in a list (month day year).
