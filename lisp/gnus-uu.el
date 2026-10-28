@@ -1518,7 +1518,8 @@ When called interactively, prompt for REGEXP."
 			 "*uudecode*"
 			 (gnus-get-buffer-create gnus-uu-output-buffer-name)
 			 shell-file-name shell-command-switch
-			 (format "cd %s %s uudecode" gnus-uu-work-dir
+			 (format "cd %s %s uudecode"
+				 (shell-quote-argument gnus-uu-work-dir)
 				 gnus-shell-command-separator))))
 	      (cd cdir)))
 	  (set-process-sentinel
@@ -1614,7 +1615,7 @@ Gnus might fail to display all of it.")
 	   start-char (point-max) shell-file-name nil
 	   (gnus-get-buffer-create gnus-uu-output-buffer-name) nil
 	   shell-command-switch
-	   (concat "cd " gnus-uu-work-dir " "
+	   (concat "cd " (shell-quote-argument gnus-uu-work-dir) " "
 		   gnus-shell-command-separator  " sh")))))
     state))
 
@@ -1662,7 +1663,9 @@ Gnus might fail to display all of it.")
     (when (member action gnus-uu-destructive-archivers)
       (copy-file file-path (concat file-path "~") t))
 
-    (setq command (format "cd %s ; %s" dir (gnus-uu-command action file-path)))
+    (setq command (format "cd %s ; %s"
+			  (shell-quote-argument dir)
+			  (gnus-uu-command action file-path)))
 
     (with-current-buffer (gnus-get-buffer-create gnus-uu-output-buffer-name)
       (erase-buffer))
