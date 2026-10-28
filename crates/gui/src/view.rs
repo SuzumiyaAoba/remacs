@@ -9,7 +9,7 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
-    GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
+    GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
     MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
@@ -158,6 +158,20 @@ fn tab_bar_command_at(
                 item.argument.into_iter().collect(),
             )
         })
+}
+
+fn popup_menu_command_at(
+    items: &[GridPopupMenuItem],
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> Option<Option<String>> {
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
+    let row = (f32::from(point.y) / f32::from(line_height)).floor().max(0.0) as usize;
+    items
+        .iter()
+        .find(|item| item.row == row && column >= item.left && column < item.left + item.width)
+        .map(|item| item.command.clone())
 }
 
 #[derive(Clone, PartialEq, gpui::Action)]
@@ -384,6 +398,10 @@ impl Render for EditorView {
         let middle_mouse_down_grid = mouse_grid.clone();
         let middle_mouse_up_tx = self.tx.clone();
         let middle_mouse_up_grid = mouse_grid;
+        let right_mouse_down_tx = self.tx.clone();
+        let right_mouse_down_grid = scroll_grid.clone();
+        let right_mouse_up_tx = self.tx.clone();
+        let right_mouse_up_grid = scroll_grid.clone();
         let entity = cx.entity();
         let focus = self.focus.clone();
         let marked = self.input.marked.clone();
@@ -464,6 +482,19 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
+                        if let Some(command) = popup_menu_command_at(
+                            &left_mouse_down_grid.popup_menu_items,
+                            event.position,
+                            cell_width,
+                            line_height,
+                        ) {
+                            this.toolbar_pressed = true;
+                            let command = command.unwrap_or_else(|| "ignore".to_owned());
+                            let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
                         if let Some(command) = tool_bar_command_at(
                             &left_mouse_down_grid.tool_bar_items,
                             event.position,
@@ -589,6 +620,30 @@ impl Render for EditorView {
                 {
                     let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Middle,
+                        click_count: event.click_count,
+                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        position,
+                    });
+                }
+            })
+            .on_mouse_down(MouseButton::Right, move |event, window, _cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&right_mouse_down_grid, event.position, window)
+                {
+                    let _ = right_mouse_down_tx.send(GuiEvent::MouseDown {
+                        button: RemacsMouseButton::Right,
+                        click_count: event.click_count,
+                        modifiers: mouse_modifier_bits(&event.modifiers),
+                        position,
+                    });
+                }
+            })
+            .on_mouse_up(MouseButton::Right, move |event, window, _cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&right_mouse_up_grid, event.position, window)
+                {
+                    let _ = right_mouse_up_tx.send(GuiEvent::MouseUp {
+                        button: RemacsMouseButton::Right,
                         click_count: event.click_count,
                         modifiers: mouse_modifier_bits(&event.modifiers),
                         position,

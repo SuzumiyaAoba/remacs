@@ -903,18 +903,27 @@ pub(super) fn f_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         decode_popup_position(i, &p)?;
     }
     match &a[0] {
-        Value::Nil => Ok(Value::Nil),
-        menu if crate::editor::is_keymap(i, menu) => Ok(Value::Nil),
+        Value::Nil => return Ok(Value::Nil),
+        menu if crate::editor::is_keymap(i, menu) => {}
         Value::Cons(c) => {
             let (car, cdr) = (c.borrow().car.clone(), c.borrow().cdr.clone());
             if crate::editor::is_keymap(i, &car) {
-                return Ok(Value::Nil);
+                // A list whose first element is a keymap is a list of panes.
+            } else {
+                check_items(i, &cdr)?;
             }
-            check_items(i, &cdr)?;
-            Ok(Value::Nil)
         }
-        _ => Ok(Value::Nil),
+        _ => return Ok(Value::Nil),
     }
+    if i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame))
+    {
+        let (x, y) = i.gui_mouse_position.unwrap_or((0, 0));
+        i.gui_popup_menu = Some((a[0].clone(), x, y));
+    }
+    Ok(Value::Nil)
 }
 
 /// `tooltip-mode' — minor-mode semantics: no arg reports, 'toggle
@@ -947,8 +956,8 @@ pub(super) fn f_mouse_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalRes
 /// `display-popup-menus-p' — GNU Fdisplay_popup_menus_p: decode_frame
 /// first (arg must be a frame when non-nil), then the tty result nil.
 pub(super) fn f_display_popup_menus_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = decode_display(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
+    let frame = decode_display(i, &arg(&a, 0))?;
+    Ok(Value::from_bool(crate::editor::frame_is_graphical(i, &frame)))
 }
 
 pub(super) fn f_current_input_mode(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {

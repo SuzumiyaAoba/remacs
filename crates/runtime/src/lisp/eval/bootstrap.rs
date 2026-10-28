@@ -94,6 +94,8 @@ impl Interp {
             output: None,
             echo_message: crate::lisp::text::EmacsText::new(),
             gui_tip: None,
+            gui_popup_menu: None,
+            gui_mouse_position: None,
             max_lisp_eval_depth: 1600,
             eval_depth: 0,
             explicit_eval_depth: 0,

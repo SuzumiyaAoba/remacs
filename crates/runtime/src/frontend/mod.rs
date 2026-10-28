@@ -131,7 +131,7 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridCursor, GridCursorShape, GridImage,
     GridHelpEcho, GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu,
-    GridMenuItem, GridTabBarItem, GridToolBarItem,
+    GridMenuItem, GridPopupMenuItem, GridTabBarItem, GridToolBarItem,
     GridScrollBar, GridScrollBarOrientation, fit_text_to_cells, render_grid,
     render_grid_with_input_cached,
 };

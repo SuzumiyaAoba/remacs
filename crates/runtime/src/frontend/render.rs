@@ -149,6 +149,14 @@ pub struct GridTabBarItem {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridPopupMenuItem {
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+    pub command: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridHelpEcho {
     pub row: usize,
     pub left: usize,
@@ -311,6 +319,7 @@ pub struct Grid {
     pub tab_bar_items: Vec<GridTabBarItem>,
     pub help_echoes: Vec<GridHelpEcho>,
     pub tooltip: Option<String>,
+    pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
@@ -372,6 +381,7 @@ impl Grid {
             tab_bar_items: Vec::new(),
             help_echoes: Vec::new(),
             tooltip: None,
+            popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -1718,6 +1728,141 @@ fn render_tab_bar(
         }
     }
     items
+}
+
+fn flatten_popup_items(
+    items: &[GridMenuItem],
+    depth: usize,
+    flat: &mut Vec<(String, Option<String>, bool, usize)>,
+) {
+    for item in items {
+        if item.separator {
+            flat.push((String::new(), None, true, depth));
+        } else if item.items.is_empty() {
+            flat.push((item.label.clone(), item.command.clone(), false, depth));
+        } else {
+            flat.push((item.label.clone(), None, false, depth));
+            flatten_popup_items(&item.items, depth.saturating_add(1), flat);
+        }
+    }
+}
+
+fn render_popup_menu(
+    i: &Interp,
+    menu: &Value,
+    pixel_position: (i128, i128),
+    width: usize,
+    height: usize,
+    cell_width: usize,
+    cell_height: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridPopupMenuItem> {
+    let menu_items = if crate::editor::is_keymap(i, menu) {
+        menu_items(i, menu, 0)
+    } else if let Value::Cons(cell) = menu {
+        let first = cell.borrow().car.clone();
+        if crate::editor::is_keymap(i, &first) {
+            menu_items(i, &first, 0)
+        } else {
+            return Vec::new();
+        }
+    } else {
+        return Vec::new();
+    };
+    let mut flat_items = Vec::new();
+    flatten_popup_items(&menu_items, 0, &mut flat_items);
+    if flat_items.is_empty() || width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let max_label_width = flat_items
+        .iter()
+        .map(|(label, _, separator, depth)| {
+            if *separator {
+                1
+            } else {
+                label
+                    .chars()
+                    .map(display_char_width)
+                    .sum::<usize>()
+                    .saturating_add(depth.saturating_mul(2))
+            }
+        })
+        .max()
+        .unwrap_or(1);
+    let menu_width = max_label_width.saturating_add(2).max(3).min(width);
+    let menu_height = flat_items.len().saturating_add(2).min(height);
+    if menu_height < 3 || menu_width < 3 {
+        return Vec::new();
+    }
+    let left = usize::try_from(pixel_position.0.max(0))
+        .unwrap_or(usize::MAX)
+        .checked_div(cell_width.max(1))
+        .unwrap_or(0)
+        .min(width.saturating_sub(menu_width));
+    let top = usize::try_from(pixel_position.1.max(0))
+        .unwrap_or(usize::MAX)
+        .checked_div(cell_height.max(1))
+        .unwrap_or(0)
+        .min(height.saturating_sub(menu_height));
+    let mut style = faces.builtin(i, "menu", 0).finish();
+    if style.fg.is_none() {
+        style.fg = default_style.fg;
+    }
+    if style.bg.is_none() {
+        style.bg = default_style.bg.or(Some(CellColor(0x2e, 0x30, 0x33)));
+    }
+    style.box_style = Some(BoxStyle {
+        vertical_width: 1,
+        horizontal_width: 1,
+        color: style.fg,
+        kind: BoxStyleKind::Flat,
+    });
+    for row_index in top..top.saturating_add(menu_height) {
+        if let Some(row) = screen.get_mut(row_index) {
+            for cell in row.iter_mut().skip(left).take(menu_width) {
+                *cell = ScreenCell {
+                    chars: Vec::new(),
+                    style,
+                    occupied: true,
+                    continuation: false,
+                };
+            }
+        }
+    }
+    let mut hit_items = Vec::new();
+    for (index, (label, command, separator, depth)) in flat_items
+        .iter()
+        .take(menu_height.saturating_sub(2))
+        .enumerate()
+    {
+        let item_row = top.saturating_add(index).saturating_add(1);
+        let text = if *separator {
+            "─".repeat(menu_width.saturating_sub(2))
+        } else {
+            format!("{}{}", " ".repeat(depth.saturating_mul(2)), label)
+        };
+        let text = fit_text_to_cells_with_tab_width(&text, menu_width.saturating_sub(2), 8).0;
+        let cell_styles = vec![style; menu_width.saturating_sub(2)];
+        let char_styles = text.chars().map(|_| style).collect::<Vec<_>>();
+        if let Some(row) = screen.get_mut(item_row) {
+            place_text_row(
+                row,
+                left.saturating_add(1),
+                &text,
+                &cell_styles,
+                &char_styles,
+            );
+        }
+        hit_items.push(GridPopupMenuItem {
+            row: item_row,
+            left: left.saturating_add(1),
+            width: menu_width.saturating_sub(2),
+            command: if *separator { None } else { command.clone() },
+        });
+    }
+    hit_items
 }
 
 fn scroll_thumb(
@@ -3551,6 +3696,7 @@ fn render_grid_internal(
     let mut tab_bar_items = Vec::new();
     let mut help_echoes = Vec::new();
     let tooltip = i.gui_tip.clone();
+    let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -3577,6 +3723,7 @@ fn render_grid_internal(
                 tab_bar_items,
                 help_echoes,
                 tooltip,
+                popup_menu_items,
                 scroll_bars,
                 attrs,
                 char_attrs,
@@ -4680,6 +4827,22 @@ fn render_grid_internal(
         }
         place_rendered_row(&mut screen_rows[y], 0, &rendered);
     }
+    if graphical
+        && let Some((menu, pixel_x, pixel_y)) = &i.gui_popup_menu
+    {
+        popup_menu_items = render_popup_menu(
+            i,
+            menu,
+            (*pixel_x, *pixel_y),
+            width,
+            body_height,
+            frame_char_width,
+            frame_char_height,
+            default_style,
+            &mut fctx,
+            &mut screen_rows,
+        );
+    }
     let (composed_rows, composed_attrs, composed_char_attrs, cell_offsets) =
         compose_screen_rows(&screen_rows, width, default_style);
     rows = composed_rows;
@@ -4720,6 +4883,7 @@ fn render_grid_internal(
         tab_bar_items,
         help_echoes,
         tooltip,
+        popup_menu_items,
         scroll_bars,
         attrs,
         char_attrs,

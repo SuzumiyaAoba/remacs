@@ -47,6 +47,10 @@ pub struct Interp {
     pub echo_message: crate::lisp::text::EmacsText,
     /// Active graphical tooltip requested by `x-show-tip'.
     pub gui_tip: Option<String>,
+    /// Popup menu requested by `x-popup-menu' for the GUI frontend.
+    pub gui_popup_menu: Option<(Value, i128, i128)>,
+    /// Last pointer position in window-relative pixels during mouse dispatch.
+    pub gui_mouse_position: Option<(i128, i128)>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,

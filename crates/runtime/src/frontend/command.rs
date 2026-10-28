@@ -637,6 +637,7 @@ fn dispatch_frontend_command_with_args(
 ) {
     keys.clear();
     *arg_mode = false;
+    i.gui_popup_menu = None;
     let command = Value::Sym(i.intern(command));
     let saved_args = std::mem::replace(
         &mut i.command_args,
@@ -688,9 +689,25 @@ fn dispatch_mouse<T: KeyIo>(
     };
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
+    i.gui_popup_menu = None;
+    let old_mouse_position = i
+        .gui_mouse_position
+        .replace((mouse.end.x, mouse.end.y));
 
     let drag = mouse.start.buffer_id != mouse.end.buffer_id
         || mouse.start.buffer_position != mouse.end.buffer_position;
+    let context_menu_mode = i
+        .q_soft("context-menu-mode")
+        .map(|symbol| i.symbol_value(symbol).truthy())
+        .unwrap_or(false);
+    if mouse.button == MouseButton::Right && !drag && context_menu_mode {
+        let command = i.q("context-menu-open");
+        if i.fbound_p(command) {
+            dispatch_frontend_command(i, "context-menu-open", keys, arg_mode);
+            i.gui_mouse_position = old_mouse_position;
+            return Ok(());
+        }
+    }
     let click_count = mouse.click_count.max(1);
     if mouse.button == MouseButton::Left && !drag {
         if let Some(translated) = translate_mouse_click(i) {
@@ -734,7 +751,9 @@ fn dispatch_mouse<T: KeyIo>(
     }
 
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
-    dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
+    let result = dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event));
+    i.gui_mouse_position = old_mouse_position;
+    result
 }
 
 fn dispatch_mouse_wheel<T: KeyIo>(
