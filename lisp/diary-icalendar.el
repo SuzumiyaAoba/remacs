@@ -1380,19 +1380,32 @@ in which DT occurs."
         (concat time " " tzname)
       time)))
 
-(defun diary-icalendar-format-time-as-local (dt &optional original-tzname)
+(defun diary-icalendar-date/time-to-local (dt &optional vtimezone)
+  "Translate date-time DT from VTIMEZONE to Emacs local time.
+DT may also be a plain date, which is returned unchanged."
+  (icalendar-date/time-to-local
+   (if (and vtimezone (cl-typep dt 'icalendar-date-time))
+       (icalendar-date-time-variant dt :tz vtimezone)
+     dt)))
+
+(defun diary-icalendar-format-time-as-local
+    (dt &optional original-tzname vtimezone)
   "Format the time in `icalendar-date-time' DT for the diary.
 
 DT is translated to the system local time zone if necessary, and the
 original time specification is preserved in parentheses if it was given
 in a different zone.  ORIGINAL-TZNAME, if specified, should be a string
 naming the time zone observance in which DT was originally encoded in
-the iCalendar data."
+the iCalendar data.  VTIMEZONE, if specified, supplies the time zone
+definition referenced by DT's TZID parameter."
   (cl-typecase dt
     (icalendar-date "")
     (icalendar-date-time
-     (let* ((ts (encode-time dt))
-            (original-offset (decoded-time-zone dt))
+     (let* ((source-dt (if vtimezone
+                           (icalendar-date-time-variant dt :tz vtimezone)
+                         dt))
+            (ts (encode-time source-dt))
+            (original-offset (decoded-time-zone source-dt))
             (local-tz (current-time-zone ts))
             (local-offset (car local-tz))
             (local-dt (decode-time ts local-tz))
@@ -1412,7 +1425,8 @@ formatted with `calendar-date-string' according to the pattern in
       (icalendar-date (calendar-date-string dt t t))
       (icalendar-date-time (calendar-date-string (icalendar-date-time-to-date dt) t t)))))
 
-(defun diary-icalendar-format-date/time-as-local (dt &optional original-tzname)
+(defun diary-icalendar-format-date/time-as-local
+    (dt &optional original-tzname vtimezone)
   "Format the `icalendar-date' or `icalendar-date-time' DT for the diary.
 
 If DT is a plain date, only the date will be formatted.  If DT is a
@@ -1426,7 +1440,7 @@ parentheses, with date if necessary.  For example:
   2025/05/01 09:00 (08:00 GMT)
 or
   2025/05/01 18:00 (2025/05/02 08:00 JST)"
-  (let ((local-dt (icalendar-date/time-to-local dt)))
+  (let ((local-dt (diary-icalendar-date/time-to-local dt vtimezone)))
     (cl-typecase local-dt
       (icalendar-date (diary-icalendar-format-date local-dt))
       (icalendar-date-time
@@ -1614,12 +1628,13 @@ Returns a string containing the diary entry."
                          ((icalendar-tzidparam :value tzid))
                          (when tzid (icalendar-index-get index :tzid tzid)))))
            (start-tzname (when start-tz (icalendar-recur-tzname-on dtstart start-tz)))
-           (dtstart-local (icalendar-date/time-to-local dtstart))
+           (dtstart-local (diary-icalendar-date/time-to-local dtstart start-tz))
            (due-tz (when due-node
                      (icalendar-with-property due-node
                        ((icalendar-tzidparam :value tzid))
                        (when tzid (icalendar-index-get index :tzid tzid)))))
            (due-tzname (when due-tz (icalendar-recur-tzname-on due-dt due-tz)))
+           (due-local (diary-icalendar-date/time-to-local due-dt due-tz))
            (dtend
             (cond (dtend dtend)
                   ;; DTEND and DUE never occur in the same component,
@@ -1627,7 +1642,6 @@ Returns a string containing the diary entry."
                   (due-dt due-dt)
                   (duration
                    (icalendar-date/time-add-duration dtstart duration start-tz))))
-           (dtend-local (icalendar-date/time-to-local dtend))
            (end-tz
             (cond (dtend-node
                    (icalendar-with-property dtend-node
@@ -1635,6 +1649,7 @@ Returns a string containing the diary entry."
                      (when tzid (icalendar-index-get index :tzid tzid))))
                   (due-node due-tz)
                   (duration start-tz)))
+           (dtend-local (diary-icalendar-date/time-to-local dtend end-tz))
            (end-tzname (when end-tz (icalendar-recur-tzname-on dtend end-tz)))
            (component-type (icalendar-ast-node-type component)))
       (dlet
@@ -1672,13 +1687,17 @@ Returns a string containing the diary entry."
            (ical-start
             (when dtstart
               (if (bound-and-true-p ical-importing)
-                  (diary-icalendar-format-date/time-as-local dtstart start-tzname)
-                (diary-icalendar-format-time-as-local dtstart start-tzname))))
+                  (diary-icalendar-format-date/time-as-local
+                   dtstart start-tzname start-tz)
+                (diary-icalendar-format-time-as-local
+                 dtstart start-tzname start-tz))))
            (ical-end
             (when dtend
               (if (bound-and-true-p ical-importing)
-                  (diary-icalendar-format-date/time-as-local dtend end-tzname)
-                (diary-icalendar-format-time-as-local dtend end-tzname))))
+                  (diary-icalendar-format-date/time-as-local
+                   dtend end-tzname end-tz)
+                (diary-icalendar-format-time-as-local
+                 dtend end-tzname end-tz))))
            (ical-start-to-end
             (with-suppressed-warnings ((lexical date) (free-vars date))
               (cond
@@ -1686,8 +1705,10 @@ Returns a string containing the diary entry."
                ((or (not dtend) (equal dtstart dtend))
                 ;; without a distinct DTEND/DUE, same as start:
                 (if (bound-and-true-p ical-importing)
-                    (diary-icalendar-format-date/time-as-local dtstart start-tzname)
-                  (diary-icalendar-format-time-as-local dtstart start-tzname)))
+                    (diary-icalendar-format-date/time-as-local
+                     dtstart start-tzname start-tz)
+                  (diary-icalendar-format-time-as-local
+                   dtstart start-tzname start-tz)))
                ((and (bound-and-true-p ical-importing)
                      (cl-typep dtstart 'icalendar-date)
                      (cl-typep dtend 'icalendar-date))
@@ -1745,13 +1766,15 @@ Returns a string containing the diary entry."
            (ical-due
             (when (eq component-type 'icalendar-vtodo)
               (if due-node
-                  (diary-icalendar-format-date/time-as-local due-dt due-tzname)
+                  (diary-icalendar-format-date/time-as-local
+                   due-dt due-tzname due-tz)
                 ;; here we use start-tzname because due/dtend is calculated from
                 ;; dtstart, not its own node with a tzid:
-                (diary-icalendar-format-date/time-as-local dtend start-tzname))))
+                (diary-icalendar-format-date/time-as-local
+                 dtend start-tzname start-tz))))
            (ical-work-time-sexp
             (when (and dtstart due-dt (bound-and-true-p ical-importing))
-              (diary-icalendar-format-time-block-sexp dtstart-local due-dt)))
+              (diary-icalendar-format-time-block-sexp dtstart-local due-local)))
            (ical-importing (bound-and-true-p ical-importing))
            (ical-location (or (icalendar-trimp location)
                               (when geo (diary-icalendar-format-geo-coordinates geo))))
