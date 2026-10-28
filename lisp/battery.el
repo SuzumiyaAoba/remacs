@@ -436,6 +436,22 @@ The following %-sequences are provided:
   (: (group (+ digit)) " " (group ?m (in "AW") hour)))
 (rx-define battery--acpi-capacity (battery--acpi-rate ?h))
 
+(defun battery--combine-linux-statuses (statuses)
+  "Return a stable overall status for the battery STATES.
+When batteries report different active states, prefer discharging so
+the aggregate does not claim the system is charging while a battery
+is losing charge."
+  (or (and (member "Discharging" statuses) "Discharging")
+      (and (member "discharging" statuses) "discharging")
+      (and (member "Charging" statuses) "Charging")
+      (and (member "charging" statuses) "charging")
+      (and (member "Not charging" statuses) "Not charging")
+      (and (member "not charging" statuses) "not charging")
+      (and (member "Full" statuses) "Full")
+      (and (member "charged" statuses) "charged")
+      (and (member "Unknown" statuses) "Unknown")
+      (and (member "unknown" statuses) "unknown")))
+
 (defun battery-linux-proc-acpi ()
   "Get ACPI status information from Linux (the kernel).
 This function works only with the `/proc/acpi/' interface
@@ -458,7 +474,7 @@ The following %-sequences are provided:
 	full-capacity
 	(warn 0)
 	(low 0)
-	capacity rate rate-type charging-state minutes hours)
+	capacity rate rate-type charging-state charging-states minutes hours)
     ;; ACPI provides information about each battery present in the system in
     ;; a separate subdirectory.  We are going to merge the available
     ;; information together since displaying for a variable amount of
@@ -469,14 +485,10 @@ The following %-sequences are provided:
           (insert-file-contents (expand-file-name "state" dir) nil nil nil t))
         (goto-char (point-min))
         (when (re-search-forward (rx "present:" (+ space) "yes" eol) nil t)
-          (and (re-search-forward (rx "charging state:" (+ space)
-                                      (group (not space) (* nonl)) eol)
-                                  nil t)
-	       (member charging-state '("unknown" "charged" nil))
-	       ;; On most multi-battery systems, most of the time only one
-	       ;; battery is "charging"/"discharging", the others are
-	       ;; "unknown".
-	       (setq charging-state (match-string 1)))
+          (when (re-search-forward (rx "charging state:" (+ space)
+                                       (group (not space) (* nonl)) eol)
+                                   nil t)
+            (push (match-string 1) charging-states))
           (when (re-search-forward (rx "present rate:" (+ space)
                                        (battery--acpi-rate) eol)
 				   nil t)
@@ -511,6 +523,7 @@ The following %-sequences are provided:
                                        battery--acpi-capacity eol)
 				   nil t)
             (incf low (string-to-number (match-string 1)))))))
+    (setq charging-state (battery--combine-linux-statuses charging-states))
     (setq full-capacity (if (> last-full-capacity 0)
 			    last-full-capacity design-capacity))
     (and capacity rate
@@ -579,7 +592,7 @@ The following %-sequences are provided:
 	(energy-now 0.0)
 	(power-now 0.0)
         (voltage-now 10.8) ; Arbitrary default, in case the info is missing.
-        charging-state temperature hours percentage-now)
+        charging-state charging-states temperature hours percentage-now)
     ;; SysFS provides information about each battery present in the
     ;; system in a separate subdirectory.  We are going to merge the
     ;; available information together.
@@ -594,9 +607,8 @@ The following %-sequences are provided:
 	(goto-char (point-min))
 	(when (re-search-forward "POWER_SUPPLY_PRESENT=1$" nil t)
 	  (goto-char (point-min))
-	  (and (re-search-forward "POWER_SUPPLY_STATUS=\\(.*\\)$" nil t)
-	       (member charging-state '("Unknown" "Full" nil))
-	       (setq charging-state (match-string 1)))
+	  (when (re-search-forward "POWER_SUPPLY_STATUS=\\(.*\\)$" nil t)
+            (push (match-string 1) charging-states))
 	  (goto-char (point-min))
 	  (when (re-search-forward
                  "POWER_SUPPLY_\\(CURRENT\\|POWER\\)_NOW=\\([0-9]*\\)$"
@@ -632,6 +644,7 @@ The following %-sequences are provided:
 			(setq now-string (match-string 1)))
                    (incf energy-full (string-to-number full-string))
                    (incf energy-now  (string-to-number now-string)))))
+	  (setq charging-state (battery--combine-linux-statuses charging-states))
 	  (unless (zerop power-now)
 	    (let ((remaining (if (string= charging-state "Discharging")
 				 energy-now
