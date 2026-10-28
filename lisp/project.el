@@ -1165,16 +1165,39 @@ requires quoting, e.g. `\\[quoted-insert]<space>'."
 (defun project--rebase-rooted-ignore (ignore relative-dir)
   "Rebase root-relative IGNORE for RELATIVE-DIR, or return nil.
 IGNORE starts with \"./\".  RELATIVE-DIR is relative to the project root."
-  (let ((path (substring ignore 2))
-        (relative-dir
-         (file-name-as-directory (string-remove-prefix "./" relative-dir))))
+  (let* ((path (substring ignore 2))
+         (pattern-components (split-string path "/" t))
+         (dir-components
+          (split-string (string-remove-prefix "./" relative-dir) "/" t))
+         (matched
+          (let ((case-fold-search nil))
+            (cl-labels
+                ((match-prefix (patterns dirs globstar-consumed)
+                   (cond
+                    ((null dirs)
+                     (cons :suffix
+                           (if (and globstar-consumed
+                                    (equal (car patterns) "**"))
+                               (cdr patterns)
+                             patterns)))
+                    ((null patterns) '(:current))
+                    ((equal (car patterns) "**")
+                     (or (match-prefix (cdr patterns) dirs nil)
+                         (match-prefix patterns (cdr dirs) t)))
+                    ((string-match-p (wildcard-to-regexp (car patterns))
+                                     (car dirs))
+                     (match-prefix (cdr patterns) (cdr dirs) nil))
+                    (t nil))))
+              (match-prefix pattern-components dir-components nil)))))
     (cond
-     ((string-empty-p path) "./")
-     ((string-prefix-p relative-dir path)
-      (concat "./" (substring path (length relative-dir))))
-     ;; A rooted ignore of an ancestor directory covers all of DIR.
-     ((string-prefix-p (file-name-as-directory path) relative-dir) "./")
-     (t nil))))
+     ((eq (car-safe matched) :current) "./")
+     ((eq (car-safe matched) :suffix)
+      (let ((suffix (cdr matched)))
+        (if suffix
+            (concat "./" (string-join suffix "/")
+                    (if (string-suffix-p "/" path) "/" ""))
+          "./")))
+     (t nil)))
 
 (defun project--dir-ignores (project dir)
   (let* ((root (file-name-as-directory (project-root project)))
