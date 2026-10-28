@@ -804,9 +804,14 @@ These will be used to retrieve the RSVP information from ical events."
   (gnus-icalendar-with-decoded-handle handle
                        (gnus-icalendar-event-from-buffer (current-buffer) attendee-name-or-email)))
 
+(defvar gnus-icalendar-button-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "\r" #'gnus-article-press-button)
+    (define-key map [mouse-2] #'gnus-article-push-button)
+    map)
+  "Keymap for iCalendar event buttons.")
+
 (defun gnus-icalendar-insert-button (text callback data)
-  ;; FIXME: the gnus-mime-button-map keymap does not make sense for this kind
-  ;; of button.
   (let ((start (point)))
     (add-text-properties
      start
@@ -815,7 +820,7 @@ These will be used to retrieve the RSVP information from ical events."
        (point))
      `(gnus-callback
        ,callback
-       keymap ,gnus-mime-button-map
+       keymap ,gnus-icalendar-button-map
        face ,gnus-article-button-face
        follow-link t
        category t

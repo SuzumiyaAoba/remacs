@@ -1090,6 +1090,7 @@ qa!(qa_local_socket_wide_paths, "qa_local_socket_wide_paths.el");
 qa!(qa_network_lookup_validation, "qa_network_lookup_validation.el");
 
 qa!(qa_gnutls_crypto_buffer_bytes, "qa_gnutls_crypto_buffer_bytes.el");
+qa!(qa_gnus_icalendar_button_map, "qa_gnus_icalendar_button_map.el");
 
 qa!(qa_geometry_invalid, "qa_geometry_invalid.el");
 
