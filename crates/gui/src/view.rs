@@ -147,6 +147,22 @@ fn scroll_bar_axis(bar: &GridScrollBar, point: Point<Pixels>) -> f32 {
     f32::from(coordinate) - origin as f32
 }
 
+fn frame_content_point(
+    position: Point<Pixels>,
+    viewport: Size<Pixels>,
+    border: Pixels,
+) -> Option<Point<Pixels>> {
+    let border = f32::from(border);
+    let x = f32::from(position.x);
+    let y = f32::from(position.y);
+    let right = f32::from(viewport.width) - border;
+    let bottom = f32::from(viewport.height) - border;
+    if x < border || y < border || x >= right || y >= bottom {
+        return None;
+    }
+    Some(point(px(x - border), px(y - border)))
+}
+
 fn scroll_bar_hit(grid: &Grid, point: Point<Pixels>) -> Option<(GridScrollBar, f32)> {
     let x = f32::from(point.x);
     let y = f32::from(point.y);
@@ -289,6 +305,7 @@ pub(super) struct EditorView {
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
     modifier_mapping: ModifierMapping,
+    internal_border_width: usize,
     alpha_background: u8,
     appearance: WindowAppearance,
     physical_modifier_state: Rc<Cell<PhysicalModifierState>>,
@@ -300,7 +317,7 @@ pub(super) struct EditorView {
     cell_width: Pixels,
     line_height: Pixels,
     geometry: Option<GuiGeometry>,
-    runtime_frame_size: Option<(usize, usize)>,
+    runtime_frame_size: Option<(usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
@@ -340,6 +357,7 @@ impl EditorView {
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
             modifier_mapping: ModifierMapping::default(),
+            internal_border_width: 0,
             alpha_background: 100,
             appearance: WindowAppearance::Dark,
             physical_modifier_state: Rc::new(Cell::new(PhysicalModifierState::default())),
@@ -391,6 +409,14 @@ impl EditorView {
         true
     }
 
+    pub(super) fn set_internal_border_width(&mut self, width: usize) -> bool {
+        if self.internal_border_width == width {
+            return false;
+        }
+        self.internal_border_width = width;
+        true
+    }
+
     pub(super) fn set_alpha_background(&mut self, alpha: u8) -> bool {
         if self.alpha_background == alpha {
             return false;
@@ -414,7 +440,11 @@ impl EditorView {
     }
 
     pub(super) fn needs_frame_size_update(&mut self, width: usize, height: usize) -> bool {
-        let size = (width.max(10), height.max(3));
+        let size = (
+            width.max(10),
+            height.max(3),
+            self.internal_border_width,
+        );
         let changed = self.runtime_frame_size != Some(size);
         self.runtime_frame_size = Some(size);
         changed
@@ -462,15 +492,21 @@ impl EditorView {
             .unwrap_or(px(8.0));
         self.line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
         let viewport = window.viewport_size();
-        let current_width = (f32::from(viewport.width) / f32::from(self.cell_width)) as usize;
-        let current_height = rows_fitting_viewport(&self.grid, viewport.height, self.line_height);
+        let border = self.internal_border_width as f32 * 2.0;
+        let content_width = (f32::from(viewport.width) - border).max(0.0);
+        let content_height = px((f32::from(viewport.height) - border).max(0.0));
+        let current_width = (content_width / f32::from(self.cell_width)) as usize;
+        let current_height = rows_fitting_viewport(&self.grid, content_height, self.line_height);
         if (current_width.max(10), current_height.max(3)) == (width, height) {
             return;
         }
         let pixel_height = (0..height)
             .map(|row| f32::from(grid_row_height(&self.grid, row, px(self.grid.default_row_height.max(1) as f32))))
             .sum::<f32>();
-        window.resize(size(self.cell_width * width as f32, px(pixel_height)));
+        window.resize(size(
+            self.cell_width * width as f32 + px(border),
+            px(pixel_height + border),
+        ));
     }
 
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
@@ -551,8 +587,12 @@ impl Render for EditorView {
 
         // Report grid-size changes to the logic thread.
         let vp = window.viewport_size();
-        let cols = (f32::from(vp.width) / f32::from(cell_width)) as usize;
-        let rows = rows_fitting_viewport(&self.grid, vp.height, line_height);
+        let border = px(self.internal_border_width as f32);
+        let border_total = border * 2.0;
+        let content_width = px((f32::from(vp.width) - f32::from(border_total)).max(0.0));
+        let content_height = px((f32::from(vp.height) - f32::from(border_total)).max(0.0));
+        let cols = (f32::from(content_width) / f32::from(cell_width)) as usize;
+        let rows = rows_fitting_viewport(&self.grid, content_height, line_height);
         let cols = cols.max(10);
         let rows = rows.max(3);
         if (cols, rows) != (self.cols, self.rows) {
@@ -724,6 +764,7 @@ impl Render for EditorView {
         div()
             .size_full()
             .bg(default_background_fill)
+            .p(border)
             .cursor(mouse_cursor)
             .track_focus(&self.focus)
             .key_context("remacs")
@@ -735,11 +776,12 @@ impl Render for EditorView {
                         .iter()
                         .map(|path| file_drop_uri(path))
                         .collect::<Vec<_>>();
-                    let position = input::mouse_position_for_point(
-                        &this.grid,
+                    let position = frame_content_point(
                         window.mouse_position(),
-                        window,
-                    );
+                        window.viewport_size(),
+                        border,
+                    )
+                    .and_then(|point| input::mouse_position_for_point(&this.grid, point, window));
                     let _ = file_drop_tx.send(GuiEvent::Drop {
                         position,
                         urls,
@@ -751,11 +793,12 @@ impl Render for EditorView {
             ))
             .on_drop(cx.listener(
                 move |this, text: &String, window, cx| {
-                    let position = input::mouse_position_for_point(
-                        &this.grid,
+                    let position = frame_content_point(
                         window.mouse_position(),
-                        window,
-                    );
+                        window.viewport_size(),
+                        border,
+                    )
+                    .and_then(|point| input::mouse_position_for_point(&this.grid, point, window));
                     let _ = text_drop_tx.send(GuiEvent::Drop {
                         position,
                         urls: vec![text.clone()],
@@ -767,11 +810,12 @@ impl Render for EditorView {
             ))
             .on_drop(cx.listener(
                 move |this, text: &ExternalText, window, cx| {
-                    let position = input::mouse_position_for_point(
-                        &this.grid,
+                    let position = frame_content_point(
                         window.mouse_position(),
-                        window,
-                    );
+                        window.viewport_size(),
+                        border,
+                    )
+                    .and_then(|point| input::mouse_position_for_point(&this.grid, point, window));
                     if let Some((kind, color)) = text
                         .0
                         .strip_prefix(COLOR_DROP_PREFIX)
@@ -804,9 +848,16 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
+                        let Some(point) = frame_content_point(
+                            event.position,
+                            window.viewport_size(),
+                            border,
+                        ) else {
+                            return;
+                        };
                         if let Some(command) = popup_menu_command_at(
                             &left_mouse_down_grid.popup_menu_items,
-                            event.position,
+                            point,
                             cell_width,
                             line_height,
                         ) {
@@ -819,7 +870,7 @@ impl Render for EditorView {
                         }
                         if let Some(command) = tool_bar_command_at(
                             &left_mouse_down_grid.tool_bar_items,
-                            event.position,
+                            point,
                             cell_width,
                             line_height,
                         ) {
@@ -831,7 +882,7 @@ impl Render for EditorView {
                         }
                         if let Some((command, args)) = tab_bar_command_at(
                             &left_mouse_down_grid.tab_bar_items,
-                            event.position,
+                            point,
                             cell_width,
                             line_height,
                         ) {
@@ -842,7 +893,7 @@ impl Render for EditorView {
                             return;
                         }
                         if let Some((bar, pointer_offset)) =
-                            scroll_bar_hit(&left_mouse_down_grid, event.position)
+                            scroll_bar_hit(&left_mouse_down_grid, point)
                         {
                             this.scroll_bar_drag = Some(ScrollBarDrag {
                                 window_id: bar.window_id,
@@ -852,7 +903,7 @@ impl Render for EditorView {
                             send_scroll_bar_event(
                                 &left_mouse_down_tx,
                                 &bar,
-                                event.position,
+                                point,
                                 pointer_offset,
                             );
                             window.prevent_default();
@@ -861,7 +912,7 @@ impl Render for EditorView {
                         }
                         if let Some(position) = input::mouse_position_for_point(
                             &left_mouse_down_grid,
-                            event.position,
+                            point,
                             window,
                         ) {
                             let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
@@ -880,11 +931,14 @@ impl Render for EditorView {
             )
             .on_mouse_move(cx.listener(
                 move |this, event: &MouseMoveEvent, window, cx| {
-                    let position = input::mouse_position_for_text_point(
-                        &this.grid,
+                    let point = frame_content_point(
                         event.position,
-                        window,
+                        window.viewport_size(),
+                        border,
                     );
+                    let position = point.and_then(|point| {
+                        input::mouse_position_for_text_point(&this.grid, point, window)
+                    });
                     let target = position.map(|position| {
                         (position.buffer_id, position.buffer_position)
                     });
@@ -897,13 +951,16 @@ impl Render for EditorView {
                     let Some(drag) = this.scroll_bar_drag else {
                         return;
                     };
+                    let Some(point) = point else {
+                        return;
+                    };
                     if let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
                         bar.window_id == drag.window_id && bar.orientation == drag.orientation
                     }) {
                         send_scroll_bar_event(
                             &scroll_bar_tx,
                             bar,
-                            event.position,
+                            point,
                             drag.pointer_offset,
                         );
                         window.prevent_default();
@@ -925,9 +982,16 @@ impl Render for EditorView {
                         cx.stop_propagation();
                         return;
                     }
+                    let Some(point) = frame_content_point(
+                        event.position,
+                        window.viewport_size(),
+                        border,
+                    ) else {
+                        return;
+                    };
                     if let Some(position) = input::mouse_position_for_point(
                         &left_mouse_up_grid,
-                        event.position,
+                        point,
                         window,
                     ) {
                         let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
@@ -944,9 +1008,10 @@ impl Render for EditorView {
                 }),
             )
             .on_mouse_down(MouseButton::Middle, move |event, window, _cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&middle_mouse_down_grid, event.position, window)
-                {
+                let point = frame_content_point(event.position, window.viewport_size(), border);
+                if let Some(position) = point.and_then(|point| {
+                    input::mouse_position_for_point(&middle_mouse_down_grid, point, window)
+                }) {
                     let _ = middle_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Middle,
                         click_count: event.click_count,
@@ -960,9 +1025,10 @@ impl Render for EditorView {
                 }
             })
             .on_mouse_up(MouseButton::Middle, move |event, window, _cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&middle_mouse_up_grid, event.position, window)
-                {
+                let point = frame_content_point(event.position, window.viewport_size(), border);
+                if let Some(position) = point.and_then(|point| {
+                    input::mouse_position_for_point(&middle_mouse_up_grid, point, window)
+                }) {
                     let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Middle,
                         click_count: event.click_count,
@@ -976,9 +1042,10 @@ impl Render for EditorView {
                 }
             })
             .on_mouse_down(MouseButton::Right, move |event, window, _cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&right_mouse_down_grid, event.position, window)
-                {
+                let point = frame_content_point(event.position, window.viewport_size(), border);
+                if let Some(position) = point.and_then(|point| {
+                    input::mouse_position_for_point(&right_mouse_down_grid, point, window)
+                }) {
                     let _ = right_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Right,
                         click_count: event.click_count,
@@ -992,9 +1059,10 @@ impl Render for EditorView {
                 }
             })
             .on_mouse_up(MouseButton::Right, move |event, window, _cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&right_mouse_up_grid, event.position, window)
-                {
+                let point = frame_content_point(event.position, window.viewport_size(), border);
+                if let Some(position) = point.and_then(|point| {
+                    input::mouse_position_for_point(&right_mouse_up_grid, point, window)
+                }) {
                     let _ = right_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Right,
                         click_count: event.click_count,
@@ -1008,9 +1076,10 @@ impl Render for EditorView {
                 }
             })
             .on_scroll_wheel(move |event, window, cx| {
-                if let Some(position) =
-                    input::mouse_position_for_point(&scroll_grid, event.position, window)
-                {
+                let point = frame_content_point(event.position, window.viewport_size(), border);
+                if let Some(position) = point.and_then(|point| {
+                    input::mouse_position_for_point(&scroll_grid, point, window)
+                }) {
                     let delta = event.delta.pixel_delta(line_height);
                     let delta_lines = -f32::from(delta.y) / f32::from(line_height);
                     if delta_lines != 0.0 {
@@ -1486,6 +1555,7 @@ impl Render for EditorView {
                             line_height,
                             &image_row_heights,
                             image_default_line_height,
+                            border,
                         )
                     }),
             )
@@ -1505,8 +1575,8 @@ impl Render for EditorView {
                 );
                 div()
                     .absolute()
-                    .left(cell_width * region.left as f32)
-                    .top(top)
+                    .left(border + cell_width * region.left as f32)
+                    .top(border + top)
                     .w(cell_width * region.width as f32)
                     .h(height)
                     .id((
@@ -1521,8 +1591,8 @@ impl Render for EditorView {
                 this.child(
                     div()
                         .absolute()
-                        .left(px(12.0))
-                        .top(px(12.0))
+                        .left(border + px(12.0))
+                        .top(border + px(12.0))
                         .bg(rgb(0x303438))
                         .child(text),
                 )
@@ -1566,6 +1636,7 @@ fn grid_image_element(
     line_height: Pixels,
     row_heights: &[usize],
     default_line_height: usize,
+    border: Pixels,
 ) -> impl IntoElement {
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
@@ -1591,13 +1662,16 @@ fn grid_image_element(
     };
     div()
         .absolute()
-        .left(cell_width * image.column as f32)
-        .top(row_top_from_heights(
-            row_heights,
-            default_line_height,
-            image.row,
-            line_height,
-        ))
+        .left(border + cell_width * image.column as f32)
+        .top(
+            border
+                + row_top_from_heights(
+                    row_heights,
+                    default_line_height,
+                    image.row,
+                    line_height,
+                ),
+        )
         .child(source)
 }
 

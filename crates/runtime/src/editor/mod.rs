@@ -6018,19 +6018,33 @@ pub(crate) fn frame_char_height(i: &Interp, frame: &crate::editor::FrameRef) -> 
     frame_parameter_positive_size(i, frame, "char-height", fallback)
 }
 
+pub(crate) fn frame_internal_border_width(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    if !frame_is_graphical(i, frame) {
+        return 0;
+    }
+    frame_parameter_value(i, frame, "internal-border-width")
+        .int()
+        .and_then(|width| usize::try_from(width).ok())
+        .unwrap_or(0)
+}
+
 pub(crate) fn frame_pixel_width(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    let border = frame_internal_border_width(i, frame).saturating_mul(2);
     let fallback = frame
         .borrow()
         .width
-        .saturating_mul(frame_char_width(i, frame));
+        .saturating_mul(frame_char_width(i, frame))
+        .saturating_add(border);
     frame_parameter_positive_size(i, frame, "pixel-width", fallback)
 }
 
 pub(crate) fn frame_pixel_height(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    let border = frame_internal_border_width(i, frame).saturating_mul(2);
     let fallback = frame
         .borrow()
         .height
-        .saturating_mul(frame_char_height(i, frame));
+        .saturating_mul(frame_char_height(i, frame))
+        .saturating_add(border);
     frame_parameter_positive_size(i, frame, "pixel-height", fallback)
 }
 

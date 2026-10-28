@@ -151,6 +151,7 @@ pub fn run_gui_with_dump(
                             let alpha_active = snapshot.alpha_active;
                             let alpha_inactive = snapshot.alpha_inactive;
                             let alpha_background = snapshot.alpha_background;
+                            let internal_border_width = snapshot.internal_border_width;
                             let background_appearance = frame_background_appearance(&snapshot);
                             let ns_appearance = snapshot.ns_appearance;
                             let represented_file = snapshot.represented_file.clone();
@@ -197,6 +198,8 @@ pub fn run_gui_with_dump(
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
+                                    let internal_border_changed =
+                                        view.set_internal_border_width(internal_border_width);
                                     let alpha_background_changed =
                                         view.set_alpha_background(alpha_background);
                                     if update_appearance {
@@ -210,6 +213,7 @@ pub fn run_gui_with_dump(
                                         view.grid = grid;
                                         cx.notify();
                                     } else if modifier_mapping_changed
+                                        || internal_border_changed
                                         || alpha_background_changed
                                         || appearance_changed
                                     {
@@ -272,6 +276,7 @@ pub fn run_gui_with_dump(
                                 let initial_fullscreen = fullscreen.clone();
                                 let initial_behavior = behavior.clone();
                                 let initial_modifier_mapping = modifier_mapping;
+                                let initial_internal_border_width = internal_border_width;
                                 let initial_alpha_active = alpha_active;
                                 let initial_alpha_inactive = alpha_inactive;
                                 let initial_alpha_background = alpha_background;
@@ -286,6 +291,7 @@ pub fn run_gui_with_dump(
                                     view.set_frame_id(frame_id);
                                     view.grid = grid;
                                     view.set_modifier_mapping(initial_modifier_mapping);
+                                    view.set_internal_border_width(initial_internal_border_width);
                                     view.set_alpha_background(initial_alpha_background);
                                     window.set_opacity(frame_opacity(
                                         initial_alpha_active,
@@ -673,9 +679,10 @@ fn frame_window_options(
     cx: &mut AsyncApp,
 ) -> WindowOptions {
     let child = frame.parent_frame.is_some();
+    let internal_border = frame.internal_border_width as f32 * 2.0;
     let content_size = size(
-        px((frame.width.max(10) as f32 * 8.0).max(80.0)),
-        px((frame.height.max(3) as f32 * 19.0).max(57.0)),
+        px((frame.width.max(10) as f32 * 8.0).max(80.0) + internal_border),
+        px((frame.height.max(3) as f32 * 19.0).max(57.0) + internal_border),
     );
     let base_window = frame
         .parent_frame

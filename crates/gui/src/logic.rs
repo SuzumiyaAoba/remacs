@@ -172,6 +172,7 @@ pub(super) struct FrameSnapshot {
     pub alpha_background: u8,
     pub width: usize,
     pub height: usize,
+    pub internal_border_width: usize,
     pub left: Option<i128>,
     pub top: Option<i128>,
     pub undecorated: bool,
@@ -1429,6 +1430,9 @@ impl KeyIo for ChanIo {
                 };
                 let name = frame.borrow().name.borrow().to_string();
                 let int_param = |name: &str| frame_parameter_value(i, frame, name).int();
+                let internal_border_width = int_param("internal-border-width")
+                    .and_then(|width| usize::try_from(width).ok())
+                    .unwrap_or(0);
                 let (alpha_active, alpha_inactive) = frame_alpha(i, frame);
                 let alpha_background = frame_alpha_background(i, frame);
                 let fullscreen = match frame_parameter_value(i, frame, "fullscreen") {
@@ -1449,6 +1453,7 @@ impl KeyIo for ChanIo {
                     alpha_background,
                     width,
                     height,
+                    internal_border_width,
                     left: int_param("left"),
                     top: int_param("top"),
                     undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),

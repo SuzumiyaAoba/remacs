@@ -443,7 +443,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-char-width", 0, 1, f_frame_char_width, ""),
     S!("frame-char-height", 0, 1, f_frame_char_height, ""),
     S!("frame-fringe-width", 0, 1, f_zero_framep, ""),
-    S!("frame-internal-border-width", 0, 1, f_zero_framep, ""),
+    S!(
+        "frame-internal-border-width",
+        0,
+        1,
+        f_frame_internal_border_width,
+        ""
+    ),
     S!("frame-right-divider-width", 0, 1, f_zero_framep, ""),
     S!("frame-bottom-divider-width", 0, 1, f_zero_framep, ""),
     S!("frame-scroll-bar-width", 0, 1, f_frame_scroll_bar_width, ""),
@@ -3998,6 +4004,20 @@ fn f_zero_framep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Nil | Value::Frame(_) => Ok(Value::Int(0)),
         other => Err(i.wrong_type_mut("framep", &other)),
     }
+}
+
+fn f_frame_internal_border_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = match arg(&a, 0) {
+        Value::Nil => crate::editor::sel_frame(i),
+        Value::Frame(frame) => Some(frame),
+        other => return Err(i.wrong_type_mut("framep", &other)),
+    };
+    Ok(Value::Int(
+        frame
+            .as_ref()
+            .map(|frame| crate::editor::frame_internal_border_width(i, frame) as i128)
+            .unwrap_or(0),
+    ))
 }
 
 /// window-*-height/divider-width getters: decode_live_window —
