@@ -12,7 +12,6 @@ use input::TextInputState;
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
 const FG: u32 = 0xc5c8c6;
 const BG: u32 = 0x1d1f21;
-const MODE_BG: u32 = 0x373b41;
 const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;
@@ -196,15 +195,6 @@ impl Render for EditorView {
                         for (y, line) in lines.iter().enumerate() {
                             let origin =
                                 point(bounds.left(), bounds.top() + line_height * (y as f32));
-                            if grid.mode_rows.contains(&y) {
-                                window.paint_quad(fill(
-                                    Bounds {
-                                        origin,
-                                        size: size(bounds.size.width, line_height),
-                                    },
-                                    rgb(MODE_BG),
-                                ));
-                            }
                             let _ = line.paint(origin, line_height, window, _cx);
                             let char_styles = grid
                                 .char_attrs

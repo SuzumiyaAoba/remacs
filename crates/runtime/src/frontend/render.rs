@@ -391,6 +391,121 @@ struct RenderedRow {
     padding_char_start: usize,
 }
 
+#[derive(Clone)]
+struct ScreenCell {
+    chars: Vec<(char, CellStyle)>,
+    style: CellStyle,
+    occupied: bool,
+    continuation: bool,
+}
+
+impl ScreenCell {
+    fn new(style: CellStyle) -> ScreenCell {
+        ScreenCell {
+            chars: Vec::new(),
+            style,
+            occupied: false,
+            continuation: false,
+        }
+    }
+}
+
+fn place_rendered_row(screen: &mut [ScreenCell], left: usize, row: &RenderedRow) {
+    place_text_row(screen, left, &row.text, &row.cell_attrs, &row.char_attrs);
+}
+
+fn place_text_row(
+    screen: &mut [ScreenCell],
+    left: usize,
+    text: &str,
+    cell_attrs: &[CellStyle],
+    char_attrs: &[CellStyle],
+) {
+    let mut column = 0usize;
+    let mut last_lead = None;
+    for (index, ch) in text.chars().enumerate() {
+        let char_width = display_char_width(ch);
+        let style = char_attrs.get(index).copied().unwrap_or_default();
+        if char_width == 0 {
+            let target = last_lead
+                .unwrap_or_else(|| left + column.min(screen.len().saturating_sub(left + 1)));
+            if let Some(cell) = screen.get_mut(target) {
+                cell.chars.push((ch, style));
+                cell.occupied = true;
+                cell.continuation = false;
+            }
+            continue;
+        }
+        let Some(target) = screen.get_mut(left.saturating_add(column)) else {
+            break;
+        };
+        target.chars.clear();
+        target.chars.push((ch, style));
+        target.style = cell_attrs.get(column).copied().unwrap_or_default();
+        target.occupied = true;
+        target.continuation = false;
+        last_lead = Some(left + column);
+        for offset in 1..char_width {
+            let Some(continuation) = screen.get_mut(left.saturating_add(column + offset)) else {
+                break;
+            };
+            continuation.chars.clear();
+            continuation.style = cell_attrs.get(column + offset).copied().unwrap_or(style);
+            continuation.occupied = true;
+            continuation.continuation = true;
+        }
+        column = column.saturating_add(char_width);
+    }
+}
+
+fn compose_screen_rows(
+    screen: &[Vec<ScreenCell>],
+    width: usize,
+    default_style: CellStyle,
+) -> (
+    Vec<String>,
+    Vec<Vec<CellStyle>>,
+    Vec<Vec<CellStyle>>,
+    Vec<Vec<usize>>,
+) {
+    let mut rows = Vec::with_capacity(screen.len());
+    let mut attrs = Vec::with_capacity(screen.len());
+    let mut char_attrs = Vec::with_capacity(screen.len());
+    let mut cell_offsets = Vec::with_capacity(screen.len());
+    for screen_row in screen {
+        let mut text = String::new();
+        let mut cell_styles = Vec::with_capacity(width);
+        let mut char_styles = Vec::new();
+        let mut offsets = vec![0; width + 1];
+        for column in 0..width {
+            offsets[column] = text.len();
+            let cell = &screen_row[column];
+            cell_styles.push(cell.style);
+            if !cell.continuation {
+                if cell.chars.is_empty() {
+                    text.push(' ');
+                    char_styles.push(if cell.occupied {
+                        cell.style
+                    } else {
+                        default_style
+                    });
+                } else {
+                    for (ch, style) in &cell.chars {
+                        text.push(*ch);
+                        char_styles.push(*style);
+                    }
+                }
+            }
+            offsets[column + 1] = text.len();
+        }
+        rows.push(text);
+        attrs.push(cell_styles);
+        char_attrs.push(char_styles);
+        cell_offsets.push(offsets);
+    }
+    (rows, attrs, char_attrs, cell_offsets)
+}
+
 /// Render a Lisp line into a fixed number of display cells. The source
 /// and cell offset maps let the GUI position its caret in GPUI's shaped
 /// line while the terminal keeps using cell coordinates.
@@ -1047,7 +1162,8 @@ fn render_grid_internal(
     let mut char_attrs = vec![Vec::new(); height];
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
-    let mut cursors = Vec::new();
+    let mut positioned_cursors = Vec::new();
+    let mut input_screen_lefts = Vec::new();
     let mut cursor_index = None;
     let (blink_cursor, blink_interval) = blink_cursor_settings(i);
     let mut input = if include_input {
@@ -1064,7 +1180,7 @@ fn render_grid_internal(
                 char_attrs,
                 mode_rows,
                 cursor: cursor_pos,
-                cursors,
+                cursors: Vec::new(),
                 cursor_index,
                 blink_cursor,
                 blink_interval,
@@ -1075,32 +1191,69 @@ fn render_grid_internal(
     };
     let fb = frame.borrow();
     let cursor_color = frame_cursor_color(i, &fctx, &fb);
-    let n_windows = fb.windows.len();
     let mini_height = 1usize;
     let body_height = height.saturating_sub(mini_height);
+    let (root_left, root_top, root_width, root_height) = fb
+        .root
+        .as_ref()
+        .map(|root| {
+            let root = root.borrow();
+            (root.left, root.top, root.width, root.height)
+        })
+        .unwrap_or((0, 0, width, body_height));
+    let scale_x = if root_width > 0 {
+        width as f64 / root_width as f64
+    } else {
+        1.0
+    };
+    let scale_y = if root_height > 0 {
+        body_height as f64 / root_height as f64
+    } else {
+        1.0
+    };
+    let scale_edge = |position: usize, origin: usize, scale: f64, limit: usize| {
+        ((position.saturating_sub(origin) as f64 * scale).round() as usize).min(limit)
+    };
+    let mut screen_rows: Vec<Vec<ScreenCell>> = (0..height)
+        .map(|_| (0..width).map(|_| ScreenCell::new(default_style)).collect())
+        .collect();
+    let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;
 
-    for (wi, w) in fb.windows.iter().enumerate() {
-        let per = if n_windows == 0 {
-            0
-        } else {
-            body_height / n_windows
-        };
-        let top = wi * per;
-        let wh = if wi == n_windows - 1 {
-            body_height.saturating_sub(per * wi)
-        } else {
-            per
-        };
-        let wh = wh.max(2);
-        let (buf_id, start, hscroll) = {
+    for w in &fb.windows {
+        let (buf_id, start, hscroll, raw_left, raw_top, raw_width, raw_height) = {
             let wb = w.borrow();
-            (wb.buffer, wb.start, wb.hscroll)
+            (
+                wb.buffer, wb.start, wb.hscroll, wb.left, wb.top, wb.width, wb.height,
+            )
         };
+        let window_left = scale_edge(raw_left, root_left, scale_x, width);
+        let window_top = scale_edge(raw_top, root_top, scale_y, body_height);
+        let window_right = scale_edge(
+            raw_left.saturating_add(raw_width),
+            root_left,
+            scale_x,
+            width,
+        );
+        let window_bottom = scale_edge(
+            raw_top.saturating_add(raw_height),
+            root_top,
+            scale_y,
+            body_height,
+        );
+        let window_width = window_right.saturating_sub(window_left);
+        let available_height = body_height.saturating_sub(window_top);
+        let window_height = window_bottom
+            .saturating_sub(window_top)
+            .max(2)
+            .min(available_height);
+        if window_width == 0 || window_height == 0 {
+            continue;
+        }
         let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
         let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
-        let text_rows = wh.saturating_sub(1);
+        let text_rows = window_height.saturating_sub(1);
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
         // away, and likewise `hscroll' horizontally (GNU
@@ -1158,15 +1311,15 @@ fn render_grid_internal(
                     .or_else(|| i.default_toplevel_value(ahs_id))
                     .map(|v| v.truthy())
                     .unwrap_or(true);
-                let new_hscroll = if width > 0 && ahs_on && !suspend_hs {
+                let new_hscroll = if window_width > 0 && ahs_on && !suspend_hs {
                     let col = display_columns(
                         &bb.text.substring(bb.text.line_start(pt_line), pt),
                         tab_width,
                     );
                     if col < hscroll {
                         col
-                    } else if col >= hscroll + width {
-                        col + 1 - width
+                    } else if col >= hscroll + window_width {
+                        col + 1 - window_width
                     } else {
                         hscroll
                     }
@@ -1194,7 +1347,7 @@ fn render_grid_internal(
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone())));
         let mut visible_end = start;
         for row in 0..text_rows {
-            let y = top + row;
+            let y = window_top + row;
             if y >= body_height {
                 break;
             }
@@ -1223,12 +1376,18 @@ fn render_grid_internal(
                 None => (EmacsText::new(), 0, 0, None),
             };
             visible_end = row_end;
-            let mut rendered =
-                render_text_row(&line, hscroll, width, tab_width, default_style, |index| {
+            let mut rendered = render_text_row(
+                &line,
+                hscroll,
+                window_width,
+                tab_width,
+                default_style,
+                |index| {
                     wf.as_ref()
                         .map(|wf| style_at_pos(i, &mut fctx, wf, line_pos + index))
                         .unwrap_or(default_style)
-                });
+                },
+            );
             // Empty tail of the row: the line-end face extends its
             // background over it iff the face's :extend holds (GNU
             // extend_face_to_end_of_line).
@@ -1236,7 +1395,7 @@ fn render_grid_internal(
                 let end_pos = line_pos + line.chars().count();
                 let tail = style_at_pos(i, &mut fctx, wf, end_pos);
                 if tail.extend {
-                    for cell in rendered.visible_columns..width {
+                    for cell in rendered.visible_columns..window_width {
                         let mut t = tail;
                         t.fg = None;
                         t.bold = false;
@@ -1263,14 +1422,14 @@ fn render_grid_internal(
                 }
             }
             if let Some(point_index) = point_index
-                && width > 0
+                && window_width > 0
             {
                 let point_col = display_columns_of(line.chars().take(point_index), tab_width);
-                let col = point_col.saturating_sub(hscroll).min(width - 1);
+                let col = point_col.saturating_sub(hscroll).min(window_width - 1);
                 let byte_index = if point_col < hscroll {
                     0
-                } else if point_col.saturating_sub(hscroll) >= width {
-                    rendered.cell_offsets[width - 1]
+                } else if point_col.saturating_sub(hscroll) >= window_width {
+                    rendered.cell_offsets[window_width - 1]
                 } else {
                     rendered
                         .source_offsets
@@ -1279,8 +1438,7 @@ fn render_grid_internal(
                         .unwrap_or(rendered.text.len())
                 };
                 if selected_window {
-                    cursor_pos = Some((col, y));
-                    cursor_index = Some(byte_index);
+                    selected_cursor = Some((y, window_left, col, byte_index));
                 }
                 if let Some((shape, thickness)) = cursor_style {
                     let stretch = line.chars().nth(point_index).and_then(|ch| {
@@ -1296,21 +1454,24 @@ fn render_grid_internal(
                             char_width > 1
                         };
                         (point_col >= hscroll
-                            && point_col.saturating_sub(hscroll) < width
+                            && point_col.saturating_sub(hscroll) < window_width
                             && stretchable)
                             .then(|| rendered.source_offsets.get(point_index + 1).copied())
                             .flatten()
                     });
-                    cursors.push(GridCursor {
-                        row: y,
-                        column: col,
-                        index: byte_index,
-                        after_index: stretch,
-                        shape,
-                        thickness,
-                        color: cursor_color,
-                        selected: selected_window,
-                    });
+                    positioned_cursors.push((
+                        GridCursor {
+                            row: y,
+                            column: col,
+                            index: byte_index,
+                            after_index: stretch,
+                            shape,
+                            thickness,
+                            color: cursor_color,
+                            selected: selected_window,
+                        },
+                        window_left,
+                    ));
                 }
             }
             if selected_window
@@ -1319,16 +1480,16 @@ fn render_grid_internal(
                     .is_some_and(|snapshot| snapshot.buffer_id == buf_id)
             {
                 if let Some(snapshot) = input.as_mut() {
+                    let row_index = snapshot.rows.len();
                     snapshot.rows.push(GridInputRow {
                         row: y,
                         buffer_start: line_pos,
                         source_offsets: rendered.source_offsets.clone(),
                     });
+                    input_screen_lefts.push((row_index, window_left));
                 }
             }
-            rows[y] = rendered.text;
-            attrs[y] = rendered.cell_attrs;
-            char_attrs[y] = rendered.char_attrs;
+            place_rendered_row(&mut screen_rows[y], window_left, &rendered);
         }
         let tick = i
             .buffers
@@ -1337,12 +1498,17 @@ fn render_grid_internal(
             .unwrap_or(0);
         w.borrow_mut().redisplay_end = Some((buf_id, tick, start, visible_end));
         // Mode line.
-        let my = top + text_rows;
+        let my = window_top + text_rows;
         if my < body_height {
             let (name, modified, point_line, point_col) = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
-                    let point = bb.point();
+                    let point = if selected_window {
+                        bb.point()
+                    } else {
+                        w.borrow().point
+                    }
+                    .clamp(bb.begv, bb.zv);
                     let point_line = bb.text.line_of_pos(point);
                     let point_line_start = bb.text.line_start(point_line);
                     (
@@ -1380,11 +1546,16 @@ fn render_grid_internal(
             if ml == CellStyle::default() {
                 ml.inverse = true;
             }
-            rows[my] = fit_text_to_cells_with_tab_width(&mode, width, tab_width).0;
-            for cell in attrs[my].iter_mut() {
-                *cell = ml;
-            }
-            char_attrs[my] = rows[my].chars().map(|_| ml).collect();
+            let mode_row = fit_text_to_cells_with_tab_width(&mode, window_width, tab_width).0;
+            let mode_cells = vec![ml; window_width];
+            let mode_chars = mode_row.chars().map(|_| ml).collect::<Vec<_>>();
+            place_text_row(
+                &mut screen_rows[my],
+                window_left,
+                &mode_row,
+                &mode_cells,
+                &mode_chars,
+            );
             mode_rows.push(my);
         }
     }
@@ -1423,10 +1594,38 @@ fn render_grid_internal(
                 buffer_start: 0,
                 source_offsets: rendered.source_offsets.clone(),
             });
+            input_screen_lefts.push((snapshot.rows.len() - 1, 0));
         }
-        rows[y] = rendered.text;
-        attrs[y] = rendered.cell_attrs;
-        char_attrs[y] = rendered.char_attrs;
+        place_rendered_row(&mut screen_rows[y], 0, &rendered);
+    }
+    let (composed_rows, composed_attrs, composed_char_attrs, cell_offsets) =
+        compose_screen_rows(&screen_rows, width, default_style);
+    rows = composed_rows;
+    attrs = composed_attrs;
+    char_attrs = composed_char_attrs;
+    let cursors = positioned_cursors
+        .into_iter()
+        .map(|(mut cursor, screen_left)| {
+            let base = cell_offsets[cursor.row][screen_left.min(width)];
+            cursor.column += screen_left;
+            cursor.index += base;
+            cursor.after_index = cursor.after_index.map(|index| index + base);
+            cursor
+        })
+        .collect();
+    if let Some((row, left, column, index)) = selected_cursor {
+        let base = cell_offsets[row][left.min(width)];
+        cursor_pos = Some((left + column, row));
+        cursor_index = Some(base + index);
+    }
+    if let Some(input) = input.as_mut() {
+        for (row_index, screen_left) in input_screen_lefts {
+            let row = &mut input.rows[row_index];
+            let base = cell_offsets[row.row][screen_left.min(width)];
+            for offset in &mut row.source_offsets {
+                *offset += base;
+            }
+        }
     }
     Grid {
         rows,
