@@ -358,11 +358,9 @@ correspond to previously loaded files."
              (package-desc-full-name pkg-desc)))
     (catch 'exit
       ;; Activate its dependencies recursively.
-      ;; FIXME: This doesn't check whether the activated version is the
-      ;; required version.
       (when deps
         (dolist (req (package-desc-reqs pkg-desc))
-          (unless (package-activate (car req))
+          (unless (package-activate (car req) nil (cadr req))
             (message "Unable to activate package `%s'.\nRequired package `%s-%s' is unavailable"
                      name (car req) (package-version-join (cadr req)))
             (throw 'exit nil))))
@@ -387,7 +385,7 @@ The following files have already been loaded: %S")))
 
 ;;;; `package-activate'
 
-(defun package--get-activatable-pkg (pkg-name)
+(defun package--get-activatable-pkg (pkg-name &optional min-version)
   ;; Is "activatable" a word?
   (let ((pkg-descs (cdr (assq pkg-name package-alist))))
     ;; Check if PACKAGE is available in `package-alist'.
@@ -396,22 +394,27 @@ The following files have already been loaded: %S")))
           (let ((available-version (package-desc-version (car pkg-descs))))
             (or (package-disabled-p pkg-name available-version)
                 ;; Prefer a builtin package.
-                (package-built-in-p pkg-name available-version))))
+                (package-built-in-p pkg-name available-version)
+                (and min-version
+                     (not (version-list-<= min-version available-version))))))
       (setq pkg-descs (cdr pkg-descs)))
     (car pkg-descs)))
 
 ;; This function activates a newer version of a package if an older
 ;; one was already activated.  It also loads a features of this
 ;; package which were already loaded.
-(defun package-activate (package &optional force)
+(defun package-activate (package &optional force min-version)
   "Activate the package named PACKAGE.
 If FORCE is true, (re-)activate it if it's already activated.
-Newer versions are always activated, regardless of FORCE."
-  (let ((pkg-desc (package--get-activatable-pkg package)))
+Newer versions are always activated, regardless of FORCE.
+
+Optional third argument MIN-VERSION restricts activation to that version
+or newer."
+  (let ((pkg-desc (package--get-activatable-pkg package min-version)))
     (cond
      ;; If no such package is found, maybe it's built-in.
      ((null pkg-desc)
-      (let ((builtin (package-built-in-p package)))
+      (let ((builtin (package-built-in-p package min-version)))
         (when builtin
           (add-to-list 'package-activated-list package))
         builtin))
