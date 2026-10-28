@@ -540,7 +540,7 @@ However, ARG is not supported in this case."
       (while (< (point) limit)
         (Buffer-menu-delete))))
    (t
-    (if (or (null arg) (= arg 0))
+    (if (null arg)
         (setq arg 1))
     (while (> arg 0)
       (when (Buffer-menu-buffer)
