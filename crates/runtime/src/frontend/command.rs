@@ -218,6 +218,15 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                     report_flow(i, flow);
                 }
             }
+            InputEvent::ColorDrop {
+                position,
+                color,
+                background,
+            } => {
+                if let Err(flow) = dispatch_color_drop(i, position, &color, background) {
+                    report_flow(i, flow);
+                }
+            }
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
@@ -1000,6 +1009,65 @@ fn dispatch_drop(
     Ok(())
 }
 
+fn dispatch_color_drop(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    color: &str,
+    background: bool,
+) -> Result<(), crate::lisp::Flow> {
+    let Some(position) = position else {
+        return Ok(());
+    };
+    if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+    let Some(frame) = i.selected_frame.clone() else {
+        return Ok(());
+    };
+    let Some(buffer) = i.buffer_value(position.buffer_id) else {
+        return Ok(());
+    };
+    let face_property = Value::Sym(i.intern("face"));
+    let get_char_property = Value::Sym(i.intern("get-char-property"));
+    let face_value = i.apply(
+        &get_char_property,
+        vec![
+            Value::Int(position.buffer_position as i128 + 1),
+            face_property,
+            buffer,
+        ],
+    )?;
+    let default_face = Value::Sym(i.intern("default"));
+    let face = match face_value {
+        Value::Sym(_) => face_value,
+        Value::Cons(cons) => {
+            let face = cons.borrow().car.clone();
+            if matches!(face, Value::Sym(_)) {
+                face
+            } else {
+                default_face
+            }
+        }
+        _ => default_face,
+    };
+    let attribute = Value::Sym(i.intern(if background {
+        ":background"
+    } else {
+        ":foreground"
+    }));
+    let set_face_attribute = Value::Sym(i.intern("set-face-attribute"));
+    i.apply(
+        &set_face_attribute,
+        vec![
+            face,
+            Value::Frame(frame),
+            attribute,
+            Value::string(format!("#{color}")),
+        ],
+    )?;
+    Ok(())
+}
+
 fn mouse_event(i: &mut Interp, mouse: MouseInput) -> Option<(i128, Value)> {
     let drag = mouse.start.buffer_id != mouse.end.buffer_id
         || mouse.start.buffer_position != mouse.end.buffer_position;
@@ -1421,6 +1489,15 @@ fn minibuf_loop<T: KeyIo>(
                 action,
             } => {
                 if let Err(flow) = dispatch_drop(i, position, &urls, &action) {
+                    return Err(flow);
+                }
+            }
+            InputEvent::ColorDrop {
+                position,
+                color,
+                background,
+            } => {
+                if let Err(flow) = dispatch_color_drop(i, position, &color, background) {
                     return Err(flow);
                 }
             }

@@ -1,7 +1,7 @@
 //! GPUI view construction and painting of frontend-neutral grids.
 use super::{
     keys::{command_keystroke, keystroke_to_code, unicode_key_text},
-    logic::{FrameEventSender, GuiEvent, GuiGeometry},
+    logic::{COLOR_DROP_PREFIX, FrameEventSender, GuiEvent, GuiGeometry},
     monitor::monitor_geometry,
 };
 use gpui::*;
@@ -502,11 +502,23 @@ impl Render for EditorView {
                         window.mouse_position(),
                         window,
                     );
-                    let _ = external_text_drop_tx.send(GuiEvent::Drop {
-                        position,
-                        urls: vec![text.0.clone()],
-                        action: "copy".to_owned(),
-                    });
+                    if let Some((kind, color)) = text
+                        .0
+                        .strip_prefix(COLOR_DROP_PREFIX)
+                        .and_then(|color| color.split_once(':'))
+                    {
+                        let _ = external_text_drop_tx.send(GuiEvent::ColorDrop {
+                            position,
+                            color: color.to_owned(),
+                            background: kind == "background",
+                        });
+                    } else {
+                        let _ = external_text_drop_tx.send(GuiEvent::Drop {
+                            position,
+                            urls: vec![text.0.clone()],
+                            action: "copy".to_owned(),
+                        });
+                    }
                     window.prevent_default();
                     cx.stop_propagation();
                 },

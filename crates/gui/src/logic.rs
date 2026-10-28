@@ -21,6 +21,8 @@ use std::{
 };
 use unicode_width::UnicodeWidthChar;
 
+pub(super) const COLOR_DROP_PREFIX: &str = "\u{1f}remacs-color-drop:";
+
 /// Messages the UI thread sends to the editor logic thread.
 pub(super) enum GuiEvent {
     /// Input emitted by a particular native frame window.
@@ -29,6 +31,11 @@ pub(super) enum GuiEvent {
         event: Box<GuiEvent>,
     },
     FrameVisibility { frame_id: usize, visible: bool },
+    ColorDrop {
+        position: Option<MousePosition>,
+        color: String,
+        background: bool,
+    },
     FrameFocus { frame_id: usize, focused: bool },
     FrameDeleteRequest { frame_id: usize },
     PowerOff,
@@ -718,6 +725,15 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
+            GuiEvent::ColorDrop {
+                position,
+                color,
+                background,
+            } => Ok(Some(InputEvent::ColorDrop {
+                position,
+                color,
+                background,
+            })),
             GuiEvent::FrameFocus { frame_id, focused } => {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
@@ -839,6 +855,7 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
+            GuiEvent::ColorDrop { .. } => Ok(None),
             GuiEvent::FrameFocus { frame_id, focused } => {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)

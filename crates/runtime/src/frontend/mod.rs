@@ -68,6 +68,12 @@ pub enum InputEvent {
         urls: Vec<String>,
         action: String,
     },
+    /// Apply a color dragged from the native color panel to the face under the pointer.
+    ColorDrop {
+        position: Option<MousePosition>,
+        color: String,
+        background: bool,
+    },
     MouseDown(MouseInput),
     Mouse(MouseInput),
     /// A wheel/trackpad event, with line count normalized by the front-end.

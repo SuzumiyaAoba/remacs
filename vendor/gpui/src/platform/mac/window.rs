@@ -13,7 +13,7 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
-        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard,
+        NSColor, NSEvent, NSEventModifierFlags, NSColorPboardType, NSFilenamesPboardType, NSPasteboard,
         NSPasteboardTypeString, NSScreen,
         NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
         NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
@@ -673,6 +673,7 @@ impl MacWindow {
             let drag_types: id = msg_send![class!(NSMutableArray), array];
             let () = msg_send![drag_types, addObject: NSFilenamesPboardType];
             let () = msg_send![drag_types, addObject: NSPasteboardTypeString];
+            let () = msg_send![drag_types, addObject: NSColorPboardType];
             let () = msg_send![native_window, registerForDraggedTypes: drag_types];
             let () = msg_send![
                 native_window,
@@ -2381,6 +2382,17 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
         }
         return NSDragOperationNone;
     }
+    if let Some(color) = external_color_from_event(dragging_info)
+        && send_new_event(
+            &window_state,
+            PlatformInput::TextDrop(TextDropEvent::Entered { position, text: color }),
+        )
+    {
+        let mut state = window_state.lock();
+        state.external_files_dragged = true;
+        state.external_text_dragged = true;
+        return NSDragOperationCopy;
+    }
     if let Some(text) = external_text_from_event(dragging_info)
         && send_new_event(
             &window_state,
@@ -2466,6 +2478,37 @@ fn external_text_from_event(dragging_info: *mut Object) -> Option<String> {
     }
     let string = unsafe { NSString::UTF8String(text) };
     (!string.is_null()).then(|| unsafe { CStr::from_ptr(string).to_string_lossy().into_owned() })
+}
+
+fn external_color_from_event(dragging_info: *mut Object) -> Option<String> {
+    const PREFIX: &str = "\u{1f}remacs-color-drop:";
+    unsafe {
+        let pasteboard: id = msg_send![dragging_info, draggingPasteboard];
+        let color: id = msg_send![class!(NSColor), colorFromPasteboard: pasteboard];
+        if color.is_null() {
+            return None;
+        }
+        let color_space: id = msg_send![class!(NSColorSpace), genericRGBColorSpace];
+        let color: id = msg_send![color, colorUsingColorSpace: color_space];
+        if color.is_null() {
+            return None;
+        }
+        let red: f64 = msg_send![color, redComponent];
+        let green: f64 = msg_send![color, greenComponent];
+        let blue: f64 = msg_send![color, blueComponent];
+        let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+        let kind = if modifiers.contains(NSEventModifierFlags::NSShiftKeyMask) {
+            "background"
+        } else {
+            "foreground"
+        };
+        Some(format!(
+            "{PREFIX}{kind}:{:02x}{:02x}{:02x}",
+            (red.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (green.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (blue.clamp(0.0, 1.0) * 255.0).round() as u8,
+        ))
+    }
 }
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
