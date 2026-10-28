@@ -87,6 +87,9 @@ value of `version-control'."
 (defvar save-place-loaded nil
   "Non-nil means that the `save-place-file' has been loaded.")
 
+(defvar save-place--load-failed nil
+  "Non-nil means `save-place-file' could not be read, so do not overwrite it.")
+
 (defcustom save-place-limit 400
   "Maximum number of entries to retain in the list; nil means no limit."
   :version "24.1"                       ; nil -> 400
@@ -121,7 +124,8 @@ this happens automatically before saving `save-place-alist' to
 
 (defun save-place-load-alist-from-file ()
   (unless save-place-loaded
-    (setq save-place-loaded t)
+    (setq save-place-loaded t
+          save-place--load-failed nil)
     ;; FIXME: Obey `save-place-abbreviate-file-names'?
     (let ((file (expand-file-name save-place-file)))
       ;; make sure that the alist does not get overwritten, and then
@@ -136,13 +140,19 @@ this happens automatically before saving `save-place-alist' to
           (let (coding-system-for-read)
             (insert-file-contents file))
           (goto-char (point-min))
-          (setq save-place-alist
-                (with-demoted-errors "Error reading save-place-file: %S"
-                  (car (read-from-string
-                        (buffer-substring (point-min) (point-max))))))
-
-          (save-place--truncate-alist)))
-      (save-place--normalize-alist))))
+          (let (alist)
+            (condition-case err
+                (setq alist
+                      (car (read-from-string
+                            (buffer-substring (point-min) (point-max)))))
+              (error
+               (setq save-place--load-failed t)
+               (message "Error reading save-place-file: %S" err)))
+            (unless save-place--load-failed
+              (setq save-place-alist alist)
+              (save-place--truncate-alist)))))
+      (unless save-place--load-failed
+        (save-place--normalize-alist)))))
 
 (defcustom save-place-abbreviate-file-names nil
   "If non-nil, abbreviate file names before saving them.
@@ -386,28 +396,30 @@ may have changed) back to `save-place-alist'."
       (setq save-place-alist (cdr save-place-alist)))))
 
 (defun save-place-alist-to-file ()
-  (let ((file (expand-file-name save-place-file))
-        (coding-system-for-write 'utf-8))
-    (with-temp-buffer
-      (when save-place-forget-unreadable-files
-	(save-place-forget-unreadable-files))
-      (insert (format ";;; -*- coding: %s; mode: lisp-data -*-\n"
-                      coding-system-for-write))
-      (let ((print-length nil)
-            (print-level nil))
-        (prin1 save-place-alist (current-buffer)))
-      (let ((version-control
-             (cond
-              ((null save-place-version-control) nil)
-              ((eq 'never save-place-version-control) 'never)
-              ((eq 'nospecial save-place-version-control) version-control)
-              (t
-               t))))
-	(condition-case nil
-	    ;; Don't use write-file; we don't want this buffer to visit it.
-            (write-region (point-min) (point-max) file nil
-			  (unless (called-interactively-p 'interactive) 'quiet))
-	  (file-error (message "Saving places: can't write %s" file)))))))
+  (if save-place--load-failed
+      (message "Not saving places because the history file could not be read")
+    (let ((file (expand-file-name save-place-file))
+          (coding-system-for-write 'utf-8))
+      (with-temp-buffer
+        (when save-place-forget-unreadable-files
+	  (save-place-forget-unreadable-files))
+        (insert (format ";;; -*- coding: %s; mode: lisp-data -*-\n"
+                        coding-system-for-write))
+        (let ((print-length nil)
+              (print-level nil))
+          (prin1 save-place-alist (current-buffer)))
+        (let ((version-control
+               (cond
+                ((null save-place-version-control) nil)
+                ((eq 'never save-place-version-control) 'never)
+                ((eq 'nospecial save-place-version-control) version-control)
+                (t
+                 t))))
+	  (condition-case nil
+	      ;; Don't use write-file; we don't want this buffer to visit it.
+              (write-region (point-min) (point-max) file nil
+			    (unless (called-interactively-p 'interactive) 'quiet))
+	    (file-error (message "Saving places: can't write %s" file))))))))
 
 (defun save-places-to-alist ()
   "Save all buffer filenames and positions to `save-place-alist'.
