@@ -333,9 +333,10 @@ the buffer of PROCESS."
     (concat "\n*"
             ;; Most start with `^' but the one for `sdb' cannot be easily
             ;; stripped.  Code the prompt for `sdb' fixed here.
-            (if (= (aref prompt-regexp 0) ?^)
-                (substring prompt-regexp 1)
-              "\\*")
+            (cond ((string= prompt-regexp "") "")
+                  ((= (aref prompt-regexp 0) ?^)
+                   (substring prompt-regexp 1))
+                  (t "\\*"))
             "$")))
 
 (defun tooltip-strip-prompt (process output)
