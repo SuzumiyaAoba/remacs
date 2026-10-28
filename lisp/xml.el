@@ -419,7 +419,8 @@ Both features can be combined by providing a cons cell
 		    (when (= (point) tag-position)
 		      (error "XML: (Not Well-Formed) Unexpected end tag")))
 		   ((stringp result)
-		    (error "XML: (Not Well-Formed) Character data outside document element"))
+		    (unless (string-match-p "\\`[ \t\n\r]*\\'" result)
+		      (error "XML: (Not Well-Formed) Character data outside document element")))
 		   ((and xml (not xml-sub-parser))
 		    ;; Translation of rule [1] of XML specifications
 		    (error "XML: (Not Well-Formed) Only one root tag allowed"))
@@ -617,8 +618,6 @@ Return one of:
      ;; skip comments
      ((looking-at-p "<!--")
       (xml--parse-comment)
-      ;; FIXME: This loses the skipped-over spaces.
-      (skip-syntax-forward " ")
       (unless (eobp)
 	(let ((xml-sub-parser t))
 	  (xml-parse-tag-1 parse-dtd xml-ns))))
@@ -694,7 +693,10 @@ Return one of:
 	       ((= (char-after) ?<)
 		(let ((tag (xml-parse-tag-1 nil namespace-scope)))
 		  (when tag
-		    (push tag children))))
+		    (push (if (and (stringp tag) (stringp (car children)))
+			      (concat (pop children) tag)
+			    tag)
+			  children))))
 	       ;; Read some character data.
 	       (t
 		(let ((expansion (xml-parse-string)))
