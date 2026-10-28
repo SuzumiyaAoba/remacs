@@ -923,7 +923,7 @@ The following %-sequences are provided:
 %t Remaining time (to charge or discharge) in the form `h:min'"
   (let ((count 0) props type line-status state load temperature temperature-count
         secs mins hrs total-energy total-energy-full total-weighted-energy
-        total-weighted-count total-rate total-tte total-ttf)
+        total-weighted-count total-rate total-rate-count total-tte total-ttf)
     ;; Merge information from all available or specified UPower
     ;; devices like other `battery-status-function's.
     (dolist (device (battery--upower-devices))
@@ -954,13 +954,25 @@ The following %-sequences are provided:
             (setq total-weighted-energy
                   (+ (or total-weighted-energy 0)
                      (or energy (* energy-full (/ percent 100.0))))))
-          (when rate    (setq total-rate   (+ (or total-rate   0) rate)))
+          (when rate
+            (setq total-rate-count (1+ (or total-rate-count 0)))
+            (setq total-rate (+ (or total-rate 0) rate)))
           (when percent (setq load         (+ (or load         0) percent)))
           (when (and temp (/= temp 0))
             (setq temperature-count (1+ (or temperature-count 0)))
             (setq temperature (+ (or temperature 0) temp)))
           (when tte     (setq total-tte    (+ (or total-tte    0) tte)))
           (when ttf     (setq total-ttf    (+ (or total-ttf    0) ttf)))))))
+    (when (and (> count 0)
+               (= (or total-weighted-count 0) count)
+               (= (or total-rate-count 0) count)
+               (> (or total-rate 0) 0))
+      (setq total-tte
+            (round (/ (* 3600 (or total-weighted-energy 0)) total-rate)))
+      (setq total-ttf
+            (round (/ (* 3600
+                         (max 0 (- total-energy-full (or total-weighted-energy 0))))
+                      total-rate))))
     (cond
      ((and (> count 0)
            (= (or total-weighted-count 0) count)
