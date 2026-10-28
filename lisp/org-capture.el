@@ -1352,6 +1352,18 @@ may have been stored before."
 	(org-capture-narrow beg (if (eobp) (point) (1- (point))))
 	(org-capture--position-cursor beg (point))))))
 
+(defun org-capture--list-item-empty-lines-before (item)
+  "Return the number of blank lines to insert before ITEM's next sibling."
+  (let* ((pos (point))
+         (struct (org-element-property :structure item))
+         (last-item (car (last struct))))
+    (if last-item
+        (let ((prevs (org-list-prevs-alist struct)))
+          (save-excursion
+            (goto-char (car last-item))
+            (min 1 (org-list-separating-blank-lines-number pos struct prevs)))
+      0)))
+
 (defun org-capture-place-item ()
   "Place the template as a new plain list item."
   (let ((prepend? (org-capture-get :prepend))
@@ -1403,7 +1415,15 @@ may have been stored before."
 				     (point))
 				   beg)))))))
     ;; Insert template.
-    (let ((origin (point-marker)))
+    (let* ((origin (point-marker))
+           (empty-lines-before
+            (and item (not prepend?)
+                 (if (or (plist-member org-capture-plist :empty-lines-before)
+                         (plist-member org-capture-plist :empty-lines))
+                     (min 1 (or (org-capture-get :empty-lines-before)
+                                (org-capture-get :empty-lines)
+                                0))
+                   (min 1 (org-capture--list-item-empty-lines-before item)))))
       (unless (bolp) (insert "\n"))
       ;; When a new list is created, always obey to `:empty-lines' and
       ;; friends.
@@ -1416,14 +1436,7 @@ may have been stored before."
       ;; specific case of empty lines above, it means we only obey the
       ;; parameter when appending an item.
       (unless (and item prepend?)
-	(org-capture-empty-lines-before
-	 (and item
-	      (not prepend?)
-              ;; FIXME: We should obey `org-blank-before-new-entry'
-              ;; when :empty-lines* is not given.
-	      (min 1 (or (org-capture-get :empty-lines-before)
-			 (org-capture-get :empty-lines)
-			 0)))))
+	(org-capture-empty-lines-before empty-lines-before))
       (org-capture-position-for-last-stored (point))
       (let ((beg (line-beginning-position))
 	    (end (progn
