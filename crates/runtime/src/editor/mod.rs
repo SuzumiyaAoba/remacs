@@ -924,7 +924,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-left-char", 0, 1, f_window_left_char, ""),
     S!("window-top-line", 0, 1, f_window_top, ""),
     S!("window-display-table", 0, 1, f_window_display_table, ""),
-    S!("set-window-display-table", 2, 2, f_second, ""),
+    S!("set-window-display-table", 2, 2, f_set_window_display_table, ""),
     S!(
         "window-margins",
         0,
@@ -3086,13 +3086,26 @@ pub(crate) fn is_terminal(i: &Interp, v: &Value) -> bool {
     false
 }
 
-/// `window-display-table` — window-live-p check; nil (no per-window
-/// display table in our model).
+/// Window-specific display tables are kept with the window parameters.
 fn f_window_display_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match a.first() {
-        None | Some(Value::Nil) | Some(Value::Window(_)) => Ok(Value::Nil),
-        Some(other) => Err(i.wrong_type_mut("window-live-p", other)),
-    }
+    let window = win_valid(i, &arg(&a, 0))?;
+    let property = Value::Sym(i.q("display-table"));
+    Ok(crate::lisp::eval::plist_get_v(
+        &window.borrow().params,
+        &property,
+    ))
+}
+
+fn f_set_window_display_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_valid(i, &a[0])?;
+    let property = Value::Sym(i.q("display-table"));
+    let parameters = crate::lisp::eval::plist_put_front(
+        &window.borrow().params,
+        &property,
+        a[1].clone(),
+    );
+    window.borrow_mut().params = parameters;
+    Ok(a[1].clone())
 }
 
 /// `merge-face-attribute` — GNU: VALUE1 wins unless `unspecified' or

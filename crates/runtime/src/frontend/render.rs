@@ -2060,6 +2060,8 @@ struct WindowFaces {
     /// `display` text-property runs; the run is replaced once, at its start.
     display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
     composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
+    /// Per-window, per-buffer, and standard display tables in precedence order.
+    display_tables: Vec<Value>,
     /// Overlay strings positioned at the overlay's start/end boundaries.
     overlay_strings: HashMap<usize, Vec<String>>,
     /// Invisible text ranges and visible overlays carrying `invisible`.
@@ -2250,11 +2252,32 @@ fn window_faces(
         .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
         .or_else(|| bb.locals.get(&ctx.buffer_invisibility_spec).cloned())
         .unwrap_or(Value::Nil);
+    let window_display_table = match win {
+        Value::Window(window) => i
+            .q_soft("display-table")
+            .map(|property| crate::lisp::eval::plist_get(&window.borrow().params, property))
+            .unwrap_or(Value::Nil),
+        _ => Value::Nil,
+    };
+    let buffer_display_table = buffer_setting(i, "buffer-display-table", bb.id);
+    let standard_display_table = i
+        .q_soft("standard-display-table")
+        .and_then(|id| i.default_toplevel_value(id))
+        .unwrap_or(Value::Nil);
+    let display_tables = [
+        window_display_table,
+        buffer_display_table,
+        standard_display_table,
+    ]
+    .into_iter()
+    .filter(|table| crate::lisp::builtins::misc::is_char_table(i, table))
+    .collect();
     WindowFaces {
         overlays,
         prop_faces,
         display_props,
         composition_props,
+        display_tables,
         overlay_strings,
         invisible_overlays,
         invisible_props,
@@ -2448,6 +2471,58 @@ fn composition_display_replacement(value: &Value) -> Option<DisplayReplacement> 
         _ => return None,
     }
     (!text.is_empty()).then_some(DisplayReplacement::Text(text))
+}
+
+fn display_table_text(value: &Value) -> Option<String> {
+    fn append_character(text: &mut String, value: &Value) {
+        if let Value::Int(code) = value
+            && let Ok(code) = u32::try_from(*code)
+            && let Some(character) = EmacsChar::new(code)
+        {
+            text.push(character.unicode().unwrap_or('\u{fffd}'));
+        }
+    }
+    match value {
+        Value::Int(code) => {
+            let code = u32::try_from(*code).ok()?;
+            Some(EmacsChar::new(code)?.unicode().unwrap_or('\u{fffd}').to_string())
+        }
+        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+        Value::Vec(vector) => {
+            let mut text = String::new();
+            for character in vector.borrow().iter() {
+                append_character(&mut text, character);
+            }
+            Some(text)
+        }
+        Value::Cons(_) => {
+            let characters = value.list_to_vec().ok()?;
+            let mut text = String::new();
+            for character in &characters {
+                append_character(&mut text, character);
+            }
+            Some(text)
+        }
+        _ => None,
+    }
+}
+
+fn display_table_replacement(
+    i: &Interp,
+    faces: &WindowFaces,
+    character: EmacsChar,
+) -> Option<DisplayReplacement> {
+    for table in &faces.display_tables {
+        let replacement =
+            crate::lisp::builtins::misc::char_table_ref(i, table, character.code() as usize);
+        if replacement.is_nil() {
+            continue;
+        }
+        if let Some(text) = display_table_text(&replacement) {
+            return Some(DisplayReplacement::Text(text));
+        }
+    }
+    None
 }
 
 fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
@@ -2977,6 +3052,7 @@ fn render_grid_internal(
                     .skip(segment_start)
                     .take(segment_len)
                     .collect();
+                let segment_chars: Vec<_> = segment_text.chars().collect();
                 let segment_pos = line_pos + segment_start;
                 let point_index = point_index.and_then(|point| {
                     (point >= segment_start
@@ -3046,6 +3122,11 @@ fn render_grid_internal(
                     |index| {
                         wf.as_ref()
                             .and_then(|wf| display_replacement_at(wf, segment_pos + index))
+                            .or_else(|| {
+                                let wf = wf.as_ref()?;
+                                let character = *segment_chars.get(index)?;
+                                display_table_replacement(i, wf, character)
+                            })
                     },
                     |index| {
                         wf.as_ref()
