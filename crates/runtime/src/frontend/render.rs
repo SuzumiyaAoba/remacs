@@ -552,6 +552,53 @@ fn wrap_ranges(
     ranges
 }
 
+fn wrap_ranges_with_prefix(
+    text: &EmacsText,
+    width: usize,
+    first_prefix_width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+) -> Vec<Range<usize>> {
+    if first_prefix_width == 0 || width == 0 {
+        return wrap_ranges(text, width, tab_width, ctl_arrow);
+    }
+    let chars: Vec<_> = text.chars().collect();
+    if chars.is_empty() {
+        return vec![0..0];
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    let mut column = first_prefix_width;
+    let tab_width = tab_width.max(1);
+    for (index, character) in chars.iter().enumerate() {
+        let byte8 = character.byte8().is_some();
+        let code = character.code();
+        let character = character.unicode().unwrap_or('\u{fffd}');
+        let control_character = code < 0x20 || code == 0x7f;
+        let mut character_width = if character == '\t' {
+            tab_width - column % tab_width
+        } else if byte8 {
+            4
+        } else if ctl_arrow && control_character {
+            2
+        } else {
+            display_char_width(character)
+        };
+        if column > 0 && column.saturating_add(character_width) > width {
+            ranges.push(start..index);
+            start = index;
+            column = 0;
+            if character == '\t' {
+                character_width = tab_width;
+            }
+        }
+        column = column.saturating_add(character_width);
+    }
+    ranges.push(start..chars.len());
+    ranges
+}
+
 fn selective_display_hides_line(mode: &Value, text: &EmacsText, tab_width: usize) -> bool {
     let Value::Int(threshold) = mode else {
         return false;
@@ -590,6 +637,65 @@ fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
     i.buffer_local_toplevel_value(id, buffer)
         .or_else(|| i.default_toplevel_value(id))
         .unwrap_or(Value::Nil)
+}
+
+fn line_prefix_at_pos(
+    i: &Interp,
+    buffer_id: usize,
+    window: &Value,
+    position: usize,
+) -> Option<EmacsText> {
+    let property = i.q_soft("line-prefix");
+    let (overlay_value, text_value) = if let (Some(property), Some(buffer)) =
+        (property, i.buffers.get(buffer_id))
+    {
+        let buffer = buffer.borrow();
+        let overlays: Vec<_> = buffer
+            .overlays
+            .iter()
+            .enumerate()
+            .filter(|(_, overlay)| {
+                overlay.buffer == Some(buffer_id)
+                    && position >= overlay.start
+                    && position < overlay.end
+                    && overlay.matches_window(i, window)
+            })
+            .filter_map(|(slot, overlay)| {
+                let value = overlay.property(i, &Value::Sym(property));
+                (!value.is_nil()).then_some((overlay, slot, value))
+            })
+            .collect();
+        let mut order: Vec<_> = overlays
+            .iter()
+            .enumerate()
+            .map(|(candidate, (overlay, _, _))| (*overlay, candidate))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        let overlay_value = order
+            .last()
+            .map(|(_, candidate)| overlays[*candidate].2.clone());
+        let text_value = buffer
+            .text
+            .props
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, prop)| {
+                prop.prop == property && position >= prop.start && position < prop.end
+            })
+            .max_by_key(|(index, _)| *index)
+            .map(|(_, prop)| prop.value.clone());
+        (overlay_value, text_value)
+    } else {
+        (None, None)
+    };
+    let value = overlay_value
+        .or(text_value)
+        .unwrap_or_else(|| buffer_setting(i, "line-prefix", buffer_id));
+    match value {
+        Value::Str(string) => Some(string.borrow().chars().collect()),
+        _ => None,
+    }
 }
 
 fn symbol_is(i: &Interp, value: &Value, name: &str) -> bool {
@@ -2272,6 +2378,7 @@ fn render_text_row<F, V, D, B>(
     text: &EmacsText,
     hscroll: usize,
     width: usize,
+    column_offset: usize,
     tab_width: usize,
     default_style: CellStyle,
     mut style_at: F,
@@ -2293,7 +2400,8 @@ where
     let mut source_offsets = vec![0; chars.len() + 1];
     let mut source_columns = vec![0; chars.len() + 1];
     let mut cell_offsets = vec![0; width + 1];
-    let mut column = 0usize;
+    let hscroll = hscroll.saturating_add(column_offset);
+    let mut column = column_offset;
     let mut visible_columns = 0usize;
     let end_column = hscroll.saturating_add(width);
     let tab_width = tab_width.max(1);
@@ -2471,6 +2579,64 @@ where
         padding_char_start,
         images,
     }
+}
+
+fn prepend_rendered_prefix(
+    prefix: &EmacsText,
+    prefix_width: usize,
+    tab_width: usize,
+    mut row: RenderedRow,
+) -> RenderedRow {
+    if prefix_width == 0 {
+        return row;
+    }
+    let prefix: String = prefix
+        .chars()
+        .map(|character| character.unicode().unwrap_or('\u{fffd}'))
+        .collect();
+    let prefix = fit_text_to_cells_with_tab_width(&prefix, prefix_width, tab_width).0;
+    let prefix_bytes = prefix.len();
+    let prefix_char_count = prefix.chars().count();
+    let mut prefix_cell_offsets = vec![0; prefix_width + 1];
+    let mut column = 0usize;
+    for (byte, character) in prefix.char_indices() {
+        let width = display_char_width(character);
+        for cell in column..column.saturating_add(width).min(prefix_width) {
+            prefix_cell_offsets[cell] = byte;
+        }
+        column = column.saturating_add(width);
+    }
+    for offset in prefix_cell_offsets.iter_mut().skip(column).take(prefix_width - column) {
+        *offset = prefix_bytes;
+    }
+    prefix_cell_offsets[prefix_width] = prefix_bytes;
+
+    let mut text = String::with_capacity(prefix_bytes.saturating_add(row.text.len()));
+    text.push_str(&prefix);
+    text.push_str(&row.text);
+    row.text = text;
+    let mut cell_attrs = vec![CellStyle::default(); prefix_width];
+    cell_attrs.extend(row.cell_attrs);
+    row.cell_attrs = cell_attrs;
+    let mut char_attrs = vec![CellStyle::default(); prefix_char_count];
+    char_attrs.extend(row.char_attrs);
+    row.char_attrs = char_attrs;
+    row.source_offsets
+        .iter_mut()
+        .for_each(|offset| *offset = offset.saturating_add(prefix_bytes));
+    let mut cell_offsets = prefix_cell_offsets[..prefix_width].to_vec();
+    cell_offsets.extend(
+        row.cell_offsets
+            .iter()
+            .map(|offset| offset.saturating_add(prefix_bytes)),
+    );
+    row.cell_offsets = cell_offsets;
+    row.visible_columns = row.visible_columns.saturating_add(prefix_width);
+    row.padding_char_start = row.padding_char_start.saturating_add(prefix_char_count);
+    for image in &mut row.images {
+        image.column = image.column.saturating_add(prefix_width);
+    }
+    row
 }
 
 /// Truncate and pad text to WIDTH display columns. The tuple contains the
@@ -4786,15 +4952,51 @@ fn render_grid_internal(
                 continue;
             }
             let line_len = line.chars().count();
-            let ranges = if wrap_lines {
-                wrap_ranges(&line, content_width, tab_width, ctl_arrow)
-            } else {
-                vec![0..line_len]
-            };
             let start_offset = if row == 0 {
                 start.saturating_sub(line_pos).min(line_len)
             } else {
                 0
+            };
+            let line_prefix = (start_offset == 0)
+                .then(|| line_prefix_at_pos(i, buf_id, &Value::Window(w.clone()), line_pos))
+                .flatten();
+            let requested_prefix_width = line_prefix
+                .as_ref()
+                .map(|prefix| display_columns(prefix, tab_width))
+                .unwrap_or(0)
+                .min(content_width);
+            let first_character_width = line.chars().next().map_or(0, |character| {
+                let byte8 = character.byte8().is_some();
+                let code = character.code();
+                let character = character.unicode().unwrap_or('\u{fffd}');
+                if character == '\t' {
+                    tab_width - requested_prefix_width % tab_width.max(1)
+                } else if byte8 {
+                    4
+                } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+                    2
+                } else {
+                    display_char_width(character)
+                }
+            });
+            let line_prefix_width = if wrap_lines
+                && line_len > 0
+                && requested_prefix_width.saturating_add(first_character_width) > content_width
+            {
+                0
+            } else {
+                requested_prefix_width
+            };
+            let ranges = if wrap_lines {
+                wrap_ranges_with_prefix(
+                    &line,
+                    content_width,
+                    line_prefix_width,
+                    tab_width,
+                    ctl_arrow,
+                )
+            } else {
+                vec![0..line_len]
             };
             for range in ranges {
                 if range.end < start_offset
@@ -4808,6 +5010,12 @@ fn render_grid_internal(
                 let segment_start = range.start.max(start_offset);
                 let segment_end = range.end;
                 let segment_len = segment_end.saturating_sub(segment_start);
+                let prefix_width = if segment_start == 0 {
+                    line_prefix_width
+                } else {
+                    0
+                };
+                let text_width = content_width.saturating_sub(prefix_width);
                 let segment_text: EmacsText = line
                     .chars()
                     .skip(segment_start)
@@ -4913,7 +5121,8 @@ fn render_grid_internal(
                 let mut rendered = render_text_row(
                     &segment_text,
                     row_hscroll,
-                    content_width,
+                    text_width,
+                    prefix_width,
                     tab_width,
                     default_style,
                     |index| {
@@ -4951,6 +5160,16 @@ fn render_grid_internal(
                     },
                     segment_end == line_len,
                 );
+                if prefix_width > 0
+                    && let Some(prefix) = line_prefix.as_ref()
+                {
+                    rendered = prepend_rendered_prefix(
+                        prefix,
+                        prefix_width,
+                        tab_width,
+                        rendered,
+                    );
+                }
                 if let Some(wf) = &wf {
                     for index in 0..segment_len {
                         let Some(text) = help_echo_at(i, wf, segment_pos + index) else {
@@ -5010,7 +5229,7 @@ fn render_grid_internal(
                     right_indicator = "·".to_owned();
                 }
                 if !wrap_lines
-                    && display_columns(&line, tab_width) > row_hscroll.saturating_add(content_width)
+                    && display_columns(&line, tab_width) > row_hscroll.saturating_add(text_width)
                 {
                     right_indicator = "›".to_owned();
                 }
@@ -5250,6 +5469,7 @@ fn render_grid_internal(
             &msg,
             0,
             width,
+            0,
             tab_width,
             default_style,
             |index| {
