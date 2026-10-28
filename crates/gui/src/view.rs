@@ -27,6 +27,17 @@ pub(super) struct EditorView {
     input: TextInputState,
     cell_width: Pixels,
     geometry: Option<GuiGeometry>,
+    #[cfg(target_os = "macos")]
+    accessibility_buffer_view: Option<usize>,
+    #[cfg(target_os = "macos")]
+    accessibility_screen_view: Option<usize>,
+    #[cfg(target_os = "macos")]
+    accessibility_snapshot: Option<(
+        String,
+        std::ops::Range<usize>,
+        String,
+        std::ops::Range<usize>,
+    )>,
 }
 
 impl EditorView {
@@ -40,6 +51,12 @@ impl EditorView {
             input: TextInputState::default(),
             cell_width: px(8.0),
             geometry: None,
+            #[cfg(target_os = "macos")]
+            accessibility_buffer_view: None,
+            #[cfg(target_os = "macos")]
+            accessibility_screen_view: None,
+            #[cfg(target_os = "macos")]
+            accessibility_snapshot: None,
         }
     }
 }
@@ -96,9 +113,7 @@ impl Render for EditorView {
                         .iter()
                         .find(|monitor| monitor.display_id == display_id)
                 })
-                .map(|monitor| {
-                    monitor.geometry[1].saturating_sub(monitor.native_origin[1])
-                })
+                .map(|monitor| monitor.geometry[1].saturating_sub(monitor.native_origin[1]))
                 .unwrap_or(0),
         );
         let geometry = GuiGeometry {
@@ -117,6 +132,52 @@ impl Render for EditorView {
         if self.geometry.as_ref() != Some(&geometry) {
             self.geometry = Some(geometry.clone());
             let _ = self.tx.send(GuiEvent::Geometry(geometry));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let screen_text = self.grid.rows.join("\n");
+            let screen_selection = visible_grid_selection(&self.grid);
+            let (buffer_text, buffer_selection) = self.grid.input.as_ref().map_or_else(
+                || (screen_text.clone(), screen_selection.clone()),
+                |input| {
+                    let selection = input
+                        .selection
+                        .as_ref()
+                        .map(|selection| selection.range.clone())
+                        .unwrap_or(input.cursor..input.cursor);
+                    (input.text.to_string(), selection)
+                },
+            );
+            let changed = self.accessibility_snapshot.as_ref().is_none_or(
+                |(old_buffer, old_buffer_selection, old_screen, old_screen_selection)| {
+                    old_buffer != &buffer_text
+                        || old_buffer_selection != &buffer_selection
+                        || old_screen != &screen_text
+                        || old_screen_selection != &screen_selection
+                },
+            );
+            if changed
+                || self.accessibility_buffer_view.is_none()
+                || self.accessibility_screen_view.is_none()
+            {
+                self.accessibility_buffer_view = super::accessibility::update_text_view(
+                    self.accessibility_buffer_view,
+                    &buffer_text,
+                    buffer_selection.clone(),
+                    "Buffer contents",
+                    "Current buffer text and input selection.",
+                );
+                self.accessibility_screen_view = super::accessibility::update_text_view(
+                    self.accessibility_screen_view,
+                    &screen_text,
+                    screen_selection.clone(),
+                    "Visible frame contents",
+                    "Text currently visible on the frame, including mode line and minibuffer.",
+                );
+                self.accessibility_snapshot =
+                    Some((buffer_text, buffer_selection, screen_text, screen_selection));
+            }
         }
 
         let default_background = self
@@ -467,6 +528,29 @@ impl Render for EditorView {
                 .size_full(),
             )
     }
+}
+
+#[cfg(target_os = "macos")]
+fn visible_grid_selection(grid: &Grid) -> std::ops::Range<usize> {
+    let Some((_, row)) = grid.cursor else {
+        return 0..0;
+    };
+    let Some(text) = grid.rows.get(row) else {
+        return 0..0;
+    };
+    let requested_byte = grid.cursor_index.unwrap_or(text.len()).min(text.len());
+    let byte = (0..=requested_byte)
+        .rev()
+        .find(|offset| text.is_char_boundary(*offset))
+        .unwrap_or(0);
+    let line_start: usize = grid
+        .rows
+        .iter()
+        .take(row)
+        .map(|line| line.encode_utf16().count() + 1)
+        .sum();
+    let position = line_start + text[..byte].encode_utf16().count();
+    position..position
 }
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'

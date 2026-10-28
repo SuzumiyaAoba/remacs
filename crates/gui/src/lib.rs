@@ -2,6 +2,8 @@
 use gpui::*;
 use std::io;
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "macos")]
+mod accessibility;
 mod keys;
 mod logic;
 mod monitor;
