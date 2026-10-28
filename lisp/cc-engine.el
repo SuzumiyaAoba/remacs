@@ -4328,7 +4328,7 @@ initializing CC Mode.  Currently (2020-06) these are `js-mode' and
      (t
       ;; CASE 4; Best of a bad job: BOL before `here-bol', or beginning of
       ;; literal containing it.
-      (list good-pos (and dropped-cons good-pos) nil)))))
+      (list good-pos (and dropped-cons good-pos) nil))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
