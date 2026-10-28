@@ -33,7 +33,7 @@
 	  (string-match (concat "[" ietf-drums-tspecials "]") value)
 	  (string-match "[ \n\t]" value)
 	  (not (string-match (concat "[" ietf-drums-text-token "]") value)))
-      (concat param "=" (format "%S" value))
+      (concat param "=" (prin1-to-string value))
     (concat param "=" value)))
 
 (provide 'rfc2045)
