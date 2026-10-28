@@ -170,6 +170,8 @@ live な値を取り出す。operand の Lisp 文字列と処理前のキュー�
 `keys.rs` はコマンドキーを Emacs イベントへ変換する。
 `view.rs` が GPUI のレイアウトと描画を行い、`view/input.rs` が IME と UTF-16 の
 OS テキスト入力を扱う。確定前の入力は view、確定したテキストは評価スレッドが所有する。
+`gpui` は workspace の `vendor/gpui` パッチを使い、Font stretch を各 OS の font selector に渡す。
+GPUI の変更はフォント選択と描画 API の範囲に留め、Lisp の face 解決は runtime が所有する。
 
 GUI も CLI と同じ起動処理を使うが、GUI 単独ビルドでは crossterm に依存しない。
 統合バイナリは GUI と端末の両方を提供し、`--no-default-features` で GUI を除外できる。

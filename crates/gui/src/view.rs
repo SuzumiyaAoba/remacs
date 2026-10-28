@@ -82,6 +82,7 @@ impl Render for EditorView {
         if let Some(weight) = default_style.font_weight {
             text_font.weight = FontWeight(weight as f32);
         }
+        text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
         let font_size = default_style
             .font_height
             .map(|height| px(height as f32 / 10.0))
@@ -352,6 +353,9 @@ impl Render for EditorView {
                                             f.weight = FontWeight(weight as f32);
                                         } else if st.bold {
                                             f = f.bold();
+                                        }
+                                        if let Some(width) = st.font_width {
+                                            f.stretch = FontStretch::from_percentage(width);
                                         }
                                         if st.italic {
                                             f = f.italic();

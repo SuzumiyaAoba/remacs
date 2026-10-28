@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/runtime", "crates/libraries", "crates/cli", "crates/gui"]
+exclude = ["vendor/gpui"]
 resolver = "3"
 
 [workspace.package]
@@ -12,7 +13,7 @@ remacs-libraries = { path = "crates/libraries" }
 remacs-cli = { path = "crates/cli", default-features = false }
 remacs-gui = { path = "crates/gui" }
 crossterm = "0.29.0"
-gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+gpui = { path = "vendor/gpui", version = "0.2.2", features = ["runtime_shaders"] }
 smol = "2.0.2"
 num-bigint = "0.4.8"
 num-integer = "0.1.46"
