@@ -114,6 +114,7 @@ is returned, where each format spec is its own element."
                    (width (match-string 2))
                    (trunc (match-string 3))
                    (char (string-to-char (match-string 4)))
+                   (entry (assq char specification))
                    (spec-properties
                     (let ((position (1- beg)) properties plist)
                       (while (< position end)
@@ -126,7 +127,7 @@ is returned, where each format spec is its own element."
                           (setq plist (cddr plist)))
                         (setq position (1+ position)))
                       properties))
-                   (text (let ((res (cdr (assq char specification))))
+                   (text (let ((res (cdr entry)))
                            (if (functionp res)
                                (with-current-buffer orig-buffer
                                  (funcall res))
@@ -134,7 +135,7 @@ is returned, where each format spec is its own element."
               (when (and split
                          (not (= (1- beg) split-start)))
                 (push (buffer-substring split-start (1- beg)) split-result))
-              (cond (text
+              (cond (entry
                      ;; Handle flags.
                      (setq text (format-spec--do-flags
                                  (format "%s" text)
