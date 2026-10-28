@@ -147,7 +147,8 @@
   (interactive "sHelp: ")
   (if (string-equal cmd "net")
       ;; FIXME: liable to quoting nightmare.  Use call-process?
-      (shell-command "net /?") (shell-command (concat "help " cmd))))
+      (shell-command "net /?")
+    (shell-command (concat "help " (shell-quote-argument cmd))))
 
 (defun bat-run ()
   "Run a batch file."
