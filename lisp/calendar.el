@@ -1366,11 +1366,32 @@ return negative results."
 (defun calendar-date-from-day-of-year (year dayno)
   "Return the date of the DAYNO-th day in YEAR.
 DAYNO must be an integer between -366 and 366."
-  (calendar-gregorian-from-absolute
-   (+ (if (< dayno 0)
-          (+ 1 dayno (if (calendar-leap-year-p year) 366 365))
-        dayno)
-      (calendar-absolute-from-gregorian (list 12 31 (1- year))))))
+  (if (> year 0)
+      (calendar-gregorian-from-absolute
+       (+ (if (< dayno 0)
+              (+ 1 dayno (if (calendar-leap-year-p year) 366 365))
+            dayno)
+          (calendar-absolute-from-gregorian (list 12 31 (1- year)))))
+    (if (= year 0)
+        ;; Signal the calendar's standard error for the nonexistent year.
+        (calendar-absolute-from-gregorian '(1 1 0))
+      ;;Remacs: The fast absolute-date inverse below does not support BC dates.
+      (let ((year year)
+            (dayno (if (< dayno 0)
+                       (+ 1 dayno (if (calendar-leap-year-p year) 366 365))
+                     dayno)))
+        ;; Normalize day numbers that cross a year boundary without a year 0.
+        (while (< dayno 1)
+          (setq year (if (= year 1) -1 (1- year))
+                dayno (+ dayno (if (calendar-leap-year-p year) 366 365))))
+        (while (> dayno (if (calendar-leap-year-p year) 366 365))
+          (setq dayno (- dayno (if (calendar-leap-year-p year) 366 365))
+                year (if (= year -1) 1 (1+ year))))
+        (let ((month 1))
+          (while (> dayno (calendar-last-day-of-month month year))
+            (setq dayno (- dayno (calendar-last-day-of-month month year))
+                  month (1+ month)))
+          (list month dayno year))))))
 
 ;;;###autoload
 (defun calendar (&optional arg)
