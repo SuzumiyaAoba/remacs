@@ -345,6 +345,39 @@ fn display_columns(text: &EmacsText, tab_width: usize) -> usize {
     display_columns_of(text.chars(), tab_width)
 }
 
+fn visible_display_columns_of<F>(
+    text: &EmacsText,
+    limit: usize,
+    tab_width: usize,
+    mut visibility_at: F,
+) -> usize
+where
+    F: FnMut(usize) -> Visibility,
+{
+    let tab_width = tab_width.max(1);
+    let mut column = 0usize;
+    let mut hidden_run = false;
+    for (index, character) in text.chars().take(limit).enumerate() {
+        match visibility_at(index) {
+            Visibility::Visible => {
+                hidden_run = false;
+                let character = character.unicode().unwrap_or('\u{fffd}');
+                column = column.saturating_add(if character == '\t' {
+                    tab_width - column % tab_width
+                } else {
+                    display_char_width(character)
+                });
+            }
+            Visibility::Ellipsis if !hidden_run => {
+                hidden_run = true;
+                column = column.saturating_add(display_char_width('…'));
+            }
+            Visibility::Hidden | Visibility::Ellipsis => hidden_run = true,
+        }
+    }
+    column
+}
+
 fn display_columns_of(chars: impl Iterator<Item = EmacsChar>, tab_width: usize) -> usize {
     let tab_width = tab_width.max(1);
     let mut columns = 0usize;
@@ -604,6 +637,13 @@ struct RenderedRow {
     padding_char_start: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Visibility {
+    Visible,
+    Hidden,
+    Ellipsis,
+}
+
 #[derive(Clone)]
 struct ScreenCell {
     chars: Vec<(char, CellStyle)>,
@@ -722,16 +762,18 @@ fn compose_screen_rows(
 /// Render a Lisp line into a fixed number of display cells. The source
 /// and cell offset maps let the GUI position its caret in GPUI's shaped
 /// line while the terminal keeps using cell coordinates.
-fn render_text_row<F>(
+fn render_text_row<F, V>(
     text: &EmacsText,
     hscroll: usize,
     width: usize,
     tab_width: usize,
     default_style: CellStyle,
     mut style_at: F,
+    mut visibility_at: V,
 ) -> RenderedRow
 where
     F: FnMut(usize) -> CellStyle,
+    V: FnMut(usize) -> Visibility,
 {
     let chars: Vec<_> = text.chars().collect();
     let mut rendered = String::new();
@@ -743,11 +785,24 @@ where
     let mut visible_columns = 0usize;
     let end_column = hscroll.saturating_add(width);
     let tab_width = tab_width.max(1);
+    let mut hidden_run = false;
 
     for (index, ch) in chars.iter().enumerate() {
-        let display = match ch.unicode().unwrap_or('\u{fffd}') {
-            '\n' | '\r' => ' ',
-            other => other,
+        let visibility = visibility_at(index);
+        let draw_ellipsis = visibility == Visibility::Ellipsis && !hidden_run;
+        if visibility != Visibility::Visible && !draw_ellipsis {
+            source_offsets[index + 1] = rendered.len();
+            hidden_run = true;
+            continue;
+        }
+        hidden_run = visibility != Visibility::Visible;
+        let display = if draw_ellipsis {
+            '…'
+        } else {
+            match ch.unicode().unwrap_or('\u{fffd}') {
+                '\n' | '\r' => ' ',
+                other => other,
+            }
         };
         let columns = if display == '\t' {
             tab_width - column % tab_width
@@ -899,6 +954,8 @@ struct FaceCtx {
     font_lock_face: u32,
     mark_active: u32,
     inherit: u32,
+    invisible: u32,
+    buffer_invisibility_spec: u32,
     box_color: u32,
     box_line_width: u32,
     box_style: u32,
@@ -970,6 +1027,8 @@ impl FaceCtx {
             font_lock_face: sym("font-lock-face"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
+            invisible: sym("invisible"),
+            buffer_invisibility_spec: sym("buffer-invisibility-spec"),
             box_color: sym(":color"),
             box_line_width: sym(":line-width"),
             box_style: sym(":style"),
@@ -1366,6 +1425,10 @@ struct WindowFaces {
     /// insertion index).  Later-inserted props merge on top (GNU's
     /// interval "last write wins").
     prop_faces: Vec<(usize, usize, Value, usize)>,
+    /// Invisible text ranges and visible overlays carrying `invisible`.
+    invisible_overlays: Vec<(crate::buffer::Overlay, Value)>,
+    invisible_props: Vec<(usize, usize, Value)>,
+    invisibility_spec: Value,
     /// Active region as a half-open range when the mark is active.
     region: Option<(usize, usize)>,
 }
@@ -1417,20 +1480,121 @@ fn window_faces(
             Some((ov.clone(), fv))
         })
         .collect();
-    let prop_faces: Vec<(usize, usize, Value, usize)> = bb
-        .text
-        .props
-        .borrow()
+    let mut invisible_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|ov| ov.buffer == Some(bb.id) && ov.start < ov.end && ov.matches_window(i, win))
+        .filter_map(|overlay| {
+            let value = overlay.property(i, &Value::Sym(ctx.invisible));
+            (!value.is_nil()).then(|| (overlay.clone(), value))
+        })
+        .collect();
+    let mut invisible_order: Vec<_> = invisible_overlays
+        .iter()
+        .enumerate()
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut invisible_order);
+    invisible_overlays = invisible_order
+        .into_iter()
+        .map(|(_, index)| invisible_overlays[index].clone())
+        .collect();
+    let properties = bb.text.props.borrow();
+    let prop_faces: Vec<(usize, usize, Value, usize)> = properties
         .iter()
         .enumerate()
         .filter(|(_, tp)| tp.prop == ctx.face || tp.prop == ctx.font_lock_face)
         .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
         .collect();
+    let invisible_props: Vec<(usize, usize, Value)> = properties
+        .iter()
+        .filter(|tp| tp.prop == ctx.invisible)
+        .map(|tp| (tp.start, tp.end, tp.value.clone()))
+        .collect();
+    let invisibility_spec = i
+        .buffer_local_toplevel_value(ctx.buffer_invisibility_spec, bb.id)
+        .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
+        .or_else(|| bb.locals.get(&ctx.buffer_invisibility_spec).cloned())
+        .unwrap_or(Value::Nil);
     WindowFaces {
         overlays,
         prop_faces,
+        invisible_overlays,
+        invisible_props,
+        invisibility_spec,
         region,
     }
+}
+
+fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
+    if matches!(spec, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
+        return if property.is_nil() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    fn match_spec(property: &Value, spec: &Value) -> Option<Visibility> {
+        let mut tail = spec.clone();
+        while let Value::Cons(cell) = tail {
+            let (entry, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if crate::lisp::builtins::eq_values(property, &entry) {
+                return Some(Visibility::Hidden);
+            }
+            if let Value::Cons(pair) = &entry {
+                let pair = pair.borrow();
+                if crate::lisp::builtins::eq_values(property, &pair.car) {
+                    return Some(if pair.cdr.is_nil() {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Ellipsis
+                    });
+                }
+            }
+            tail = next;
+        }
+        None
+    }
+
+    if let Some(visibility) = match_spec(property, spec) {
+        return visibility;
+    }
+    let mut property_tail = property.clone();
+    while let Value::Cons(cell) = property_tail {
+        let (element, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        if let Some(visibility) = match_spec(&element, spec) {
+            return visibility;
+        }
+        property_tail = next;
+    }
+    Visibility::Visible
+}
+
+fn visibility_at_pos(faces: &WindowFaces, pos: usize) -> Visibility {
+    if let Some((_, property)) = faces
+        .invisible_overlays
+        .iter()
+        .rev()
+        .find(|(overlay, _)| pos >= overlay.start && pos < overlay.end)
+    {
+        return invisibility_for_property(property, &faces.invisibility_spec);
+    }
+    if let Some((_, _, property)) = faces
+        .invisible_props
+        .iter()
+        .rev()
+        .find(|(start, end, _)| pos >= *start && pos < *end)
+    {
+        return invisibility_for_property(property, &faces.invisibility_spec);
+    }
+    Visibility::Visible
 }
 
 /// The merged face style for buffer position POS under WF.  GNU
@@ -1729,6 +1893,11 @@ fn render_grid_internal(
                         .map(|wf| style_at_pos(i, &mut fctx, wf, line_pos + index))
                         .unwrap_or(default_style)
                 },
+                |index| {
+                    wf.as_ref()
+                        .map(|wf| visibility_at_pos(wf, line_pos + index))
+                        .unwrap_or(Visibility::Visible)
+                },
             );
             // Empty tail of the row: the line-end face extends its
             // background over it iff the face's :extend holds (GNU
@@ -1766,7 +1935,14 @@ fn render_grid_internal(
             if let Some(point_index) = point_index
                 && window_width > 0
             {
-                let point_col = display_columns_of(line.chars().take(point_index), tab_width);
+                let point_col = wf.as_ref().map_or_else(
+                    || display_columns_of(line.chars().take(point_index), tab_width),
+                    |wf| {
+                        visible_display_columns_of(&line, point_index, tab_width, |index| {
+                            visibility_at_pos(wf, line_pos + index)
+                        })
+                    },
+                );
                 let col = point_col.saturating_sub(hscroll).min(window_width - 1);
                 let byte_index = if point_col < hscroll {
                     0
@@ -1923,11 +2099,19 @@ fn render_grid_internal(
         .unwrap_or(8);
     if let Some(y) = rows.len().checked_sub(1) {
         let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil));
-        let rendered = render_text_row(&msg, 0, width, tab_width, default_style, |index| {
-            wf.as_ref()
-                .map(|wf| style_at_pos(i, &mut fctx, wf, index))
-                .unwrap_or(default_style)
-        });
+        let rendered = render_text_row(
+            &msg,
+            0,
+            width,
+            tab_width,
+            default_style,
+            |index| {
+                wf.as_ref()
+                    .map(|wf| style_at_pos(i, &mut fctx, wf, index))
+                    .unwrap_or(default_style)
+            },
+            |_| Visibility::Visible,
+        );
         if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
             && snapshot.buffer_id == buffer.borrow().id
         {
