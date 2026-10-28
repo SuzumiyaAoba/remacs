@@ -3711,7 +3711,7 @@ The row must be adjacent to a horizontal grid-table border."
 	       (save-excursion
 		 (and (zerop (forward-line 1))
 		      (= (current-indentation) indentation)
-		      (looking-at rst-font-lock-grid-table-border-regexp)))))))
+		      (looking-at rst-font-lock-grid-table-border-regexp))))))))
 
 (defun rst-font-lock-match-grid-table-pipe (limit)
   "Search for a grid-table cell delimiter before LIMIT.
