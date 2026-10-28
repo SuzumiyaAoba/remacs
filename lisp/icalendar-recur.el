@@ -1385,7 +1385,9 @@ UTC offsets local to that time zone."
         (while (icalendar-date-time< (icalendar-recur-interval-low curr-interval) high-intbound)
           (setq recurrences
                 (nconc
-                 (icalendar-recur-recurrences-in-interval curr-interval component vtimezone)
+                 (reverse
+                  (icalendar-recur-recurrences-in-interval
+                   curr-interval component vtimezone))
                  recurrences))
           (setq curr-interval (icalendar-recur-next-interval curr-interval rrule
                                                  vtimezone)))
@@ -1396,7 +1398,7 @@ UTC offsets local to that time zone."
          (lambda (dt)
            (and (icalendar-date/time<= lower dt)
                 (icalendar-date/time< dt upper)))
-         recurrences))))))
+         (nreverse recurrences))))))
 
 (defun icalendar-recur-recurrences-in-window-w/end-times
     (lower upper component &optional vtimezone)
