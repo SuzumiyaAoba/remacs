@@ -3686,6 +3686,46 @@ of your own."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defconst rst-font-lock-grid-table-border-regexp
+  (rst-re 'lin-beg
+	  '(:grp "[+][- =]+\\(?:[+][- =]+\\)+[+]")
+	  'lin-end)
+  "Regexp matching a horizontal border of a grid table.")
+
+(defconst rst-font-lock-grid-table-row-regexp
+  (rst-re 'lin-beg "|" "[^\n]*" "|" 'lin-end)
+  "Regexp matching a line with the outer delimiters of a grid-table row.")
+
+(defun rst-font-lock-grid-table-row-p (position)
+  "Return non-nil if POSITION is on a grid-table row delimiter.
+The row must be adjacent to a horizontal grid-table border."
+  (save-excursion
+    (goto-char position)
+    (beginning-of-line)
+    (and (looking-at rst-font-lock-grid-table-row-regexp)
+	 (let ((indentation (current-indentation)))
+	   (or (save-excursion
+		 (and (zerop (forward-line -1))
+		      (= (current-indentation) indentation)
+		      (looking-at rst-font-lock-grid-table-border-regexp)))
+	       (save-excursion
+		 (and (zerop (forward-line 1))
+		      (= (current-indentation) indentation)
+		      (looking-at rst-font-lock-grid-table-border-regexp)))))))
+
+(defun rst-font-lock-match-grid-table-pipe (limit)
+  "Search for a grid-table cell delimiter before LIMIT.
+Set the match data to the next `|' on a row adjacent to a grid border."
+  (let (found)
+    (while (and (not found) (re-search-forward "[|]" limit t))
+      (let ((pipe (match-beginning 0)))
+	(when (rst-font-lock-grid-table-row-p pipe)
+	  (set-match-data (list pipe (1+ pipe)))
+	  (setq found t))))
+    found))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defvar rst-font-lock-keywords
   ;; The reST-links in the comments below all relate to sections in
   ;; https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html.
@@ -3715,7 +3755,20 @@ of your own."
      1 'rst-block)
 
     ;; `Tables`_
-    ;; FIXME: missing
+    ;; Grid-table borders and cell separators.
+    (,rst-font-lock-grid-table-border-regexp
+     1 'rst-block)
+    (rst-font-lock-match-grid-table-pipe
+     (0 'rst-block append))
+    ;; Simple-table borders and row/column separators.  At least two
+    ;; separator runs are required to distinguish these from section
+    ;; adornments.
+    (,(rst-re 'lin-beg
+	      '(:grp (:alt
+		      (:seq "=+" "\\(?:[ \t]+=+\\)+")
+		      (:seq "-+" "\\(?:[ \t]+-+\\)+")))
+	      'lin-end)
+     1 'rst-block)
 
     ;; All the `Explicit Markup Blocks`_
     ;; `Footnotes`_ / `Citations`_
