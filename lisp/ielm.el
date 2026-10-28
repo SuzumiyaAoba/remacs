@@ -307,7 +307,9 @@ simply inserts a newline."
 (defun ielm-is-whitespace-or-comment (string)
   "Return non-nil if STRING is all whitespace or a comment."
   (or (string= string "")
-      (string-match-p "\\`[ \t\n]*\\(?:;.*\\)*\\'" string)))
+      (string-match-p
+       "\\`[ \t\n]*\\(?:;[^\n]*\\(?:\n\\|\\'\\)[ \t\n]*\\)*\\'"
+       string)))
 
 ;;; Evaluation
 
