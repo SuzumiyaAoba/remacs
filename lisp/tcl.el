@@ -413,6 +413,16 @@ This variable is generally set from `tcl-proc-regexp',
         (forward-char))
       (> depth 0)))
 
+(defun tcl--syntax-of-hash (pos)
+  "Return punctuation syntax for a hash inside a braced Tcl word at POS."
+  (let ((openers (nth 9 (syntax-ppss pos)))
+        found)
+    (while (and openers (not found))
+      (when (eq (char-after (car openers)) ?\{)
+        (setq found t))
+      (setq openers (cdr openers)))
+    (when found (string-to-syntax ".")))
+
 (defun tcl--syntax-of-quote (pos)
   "Decide whether a double quote opens a string or not."
   ;; This is pretty tricky, because strings can be written as "..."
@@ -472,6 +482,8 @@ This variable is generally set from `tcl-proc-regexp',
   (syntax-propertize-rules
    ;; Tcl folds backslash-newline before parsing, including inside comments.
    ((concat (regexp-quote "\\") "\\(\n\\)[ \t]*") (1 " "))
+   ;; Hashes inside braced words are data, not comment starters.
+   ("#" (0 (tcl--syntax-of-hash (match-beginning 0))))
    ;; Mark the few `#' that are not comment-markers.
    ((concat "[^" tcl--word-delimiters "][ \t]*\\(#\\)") (1 "."))
    ("\"" (0 (tcl--syntax-of-quote (match-beginning 0)))))
