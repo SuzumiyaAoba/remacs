@@ -2036,7 +2036,7 @@ See also `multi-occur'."
                                  (when (= match-start match-end)
                                    (if (< (point) (or end (point-max)))
                                        (forward-char 1)
-                                     (setq done t))))))))))
+                                     (setq done t)))))))))
                      count)
 		 ;; Perform normal occur.
 		 (occur-engine
@@ -2106,7 +2106,8 @@ See also `multi-occur'."
 		(goto-char (if (overlayp boo) (overlay-start boo) (point-min)))
                 (unless (overlayp boo)
                   (forward-line 0))
-	        (let* ((limit (if (overlayp boo) (overlay-end boo) (point-max)))
+	        (let* ((search-start (if (overlayp boo) (overlay-start boo) (point-min)))
+                       (limit (if (overlayp boo) (overlay-end boo) (point-max)))
                        (start-line (line-number-at-pos))
 		       (curr-line start-line) ; line count
 		       (orig-line-shown-p)
@@ -2145,8 +2146,10 @@ See also `multi-occur'."
                       (setq markers nil)
 		      (setq curstring (occur-engine-line begpt endpt keep-props))
 		      ;; Highlight the matches
-		      (let ((len (length curstring))
-			    (start 0))
+		      (let* ((len (length curstring))
+                             (search-beg (max 0 (- search-start begpt)))
+                             (search-end (min len (max search-beg (- limit begpt))))
+			     (start search-beg))
 		        ;; Count empty lines that don't use next loop (Bug#22062).
 		        (when (zerop len)
 			  (setq matches (1+ matches)))
@@ -2162,8 +2165,10 @@ See also `multi-occur'."
 				     (<= orig-line (+ curr-line nlines)))
 			    ;; Shown either here or will be shown by occur-context-lines
 			    (setq orig-line-shown-p t)))
-		        (while (and (< start len)
-				    (string-match regexp curstring start))
+			(while (and (< start search-end)
+				    (string-match regexp curstring start)
+                                    (< (match-beginning 0) search-end)
+                                    (<= (match-end 0) search-end))
                           (push (cons (set-marker (make-marker)
                                                   (+ begpt (match-beginning 0)))
                                       (set-marker (make-marker)
