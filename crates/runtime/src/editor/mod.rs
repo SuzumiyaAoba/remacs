@@ -6399,6 +6399,15 @@ fn store_frame_parameter(
             f.borrow_mut().name = name;
         }
     }
+    if name.as_deref() == Some("cursor-color") {
+        if let (Some(cursor), Some(override_property)) = (
+            i.intern_soft("cursor"),
+            i.intern_soft("remacs--cursor-face-background-override"),
+        ) {
+            // A later frame-parameter update takes precedence over the face.
+            i.put_prop(cursor, override_property, Value::Nil);
+        }
+    }
     Ok(())
 }
 
@@ -22870,6 +22879,12 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
     }
     if !to_t {
         set_face_attr(i, &name, &attr, value);
+    }
+    if i.symbol_name(name) == "cursor" && attr == ":background" {
+        if let Some(cursor) = i.intern_soft("cursor") {
+            let override_property = i.intern("remacs--cursor-face-background-override");
+            i.put_prop(cursor, override_property, Value::t());
+        }
     }
     Ok(Value::Sym(face))
 }

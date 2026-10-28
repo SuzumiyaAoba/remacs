@@ -353,9 +353,23 @@ fn cursor_type_for_window(
 
 fn frame_cursor_color(
     i: &Interp,
-    face_ctx: &FaceCtx,
+    face_ctx: &mut FaceCtx,
     frame: &crate::editor::Frame,
 ) -> Option<CellColor> {
+    // A Lisp change to the cursor face is the graphical cursor's highest
+    // priority color.  Keep frame-parameter updates authoritative until that
+    // face has been explicitly changed.
+    if let (Some(cursor), Some(override_property)) = (
+        i.q_soft("cursor"),
+        i.q_soft("remacs--cursor-face-background-override"),
+    ) {
+        if i.get_prop(cursor, override_property).truthy() {
+            if let Some(color) = face_ctx.named(i, &cursor, 0).bg {
+                return Some(color);
+            }
+        }
+    }
+
     let value = i
         .q_soft("cursor-color")
         .map(|id| crate::lisp::eval::plist_get_v(&frame.params, &Value::Sym(id)))
@@ -1190,7 +1204,7 @@ fn render_grid_internal(
         }
     };
     let fb = frame.borrow();
-    let cursor_color = frame_cursor_color(i, &fctx, &fb);
+    let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let mini_height = 1usize;
     let body_height = height.saturating_sub(mini_height);
     let (root_left, root_top, root_width, root_height) = fb
