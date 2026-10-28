@@ -1271,9 +1271,11 @@ Has a preference of looking backwards."
       (cond
        ((re-search-forward "^\\([-+]\\)[ \t\n\f\r]*\\(([^)]*)\\)?\\s-*" nil t)
 	(change-log-get-method-definition-1 "")
-	(while (not (looking-at "[{;]"))
-	  (looking-at
-	   "\\([A-Za-z_]*:?\\)\\s-*\\(([^)]*)\\)?[A-Za-z_]*[ \t\n\f\r]*")
+	(while (and (not (looking-at "[{;]"))
+	            (< (point) (point-max))
+	            (looking-at
+	             "\\([A-Za-z_]*:?\\)\\s-*\\(([^)]*)\\)?[A-Za-z_]*[ \t\n\f\r]*")
+	            (> (match-end 0) (point)))
 	  (change-log-get-method-definition-1 ""))
 	(concat change-log-get-method-definition-md "]"))))))
 
