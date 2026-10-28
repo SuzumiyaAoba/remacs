@@ -36,9 +36,6 @@
 ;; Bugs / Todo:
 ;; ===========
 
-;; * Respooling doesn't work because contrary to the request-scan function,
-;;   Gnus won't allow me to override the split methods when calling the
-;;   respooling back end functions.
 ;; * There's a bug in the time zone mechanism with variable TZ locations.
 ;; * We could allow a keyword like `ask' in X-Diary-* headers, that would mean
 ;;   "ask for value upon reception of the message".
@@ -73,8 +70,7 @@
 ;;   one mail back ends for mail retrieval and splitting.  This back end is
 ;;   also an attempt to make it behave differently.  For Gnus developers: as
 ;;   you can see if you snarf into the code, that was not a very difficult
-;;   thing to do.  Something should be done about the respooling breakage
-;;   though.
+;;   thing to do.  The custom split methods are also used for respooling.
 
 
 ;;; Code:
@@ -107,7 +103,7 @@ must contain diary messages ONLY."
   "NNDiary specific split methods.
 This variable is used by nndiary in place of the standard
 `nnmail-split-methods' variable when `nndiary-get-new-mail' is set to
-non-nil."
+non-nil, and when respooling articles into an nndiary group."
   :group 'nndiary
   :group 'nnmail-split
   :type '(choice (repeat :tag "Alist" (group (string :tag "Name") regexp))
@@ -648,7 +644,8 @@ all.  This may very well take some time.")
 	(and
 	 (nnmail-activate 'nndiary)
 	 (if (and (not (setq result
-			     (nnmail-article-group 'nndiary-active-number)))
+			     (let ((nnmail-split-methods nndiary-split-methods))
+			       (nnmail-article-group 'nndiary-active-number)))
 		  (yes-or-no-p "Moved to `junk' group; delete article? "))
 	     (setq result 'junk)
 	   (setq result (car (nndiary-save-mail result))))
