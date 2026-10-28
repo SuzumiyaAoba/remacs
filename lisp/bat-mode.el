@@ -153,13 +153,14 @@
   "Run a batch file."
   (interactive)
   ;; FIXME: liable to quoting nightmare.  Use call/start-process?
-  (save-buffer) (shell-command buffer-file-name))
+  (save-buffer)
+  (shell-command (shell-quote-argument buffer-file-name)))
 
 (defun bat-run-args (args)
   "Run a batch file with ARGS."
   (interactive "sArgs: ")
   ;; FIXME: Use `compile'?
-  (shell-command (concat buffer-file-name " " args)))
+  (shell-command (concat (shell-quote-argument buffer-file-name) " " args)))
 
 (defun bat-template ()
   "Insert minimal batch file template."
