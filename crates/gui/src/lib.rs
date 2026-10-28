@@ -39,11 +39,22 @@ pub fn run_gui_with_dump(
     dump_file: Option<&str>,
     arguments: &[String],
 ) -> io::Result<()> {
-    let (event_tx, gui_requests, clipboard_requests) = start_logic_with_frames(
+    let (event_tx, gui_requests, clipboard_requests, initial_frame_size) = start_logic_with_frames(
         files.to_vec(),
         dump_file.map(str::to_owned),
         arguments.to_vec(),
     )?;
+    // Use explicit runtime dimensions from the user's frame alists before
+    // opening the native window. The first frame snapshot corrects this
+    // estimate using actual font metrics.
+    let initial_window_size = initial_frame_size
+        .map(|frame| {
+            size(
+                px(frame.width.max(10) as f32 * 8.0),
+                px(frame.height.max(3) as f32 * 19.0),
+            )
+        })
+        .unwrap_or(size(px(960.0), px(640.0)));
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -89,7 +100,7 @@ pub fn run_gui_with_dump(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
-                    size(px(960.0), px(640.0)),
+                    initial_window_size,
                     cx,
                 ))),
                 ..Default::default()

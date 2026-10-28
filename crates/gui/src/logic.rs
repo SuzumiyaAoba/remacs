@@ -177,6 +177,12 @@ pub(super) struct FrameSnapshot {
     pub grid: Grid,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct InitialFrameSize {
+    pub width: usize,
+    pub height: usize,
+}
+
 pub(super) enum GuiRequest {
     FrameSnapshots(Vec<FrameSnapshot>),
     FrameVisibility { frame_id: usize, visible: bool },
@@ -1403,7 +1409,7 @@ impl KeyIo for ChanIo {
 pub(super) fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _gui_requests, _clipboard_requests) =
+    let (events, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
         start_logic_inner(files, None, Vec::new(), false, true, false)?;
     Ok((events, grids))
 }
@@ -1414,7 +1420,7 @@ pub(super) fn start_logic_with_dump_for_test(
     dump_file: Option<String>,
     arguments: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _gui_requests, _clipboard_requests) =
+    let (events, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
         start_logic_inner(files, dump_file, arguments, false, true, false)?;
     Ok((events, grids))
 }
@@ -1447,7 +1453,7 @@ pub(super) fn start_logic_with_dump(
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
-    let (events, grids, _gui_requests, clipboard) =
+    let (events, grids, _gui_requests, clipboard, _initial_frame_size) =
         start_logic_inner(files, dump_file, arguments, true, true, false)?;
     Ok((events, grids, clipboard))
 }
@@ -1460,11 +1466,15 @@ pub(super) fn start_logic_with_frames(
     Sender<GuiEvent>,
     smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
+    Option<InitialFrameSize>,
 )> {
-    let (events, grids, gui_requests, clipboard) =
+    let (events, grids, gui_requests, clipboard, initial_frame_size_rx) =
         start_logic_inner(files, dump_file, arguments, true, false, true)?;
     drop(grids);
-    Ok((events, gui_requests, clipboard))
+    let initial_frame_size = initial_frame_size_rx
+        .recv()
+        .map_err(|_| io::Error::other("GUI startup frame size is unavailable"))?;
+    Ok((events, gui_requests, clipboard, initial_frame_size))
 }
 
 fn start_logic_inner(
@@ -1479,6 +1489,7 @@ fn start_logic_inner(
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
+    mpsc::Receiver<Option<InitialFrameSize>>,
 )> {
     let wait_for_dump = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
@@ -1486,6 +1497,7 @@ fn start_logic_inner(
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
     let (gui_requests_tx, gui_requests_rx) = smol::channel::unbounded::<GuiRequest>();
     let (clipboard_tx, clipboard_rx) = smol::channel::unbounded::<ClipboardRequest>();
+    let (initial_frame_size_tx, initial_frame_size_rx) = mpsc::sync_channel(1);
     let clipboard_ready = Arc::new(AtomicBool::new(false));
     clipboard_tx
         .send_blocking(ClipboardRequest::Ready(clipboard_ready.clone()))
@@ -1508,6 +1520,7 @@ fn start_logic_inner(
                     }
                     Err(error) => {
                         let _ = startup_tx.send(Err(error.to_string()));
+                        let _ = initial_frame_size_tx.send(None);
                         return;
                     }
                 },
@@ -1522,6 +1535,7 @@ fn start_logic_inner(
                 let message = format!("GUI startup: {error:?}");
                 eprintln!("remacs: {message}");
                 let _ = startup_tx.send(Err(message));
+                let _ = initial_frame_size_tx.send(None);
                 return;
             }
             if enable_gui_selections {
@@ -1549,6 +1563,28 @@ fn start_logic_inner(
                     },
                 )));
             }
+            let initial_frame_size = i.selected_frame.as_ref().and_then(|frame| {
+                let has_size_parameter = [
+                    "initial-frame-alist",
+                    "default-frame-alist",
+                    "frame-initial-frame-alist",
+                ]
+                .iter()
+                .any(|name| {
+                    i.intern_soft(name).is_some_and(|symbol| {
+                        let alist = i.symbol_value(symbol);
+                        frame_alist_sets_size(&i, &alist)
+                    })
+                });
+                has_size_parameter.then(|| {
+                    let frame = frame.borrow();
+                    InitialFrameSize {
+                        width: frame.width,
+                        height: frame.height,
+                    }
+                })
+            });
+            let _ = initial_frame_size_tx.send(initial_frame_size);
             let _ = startup_tx.send(Ok(()));
             let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
             let mut frame_sizes = HashMap::new();
@@ -1602,7 +1638,13 @@ fn start_logic_inner(
             .map_err(io::Error::other)?
             .map_err(io::Error::other)?;
     }
-    Ok((event_tx, grid_rx, gui_requests_rx, clipboard_rx))
+    Ok((
+        event_tx,
+        grid_rx,
+        gui_requests_rx,
+        clipboard_rx,
+        initial_frame_size_rx,
+    ))
 }
 
 fn configure_gui_window_system(i: &mut Interp) {
@@ -1629,4 +1671,27 @@ fn configure_gui_window_system(i: &mut Interp) {
             vec![remacs_runtime::lisp::Value::Frame(frame)],
         );
     }
+}
+
+fn frame_alist_sets_size(i: &Interp, alist: &Value) -> bool {
+    let Ok(entries) = alist.list_to_vec() else {
+        return false;
+    };
+    entries.into_iter().any(|entry| {
+        let Value::Cons(entry) = entry else {
+            return false;
+        };
+        let (key, value) = {
+            let entry = entry.borrow();
+            (entry.car.clone(), entry.cdr.clone())
+        };
+        let Some(key) = i.sym_id(&key) else {
+            return false;
+        };
+        match i.symbol_name(key).as_str() {
+            "width" => value.int().is_some_and(|width| width > 0),
+            "height" => value.int().is_some_and(|height| height > 1),
+            _ => false,
+        }
+    })
 }
