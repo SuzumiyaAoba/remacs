@@ -824,6 +824,16 @@ fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mu
         return;
     }
 
+    // The OS text path bypasses `dispatch_key_core_inner', so record its
+    // characters explicitly while a keyboard macro is being defined.
+    if !i.macro_replaying {
+        let defining = i.q("defining-kbd-macro");
+        if i.symbol_value(defining).truthy() {
+            i.kbd_macro_events
+                .extend(text.chars().map(|ch| Value::Int(ch as i128)));
+        }
+    }
+
     // A committed-text event breaks an unfinished key sequence and has
     // no numeric-prefix interpretation.
     keys.clear();
