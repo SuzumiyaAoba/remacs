@@ -1384,7 +1384,7 @@ fn render_grid_internal(
                     }
                     .clamp(bb.begv, bb.zv);
                     let point_line = bb.text.line_start(bb.text.line_of_pos(point));
-                    let point_index = (point_line == ls).then_some(point - ls);
+                    let point_index = (point_line == ls).then(|| point - ls);
                     (bb.text.substring(ls, le), ls, row_end, point_index)
                 }
                 None => (EmacsText::new(), 0, 0, None),
