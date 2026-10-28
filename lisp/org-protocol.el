@@ -692,16 +692,17 @@ This function is indented to be used as :around advice for `server-visit-files'.
     (catch 'greedy
       (dolist (var flist)
 	;; `\' to `/' on windows.  FIXME: could this be done any better?
-        (let ((fname  (expand-file-name (car var))))
+        (let* ((fname (expand-file-name (car var)))
+               (restoffiles (memq var flist)))
           (setq fname (org-protocol-check-filename-for-protocol
-		       fname (member var flist)  client))
+		       fname restoffiles client))
           (if (eq fname t) ;; greedy? We need the t return value.
               (progn
-                ;; FIXME: Doesn't this just ignore all the files before
-                ;; this one (the remaining ones have been passed to
-                ;; `org-protocol-check-filename-for-protocol' but not
-                ;; the ones before).
-                (setq files nil)
+                ;; The greedy handler consumed RESTOFFILES.  Keep earlier
+                ;; files that were not handled by a protocol function.
+                (setq files
+                      (cl-remove-if (lambda (file) (memq file restoffiles))
+                                    files))
                 (throw 'greedy t))
             (if (stringp fname) ;; probably filename
                 (setcar var fname)
