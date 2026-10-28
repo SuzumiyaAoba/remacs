@@ -74,6 +74,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_NOTIFICATION,
         _NET_WM_WINDOW_TYPE_DIALOG,
+        _NET_WM_WINDOW_OPACITY,
         _NET_WM_SYNC,
         _NET_SUPPORTED,
         _MOTIF_WM_HINTS,
@@ -273,6 +274,7 @@ pub struct X11WindowState {
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
     last_insets: [u32; 4],
+    opacity: Option<u32>,
 }
 
 impl X11WindowState {
@@ -689,6 +691,7 @@ impl X11WindowState {
                 client_side_decorations_supported,
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
+                opacity: None,
                 edge_constraints: None,
                 counter_id: sync_request_counter,
                 last_sync_counter: None,
@@ -1437,6 +1440,31 @@ impl PlatformWindow for X11Window {
 
     fn is_fullscreen(&self) -> bool {
         self.0.state.borrow().fullscreen
+    }
+
+    fn set_opacity(&self, opacity: f32) {
+        let value = (u32::MAX as f32 * opacity.clamp(0.0, 1.0)).round() as u32;
+        let mut state = self.0.state.borrow_mut();
+        let new_opacity = (value < u32::MAX).then_some(value);
+        if state.opacity == new_opacity {
+            return;
+        }
+        state.opacity = new_opacity;
+        let request = if let Some(value) = new_opacity {
+            self.0.xcb.change_property32(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                state.atoms._NET_WM_WINDOW_OPACITY,
+                xproto::AtomEnum::CARDINAL,
+                &[value],
+            )
+        } else {
+            self.0
+                .xcb
+                .delete_property(self.0.x_window, state.atoms._NET_WM_WINDOW_OPACITY)
+        };
+        request.log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {

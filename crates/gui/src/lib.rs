@@ -124,6 +124,7 @@ pub fn run_gui_with_dump(
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
+            let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut native_visibility = HashMap::<usize, bool>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
@@ -135,6 +136,10 @@ pub fn run_gui_with_dump(
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
                             let modifier_mapping = snapshot.modifier_mapping;
+                            let alpha_active = snapshot.alpha_active;
+                            let alpha_inactive = snapshot.alpha_inactive;
+                            let alpha_background = snapshot.alpha_background;
+                            let background_appearance = frame_background_appearance(&snapshot);
                             let fullscreen = snapshot.fullscreen.clone();
                             let frame_size = (snapshot.width, snapshot.height);
                             let frame_left = snapshot.left;
@@ -160,15 +165,27 @@ pub fn run_gui_with_dump(
                                 let requested_parent_bounds = parent_bounds;
                                 let update_behavior =
                                     frame_behaviors.get(&frame_id) != Some(&behavior);
+                                let update_background =
+                                    window_backgrounds.get(&frame_id) != Some(&background_appearance);
                                 let requested_behavior = behavior.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
+                                    let alpha_background_changed =
+                                        view.set_alpha_background(alpha_background);
                                     if view.grid != grid || grid.blink_cursor {
                                         view.grid = grid;
                                         cx.notify();
-                                    } else if modifier_mapping_changed {
+                                    } else if modifier_mapping_changed || alpha_background_changed {
                                         cx.notify();
+                                    }
+                                    window.set_opacity(frame_opacity(
+                                        alpha_active,
+                                        alpha_inactive,
+                                        window.is_window_active(),
+                                    ));
+                                    if update_background {
+                                        window.set_background_appearance(background_appearance);
                                     }
                                     if requested_fullscreen.is_none() {
                                         apply_frame_snapshot_bounds(
@@ -202,6 +219,7 @@ pub fn run_gui_with_dump(
                                 });
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
+                                window_backgrounds.insert(frame_id, background_appearance);
                                 native_visibility.entry(frame_id).or_insert(true);
                                 continue;
                             }
@@ -209,12 +227,25 @@ pub fn run_gui_with_dump(
                                 let initial_fullscreen = fullscreen.clone();
                                 let initial_behavior = behavior.clone();
                                 let initial_modifier_mapping = modifier_mapping;
+                                let initial_alpha_active = alpha_active;
+                                let initial_alpha_inactive = alpha_inactive;
+                                let initial_alpha_background = alpha_background;
+                                let initial_background_appearance = background_appearance;
                                 let initial_left = frame_left;
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
                                     view.grid = grid;
                                     view.set_modifier_mapping(initial_modifier_mapping);
+                                    view.set_alpha_background(initial_alpha_background);
+                                    window.set_opacity(frame_opacity(
+                                        initial_alpha_active,
+                                        initial_alpha_inactive,
+                                        window.is_window_active(),
+                                    ));
+                                    window.set_background_appearance(
+                                        initial_background_appearance,
+                                    );
                                     if initial_fullscreen.is_none() {
                                         apply_frame_snapshot_bounds(
                                             view,
@@ -244,6 +275,7 @@ pub fn run_gui_with_dump(
                                 });
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
+                                window_backgrounds.insert(frame_id, initial_background_appearance);
                                 native_visibility.insert(frame_id, true);
                                 windows.insert(frame_id, handle);
                                 continue;
@@ -251,8 +283,18 @@ pub fn run_gui_with_dump(
 
                             let options = frame_window_options(&snapshot, &windows, cx);
                             let modifier_mapping = snapshot.modifier_mapping;
+                            let alpha_active = snapshot.alpha_active;
+                            let alpha_inactive = snapshot.alpha_inactive;
+                            let alpha_background = snapshot.alpha_background;
+                            let background_appearance = frame_background_appearance(&snapshot);
                             let event_tx = event_tx.clone();
                             let handle = match cx.open_window(options, move |window, app| {
+                                window.set_opacity(frame_opacity(
+                                    alpha_active,
+                                    alpha_inactive,
+                                    window.is_window_active(),
+                                ));
+                                window.set_background_appearance(background_appearance);
                                 app.new(|cx| {
                                     let mut view = build_managed_editor_view(
                                         window,
@@ -262,6 +304,7 @@ pub fn run_gui_with_dump(
                                         Some(grid),
                                     );
                                     view.set_modifier_mapping(modifier_mapping);
+                                    view.set_alpha_background(alpha_background);
                                     view
                                 })
                             }) {
@@ -273,6 +316,7 @@ pub fn run_gui_with_dump(
                             };
                             window_modes.insert(frame_id, snapshot.fullscreen.clone());
                             frame_behaviors.insert(frame_id, behavior.clone());
+                            window_backgrounds.insert(frame_id, background_appearance);
                             let _ = handle.update(cx, move |view, window, _cx| {
                                 view.set_frame_behavior(behavior.0, behavior.1);
                                 set_frame_z_group_window(
@@ -297,6 +341,7 @@ pub fn run_gui_with_dump(
                             }
                             window_modes.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
+                            window_backgrounds.remove(&frame_id);
                             native_visibility.remove(&frame_id);
                         }
                         if let Some(stack) = cx.update(|app| app.window_stack()).ok().flatten() {
@@ -631,6 +676,7 @@ fn frame_window_options(
     };
     WindowOptions {
         window_bounds: Some(window_bounds),
+        window_background: frame_background_appearance(frame),
         display_id: parameter_position
             .and_then(|(_, display_id)| display_id)
             .map(DisplayId::from),
@@ -653,6 +699,18 @@ fn frame_window_options(
         is_minimizable: !child,
         ..Default::default()
     }
+}
+
+fn frame_background_appearance(frame: &FrameSnapshot) -> WindowBackgroundAppearance {
+    if frame.alpha_background < 100 || frame.alpha_active < 100 || frame.alpha_inactive < 100 {
+        WindowBackgroundAppearance::Transparent
+    } else {
+        WindowBackgroundAppearance::Opaque
+    }
+}
+
+fn frame_opacity(alpha_active: u8, alpha_inactive: u8, active: bool) -> f32 {
+    f32::from(if active { alpha_active } else { alpha_inactive }) / 100.0
 }
 
 fn frame_position_in_window(

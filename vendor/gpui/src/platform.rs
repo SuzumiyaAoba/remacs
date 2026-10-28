@@ -494,6 +494,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn zoom(&self);
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
+    fn set_opacity(&self, _opacity: f32) {}
     fn begin_text_drag_session(
         &self,
         _text: String,

@@ -289,6 +289,7 @@ pub(super) struct EditorView {
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
     modifier_mapping: ModifierMapping,
+    alpha_background: u8,
     physical_modifier_state: Rc<Cell<PhysicalModifierState>>,
     installed_menus: Vec<GridMenu>,
     window_title: Option<String>,
@@ -337,6 +338,7 @@ impl EditorView {
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
             modifier_mapping: ModifierMapping::default(),
+            alpha_background: 100,
             physical_modifier_state: Rc::new(Cell::new(PhysicalModifierState::default())),
             installed_menus: Vec::new(),
             window_title: None,
@@ -382,6 +384,14 @@ impl EditorView {
             return false;
         }
         self.modifier_mapping = mapping;
+        true
+    }
+
+    pub(super) fn set_alpha_background(&mut self, alpha: u8) -> bool {
+        if self.alpha_background == alpha {
+            return false;
+        }
+        self.alpha_background = alpha;
         true
     }
 
@@ -642,6 +652,8 @@ impl Render for EditorView {
             .default_bg
             .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
             .unwrap_or(BG);
+        let background_alpha = ((self.alpha_background as u32 * 255 + 50) / 100) as u8;
+        let default_background_fill = rgba((default_background << 8) | u32::from(background_alpha));
         let modifier_mapping = self.modifier_mapping;
         let physical_modifier_state = self.physical_modifier_state.clone();
         let key_modifier_state = physical_modifier_state.clone();
@@ -696,7 +708,7 @@ impl Render for EditorView {
         let mouse_face_exit_tx = self.tx.clone();
         div()
             .size_full()
-            .bg(rgb(default_background))
+            .bg(default_background_fill)
             .cursor(mouse_cursor)
             .track_focus(&self.focus)
             .key_context("remacs")
@@ -1054,7 +1066,8 @@ impl Render for EditorView {
                                         if len == 0 {
                                             return;
                                         }
-                                        let (fg, bg) = style_colors(st, default_background);
+                                        let (fg, bg) =
+                                            style_colors(st, default_background, background_alpha);
                                         let mut f = text_font.clone();
                                         if let Some(family) = st
                                             .font_family
@@ -1170,6 +1183,7 @@ impl Render for EditorView {
                                 grid_row_top(&grid, y, line_height),
                                 grid_row_height(&grid, y, line_height),
                                 default_background,
+                                background_alpha,
                                 window,
                             );
                             let _ = line.paint(origin, line_height, window, _cx);
@@ -1212,7 +1226,8 @@ impl Render for EditorView {
                                                 origin: point(bounds.left() + left, overline_y),
                                                 size: size(width, px(1.0)),
                                             },
-                                            style_colors(style, default_background).0,
+                                            style_colors(style, default_background, background_alpha)
+                                                .0,
                                         ));
                                     }
                                 }
@@ -1262,7 +1277,7 @@ impl Render for EditorView {
                                         origin,
                                         size: size(line.width.max(cell_width), line_height),
                                     },
-                                    rgb(default_background),
+                                    default_background_fill,
                                 ));
                                 let _ = line.paint(origin, line_height, window, _cx);
                                 (row, x + line.x_for_index(marked_cursor))
@@ -1617,6 +1632,7 @@ fn paint_stipple_region(
     row_height: Pixels,
     bounds: Bounds<Pixels>,
     default_background: u32,
+    background_alpha: u8,
     window: &mut Window,
 ) {
     let width_px = f32::from(width).ceil().max(0.0) as usize;
@@ -1625,13 +1641,13 @@ fn paint_stipple_region(
         return;
     }
     let origin = point(bounds.left() + left, bounds.top() + row_top);
-    let (foreground, background) = style_colors(style, default_background);
+    let (foreground, background) = style_colors(style, default_background, background_alpha);
     window.paint_quad(fill(
         Bounds {
             origin,
             size: size(px(width_px as f32), px(height_px as f32)),
         },
-        background.unwrap_or_else(|| rgb(default_background).into()),
+        background.unwrap_or_else(|| background_rgba(default_background, background_alpha)),
     ));
 
     let origin_x = f32::from(origin.x).floor() as isize;
@@ -1675,6 +1691,7 @@ fn paint_stipple_backgrounds(
     row_top: Pixels,
     row_height: Pixels,
     default_background: u32,
+    background_alpha: u8,
     window: &mut Window,
 ) {
     let Some(text) = grid.rows.get(row_index) else {
@@ -1715,6 +1732,7 @@ fn paint_stipple_backgrounds(
             row_height,
             bounds,
             default_background,
+            background_alpha,
             window,
         );
     }
@@ -1934,20 +1952,35 @@ fn shade_color(color: u32, factor: f32) -> u32 {
 fn style_colors(
     st: remacs_runtime::frontend::CellStyle,
     default_background: u32,
+    background_alpha: u8,
 ) -> (Hsla, Option<Hsla>) {
-    let cc = |c: remacs_runtime::frontend::CellColor| -> Hsla {
-        rgb(((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32).into()
+    let rgb_color = |c: remacs_runtime::frontend::CellColor| {
+        ((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32
     };
-    let fg = st.fg.map(cc).unwrap_or_else(|| rgb(FG).into());
-    let bg = st.bg.map(cc);
+    let foreground = st
+        .fg
+        .map(|color| rgb(rgb_color(color)).into())
+        .unwrap_or_else(|| rgb(FG).into());
+    let background = st
+        .bg
+        .map(|color| background_rgba(rgb_color(color), background_alpha));
     if st.inverse {
         (
-            bg.unwrap_or_else(|| rgb(default_background).into()),
-            Some(fg),
+            st.bg
+                .map(|color| rgb(rgb_color(color)).into())
+                .unwrap_or_else(|| rgb(default_background).into()),
+            Some(background_rgba(
+                st.fg.map(rgb_color).unwrap_or(FG),
+                background_alpha,
+            )),
         )
     } else {
-        (fg, bg)
+        (foreground, background)
     }
+}
+
+fn background_rgba(color: u32, alpha: u8) -> Hsla {
+    rgba((color << 8) | u32::from(alpha)).into()
 }
 
 /// Construct the root view: focus it for key input and spawn the

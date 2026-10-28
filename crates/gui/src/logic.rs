@@ -166,6 +166,9 @@ pub(super) struct FrameSnapshot {
     pub name: String,
     pub parent_frame: Option<usize>,
     pub modifier_mapping: super::keys::ModifierMapping,
+    pub alpha_active: u8,
+    pub alpha_inactive: u8,
+    pub alpha_background: u8,
     pub width: usize,
     pub height: usize,
     pub left: Option<i128>,
@@ -692,6 +695,51 @@ fn frame_system_is_graphical(i: &Interp, frame: &remacs_runtime::editor::FrameRe
             "x" | "w32" | "ns" | "pgtk" | "haiku" | "android" | "gpui"
         ),
         _ => false,
+    }
+}
+
+fn alpha_percent(value: &Value) -> Option<i128> {
+    match value {
+        Value::Int(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8) {
+    let lower_limit = i
+        .intern_soft("frame-alpha-lower-limit")
+        .filter(|symbol| i.bound_p(*symbol))
+        .and_then(|symbol| i.symbol_value(symbol).int())
+        .unwrap_or(20)
+        .clamp(0, 100);
+    let value = frame_parameter_value(i, frame, "alpha");
+    let (active, inactive) = match value {
+        Value::Int(value) => (Some(value), Some(value)),
+        Value::Cons(pair) => {
+            let pair = pair.borrow();
+            let active = alpha_percent(&pair.car);
+            let inactive_value = match &pair.cdr {
+                Value::Cons(tail) => tail.borrow().car.clone(),
+                value => value.clone(),
+            };
+            (active, alpha_percent(&inactive_value))
+        }
+        _ => (None, None),
+    };
+    let normalize = |value: Option<i128>, fallback: u8| {
+        value
+            .map(|value| value.clamp(lower_limit, 100) as u8)
+            .unwrap_or(fallback)
+    };
+    let active = normalize(active, 100);
+    let inactive = normalize(inactive, active);
+    (active, inactive)
+}
+
+fn frame_alpha_background(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> u8 {
+    match frame_parameter_value(i, frame, "alpha-background") {
+        Value::Int(value) => value.clamp(0, 100) as u8,
+        _ => 100,
     }
 }
 
@@ -1339,6 +1387,8 @@ impl KeyIo for ChanIo {
                 };
                 let name = frame.borrow().name.borrow().to_string();
                 let int_param = |name: &str| frame_parameter_value(i, frame, name).int();
+                let (alpha_active, alpha_inactive) = frame_alpha(i, frame);
+                let alpha_background = frame_alpha_background(i, frame);
                 let fullscreen = match frame_parameter_value(i, frame, "fullscreen") {
                     Value::Sym(symbol) => Some(i.symbol_name(symbol)),
                     _ => None,
@@ -1352,6 +1402,9 @@ impl KeyIo for ChanIo {
                     name,
                     parent_frame,
                     modifier_mapping: super::keys::ModifierMapping::from_interp(i),
+                    alpha_active,
+                    alpha_inactive,
+                    alpha_background,
                     width,
                     height,
                     left: int_param("left"),

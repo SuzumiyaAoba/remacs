@@ -1707,6 +1707,11 @@ impl Window {
         self.platform_window.is_fullscreen()
     }
 
+    /// Set the opacity of this native window, where 1.0 is fully opaque.
+    pub fn set_opacity(&self, opacity: f32) {
+        self.platform_window.set_opacity(opacity.clamp(0.0, 1.0));
+    }
+
     /// Begin dragging text from this window to the operating system.
     ///
     /// The completion callback receives the operation accepted by the drop

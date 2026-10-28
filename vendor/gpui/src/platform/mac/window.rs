@@ -1455,6 +1455,13 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_opacity(&self, opacity: f32) {
+        let window = self.0.lock().native_window;
+        unsafe {
+            let _: () = msg_send![window, setAlphaValue: opacity as f64];
+        }
+    }
+
     fn begin_text_drag_session(
         &self,
         text: String,
