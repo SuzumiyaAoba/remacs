@@ -241,35 +241,34 @@ impl Render for EditorView {
                                 }
                             }
                         }
+                        let fallback_cursor = grid.cursor.map(|(column, row)| {
+                            let x = grid
+                                .cursor_index
+                                .and_then(|index| {
+                                    lines.get(row).map(|line| line.x_for_index(index))
+                                })
+                                .unwrap_or(cell_width * (column as f32));
+                            (row, x)
+                        });
                         let composition_origin = (!marked.is_empty())
                             .then_some(marked_origin)
                             .flatten()
                             .and_then(|(row, index)| {
                                 lines.get(row).map(|line| (row, line.x_for_index(index)))
-                            });
-                        let cursor = composition_origin.or_else(|| {
-                            grid.cursor.map(|(column, row)| {
-                                let x = grid
-                                    .cursor_index
-                                    .and_then(|index| {
-                                        lines.get(row).map(|line| line.x_for_index(index))
-                                    })
-                                    .unwrap_or(cell_width * (column as f32));
-                                (row, x)
                             })
-                        });
-                        if let Some((cursor_row, cursor_x)) = cursor {
-                            let mut origin = point(
-                                bounds.left() + cursor_x,
-                                bounds.top() + line_height * (cursor_row as f32),
-                            );
-                            if !marked.is_empty() {
+                            .or(fallback_cursor);
+                        let composition_caret = if !marked.is_empty() {
+                            composition_origin.map(|(row, x)| {
+                                let origin = point(
+                                    bounds.left() + x,
+                                    bounds.top() + line_height * (row as f32),
+                                );
                                 let line = window.text_system().shape_line(
                                     marked.clone().into(),
                                     font_size,
                                     &[TextRun {
                                         len: marked.len(),
-                                        font: composition_font,
+                                        font: composition_font.clone(),
                                         color: rgb(FG).into(),
                                         background_color: None,
                                         underline: Some(UnderlineStyle {
@@ -289,15 +288,136 @@ impl Render for EditorView {
                                     rgb(default_background),
                                 ));
                                 let _ = line.paint(origin, line_height, window, _cx);
-                                origin.x += line.x_for_index(marked_cursor);
+                                (row, x + line.x_for_index(marked_cursor))
+                            })
+                        } else {
+                            None
+                        };
+
+                        let blink_visible = if grid.blink_cursor {
+                            let elapsed = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs_f64();
+                            (elapsed / grid.blink_interval.max(0.05)).floor() as u64 % 2 == 0
+                        } else {
+                            true
+                        };
+                        for cursor in &grid.cursors {
+                            if cursor.selected && grid.blink_cursor && !blink_visible {
+                                continue;
                             }
-                            window.paint_quad(fill(
-                                Bounds {
-                                    origin,
-                                    size: size(cell_width, line_height),
-                                },
-                                rgba((CURSOR << 8) | 0x80),
-                            ));
+                            let row = if cursor.selected {
+                                composition_caret.map(|(row, _)| row).unwrap_or(cursor.row)
+                            } else {
+                                cursor.row
+                            };
+                            let Some(line) = lines.get(row) else {
+                                continue;
+                            };
+                            let x = if cursor.selected {
+                                composition_caret
+                                    .map(|(_, x)| x)
+                                    .unwrap_or_else(|| line.x_for_index(cursor.index))
+                            } else {
+                                line.x_for_index(cursor.index)
+                            };
+                            let glyph_width = if cursor.selected && composition_caret.is_some() {
+                                cell_width
+                            } else {
+                                cursor
+                                    .after_index
+                                    .map(|end| {
+                                        let end_x = line.x_for_index(end);
+                                        if end_x >= x { end_x - x } else { x - end_x }
+                                    })
+                                    .filter(|width| *width > px(0.0))
+                                    .unwrap_or(cell_width)
+                            };
+                            let rgb_color = cursor.color.map_or(CURSOR, |color| {
+                                ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
+                            });
+                            let origin =
+                                point(bounds.left() + x, bounds.top() + line_height * (row as f32));
+                            match cursor.shape {
+                                remacs_runtime::frontend::GridCursorShape::Block => {
+                                    let width = if cursor.thickness > 0 {
+                                        px(cursor.thickness as f32)
+                                    } else {
+                                        glyph_width
+                                    };
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin,
+                                            size: size(width, line_height),
+                                        },
+                                        rgba((rgb_color << 8) | 0x80),
+                                    ));
+                                }
+                                remacs_runtime::frontend::GridCursorShape::Hollow => {
+                                    let width = if cursor.thickness > 0 {
+                                        px(cursor.thickness as f32)
+                                    } else {
+                                        glyph_width
+                                    };
+                                    let color = rgb(rgb_color);
+                                    let edge = px(1.0);
+                                    let height = line_height;
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin,
+                                            size: size(width, edge),
+                                        },
+                                        color,
+                                    ));
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin: point(origin.x, origin.y + height - edge),
+                                            size: size(width, edge),
+                                        },
+                                        color,
+                                    ));
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin,
+                                            size: size(edge, height),
+                                        },
+                                        color,
+                                    ));
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin: point(origin.x + width - edge, origin.y),
+                                            size: size(edge, height),
+                                        },
+                                        color,
+                                    ));
+                                }
+                                remacs_runtime::frontend::GridCursorShape::Bar => {
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin,
+                                            size: size(
+                                                px(cursor.thickness.max(1) as f32),
+                                                line_height,
+                                            ),
+                                        },
+                                        rgb(rgb_color),
+                                    ));
+                                }
+                                remacs_runtime::frontend::GridCursorShape::HBar => {
+                                    let height = px(cursor.thickness.max(1) as f32);
+                                    window.paint_quad(fill(
+                                        Bounds {
+                                            origin: point(
+                                                origin.x,
+                                                origin.y + line_height - height,
+                                            ),
+                                            size: size(glyph_width, height),
+                                        },
+                                        rgb(rgb_color),
+                                    ));
+                                }
+                            }
                         }
                     },
                 )

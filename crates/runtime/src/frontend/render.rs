@@ -34,6 +34,29 @@ pub struct CellStyle {
     pub extend: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GridCursorShape {
+    Block,
+    Hollow,
+    Bar,
+    HBar,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridCursor {
+    pub row: usize,
+    pub column: usize,
+    /// UTF-8 start offset in the rendered row.
+    pub index: usize,
+    /// UTF-8 end offset when the cursor should stretch over the next glyph.
+    pub after_index: Option<usize>,
+    pub shape: GridCursorShape,
+    /// Pixel width for bar/hbar cursors and explicit cursor widths.
+    pub thickness: usize,
+    pub color: Option<CellColor>,
+    pub selected: bool,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -103,8 +126,12 @@ pub struct Grid {
     pub char_attrs: Vec<Vec<CellStyle>>,
     pub mode_rows: Vec<usize>,
     pub cursor: Option<(usize, usize)>,
+    /// Per-window text cursors; terminal output uses `cursor` only.
+    pub cursors: Vec<GridCursor>,
     /// UTF-8 byte offset of the cursor in the rendered row at `cursor.1`.
     pub cursor_index: Option<usize>,
+    pub blink_cursor: bool,
+    pub blink_interval: f64,
     /// Default face background used outside the visible text rows.
     pub default_bg: Option<CellColor>,
     /// Unicode text and visible positions for the active OS text client.
@@ -148,7 +175,10 @@ impl Grid {
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
             cursor: None,
+            cursors: Vec::new(),
             cursor_index: None,
+            blink_cursor: false,
+            blink_interval: 0.5,
             default_bg: None,
             input: None,
         }
@@ -250,6 +280,105 @@ fn buffer_tab_width(i: &Interp, buffer: usize) -> usize {
         })
         .filter(|width| *width > 0)
         .unwrap_or(8)
+}
+
+fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
+    let Some(id) = i.q_soft(name) else {
+        return Value::Nil;
+    };
+    i.buffer_local_toplevel_value(id, buffer)
+        .or_else(|| i.default_toplevel_value(id))
+        .unwrap_or(Value::Nil)
+}
+
+fn symbol_is(i: &Interp, value: &Value, name: &str) -> bool {
+    i.q_soft(name)
+        .is_some_and(|id| matches!(value, Value::Sym(symbol) if *symbol == id))
+}
+
+fn parse_cursor_type(i: &Interp, value: &Value) -> Option<(GridCursorShape, usize)> {
+    let (name, explicit_size) = match value {
+        Value::Sym(symbol) => (i.symbol_name(*symbol), None),
+        Value::Cons(cons) => {
+            let cons = cons.borrow();
+            let Value::Sym(symbol) = &cons.car else {
+                return None;
+            };
+            let size = cons.cdr.int().and_then(|size| usize::try_from(size).ok());
+            (i.symbol_name(*symbol), size)
+        }
+        _ => return None,
+    };
+    let (shape, default_size) = match name.as_str() {
+        "t" | "box" => (GridCursorShape::Block, 0),
+        "hollow" => (GridCursorShape::Hollow, 0),
+        "bar" => (GridCursorShape::Bar, 2),
+        "hbar" => (GridCursorShape::HBar, 2),
+        _ => return None,
+    };
+    let thickness = explicit_size.unwrap_or(default_size);
+    if explicit_size.is_some() && thickness == 0 {
+        None
+    } else {
+        Some((shape, thickness))
+    }
+}
+
+fn cursor_type_for_window(
+    i: &Interp,
+    window: &std::rc::Rc<std::cell::RefCell<crate::editor::Window>>,
+    buffer: usize,
+    selected: bool,
+) -> Option<(GridCursorShape, usize)> {
+    let buffer_type = buffer_setting(i, "cursor-type", buffer);
+    let window_type = window.borrow().cursor_type.clone();
+    let effective_type = if symbol_is(i, &window_type, "t") {
+        buffer_type
+    } else {
+        window_type
+    };
+    if selected {
+        return parse_cursor_type(i, &effective_type);
+    }
+    let nonselected = buffer_setting(i, "cursor-in-non-selected-windows", buffer);
+    if nonselected.is_nil() || effective_type.is_nil() {
+        return None;
+    }
+    if symbol_is(i, &nonselected, "t") {
+        Some((GridCursorShape::Hollow, 0))
+    } else {
+        parse_cursor_type(i, &nonselected)
+    }
+}
+
+fn frame_cursor_color(
+    i: &Interp,
+    face_ctx: &FaceCtx,
+    frame: &crate::editor::Frame,
+) -> Option<CellColor> {
+    let value = i
+        .q_soft("cursor-color")
+        .map(|id| crate::lisp::eval::plist_get_v(&frame.params, &Value::Sym(id)))
+        .filter(|value| !value.is_nil())
+        .unwrap_or_else(|| Value::string("white"));
+    face_ctx.color(&value)
+}
+
+fn blink_cursor_settings(i: &Interp) -> (bool, f64) {
+    let enabled = i
+        .q_soft("blink-cursor-mode")
+        .is_some_and(|id| i.symbol_value(id).truthy());
+    let interval = i
+        .q_soft("blink-cursor-interval")
+        .and_then(|id| match i.symbol_value(id) {
+            Value::Int(value) => Some(value as f64),
+            Value::Float(value) => Some(*value),
+            _ => None,
+        });
+    (
+        enabled,
+        interval.filter(|value| *value > 0.0).unwrap_or(0.5),
+    )
 }
 
 struct RenderedRow {
@@ -918,7 +1047,9 @@ fn render_grid_internal(
     let mut char_attrs = vec![Vec::new(); height];
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
+    let mut cursors = Vec::new();
     let mut cursor_index = None;
+    let (blink_cursor, blink_interval) = blink_cursor_settings(i);
     let mut input = if include_input {
         input_snapshot(i, cached_input)
     } else {
@@ -933,13 +1064,17 @@ fn render_grid_internal(
                 char_attrs,
                 mode_rows,
                 cursor: cursor_pos,
+                cursors,
                 cursor_index,
+                blink_cursor,
+                blink_interval,
                 default_bg,
                 input,
             };
         }
     };
     let fb = frame.borrow();
+    let cursor_color = frame_cursor_color(i, &fctx, &fb);
     let n_windows = fb.windows.len();
     let mini_height = 1usize;
     let body_height = height.saturating_sub(mini_height);
@@ -961,6 +1096,9 @@ fn render_grid_internal(
             let wb = w.borrow();
             (wb.buffer, wb.start, wb.hscroll)
         };
+        let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
+        let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
+        let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let text_rows = wh.saturating_sub(1);
         // Keep point inside the window: scroll `start' the minimal
@@ -1062,7 +1200,6 @@ fn render_grid_internal(
             }
             // Line-aligned rendering: `start' is a line start because
             // the scroll code above always lands it on line_start().
-            let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
             let (line, line_pos, row_end, point_index) = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
@@ -1073,13 +1210,14 @@ fn render_grid_internal(
                     } else {
                         le
                     };
-                    let point_index = if selected_window {
-                        let point = bb.point();
-                        let point_line = bb.text.line_start(bb.text.line_of_pos(point));
-                        (point_line == ls).then_some(point - ls)
+                    let point = if selected_window {
+                        bb.point()
                     } else {
-                        None
-                    };
+                        w.borrow().point
+                    }
+                    .clamp(bb.begv, bb.zv);
+                    let point_line = bb.text.line_start(bb.text.line_of_pos(point));
+                    let point_index = (point_line == ls).then_some(point - ls);
                     (bb.text.substring(ls, le), ls, row_end, point_index)
                 }
                 None => (EmacsText::new(), 0, 0, None),
@@ -1140,8 +1278,40 @@ fn render_grid_internal(
                         .copied()
                         .unwrap_or(rendered.text.len())
                 };
-                cursor_pos = Some((col, y));
-                cursor_index = Some(byte_index);
+                if selected_window {
+                    cursor_pos = Some((col, y));
+                    cursor_index = Some(byte_index);
+                }
+                if let Some((shape, thickness)) = cursor_style {
+                    let stretch = line.chars().nth(point_index).and_then(|ch| {
+                        let ch = ch.unicode().unwrap_or('\u{fffd}');
+                        let char_width = if ch == '\t' {
+                            tab_width - point_col % tab_width
+                        } else {
+                            display_char_width(ch)
+                        };
+                        let stretchable = if ch.is_whitespace() {
+                            stretch_cursor && char_width > 1
+                        } else {
+                            char_width > 1
+                        };
+                        (point_col >= hscroll
+                            && point_col.saturating_sub(hscroll) < width
+                            && stretchable)
+                            .then(|| rendered.source_offsets.get(point_index + 1).copied())
+                            .flatten()
+                    });
+                    cursors.push(GridCursor {
+                        row: y,
+                        column: col,
+                        index: byte_index,
+                        after_index: stretch,
+                        shape,
+                        thickness,
+                        color: cursor_color,
+                        selected: selected_window,
+                    });
+                }
             }
             if selected_window
                 && input
@@ -1264,7 +1434,10 @@ fn render_grid_internal(
         char_attrs,
         mode_rows,
         cursor: cursor_pos,
+        cursors,
         cursor_index,
+        blink_cursor,
+        blink_interval,
         default_bg,
         input,
     }

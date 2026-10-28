@@ -54,6 +54,6 @@ pub use command::{
     run_batch_editor, run_editor_with,
 };
 pub use render::{
-    CellColor, CellStyle, Grid, GridInput, GridInputRow, GridInputSelection, fit_text_to_cells,
-    render_grid, render_grid_with_input_cached,
+    CellColor, CellStyle, Grid, GridCursor, GridCursorShape, GridInput, GridInputRow,
+    GridInputSelection, fit_text_to_cells, render_grid, render_grid_with_input_cached,
 };

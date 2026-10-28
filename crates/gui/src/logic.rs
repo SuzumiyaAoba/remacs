@@ -45,6 +45,9 @@ impl ChanIo {
 
     fn echo_grid(&self, mut grid: Grid, text: &str, reset_styles: bool) -> Grid {
         let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
+        let echo_row = self.rows.saturating_sub(1);
+        let selected_cursor = grid.cursors.iter().find(|cursor| cursor.selected).copied();
+        grid.cursors.retain(|cursor| !cursor.selected);
         if let Some(last) = grid.rows.last_mut() {
             *last = shown;
         }
@@ -64,8 +67,15 @@ impl ChanIo {
             }
         }
         let cx = columns.min(self.cols.saturating_sub(1));
-        grid.cursor = Some((cx, self.rows.saturating_sub(1)));
+        grid.cursor = Some((cx, echo_row));
         grid.cursor_index = Some(visible_bytes);
+        if let Some(mut cursor) = selected_cursor {
+            cursor.row = echo_row;
+            cursor.column = cx;
+            cursor.index = visible_bytes;
+            cursor.after_index = None;
+            grid.cursors.push(cursor);
+        }
         grid
     }
 }
