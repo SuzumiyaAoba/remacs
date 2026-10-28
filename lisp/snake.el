@@ -183,23 +183,26 @@ and then start moving it leftwards.")
   "n"       #'snake-start-game
   "q"       #'quit-window)
 
+(defun snake--menu-filter (items)
+  "Pause an active game while displaying its menu, then return ITEMS."
+  (when (and (snake-active-p) (not snake-paused))
+    (setq snake-paused t))
+  items)
+
 (defconst snake--menu-def
   '("Snake"
+    :filter snake--menu-filter
     ["Start new game" snake-start-game
      :help "Start a new Snake game"]
     ["End game"       snake-end-game
      :active (snake-active-p)
      :help "End the current Snake game"]
-    ;; FIXME: Pause and resume from the menu currently doesn't work
-    ;;        very well and is therefore disabled.  The game continues
-    ;;        running while navigating the menu.  See also
-    ;;        `tetris--menu-def' which has the same problem.
-    ;; ["Pause"          snake-pause-game
-    ;;  :active (and (snake-active-p) (not snake-paused))
-    ;;  :help "Pause running Snake game"]
-    ;; ["Resume"         snake-pause-game
-    ;;  :active (and (snake-active-p) snake-paused)
-    ;;  :help "Resume paused Snake game"]
+    ["Pause"          snake-pause-game
+     :active (and (snake-active-p) (not snake-paused))
+     :help "Pause running Snake game"]
+    ["Resume"         snake-pause-game
+     :active (and (snake-active-p) snake-paused)
+     :help "Resume paused Snake game"]
     )
   "Menu for `snake'.  Used to initialize menus.")
 
