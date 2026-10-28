@@ -243,7 +243,8 @@ Will not do anything if `url-show-status' is nil."
         (if cur
             (setcdr cur (append (cdr cur) (list val)))
           (setq retval (cons (list key val) retval)))))
-    retval))
+    ;;Remacs: return parameters in the order they appeared in the query.
+    (nreverse retval)))
 
 (defun url-unhex (x)
   (if (> x ?9)
