@@ -32,7 +32,8 @@
   :set #'winner--set-dont-bind-my-keys)
 
 (defcustom winner-ring-size 200
-  "Maximum number of stored window configurations per frame."
+  "Maximum number of stored window configurations per frame.
+If zero, do not keep any undo history."
   :type 'natnum)
 
 (defcustom winner-boring-buffers '("*Completions*")
@@ -99,7 +100,8 @@ You may want to include buffer names such as *Help*, *Apropos*,
 ;; Find the right ring.  If it does not exist, create one.
 (defsubst winner-ring (frame)
   (or (cdr (assq frame winner-ring-alist))
-      (let ((ring (make-ring winner-ring-size)))
+      ;; Keep the current configuration as a sentinel when history is disabled.
+      (let ((ring (make-ring (max 1 winner-ring-size))))
         (ring-insert ring (winner-configuration frame))
         (push (cons frame ring) winner-ring-alist)
         ring)))
