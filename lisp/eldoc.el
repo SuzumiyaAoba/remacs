@@ -970,8 +970,10 @@ the docstrings eventually produced, using
                (stringp res)
                (register-doc 0 res nil eldoc-documentation-strategy)
                (display-doc))
-              (;; Old protocol: got nil, clear the echo area;
-               (null res) (eldoc--message nil))
+              (;; Old protocol: got nil, clear all display targets and
+               ;; the echo area;
+               ;; Remacs: The doc buffer also represents the last request.
+               (null res) (progn (display-doc) (eldoc--message nil)))
               (;; New protocol: trust callback will be called;
                t))))))
 
