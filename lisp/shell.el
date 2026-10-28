@@ -509,6 +509,9 @@ can be determined, a default according to the shell type is used."
                    "\\|\\\\\\(\\(?:.\\|\n\\)?\\)\\)"))
             (goto-char (match-end 0))
             (cond
+             ;; POSIX line continuation removes the backslash-newline pair.
+             ((and (match-beginning 3)
+                   (equal (match-string 3) "\n")))
              ((match-beginning 3)       ;Backslash escape.
               (push (cond
                      ((null comint-file-name-quote-list)
