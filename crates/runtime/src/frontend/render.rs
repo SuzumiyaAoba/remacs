@@ -20,6 +20,14 @@ pub struct CellColor(pub u8, pub u8, pub u8);
 pub struct CellStyle {
     pub fg: Option<CellColor>,
     pub bg: Option<CellColor>,
+    /// Index into `Grid::font_families` for an explicit face family.
+    pub font_family: Option<u16>,
+    /// Explicit font weight, in GNU's 100–900 scale.
+    pub font_weight: Option<u16>,
+    /// Explicit font width as a percentage of normal width.
+    pub font_width: Option<u8>,
+    /// Explicit font height in tenths of a point.
+    pub font_height: Option<u16>,
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
@@ -63,6 +71,10 @@ pub struct GridCursor {
 struct StyleMix {
     fg: Option<CellColor>,
     bg: Option<CellColor>,
+    font_family: Option<u16>,
+    font_weight: Option<u16>,
+    font_width: Option<u8>,
+    font_height: Option<u16>,
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
@@ -81,7 +93,19 @@ impl StyleMix {
             };
         }
         m!(
-            fg, bg, bold, italic, underline, overline, strike, inverse, extend
+            fg,
+            bg,
+            font_family,
+            font_weight,
+            font_width,
+            font_height,
+            bold,
+            italic,
+            underline,
+            overline,
+            strike,
+            inverse,
+            extend
         );
     }
 
@@ -89,6 +113,10 @@ impl StyleMix {
         CellStyle {
             fg: self.fg,
             bg: self.bg,
+            font_family: self.font_family,
+            font_weight: self.font_weight,
+            font_width: self.font_width,
+            font_height: self.font_height,
             bold: self.bold.unwrap_or(false),
             italic: self.italic.unwrap_or(false),
             underline: self.underline.unwrap_or(false),
@@ -104,6 +132,10 @@ impl PartialEq for StyleMix {
     fn eq(&self, o: &Self) -> bool {
         self.fg == o.fg
             && self.bg == o.bg
+            && self.font_family == o.font_family
+            && self.font_weight == o.font_weight
+            && self.font_width == o.font_width
+            && self.font_height == o.font_height
             && self.bold == o.bold
             && self.italic == o.italic
             && self.underline == o.underline
@@ -121,6 +153,10 @@ impl PartialEq for StyleMix {
 pub struct Grid {
     /// Native frame title computed from `frame-title-format`.
     pub title: String,
+    /// Face family names referenced by styles in this snapshot.
+    pub font_families: Vec<String>,
+    /// The realized default face style for the current frame.
+    pub default_style: CellStyle,
     pub rows: Vec<String>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
@@ -173,6 +209,8 @@ impl Grid {
     pub fn blank(width: usize, height: usize) -> Grid {
         Grid {
             title: "Remacs".to_owned(),
+            font_families: Vec::new(),
+            default_style: CellStyle::default(),
             rows: vec![String::new(); height],
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -814,6 +852,9 @@ struct FaceCtx {
     inherit: u32,
     /// `color-name-rgb-alist' folded into (canonical name -> rgb).
     colors: HashMap<EmacsText, (u8, u8, u8)>,
+    /// Face family names interned for compact, copyable cell styles.
+    font_families: Vec<String>,
+    font_family_ids: HashMap<String, u16>,
     /// Resolved face name -> merged StyleMix.
     cache: HashMap<crate::lisp::value::SymId, StyleMix>,
 }
@@ -878,6 +919,8 @@ impl FaceCtx {
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
             colors,
+            font_families: Vec::new(),
+            font_family_ids: HashMap::new(),
             cache: HashMap::new(),
         }
     }
@@ -910,6 +953,20 @@ impl FaceCtx {
         }
         let canon = t.to_lowercase().replace(' ', "");
         self.colors.get(&canon).map(|&(r, g, b)| CellColor(r, g, b))
+    }
+
+    fn font_family_id(&mut self, value: &Value) -> Option<u16> {
+        let Value::Str(name) = value else {
+            return None;
+        };
+        let family = name.borrow().to_unicode_lossy();
+        if let Some(id) = self.font_family_ids.get(&family) {
+            return Some(*id);
+        }
+        let id = u16::try_from(self.font_families.len()).ok()?;
+        self.font_families.push(family.clone());
+        self.font_family_ids.insert(family, id);
+        Some(id)
     }
 
     /// Merge one named face's attributes (spec layer first, then the
@@ -978,7 +1035,14 @@ impl FaceCtx {
                         mix.bg = Some(c);
                     }
                 }
-                ":weight" => mix.bold = Some(weight_bold(i, v)),
+                ":family" => mix.font_family = self.font_family_id(v),
+                ":weight" => {
+                    let weight = font_weight_value(i, v);
+                    mix.font_weight = Some(weight);
+                    mix.bold = Some(weight >= 600);
+                }
+                ":width" => mix.font_width = font_width_percent(i, v),
+                ":height" => mix.font_height = font_height_tenths(v),
                 ":slant" => mix.italic = Some(slant_italic(i, v)),
                 ":underline" => mix.underline = Some(v.truthy()),
                 ":overline" => mix.overline = Some(v.truthy()),
@@ -1061,9 +1125,8 @@ impl FaceCtx {
     }
 }
 
-/// GNU weight mapping (xfaces.c `face_numeric_weight'): semi-bold and
-/// heavier render as bold on a tty.
-fn weight_bold(i: &Interp, v: &Value) -> bool {
+/// GNU weight mapping (xfaces.c `face_numeric_weight').
+fn font_weight_value(i: &Interp, v: &Value) -> u16 {
     let n: i128 = match v {
         Value::Int(n) => *n,
         Value::Sym(s) => match i.symbol_name(*s).as_str() {
@@ -1071,15 +1134,43 @@ fn weight_bold(i: &Interp, v: &Value) -> bool {
             "ultra-light" | "extra-light" => 275,
             "light" => 300,
             "semi-light" | "book" => 380,
+            "normal" | "regular" => 400,
+            "medium" => 500,
             "semi-bold" | "demi-bold" | "demibold" => 600,
             "bold" => 700,
             "extra-bold" | "ultra-bold" | "extrabold" | "ultrabold" => 800,
-            "black" | "heavy" => 900,
+            "black" | "heavy" | "ultra-heavy" => 900,
             _ => 400,
         },
         _ => 400,
     };
-    n >= 600
+    n.clamp(100, 900) as u16
+}
+
+fn font_width_percent(i: &Interp, value: &Value) -> Option<u8> {
+    match value {
+        Value::Int(width) => Some((*width).clamp(50, 200) as u8),
+        Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+            "ultra-condensed" => Some(50),
+            "extra-condensed" => Some(62),
+            "condensed" | "compressed" | "narrow" => Some(75),
+            "semi-condensed" | "demi-condensed" => Some(87),
+            "normal" | "medium" | "regular" => Some(100),
+            "semi-expanded" | "demi-expanded" => Some(112),
+            "expanded" => Some(125),
+            "extra-expanded" => Some(150),
+            "ultra-expanded" | "wide" => Some(200),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn font_height_tenths(value: &Value) -> Option<u16> {
+    match value {
+        Value::Int(height) if *height > 0 => u16::try_from(*height).ok(),
+        _ => None,
+    }
 }
 
 /// GNU slant mapping: italic/oblique slant the text.
@@ -1302,6 +1393,8 @@ fn render_grid_internal(
         None => {
             return Grid {
                 title: "Remacs".to_owned(),
+                font_families: fctx.font_families,
+                default_style,
                 rows,
                 attrs,
                 char_attrs,
@@ -1757,6 +1850,8 @@ fn render_grid_internal(
     }
     Grid {
         title,
+        font_families: fctx.font_families,
+        default_style,
         rows,
         attrs,
         char_attrs,

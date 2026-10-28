@@ -71,9 +71,22 @@ impl Render for EditorView {
             self.window_title = Some(self.grid.title.clone());
         }
 
-        let text_font = font("Menlo");
-        let font_size = px(FONT_SIZE);
-        let line_height = px(LINE_HEIGHT);
+        let font_families = self.grid.font_families.clone();
+        let default_style = self.grid.default_style;
+        let family = default_style
+            .font_family
+            .and_then(|id| font_families.get(id as usize))
+            .cloned()
+            .unwrap_or_else(|| "Menlo".to_owned());
+        let mut text_font = font(family);
+        if let Some(weight) = default_style.font_weight {
+            text_font.weight = FontWeight(weight as f32);
+        }
+        let font_size = default_style
+            .font_height
+            .map(|height| px(height as f32 / 10.0))
+            .unwrap_or(px(FONT_SIZE));
+        let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
         let font_id = window.text_system().resolve_font(&text_font);
         let cell_width = window
             .text_system()
@@ -329,7 +342,15 @@ impl Render for EditorView {
                                         }
                                         let (fg, bg) = style_colors(st, default_background);
                                         let mut f = text_font.clone();
-                                        if st.bold {
+                                        if let Some(family) = st
+                                            .font_family
+                                            .and_then(|id| font_families.get(id as usize))
+                                        {
+                                            f.family = family.clone().into();
+                                        }
+                                        if let Some(weight) = st.font_weight {
+                                            f.weight = FontWeight(weight as f32);
+                                        } else if st.bold {
                                             f = f.bold();
                                         }
                                         if st.italic {
