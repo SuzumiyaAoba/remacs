@@ -198,7 +198,7 @@ must never cause a Lisp error."
 				      (number-to-string (car part))))
 		  (error "Invalid RFC 2231 continuation numbering for %s"
 			 attribute))
-		(setq expected (1+ expected)))))
+		(setq expected (1+ expected))))))
 
 	;; Now collect and concatenate continuation parameters.
 	(let ((cparams nil)
@@ -243,7 +243,7 @@ must never cause a Lisp error."
 				(if encoded
 				    (rfc2231-decode-encoded-string value signal-error)
 				  value))))
-		      (nreverse cparams)))))))
+		      (nreverse cparams))))))))
 
 (defun rfc2231--valid-percent-escapes-p (string)
   "Return non-nil if every percent sign in STRING starts a hex octet."
@@ -257,7 +257,7 @@ must never cause a Lisp error."
 		 (and (or (<= ?0 first ?9) (<= ?A first ?F) (<= ?a first ?f))
 		      (or (<= ?0 second ?9) (<= ?A second ?F) (<= ?a second ?f))))
 	  (setq index (+ index 3))
-	(setq valid nil)))
+	(setq valid nil))))
     valid))
 
 (defun rfc2231-decode-encoded-string (string &optional signal-error)
