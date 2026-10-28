@@ -1712,6 +1712,12 @@ impl Window {
         self.platform_window.set_opacity(opacity.clamp(0.0, 1.0));
     }
 
+    /// Set or clear the native window appearance override.
+    pub fn set_window_appearance(&mut self, appearance: Option<WindowAppearance>) {
+        self.platform_window.set_window_appearance(appearance);
+        self.appearance = self.platform_window.appearance();
+    }
+
     /// Update whether this window has native decorations and a transparent titlebar.
     pub fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
         self.platform_window

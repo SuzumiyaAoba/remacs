@@ -31,7 +31,7 @@ mod text_system;
 
 mod platform;
 mod window;
-mod window_appearance;
+pub(crate) mod window_appearance;
 
 use crate::{DevicePixels, Pixels, Size, px, size};
 use cocoa::{

@@ -175,6 +175,7 @@ pub(super) struct FrameSnapshot {
     pub top: Option<i128>,
     pub undecorated: bool,
     pub ns_transparent_titlebar: bool,
+    pub ns_appearance: Option<gpui::WindowAppearance>,
     pub fullscreen: Option<String>,
     pub auto_raise: bool,
     pub auto_lower: bool,
@@ -741,6 +742,20 @@ fn frame_alpha_background(i: &Interp, frame: &remacs_runtime::editor::FrameRef) 
     match frame_parameter_value(i, frame, "alpha-background") {
         Value::Int(value) => value.clamp(0, 100) as u8,
         _ => 100,
+    }
+}
+
+fn frame_ns_appearance(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+) -> Option<gpui::WindowAppearance> {
+    match frame_parameter_value(i, frame, "ns-appearance") {
+        Value::Sym(symbol) => match i.symbol_name(symbol).as_str() {
+            "dark" => Some(gpui::WindowAppearance::VibrantDark),
+            "light" => Some(gpui::WindowAppearance::Light),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -1417,6 +1432,7 @@ impl KeyIo for ChanIo {
                         "ns-transparent-titlebar",
                     )
                     .truthy(),
+                    ns_appearance: frame_ns_appearance(i, frame),
                     fullscreen,
                     auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
                     auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),

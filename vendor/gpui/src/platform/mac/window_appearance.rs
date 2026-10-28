@@ -1,10 +1,10 @@
 use crate::WindowAppearance;
 use cocoa::{
     appkit::{NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight},
-    base::id,
+    base::{id, nil},
     foundation::NSString,
 };
-use objc::{msg_send, sel, sel_impl};
+use objc::{class, msg_send, sel, sel_impl};
 use std::ffi::CStr;
 
 impl WindowAppearance {
@@ -28,6 +28,21 @@ impl WindowAppearance {
             }
         }
     }
+}
+
+pub(crate) unsafe fn native_appearance(appearance: Option<WindowAppearance>) -> id {
+    let Some(appearance) = appearance else {
+        return nil;
+    };
+    let name = unsafe {
+        match appearance {
+            WindowAppearance::Light => NSAppearanceNameAqua,
+            WindowAppearance::VibrantLight => NSAppearanceNameVibrantLight,
+            WindowAppearance::Dark => NSAppearanceNameDarkAqua,
+            WindowAppearance::VibrantDark => NSAppearanceNameVibrantDark,
+        }
+    };
+    unsafe { msg_send![class!(NSAppearance), appearanceNamed: name] }
 }
 
 #[link(name = "AppKit", kind = "framework")]

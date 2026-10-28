@@ -290,6 +290,7 @@ pub(super) struct EditorView {
     pub(super) grid: Grid,
     modifier_mapping: ModifierMapping,
     alpha_background: u8,
+    appearance: WindowAppearance,
     physical_modifier_state: Rc<Cell<PhysicalModifierState>>,
     installed_menus: Vec<GridMenu>,
     window_title: Option<String>,
@@ -306,6 +307,7 @@ pub(super) struct EditorView {
     bell_flash: bool,
     bell_flash_generation: u64,
     focus_subscriptions: Vec<Subscription>,
+    appearance_subscription: Option<Subscription>,
     mouse_face_position: Rc<Cell<Option<(usize, usize)>>>,
     auto_raise: Rc<Cell<bool>>,
     auto_lower: Rc<Cell<bool>>,
@@ -339,6 +341,7 @@ impl EditorView {
             grid: Grid::blank(0, 0),
             modifier_mapping: ModifierMapping::default(),
             alpha_background: 100,
+            appearance: WindowAppearance::Dark,
             physical_modifier_state: Rc::new(Cell::new(PhysicalModifierState::default())),
             installed_menus: Vec::new(),
             window_title: None,
@@ -355,6 +358,7 @@ impl EditorView {
             bell_flash: false,
             bell_flash_generation: 0,
             focus_subscriptions: Vec::new(),
+            appearance_subscription: None,
             mouse_face_position: Rc::new(Cell::new(None)),
             auto_raise: Rc::new(Cell::new(false)),
             auto_lower: Rc::new(Cell::new(false)),
@@ -392,6 +396,14 @@ impl EditorView {
             return false;
         }
         self.alpha_background = alpha;
+        true
+    }
+
+    pub(super) fn set_appearance(&mut self, appearance: WindowAppearance) -> bool {
+        if self.appearance == appearance {
+            return false;
+        }
+        self.appearance = appearance;
         true
     }
 
@@ -651,7 +663,10 @@ impl Render for EditorView {
             .grid
             .default_bg
             .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
-            .unwrap_or(BG);
+            .unwrap_or_else(|| match self.appearance {
+                WindowAppearance::Light | WindowAppearance::VibrantLight => 0xf5f5f5,
+                WindowAppearance::Dark | WindowAppearance::VibrantDark => BG,
+            });
         let background_alpha = ((self.alpha_background as u32 * 255 + 50) / 100) as u8;
         let default_background_fill = rgba((default_background << 8) | u32::from(background_alpha));
         let modifier_mapping = self.modifier_mapping;
@@ -2055,5 +2070,14 @@ pub(super) fn build_managed_editor_view(
     });
     view.focus_subscriptions.push(subscription);
     view.focus.focus(window);
+    let appearance_view = cx.entity();
+    view.appearance_subscription = Some(window.observe_window_appearance(move |window, cx| {
+        let appearance = window.appearance();
+        let _ = appearance_view.update(cx, |view, cx| {
+            if view.set_appearance(appearance) {
+                cx.notify();
+            }
+        });
+    }));
     view
 }

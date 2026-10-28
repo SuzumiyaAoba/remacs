@@ -495,6 +495,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
     fn set_opacity(&self, _opacity: f32) {}
+    fn set_window_appearance(&self, _appearance: Option<WindowAppearance>) {}
     fn set_titlebar_appearance(&self, decorated: bool, _transparent: bool) {
         self.request_decorations(if decorated {
             WindowDecorations::Server

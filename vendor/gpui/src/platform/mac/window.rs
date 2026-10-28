@@ -1473,6 +1473,14 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_window_appearance(&self, appearance: Option<WindowAppearance>) {
+        let window = self.0.lock().native_window;
+        let appearance = unsafe { super::window_appearance::native_appearance(appearance) };
+        unsafe {
+            let _: () = msg_send![window, setAppearance: appearance];
+        }
+    }
+
     fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
         let (window, style_mask) = {
             let mut state = self.0.lock();
