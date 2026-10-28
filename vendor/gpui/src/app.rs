@@ -38,7 +38,8 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point, PromptBuilder,
+    OpenFileRequest, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
     Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
     TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
@@ -190,6 +191,15 @@ impl Application {
         F: 'static + FnMut(Vec<String>),
     {
         self.0.borrow().platform.on_open_urls(Box::new(callback));
+        self
+    }
+
+    /// Register a handler for files opened through the operating system.
+    pub fn on_open_files<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(Vec<OpenFileRequest>),
+    {
+        self.0.borrow().platform.on_open_files(Box::new(callback));
         self
     }
 

@@ -223,6 +223,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                     report_flow(i, flow);
                 }
             }
+            InputEvent::OpenFiles(files) => {
+                dispatch_ns_open_files(i, files, &mut keys, &mut arg_mode);
+            }
             InputEvent::ColorDrop {
                 position,
                 color,
@@ -745,6 +748,29 @@ fn dispatch_frontend_command(
     arg_mode: &mut bool,
 ) {
     dispatch_frontend_command_with_args(i, command, &[], keys, arg_mode);
+}
+
+fn dispatch_ns_open_files(
+    i: &mut Interp,
+    files: Vec<(String, Option<usize>)>,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
+    let ns_input_file = i.intern("ns-input-file");
+    let ns_input_line = i.intern("ns-input-line");
+    for (path, line) in files {
+        let command = if line.is_some() {
+            "ns-open-file-select-line"
+        } else {
+            "ns-find-file"
+        };
+        let _ = i.set_symbol(ns_input_file, Value::list(vec![Value::string(path)]));
+        let _ = i.set_symbol(
+            ns_input_line,
+            line.map(|line| Value::Int(line as i128)).unwrap_or(Value::Nil),
+        );
+        dispatch_frontend_command(i, command, keys, arg_mode);
+    }
 }
 
 fn dispatch_frontend_command_with_args(
@@ -1543,6 +1569,9 @@ fn minibuf_loop<T: KeyIo>(
                 if let Err(flow) = dispatch_drop(i, position, &urls, &action) {
                     return Err(flow);
                 }
+            }
+            InputEvent::OpenFiles(files) => {
+                dispatch_ns_open_files(i, files, &mut keys, &mut arg_mode);
             }
             InputEvent::ColorDrop {
                 position,

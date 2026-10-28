@@ -537,6 +537,15 @@ impl Render for ExternalText {
     }
 }
 
+/// A file-open request delivered by the operating system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenFileRequest {
+    /// The local file path to open.
+    pub path: PathBuf,
+    /// Optional one-based line requested by a debugger or IDE.
+    pub line: Option<usize>,
+}
+
 /// A file drop event from the platform, generated when files are dragged and dropped onto the window.
 #[derive(Debug, Clone)]
 pub enum FileDropEvent {

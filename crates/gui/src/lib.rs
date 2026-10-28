@@ -58,7 +58,16 @@ pub fn run_gui_with_dump(
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
-    Application::new().run(move |cx: &mut App| {
+    let application = Application::new();
+    let open_file_tx = event_tx.clone();
+    application.on_open_files(move |files| {
+        let files = files
+            .into_iter()
+            .map(|file| (file.path.to_string_lossy().into_owned(), file.line))
+            .collect();
+        let _ = open_file_tx.send(GuiEvent::OpenFiles(files));
+    });
+    application.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         register_power_off_listener(event_tx.clone());
         cx.spawn(async move |cx| {

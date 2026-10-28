@@ -236,6 +236,7 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             legacy_grid_output: true,
             gui_requests: None,
             pending: Vec::new(),
+            pending_open_files: std::collections::VecDeque::new(),
             cols: 80,
             rows: 24,
             last: None,

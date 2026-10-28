@@ -8,7 +8,7 @@ use remacs_runtime::{
     lisp::{Interp, Value},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io,
     ops::Range,
     rc::Rc,
@@ -59,6 +59,7 @@ pub(super) enum GuiEvent {
         urls: Vec<String>,
         action: String,
     },
+    OpenFiles(Vec<(String, Option<usize>)>),
     Resize(usize, usize),
     Geometry(GuiGeometry),
     MouseMove {
@@ -544,6 +545,7 @@ pub(super) struct ChanIo {
     pub(super) gui_requests: Option<smol::channel::Sender<GuiRequest>>,
     /// Keys pushed back via `unread` (unread-command-events).
     pub(super) pending: Vec<i128>,
+    pub(super) pending_open_files: VecDeque<(String, Option<usize>)>,
     pub(super) cols: usize,
     pub(super) rows: usize,
     /// Last grid sent, so `draw_echo` can patch just the echo row.
@@ -979,6 +981,9 @@ impl KeyIo for ChanIo {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(InputEvent::Key(k)));
         }
+        if let Some(file) = self.pending_open_files.pop_front() {
+            return Ok(Some(InputEvent::OpenFiles(vec![file])));
+        }
         let Some(event) = self.receive_event(dur)? else {
             return Ok(None);
         };
@@ -1030,6 +1035,7 @@ impl KeyIo for ChanIo {
                 urls,
                 action,
             })),
+            GuiEvent::OpenFiles(files) => Ok(Some(InputEvent::OpenFiles(files))),
             GuiEvent::Resize(c, r) => {
                 self.update_size(self.active_frame_id, c, r);
                 Ok(None)
@@ -1177,6 +1183,10 @@ impl KeyIo for ChanIo {
                 Ok(first)
             }
             GuiEvent::Drop { .. } => Ok(None),
+            GuiEvent::OpenFiles(files) => {
+                self.pending_open_files.extend(files);
+                Ok(None)
+            }
             GuiEvent::Resize(c, r) => {
                 self.update_size(self.active_frame_id, c, r);
                 Ok(None)
@@ -1766,6 +1776,7 @@ fn start_logic_inner(
                 legacy_grid_output,
                 gui_requests: enable_gui_requests.then_some(gui_requests_tx),
                 pending: Vec::new(),
+                pending_open_files: VecDeque::new(),
                 cols: 80,
                 rows: 24,
                 last: None,

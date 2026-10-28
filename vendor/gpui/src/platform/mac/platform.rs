@@ -8,7 +8,8 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    OpenFileRequest, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
     hash,
 };
@@ -143,6 +144,22 @@ unsafe fn build_classes() {
                 sel!(application:openURLs:),
                 open_urls as extern "C" fn(&mut Object, Sel, id, id),
             );
+            decl.add_method(
+                sel!(application:openFile:),
+                application_open_file as extern "C" fn(&mut Object, Sel, id, id) -> BOOL,
+            );
+            decl.add_method(
+                sel!(application:openFiles:),
+                application_open_files as extern "C" fn(&mut Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(application:openTempFile:),
+                application_open_file as extern "C" fn(&mut Object, Sel, id, id) -> BOOL,
+            );
+            decl.add_method(
+                sel!(application:openFileWithoutUI:),
+                application_open_file as extern "C" fn(&mut Object, Sel, id, id) -> BOOL,
+            );
 
             decl.add_method(
                 sel!(onKeyboardLayoutChange:),
@@ -173,6 +190,8 @@ pub(crate) struct MacPlatformState {
     will_open_menu: Option<Box<dyn FnMut()>>,
     menu_actions: Vec<Box<dyn Action>>,
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
+    open_files: Option<Box<dyn FnMut(Vec<OpenFileRequest>)>>,
+    pending_open_files: Vec<OpenFileRequest>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
@@ -214,6 +233,8 @@ impl MacPlatform {
             will_open_menu: None,
             menu_actions: Default::default(),
             open_urls: None,
+            open_files: None,
+            pending_open_files: Vec::new(),
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
@@ -705,6 +726,14 @@ impl Platform for MacPlatform {
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
         self.0.lock().open_urls = Some(callback);
+    }
+
+    fn on_open_files(&self, mut callback: Box<dyn FnMut(Vec<OpenFileRequest>)>) {
+        let pending = std::mem::take(&mut self.0.lock().pending_open_files);
+        if !pending.is_empty() {
+            callback(pending);
+        }
+        self.0.lock().open_files = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -1445,14 +1474,20 @@ extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
 }
 
 extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
+    let mut file_requests = Vec::new();
     let urls = unsafe {
         (0..urls.count())
             .filter_map(|i| {
                 let url = urls.objectAtIndex(i);
+                if url.isFileURL() == YES {
+                    if let Some(request) = file_open_request_from_url(url) {
+                        file_requests.push(request);
+                    }
+                }
                 match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
                     Ok(string) => Some(string.to_string()),
                     Err(err) => {
-                        log::error!("error converting path to string: {}", err);
+                        log::error!("error converting URL to string: {}", err);
                         None
                     }
                 }
@@ -1460,11 +1495,101 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             .collect::<Vec<_>>()
     };
     let platform = unsafe { get_mac_platform(this) };
+    dispatch_open_files(&platform, file_requests);
     let mut lock = platform.0.lock();
     if let Some(mut callback) = lock.open_urls.take() {
         drop(lock);
         callback(urls);
         platform.0.lock().open_urls.get_or_insert(callback);
+    }
+}
+
+extern "C" fn application_open_file(this: &mut Object, _: Sel, _: id, path: id) -> BOOL {
+    let Some(request) = file_open_request_from_path(path, None) else {
+        return NO;
+    };
+    let platform = unsafe { get_mac_platform(this) };
+    dispatch_open_files(&platform, vec![request]);
+    YES
+}
+
+extern "C" fn application_open_files(this: &mut Object, _: Sel, sender: id, paths: id) {
+    let files = unsafe {
+        (0..paths.count())
+            .filter_map(|index| {
+                let path = paths.objectAtIndex(index);
+                file_open_request_from_path(path, None)
+            })
+            .collect::<Vec<_>>()
+    };
+    let platform = unsafe { get_mac_platform(this) };
+    dispatch_open_files(&platform, files);
+    unsafe {
+        let _: () = msg_send![sender, replyToOpenOrPrint: 0isize];
+    }
+}
+
+fn dispatch_open_files(platform: &MacPlatform, files: Vec<OpenFileRequest>) {
+    if files.is_empty() {
+        return;
+    }
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.open_files.take() {
+        drop(lock);
+        callback(files);
+        platform.0.lock().open_files.get_or_insert(callback);
+    } else {
+        lock.pending_open_files.extend(files);
+    }
+}
+
+fn file_open_request_from_url(url: id) -> Option<OpenFileRequest> {
+    unsafe {
+        Some(OpenFileRequest {
+            path: ns_url_to_path(url).ok()?,
+            line: line_from_url(url),
+        })
+    }
+}
+
+fn file_open_request_from_path(path: id, line: Option<usize>) -> Option<OpenFileRequest> {
+    unsafe {
+        Some(OpenFileRequest {
+            path: PathBuf::from(c_string(path)?),
+            line,
+        })
+    }
+}
+
+unsafe fn c_string(value: id) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(value.UTF8String()).to_str().ok().map(str::to_owned) }
+}
+
+fn line_from_url(url: id) -> Option<usize> {
+    unsafe {
+        [url.query(), url.fragment()]
+            .into_iter()
+            .filter_map(|component| c_string(component))
+            .flat_map(|component| {
+                component
+                    .split(|character| character == '&' || character == ';')
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .find_map(|part| {
+                if let Some((key, value)) = part.split_once('=')
+                    && matches!(key, "line" | "lineNumber" | "line-number")
+                {
+                    return value.parse::<usize>().ok().filter(|line| *line > 0);
+                }
+                part.strip_prefix('L')
+                    .or_else(|| part.strip_prefix('l'))
+                    .and_then(|line| line.parse::<usize>().ok())
+                    .filter(|line| *line > 0)
+            })
     }
 }
 
