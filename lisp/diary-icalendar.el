@@ -1234,14 +1234,31 @@ attendee's address matches the regexp in
           (abs (car geo)) (if (< 0 (car geo)) "N" "S")
           (abs (cdr geo)) (if (< 0 (cdr geo)) "E" "W")))
 
+(defun diary-icalendar--safe-attachment-dirname (uid)
+  "Return a filesystem-safe directory name derived from UID."
+  (if (and (<= (length uid) 240)
+           (string-match "\\`[A-Za-z0-9_-]+\\'" uid)
+           ;; Keep the hash namespace separate from literal UIDs.
+           (not (string-match "\\`uid-" (downcase uid)))
+           (not (member (downcase uid)
+                        '("con" "prn" "aux" "nul"
+                          "com1" "com2" "com3" "com4" "com5"
+                          "com6" "com7" "com8" "com9"
+                          "lpt1" "lpt2" "lpt3" "lpt4" "lpt5"
+                          "lpt6" "lpt7" "lpt8" "lpt9"))))
+      uid
+    (concat "uid-" (secure-hash 'sha256 uid))))
+
 (defun diary-icalendar-save-binary-attachment (base64-data dir &optional mimetype)
   "Decode and save BASE64-DATA to a new file in DIR.
 
 The file will be named based on a unique prefix of BASE64-DATA with an
-extension based on MIMETYPE.  It will be saved in a subdirectory named
-DIR of `diary-icalendar-attachment-directory', which will be created if
-necessary.  Returns the (non-directory part of) the saved filename."
+extension based on MIMETYPE.  It will be saved in a subdirectory of
+`diary-icalendar-attachment-directory' whose name is derived from DIR.
+The subdirectory will be created if necessary.  Returns the
+(non-directory part of) the saved filename."
   (require 'mailcap) ; for `mailcap-mime-type-to-extension'
+  (setq dir (diary-icalendar--safe-attachment-dirname dir))
   ;; Create the subdirectory for the attachment if necessary:
   (unless (and (directory-name-p diary-icalendar-attachment-directory)
                (file-writable-p diary-icalendar-attachment-directory))
@@ -1278,8 +1295,8 @@ necessary.  Returns the (non-directory part of) the saved filename."
 If these nodes contain binary data, rather than an URL, save the data to
 a file in `diary-icalendar-attachment-directory' (unless this variable
 is nil).  UID should be the universal ID of the component containing
-ATTACHMENT-NODES; the attachments will be saved in a subdirectory of the
-same name.  The returned list is a list of strings, which are either
+ATTACHMENT-NODES; the attachments will be saved in a subdirectory derived
+from it.  The returned list is a list of strings, which are either
 URLs or filenames."
   (let (entry-attachments)
     (dolist (node attachment-nodes)
