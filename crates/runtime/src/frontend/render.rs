@@ -416,6 +416,25 @@ fn wrap_ranges(text: &EmacsText, width: usize, tab_width: usize) -> Vec<Range<us
     ranges
 }
 
+fn selective_display_hides_line(mode: &Value, text: &EmacsText, tab_width: usize) -> bool {
+    let Value::Int(threshold) = mode else {
+        return false;
+    };
+    if *threshold <= 0 {
+        return false;
+    }
+    let tab_width = tab_width.max(1);
+    let mut indentation = 0usize;
+    for character in text.chars() {
+        match character.unicode().unwrap_or('\u{fffd}') {
+            ' ' => indentation = indentation.saturating_add(1),
+            '\t' => indentation = indentation.saturating_add(tab_width - indentation % tab_width),
+            _ => break,
+        }
+    }
+    indentation >= usize::try_from(*threshold).unwrap_or(usize::MAX)
+}
+
 fn buffer_tab_width(i: &Interp, buffer: usize) -> usize {
     let id = i.q_soft("tab-width").unwrap_or(u32::MAX);
     i.buffer_local_toplevel_value(id, buffer)
@@ -2992,7 +3011,14 @@ fn render_grid_internal(
         }
         let mut visible_end = start;
         let mut screen_row = content_top;
-        for row in 0..text_rows {
+        let selective_display = buffer_setting(i, "selective-display", buf_id);
+        let logical_rows = i.buffers.get(buf_id).map_or(text_rows, |buffer| {
+            let bb = buffer.borrow();
+            let first = bb.text.line_of_pos(start);
+            let last = bb.text.line_of_pos(bb.zv);
+            last.saturating_sub(first).saturating_add(1)
+        });
+        for row in 0..logical_rows {
             if screen_row >= body_height || screen_row >= window_top + text_rows {
                 break;
             }
@@ -3036,6 +3062,10 @@ fn render_grid_internal(
                 }
                 None => (EmacsText::new(), 0, 0, None, 1, usize::MAX),
             };
+            visible_end = row_end;
+            if selective_display_hides_line(&selective_display, &line, tab_width) {
+                continue;
+            }
             let line_len = line.chars().count();
             let ranges = if wrap_lines {
                 wrap_ranges(&line, content_width, tab_width)
