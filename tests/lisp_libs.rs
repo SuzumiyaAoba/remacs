@@ -335,6 +335,18 @@ fn avl_tree_insert_order_delete() {
 }
 
 #[test]
+fn avl_tree_delete_returns_the_original_two_child_element() {
+    assert_eq!(
+        ev("(progn (require 'avl-tree)
+                  (let ((tree (avl-tree-create #'<)))
+                    (dolist (x '(2 1 3)) (avl-tree-enter tree x))
+                    (list (avl-tree-delete tree 2)
+                          (avl-tree-flatten tree))))"),
+        "(2 (1 3))"
+    );
+}
+
+#[test]
 fn avl_tree_iter_and_stack() {
     assert_eq!(
         ev_out(

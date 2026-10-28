@@ -249,11 +249,11 @@ the related data."
 	  (cons t (avl-tree--node-data br)))
 
 	 (t
-	  (if (avl-tree--do-del-internal br 0 br)
-	      (cons (avl-tree--del-balance root branch 0)
-		    (avl-tree--node-data br))
-	    (cons nil (avl-tree--node-data br))))
-	 ))))))
+	  (let ((deleted-data (avl-tree--node-data br)))
+	    (if (avl-tree--do-del-internal br 0 br)
+		(cons (avl-tree--del-balance root branch 0) deleted-data)
+	      (cons nil deleted-data)))))
+	 )))))
 
 
 
