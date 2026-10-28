@@ -848,21 +848,16 @@ Return the new end point."
 
 (defun rfc2047-q-encode-string (string)
   "Quoted-printable-encode the header in STRING."
-  (mm-with-unibyte-buffer
-    (insert string)
-    (quoted-printable-encode-region
-     (point-min) (point-max) nil
-     ;; = (\075), _ (\137), ? (\077) are used in the encoded word.
-     ;; Avoid using 8bit characters.
-     ;; This list excludes `especials' (see the RFC2047 syntax),
-     ;; meaning that some characters in non-structured fields will
-     ;; get encoded when they con't need to be.  The following is
-     ;; what it used to be.
-     ;;;  ;; Equivalent to "^\000-\007\011\013\015-\037\200-\377=_?"
-     ;;;  "\010\012\014\040-\074\076\100-\136\140-\177")
-     "-\b\n\f !#-'*+0-9A-Z\\^`-~\d")
-    (subst-char-in-region (point-min) (point-max) ?  ?_)
-    (buffer-string)))
+  (let ((class (if (eq rfc2047-encoding-type 'address-mime)
+                   ;; RFC 2047 section 5(3) restricts Q-encoded phrases.
+                   "- !*+/0-9A-Z_a-z"
+                 ;; Use a wider printable set in unstructured fields/comments.
+                 "-\b\n\f !#-'*+0-9A-Z\\^`-~\d")))
+    (mm-with-unibyte-buffer
+      (insert string)
+      (quoted-printable-encode-region (point-min) (point-max) nil class)
+      (subst-char-in-region (point-min) (point-max) ?  ?_)
+      (buffer-string))))
 
 (defun rfc2047-encode-parameter (param value)
   "Return a PARAM=VALUE string encoded in the RFC2047-like style.
