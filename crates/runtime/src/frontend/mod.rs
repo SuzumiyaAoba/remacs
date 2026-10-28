@@ -46,4 +46,4 @@ pub use command::{
     batch_command_error, dispatch_key_core, nonblocking_sleep, replay_macro_events,
     run_batch_editor, run_editor_with,
 };
-pub use render::{CellColor, CellStyle, Grid, render_grid};
+pub use render::{CellColor, CellStyle, Grid, fit_text_to_cells, render_grid};

@@ -3,9 +3,10 @@
 
 use std::ops::Range;
 
-use super::{EditorView, GuiEvent, LINE_HEIGHT};
+use super::{EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT};
 use gpui::{
-    Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, point, px, size,
+    Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
+    rgb, size,
 };
 
 #[derive(Clone, Default)]
@@ -159,16 +160,63 @@ impl EntityInputHandler for EditorView {
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let (column, row) = self.grid.cursor?;
-        let prefix = self.input.text(0..requested.start)?.0;
-        let text = self.input.text(requested)?.0;
-        let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
-        let text_width = unicode_width::UnicodeWidthStr::width(text.as_str()).max(1);
+        let (prefix, _) = self.input.text(0..requested.start)?;
+        let (text, _) = self.input.text(requested)?;
+        let cursor_x = self
+            .grid
+            .cursor_index
+            .and_then(|index| {
+                let row_text = self.grid.rows.get(row)?;
+                let font = font("Menlo");
+                let layout = _window.text_system().shape_line(
+                    row_text.clone().into(),
+                    px(FONT_SIZE),
+                    &[gpui::TextRun {
+                        len: row_text.len(),
+                        font,
+                        color: rgb(FG).into(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                Some(layout.x_for_index(index))
+            })
+            .unwrap_or(self.cell_width * column as f32);
+        let composition = self.input.marked.clone();
+        let composition_line = _window.text_system().shape_line(
+            composition.clone().into(),
+            px(FONT_SIZE),
+            &[gpui::TextRun {
+                len: composition.len(),
+                font: font("Menlo"),
+                color: rgb(FG).into(),
+                background_color: None,
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.0),
+                    color: None,
+                    wavy: false,
+                }),
+                strikethrough: None,
+            }],
+            None,
+        );
+        let start = composition_line.x_for_index(prefix.len());
+        let end = composition_line.x_for_index(prefix.len() + text.len());
+        let left = start.min(end);
+        let text_width = if end >= start {
+            end - start
+        } else {
+            start - end
+        }
+        .max(self.cell_width);
         Some(Bounds {
             origin: point(
-                bounds.left() + self.cell_width * (column + prefix_width) as f32,
+                bounds.left() + cursor_x + left,
                 bounds.top() + px(LINE_HEIGHT) * row as f32,
             ),
-            size: size(self.cell_width * text_width as f32, px(LINE_HEIGHT)),
+            size: size(text_width, px(LINE_HEIGHT)),
         })
     }
 

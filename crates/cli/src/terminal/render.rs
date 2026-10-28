@@ -4,7 +4,7 @@ use crossterm::{
     style::{Attribute, SetAttribute},
     terminal,
 };
-use remacs_runtime::frontend::{CellColor, CellStyle, Grid};
+use remacs_runtime::frontend::{CellColor, CellStyle, Grid, fit_text_to_cells};
 use std::io::{self, Write};
 
 /// Emit the SGR state for one cell style: reset, then foreground /
@@ -52,12 +52,17 @@ pub(super) fn draw_grid(out: &mut impl Write, grid: &Grid) -> io::Result<()> {
     for (y, row) in grid.rows.iter().enumerate() {
         queue!(out, cursor::MoveTo(0, y as u16))?;
         let cells = grid.attrs.get(y).map(|v| v.as_slice()).unwrap_or(&[]);
+        let char_cells = grid.char_attrs.get(y).map(|v| v.as_slice()).unwrap_or(&[]);
         // Emit contiguous same-style runs; SGR state resets at
         // each boundary so only the style's own escapes are live.
         let mut cur = None;
         let mut run = String::new();
         for (x, ch) in row.chars().enumerate() {
-            let st = cells.get(x).copied().unwrap_or(default);
+            let st = char_cells
+                .get(x)
+                .or_else(|| cells.get(x))
+                .copied()
+                .unwrap_or(default);
             if Some(st) != cur {
                 if !run.is_empty() {
                     emit_style(out, cur.unwrap())?;
@@ -93,8 +98,9 @@ pub(super) fn draw_echo(
         cursor::MoveTo(0, y),
         terminal::Clear(terminal::ClearType::CurrentLine)
     )?;
-    write!(out, "{:<width$}", text, width = width)?;
-    let cx = text.chars().count().min(width.saturating_sub(1));
+    let (shown, columns, _) = fit_text_to_cells(text, width);
+    write!(out, "{shown}")?;
+    let cx = columns.min(width.saturating_sub(1));
     queue!(out, cursor::MoveTo(cx as u16, y), cursor::Show)?;
     out.flush()
 }

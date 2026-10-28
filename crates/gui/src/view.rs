@@ -107,7 +107,11 @@ impl Render for EditorView {
                             .iter()
                             .enumerate()
                             .map(|(y, row)| {
-                                let cells = grid.attrs.get(y);
+                                let cells = grid
+                                    .char_attrs
+                                    .get(y)
+                                    .filter(|cells| !cells.is_empty())
+                                    .or_else(|| grid.attrs.get(y));
                                 let mut runs: Vec<TextRun> = Vec::new();
                                 let mut cur: Option<remacs_runtime::frontend::CellStyle> = None;
                                 let mut run_bytes = 0usize;
@@ -194,8 +198,12 @@ impl Render for EditorView {
                             let _ = line.paint(origin, line_height, window, _cx);
                         }
                         if let Some((cxp, yp)) = grid.cursor {
+                            let cursor_x = grid
+                                .cursor_index
+                                .and_then(|index| lines.get(yp).map(|line| line.x_for_index(index)))
+                                .unwrap_or(cell_width * (cxp as f32));
                             let mut origin = point(
-                                bounds.left() + cell_width * (cxp as f32),
+                                bounds.left() + cursor_x,
                                 bounds.top() + line_height * (yp as f32),
                             );
                             if !marked.is_empty() {

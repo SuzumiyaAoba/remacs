@@ -1,6 +1,6 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
-    frontend::{Grid, InputEvent, KeyIo, render_grid},
+    frontend::{Grid, InputEvent, KeyIo, fit_text_to_cells, render_grid},
     lisp::Interp,
 };
 use std::{
@@ -102,15 +102,21 @@ impl KeyIo for ChanIo {
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
+        let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
         if let Some(last) = grid.rows.last_mut() {
-            *last = format!("{text:<width$}", width = self.cols);
+            *last = shown;
         }
         if let Some(last) = grid.attrs.last_mut() {
             last.iter_mut()
                 .for_each(|c| *c = remacs_runtime::frontend::CellStyle::default());
         }
-        let cx = text.chars().count().min(self.cols.saturating_sub(1));
+        if let Some(last) = grid.char_attrs.last_mut() {
+            let char_count = grid.rows.last().map_or(0, |row| row.chars().count());
+            *last = vec![remacs_runtime::frontend::CellStyle::default(); char_count];
+        }
+        let cx = columns.min(self.cols.saturating_sub(1));
         grid.cursor = Some((cx, self.rows.saturating_sub(1)));
+        grid.cursor_index = Some(visible_bytes);
         self.send_grid(grid)
     }
 

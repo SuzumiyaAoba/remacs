@@ -1,10 +1,11 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
-use crate::lisp::text::{EmacsStr, EmacsText};
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
     lisp::{Interp, Value},
 };
 use std::collections::HashMap;
+use unicode_width::UnicodeWidthChar;
 
 /// A terminal color: RGB. Face color specs (names, `#rgb' forms) are
 /// resolved to this at render time; the crossterm front-end emits
@@ -91,16 +92,19 @@ impl PartialEq for StyleMix {
 }
 
 /// A text-mode screen snapshot produced by `render_grid`: one string
-/// per row, the per-cell face attributes (same shape as `rows`), which
-/// rows are mode lines, and the hardware cursor position.  Both
-/// front-ends share it — the terminal writes it, gpui draws it.
+/// per row, face attributes by display cell and by character, mode-line
+/// rows, and cursor positions for terminals and shaped GUI text.
 #[derive(Clone)]
 pub struct Grid {
     pub rows: Vec<String>,
-    /// Cell styles, `attrs[y][x]` alongside `rows[y]`'s chars.
+    /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
+    /// Character styles, `char_attrs[y][x]` alongside each row's chars.
+    pub char_attrs: Vec<Vec<CellStyle>>,
     pub mode_rows: Vec<usize>,
     pub cursor: Option<(usize, usize)>,
+    /// UTF-8 byte offset of the cursor in the rendered row at `cursor.1`.
+    pub cursor_index: Option<usize>,
 }
 
 impl Grid {
@@ -109,10 +113,216 @@ impl Grid {
         Grid {
             rows: vec![String::new(); height],
             attrs: vec![vec![CellStyle::default(); width]; height],
+            char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
             cursor: None,
+            cursor_index: None,
         }
     }
+}
+
+fn display_char_width(ch: char) -> usize {
+    UnicodeWidthChar::width(ch).unwrap_or(1)
+}
+
+fn display_columns(text: &EmacsText, tab_width: usize) -> usize {
+    display_columns_of(text.chars(), tab_width)
+}
+
+fn display_columns_of(chars: impl Iterator<Item = EmacsChar>, tab_width: usize) -> usize {
+    let tab_width = tab_width.max(1);
+    let mut columns = 0usize;
+    for ch in chars {
+        let ch = ch.unicode().unwrap_or('\u{fffd}');
+        let width = if ch == '\t' {
+            tab_width - columns % tab_width
+        } else {
+            display_char_width(ch)
+        };
+        columns = columns.saturating_add(width);
+    }
+    columns
+}
+
+fn buffer_tab_width(i: &Interp, buffer: usize) -> usize {
+    let id = i.q_soft("tab-width").unwrap_or(u32::MAX);
+    i.buffer_local_toplevel_value(id, buffer)
+        .or_else(|| i.default_toplevel_value(id))
+        .and_then(|value| match value {
+            Value::Int(width) if width > 0 => usize::try_from(width).ok(),
+            _ => None,
+        })
+        .filter(|width| *width > 0)
+        .unwrap_or(8)
+}
+
+struct RenderedRow {
+    text: String,
+    cell_attrs: Vec<CellStyle>,
+    char_attrs: Vec<CellStyle>,
+    source_offsets: Vec<usize>,
+    cell_offsets: Vec<usize>,
+    visible_columns: usize,
+    padding_char_start: usize,
+}
+
+/// Render a Lisp line into a fixed number of display cells. The source
+/// and cell offset maps let the GUI position its caret in GPUI's shaped
+/// line while the terminal keeps using cell coordinates.
+fn render_text_row<F>(
+    text: &EmacsText,
+    hscroll: usize,
+    width: usize,
+    tab_width: usize,
+    mut style_at: F,
+) -> RenderedRow
+where
+    F: FnMut(usize) -> CellStyle,
+{
+    let chars: Vec<_> = text.chars().collect();
+    let mut rendered = String::new();
+    let mut char_attrs = Vec::new();
+    let mut cell_attrs = vec![CellStyle::default(); width];
+    let mut source_offsets = vec![0; chars.len() + 1];
+    let mut cell_offsets = vec![0; width + 1];
+    let mut column = 0usize;
+    let mut visible_columns = 0usize;
+    let end_column = hscroll.saturating_add(width);
+    let tab_width = tab_width.max(1);
+
+    for (index, ch) in chars.iter().enumerate() {
+        let display = match ch.unicode().unwrap_or('\u{fffd}') {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        let columns = if display == '\t' {
+            tab_width - column % tab_width
+        } else {
+            display_char_width(display)
+        };
+        let start_column = column;
+        let next_column = column.saturating_add(columns);
+        let before = rendered.len();
+
+        if columns == 0 {
+            if start_column >= hscroll && start_column < end_column {
+                let style = style_at(index);
+                rendered.push(display);
+                char_attrs.push(style);
+            }
+            source_offsets[index + 1] = if next_column <= hscroll {
+                0
+            } else {
+                rendered.len()
+            };
+            continue;
+        }
+
+        if next_column <= hscroll {
+            source_offsets[index + 1] = 0;
+            column = next_column;
+            continue;
+        }
+        if start_column >= end_column {
+            source_offsets[index + 1] = rendered.len();
+            source_offsets[index + 2..].fill(rendered.len());
+            break;
+        }
+
+        let cell_start = start_column.saturating_sub(hscroll);
+        let cell_end = next_column.min(end_column).saturating_sub(hscroll);
+        let style = style_at(index);
+        if start_column < hscroll || next_column > end_column {
+            // A horizontal boundary can bisect a wide glyph. Preserve its
+            // remaining cell geometry with blanks instead of shifting the
+            // following text or drawing half a glyph outside the viewport.
+            for cell in cell_start..cell_end {
+                cell_offsets[cell] = rendered.len();
+                cell_attrs[cell] = style;
+                rendered.push(' ');
+                char_attrs.push(style);
+                cell_offsets[cell + 1] = rendered.len();
+            }
+        } else {
+            for cell in cell_start..cell_end {
+                cell_offsets[cell] = before;
+                cell_attrs[cell] = style;
+            }
+            if display == '\t' {
+                for cell in cell_start..cell_end {
+                    rendered.push(' ');
+                    char_attrs.push(style);
+                    cell_offsets[cell + 1] = rendered.len();
+                }
+            } else {
+                rendered.push(display);
+                char_attrs.push(style);
+            }
+            cell_offsets[cell_end] = rendered.len();
+        }
+        visible_columns = visible_columns.max(cell_end);
+        source_offsets[index + 1] = rendered.len();
+        column = next_column;
+    }
+
+    // The line end maps to the end of its visible text, before padding.
+    let padding_char_start = char_attrs.len();
+    for cell in visible_columns..width {
+        cell_offsets[cell] = rendered.len();
+        rendered.push(' ');
+        char_attrs.push(CellStyle::default());
+        cell_offsets[cell + 1] = rendered.len();
+    }
+    cell_offsets[width] = rendered.len();
+    RenderedRow {
+        text: rendered,
+        cell_attrs,
+        char_attrs,
+        source_offsets,
+        cell_offsets,
+        visible_columns,
+        padding_char_start,
+    }
+}
+
+/// Truncate and pad text to WIDTH display columns. The tuple contains the
+/// padded text, occupied columns before padding, and visible text's byte end.
+pub fn fit_text_to_cells(text: &str, width: usize) -> (String, usize, usize) {
+    fit_text_to_cells_with_tab_width(text, width, 8)
+}
+
+fn fit_text_to_cells_with_tab_width(
+    text: &str,
+    width: usize,
+    tab_width: usize,
+) -> (String, usize, usize) {
+    let mut rendered = String::new();
+    let mut columns = 0usize;
+    let tab_width = tab_width.max(1);
+    for raw_ch in text.chars() {
+        let ch = match raw_ch {
+            '\n' | '\r' => ' ',
+            _ => raw_ch,
+        };
+        let char_width = if ch == '\t' {
+            tab_width - columns % tab_width
+        } else {
+            display_char_width(ch)
+        };
+        let next = columns.saturating_add(char_width);
+        if next > width {
+            break;
+        }
+        if ch == '\t' {
+            rendered.push_str(&" ".repeat(char_width));
+        } else {
+            rendered.push(ch);
+        }
+        columns = next;
+    }
+    let visible_bytes = rendered.len();
+    rendered.push_str(&" ".repeat(width.saturating_sub(columns)));
+    (rendered, columns, visible_bytes)
 }
 // ---------- face resolution ----------
 //
@@ -584,16 +794,20 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     let mut rows = vec![String::new(); height];
     let mut attrs = vec![vec![CellStyle::default(); width]; height];
+    let mut char_attrs = vec![Vec::new(); height];
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
+    let mut cursor_index = None;
     let frame = match &i.selected_frame {
         Some(f) => f.clone(),
         None => {
             return Grid {
                 rows,
                 attrs,
+                char_attrs,
                 mode_rows,
                 cursor: cursor_pos,
+                cursor_index,
             };
         }
     };
@@ -620,6 +834,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             let wb = w.borrow();
             (wb.buffer, wb.start, wb.hscroll)
         };
+        let tab_width = buffer_tab_width(i, buf_id);
         let text_rows = wh.saturating_sub(1);
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
@@ -679,7 +894,10 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                     .map(|v| v.truthy())
                     .unwrap_or(true);
                 let new_hscroll = if width > 0 && ahs_on && !suspend_hs {
-                    let col = pt - bb.text.line_start(pt_line);
+                    let col = display_columns(
+                        &bb.text.substring(bb.text.line_start(pt_line), pt),
+                        tab_width,
+                    );
                     if col < hscroll {
                         col
                     } else if col >= hscroll + width {
@@ -717,7 +935,8 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             }
             // Line-aligned rendering: `start' is a line start because
             // the scroll code above always lands it on line_start().
-            let (line, line_pos, row_end) = match i.buffers.get(buf_id) {
+            let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
+            let (line, line_pos, row_end, point_index) = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
                     let ls = bb.text.line_start(bb.text.line_of_pos(start) + row);
@@ -727,31 +946,31 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                     } else {
                         le
                     };
-                    (bb.text.substring(ls, le), ls, row_end)
+                    let point_index = if selected_window {
+                        let point = bb.point();
+                        let point_line = bb.text.line_start(bb.text.line_of_pos(point));
+                        (point_line == ls).then_some(point - ls)
+                    } else {
+                        None
+                    };
+                    (bb.text.substring(ls, le), ls, row_end, point_index)
                 }
-                None => (EmacsText::new(), 0, 0),
+                None => (EmacsText::new(), 0, 0, None),
             };
             visible_end = row_end;
-            let nvis = line.chars().count().saturating_sub(hscroll).min(width);
-            let mut vis = String::with_capacity(nvis);
-            // Characters visible in this row and their cells' styles.
-            for (x, ch) in line.chars().skip(hscroll).take(width).enumerate() {
-                // Grid is a Unicode presentation surface; Lisp text stays intact.
-                vis.push(ch.unicode().unwrap_or('\u{fffd}'));
-                let pos = line_pos + hscroll + x;
-                if let Some(wf) = &wf {
-                    attrs[y][x] = style_at_pos(i, &mut fctx, wf, pos);
-                }
-            }
+            let mut rendered = render_text_row(&line, hscroll, width, tab_width, |index| {
+                wf.as_ref()
+                    .map(|wf| style_at_pos(i, &mut fctx, wf, line_pos + index))
+                    .unwrap_or_default()
+            });
             // Empty tail of the row: the line-end face extends its
             // background over it iff the face's :extend holds (GNU
             // extend_face_to_end_of_line).
             if let Some(wf) = &wf {
-                let tail_pos = (line_pos + line.chars().count()).min(line_pos + hscroll + nvis);
                 let end_pos = line_pos + line.chars().count();
-                let tail = style_at_pos(i, &mut fctx, wf, tail_pos.max(end_pos));
+                let tail = style_at_pos(i, &mut fctx, wf, end_pos);
                 if tail.extend {
-                    for x in nvis..width {
+                    for cell in rendered.visible_columns..width {
                         let mut t = tail;
                         t.fg = None;
                         t.bold = false;
@@ -761,11 +980,44 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                         t.strike = false;
                         t.inverse = false;
                         t.extend = false;
-                        attrs[y][x] = t;
+                        rendered.cell_attrs[cell] = t;
+                    }
+                    let mut tail = tail;
+                    tail.fg = None;
+                    tail.bold = false;
+                    tail.italic = false;
+                    tail.underline = false;
+                    tail.overline = false;
+                    tail.strike = false;
+                    tail.inverse = false;
+                    tail.extend = false;
+                    for style in &mut rendered.char_attrs[rendered.padding_char_start..] {
+                        *style = tail;
                     }
                 }
             }
-            rows[y] = format!("{vis:<width$}", width = width);
+            if let Some(point_index) = point_index
+                && width > 0
+            {
+                let point_col = display_columns_of(line.chars().take(point_index), tab_width);
+                let col = point_col.saturating_sub(hscroll).min(width - 1);
+                let byte_index = if point_col < hscroll {
+                    0
+                } else if point_col.saturating_sub(hscroll) >= width {
+                    rendered.cell_offsets[width - 1]
+                } else {
+                    rendered
+                        .source_offsets
+                        .get(point_index)
+                        .copied()
+                        .unwrap_or(rendered.text.len())
+                };
+                cursor_pos = Some((col, y));
+                cursor_index = Some(byte_index);
+            }
+            rows[y] = rendered.text;
+            attrs[y] = rendered.cell_attrs;
+            char_attrs[y] = rendered.char_attrs;
         }
         let tick = i
             .buffers
@@ -779,11 +1031,14 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             let (name, modified, point_line, point_col) = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
+                    let point = bb.point();
+                    let point_line = bb.text.line_of_pos(point);
+                    let point_line_start = bb.text.line_start(point_line);
                     (
                         bb.name.clone(),
                         bb.is_modified(),
-                        bb.text.line_of_pos(bb.point()) + 1,
-                        bb.point() - bb.text.line_start(bb.text.line_of_pos(bb.point())),
+                        point_line + 1,
+                        display_columns(&bb.text.substring(point_line_start, point), tab_width),
                     )
                 }
                 None => ("???".into(), false, 0, 0),
@@ -814,35 +1069,12 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
             if ml == CellStyle::default() {
                 ml.inverse = true;
             }
-            rows[my] = format!("{mode:<width$}", width = width);
+            rows[my] = fit_text_to_cells_with_tab_width(&mode, width, tab_width).0;
             for cell in attrs[my].iter_mut() {
                 *cell = ml;
             }
+            char_attrs[my] = rows[my].chars().map(|_| ml).collect();
             mode_rows.push(my);
-        }
-        // Cursor for the selected window.
-        if std::rc::Rc::ptr_eq(w, &fb.selected) {
-            if let Some(b) = i.buffers.get(buf_id) {
-                let bb = b.borrow();
-                let p = bb.point();
-                let line = bb.text.line_of_pos(p);
-                let ls = bb.text.line_start(line);
-                let start_line = bb.text.line_of_pos(start);
-                let row = line.saturating_sub(start_line);
-                // GNU clamps an hscroll-hidden cursor to the window
-                // edge (left edge when scrolled past on the left,
-                // right edge when past the right) instead of hiding
-                // it — needed while `suspend_hscroll' holds the view.
-                let pcol = p - ls;
-                let col = if pcol < hscroll {
-                    0
-                } else {
-                    (pcol - hscroll).min(width.saturating_sub(1))
-                };
-                if row < text_rows && width > 0 {
-                    cursor_pos = Some((col, top + row));
-                }
-            }
         }
     }
     // Minibuffer / echo area (last row).  The minibuffer's own text
@@ -861,20 +1093,27 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     } else {
         (mini_text, mini_buf.as_ref())
     };
+    let tab_width = mini_buf
+        .as_ref()
+        .map(|buffer| buffer_tab_width(i, buffer.borrow().id))
+        .unwrap_or(8);
     if let Some(y) = rows.len().checked_sub(1) {
-        let vis: String = msg.chars().take(width).map(|c| c.unicode().unwrap_or('\u{fffd}')).collect();
-        rows[y] = format!("{vis:<width$}", width = width);
-        if let Some(b) = styled {
-            let wf = window_faces(i, &fctx, &b, &Value::Nil);
-            for (x, _) in msg.chars().take(width).enumerate() {
-                attrs[y][x] = style_at_pos(i, &mut fctx, &wf, x);
-            }
-        }
+        let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil));
+        let rendered = render_text_row(&msg, 0, width, tab_width, |index| {
+            wf.as_ref()
+                .map(|wf| style_at_pos(i, &mut fctx, wf, index))
+                .unwrap_or_default()
+        });
+        rows[y] = rendered.text;
+        attrs[y] = rendered.cell_attrs;
+        char_attrs[y] = rendered.char_attrs;
     }
     Grid {
         rows,
         attrs,
+        char_attrs,
         mode_rows,
         cursor: cursor_pos,
+        cursor_index,
     }
 }
