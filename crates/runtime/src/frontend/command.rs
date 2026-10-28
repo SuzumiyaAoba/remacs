@@ -306,6 +306,29 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         );
     }
 
+    if let Some((frame_id, focused)) = term.borrow_mut().take_frame_focus_update()
+        && let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id)
+            .cloned()
+    {
+        let event_name = if focused { "focus-in" } else { "focus-out" };
+        let handler_name = if focused {
+            "handle-focus-in"
+        } else {
+            "handle-focus-out"
+        };
+        let event = Value::list(vec![
+            Value::Sym(i.intern(event_name)),
+            Value::Frame(frame),
+        ]);
+        let handler = Value::Sym(i.intern(handler_name));
+        if let Err(flow) = i.apply(&handler, vec![event]) {
+            report_flow(i, flow);
+        }
+    }
+
     if let Some(frame_id) = term.borrow_mut().take_frame_delete_request()
         && let Some(frame) = i
             .frames

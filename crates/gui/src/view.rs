@@ -197,6 +197,7 @@ pub(super) struct EditorView {
     focus_subscriptions: Vec<Subscription>,
     auto_raise: Rc<Cell<bool>>,
     auto_lower: Rc<Cell<bool>>,
+    last_window_active: Option<bool>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -236,6 +237,7 @@ impl EditorView {
             focus_subscriptions: Vec::new(),
             auto_raise: Rc::new(Cell::new(false)),
             auto_lower: Rc::new(Cell::new(false)),
+            last_window_active: None,
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -257,6 +259,20 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = window.is_window_active();
+        if let Some(frame_id) = self.tx.frame_id() {
+            if self.last_window_active != Some(active) {
+                if active && self.auto_raise.get() {
+                    crate::raise_frame_window(window);
+                } else if !active && self.auto_lower.get() {
+                    crate::lower_frame_window(window);
+                }
+                let _ = self.tx.send_focus_update(frame_id, active);
+                self.last_window_active = Some(active);
+            }
+        } else {
+            self.last_window_active = None;
+        }
         if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
             window.set_window_title(&self.grid.title);
             self.window_title = Some(self.grid.title.clone());
@@ -1500,11 +1516,7 @@ pub(super) fn build_managed_editor_view(
             .is_some_and(|frame_id| close_events.send_delete_request(frame_id).is_err())
     });
     let frame_events = view.tx.clone();
-    let auto_lower = view.auto_lower.clone();
     let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, cx| {
-        if auto_lower.get() {
-            crate::lower_frame_window(window);
-        }
         if let (Some(frame_id), Some(stack)) = (frame_events.frame_id(), cx.window_stack()) {
             let visible = stack.contains(&window.window_handle());
             let _ = frame_events.send_visibility_update(frame_id, visible);
@@ -1512,11 +1524,7 @@ pub(super) fn build_managed_editor_view(
     });
     view.focus_subscriptions.push(subscription);
     let frame_events = view.tx.clone();
-    let auto_raise = view.auto_raise.clone();
     let subscription = window.on_focus_in(&view.focus, cx, move |window, cx| {
-        if auto_raise.get() {
-            crate::raise_frame_window(window);
-        }
         if let Some(frame_id) = frame_events.frame_id() {
             let visible = cx
                 .window_stack()

@@ -141,15 +141,19 @@ pub trait KeyIo {
     fn take_render_request(&mut self) -> bool {
         false
     }
-    /// Frame whose native window produced the most recently polled input.
+    /// Frame selected by the most recent native input or focus-in event.
     /// Multi-window front-ends use this to select the corresponding Lisp
-    /// frame before dispatching the input. Single-window front-ends inherit
+    /// frame before handling that event. Single-window front-ends inherit
     /// the default.
     fn take_frame_selection(&mut self) -> Option<usize> {
         None
     }
     /// Visibility change reported by the native window manager.
     fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
+        None
+    }
+    /// Focus change reported by the native window manager.
+    fn take_frame_focus_update(&mut self) -> Option<(usize, bool)> {
         None
     }
     /// Frame whose native window received a close request.

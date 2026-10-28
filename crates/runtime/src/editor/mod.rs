@@ -6146,13 +6146,21 @@ fn f_show_cursor_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_frame_focus_state(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: optional FRAME decodes as a *terminal*
-    // (CHECK_TERMINAL -> terminal-live-p); nil (unknown) result.
-    match a.first() {
-        None | Some(Value::Nil) => Ok(Value::Nil),
-        Some(Value::Frame(f)) if !f.borrow().dead => Ok(Value::Nil),
-        Some(v) if is_terminal(i, v) => Ok(Value::Nil),
-        Some(other) => Err(i.wrong_type_mut("terminal-live-p", other)),
+    // GNU: terminal arguments return nil; graphical frames report the
+    // last focus event recorded by `handle-focus-in/out'.
+    let frame = match a.first() {
+        None | Some(Value::Nil) => sel_frame(i),
+        Some(Value::Frame(frame)) if !frame.borrow().dead => Some(frame.clone()),
+        Some(value) if is_terminal(i, value) => return Ok(Value::Nil),
+        Some(other) => return Err(i.wrong_type_mut("terminal-live-p", other)),
+    };
+    let Some(frame) = frame else {
+        return Ok(Value::Nil);
+    };
+    if crate::editor::frame_is_graphical(i, &frame) {
+        Ok(frame_parameter_value(i, &frame, "last-focus-update"))
+    } else {
+        Ok(Value::Nil)
     }
 }
 fn f_frame_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {

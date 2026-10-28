@@ -29,6 +29,7 @@ pub(super) enum GuiEvent {
         event: Box<GuiEvent>,
     },
     FrameVisibility { frame_id: usize, visible: bool },
+    FrameFocus { frame_id: usize, focused: bool },
     FrameDeleteRequest { frame_id: usize },
     PowerOff,
     Key(i128),
@@ -104,6 +105,14 @@ impl FrameEventSender {
         frame_id: usize,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
         self.sender.send(GuiEvent::FrameDeleteRequest { frame_id })
+    }
+
+    pub(super) fn send_focus_update(
+        &self,
+        frame_id: usize,
+        focused: bool,
+    ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.sender.send(GuiEvent::FrameFocus { frame_id, focused })
     }
 
     pub(super) fn send(&self, event: GuiEvent) -> Result<(), mpsc::SendError<GuiEvent>> {
@@ -354,6 +363,7 @@ pub(super) struct ChanIo {
     primary_frame_id: Option<usize>,
     pending_frame_selection: Option<usize>,
     pending_frame_visibility: Option<(usize, bool)>,
+    pending_frame_focus: Option<(usize, bool)>,
     pending_frame_delete: Option<usize>,
     pending_power_off: bool,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
@@ -526,6 +536,15 @@ impl ChanIo {
         self.render_requested = true;
     }
 
+    fn record_frame_focus(&mut self, frame_id: usize, focused: bool) {
+        self.pending_frame_focus = Some((frame_id, focused));
+        self.render_requested = true;
+        if focused {
+            self.active_frame_id = Some(frame_id);
+            self.pending_frame_selection = Some(frame_id);
+        }
+    }
+
     fn mouse_input(
         &mut self,
         button: MouseButton,
@@ -666,14 +685,21 @@ impl KeyIo for ChanIo {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
             GuiEvent::FrameDeleteRequest { frame_id } => {
                 self.pending_frame_delete = Some(frame_id);
+                self.render_requested = true;
                 Ok(None)
             }
             GuiEvent::PowerOff => {
                 self.pending_power_off = true;
+                self.render_requested = true;
                 Ok(None)
             }
             GuiEvent::FrameVisibility { frame_id, visible } => {
                 self.pending_frame_visibility = Some((frame_id, visible));
+                self.render_requested = true;
+                Ok(None)
+            }
+            GuiEvent::FrameFocus { frame_id, focused } => {
+                self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
@@ -780,14 +806,21 @@ impl KeyIo for ChanIo {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
             GuiEvent::FrameDeleteRequest { frame_id } => {
                 self.pending_frame_delete = Some(frame_id);
+                self.render_requested = true;
                 Ok(None)
             }
             GuiEvent::PowerOff => {
                 self.pending_power_off = true;
+                self.render_requested = true;
                 Ok(None)
             }
             GuiEvent::FrameVisibility { frame_id, visible } => {
                 self.pending_frame_visibility = Some((frame_id, visible));
+                self.render_requested = true;
+                Ok(None)
+            }
+            GuiEvent::FrameFocus { frame_id, focused } => {
+                self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
             GuiEvent::Key(k) => Ok(Some(k)),
@@ -1011,6 +1044,10 @@ impl KeyIo for ChanIo {
         self.pending_frame_visibility.take()
     }
 
+    fn take_frame_focus_update(&mut self) -> Option<(usize, bool)> {
+        self.pending_frame_focus.take()
+    }
+
     fn take_frame_delete_request(&mut self) -> Option<usize> {
         self.pending_frame_delete.take()
     }
@@ -1223,6 +1260,7 @@ fn start_logic_inner(
                 primary_frame_id: selected_frame_id,
                 pending_frame_selection: None,
                 pending_frame_visibility: None,
+                pending_frame_focus: None,
                 pending_frame_delete: None,
                 pending_power_off: false,
                 geometry_symbols: if enable_gui_selections {
