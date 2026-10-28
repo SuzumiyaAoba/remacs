@@ -55,7 +55,8 @@ COMMAND is a text string representing the thing to be run."
     (if (not (string= (file-name-as-directory (expand-file-name default-directory))
 		      (file-name-as-directory (expand-file-name dd))))
 	;; Go there.
-	(setq command (concat (concat "cd " dd ";" command))))
+	(setq command
+	      (concat "cd " (shell-quote-argument dd) ";" command)))
     ;; Run the command itself.
     (ede-shell-run-command command)
     ))
