@@ -152,6 +152,14 @@ pub trait KeyIo {
     fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
         None
     }
+    /// Frame whose native window received a close request.
+    fn take_frame_delete_request(&mut self) -> Option<usize> {
+        None
+    }
+    /// Whether the operating system is asking the editor to save and quit.
+    fn take_power_off_request(&mut self) -> bool {
+        false
+    }
     /// Show TEXT in the echo area (minibuffer prompt/status).
     fn draw_echo(&mut self, text: &str) -> io::Result<()>;
     /// Show minibuffer text while retaining front-end style information.

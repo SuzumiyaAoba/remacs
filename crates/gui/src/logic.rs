@@ -29,6 +29,8 @@ pub(super) enum GuiEvent {
         event: Box<GuiEvent>,
     },
     FrameVisibility { frame_id: usize, visible: bool },
+    FrameDeleteRequest { frame_id: usize },
+    PowerOff,
     Key(i128),
     Text(String),
     MenuCommand(String),
@@ -95,6 +97,13 @@ impl FrameEventSender {
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
         self.sender
             .send(GuiEvent::FrameVisibility { frame_id, visible })
+    }
+
+    pub(super) fn send_delete_request(
+        &self,
+        frame_id: usize,
+    ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.sender.send(GuiEvent::FrameDeleteRequest { frame_id })
     }
 
     pub(super) fn send(&self, event: GuiEvent) -> Result<(), mpsc::SendError<GuiEvent>> {
@@ -345,6 +354,8 @@ pub(super) struct ChanIo {
     primary_frame_id: Option<usize>,
     pending_frame_selection: Option<usize>,
     pending_frame_visibility: Option<(usize, bool)>,
+    pending_frame_delete: Option<usize>,
+    pending_power_off: bool,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
     pub(super) scroll_remainder: f32,
@@ -653,6 +664,14 @@ impl KeyIo for ChanIo {
         };
         match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
+            GuiEvent::FrameDeleteRequest { frame_id } => {
+                self.pending_frame_delete = Some(frame_id);
+                Ok(None)
+            }
+            GuiEvent::PowerOff => {
+                self.pending_power_off = true;
+                Ok(None)
+            }
             GuiEvent::FrameVisibility { frame_id, visible } => {
                 self.pending_frame_visibility = Some((frame_id, visible));
                 Ok(None)
@@ -759,6 +778,14 @@ impl KeyIo for ChanIo {
         };
         match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
+            GuiEvent::FrameDeleteRequest { frame_id } => {
+                self.pending_frame_delete = Some(frame_id);
+                Ok(None)
+            }
+            GuiEvent::PowerOff => {
+                self.pending_power_off = true;
+                Ok(None)
+            }
             GuiEvent::FrameVisibility { frame_id, visible } => {
                 self.pending_frame_visibility = Some((frame_id, visible));
                 Ok(None)
@@ -984,6 +1011,14 @@ impl KeyIo for ChanIo {
         self.pending_frame_visibility.take()
     }
 
+    fn take_frame_delete_request(&mut self) -> Option<usize> {
+        self.pending_frame_delete.take()
+    }
+
+    fn take_power_off_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_power_off)
+    }
+
     fn draw_echo(&mut self, text: &str) -> io::Result<()> {
         let grid = self
             .last
@@ -1188,6 +1223,8 @@ fn start_logic_inner(
                 primary_frame_id: selected_frame_id,
                 pending_frame_selection: None,
                 pending_frame_visibility: None,
+                pending_frame_delete: None,
+                pending_power_off: false,
                 geometry_symbols: if enable_gui_selections {
                     Some(GeometrySymbols::intern(&mut i))
                 } else {

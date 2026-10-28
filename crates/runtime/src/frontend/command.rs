@@ -305,6 +305,26 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
             Value::t(),
         );
     }
+
+    if let Some(frame_id) = term.borrow_mut().take_frame_delete_request()
+        && let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id)
+            .cloned()
+    {
+        let delete_frame = Value::Sym(i.intern("delete-frame"));
+        if let Err(flow) = i.apply(&delete_frame, vec![Value::Frame(frame)]) {
+            report_flow(i, flow);
+        }
+    }
+
+    if term.borrow_mut().take_power_off_request() {
+        let save_and_quit = Value::Sym(i.intern("save-buffers-kill-emacs"));
+        if let Err(flow) = i.apply(&save_and_quit, Vec::new()) {
+            report_flow(i, flow);
+        }
+    }
 }
 
 /// Process one key event: extend the key sequence, look up the

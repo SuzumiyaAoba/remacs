@@ -249,6 +249,8 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             primary_frame_id: None,
             pending_frame_selection: None,
             pending_frame_visibility: None,
+            pending_frame_delete: None,
+            pending_power_off: false,
             geometry_symbols: None,
             mouse_down: None,
             scroll_remainder: 0.0,
@@ -661,6 +663,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
+            GuiEvent::FrameDeleteRequest { .. } | GuiEvent::PowerOff => None,
             GuiEvent::Text(text) => Some(text),
             GuiEvent::CommandArgs { .. } => None,
             GuiEvent::Drop { .. } => None,
@@ -682,6 +685,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
+            GuiEvent::FrameDeleteRequest { .. } | GuiEvent::PowerOff => None,
             GuiEvent::Key(code) => Some(code),
             GuiEvent::CommandArgs { .. } => None,
             GuiEvent::Drop { .. } => None,

@@ -1,6 +1,6 @@
 //! GPUI frontend. The evaluator lives on a separate logic thread.
 use gpui::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
@@ -8,9 +8,9 @@ mod accessibility;
 #[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
 #[cfg(target_os = "macos")]
-use cocoa::foundation::NSInteger;
+use cocoa::foundation::{NSInteger, NSString};
 #[cfg(target_os = "macos")]
-use objc::{msg_send, runtime::{BOOL, YES}, sel, sel_impl};
+use objc::{class, msg_send, runtime::{BOOL, YES}, sel, sel_impl};
 mod keys;
 mod logic;
 mod monitor;
@@ -38,6 +38,8 @@ pub fn run_gui_with_dump(
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
     Application::new().run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        register_power_off_listener(event_tx.clone());
         cx.spawn(async move |cx| {
             while let Ok(request) = clipboard_requests.recv().await {
                 match request {
@@ -106,6 +108,8 @@ pub fn run_gui_with_dump(
             while let Ok(request) = gui_requests.recv().await {
                 match request {
                     GuiRequest::FrameSnapshots(snapshots) => {
+                        let live_frames: HashSet<_> =
+                            snapshots.iter().map(|snapshot| snapshot.frame_id).collect();
                         for snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
@@ -210,6 +214,21 @@ pub fn run_gui_with_dump(
                             });
                             native_visibility.insert(frame_id, true);
                             windows.insert(frame_id, handle);
+                        }
+                        let removed: Vec<_> = windows
+                            .keys()
+                            .filter(|frame_id| !live_frames.contains(frame_id))
+                            .copied()
+                            .collect();
+                        for frame_id in removed {
+                            if let Some(handle) = windows.remove(&frame_id) {
+                                let _ = handle.update(cx, |_view, window, _cx| {
+                                    window.remove_window();
+                                });
+                            }
+                            window_modes.remove(&frame_id);
+                            frame_behaviors.remove(&frame_id);
+                            native_visibility.remove(&frame_id);
                         }
                         if let Some(stack) = cx.update(|app| app.window_stack()).ok().flatten() {
                             for (frame_id, handle) in &windows {
@@ -444,6 +463,20 @@ fn show_frame_window(window: &Window) {
         }
     }
     window.activate_window();
+}
+
+#[cfg(target_os = "macos")]
+fn register_power_off_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
+    let workspace: id = unsafe { msg_send![class!(NSWorkspace), sharedWorkspace] };
+    let notification_center: id = unsafe { msg_send![workspace, notificationCenter] };
+    let name = unsafe { NSString::alloc(nil).init_str("NSWorkspaceWillPowerOffNotification") };
+    let handler = block::ConcreteBlock::new(move |_notification: id| {
+        let _ = event_tx.send(GuiEvent::PowerOff);
+    })
+    .copy();
+    let _: id = unsafe {
+        msg_send![notification_center, addObserverForName:name object:nil queue:nil usingBlock:handler]
+    };
 }
 
 fn raise_frame_window(window: &Window) {

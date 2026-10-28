@@ -1493,6 +1493,12 @@ pub(super) fn build_managed_editor_view(
     if let Some(grid) = grid {
         view.grid = grid;
     }
+    let close_events = view.tx.clone();
+    window.on_window_should_close(cx, move |_window, _cx| {
+        close_events
+            .frame_id()
+            .is_some_and(|frame_id| close_events.send_delete_request(frame_id).is_err())
+    });
     let frame_events = view.tx.clone();
     let auto_lower = view.auto_lower.clone();
     let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, cx| {

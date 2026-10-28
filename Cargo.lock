@@ -4715,6 +4715,7 @@ dependencies = [
 name = "remacs-gui"
 version = "0.1.0"
 dependencies = [
+ "block",
  "cocoa 0.26.0",
  "core-graphics 0.24.0",
  "gpui",

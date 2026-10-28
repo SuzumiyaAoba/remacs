@@ -6177,6 +6177,12 @@ fn f_delete_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         return Err(i.error(message));
     }
+    let run_hook_with_args = Value::Sym(i.intern("run-hook-with-args"));
+    let delete_frame_functions = Value::Sym(i.intern("delete-frame-functions"));
+    i.apply(
+        &run_hook_with_args,
+        vec![delete_frame_functions, Value::Frame(f.clone())],
+    )?;
     if sel_frame(i).is_some_and(|selected| Rc::ptr_eq(&selected, &f)) {
         let replacement = i
             .frames
@@ -6205,6 +6211,11 @@ fn f_delete_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         f.dead = true;
     }
     i.frames.retain(|other| !Rc::ptr_eq(other, &f));
+    let after_delete_frame_functions = Value::Sym(i.intern("after-delete-frame-functions"));
+    i.apply(
+        &run_hook_with_args,
+        vec![after_delete_frame_functions, Value::Frame(f)],
+    )?;
     Ok(Value::Nil)
 }
 
