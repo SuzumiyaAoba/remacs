@@ -3576,20 +3576,20 @@ values (of the same type as START)."
   ;;   :rule '((FREQ MONTHLY) (BYDAY ((0 . 1))))
   (with-no-warnings (defvar date) (defvar entry))
   (when (icalendar-date<= start date)
-    (let* ((vevent (icalendar-make-vevent
-                    (icalendar-rrule rule)
-                    (icalendar-dtstart start)
-                    (icalendar-rdate include)
-                    (icalendar-exdate exclude)))
-           (interval (icalendar-recur-find-interval date start rule)))
-      (cl-typecase start
-        (icalendar-date
+    (cl-typecase start
+      (icalendar-date
+       (let* ((vevent (icalendar-make-vevent
+                       (icalendar-rrule rule)
+                       (icalendar-dtstart start)
+                       (icalendar-rdate include)
+                       (icalendar-exdate exclude)))
+              (interval (icalendar-recur-find-interval date start rule)))
           (if (icalendar-rrule-count rule)
               (when (member date (icalendar-recur-recurrences-to-count vevent))
                 entry)
             (when (member date (icalendar-recur-recurrences-in-interval interval vevent))
               entry)))
-        (icalendar-date-time
+      (icalendar-date-time
          ;; TODO.  If start is a date-time, it was probably imported from
          ;; an iCalendar file, but in order to calculate recurrences, we
          ;; really need all the time zone information from that file,
@@ -3617,18 +3617,34 @@ values (of the same type as START)."
                       (icalendar-date/time-add-duration start duration))
                    (diary-icalendar-format-time-as-local start)))
                 (date-entry (concat entry-time " " entry)))
-           (when (memq (icalendar-rrule-freq date-rule) '(HOURLY MINUTELY SECONDLY))
-             (setf (alist-get 'FREQ date-rule) 'DAILY)
-             (setf (alist-get 'INTERVAL date-rule) 1)
-             (setf (alist-get 'BYHOUR date-rule nil t) nil)
-             (setf (alist-get 'BYMINUTE date-rule nil t) nil)
-             (setf (alist-get 'BYSECOND date-rule nil t) nil))
-           ;; Recurse with the plain date values:
-           (calendar-dlet
-               ((date date)
-                (entry date-entry))
-             (diary-rrule :rule date-rule :start start-date
-                          :include include-dates :exclude exclude-dates))))))))
+           (if (and (memq (icalendar-rrule-freq rule) '(HOURLY MINUTELY SECONDLY))
+                    (icalendar-rrule-count rule))
+               ;; A subdaily COUNT can end before the next date.  Enumerate
+               ;; it before projecting the occurrences onto diary dates.
+               (let* ((vevent (icalendar-make-vevent
+                               (icalendar-rrule rule)
+                               (icalendar-dtstart start)
+                               (icalendar-rdate include)
+                               (icalendar-exdate exclude)))
+                      (query-date (icalendar-date/time-to-date date))
+                      (recurrences
+                       (icalendar-recur-recurrences-to-count vevent)))
+                 (when (member query-date
+                               (mapcar #'icalendar-date/time-to-date recurrences))
+                   date-entry))
+             (progn
+               (when (memq (icalendar-rrule-freq date-rule) '(HOURLY MINUTELY SECONDLY))
+                 (setf (alist-get 'FREQ date-rule) 'DAILY)
+                 (setf (alist-get 'INTERVAL date-rule) 1)
+                 (setf (alist-get 'BYHOUR date-rule nil t) nil)
+                 (setf (alist-get 'BYMINUTE date-rule nil t) nil)
+                 (setf (alist-get 'BYSECOND date-rule nil t) nil))
+               ;; Recurse with the plain date values:
+               (calendar-dlet
+                   ((date date)
+                    (entry date-entry))
+                 (diary-rrule :rule date-rule :start start-date
+                              :include include-dates :exclude exclude-dates))))))))))
 
 (defun diary-icalendar-display-entries ()
   "Display iCalendar data from a file in the diary.
