@@ -776,6 +776,7 @@ LIST-ONLY is non-nil, in which case it just returns the list."
   (when (> number 0)
     (let* ((original-date date)    ; save for possible use in the hooks
            (diary--date-string (calendar-date-string date))
+           (diary-full-filename (expand-file-name diary-file))
            (diary-buffer (find-buffer-visiting diary-file))
            ;; Dynamically bound in diary-include-files.
            (d-incp (and (boundp 'diary-including) diary-including))
@@ -794,7 +795,10 @@ LIST-ONLY is non-nil, in which case it just returns the list."
                     (revert-buffer t t)))
             (if temp-buff
                 ;; If including, caller has already verified it is readable.
-                (insert-file-contents diary-file)
+                (progn
+                  (setq-local default-directory
+                              (file-name-directory diary-full-filename))
+                  (insert-file-contents diary-full-filename))
               ;; Setup things like the header-line-format and invisibility-spec.
               (if (eq major-mode (default-value 'major-mode))
                   (diary-mode)
