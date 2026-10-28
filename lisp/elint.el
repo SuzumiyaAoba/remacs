@@ -370,10 +370,9 @@ Returns the forms."
     (setq-local elint-buffer-forms (elint-get-top-forms))
     (setq-local elint-features nil)
     (setq-local elint-buffer-env (elint-init-env elint-buffer-forms))
-    (if elint-preloaded-env
-        ;; FIXME: This doesn't do anything!  Should we setq the result to
-        ;; elint-buffer-env?
-	(elint-env-add-env elint-preloaded-env elint-buffer-env))
+    (when elint-preloaded-env
+	(setq-local elint-buffer-env
+		    (elint-env-add-env elint-preloaded-env elint-buffer-env)))
     (setq-local elint-last-env-time (buffer-modified-tick))
     elint-buffer-forms))
 
