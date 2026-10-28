@@ -192,7 +192,10 @@ code."
       (when epilogue (setq body (concat body "\n" epilogue)))
       ;; Setting the directory needs to be done first so that
       ;; subsequent 'output' directive goes to the right place.
-      (when directory (funcall add-to-body (format "cd '%s'" directory))))
+      (when directory
+	(funcall add-to-body
+		 (format "cd '%s'" (replace-regexp-in-string
+				     "'" "''" directory t t)))))
     body))
 
 (defun org-babel-execute:gnuplot (body params)
