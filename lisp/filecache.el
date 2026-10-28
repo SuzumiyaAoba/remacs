@@ -511,10 +511,10 @@ If called interactively, read the directory names one by one."
 ;; Return a canonical directory for comparison purposes.
 ;; Such a directory ends with a forward slash.
 (defun file-cache-canonical-directory (dir)
-  (let ((directory dir))
-    (if (not (char-equal ?/ (string-to-char (substring directory -1))))
-	(concat directory "/")
-      directory)))
+  (file-name-as-directory
+   (condition-case nil
+       (file-truename dir)
+     (file-error dir))))
 
 (defun file-cache-cycle (name)
   "Cycle through the directories that NAME is available in."
