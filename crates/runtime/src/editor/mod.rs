@@ -91,6 +91,8 @@ pub struct Window {
     pub params: Value,
     /// Fringes/margins.
     pub margins: (usize, usize),
+    /// Per-window fringe widths in pixels and placement flags.
+    pub fringes: Option<(Option<usize>, Option<usize>, bool, bool)>,
     /// `window-use-time': tick of the last creation/selection.
     pub use_time: u64,
     /// Buffers previously shown here — list of
@@ -247,6 +249,7 @@ impl Window {
                 minibuffer: false,
                 params: Value::Nil,
                 margins: (0, 0),
+                fringes: None,
                 suspend_hscroll: false,
                 old_point: 0,
                 old_point_marker: Value::Nil,

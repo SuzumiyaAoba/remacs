@@ -775,6 +775,77 @@ fn mode_line_context(
     }
 }
 
+fn frame_fringe_pixels(i: &Interp, parameters: &Value, name: &str) -> usize {
+    i.q_soft(name)
+        .map(|parameter| crate::lisp::eval::plist_get(parameters, parameter))
+        .and_then(|value| match value {
+            Value::Int(width) => usize::try_from(width.max(0)).ok(),
+            _ => None,
+        })
+        .unwrap_or(8)
+}
+
+fn fringe_pixels_to_cells(pixels: usize, cell_width: usize) -> usize {
+    let cell_width = cell_width.max(1);
+    if pixels == 0 {
+        0
+    } else {
+        pixels.saturating_add(cell_width - 1) / cell_width
+    }
+}
+
+fn overlay_arrow_positions(i: &Interp, buffer_id: usize) -> Vec<(usize, String)> {
+    fn arrow_marker(value: &Value, buffer_id: usize) -> Option<usize> {
+        let Value::Marker(marker) = value else {
+            return None;
+        };
+        let marker = marker.borrow();
+        (marker.buffer == Some(buffer_id)).then_some(marker.position)
+    }
+    fn arrow_string(i: &Interp, value: Value, fallback: &str) -> String {
+        match value {
+            Value::Str(string) => string.borrow().to_unicode_lossy(),
+            _ => fallback.to_owned(),
+        }
+    }
+
+    let default_string = mode_line_variable(i, buffer_id, "overlay-arrow-string")
+        .map(|value| arrow_string(i, value, ">"))
+        .unwrap_or_else(|| ">".to_owned());
+    let mut arrows = Vec::new();
+    if let Some(position) = mode_line_variable(i, buffer_id, "overlay-arrow-position")
+        .as_ref()
+        .and_then(|marker| arrow_marker(marker, buffer_id))
+    {
+        arrows.push((position, default_string.clone()));
+    }
+
+    if let Some(mut variables) = i.q_soft("overlay-arrow-variable-list").map(|id| i.symbol_value(id))
+    {
+        let arrow_string_property = i.q_soft("overlay-arrow-string");
+        while let Value::Cons(cell) = variables {
+            let (variable, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            variables = next;
+            let Value::Sym(variable_id) = variable else {
+                continue;
+            };
+            let value = mode_line_variable(i, buffer_id, &i.symbol_name(variable_id))
+                .unwrap_or(Value::Nil);
+            let Some(position) = arrow_marker(&value, buffer_id) else {
+                continue;
+            };
+            let specific = arrow_string_property
+                .map(|property| i.get_prop(variable_id, property))
+                .unwrap_or(Value::Nil);
+            arrows.push((position, arrow_string(i, specific, &default_string)));
+        }
+    }
+    arrows
+}
+
 fn fit_mode_line_field(field: &str, width: usize, left_align: bool) -> String {
     if width == 0 {
         return String::new();
@@ -1310,6 +1381,33 @@ fn place_text_row(
             continuation.continuation = true;
         }
         column = column.saturating_add(char_width);
+    }
+}
+
+fn place_fringe_glyph(
+    screen: &mut [Vec<ScreenCell>],
+    row: usize,
+    column: usize,
+    fringe_width: usize,
+    glyph: &str,
+    style: CellStyle,
+) {
+    if fringe_width == 0 || glyph.is_empty() {
+        return;
+    }
+    let glyph = if glyph.chars().count() > fringe_width {
+        glyph
+            .chars()
+            .last()
+            .map(|character| character.to_string())
+            .unwrap_or_default()
+    } else {
+        glyph.to_owned()
+    };
+    let cells = vec![style; fringe_width];
+    let characters = glyph.chars().map(|_| style).collect::<Vec<_>>();
+    if let Some(screen_row) = screen.get_mut(row) {
+        place_text_row(screen_row, column, &glyph, &cells, &characters);
     }
 }
 
@@ -2957,6 +3055,25 @@ fn render_grid_internal(
     let fb = frame.borrow();
     let title = frame_title(i, &fb);
     let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
+    let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let frame_char_width = i
+        .q_soft("char-width")
+        .map(|id| crate::lisp::eval::plist_get(&fb.params, id))
+        .and_then(|value| match value {
+            Value::Int(width) if width > 0 => usize::try_from(width).ok(),
+            _ => None,
+        })
+        .unwrap_or(8);
+    let default_fringe_left = if graphical {
+        frame_fringe_pixels(i, &fb.params, "left-fringe")
+    } else {
+        0
+    };
+    let default_fringe_right = if graphical {
+        frame_fringe_pixels(i, &fb.params, "right-fringe")
+    } else {
+        0
+    };
     let mini_height = 1usize;
     let body_height = height.saturating_sub(mini_height);
     let (root_left, root_top, root_width, root_height) = fb
@@ -2986,7 +3103,17 @@ fn render_grid_internal(
     let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;
 
     for w in &fb.windows {
-        let (buf_id, start, hscroll, raw_left, raw_top, raw_width, raw_height, margins) = {
+        let (
+            buf_id,
+            start,
+            hscroll,
+            raw_left,
+            raw_top,
+            raw_width,
+            raw_height,
+            margins,
+            fringes,
+        ) = {
             let wb = w.borrow();
             (
                 wb.buffer,
@@ -2997,6 +3124,7 @@ fn render_grid_internal(
                 wb.width,
                 wb.height,
                 wb.margins,
+                wb.fringes,
             )
         };
         let window_left = scale_edge(raw_left, root_left, scale_x, width);
@@ -3014,13 +3142,35 @@ fn render_grid_internal(
             body_height,
         );
         let window_width = window_right.saturating_sub(window_left);
-        let margin_left = margins.0.min(window_width.saturating_sub(1));
+        let (fringe_left_pixels, fringe_right_pixels) = if graphical {
+            fringes
+                .map(|(left, right, _, _)| {
+                    (
+                        left.unwrap_or(default_fringe_left),
+                        right.unwrap_or(default_fringe_right),
+                    )
+                })
+                .unwrap_or((default_fringe_left, default_fringe_right))
+        } else {
+            (0, 0)
+        };
+        let fringe_left_cells = fringe_pixels_to_cells(fringe_left_pixels, frame_char_width)
+            .min(window_width.saturating_sub(1));
+        let fringe_right_cells = fringe_pixels_to_cells(fringe_right_pixels, frame_char_width)
+            .min(window_width.saturating_sub(fringe_left_cells.saturating_add(1)));
+        let right_fringe_left = window_left
+            .saturating_add(window_width.saturating_sub(fringe_right_cells));
+        let width_after_fringes =
+            window_width.saturating_sub(fringe_left_cells.saturating_add(fringe_right_cells));
+        let margin_left = margins.0.min(width_after_fringes.saturating_sub(1));
         let margin_right = margins
             .1
-            .min(window_width.saturating_sub(margin_left.saturating_add(1)));
-        let content_left_with_margin = window_left.saturating_add(margin_left);
+            .min(width_after_fringes.saturating_sub(margin_left.saturating_add(1)));
+        let content_left_with_margin = window_left
+            .saturating_add(fringe_left_cells)
+            .saturating_add(margin_left);
         let content_width_with_margins =
-            window_width.saturating_sub(margin_left.saturating_add(margin_right));
+            width_after_fringes.saturating_sub(margin_left.saturating_add(margin_right));
         let available_height = body_height.saturating_sub(window_top);
         let window_height = window_bottom
             .saturating_sub(window_top)
@@ -3074,6 +3224,27 @@ fn render_grid_internal(
         let gutter_left = content_left_with_margin;
         let content_left = gutter_left.saturating_add(gutter_width);
         let content_width = content_width_with_margins.saturating_sub(gutter_width);
+        let fringe_style = fctx.builtin(i, "fringe", 0).finish();
+        let indicate_boundaries = buffer_setting(i, "indicate-buffer-boundaries", buf_id);
+        let show_left_boundaries = match &indicate_boundaries {
+            Value::Nil => false,
+            Value::Sym(symbol) => matches!(i.symbol_name(*symbol).as_str(), "t" | "left"),
+            _ => indicate_boundaries.truthy(),
+        };
+        let show_right_boundaries = matches!(
+            &indicate_boundaries,
+            Value::Sym(symbol) if matches!(i.symbol_name(*symbol).as_str(), "t" | "right")
+        );
+        let indicate_empty_lines = buffer_setting(i, "indicate-empty-lines", buf_id).truthy();
+        let overlay_arrows = overlay_arrow_positions(i, buf_id);
+        let (first_buffer_line, last_buffer_line) = i
+            .buffers
+            .get(buf_id)
+            .map(|buffer| {
+                let bb = buffer.borrow();
+                (bb.text.line_of_pos(bb.begv), bb.text.line_of_pos(bb.zv))
+            })
+            .unwrap_or((usize::MAX, usize::MAX));
         let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
         let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
         let text_rows = window_height
@@ -3436,6 +3607,62 @@ fn render_grid_internal(
                     },
                     segment_end == line_len,
                 );
+                let first_line = line_number.saturating_sub(1) == first_buffer_line;
+                let last_line = line_number.saturating_sub(1) == last_buffer_line;
+                let mut left_indicator = if wrap_lines && segment_start > 0 {
+                    "↪".to_owned()
+                } else {
+                    String::new()
+                };
+                let mut right_indicator = String::new();
+                if show_left_boundaries {
+                    if first_line {
+                        left_indicator = "↑".to_owned();
+                    }
+                    if last_line {
+                        left_indicator = if first_line { "↕" } else { "↓" }.to_owned();
+                    }
+                }
+                if show_right_boundaries {
+                    if first_line {
+                        right_indicator = "↑".to_owned();
+                    }
+                    if last_line {
+                        right_indicator = if first_line { "↕" } else { "↓" }.to_owned();
+                    }
+                }
+                if indicate_empty_lines && line_len == 0 && last_line {
+                    right_indicator = "·".to_owned();
+                }
+                if !wrap_lines
+                    && display_columns(&line, tab_width) > row_hscroll.saturating_add(content_width)
+                {
+                    right_indicator = "›".to_owned();
+                }
+                if let Some((_, arrow)) = overlay_arrows.iter().find(|(position, _)| {
+                    *position >= segment_pos
+                        && (*position < segment_pos.saturating_add(segment_len)
+                            || (*position == segment_pos.saturating_add(segment_len)
+                                && segment_end == line_len))
+                }) {
+                    left_indicator = arrow.clone();
+                }
+                place_fringe_glyph(
+                    &mut screen_rows,
+                    y,
+                    window_left,
+                    fringe_left_cells,
+                    &left_indicator,
+                    fringe_style,
+                );
+                place_fringe_glyph(
+                    &mut screen_rows,
+                    y,
+                    right_fringe_left,
+                    fringe_right_cells,
+                    &right_indicator,
+                    fringe_style,
+                );
                 images.extend(rendered.images.iter().filter_map(|image| {
                     let column = content_left.saturating_add(image.column);
                     (column < width).then(|| GridImage {
@@ -3557,6 +3784,18 @@ fn render_grid_internal(
                 }
                 place_rendered_row(&mut screen_rows[y], content_left, &rendered);
                 screen_row += 1;
+            }
+        }
+        if indicate_empty_lines && fringe_right_cells > 0 {
+            for row in screen_row..(window_top + text_rows).min(body_height) {
+                place_fringe_glyph(
+                    &mut screen_rows,
+                    row,
+                    right_fringe_left,
+                    fringe_right_cells,
+                    "·",
+                    fringe_style,
+                );
             }
         }
         let tick = i

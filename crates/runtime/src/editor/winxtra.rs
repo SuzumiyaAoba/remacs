@@ -825,12 +825,42 @@ fn f_window_new_normal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// PERSISTENT) with the live-window check; OUTSIDE-MARGINS is a
 /// boolean, so nil (not 0) on tty where fringes don't exist.
 fn f_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = win_live(i, &arg(&a, 0))?;
+    let window = win_live(i, &arg(&a, 0))?;
+    let stored = window.borrow().fringes;
+    let frame = frame_of_window(i, &window);
+    if !frame
+        .as_ref()
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame))
+    {
+        return Ok(Value::list(vec![
+            Value::Int(0),
+            Value::Int(0),
+            Value::Nil,
+            Value::Nil,
+        ]));
+    }
+    let default_width = |name: &str| {
+        frame
+            .as_ref()
+            .and_then(|frame| {
+                let parameter = i.q_soft(name)?;
+                Some(crate::lisp::eval::plist_get(
+                    &frame.borrow().params,
+                    parameter,
+                ))
+            })
+            .and_then(|value| match value {
+                Value::Int(width) => usize::try_from(width.max(0)).ok(),
+                _ => None,
+            })
+            .unwrap_or(8)
+    };
+    let (left, right, outside, persistent) = stored.unwrap_or((None, None, false, false));
     Ok(Value::list(vec![
-        Value::Int(0),
-        Value::Int(0),
-        Value::Nil,
-        Value::Nil,
+        Value::Int(left.unwrap_or_else(|| default_width("left-fringe")) as i128),
+        Value::Int(right.unwrap_or_else(|| default_width("right-fringe")) as i128),
+        if outside { Value::t() } else { Value::Nil },
+        if persistent { Value::t() } else { Value::Nil },
     ]))
 }
 
@@ -2806,10 +2836,20 @@ fn f_set_window_margins(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// `set-window-fringes' — window-live-p check; GNU returns t.
 fn f_set_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::t()),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
+    let window = win_live(i, &a[0])?;
+    let fringe_width = |i: &mut Interp, value: &Value| -> Result<Option<usize>, Flow> {
+        match value {
+            Value::Nil => Ok(None),
+            Value::Int(width) => {
+                Ok(Some(usize::try_from((*width).max(0)).unwrap_or(usize::MAX)))
+            }
+            other => Err(i.wrong_type_mut("integer-or-nil", other)),
+        }
+    };
+    let left = fringe_width(i, &a[1])?;
+    let right = fringe_width(i, &a[2])?;
+    window.borrow_mut().fringes = Some((left, right, arg(&a, 3).truthy(), arg(&a, 4).truthy()));
+    Ok(Value::t())
 }
 
 /// `set-window-scroll-bars' — window-live-p check; GNU returns nil.

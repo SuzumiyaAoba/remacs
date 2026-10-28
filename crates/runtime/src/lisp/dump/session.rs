@@ -143,6 +143,8 @@ struct WindowData {
     minibuffer: bool,
     params: Ref,
     margins: (usize, usize),
+    #[serde(default)]
+    fringes: Option<(Option<usize>, Option<usize>, bool, bool)>,
     suspend_hscroll: bool,
     old_point: usize,
     #[serde(default)]
@@ -477,6 +479,7 @@ impl Image {
             w.minibuffer = data.minibuffer;
             w.params = params;
             w.margins = data.margins;
+            w.fringes = data.fringes;
             w.suspend_hscroll = data.suspend_hscroll;
             w.old_point = data.old_point;
             w.old_point_marker = old_point_marker;
@@ -955,6 +958,7 @@ impl Image {
             minibuffer: w.minibuffer,
             params: e.value(&w.params)?,
             margins: w.margins,
+            fringes: w.fringes,
             suspend_hscroll: w.suspend_hscroll,
             old_point: w.old_point_position(),
             old_point_marker: if w.old_point_marker.is_nil() { None } else { Some(e.value(&w.old_point_marker)?) },
