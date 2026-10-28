@@ -235,9 +235,11 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
            "[0-9]+:[0-9]+:[0-9]+"
            (lambda (match) (make-string (length match) 32))
            date t t))
+         (zone-regexp
+          "\\(?:^\\|[^[:alnum:]]\\)\\([+-][0-9][0-9]:?[0-9][0-9]\\)\\(?:$\\|[^0-9]\\)")
          (date-without-zone
           (replace-regexp-in-string
-           "\\(?:^\\|[^[:alnum:]]\\)[+-][0-9][0-9]:?[0-9][0-9]\\(?:$\\|[^0-9]\\)"
+           zone-regexp
            (lambda (match) (make-string (length match) 32))
            date-without-time t t))
          (day-of-month
@@ -258,6 +260,17 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
       (aset date-with-hyphen-delimiters (match-beginning 0) 32)
       (setq start (match-end 0)))
     (setq start 0)
+    ;; RFC 6265 ignores timezone tokens and interprets the parsed fields in
+    ;; UTC.  Remove numeric offsets from the output using positions found
+    ;; after the time token has been masked.
+    (while (string-match zone-regexp date-without-time start)
+      (let ((offset (match-beginning 1))
+            (offset-end (match-end 1)))
+        (while (< offset offset-end)
+          (aset date-with-hyphen-delimiters offset 32)
+          (setq offset (1+ offset))))
+      (setq start (match-end 0)))
+    (setq start 0)
     (while (and (not year-range)
                 (string-match
                  "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]\\)\\(?:$\\|[^0-9]\\)"
@@ -267,12 +280,18 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
             (setq year-range
                   (list (match-beginning 1) (match-end 1) year))
           (setq start (match-end 1)))))
-    (date-to-time
-     (if year-range
-         (concat (substring date-with-hyphen-delimiters 0 (nth 0 year-range))
-                 (number-to-string (+ 2000 (nth 2 year-range)))
-                 (substring date-with-hyphen-delimiters (nth 1 year-range)))
-       date-with-hyphen-delimiters))))
+    (let ((date-for-time
+           (if year-range
+               (concat (substring date-with-hyphen-delimiters
+                                  0 (nth 0 year-range))
+                       (number-to-string (+ 2000 (nth 2 year-range)))
+                       (substring date-with-hyphen-delimiters
+                                  (nth 1 year-range)))
+             date-with-hyphen-delimiters)))
+      ;; Ignore any trailing timezone name (for example, PST or GMT).
+      (when (string-match "[ \t]+[[:alpha:]]+[ \t]*\\'" date-for-time)
+        (setq date-for-time (substring date-for-time 0 (match-beginning 0))))
+      (date-to-time (concat date-for-time " GMT")))))
 
 (defun url-cookie-expired-p (cookie)
   "Return non-nil if COOKIE is expired."
