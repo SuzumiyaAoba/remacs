@@ -247,6 +247,7 @@ Note: LIST has to be sorted over `<'."
 	(setq ranges (cdr ranges)))
       out)))
 
+;;Remacs: equality checks below must compare bignum endpoints numerically.
 (defun range-remove (range1 range2)
   "Return a range that has all numbers from RANGE2 removed from RANGE1.
 The returned range is always a list.  RANGE2 can also be a unsorted
@@ -286,7 +287,7 @@ modified."
 		     r2-min (if (consp r2) (car r2) r2)
 		     r2-max (if (consp r2) (cdr r2) r2)))
 	      ((and (<= r1-min r2-min) (<= r2-max r1-max)) ; r2 contained in r1
-	       (if (eq r1-min (1- r2-min))
+	       (if (= r1-min (1- r2-min))
 		   (push r1-min out)
 		 (push (cons r1-min (1- r2-min)) out))
 	       (pop range2)
@@ -300,7 +301,7 @@ modified."
 		     r2-min (if (consp r2) (car r2) r2)
 		     r2-max (if (consp r2) (cdr r2) r2)))
 	      ((and (<= r2-min r1-max) (<= r1-max r2-max)) ; r2 overlap max r1
-	       (if (eq r1-min (1- r2-min))
+	       (if (= r1-min (1- r2-min))
 		   (push r1-min out)
 		 (push (cons r1-min (1- r2-min)) out))
 	       (pop range1)
@@ -309,14 +310,14 @@ modified."
 		     r1-max (if (consp r1) (cdr r1) r1)))
 	      ((< r1-max r2-min)	; r2 > r1
 	       (pop range1)
-	       (if (eq r1-min r1-max)
+	       (if (= r1-min r1-max)
 		   (push r1-min out)
 		 (push (cons r1-min r1-max) out))
 	       (setq r1 (car range1)
 		     r1-min (if (consp r1) (car r1) r1)
 		     r1-max (if (consp r1) (cdr r1) r1)))))
       (when r1
-	(if (eq r1-min r1-max)
+	(if (= r1-min r1-max)
 	    (push r1-min out)
 	  (push (cons r1-min r1-max) out))
 	(pop range1))

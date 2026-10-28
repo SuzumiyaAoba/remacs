@@ -2281,6 +2281,18 @@ fn cond_star_range_timer_list_copyright_parity() {
 }
 
 #[test]
+fn range_remove_normalizes_bignum_singletons() {
+    assert_eq!(
+        ev("(progn (require 'range)
+                  (let* ((n (lsh 1 80))
+                         (result (range-remove (list (cons n (1+ n)))
+                                               (list (1+ n)))))
+                    (list result (range-uncompress result))))"),
+        "((1208925819614629174706176) (1208925819614629174706176))"
+    );
+}
+
+#[test]
 fn msb_rect_xml_and_defsubst_parity() {
     // GNU -Q: msb-mode/xml-parse-region are autoload cells.
     // `rectangle-mark-mode' is a prelude-defined minor mode here (GNU
