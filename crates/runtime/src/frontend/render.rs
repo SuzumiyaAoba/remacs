@@ -338,6 +338,8 @@ pub struct Grid {
     pub default_bg: Option<CellColor>,
     /// Pixel height for each display row. Empty grids use the frontend default.
     pub row_heights: Vec<usize>,
+    /// Base frame line height before line spacing and per-line overrides.
+    pub default_line_height: usize,
     /// Default text row height used when the viewport needs more rows.
     pub default_row_height: usize,
     /// Pointer shape at the current mouse position, if it is over buffer text.
@@ -410,6 +412,7 @@ impl Grid {
             blink_interval: 0.5,
             default_bg: None,
             row_heights: Vec::new(),
+            default_line_height: 19,
             default_row_height: 19,
             hover_cursor: None,
             input: None,
@@ -4228,6 +4231,7 @@ fn render_grid_internal(
     let default_bg = default_style.bg;
     let mut attrs = vec![vec![default_style; width]; height];
     let mut row_heights = vec![19; height];
+    let mut default_line_height = 19;
     let mut default_row_height = 19;
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
@@ -4276,6 +4280,7 @@ fn render_grid_internal(
                 blink_interval,
                 default_bg,
                 row_heights,
+                default_line_height,
                 default_row_height,
                 hover_cursor,
                 input,
@@ -4296,6 +4301,7 @@ fn render_grid_internal(
         .unwrap_or(8);
     let frame_char_height = crate::editor::frame_char_height(i, &frame).max(1);
     row_heights.fill(frame_char_height);
+    default_line_height = frame_char_height;
     default_row_height = frame_char_height;
     let frame_line_spacing = i
         .q_soft("line-spacing")
@@ -5576,6 +5582,7 @@ fn render_grid_internal(
         blink_interval,
         default_bg,
         row_heights,
+        default_line_height,
         default_row_height,
         hover_cursor,
         input,

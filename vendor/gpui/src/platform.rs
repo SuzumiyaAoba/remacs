@@ -345,6 +345,12 @@ impl From<DisplayId> for u32 {
     }
 }
 
+impl From<u32> for DisplayId {
+    fn from(id: u32) -> Self {
+        Self(id)
+    }
+}
+
 impl Debug for DisplayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "DisplayId({})", self.0)
@@ -463,6 +469,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn resize(&mut self, size: Size<Pixels>);
+    fn set_position(&mut self, _position: Point<Pixels>, _display_id: Option<u32>) {}
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;

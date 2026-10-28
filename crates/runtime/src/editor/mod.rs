@@ -6009,11 +6009,13 @@ pub(crate) fn frame_parameter_positive_size(
 }
 
 pub(crate) fn frame_char_width(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
-    frame_parameter_positive_size(i, frame, "char-width", 1)
+    let fallback = if frame_is_graphical(i, frame) { 8 } else { 1 };
+    frame_parameter_positive_size(i, frame, "char-width", fallback)
 }
 
 pub(crate) fn frame_char_height(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
-    frame_parameter_positive_size(i, frame, "char-height", 1)
+    let fallback = if frame_is_graphical(i, frame) { 19 } else { 1 };
+    frame_parameter_positive_size(i, frame, "char-height", fallback)
 }
 
 pub(crate) fn frame_pixel_width(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
@@ -6465,6 +6467,15 @@ fn store_frame_parameter(
     } else {
         let new = crate::lisp::eval::plist_put_front(&f.borrow().params, &key, value.clone());
         f.borrow_mut().params = new;
+        match (name.as_deref(), value.int()) {
+            (Some("width"), Some(width)) => {
+                f.borrow_mut().width = usize::try_from(width.max(1)).unwrap_or(usize::MAX);
+            }
+            (Some("height"), Some(height)) => {
+                f.borrow_mut().height = usize::try_from(height.max(1)).unwrap_or(usize::MAX);
+            }
+            _ => {}
+        }
         if name.as_deref() == Some("name") {
             let current = f.borrow().name.borrow().clone();
             let new_value = if value.is_nil() {
@@ -6565,9 +6576,21 @@ fn f_frame_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_frame_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU decode_live_frame.
-    let _ = frame_live(i, &arg(&a, 0))?;
-    Ok(Value::cons(Value::Int(0), Value::Int(0)))
+    let frame = frame_live(i, &arg(&a, 0))?;
+    if !frame_is_graphical(i, &frame) {
+        return Ok(Value::cons(Value::Int(0), Value::Int(0)));
+    }
+    let params = frame.borrow().params.clone();
+    let parameter = |i: &Interp, name: &str| {
+        i.q_soft(name)
+            .map(|symbol| crate::lisp::eval::plist_get_v(&params, &Value::Sym(symbol)))
+            .and_then(|value| value.int())
+            .unwrap_or(0)
+    };
+    Ok(Value::cons(
+        Value::Int(parameter(i, "left")),
+        Value::Int(parameter(i, "top")),
+    ))
 }
 /// GNU frame.c `frame-edges' et al decode with a plain
 /// `(error "X is not a live frame")' — not a `frame-live-p' wta.

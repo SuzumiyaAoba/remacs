@@ -1696,6 +1696,11 @@ impl Window {
         self.platform_window.resize(size);
     }
 
+    /// Set the outer position of the window in the platform coordinate space.
+    pub fn set_position(&mut self, position: Point<Pixels>, display_id: Option<u32>) {
+        self.platform_window.set_position(position, display_id);
+    }
+
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()

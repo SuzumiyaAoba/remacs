@@ -61,8 +61,8 @@ fn grid_row_at_y(grid: &Grid, y: Pixels) -> usize {
     }
     let y = f32::from(y).max(0.0);
     let mut top = 0.0;
-    for (row, height) in grid.row_heights.iter().enumerate() {
-        let bottom = top + (*height).max(1) as f32;
+    for row in 0..grid.row_heights.len() {
+        let bottom = top + f32::from(grid_row_height(grid, row, px(LINE_HEIGHT))).max(1.0);
         if y < bottom {
             return row;
         }

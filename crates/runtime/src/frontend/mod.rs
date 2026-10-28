@@ -91,6 +91,12 @@ pub enum InputEvent {
         position: MousePosition,
         line_count: usize,
     },
+    /// A native window manager moved a graphical frame.
+    FrameMoved {
+        frame_id: usize,
+        left: i128,
+        top: i128,
+    },
     /// Move a window's vertical or horizontal scroll bar to a logical offset.
     ScrollBar {
         window_id: usize,
@@ -165,6 +171,10 @@ pub trait KeyIo {
     /// frame before handling that event. Single-window front-ends inherit
     /// the default.
     fn take_frame_selection(&mut self) -> Option<usize> {
+        None
+    }
+    /// Native frame position change consumed by a key-only nested loop.
+    fn take_frame_moved(&mut self) -> Option<(usize, i128, i128)> {
         None
     }
     /// Visibility change reported by the native window manager.

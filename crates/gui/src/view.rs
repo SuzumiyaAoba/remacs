@@ -26,32 +26,65 @@ const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
 
 pub(super) fn grid_row_top(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
-    row_top_from_heights(&grid.row_heights, row, fallback)
+    row_top_from_heights(
+        &grid.row_heights,
+        grid.default_line_height,
+        row,
+        fallback,
+    )
 }
 
 pub(super) fn grid_row_height(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
-    row_height_from_heights(&grid.row_heights, row, fallback)
+    row_height_from_heights(
+        &grid.row_heights,
+        grid.default_line_height,
+        row,
+        fallback,
+    )
 }
 
-fn row_top_from_heights(row_heights: &[usize], row: usize, fallback: Pixels) -> Pixels {
+fn adjusted_row_height(height: usize, default_line_height: usize, fallback: Pixels) -> Pixels {
+    let extra = height.saturating_sub(default_line_height.max(1));
+    fallback.max(px(1.0)) + px(extra as f32)
+}
+
+fn row_top_from_heights(
+    row_heights: &[usize],
+    default_line_height: usize,
+    row: usize,
+    fallback: Pixels,
+) -> Pixels {
     if row_heights.is_empty() {
         return fallback * row as f32;
     }
-    let height = row_heights.iter().take(row).copied().sum::<usize>();
-    px(height as f32)
+    let height = row_heights
+        .iter()
+        .take(row)
+        .map(|height| adjusted_row_height(*height, default_line_height, fallback))
+        .fold(px(0.0), |total, height| total + height);
+    height
 }
 
-fn row_height_from_heights(row_heights: &[usize], row: usize, fallback: Pixels) -> Pixels {
+fn row_height_from_heights(
+    row_heights: &[usize],
+    default_line_height: usize,
+    row: usize,
+    fallback: Pixels,
+) -> Pixels {
     row_heights
         .get(row)
         .copied()
-        .map(|height| px(height as f32))
+        .map(|height| adjusted_row_height(height, default_line_height, fallback))
         .unwrap_or(fallback)
 }
 
 fn rows_fitting_viewport(grid: &Grid, height: Pixels, fallback: Pixels) -> usize {
     let available = f32::from(height);
-    let default_height = grid.default_row_height.max(1) as f32;
+    let default_height = f32::from(adjusted_row_height(
+        grid.default_row_height,
+        grid.default_line_height,
+        fallback,
+    ));
     let mut used = 0.0;
     let mut rows = 0;
     loop {
@@ -59,7 +92,13 @@ fn rows_fitting_viewport(grid: &Grid, height: Pixels, fallback: Pixels) -> usize
             .row_heights
             .get(rows)
             .copied()
-            .map(|height| height.max(1) as f32)
+            .map(|height| {
+                f32::from(adjusted_row_height(
+                    height,
+                    grid.default_line_height,
+                    fallback,
+                ))
+            })
             .unwrap_or_else(|| {
                 if grid.row_heights.is_empty() {
                     f32::from(fallback).max(1.0)
@@ -252,7 +291,10 @@ pub(super) struct EditorView {
     rows: usize,
     input: TextInputState,
     cell_width: Pixels,
+    line_height: Pixels,
     geometry: Option<GuiGeometry>,
+    runtime_frame_size: Option<(usize, usize)>,
+    runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
     focus_subscriptions: Vec<Subscription>,
@@ -293,7 +335,10 @@ impl EditorView {
             rows: 24,
             input: TextInputState::default(),
             cell_width: px(8.0),
+            line_height: px(LINE_HEIGHT),
             geometry: None,
+            runtime_frame_size: None,
+            runtime_frame_position: None,
             scroll_bar_drag: None,
             toolbar_pressed: false,
             focus_subscriptions: Vec::new(),
@@ -310,9 +355,78 @@ impl EditorView {
         }
     }
 
-    pub(super) fn set_frame_id(&self, frame_id: usize) {
+    pub(super) fn set_frame_id(&mut self, frame_id: usize) {
         self.tx.set_frame_id(frame_id);
         self.mouse_face_position.set(None);
+        self.geometry = None;
+        self.runtime_frame_size = None;
+        self.runtime_frame_position = None;
+    }
+
+    pub(super) fn native_position(&self) -> Option<(i128, i128)> {
+        self.geometry
+            .as_ref()
+            .map(|geometry| (geometry.frame_left, geometry.frame_top))
+    }
+
+    pub(super) fn needs_frame_size_update(&mut self, width: usize, height: usize) -> bool {
+        let size = (width.max(10), height.max(3));
+        let changed = self.runtime_frame_size != Some(size);
+        self.runtime_frame_size = Some(size);
+        changed
+    }
+
+    pub(super) fn needs_frame_position_update(
+        &mut self,
+        left: Option<i128>,
+        top: Option<i128>,
+    ) -> bool {
+        let position = (left, top);
+        let changed = self.runtime_frame_position != Some(position);
+        self.runtime_frame_position = Some(position);
+        changed
+    }
+
+    pub(super) fn resize_to_cells(
+        &mut self,
+        width: usize,
+        height: usize,
+        window: &mut Window,
+    ) {
+        let width = width.max(10);
+        let height = height.max(3);
+        let default_style = self.grid.default_style;
+        let family = default_style
+            .font_family
+            .and_then(|id| self.grid.font_families.get(id as usize))
+            .cloned()
+            .unwrap_or_else(|| "Menlo".to_owned());
+        let mut text_font = font(family);
+        if let Some(weight) = default_style.font_weight {
+            text_font.weight = FontWeight(weight as f32);
+        }
+        text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
+        let font_size = default_style
+            .font_height
+            .map(|height| px(height as f32 / 10.0))
+            .unwrap_or(px(FONT_SIZE));
+        let font_id = window.text_system().resolve_font(&text_font);
+        self.cell_width = window
+            .text_system()
+            .advance(font_id, font_size, '0')
+            .map(|metrics| metrics.width)
+            .unwrap_or(px(8.0));
+        self.line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
+        let viewport = window.viewport_size();
+        let current_width = (f32::from(viewport.width) / f32::from(self.cell_width)) as usize;
+        let current_height = rows_fitting_viewport(&self.grid, viewport.height, self.line_height);
+        if (current_width.max(10), current_height.max(3)) == (width, height) {
+            return;
+        }
+        let pixel_height = (0..height)
+            .map(|row| f32::from(grid_row_height(&self.grid, row, px(self.grid.default_row_height.max(1) as f32))))
+            .sum::<f32>();
+        window.resize(size(self.cell_width * width as f32, px(pixel_height)));
     }
 
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
@@ -363,6 +477,7 @@ impl Render for EditorView {
             .map(|height| px(height as f32 / 10.0))
             .unwrap_or(px(FONT_SIZE));
         let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
+        self.line_height = line_height;
         let font_id = window.text_system().resolve_font(&text_font);
         let cell_width = window
             .text_system()
@@ -380,7 +495,9 @@ impl Render for EditorView {
         if (cols, rows) != (self.cols, self.rows) {
             self.cols = cols;
             self.rows = rows;
-            let _ = self.tx.send(GuiEvent::Resize(cols, rows));
+            if self.tx.frame_id().is_some() {
+                let _ = self.tx.send(GuiEvent::Resize(cols, rows));
+            }
         }
         let scale_factor = window.scale_factor();
         let to_pixels = |value: Pixels| f32::from(value).round() as i128;
@@ -428,7 +545,9 @@ impl Render for EditorView {
         };
         if self.geometry.as_ref() != Some(&geometry) {
             self.geometry = Some(geometry.clone());
-            let _ = self.tx.send(GuiEvent::Geometry(geometry));
+            if self.tx.frame_id().is_some() {
+                let _ = self.tx.send(GuiEvent::Geometry(geometry));
+            }
         }
 
         #[cfg(target_os = "macos")]
@@ -487,7 +606,9 @@ impl Render for EditorView {
         let images = grid.images.clone();
         let help_echoes = grid.help_echoes.clone();
         let help_row_heights = grid.row_heights.clone();
+        let help_default_line_height = grid.default_line_height;
         let image_row_heights = grid.row_heights.clone();
+        let image_default_line_height = grid.default_line_height;
         let explicit_tooltip = grid.tooltip.clone();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
@@ -1208,13 +1329,29 @@ impl Render for EditorView {
                 images
                     .into_iter()
                     .map(|image| {
-                        grid_image_element(image, cell_width, line_height, &image_row_heights)
+                        grid_image_element(
+                            image,
+                            cell_width,
+                            line_height,
+                            &image_row_heights,
+                            image_default_line_height,
+                        )
                     }),
             )
             .children(help_echoes.into_iter().map(|region| {
                 let text = region.text;
-                let top = row_top_from_heights(&help_row_heights, region.row, line_height);
-                let height = row_height_from_heights(&help_row_heights, region.row, line_height);
+                let top = row_top_from_heights(
+                    &help_row_heights,
+                    help_default_line_height,
+                    region.row,
+                    line_height,
+                );
+                let height = row_height_from_heights(
+                    &help_row_heights,
+                    help_default_line_height,
+                    region.row,
+                    line_height,
+                );
                 div()
                     .absolute()
                     .left(cell_width * region.left as f32)
@@ -1277,6 +1414,7 @@ fn grid_image_element(
     cell_width: Pixels,
     line_height: Pixels,
     row_heights: &[usize],
+    default_line_height: usize,
 ) -> impl IntoElement {
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
@@ -1303,7 +1441,12 @@ fn grid_image_element(
     div()
         .absolute()
         .left(cell_width * image.column as f32)
-        .top(row_top_from_heights(row_heights, image.row, line_height))
+        .top(row_top_from_heights(
+            row_heights,
+            default_line_height,
+            image.row,
+            line_height,
+        ))
         .child(source)
 }
 

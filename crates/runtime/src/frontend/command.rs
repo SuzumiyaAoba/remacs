@@ -194,6 +194,11 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 let timeout = Duration::from_millis(50);
                 let polled = term.borrow_mut().poll_input(timeout)?;
                 apply_frame_selection(&term, i);
+                if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved()
+                    && let Err(flow) = dispatch_frame_moved(i, frame_id, left, top)
+                {
+                    report_flow(i, flow);
+                }
                 match polled {
                     Some(input) => input,
                     None => continue,
@@ -253,6 +258,15 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 offset,
                 max_offset,
             } => dispatch_scroll_bar(i, window_id, orientation, offset, max_offset),
+            InputEvent::FrameMoved {
+                frame_id,
+                left,
+                top,
+            } => {
+                if let Err(flow) = dispatch_frame_moved(i, frame_id, left, top) {
+                    report_flow(i, flow);
+                }
+            }
         }
         render_needed = true;
         i.macro_replaying = false;
@@ -1200,6 +1214,41 @@ fn mouse_position_value(i: &Interp, position: MousePosition) -> Option<Value> {
     ]))
 }
 
+fn dispatch_frame_moved(
+    i: &mut Interp,
+    frame_id: usize,
+    left: i128,
+    top: i128,
+) -> Result<(), crate::lisp::error::Flow> {
+    let Some(frame) = i
+        .frames
+        .iter()
+        .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let left_parameter = Value::Sym(i.intern("left"));
+    let top_parameter = Value::Sym(i.intern("top"));
+    let mut parameters = frame.borrow().params.clone();
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &left_parameter,
+        Value::Int(left),
+    );
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &top_parameter,
+        Value::Int(top),
+    );
+    frame.borrow_mut().params = parameters;
+
+    let hook = Value::Sym(i.intern("move-frame-functions"));
+    let runner = Value::Sym(i.intern("run-hook-with-args"));
+    i.apply(&runner, vec![hook, Value::Frame(frame)])?;
+    Ok(())
+}
+
 /// Insert text committed by the operating system without interpreting
 /// control characters such as newline and TAB as key bindings.
 fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mut bool) {
@@ -1464,6 +1513,9 @@ fn minibuf_loop<T: KeyIo>(
             }
         };
         apply_frame_selection(term, i);
+        if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved() {
+            dispatch_frame_moved(i, frame_id, left, top)?;
+        }
         let input = match polled {
             Ok(Some(input)) => input,
             Ok(None) => continue,
@@ -1537,6 +1589,11 @@ fn minibuf_loop<T: KeyIo>(
                 offset,
                 max_offset,
             } => dispatch_scroll_bar(i, window_id, orientation, offset, max_offset),
+            InputEvent::FrameMoved {
+                frame_id,
+                left,
+                top,
+            } => dispatch_frame_moved(i, frame_id, left, top)?,
         }
         render_needed = true;
         if let Some(f) = i.minibuf_exit_fn.take() {

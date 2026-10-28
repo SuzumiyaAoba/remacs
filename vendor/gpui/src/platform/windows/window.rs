@@ -562,6 +562,32 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn set_position(&mut self, position: Point<Pixels>, _display_id: Option<u32>) {
+        let hwnd = self.0.hwnd;
+        let bounds =
+            crate::bounds(position, self.bounds().size).to_device_pixels(self.scale_factor());
+        let rect = calculate_window_rect(bounds, self.0.state.borrow().border_offset);
+
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                    .context("unable to set window position")
+                    .log_err();
+                }
+            })
+            .detach();
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.state.borrow().scale_factor
     }

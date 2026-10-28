@@ -986,6 +986,50 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn set_position(&mut self, position: Point<Pixels>, display_id: Option<u32>) {
+        let this = self.0.lock();
+        let window = this.native_window;
+        let frame = unsafe { NSWindow::frame(window) };
+        let screen = display_id
+            .and_then(|display_id| {
+                unsafe {
+                    let screens = NSScreen::screens(nil);
+                    let count = NSArray::count(screens) as usize;
+                    (0..count).find_map(|index| {
+                        let screen = NSArray::objectAtIndex(screens, index as u64);
+                        let description = NSScreen::deviceDescription(screen);
+                        let key = NSString::alloc(nil).init_str("NSScreenNumber");
+                        let key: id = msg_send![key, autorelease];
+                        let number = NSDictionary::objectForKey_(description, key);
+                        let number: u32 = msg_send![number, unsignedIntValue];
+                        (number == display_id).then_some(screen)
+                    })
+                }
+            })
+            .unwrap_or_else(|| unsafe { NSWindow::screen(window) });
+        let origin = if screen.is_null() {
+            let bounds = this.bounds();
+            let dx = (position.x.0 - bounds.origin.x.0) as f64;
+            let dy = (position.y.0 - bounds.origin.y.0) as f64;
+            NSPoint::new(frame.origin.x + dx, frame.origin.y - dy)
+        } else {
+            let screen_frame = unsafe { NSScreen::frame(screen) };
+            NSPoint::new(
+                screen_frame.origin.x + position.x.0 as f64,
+                screen_frame.origin.y + screen_frame.size.height
+                    - position.y.0 as f64
+                    - frame.size.height,
+            )
+        };
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    let _: () = msg_send![window, setFrameOrigin: origin];
+                }
+            })
+            .detach();
+    }
+
     fn merge_all_windows(&self) {
         let native_window = self.0.lock().native_window;
         unsafe extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {

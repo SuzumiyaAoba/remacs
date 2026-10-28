@@ -464,6 +464,7 @@ pub(super) struct ChanIo {
     pub(super) render_requested: bool,
     pub(super) geometry: Option<GuiGeometry>,
     frame_sizes: HashMap<usize, (usize, usize)>,
+    frame_runtime_sizes: HashMap<usize, (usize, usize)>,
     frame_geometries: HashMap<usize, GuiGeometry>,
     frame_grids: HashMap<usize, Grid>,
     latest_snapshots: Vec<FrameSnapshot>,
@@ -472,6 +473,7 @@ pub(super) struct ChanIo {
     pending_frame_selection: Option<usize>,
     pending_frame_visibility: Option<(usize, bool)>,
     pending_frame_focus: Option<(usize, bool)>,
+    pending_frame_moved: Option<(usize, i128, i128)>,
     pending_frame_delete: Option<usize>,
     pending_power_off: bool,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
@@ -870,13 +872,33 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::Geometry(geometry) => {
-                if let Some(frame_id) = self.active_frame_id {
-                    self.frame_geometries.insert(frame_id, geometry.clone());
+                let frame_move = if let Some(frame_id) = self.active_frame_id {
+                    let previous = self.frame_geometries.insert(frame_id, geometry.clone());
+                    previous
+                        .filter(|old| {
+                            old.frame_left != geometry.frame_left
+                                || old.frame_top != geometry.frame_top
+                        })
+                        .map(|_| frame_id)
                 } else {
-                    self.geometry = Some(geometry.clone());
-                }
+                    let previous = self.geometry.replace(geometry.clone());
+                    previous
+                        .filter(|old| {
+                            old.frame_left != geometry.frame_left
+                                || old.frame_top != geometry.frame_top
+                        })
+                        .and(self.active_frame_id)
+                };
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
-                Ok(None)
+                if let Some(frame_id) = frame_move {
+                    Ok(Some(InputEvent::FrameMoved {
+                        frame_id,
+                        left: geometry.frame_left,
+                        top: geometry.frame_top,
+                    }))
+                } else {
+                    Ok(None)
+                }
             }
             GuiEvent::MouseMove {
                 frame_id,
@@ -997,12 +1019,31 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::Geometry(geometry) => {
-                if let Some(frame_id) = self.active_frame_id {
-                    self.frame_geometries.insert(frame_id, geometry.clone());
+                let moved_frame = if let Some(frame_id) = self.active_frame_id {
+                    self.frame_geometries
+                        .insert(frame_id, geometry.clone())
+                        .filter(|old| {
+                            old.frame_left != geometry.frame_left
+                                || old.frame_top != geometry.frame_top
+                        })
+                        .map(|_| frame_id)
                 } else {
-                    self.geometry = Some(geometry.clone());
-                }
+                    self.geometry
+                        .replace(geometry.clone())
+                        .filter(|old| {
+                            old.frame_left != geometry.frame_left
+                                || old.frame_top != geometry.frame_top
+                        })
+                        .and(self.active_frame_id)
+                };
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
+                if let Some(frame_id) = moved_frame {
+                    self.pending_frame_moved = Some((
+                        frame_id,
+                        geometry.frame_left,
+                        geometry.frame_top,
+                    ));
+                }
                 Ok(None)
             }
             GuiEvent::MouseMove {
@@ -1051,6 +1092,8 @@ impl KeyIo for ChanIo {
         let live_ids: std::collections::HashSet<_> =
             live_frames.iter().map(|frame| frame.borrow().id).collect();
         self.frame_grids.retain(|id, _| live_ids.contains(id));
+        self.frame_runtime_sizes
+            .retain(|id, _| live_ids.contains(id));
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
         let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
         let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
@@ -1062,16 +1105,55 @@ impl KeyIo for ChanIo {
                 let frame = frame.borrow();
                 (frame.id, frame.width, frame.height)
             };
-            let (width, height) = *self
+            let (mut width, mut height) = *self
                 .frame_sizes
                 .entry(frame_id)
                 .or_insert((frame_width, frame_height));
             if (frame_width, frame_height) != (width, height) {
+                let graphical =
+                    self.gui_requests.is_some() && frame_system_is_graphical(i, frame);
+                let last_runtime_size = self
+                    .frame_runtime_sizes
+                    .get(&frame_id)
+                    .copied()
+                    .unwrap_or((frame_width, frame_height));
+                let runtime_requested_size = graphical
+                    && (frame_width, frame_height) != last_runtime_size;
+                if runtime_requested_size {
+                    // Lisp changed the requested frame size. Keep it as the
+                    // target size and let the native window report its actual
+                    // cell dimensions through the ordinary resize event.
+                    (width, height) = (frame_width, frame_height);
+                    self.frame_sizes.insert(frame_id, (width, height));
+                }
                 remacs_runtime::editor::reflow_frame_windows(frame, width, height);
-                let mut frame = frame.borrow_mut();
-                frame.width = width;
-                frame.height = height;
+                if !runtime_requested_size {
+                    let mut frame = frame.borrow_mut();
+                    frame.width = width;
+                    frame.height = height;
+                    let mut params = frame.params.clone();
+                    if let Some(parameter) = i.intern_soft("width") {
+                        params = remacs_runtime::lisp::eval::plist_put_front(
+                            &params,
+                            &Value::Sym(parameter),
+                            Value::Int(width as i128),
+                        );
+                    }
+                    if let Some(parameter) = i.intern_soft("height") {
+                        params = remacs_runtime::lisp::eval::plist_put_front(
+                            &params,
+                            &Value::Sym(parameter),
+                            Value::Int(height as i128),
+                        );
+                    }
+                    frame.params = params;
+                }
             }
+            let runtime_size = {
+                let frame = frame.borrow();
+                (frame.width, frame.height)
+            };
+            self.frame_runtime_sizes.insert(frame_id, runtime_size);
 
             let geometry = self.frame_geometries.get(&frame_id).cloned().or_else(|| {
                 (Some(frame_id) == self.primary_frame_id)
@@ -1114,8 +1196,6 @@ impl KeyIo for ChanIo {
                     (keys.char_height, Value::Int(geometry.char_height)),
                     (keys.grid_cols, Value::Int(geometry.cols as i128)),
                     (keys.grid_rows, Value::Int(geometry.rows as i128)),
-                    (keys.frame_left, Value::Int(geometry.frame_left)),
-                    (keys.frame_top, Value::Int(geometry.frame_top)),
                     (keys.scale_factor, Value::float(geometry.scale_factor)),
                     (keys.monitor_attributes, Value::list(monitors)),
                 ] {
@@ -1125,6 +1205,30 @@ impl KeyIo for ChanIo {
                         value,
                     );
                 }
+                let left_parameter = Value::Sym(keys.frame_left);
+                let current_left = frame_parameter_value(i, frame, "left");
+                let left = if matches!(&current_left, Value::Int(left) if *left != geometry.frame_left) {
+                    current_left
+                } else {
+                    Value::Int(geometry.frame_left)
+                };
+                params = remacs_runtime::lisp::eval::plist_put_front(
+                    &params,
+                    &left_parameter,
+                    left,
+                );
+                let top_parameter = Value::Sym(keys.frame_top);
+                let current_top = frame_parameter_value(i, frame, "top");
+                let top = if matches!(&current_top, Value::Int(top) if *top != geometry.frame_top) {
+                    current_top
+                } else {
+                    Value::Int(geometry.frame_top)
+                };
+                params = remacs_runtime::lisp::eval::plist_put_front(
+                    &params,
+                    &top_parameter,
+                    top,
+                );
                 frame.borrow_mut().params = params;
             }
 
@@ -1213,6 +1317,10 @@ impl KeyIo for ChanIo {
 
     fn take_frame_selection(&mut self) -> Option<usize> {
         self.pending_frame_selection.take()
+    }
+
+    fn take_frame_moved(&mut self) -> Option<(usize, i128, i128)> {
+        self.pending_frame_moved.take()
     }
 
     fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
@@ -1429,7 +1537,10 @@ fn start_logic_inner(
             let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
             let mut frame_sizes = HashMap::new();
             if let Some(frame_id) = selected_frame_id {
-                frame_sizes.insert(frame_id, (80, 24));
+                if let Some(frame) = &i.selected_frame {
+                    let frame = frame.borrow();
+                    frame_sizes.insert(frame_id, (frame.width, frame.height));
+                }
             }
             let io = ChanIo {
                 events: event_rx,
@@ -1443,6 +1554,7 @@ fn start_logic_inner(
                 render_requested: false,
                 geometry: None,
                 frame_sizes,
+                frame_runtime_sizes: HashMap::new(),
                 frame_geometries: HashMap::new(),
                 frame_grids: HashMap::new(),
                 latest_snapshots: Vec::new(),
@@ -1451,6 +1563,7 @@ fn start_logic_inner(
                 pending_frame_selection: None,
                 pending_frame_visibility: None,
                 pending_frame_focus: None,
+                pending_frame_moved: None,
                 pending_frame_delete: None,
                 pending_power_off: false,
                 geometry_symbols: if enable_gui_selections {

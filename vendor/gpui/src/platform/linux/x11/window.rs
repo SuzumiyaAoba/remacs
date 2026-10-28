@@ -1224,6 +1224,14 @@ impl PlatformWindow for X11Window {
         xcb_flush(&self.0.xcb);
     }
 
+    fn set_position(&mut self, position: Point<Pixels>, _display_id: Option<u32>) {
+        let bounds = crate::bounds(position, self.bounds().size)
+            .to_device_pixels(self.scale_factor())
+            .map(|coordinate| coordinate.0);
+        self.set_bounds(bounds).log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.state.borrow().scale_factor
     }

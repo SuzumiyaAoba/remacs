@@ -2647,9 +2647,25 @@ fn f_set_frame_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = crate::editor::frame_live(i, &arg(&a, 0))?;
     let w = want_int(i, &a[1])?;
     let h = want_int(i, &a[2])?;
+    let width = w.max(1);
+    let height = h.max(1);
+    let width_parameter = Value::Sym(i.intern("width"));
+    let height_parameter = Value::Sym(i.intern("height"));
     let mut fb = f.borrow_mut();
-    fb.width = w.max(1) as usize;
-    fb.height = h.max(1) as usize;
+    fb.width = usize::try_from(width).unwrap_or(usize::MAX);
+    fb.height = usize::try_from(height).unwrap_or(usize::MAX);
+    let mut parameters = fb.params.clone();
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &width_parameter,
+        Value::Int(width),
+    );
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &height_parameter,
+        Value::Int(height),
+    );
+    fb.params = parameters;
     Ok(Value::Nil)
 }
 
@@ -2869,13 +2885,30 @@ fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }))
 }
 
-/// `set-frame-position' — frame-live-p check, then t (GNU reports
-/// success even though a tty has no real positioning).
+/// `set-frame-position' — graphical frames retain their requested native
+/// position; text terminals keep GNU's successful no-op behavior.
 fn f_set_frame_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::t()),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+    let frame = frame_live(i, &arg(&a, 0))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::t());
     }
+    let left = want_int(i, &a[1])?;
+    let top = want_int(i, &a[2])?;
+    let left_parameter = Value::Sym(i.intern("left"));
+    let top_parameter = Value::Sym(i.intern("top"));
+    let mut parameters = frame.borrow().params.clone();
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &left_parameter,
+        Value::Int(left),
+    );
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &top_parameter,
+        Value::Int(top),
+    );
+    frame.borrow_mut().params = parameters;
+    Ok(Value::t())
 }
 
 /// Mark a frame for state-change notification at the next redisplay.

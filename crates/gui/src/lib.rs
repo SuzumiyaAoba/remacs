@@ -114,6 +114,17 @@ pub fn run_gui_with_dump(
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
                             let fullscreen = snapshot.fullscreen.clone();
+                            let frame_size = (snapshot.width, snapshot.height);
+                            let frame_left = snapshot.left;
+                            let frame_top = snapshot.top;
+                            let parent_bounds = snapshot
+                                .parent_frame
+                                .and_then(|parent| windows.get(&parent))
+                                .and_then(|parent| {
+                                    parent
+                                        .update(cx, |_view, window, _cx| window.bounds())
+                                        .ok()
+                                });
                             let behavior = (
                                 snapshot.auto_raise,
                                 snapshot.auto_lower,
@@ -124,6 +135,7 @@ pub fn run_gui_with_dump(
                                 let update_window_mode =
                                     window_modes.get(&frame_id) != Some(&fullscreen);
                                 let requested_fullscreen = fullscreen.clone();
+                                let requested_parent_bounds = parent_bounds;
                                 let update_behavior =
                                     frame_behaviors.get(&frame_id) != Some(&behavior);
                                 let requested_behavior = behavior.clone();
@@ -131,6 +143,18 @@ pub fn run_gui_with_dump(
                                     if view.grid != grid || grid.blink_cursor {
                                         view.grid = grid;
                                         cx.notify();
+                                    }
+                                    if requested_fullscreen.is_none() {
+                                        apply_frame_snapshot_bounds(
+                                            view,
+                                            window,
+                                            cx,
+                                            frame_size.0,
+                                            frame_size.1,
+                                            frame_left,
+                                            frame_top,
+                                            requested_parent_bounds,
+                                        );
                                     }
                                     if update_window_mode {
                                         apply_frame_window_state(
@@ -158,9 +182,23 @@ pub fn run_gui_with_dump(
                             if let Some(handle) = primary_window.take() {
                                 let initial_fullscreen = fullscreen.clone();
                                 let initial_behavior = behavior.clone();
+                                let initial_left = frame_left;
+                                let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
                                     view.grid = grid;
+                                    if initial_fullscreen.is_none() {
+                                        apply_frame_snapshot_bounds(
+                                            view,
+                                            window,
+                                            cx,
+                                            frame_size.0,
+                                            frame_size.1,
+                                            initial_left,
+                                            initial_top,
+                                            None,
+                                        );
+                                    }
                                     cx.notify();
                                     apply_frame_window_state(
                                         window,
@@ -402,6 +440,36 @@ fn frame_window_options(
         .or_else(|| windows.values().next());
     let parent_bounds = base_window
         .and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
+    let parameter_position = frame.left.zip(frame.top).map(|(left, top)| {
+        if child {
+            let position = parent_bounds
+                .map(|bounds| bounds.origin + point(px(left as f32), px(top as f32)))
+                .unwrap_or_else(|| point(px(left as f32), px(top as f32)));
+            let display_id = base_window
+                .and_then(|base| {
+                    base.update(cx, |_view, window, cx| {
+                        window.display(cx).map(|display| u32::from(display.id()))
+                    })
+                    .ok()
+                })
+                .flatten();
+            (position, display_id)
+        } else {
+            base_window
+                .and_then(|base| {
+                    base.update(cx, |_view, window, cx| {
+                        frame_position_in_window(left, top, None, window, cx)
+                    })
+                    .ok()
+                })
+                .unwrap_or_else(|| {
+                    (
+                        point(px(left as f32), px(top as f32)),
+                        None,
+                    )
+                })
+        }
+    });
     let bounds = if let Some(parent_bounds) = parent_bounds {
         if child {
             let left = frame.left.map(|value| value as f32).unwrap_or_else(|| {
@@ -414,6 +482,17 @@ fn frame_window_options(
                 parent_bounds.origin + point(px(left), px(top)),
                 content_size,
             )
+        } else if let Some((position, _)) = parameter_position {
+            Bounds::new(position, content_size)
+        } else if frame.left.is_some() || frame.top.is_some() {
+            let default_origin = parent_bounds.origin + point(px(36.0), px(36.0));
+            Bounds::new(
+                point(
+                    frame.left.map(|value| px(value as f32)).unwrap_or(default_origin.x),
+                    frame.top.map(|value| px(value as f32)).unwrap_or(default_origin.y),
+                ),
+                content_size,
+            )
         } else {
             Bounds::new(
                 parent_bounds.origin + point(px(36.0), px(36.0)),
@@ -421,7 +500,12 @@ fn frame_window_options(
             )
         }
     } else {
-        Bounds::new(point(px(80.0), px(80.0)), content_size)
+        Bounds::new(
+            parameter_position
+                .map(|(position, _)| position)
+                .unwrap_or(point(px(80.0), px(80.0))),
+            content_size,
+        )
     };
     let window_bounds = match frame.fullscreen.as_deref() {
         Some("maximized") => WindowBounds::Maximized(bounds),
@@ -430,6 +514,9 @@ fn frame_window_options(
     };
     WindowOptions {
         window_bounds: Some(window_bounds),
+        display_id: parameter_position
+            .and_then(|(_, display_id)| display_id)
+            .map(DisplayId::from),
         kind: if child {
             WindowKind::Floating
         } else {
@@ -448,6 +535,88 @@ fn frame_window_options(
         is_resizable: !child,
         is_minimizable: !child,
         ..Default::default()
+    }
+}
+
+fn frame_position_in_window(
+    left: i128,
+    top: i128,
+    parent_bounds: Option<Bounds<Pixels>>,
+    window: &Window,
+    cx: &App,
+) -> (Point<Pixels>, Option<u32>) {
+    if let Some(parent_bounds) = parent_bounds {
+        return (
+            parent_bounds.origin + point(px(left as f32), px(top as f32)),
+            window.display(cx).map(|display| u32::from(display.id())),
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let monitors = monitor::monitor_geometry(window, cx);
+        let display_id = window.display(cx).map(|display| u32::from(display.id()));
+        let monitor = monitors
+            .iter()
+            .find(|monitor| {
+                let [x, y, width, height] = monitor.geometry;
+                left >= x
+                    && left < x.saturating_add(width)
+                    && top >= y
+                    && top < y.saturating_add(height)
+            })
+            .or_else(|| {
+                display_id.and_then(|display_id| {
+                    monitors
+                        .iter()
+                        .find(|monitor| monitor.display_id == display_id)
+                })
+            });
+        if let Some(monitor) = monitor {
+            return (
+                point(
+                    px(left.saturating_sub(monitor.native_origin[0]) as f32),
+                    px(
+                        top.saturating_sub(
+                            monitor.geometry[1].saturating_sub(monitor.native_origin[1]),
+                        ) as f32,
+                    ),
+                ),
+                Some(monitor.display_id),
+            );
+        }
+    }
+    (
+        point(px(left as f32), px(top as f32)),
+        window.display(cx).map(|display| u32::from(display.id())),
+    )
+}
+
+fn apply_frame_snapshot_bounds(
+    view: &mut EditorView,
+    window: &mut Window,
+    cx: &mut Context<EditorView>,
+    width: usize,
+    height: usize,
+    left: Option<i128>,
+    top: Option<i128>,
+    parent_bounds: Option<Bounds<Pixels>>,
+) {
+    if view.needs_frame_size_update(width, height) {
+        view.resize_to_cells(width, height, window);
+    }
+    let position_changed = view.needs_frame_position_update(left, top);
+    if position_changed
+        && let (Some(left), Some(top)) = (left, top)
+        && view.native_position() != Some((left, top))
+    {
+        let (position, display_id) = frame_position_in_window(
+            left,
+            top,
+            parent_bounds,
+            window,
+            cx,
+        );
+        window.set_position(position, display_id);
     }
 }
 
