@@ -681,10 +681,10 @@ DIR is assumed to be a directory, verified by the caller."
                 ;; directory because otherwise pushd will barf on a
                 ;; directory with forward slashes.  Note that * will not
                 ;; skip dotfiles with Windows shells, unlike on Unix.
-                (insert "pushd " (shell-quote-argument d) " && du -sk * \n")
-                (message "Running `pushd \"%s\" && du -sk *'..." d))
-            (insert "cd " (shell-quote-argument d) ";du -sk * \n")
-            (message "Running `cd %s;du -sk *'..." d))
+                (insert "pushd " (shell-quote-argument d) " && du -sk -- * \n")
+                (message "Running `pushd \"%s\" && du -sk -- *'..." d))
+            (insert "cd " (shell-quote-argument d) ";du -sk -- * \n")
+            (message "Running `cd %s;du -sk -- *'..." d))
           (call-process-region (point-min) (point-max) shell-file-name t
 			       (current-buffer) nil)
           (goto-char (point-min))
