@@ -376,6 +376,7 @@ qa!(qa_url_unhex_bytes, "qa_url_unhex_bytes.el");
 qa!(qa_url_cookie_expiry_invalid_day, "qa_url_cookie_expiry_invalid_day.el");
 qa!(qa_url_cookie_expiry_timezone, "qa_url_cookie_expiry_timezone.el");
 qa!(qa_url_cookie_hyphen_date, "qa_url_cookie_hyphen_date.el");
+qa!(qa_url_cookie_zero_prefixed_year, "qa_url_cookie_zero_prefixed_year.el");
 qa!(qa_symbol_with_pos_dynamic_mode, "qa_symbol_with_pos_dynamic_mode.el");
 qa!(qa_dired_newline_filename, "qa_dired_newline_filename.el");
 qa!(qa_flymake_diag_region, "qa_flymake_diag_region.el");

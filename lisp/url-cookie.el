@@ -229,7 +229,7 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
                (setq url-cookie-storage (list (list domain tmp)))))))))
 
 (defun url-cookie--expires-date-to-time (date)
-  "Parse cookie DATE with RFC 6265's two-digit year rule."
+  "Parse cookie DATE with RFC 6265's year rule."
   (let* ((date-without-time
           (replace-regexp-in-string
            "[0-9]+:[0-9]+:[0-9]+"
@@ -242,17 +242,19 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
            zone-regexp
            (lambda (match) (make-string (length match) 32))
            date-without-time t t))
-         (day-of-month
+         (day-token
           (and (string-match
                 "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]?\\)\\(?:[^0-9]\\|$\\)"
                 date-without-zone)
-               (string-to-number (match-string 1 date-without-zone))))
+               (list (match-beginning 1)
+                     (match-end 1)
+                     (string-to-number (match-string 1 date-without-zone)))))
          (date-with-hyphen-delimiters (copy-sequence date))
          (start 0)
          year-range)
     ;; RFC 6265 processes the day-of-month token before considering a year.
     ;; An out-of-range two-digit day must not be reinterpreted as a year.
-    (when (and day-of-month (not (<= 1 day-of-month 31)))
+    (when (and day-token (not (<= 1 (nth 2 day-token) 31)))
       (error "Invalid cookie date: %s" date))
     ;; Hyphen is an RFC 6265 date-token delimiter.  Leave signed numeric
     ;; timezone offsets intact; they were blanked in DATE-WITHOUT-ZONE.
@@ -271,15 +273,23 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
           (setq offset (1+ offset))))
       (setq start (match-end 0)))
     (setq start 0)
+    ;; RFC 6265 year tokens may have two to four digits; apply the mapping to
+    ;; their numeric value, not their textual width.
     (while (and (not year-range)
                 (string-match
-                 "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]\\)\\(?:$\\|[^0-9]\\)"
+                 "\\(?:^\\|[^0-9]\\)\\([0-9][0-9][0-9]?[0-9]?\\)\\(?:$\\|[^0-9]\\)"
                  date-without-zone start))
-      (let ((year (string-to-number (match-string 1 date-without-zone))))
-        (if (<= 50 year 69)
-            (setq year-range
-                  (list (match-beginning 1) (match-end 1) year))
-          (setq start (match-end 1)))))
+      (let ((year-start (match-beginning 1))
+            (year-end (match-end 1))
+            (year (string-to-number (match-string 1 date-without-zone))))
+        (cond
+         ((and day-token
+               (= year-start (nth 0 day-token))
+               (= year-end (nth 1 day-token)))
+          (setq start year-end))
+         ((<= 0 year 69)
+          (setq year-range (list year-start year-end year)))
+         (t (setq start year-end)))))
     (let ((date-for-time
            (if year-range
                (concat (substring date-with-hyphen-delimiters
