@@ -127,15 +127,11 @@ user for what type to save as."
         (message "Error accessing history file `%s'" fname)
       (let ((make-backup-files nil)
             (version-control nil)
-            (require-final-newline t)
-            (count 0))
+            (require-final-newline t))
         (with-temp-buffer
           (maphash (lambda (key value)
-                     (while (string-match "[\r\n]+" key)
-                       (setq key (concat (substring key 0 (match-beginning 0))
-                                         (substring key (match-end 0) nil))))
-                     (setq count (1+ count))
-                     (insert "(puthash \"" key "\""
+                     (insert "(puthash "
+                             (prin1-to-string (list 'quote key))
                              (if (not (stringp value)) " '" "")
                              (prin1-to-string value)
                              " url-history-hash-table)\n"))
