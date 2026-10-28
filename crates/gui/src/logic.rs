@@ -110,6 +110,17 @@ pub(super) struct FrameSnapshot {
     pub grid: Grid,
 }
 
+pub(super) enum GuiRequest {
+    FrameSnapshots(Vec<FrameSnapshot>),
+    Prompt {
+        frame_id: usize,
+        message: String,
+        detail: Option<String>,
+        buttons: Vec<String>,
+        reply: SyncSender<Result<Option<usize>, String>>,
+    },
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) struct MonitorGeometry {
     pub display_id: u32,
@@ -159,6 +170,34 @@ pub(super) enum ClipboardRequest {
     Write(String, Option<SyncSender<Result<(), String>>>),
 }
 
+struct GuiDialogBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::DialogBackend for GuiDialogBackend {
+    fn choose(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        buttons: &[String],
+    ) -> Result<Option<usize>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::Prompt {
+                frame_id,
+                message: message.to_owned(),
+                detail: detail.map(str::to_owned),
+                buttons: buttons.to_vec(),
+                reply,
+            })
+            .map_err(|_| "GUI dialog service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI dialog service stopped".to_owned())?
+    }
+}
+
 struct GuiClipboardBackend {
     requests: smol::channel::Sender<ClipboardRequest>,
     ready: Arc<AtomicBool>,
@@ -199,7 +238,7 @@ pub(super) struct ChanIo {
     pub(super) events: Receiver<GuiEvent>,
     pub(super) grids: smol::channel::Sender<Grid>,
     pub(super) legacy_grid_output: bool,
-    pub(super) frame_updates: Option<smol::channel::Sender<Vec<FrameSnapshot>>>,
+    pub(super) gui_requests: Option<smol::channel::Sender<GuiRequest>>,
     /// Keys pushed back via `unread` (unread-command-events).
     pub(super) pending: Vec<i128>,
     pub(super) cols: usize,
@@ -420,9 +459,9 @@ impl ChanIo {
         {
             snapshot.grid = grid.clone();
             self.frame_grids.insert(frame_id, grid.clone());
-            if let Some(updates) = &self.frame_updates {
+            if let Some(updates) = &self.gui_requests {
                 updates
-                    .force_send(self.latest_snapshots.clone())
+                    .send_blocking(GuiRequest::FrameSnapshots(self.latest_snapshots.clone()))
                     .map_err(|_| {
                         io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
                     })?;
@@ -771,7 +810,7 @@ impl KeyIo for ChanIo {
                 frame.borrow_mut().params = params;
             }
 
-            if self.frame_updates.is_some() && frame_system_is_graphical(i, frame) {
+            if self.gui_requests.is_some() && frame_system_is_graphical(i, frame) {
                 let cached = self
                     .frame_grids
                     .get(&frame_id)
@@ -802,8 +841,10 @@ impl KeyIo for ChanIo {
         }
 
         self.latest_snapshots = snapshots.clone();
-        if let Some(updates) = &self.frame_updates {
-            updates.force_send(snapshots).map_err(|_| {
+        if let Some(updates) = &self.gui_requests {
+            updates
+                .send_blocking(GuiRequest::FrameSnapshots(snapshots))
+                .map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
             })?;
         }
@@ -874,7 +915,7 @@ impl KeyIo for ChanIo {
 pub(super) fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _frame_updates, _clipboard_requests) =
+    let (events, grids, _gui_requests, _clipboard_requests) =
         start_logic_inner(files, None, Vec::new(), false, true, false)?;
     Ok((events, grids))
 }
@@ -885,7 +926,7 @@ pub(super) fn start_logic_with_dump_for_test(
     dump_file: Option<String>,
     arguments: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _frame_updates, _clipboard_requests) =
+    let (events, grids, _gui_requests, _clipboard_requests) =
         start_logic_inner(files, dump_file, arguments, false, true, false)?;
     Ok((events, grids))
 }
@@ -918,7 +959,7 @@ pub(super) fn start_logic_with_dump(
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
-    let (events, grids, _frame_updates, clipboard) =
+    let (events, grids, _gui_requests, clipboard) =
         start_logic_inner(files, dump_file, arguments, true, true, false)?;
     Ok((events, grids, clipboard))
 }
@@ -929,13 +970,13 @@ pub(super) fn start_logic_with_frames(
     arguments: Vec<String>,
 ) -> io::Result<(
     Sender<GuiEvent>,
-    smol::channel::Receiver<Vec<FrameSnapshot>>,
+    smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
-    let (events, grids, frame_updates, clipboard) =
+    let (events, grids, gui_requests, clipboard) =
         start_logic_inner(files, dump_file, arguments, true, false, true)?;
     drop(grids);
-    Ok((events, frame_updates, clipboard))
+    Ok((events, gui_requests, clipboard))
 }
 
 fn start_logic_inner(
@@ -944,18 +985,18 @@ fn start_logic_inner(
     arguments: Vec<String>,
     enable_gui_selections: bool,
     legacy_grid_output: bool,
-    enable_frame_updates: bool,
+    enable_gui_requests: bool,
 ) -> io::Result<(
     Sender<GuiEvent>,
     smol::channel::Receiver<Grid>,
-    smol::channel::Receiver<Vec<FrameSnapshot>>,
+    smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
     let wait_for_dump = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
     let (event_tx, event_rx) = mpsc::channel::<GuiEvent>();
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
-    let (frame_updates_tx, frame_updates_rx) = smol::channel::bounded::<Vec<FrameSnapshot>>(1);
+    let (gui_requests_tx, gui_requests_rx) = smol::channel::unbounded::<GuiRequest>();
     let (clipboard_tx, clipboard_rx) = smol::channel::unbounded::<ClipboardRequest>();
     let clipboard_ready = Arc::new(AtomicBool::new(false));
     clipboard_tx
@@ -998,6 +1039,11 @@ fn start_logic_inner(
             if enable_gui_selections {
                 configure_gui_window_system(&mut i);
             }
+            if enable_gui_requests {
+                i.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+            }
             let _ = startup_tx.send(Ok(()));
             let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
             let mut frame_sizes = HashMap::new();
@@ -1008,7 +1054,7 @@ fn start_logic_inner(
                 events: event_rx,
                 grids: grid_tx,
                 legacy_grid_output,
-                frame_updates: enable_frame_updates.then_some(frame_updates_tx),
+                gui_requests: enable_gui_requests.then_some(gui_requests_tx),
                 pending: Vec::new(),
                 cols: 80,
                 rows: 24,
@@ -1031,7 +1077,7 @@ fn start_logic_inner(
                 scroll_remainder: 0.0,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
-            // The frame update sender drops here → the UI pump quits the app.
+            // The GUI request sender drops here → the UI pump quits the app.
         })
         .map_err(io::Error::other)?;
     if wait_for_dump {
@@ -1040,7 +1086,7 @@ fn start_logic_inner(
             .map_err(io::Error::other)?
             .map_err(io::Error::other)?;
     }
-    Ok((event_tx, grid_rx, frame_updates_rx, clipboard_rx))
+    Ok((event_tx, grid_rx, gui_requests_rx, clipboard_rx))
 }
 
 fn configure_gui_window_system(i: &mut Interp) {

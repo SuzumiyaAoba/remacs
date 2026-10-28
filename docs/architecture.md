@@ -166,8 +166,8 @@ live な値を取り出す。operand の Lisp 文字列と処理前のキュー�
 ## GUI: crates/gui
 
 `lib.rs` はアプリケーションの公開起動 API。
-`logic.rs` は評価スレッドと、入力イベント／frame ごとの画面スナップショットのチャネルを所有する。
-`lib.rs` はスナップショットを GPUI window に割り当て、親を持つ child frame は親の bounds 上に popup window として表示する。
+`logic.rs` は評価スレッドと、入力イベント／frame ごとの画面スナップショット／ネイティブダイアログ要求のチャネルを所有する。
+`lib.rs` はスナップショットを GPUI window に割り当て、親を持つ child frame は親の bounds 上に popup window として表示する。Lisp の選択ダイアログは同じ window の prompt API を使う。
 `keys.rs` はコマンドキーを Emacs イベントへ変換する。
 `view.rs` が GPUI のレイアウトと描画を行い、`view/input.rs` が IME と UTF-16 の
 OS テキスト入力を扱う。確定前の入力は view、確定したテキストは評価スレッドが所有する。

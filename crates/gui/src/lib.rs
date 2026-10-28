@@ -9,7 +9,7 @@ mod keys;
 mod logic;
 mod monitor;
 mod view;
-use logic::{ClipboardRequest, FrameSnapshot, start_logic_with_frames};
+use logic::{ClipboardRequest, FrameSnapshot, GuiRequest, start_logic_with_frames};
 use view::{EditorView, build_managed_editor_view};
 
 /// Launch the gpui front-end. `files` are visited via `find-file`
@@ -23,7 +23,7 @@ pub fn run_gui_with_dump(
     dump_file: Option<&str>,
     arguments: &[String],
 ) -> io::Result<()> {
-    let (event_tx, frame_updates, clipboard_requests) = start_logic_with_frames(
+    let (event_tx, gui_requests, clipboard_requests) = start_logic_with_frames(
         files.to_vec(),
         dump_file.map(str::to_owned),
         arguments.to_vec(),
@@ -94,49 +94,79 @@ pub fn run_gui_with_dump(
         cx.spawn(async move |cx| {
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
             let mut primary_window = Some(primary_window);
-            while let Ok(snapshots) = frame_updates.recv().await {
-                for snapshot in snapshots {
-                    let frame_id = snapshot.frame_id;
-                    let grid = snapshot.grid.clone();
-                    if let Some(handle) = windows.get(&frame_id).copied() {
-                        let _ = handle.update(cx, move |view, _window, cx| {
-                            if view.grid != grid || grid.blink_cursor {
-                                view.grid = grid;
-                                cx.notify();
+            while let Ok(request) = gui_requests.recv().await {
+                match request {
+                    GuiRequest::FrameSnapshots(snapshots) => {
+                        for snapshot in snapshots {
+                            let frame_id = snapshot.frame_id;
+                            let grid = snapshot.grid.clone();
+                            if let Some(handle) = windows.get(&frame_id).copied() {
+                                let _ = handle.update(cx, move |view, _window, cx| {
+                                    if view.grid != grid || grid.blink_cursor {
+                                        view.grid = grid;
+                                        cx.notify();
+                                    }
+                                });
+                                continue;
                             }
-                        });
-                        continue;
-                    }
-                    if let Some(handle) = primary_window.take() {
-                        let _ = handle.update(cx, move |view, _window, cx| {
-                            view.set_frame_id(frame_id);
-                            view.grid = grid;
-                            cx.notify();
-                        });
-                        windows.insert(frame_id, handle);
-                        continue;
-                    }
+                            if let Some(handle) = primary_window.take() {
+                                let _ = handle.update(cx, move |view, _window, cx| {
+                                    view.set_frame_id(frame_id);
+                                    view.grid = grid;
+                                    cx.notify();
+                                });
+                                windows.insert(frame_id, handle);
+                                continue;
+                            }
 
-                    let options = frame_window_options(&snapshot, &windows, cx);
-                    let event_tx = event_tx.clone();
-                    let handle = match cx.open_window(options, move |window, app| {
-                        app.new(|cx| {
-                            build_managed_editor_view(
-                                window,
-                                cx,
-                                event_tx,
-                                Some(frame_id),
-                                Some(grid),
-                            )
-                        })
-                    }) {
-                        Ok(handle) => handle,
-                        Err(error) => {
-                            eprintln!("remacs: cannot open frame window: {error}");
-                            continue;
+                            let options = frame_window_options(&snapshot, &windows, cx);
+                            let event_tx = event_tx.clone();
+                            let handle = match cx.open_window(options, move |window, app| {
+                                app.new(|cx| {
+                                    build_managed_editor_view(
+                                        window,
+                                        cx,
+                                        event_tx,
+                                        Some(frame_id),
+                                        Some(grid),
+                                    )
+                                })
+                            }) {
+                                Ok(handle) => handle,
+                                Err(error) => {
+                                    eprintln!("remacs: cannot open frame window: {error}");
+                                    continue;
+                                }
+                            };
+                            windows.insert(frame_id, handle);
                         }
-                    };
-                    windows.insert(frame_id, handle);
+                    }
+                    GuiRequest::Prompt {
+                        frame_id,
+                        message,
+                        detail,
+                        buttons,
+                        reply,
+                    } => {
+                        let buttons: Vec<_> = buttons.into_iter().map(PromptButton::new).collect();
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            match handle.update(cx, |_view, window, cx| {
+                                window.prompt(
+                                    PromptLevel::Info,
+                                    &message,
+                                    detail.as_deref(),
+                                    &buttons,
+                                    cx,
+                                )
+                            }) {
+                                Ok(response) => Ok(response.await.ok()),
+                                Err(error) => Err(error.to_string()),
+                            }
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                 }
             }
             let _ = cx.update(|app| app.quit());

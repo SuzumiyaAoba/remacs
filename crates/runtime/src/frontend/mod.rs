@@ -18,6 +18,18 @@ pub trait ClipboardBackend {
     fn write_text(&self, text: String) -> Result<(), String>;
 }
 
+/// Host dialog backend used by interactive graphical front-ends. The logic
+/// thread blocks until the UI returns the selected button index.
+pub trait DialogBackend {
+    fn choose(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        buttons: &[String],
+    ) -> Result<Option<usize>, String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),

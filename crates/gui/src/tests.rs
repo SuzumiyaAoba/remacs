@@ -234,7 +234,7 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             events: erx,
             grids: gtx,
             legacy_grid_output: true,
-            frame_updates: None,
+            gui_requests: None,
             pending: Vec::new(),
             cols: 80,
             rows: 24,

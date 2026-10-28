@@ -7317,7 +7317,65 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Nil => return Err(i.wrong_type_mut("stringp", &Value::Nil)),
         other => return Err(i.wrong_type_mut("listp", other)),
     }
-    // tty batch: emulate_dialog_with_menu finds no menu items → nil.
+    let (title, mut items) = match &a[1] {
+        Value::Cons(contents) => {
+            let contents = contents.borrow();
+            (contents.car.clone(), contents.cdr.clone())
+        }
+        _ => unreachable!("contents were checked above"),
+    };
+    let Value::Str(title) = title else {
+        unreachable!("title was checked above")
+    };
+    let title = title.borrow().to_unicode_lossy();
+    let detail = a.get(2).and_then(|value| match value {
+        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+        _ => None,
+    });
+    let frame = match &window {
+        Value::Frame(frame) => Some(frame.clone()),
+        Value::Window(window) => frame_of_window(i, window),
+        _ => None,
+    };
+    let Some(frame) = frame.filter(|frame| frame_is_graphical(i, frame)) else {
+        return Ok(Value::Nil);
+    };
+    let Some(backend) = i.dialog_backend.clone() else {
+        return Ok(Value::Nil);
+    };
+    let mut buttons = Vec::new();
+    let mut values = Vec::new();
+    while let Value::Cons(cell) = items {
+        let (item, rest) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        items = rest;
+        let Value::Cons(item) = item else {
+            continue;
+        };
+        let (label, value) = {
+            let item = item.borrow();
+            (item.car.clone(), item.cdr.clone())
+        };
+        let Value::Str(label) = label else {
+            return Err(i.wrong_type_mut("stringp", &label));
+        };
+        buttons.push(label.borrow().to_unicode_lossy());
+        values.push(value);
+    }
+
+    // Keep the interpreter on its logic thread while the frontend presents
+    // the native prompt.
+    if !buttons.is_empty() {
+        let frame_id = frame.borrow().id;
+        let selected = backend
+            .choose(frame_id, &title, detail.as_deref(), &buttons)
+            .map_err(|error| i.error(format!("Dialog failed: {error}")))?;
+        return Ok(selected
+            .and_then(|index| values.get(index).cloned())
+            .unwrap_or(Value::Nil));
+    }
     Ok(Value::Nil)
 }
 

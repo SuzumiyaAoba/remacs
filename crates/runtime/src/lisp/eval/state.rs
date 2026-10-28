@@ -20,6 +20,11 @@ impl Interp {
         self.clipboard_backend = backend;
     }
 
+    /// Install or remove the host dialog backend used by graphical frames.
+    pub fn set_dialog_backend(&mut self, backend: Option<Rc<dyn crate::frontend::DialogBackend>>) {
+        self.dialog_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

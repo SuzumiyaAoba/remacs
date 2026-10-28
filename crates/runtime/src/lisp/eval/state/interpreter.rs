@@ -246,6 +246,8 @@ pub struct Interp {
     >,
     /// Host clipboard bridge, installed by a GUI front-end.
     pub(crate) clipboard_backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
+    /// Host dialog bridge, installed by a GUI front-end.
+    pub(crate) dialog_backend: Option<Rc<dyn crate::frontend::DialogBackend>>,
     /// NS selection values retained for local selection reads and ownership checks.
     pub(crate) nsgui_selections: HashMap<SymId, Value>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.
