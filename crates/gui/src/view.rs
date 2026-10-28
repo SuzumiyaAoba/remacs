@@ -196,6 +196,40 @@ impl Render for EditorView {
                                 ));
                             }
                             let _ = line.paint(origin, line_height, window, _cx);
+                            let char_styles = grid
+                                .char_attrs
+                                .get(y)
+                                .filter(|styles| !styles.is_empty())
+                                .or_else(|| grid.attrs.get(y));
+                            if let Some(char_styles) = char_styles {
+                                let overline_y = origin.y
+                                    + (line_height - line.ascent - line.descent) / 2.0
+                                    + px(1.0);
+                                for (index, (byte, ch)) in grid.rows[y].char_indices().enumerate() {
+                                    let Some(style) = char_styles.get(index).copied() else {
+                                        continue;
+                                    };
+                                    if !style.overline {
+                                        continue;
+                                    }
+                                    let start = line.x_for_index(byte);
+                                    let end = line.x_for_index(byte + ch.len_utf8());
+                                    let (left, width) = if end >= start {
+                                        (start, end - start)
+                                    } else {
+                                        (end, start - end)
+                                    };
+                                    if width > px(0.0) {
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin: point(bounds.left() + left, overline_y),
+                                                size: size(width, px(1.0)),
+                                            },
+                                            style_colors(style).0,
+                                        ));
+                                    }
+                                }
+                            }
                         }
                         if let Some((cxp, yp)) = grid.cursor {
                             let cursor_x = grid
