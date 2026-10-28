@@ -272,6 +272,15 @@ mode set `electric-indent-inhibit', but this can be used as a workaround.")
       (with-demoted-errors "Error reindenting: %S"
         (indent-region (point-min) (point-max))))))
 
+(defun electric-indent--any-mode-enabled-p ()
+  "Return non-nil if Electric Indent mode is enabled globally or locally."
+  (or (default-value 'electric-indent-mode)
+      (catch 'enabled
+        (dolist (buf (buffer-list))
+          (with-current-buffer buf
+            (when electric-indent-mode
+              (throw 'enabled t)))))))
+
 (defun electric-indent--activate-indent-actions (enable)
   "Enable the actions specified in `electric-indent-actions'."
   (advice-remove 'yank #'electric-indent--yank-advice)
@@ -386,10 +395,7 @@ use `electric-indent-local-mode'."
   :initialize #'custom-initialize-after-file-load
   :init-value t
   (if (not electric-indent-mode)
-      (unless (catch 'found
-                (dolist (buf (buffer-list))
-                  (with-current-buffer buf
-                    (if electric-indent-mode (throw 'found t)))))
+      (unless (electric-indent--any-mode-enabled-p)
         (remove-hook 'post-self-insert-hook
                      #'electric-indent-post-self-insert-function))
 
@@ -398,7 +404,8 @@ use `electric-indent-local-mode'."
               60))
 
   ;; Toggle the reindentation on actions
-  (electric-indent--activate-indent-actions electric-indent-mode))
+  (electric-indent--activate-indent-actions
+   (electric-indent--any-mode-enabled-p)))
 
 ;;;###autoload
 (define-minor-mode electric-indent-local-mode
@@ -412,7 +419,9 @@ use `electric-indent-local-mode'."
     ;; Locally enabled, but globally disabled.
     (electric-indent-mode 1)                ; Setup the hooks.
     (setq-default electric-indent-mode nil) ; But keep it globally disabled.
-    )))
+    ))
+  (electric-indent--activate-indent-actions
+   (electric-indent--any-mode-enabled-p)))
 
 ;;; Electric newlines after/before/around some chars.
 
