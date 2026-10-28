@@ -884,7 +884,7 @@ FRAME defaults to the selected frame."
 	 (r (ash (car rgb) -8))
 	 (g (ash (cadr rgb) -8))
 	 (b (ash (nth 2 rgb) -8))
-	 best-color)
+	 best-color (best-gray-distance 195076) best-gray-color)
     (while candidate
       (let ((try-rgb (cddr candidate))
 	    ;; If the approximated color is not close enough to the
@@ -904,6 +904,12 @@ FRAME defaults to the selected frame."
 		    dif-g (- g try-g)
 		    dif-b (- b try-b))
 	      (setq dist (+ (* dif-r dif-r) (* dif-g dif-g) (* dif-b dif-b)))
+	      ;; Remember the closest gray as a fallback if the terminal has
+	      ;; no non-gray colors to choose from.
+	      (when (and (= try-r try-g) (= try-g try-b)
+		         (< dist best-gray-distance))
+		(setq best-gray-distance dist
+		      best-gray-color candidate))
 	      (if (and (< dist best-distance)
 		       ;; The candidate color is on the gray diagonal
 		       ;; if its RGB components are all equal.
@@ -913,7 +919,7 @@ FRAME defaults to the selected frame."
 			best-color candidate)))))
       (setq color-list (cdr color-list))
       (setq candidate (car color-list)))
-    best-color))
+    (or best-color best-gray-color)))
 
 (defun tty-color-standard-values (color)
 "Return standard RGB values of the color COLOR.
