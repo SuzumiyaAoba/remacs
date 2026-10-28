@@ -444,7 +444,7 @@ can be determined, a default according to the shell type is used."
          (ustrs '())
          (re (concat
               "[\"']"
-              "\\|\\$\\(?:\\([[:alpha:]][[:alnum:]]*\\)"
+              "\\|\\$\\(?:\\([[:alpha:]_][[:alnum:]_]*\\)"
               "\\|{\\(?1:[^{}]+\\)}\\)"
               (when (memq system-type '(ms-dos windows-nt))
                 "\\|%\\(?1:[^\\/]*\\)%")
