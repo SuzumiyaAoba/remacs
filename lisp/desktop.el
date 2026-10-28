@@ -1001,10 +1001,12 @@ which means to truncate VAR's value to at most MAX-SIZE elements
     (when (boundp var)
       (let ((value (symbol-value var)))
 	(when (and (integerp size)
-		   (> size 0)
+		   (>= size 0)
 		   (listp value))
 	  (setq value (copy-sequence value))
-	  (desktop-truncate value size))
+	  (if (zerop size)
+	      (setq value nil)
+	    (desktop-truncate value size)))
 	(insert "(setq "
 		(symbol-name var)
 		" "
