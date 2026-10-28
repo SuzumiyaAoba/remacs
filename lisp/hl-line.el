@@ -356,18 +356,21 @@ all such overlays in all buffers except the current one."
   (let ((rol (window-parameter window 'hl-line-overlay)))
     (with-current-buffer (window-buffer window)
       (if (buffer-match-p global-hl-line-buffers (current-buffer))
-          (let* ((bounds (save-excursion
-                           (goto-char (window-point window))
-                           (if hl-line-range-function
-                               (funcall hl-line-range-function)
-                             (cons (line-beginning-position)
-                                   (line-beginning-position 2)))))
-                 (new (redisplay--highlight-overlay-function
-                       (car bounds) (cdr bounds) window rol
-                       (if (eq window (selected-window))
-                           hl-line-face 'hl-line-nonselected))))
-            (unless (equal new rol)
-              (set-window-parameter window 'hl-line-overlay new)))
+          (let ((bounds (save-excursion
+                          (goto-char (window-point window))
+                          (if hl-line-range-function
+                              (funcall hl-line-range-function)
+                            (cons (line-beginning-position)
+                                  (line-beginning-position 2))))))
+            (if bounds
+                (let ((new (redisplay--highlight-overlay-function
+                            (car bounds) (cdr bounds) window rol
+                            (if (eq window (selected-window))
+                                hl-line-face 'hl-line-nonselected))))
+                  (unless (equal new rol)
+                    (set-window-parameter window 'hl-line-overlay new)))
+              (redisplay--unhighlight-overlay-function rol)
+              (set-window-parameter window 'hl-line-overlay nil)))
         (redisplay--unhighlight-overlay-function rol)))))
 
 
