@@ -132,8 +132,8 @@
        ;; CONST/TYPE/VAR/PROCEDURE, but we also want PROCEDURE to be an opener
        ;; (so that its END has PROCEDURE as its parent).  So instead, we treat
        ;; the last ";" in those blocks as a separator (we call it ";-block").
-       ;; FIXME: This means that "TYPE \n VAR" is not indented properly
-       ;; because there's no ";-block" between the two.
+       ;; Section keywords also serve as boundaries when an empty section
+       ;; has no trailing semicolon to classify as a "-block".
        (decls (decls ";-block" decls)
               ("TYPE" typedecls) ("CONST" constdecls) ("VAR" vardecls)
               ;; END is usually a closer, but not quite for PROCEDURE...END.
@@ -174,10 +174,11 @@
        ;; This category is not used anywhere, but it adds some constraints that
        ;; try to reduce the harm when an OF-type is not properly recognized.
        (error-OF ("ARRAY" range "OF" type) ("SET" "OF" id)))
-     '((assoc ";")) '((assoc ";-block")) '((assoc "|"))
+     '((assoc ";"))
+     '((assoc ";-block" "TYPE" "CONST" "VAR" "PROCEDURE"))
+     '((assoc "|"))
      ;; For case labels.
      '((assoc ",") (assoc ".."))
-     ;; '((assoc "TYPE" "CONST" "VAR" "PROCEDURE"))
      )
     (smie-precs->prec2
      '((nonassoc "-anchor-" "=")
