@@ -336,6 +336,8 @@ pub struct Grid {
     pub blink_interval: f64,
     /// Default face background used outside the visible text rows.
     pub default_bg: Option<CellColor>,
+    /// Pointer shape at the current mouse position, if it is over buffer text.
+    pub hover_cursor: Option<GridPointerShape>,
     /// Unicode text and visible positions for the active OS text client.
     pub input: Option<GridInput>,
 }
@@ -368,6 +370,16 @@ pub struct GridInput {
     char_offsets: Arc<[usize]>,
 }
 
+/// Cursor shapes that can be requested by text pointer properties.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridPointerShape {
+    Text,
+    Arrow,
+    Hand,
+    ResizeHorizontal,
+    ResizeVertical,
+}
+
 impl Grid {
     /// An all-default grid of WIDTH × HEIGHT cells.
     pub fn blank(width: usize, height: usize) -> Grid {
@@ -393,6 +405,7 @@ impl Grid {
             blink_cursor: false,
             blink_interval: 0.5,
             default_bg: None,
+            hover_cursor: None,
             input: None,
         }
     }
@@ -2513,6 +2526,7 @@ struct FaceCtx {
     face: u32,
     font_lock_face: u32,
     mouse_face: u32,
+    pointer: u32,
     mark_active: u32,
     inherit: u32,
     invisible: u32,
@@ -2587,6 +2601,7 @@ impl FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
             mouse_face: sym("mouse-face"),
+            pointer: sym("pointer"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
             invisible: sym("invisible"),
@@ -2989,6 +3004,8 @@ struct WindowFaces {
     prop_faces: Vec<(usize, usize, Value, usize)>,
     /// The active mouse-face run from the hovered text or overlay.
     mouse_face: Option<(usize, usize, Value)>,
+    /// The pointer property supplied by the hovered text or overlay.
+    pointer: Option<Value>,
     /// `help-echo` text-property runs and overlay values for hover tooltips.
     help_echo_props: Vec<(usize, usize, Value, usize)>,
     help_echo_overlays: Vec<(crate::buffer::Overlay, Value)>,
@@ -3250,6 +3267,44 @@ fn window_faces(
         })
     });
     let mouse_face = mouse_face_overlay.or(mouse_face_prop);
+    let pointer_prop = mouse_position.and_then(|position| {
+        properties
+            .iter()
+            .enumerate()
+            .filter(|(_, tp)| {
+                tp.prop == ctx.pointer
+                    && !tp.value.is_nil()
+                    && position >= tp.start
+                    && position < tp.end
+            })
+            .max_by_key(|(index, _)| *index)
+            .map(|(_, tp)| tp.value.clone())
+    });
+    let pointer_overlay = mouse_position.and_then(|position| {
+        let candidates: Vec<_> = bb
+            .overlays
+            .iter()
+            .enumerate()
+            .filter(|(_, overlay)| {
+                overlay.buffer == Some(bb.id)
+                    && overlay.start <= position
+                    && position < overlay.end
+                    && overlay.matches_window(i, win)
+            })
+            .filter_map(|(slot, overlay)| {
+                let shape = overlay.property(i, &Value::Sym(ctx.pointer));
+                (!shape.is_nil()).then_some((overlay, slot, shape))
+            })
+            .collect();
+        let mut order: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .map(|(candidate, (overlay, _, _))| (*overlay, candidate))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        order.last().map(|(_, candidate)| candidates[*candidate].2.clone())
+    });
+    let pointer = pointer_overlay.or(pointer_prop);
     let invisibility_spec = i
         .buffer_local_toplevel_value(ctx.buffer_invisibility_spec, bb.id)
         .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
@@ -3279,6 +3334,7 @@ fn window_faces(
         overlays,
         prop_faces,
         mouse_face,
+        pointer,
         help_echo_props,
         help_echo_overlays,
         display_props,
@@ -3722,6 +3778,20 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
     mix.finish()
 }
 
+fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
+    let Some(Value::Sym(symbol)) = value else {
+        return GridPointerShape::Text;
+    };
+    match i.symbol_name(*symbol).as_str() {
+        "text" | "nil" => GridPointerShape::Text,
+        "hand" => GridPointerShape::Hand,
+        "hdrag" => GridPointerShape::ResizeHorizontal,
+        "nhdrag" => GridPointerShape::ResizeVertical,
+        "arrow" | "vdrag" | "modeline" => GridPointerShape::Arrow,
+        _ => GridPointerShape::Arrow,
+    }
+}
+
 /// Compute the screen contents for the selected frame at `width` ×
 /// `height` text cells.  Like GNU's `redisplay_window' it also keeps
 /// each window's point on screen: a window's `start' is scrolled the
@@ -3822,6 +3892,7 @@ fn render_grid_internal(
     let mut positioned_cursors = Vec::new();
     let mut input_screen_lefts = Vec::new();
     let mut cursor_index = None;
+    let mut hover_cursor = None;
     let (blink_cursor, blink_interval) = blink_cursor_settings(i);
     let mut input = if include_input {
         input_snapshot(i, cached_input)
@@ -3853,6 +3924,7 @@ fn render_grid_internal(
                 blink_cursor,
                 blink_interval,
                 default_bg,
+                hover_cursor,
                 input,
             };
         }
@@ -4382,6 +4454,15 @@ fn render_grid_internal(
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
+        if selected_window
+            && let Some(position) = mouse_position
+            && position.buffer_id == buf_id
+        {
+            hover_cursor = Some(grid_pointer_shape(
+                i,
+                wf.as_ref().and_then(|faces| faces.pointer.as_ref()),
+            ));
+        }
         let mode_point = i.buffers.get(buf_id).map_or(0, |buffer| {
             let bb = buffer.borrow();
             (if selected_window {
@@ -4904,6 +4985,14 @@ fn render_grid_internal(
         .unwrap_or(8);
     if let Some(y) = rows.len().checked_sub(1) {
         let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil, mouse_position));
+        if let (Some(position), Some(buffer)) = (mouse_position, mini_buf.as_ref())
+            && position.buffer_id == buffer.borrow().id
+        {
+            hover_cursor = Some(grid_pointer_shape(
+                i,
+                wf.as_ref().and_then(|faces| faces.pointer.as_ref()),
+            ));
+        }
         let rendered = render_text_row(
             &msg,
             0,
@@ -5013,6 +5102,7 @@ fn render_grid_internal(
         blink_cursor,
         blink_interval,
         default_bg,
+        hover_cursor,
         input,
     }
 }

@@ -10,7 +10,7 @@ use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
     GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
-    MouseButton as RemacsMouseButton,
+    GridPointerShape, MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 use std::{cell::Cell, rc::Rc};
@@ -105,6 +105,16 @@ fn send_scroll_bar_event(
         offset: scroll_bar_offset(bar, point, pointer_offset),
         max_offset: bar.max_offset,
     });
+}
+
+fn gpui_cursor_style(shape: Option<GridPointerShape>) -> CursorStyle {
+    match shape {
+        Some(GridPointerShape::Text) => CursorStyle::IBeam,
+        Some(GridPointerShape::Hand) => CursorStyle::PointingHand,
+        Some(GridPointerShape::ResizeHorizontal) => CursorStyle::ResizeLeftRight,
+        Some(GridPointerShape::ResizeVertical) => CursorStyle::ResizeUpDown,
+        Some(GridPointerShape::Arrow) | None => CursorStyle::Arrow,
+    }
 }
 
 fn file_drop_uri(path: &std::path::Path) -> String {
@@ -421,6 +431,7 @@ impl Render for EditorView {
             .default_bg
             .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
             .unwrap_or(BG);
+        let mouse_cursor = gpui_cursor_style(self.grid.hover_cursor);
         let grid = self.grid.clone();
         let images = grid.images.clone();
         let help_echoes = grid.help_echoes.clone();
@@ -460,6 +471,7 @@ impl Render for EditorView {
         div()
             .size_full()
             .bg(rgb(default_background))
+            .cursor(mouse_cursor)
             .track_focus(&self.focus)
             .key_context("remacs")
             .id("remacs-editor-drop-target")
@@ -611,7 +623,7 @@ impl Render for EditorView {
             )
             .on_mouse_move(cx.listener(
                 move |this, event: &MouseMoveEvent, window, cx| {
-                    let position = input::mouse_position_for_point(
+                    let position = input::mouse_position_for_text_point(
                         &this.grid,
                         event.position,
                         window,

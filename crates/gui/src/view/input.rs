@@ -106,6 +106,20 @@ pub(super) fn mouse_position_for_point(
     })
 }
 
+pub(super) fn mouse_position_for_text_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    window: &mut Window,
+) -> Option<MousePosition> {
+    let input = grid.input.as_ref()?;
+    let row = (f32::from(point.y) / LINE_HEIGHT).floor().max(0.0) as usize;
+    let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
+    let line = grid.rows.get(row)?;
+    let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
+    let source_end = input_row.source_offsets.last()?;
+    (byte <= *source_end).then(|| mouse_position_for_point(grid, point, window)).flatten()
+}
+
 fn shape_grid_row(window: &Window, row: &str) -> gpui::ShapedLine {
     window.text_system().shape_line(
         row.to_owned().into(),
