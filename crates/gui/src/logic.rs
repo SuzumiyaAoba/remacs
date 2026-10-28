@@ -1,10 +1,11 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
-    frontend::{Grid, InputEvent, KeyIo, fit_text_to_cells, render_grid},
+    frontend::{Grid, InputEvent, KeyIo, fit_text_to_cells, render_grid_with_input_cached},
     lisp::Interp,
 };
 use std::{
     io,
+    ops::Range,
     sync::mpsc::{self, Receiver, Sender},
     time::Duration,
 };
@@ -13,6 +14,7 @@ use std::{
 pub(super) enum GuiEvent {
     Key(i128),
     Text(String),
+    ReplaceText { range: Range<usize>, text: String },
     Resize(usize, usize),
 }
 
@@ -76,6 +78,9 @@ impl KeyIo for ChanIo {
         match self.events.recv_timeout(dur) {
             Ok(GuiEvent::Key(k)) => Ok(Some(InputEvent::Key(k))),
             Ok(GuiEvent::Text(text)) => Ok(Some(InputEvent::Text(text))),
+            Ok(GuiEvent::ReplaceText { range, text }) => {
+                Ok(Some(InputEvent::ReplaceText { range, text }))
+            }
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);
@@ -101,6 +106,12 @@ impl KeyIo for ChanIo {
                 self.pending.extend(chars.rev());
                 Ok(first)
             }
+            Ok(GuiEvent::ReplaceText { text, .. }) => {
+                let mut chars = text.chars().map(|ch| ch as i128);
+                let first = chars.next();
+                self.pending.extend(chars.rev());
+                Ok(first)
+            }
             Ok(GuiEvent::Resize(c, r)) => {
                 self.cols = c.max(10);
                 self.rows = r.max(3);
@@ -119,7 +130,8 @@ impl KeyIo for ChanIo {
     }
 
     fn render(&mut self, i: &Interp) -> io::Result<()> {
-        let grid = render_grid(i, self.cols, self.rows);
+        let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
+        let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
         self.send_grid(grid)
     }
 
@@ -133,7 +145,8 @@ impl KeyIo for ChanIo {
     }
 
     fn draw_echo_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
-        let grid = render_grid(i, self.cols, self.rows);
+        let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
+        let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
         let grid = self.echo_grid(grid, text, false);
         self.send_grid(grid)
     }

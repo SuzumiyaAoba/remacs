@@ -6,6 +6,7 @@
 //! back to this loop rather than blocking inside the evaluator.
 
 use std::io;
+use std::ops::Range;
 use std::time::Duration;
 
 use crate::lisp::Interp;
@@ -14,6 +15,7 @@ use crate::lisp::Interp;
 pub enum InputEvent {
     Key(i128),
     Text(String),
+    ReplaceText { range: Range<usize>, text: String },
 }
 
 /// Frontend-agnostic key/render interface used by the command loop
@@ -51,4 +53,7 @@ pub use command::{
     batch_command_error, dispatch_key_core, nonblocking_sleep, replay_macro_events,
     run_batch_editor, run_editor_with,
 };
-pub use render::{CellColor, CellStyle, Grid, fit_text_to_cells, render_grid};
+pub use render::{
+    CellColor, CellStyle, Grid, GridInput, GridInputRow, GridInputSelection, fit_text_to_cells,
+    render_grid, render_grid_with_input_cached,
+};

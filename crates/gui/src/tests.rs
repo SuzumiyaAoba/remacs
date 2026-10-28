@@ -590,6 +590,9 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::Text(text) => Some(text),
             GuiEvent::Resize(..) => None,
             GuiEvent::Key(code) => panic!("plain text also produced key {code}"),
+            GuiEvent::ReplaceText { range, text } => {
+                panic!("plain text also produced ranged replacement {range:?}: {text:?}")
+            }
         })
         .collect();
     assert_eq!(text, "Aa! 日本語😀");
@@ -600,6 +603,9 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::Key(code) => Some(code),
             GuiEvent::Resize(..) => None,
             GuiEvent::Text(text) => panic!("command also inserted {text:?}"),
+            GuiEvent::ReplaceText { range, text } => {
+                panic!("command also replaced {range:?} with {text:?}")
+            }
         })
         .collect();
     assert_eq!(

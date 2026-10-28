@@ -4,7 +4,7 @@ use crate::{
     buffer::Buffer,
     lisp::{Interp, Value},
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range, sync::Arc};
 use unicode_width::UnicodeWidthChar;
 
 /// A terminal color: RGB. Face color specs (names, `#rgb' forms) are
@@ -105,6 +105,36 @@ pub struct Grid {
     pub cursor: Option<(usize, usize)>,
     /// UTF-8 byte offset of the cursor in the rendered row at `cursor.1`.
     pub cursor_index: Option<usize>,
+    /// Unicode text and visible positions for the active OS text client.
+    pub input: Option<GridInput>,
+}
+
+#[derive(Clone)]
+pub struct GridInputSelection {
+    pub range: Range<usize>,
+    pub reversed: bool,
+}
+
+#[derive(Clone)]
+pub struct GridInputRow {
+    pub row: usize,
+    /// Character offset in `GridInput::text` of the first source character.
+    pub buffer_start: usize,
+    /// Source character boundaries mapped to UTF-8 row byte offsets.
+    pub source_offsets: Vec<usize>,
+}
+
+#[derive(Clone)]
+pub struct GridInput {
+    pub buffer_id: usize,
+    pub text: Arc<str>,
+    /// Buffer point as a UTF-16 offset into `text`.
+    pub cursor: usize,
+    /// Active region as a UTF-16 range into `text`.
+    pub selection: Option<GridInputSelection>,
+    pub rows: Vec<GridInputRow>,
+    mod_tick: u64,
+    char_offsets: Arc<[usize]>,
 }
 
 impl Grid {
@@ -117,8 +147,71 @@ impl Grid {
             mode_rows: Vec::new(),
             cursor: None,
             cursor_index: None,
+            input: None,
         }
     }
+}
+
+fn input_snapshot(i: &Interp, cached: Option<&GridInput>) -> Option<GridInput> {
+    let buffer = i.current_buffer_ref()?;
+    let bb = buffer.borrow();
+    let mod_tick = bb.text.mod_tick.get();
+    let (text, char_offsets) = match cached {
+        Some(snapshot) if snapshot.buffer_id == bb.id && snapshot.mod_tick == mod_tick => {
+            (snapshot.text.clone(), snapshot.char_offsets.clone())
+        }
+        _ => {
+            let source = bb.text.text();
+            let mut text = String::with_capacity(source.chars().count());
+            let mut char_offsets = Vec::with_capacity(source.chars().count() + 1);
+            let mut utf16_offset = 0usize;
+            for ch in source.chars() {
+                char_offsets.push(utf16_offset);
+                let ch = ch.unicode().unwrap_or('\u{fffd}');
+                text.push(ch);
+                utf16_offset += ch.len_utf16();
+            }
+            char_offsets.push(utf16_offset);
+            (Arc::<str>::from(text), Arc::<[usize]>::from(char_offsets))
+        }
+    };
+    let point = bb.point().min(char_offsets.len().saturating_sub(1));
+    let cursor = char_offsets.get(point).copied().unwrap_or(0);
+    let mark_active = i
+        .q_soft("mark-active")
+        .and_then(|id| {
+            i.buffer_local_toplevel_value(id, bb.id)
+                .or_else(|| i.default_toplevel_value(id))
+                .or_else(|| bb.locals.get(&id).cloned())
+        })
+        .is_some_and(|value| value.truthy());
+    let selection = if mark_active {
+        bb.mark.as_ref().and_then(|mark| {
+            let mark = mark.borrow();
+            if mark.buffer != Some(bb.id) {
+                return None;
+            }
+            let mark_position = mark.position.min(char_offsets.len().saturating_sub(1));
+            (mark_position != point).then(|| {
+                let mark_offset = char_offsets.get(mark_position).copied().unwrap_or(0);
+                GridInputSelection {
+                    range: mark_offset.min(cursor)..mark_offset.max(cursor),
+                    reversed: cursor < mark_offset,
+                }
+            })
+        })
+    } else {
+        None
+    };
+    Some(GridInput {
+        buffer_id: bb.id,
+        text,
+        cursor,
+        selection,
+        rows: Vec::new(),
+        mod_tick,
+        char_offsets,
+    })
 }
 
 fn display_char_width(ch: char) -> usize {
@@ -792,12 +885,38 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
 /// minimal amount to show point, and recentered when point sits more
 /// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
+    render_grid_internal(i, width, height, false, None)
+}
+
+/// Render a GUI input grid, reusing TEXT from a previous snapshot when
+/// the same buffer has not changed.
+pub fn render_grid_with_input_cached(
+    i: &Interp,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+) -> Grid {
+    render_grid_internal(i, width, height, true, cached)
+}
+
+fn render_grid_internal(
+    i: &Interp,
+    width: usize,
+    height: usize,
+    include_input: bool,
+    cached_input: Option<&GridInput>,
+) -> Grid {
     let mut rows = vec![String::new(); height];
     let mut attrs = vec![vec![CellStyle::default(); width]; height];
     let mut char_attrs = vec![Vec::new(); height];
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let mut cursor_index = None;
+    let mut input = if include_input {
+        input_snapshot(i, cached_input)
+    } else {
+        None
+    };
     let frame = match &i.selected_frame {
         Some(f) => f.clone(),
         None => {
@@ -808,6 +927,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                 mode_rows,
                 cursor: cursor_pos,
                 cursor_index,
+                input,
             };
         }
     };
@@ -1015,6 +1135,19 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                 cursor_pos = Some((col, y));
                 cursor_index = Some(byte_index);
             }
+            if selected_window
+                && input
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.buffer_id == buf_id)
+            {
+                if let Some(snapshot) = input.as_mut() {
+                    snapshot.rows.push(GridInputRow {
+                        row: y,
+                        buffer_start: line_pos,
+                        source_offsets: rendered.source_offsets.clone(),
+                    });
+                }
+            }
             rows[y] = rendered.text;
             attrs[y] = rendered.cell_attrs;
             char_attrs[y] = rendered.char_attrs;
@@ -1104,6 +1237,15 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                 .map(|wf| style_at_pos(i, &mut fctx, wf, index))
                 .unwrap_or_default()
         });
+        if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
+            && snapshot.buffer_id == buffer.borrow().id
+        {
+            snapshot.rows.push(GridInputRow {
+                row: y,
+                buffer_start: 0,
+                source_offsets: rendered.source_offsets.clone(),
+            });
+        }
         rows[y] = rendered.text;
         attrs[y] = rendered.cell_attrs;
         char_attrs[y] = rendered.char_attrs;
@@ -1115,5 +1257,6 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
         mode_rows,
         cursor: cursor_pos,
         cursor_index,
+        input,
     }
 }

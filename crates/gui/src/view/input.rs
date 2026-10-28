@@ -8,11 +8,16 @@ use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
+use remacs_runtime::frontend::{Grid, GridInput};
 
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
     pub(super) marked: String,
     selection: Range<usize>,
+    /// Marked-text interval in the OS-visible UTF-16 document.
+    marked_range: Option<Range<usize>>,
+    /// Buffer interval replaced by the current marked text.
+    pub(super) replacement_range: Option<Range<usize>>,
 }
 
 fn offset(text: &str, requested: usize, round_up: bool) -> (usize, usize) {
@@ -40,6 +45,47 @@ fn range(text: &str, requested: Range<usize>) -> (Range<usize>, Range<usize>) {
     (start..end, start_units..end_units)
 }
 
+fn selected_document_range(input: &GridInput) -> Range<usize> {
+    input
+        .selection
+        .as_ref()
+        .map(|selection| selection.range.clone())
+        .unwrap_or(input.cursor..input.cursor)
+}
+
+pub(super) fn visible_input_position(
+    grid: &Grid,
+    utf16_offset: usize,
+    round_up: bool,
+) -> Option<(usize, usize)> {
+    let input = grid.input.as_ref()?;
+    let (byte, _) = offset(&input.text, utf16_offset, round_up);
+    let char_offset = input.text[..byte].chars().count();
+    input.rows.iter().find_map(|row| {
+        let relative = char_offset.checked_sub(row.buffer_start)?;
+        row.source_offsets
+            .get(relative)
+            .copied()
+            .map(|byte| (row.row, byte))
+    })
+}
+
+fn shape_grid_row(window: &Window, row: &str) -> gpui::ShapedLine {
+    window.text_system().shape_line(
+        row.to_owned().into(),
+        px(FONT_SIZE),
+        &[gpui::TextRun {
+            len: row.len(),
+            font: font("Menlo"),
+            color: rgb(FG).into(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }],
+        None,
+    )
+}
+
 impl TextInputState {
     fn len(&self) -> usize {
         self.marked.encode_utf16().count()
@@ -60,14 +106,18 @@ impl TextInputState {
 
     fn take(&mut self) -> String {
         self.selection = 0..0;
+        self.marked_range = None;
+        self.replacement_range = None;
         std::mem::take(&mut self.marked)
     }
 
+    #[cfg(test)]
     fn commit(&mut self, replacement: Option<Range<usize>>, text: &str) -> String {
         self.mark(replacement, text, None);
         self.take()
     }
 
+    #[cfg(test)]
     fn text(&self, requested: Range<usize>) -> Option<(String, Range<usize>)> {
         if requested.start > self.len() || requested.start > requested.end {
             return None;
@@ -79,12 +129,101 @@ impl TextInputState {
     pub(super) fn selection_byte_end(&self) -> usize {
         offset(&self.marked, self.selection.end, false).0
     }
+
+    fn virtual_text(&self, base: &str) -> String {
+        let Some(replacement) = &self.replacement_range else {
+            return base.to_owned();
+        };
+        let (bytes, _) = range(base, replacement.clone());
+        let mut text = base.to_owned();
+        text.replace_range(bytes, &self.marked);
+        text
+    }
+
+    fn base_range_for_virtual(&self, requested: Range<usize>) -> Range<usize> {
+        let (Some(marked), Some(replacement)) = (&self.marked_range, &self.replacement_range)
+        else {
+            return requested;
+        };
+        if requested == *marked {
+            return replacement.clone();
+        }
+        if requested.is_empty() {
+            if requested.start <= marked.start {
+                return requested;
+            }
+            if requested.start >= marked.end {
+                let offset = requested
+                    .start
+                    .saturating_sub(marked.end)
+                    .saturating_add(replacement.end);
+                return offset..offset;
+            }
+            return replacement.clone();
+        }
+        if requested.start < marked.end && requested.end > marked.start {
+            let start = if requested.start < marked.start {
+                requested.start
+            } else {
+                replacement.start
+            };
+            let end = if requested.end > marked.end {
+                replacement.end.saturating_add(requested.end - marked.end)
+            } else {
+                replacement.end
+            };
+            return start..end;
+        }
+        let map = |offset: usize| {
+            if offset <= marked.start {
+                offset
+            } else {
+                offset
+                    .saturating_sub(marked.end - marked.start)
+                    .saturating_add(replacement.end - replacement.start)
+            }
+        };
+        map(requested.start)..map(requested.end)
+    }
+
+    fn mark_document(
+        &mut self,
+        replacement: Option<Range<usize>>,
+        text: &str,
+        selection: Option<Range<usize>>,
+        fallback: Range<usize>,
+    ) {
+        let requested =
+            replacement.unwrap_or_else(|| self.marked_range.clone().unwrap_or(fallback));
+        if let Some(marked) = self.marked_range.clone()
+            && requested.start >= marked.start
+            && requested.end <= marked.end
+        {
+            let local = requested.start - marked.start..requested.end - marked.start;
+            self.mark(Some(local), text, selection);
+            self.marked_range = Some(marked.start..marked.start + self.len());
+        } else {
+            let base_range = self.base_range_for_virtual(requested);
+            self.mark(None, text, selection);
+            self.replacement_range = Some(base_range.clone());
+            self.marked_range = Some(base_range.start..base_range.start + self.len());
+        }
+    }
 }
 
 impl EditorView {
-    fn send_text(&self, text: String) {
-        if !text.is_empty() {
-            let _ = self.tx.send(GuiEvent::Text(text));
+    fn send_replace_text(&self, range: Range<usize>, text: String) {
+        if !range.is_empty() || !text.is_empty() {
+            let plain_insert = self.grid.input.as_ref().is_none_or(|input| {
+                self.input.marked.is_empty()
+                    && input.selection.is_none()
+                    && range == (input.cursor..input.cursor)
+            });
+            if plain_insert {
+                let _ = self.tx.send(GuiEvent::Text(text));
+            } else {
+                let _ = self.tx.send(GuiEvent::ReplaceText { range, text });
+            }
         }
     }
 }
@@ -97,9 +236,19 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
-        let (text, actual) = self.input.text(requested)?;
+        let base = self
+            .grid
+            .input
+            .as_ref()
+            .map(|input| input.text.as_ref())
+            .unwrap_or("");
+        let text = self.input.virtual_text(base);
+        if requested.start > requested.end || requested.start > text.encode_utf16().count() {
+            return None;
+        }
+        let (bytes, actual) = range(&text, requested);
         *adjusted = Some(actual);
-        Some(text)
+        Some(text[bytes].to_owned())
     }
 
     fn selected_text_range(
@@ -108,8 +257,29 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
+        if let Some(marked) = self.input.marked_range.as_ref()
+            && !self.input.marked.is_empty()
+        {
+            return Some(UTF16Selection {
+                range: marked.start + self.input.selection.start
+                    ..marked.start + self.input.selection.end,
+                reversed: false,
+            });
+        }
+        if let Some(input) = self.grid.input.as_ref() {
+            if let Some(selection) = &input.selection {
+                return Some(UTF16Selection {
+                    range: selection.range.clone(),
+                    reversed: selection.reversed,
+                });
+            }
+            return Some(UTF16Selection {
+                range: input.cursor..input.cursor,
+                reversed: false,
+            });
+        }
         Some(UTF16Selection {
-            range: self.input.selection.clone(),
+            range: 0..0,
             reversed: false,
         })
     }
@@ -119,12 +289,23 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        (!self.input.marked.is_empty()).then(|| 0..self.input.len())
+        (!self.input.marked.is_empty())
+            .then(|| self.input.marked_range.clone())
+            .flatten()
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.input.take();
-        self.send_text(text);
+        if !self.input.marked.is_empty() {
+            let range = self
+                .input
+                .replacement_range
+                .clone()
+                .or_else(|| self.grid.input.as_ref().map(selected_document_range));
+            if let Some(range) = range {
+                self.send_replace_text(range, self.input.marked.clone());
+            }
+        }
+        self.input.take();
         cx.notify();
     }
 
@@ -135,8 +316,14 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.input.commit(replacement, text);
-        self.send_text(text);
+        let fallback = self.grid.input.as_ref().map(selected_document_range);
+        let range = replacement
+            .map(|range| self.input.base_range_for_virtual(range))
+            .or_else(|| self.input.replacement_range.clone())
+            .or(fallback)
+            .unwrap_or(0..0);
+        self.send_replace_text(range, text.to_owned());
+        self.input.take();
         cx.notify();
     }
 
@@ -148,7 +335,9 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.input.mark(replacement, text, selected);
+        let fallback = self.grid.input.as_ref().map(selected_document_range);
+        self.input
+            .mark_document(replacement, text, selected, fallback.unwrap_or(0..0));
         cx.notify();
     }
 
@@ -156,67 +345,148 @@ impl EntityInputHandler for EditorView {
         &mut self,
         requested: Range<usize>,
         bounds: Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let (column, row) = self.grid.cursor?;
-        let (prefix, _) = self.input.text(0..requested.start)?;
-        let (text, _) = self.input.text(requested)?;
-        let cursor_x = self
-            .grid
-            .cursor_index
-            .and_then(|index| {
-                let row_text = self.grid.rows.get(row)?;
-                let font = font("Menlo");
-                let layout = _window.text_system().shape_line(
-                    row_text.clone().into(),
-                    px(FONT_SIZE),
-                    &[gpui::TextRun {
-                        len: row_text.len(),
-                        font,
-                        color: rgb(FG).into(),
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    }],
-                    None,
-                );
-                Some(layout.x_for_index(index))
-            })
-            .unwrap_or(self.cell_width * column as f32);
-        let composition = self.input.marked.clone();
-        let composition_line = _window.text_system().shape_line(
-            composition.clone().into(),
-            px(FONT_SIZE),
-            &[gpui::TextRun {
-                len: composition.len(),
-                font: font("Menlo"),
-                color: rgb(FG).into(),
-                background_color: None,
-                underline: Some(gpui::UnderlineStyle {
-                    thickness: px(1.0),
-                    color: None,
-                    wavy: false,
-                }),
-                strikethrough: None,
-            }],
-            None,
-        );
-        let start = composition_line.x_for_index(prefix.len());
-        let end = composition_line.x_for_index(prefix.len() + text.len());
-        let left = start.min(end);
-        let text_width = if end >= start {
-            end - start
-        } else {
-            start - end
+        let Some(input) = self.grid.input.as_ref() else {
+            let (column, row) = self.grid.cursor?;
+            let base_x = self
+                .grid
+                .cursor_index
+                .and_then(|index| {
+                    let row_text = self.grid.rows.get(row)?;
+                    Some(shape_grid_row(window, row_text).x_for_index(index))
+                })
+                .unwrap_or(self.cell_width * column as f32);
+            let mark_start = self
+                .input
+                .marked_range
+                .as_ref()
+                .map_or(0, |range| range.start);
+            let start_byte = offset(
+                &self.input.marked,
+                requested.start.saturating_sub(mark_start),
+                false,
+            )
+            .0;
+            let end_byte = offset(
+                &self.input.marked,
+                requested.end.saturating_sub(mark_start),
+                true,
+            )
+            .0;
+            let composition_line = window.text_system().shape_line(
+                self.input.marked.clone().into(),
+                px(FONT_SIZE),
+                &[gpui::TextRun {
+                    len: self.input.marked.len(),
+                    font: font("Menlo"),
+                    color: rgb(FG).into(),
+                    background_color: None,
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    }),
+                    strikethrough: None,
+                }],
+                None,
+            );
+            let start = composition_line.x_for_index(start_byte);
+            let end = composition_line.x_for_index(end_byte);
+            let (left, text_width) = if end >= start {
+                (start, end - start)
+            } else {
+                (end, start - end)
+            };
+            return Some(Bounds {
+                origin: point(
+                    bounds.left() + base_x + left,
+                    bounds.top() + px(LINE_HEIGHT) * row as f32,
+                ),
+                size: size(text_width.max(self.cell_width), px(LINE_HEIGHT)),
+            });
+        };
+        let visible_text = self.input.virtual_text(&input.text);
+        let visible_len = visible_text.encode_utf16().count();
+        if requested.start > requested.end || requested.start > visible_len {
+            return None;
         }
-        .max(self.cell_width);
+
+        if let (Some(marked), Some(replacement)) =
+            (&self.input.marked_range, &self.input.replacement_range)
+            && requested.start >= marked.start
+            && requested.end <= marked.end
+            && !self.input.marked.is_empty()
+        {
+            let (row, base_byte) = visible_input_position(&self.grid, replacement.start, false)?;
+            let local = requested.start - marked.start..requested.end - marked.start;
+            let (bytes, _) = range(&self.input.marked, local);
+            let prefix_byte = offset(
+                &self.input.marked,
+                requested.start.saturating_sub(marked.start),
+                false,
+            )
+            .0;
+            let composition = &self.input.marked;
+            let composition_line = window.text_system().shape_line(
+                composition.clone().into(),
+                px(FONT_SIZE),
+                &[gpui::TextRun {
+                    len: composition.len(),
+                    font: font("Menlo"),
+                    color: rgb(FG).into(),
+                    background_color: None,
+                    underline: Some(gpui::UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    }),
+                    strikethrough: None,
+                }],
+                None,
+            );
+            let end_byte = bytes.end;
+            let start = composition_line.x_for_index(prefix_byte);
+            let end = composition_line.x_for_index(end_byte);
+            let (left, text_width) = if end >= start {
+                (start, end - start)
+            } else {
+                (end, start - end)
+            };
+            let row_text = self.grid.rows.get(row)?;
+            let base_line = shape_grid_row(window, row_text);
+            let base_x = base_line.x_for_index(base_byte);
+            return Some(Bounds {
+                origin: point(
+                    bounds.left() + base_x + left,
+                    bounds.top() + px(LINE_HEIGHT) * row as f32,
+                ),
+                size: size(text_width.max(self.cell_width), px(LINE_HEIGHT)),
+            });
+        }
+
+        let base_range = self.input.base_range_for_virtual(requested);
+        let (row, start_byte) = visible_input_position(&self.grid, base_range.start, false)?;
+        let end_position = visible_input_position(&self.grid, base_range.end, true);
+        let row_text = self.grid.rows.get(row)?;
+        let layout = shape_grid_row(window, row_text);
+        let start = layout.x_for_index(start_byte);
+        let end = match end_position {
+            Some((end_row, end_byte)) if end_row == row => layout.x_for_index(end_byte),
+            _ => layout.width,
+        };
+        let (left, text_width) = if end >= start {
+            (start, end - start)
+        } else {
+            (end, start - end)
+        };
         Some(Bounds {
             origin: point(
-                bounds.left() + cursor_x + left,
+                bounds.left() + left,
                 bounds.top() + px(LINE_HEIGHT) * row as f32,
             ),
-            size: size(text_width, px(LINE_HEIGHT)),
+            size: size(text_width.max(self.cell_width), px(LINE_HEIGHT)),
         })
     }
 

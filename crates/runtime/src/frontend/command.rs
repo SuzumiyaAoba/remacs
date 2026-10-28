@@ -170,6 +170,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         match input {
             InputEvent::Key(key) => dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?,
             InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+            InputEvent::ReplaceText { range, text } => {
+                dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
+            }
         }
         i.macro_replaying = false;
         // A command error while replaying a macro aborts the rest of
@@ -587,6 +590,89 @@ fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mu
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
 }
 
+/// Replace the UTF-16 range used by the GUI text-input client. The event
+/// offsets refer to Unicode text in the current buffer, not to the visible
+/// composition string.
+fn dispatch_text_range(
+    i: &mut Interp,
+    range: &std::ops::Range<usize>,
+    text: &str,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
+    if range.is_empty() && text.is_empty() {
+        return;
+    }
+
+    keys.clear();
+    *arg_mode = false;
+    let prefix_arg = i.q("prefix-arg");
+    let prefix = i.symbol_value(prefix_arg);
+    let current_prefix_arg = i.q("current-prefix-arg");
+    let _ = i.set_symbol(current_prefix_arg, prefix);
+    let _ = i.set_symbol(prefix_arg, Value::Nil);
+
+    let this_command = i.q("this-command");
+    let previous = i.symbol_value(this_command);
+    let last_command = i.q("last-command");
+    let _ = i.set_symbol(last_command, previous);
+    let self_insert = i.intern("self-insert-command");
+    let _ = i.set_symbol(this_command, Value::Sym(self_insert));
+    if let Some(ch) = text.chars().last() {
+        let last_event = i.q("last-command-event");
+        let _ = i.set_symbol(last_event, Value::Int(ch as i128));
+    }
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
+
+    let mut changed = false;
+    if let Some(buffer) = i.current_buffer_ref() {
+        let (start, end) = {
+            let bb = buffer.borrow();
+            let contents = bb.text.text();
+            let start = utf16_to_char_offset(&contents, range.start, false).clamp(bb.begv, bb.zv);
+            let end = utf16_to_char_offset(&contents, range.end.max(range.start), true)
+                .clamp(start, bb.zv);
+            (start, end)
+        };
+        buffer.borrow_mut().set_point(start);
+        if start < end {
+            match crate::buffer::primitives::chg_delete(i, start, end) {
+                Ok(_) => changed = true,
+                Err(flow) => report_flow(i, flow),
+            }
+        }
+        if (start == end || changed) && !text.is_empty() {
+            if let Some(buffer) = i.current_buffer_ref() {
+                buffer.borrow_mut().set_point(start);
+            }
+            match crate::buffer::primitives::chg_insert_pt(i, text, false) {
+                Ok(_) => changed = true,
+                Err(flow) => report_flow(i, flow),
+            }
+        }
+    }
+    if changed {
+        post_command_undo_boundary(i);
+    }
+    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+}
+
+fn utf16_to_char_offset(text: &EmacsText, requested: usize, round_up: bool) -> usize {
+    let mut units = 0usize;
+    for (index, ch) in text.chars().enumerate() {
+        let end = units + ch.unicode().unwrap_or('\u{fffd}').len_utf16();
+        if requested < end {
+            return if round_up && requested > units {
+                index + 1
+            } else {
+                index
+            };
+        }
+        units = end;
+    }
+    text.chars().count()
+}
+
 /// The front-end-independent half of `minibuf_loop' for a canned/
 /// scripted input source: dispatch one `MinibufInput::Key' through
 /// the minibuffer's real keymaps.  `minibuf_read' owns `keys'/
@@ -722,6 +808,9 @@ fn minibuf_loop<T: KeyIo>(
                 }
             }
             InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+            InputEvent::ReplaceText { range, text } => {
+                dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
+            }
         }
         if let Some(f) = i.minibuf_exit_fn.take() {
             return Ok(MinibufInput::Call(f));

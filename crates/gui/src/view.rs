@@ -73,6 +73,11 @@ impl Render for EditorView {
         let focus = self.focus.clone();
         let marked = self.input.marked.clone();
         let marked_cursor = self.input.selection_byte_end();
+        let marked_origin = self
+            .input
+            .replacement_range
+            .as_ref()
+            .and_then(|range| input::visible_input_position(&self.grid, range.start, false));
         let composition_font = text_font.clone();
         div()
             .size_full()
@@ -231,14 +236,27 @@ impl Render for EditorView {
                                 }
                             }
                         }
-                        if let Some((cxp, yp)) = grid.cursor {
-                            let cursor_x = grid
-                                .cursor_index
-                                .and_then(|index| lines.get(yp).map(|line| line.x_for_index(index)))
-                                .unwrap_or(cell_width * (cxp as f32));
+                        let composition_origin = (!marked.is_empty())
+                            .then_some(marked_origin)
+                            .flatten()
+                            .and_then(|(row, index)| {
+                                lines.get(row).map(|line| (row, line.x_for_index(index)))
+                            });
+                        let cursor = composition_origin.or_else(|| {
+                            grid.cursor.map(|(column, row)| {
+                                let x = grid
+                                    .cursor_index
+                                    .and_then(|index| {
+                                        lines.get(row).map(|line| line.x_for_index(index))
+                                    })
+                                    .unwrap_or(cell_width * (column as f32));
+                                (row, x)
+                            })
+                        });
+                        if let Some((cursor_row, cursor_x)) = cursor {
                             let mut origin = point(
                                 bounds.left() + cursor_x,
-                                bounds.top() + line_height * (yp as f32),
+                                bounds.top() + line_height * (cursor_row as f32),
                             );
                             if !marked.is_empty() {
                                 let line = window.text_system().shape_line(
