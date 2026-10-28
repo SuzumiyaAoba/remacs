@@ -401,6 +401,73 @@ impl Frame {
     }
 }
 
+/// Reflow the selected frame's window tree to the front-end's current
+/// cell dimensions. Child ratios are preserved by `relay_children`, so a
+/// native resize changes live window sizes before redisplay notifications.
+pub(crate) fn reflow_frame_windows(frame: &FrameRef, width: usize, height: usize) {
+    let width = width.max(1);
+    let height = height.max(2);
+    let (root, minibuffer, root_top) = {
+        let frame_data = frame.borrow();
+        let root = frame_data.root.clone();
+        let minibuffer = frame_data.minibuffer.clone();
+        let root_top = root.as_ref().map_or(0, |root| root.borrow().top);
+        (root, minibuffer, root_top)
+    };
+    let minibuffer_height = minibuffer
+        .as_ref()
+        .map_or(0, |window| window.borrow().height)
+        .min(height.saturating_sub(1));
+    let root_height = height.saturating_sub(minibuffer_height);
+    let geometry_changed = {
+        let frame_data = frame.borrow();
+        frame_data.width != width
+            || frame_data.height != height
+            || root.as_ref().is_some_and(|root| {
+                let root = root.borrow();
+                root.left != 0
+                    || root.top != root_top
+                    || root.width != width
+                    || root.height != root_height
+            })
+            || minibuffer.as_ref().is_some_and(|window| {
+                let window = window.borrow();
+                window.left != 0
+                    || window.top != root_top.saturating_add(root_height)
+                    || window.width != width
+                    || window.height != minibuffer_height
+            })
+    };
+    if !geometry_changed {
+        return;
+    }
+
+    {
+        let mut frame_data = frame.borrow_mut();
+        frame_data.width = width;
+        frame_data.height = height;
+    }
+    if let Some(root) = &root {
+        {
+            let mut root_data = root.borrow_mut();
+            root_data.left = 0;
+            root_data.top = root_top;
+            root_data.width = width;
+            root_data.height = root_height;
+        }
+        if root.borrow().horiz.is_some() {
+            relay_children(root);
+        }
+    }
+    if let Some(minibuffer) = minibuffer {
+        let mut window = minibuffer.borrow_mut();
+        window.left = 0;
+        window.top = root_top.saturating_add(root_height);
+        window.width = width;
+        window.height = minibuffer_height;
+    }
+}
+
 /// The frame's batch menu-bar shift (0 or 1 rows) — derived from the
 /// minibuffer's top edge so it also applies to frames whose geometry
 /// was installed by `set-window-configuration'.

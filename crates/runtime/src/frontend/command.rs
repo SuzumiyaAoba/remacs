@@ -121,14 +121,12 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             minibuf_loop::<T>(&t, interp, prompt, single)
         }));
     }
-    // Sync frame geometry.
-    {
-        let (w, h) = term.borrow().size();
-        if let Some(f) = &i.selected_frame {
-            f.borrow_mut().width = w;
-            f.borrow_mut().height = h;
-        }
+    // Sync initial frame/window geometry, then watch for front-end resizes.
+    let mut frontend_size = term.borrow().size();
+    if let Some(frame) = i.selected_frame.as_ref() {
+        crate::editor::reflow_frame_windows(frame, frontend_size.0, frontend_size.1);
     }
+    let mut frontend_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
     let mut keys: Vec<i128> = Vec::new();
     // Set while a universal/digit-argument sequence is being entered:
     // digits, `-', and further C-u keep building `prefix-arg' (Emacs's
@@ -136,6 +134,15 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
     let mut arg_mode = false;
     let mut render_needed = true;
     loop {
+        let current_size = term.borrow().size();
+        let current_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
+        if current_size != frontend_size || current_frame_id != frontend_frame_id {
+            frontend_size = current_size;
+            frontend_frame_id = current_frame_id;
+            if let Some(frame) = i.selected_frame.as_ref() {
+                crate::editor::reflow_frame_windows(frame, frontend_size.0, frontend_size.1);
+            }
+        }
         let event_activity = match crate::lisp::eval::threads::yield_now(i).and_then(|ran_thread| {
             crate::lisp::builtins::evalfn::thread_wait_events(i)
                 .map(|ran_events| ran_thread || ran_events)
