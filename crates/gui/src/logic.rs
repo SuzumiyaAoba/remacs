@@ -119,6 +119,14 @@ pub(super) enum GuiRequest {
         buttons: Vec<String>,
         reply: SyncSender<Result<Option<usize>, String>>,
     },
+    FileDialog {
+        prompt: String,
+        directory: Option<String>,
+        must_match: bool,
+        initial: Option<String>,
+        directory_only: bool,
+        reply: SyncSender<Result<Option<String>, String>>,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -195,6 +203,36 @@ impl remacs_runtime::frontend::DialogBackend for GuiDialogBackend {
         response
             .recv()
             .map_err(|_| "GUI dialog service stopped".to_owned())?
+    }
+}
+
+struct GuiFileDialogBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
+    fn read_file_name(
+        &self,
+        prompt: &str,
+        directory: Option<&str>,
+        must_match: bool,
+        initial: Option<&str>,
+        directory_only: bool,
+    ) -> Result<Option<String>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FileDialog {
+                prompt: prompt.to_owned(),
+                directory: directory.map(str::to_owned),
+                must_match,
+                initial: initial.map(str::to_owned),
+                directory_only,
+                reply,
+            })
+            .map_err(|_| "GUI file dialog service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI file dialog service stopped".to_owned())?
     }
 }
 
@@ -1041,6 +1079,9 @@ fn start_logic_inner(
             }
             if enable_gui_requests {
                 i.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                i.set_file_dialog_backend(Some(Rc::new(GuiFileDialogBackend {
                     requests: gui_requests_tx.clone(),
                 })));
             }

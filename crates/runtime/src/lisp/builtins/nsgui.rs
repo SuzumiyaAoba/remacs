@@ -538,12 +538,40 @@ winsys_fn!(f_ns_hide_emacs);
 winsys_fn!(f_ns_hide_others);
 winsys_fn!(f_ns_emacs_info_panel);
 winsys_fn!(f_ns_popup_color_panel);
-winsys_fn!(f_ns_read_file_name);
 winsys_fn!(f_ns_frame_edges);
 winsys_fn!(f_ns_frame_geometry);
 winsys_fn!(f_ns_mouse_absolute_pixel_position);
 winsys_fn!(f_ns_set_mouse_absolute_pixel_position);
 winsys_fn!(f_ns_show_character_palette);
+
+fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    fn optional_string(i: &mut Interp, value: Option<&Value>) -> Result<Option<String>, Flow> {
+        match value {
+            None | Some(Value::Nil) => Ok(None),
+            Some(value) => super::want_string(i, value)
+                .map(|text| Some(text.to_unicode_lossy())),
+        }
+    }
+
+    let prompt = super::want_string(i, &a[0])?.to_unicode_lossy();
+    let directory = optional_string(i, a.get(1))?;
+    let must_match = a.get(2).is_some_and(Value::truthy);
+    let initial = optional_string(i, a.get(3))?;
+    let directory_only = a.get(4).is_some_and(Value::truthy);
+    let Some(backend) = i.file_dialog_backend.clone() else {
+        return Err(winsys(i));
+    };
+    let selected = backend
+        .read_file_name(
+            &prompt,
+            directory.as_deref(),
+            must_match,
+            initial.as_deref(),
+            directory_only,
+        )
+        .map_err(|error| i.error(format!("File dialog failed: {error}")))?;
+    Ok(selected.map(Value::string).unwrap_or(Value::Nil))
+}
 
 fn selection_symbol(i: &mut Interp, value: &Value) -> Result<SymId, Flow> {
     match value {

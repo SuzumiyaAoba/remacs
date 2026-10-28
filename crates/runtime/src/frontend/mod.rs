@@ -30,6 +30,18 @@ pub trait DialogBackend {
     ) -> Result<Option<usize>, String>;
 }
 
+/// Host file panel used by graphical file-name primitives.
+pub trait FileDialogBackend {
+    fn read_file_name(
+        &self,
+        prompt: &str,
+        directory: Option<&str>,
+        must_match: bool,
+        initial: Option<&str>,
+        directory_only: bool,
+    ) -> Result<Option<String>, String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),

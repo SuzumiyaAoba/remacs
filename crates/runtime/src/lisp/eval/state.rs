@@ -25,6 +25,14 @@ impl Interp {
         self.dialog_backend = backend;
     }
 
+    /// Install or remove the host file panel used by graphical file-name primitives.
+    pub fn set_file_dialog_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::FileDialogBackend>>,
+    ) {
+        self.file_dialog_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

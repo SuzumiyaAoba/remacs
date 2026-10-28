@@ -167,6 +167,37 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::FileDialog {
+                        prompt,
+                        directory,
+                        must_match,
+                        initial,
+                        directory_only,
+                        reply,
+                    } => {
+                        // GPUI's path panel currently accepts mode and prompt;
+                        // its platform API does not expose the initial path.
+                        let _ = (directory, must_match, initial);
+                        let options = PathPromptOptions {
+                            files: !directory_only,
+                            directories: directory_only,
+                            multiple: false,
+                            prompt: Some(prompt.into()),
+                        };
+                        let result = match cx.update(|app| app.prompt_for_paths(options)) {
+                            Ok(response) => match response.await {
+                                Ok(Ok(Some(paths))) => Ok(paths
+                                    .into_iter()
+                                    .next()
+                                    .map(|path| path.to_string_lossy().into_owned())),
+                                Ok(Ok(None)) => Ok(None),
+                                Ok(Err(error)) => Err(error.to_string()),
+                                Err(error) => Err(error.to_string()),
+                            },
+                            Err(error) => Err(error.to_string()),
+                        };
+                        let _ = reply.send(result);
+                    }
                 }
             }
             let _ = cx.update(|app| app.quit());
