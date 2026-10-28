@@ -670,6 +670,60 @@ fn mode_line_variable(i: &Interp, buffer_id: usize, name: &str) -> Option<Value>
         .or_else(|| i.default_toplevel_value(id))
 }
 
+fn mode_line_context(
+    i: &Interp,
+    buffer_id: usize,
+    point: usize,
+    tab_width: usize,
+) -> ModeLineContext {
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return ModeLineContext {
+            buffer_name: "???".to_owned(),
+            file_name: String::new(),
+            mode_name: String::new(),
+            modified: false,
+            read_only: false,
+            line: 0,
+            column: 0,
+            line_count: 0,
+            buffer_size: 0,
+            point_offset: 0,
+            narrowed: false,
+        };
+    };
+    let buffer = buffer.borrow();
+    let point = point.clamp(buffer.begv, buffer.zv);
+    let first_line = buffer.text.line_of_pos(buffer.begv);
+    let point_line = buffer.text.line_of_pos(point);
+    let last_line = buffer.text.line_of_pos(buffer.zv);
+    let point_line_start = buffer.text.line_start(point_line);
+    let mode_name = match buffer_setting(i, "mode-name", buffer_id) {
+        Value::Str(name) => name.borrow().to_unicode_lossy(),
+        Value::Sym(name) => i.symbol_name(name),
+        value => i.princ_to_string(&value).to_unicode_lossy(),
+    };
+    ModeLineContext {
+        buffer_name: buffer.name.to_unicode_lossy(),
+        file_name: buffer
+            .file_name
+            .as_ref()
+            .map(|name| name.to_unicode_lossy())
+            .unwrap_or_default(),
+        mode_name,
+        modified: buffer.is_modified(),
+        read_only: buffer_setting(i, "buffer-read-only", buffer_id).truthy(),
+        line: point_line.saturating_sub(first_line).saturating_add(1),
+        column: display_columns(
+            &buffer.text.substring(point_line_start, point),
+            tab_width,
+        ),
+        line_count: last_line.saturating_sub(first_line).saturating_add(1),
+        buffer_size: buffer.zv.saturating_sub(buffer.begv),
+        point_offset: point.saturating_sub(buffer.begv),
+        narrowed: buffer.begv > 0 || buffer.zv < buffer.text_len(),
+    }
+}
+
 fn fit_mode_line_field(field: &str, width: usize, left_align: bool) -> String {
     if width == 0 {
         return String::new();
@@ -1048,6 +1102,44 @@ fn place_text_row(
         }
         column = column.saturating_add(char_width);
     }
+}
+
+fn place_formatted_window_row(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+    row: usize,
+    left: usize,
+    width: usize,
+    tab_width: usize,
+    buffer_id: usize,
+    format: &Value,
+    context: &ModeLineContext,
+    face_name: &str,
+) {
+    let Some(screen_row) = screen.get_mut(row) else {
+        return;
+    };
+    let text = format_mode_line_value(i, buffer_id, format, context, 0);
+    let row_text = fit_text_to_cells_with_tab_width(&text, width, tab_width).0;
+    let mut style = faces.builtin(i, face_name, 0).finish();
+    if style == CellStyle::default()
+        && matches!(
+            face_name,
+            "mode-line-active" | "mode-line-inactive" | "header-line"
+        )
+    {
+        style.inverse = true;
+    }
+    let cell_styles = vec![style; width];
+    let character_styles = row_text.chars().map(|_| style).collect::<Vec<_>>();
+    place_text_row(
+        screen_row,
+        left,
+        &row_text,
+        &cell_styles,
+        &character_styles,
+    );
 }
 
 fn compose_screen_rows(
@@ -2537,6 +2629,10 @@ fn render_grid_internal(
         let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
         let mode_line_format = buffer_setting(i, "mode-line-format", buf_id);
         let mode_line_enabled = !mode_line_format.is_nil();
+        let tab_line_format = buffer_setting(i, "tab-line-format", buf_id);
+        let tab_line_enabled = !tab_line_format.is_nil();
+        let header_line_format = buffer_setting(i, "header-line-format", buf_id);
+        let header_line_enabled = !header_line_format.is_nil();
         let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
         let line_number_offset = match buffer_setting(i, "display-line-numbers-offset", buf_id) {
             Value::Int(offset) => offset,
@@ -2569,7 +2665,11 @@ fn render_grid_internal(
         };
         let content_left = window_left.saturating_add(gutter_width);
         let content_width = window_width.saturating_sub(gutter_width);
-        let text_rows = window_height.saturating_sub(usize::from(mode_line_enabled));
+        let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
+        let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
+        let text_rows = window_height
+            .saturating_sub(top_rows + usize::from(mode_line_enabled));
+        let content_top = window_top + top_rows;
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
         // away, and likewise `hscroll' horizontally (GNU
@@ -2705,8 +2805,50 @@ fn render_grid_internal(
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone())));
+        let mode_point = i.buffers.get(buf_id).map_or(0, |buffer| {
+            let bb = buffer.borrow();
+            (if selected_window {
+                bb.point()
+            } else {
+                w.borrow().point
+            })
+            .clamp(bb.begv, bb.zv)
+        });
+        let mode_context = mode_line_context(i, buf_id, mode_point, tab_width);
+        let mut auxiliary_row = window_top;
+        if tab_line_enabled && auxiliary_row < content_top {
+            place_formatted_window_row(
+                i,
+                &mut fctx,
+                &mut screen_rows,
+                auxiliary_row,
+                window_left,
+                window_width,
+                tab_width,
+                buf_id,
+                &tab_line_format,
+                &mode_context,
+                "tab-line",
+            );
+            auxiliary_row += 1;
+        }
+        if header_line_enabled && auxiliary_row < content_top {
+            place_formatted_window_row(
+                i,
+                &mut fctx,
+                &mut screen_rows,
+                auxiliary_row,
+                window_left,
+                window_width,
+                tab_width,
+                buf_id,
+                &header_line_format,
+                &mode_context,
+                "header-line",
+            );
+        }
         let mut visible_end = start;
-        let mut screen_row = window_top;
+        let mut screen_row = content_top;
         for row in 0..text_rows {
             if screen_row >= body_height || screen_row >= window_top + text_rows {
                 break;
@@ -2979,60 +3121,6 @@ fn render_grid_internal(
         // Mode line.
         let my = window_top + text_rows;
         if mode_line_enabled && my < body_height {
-            let mode_context = match i.buffers.get(buf_id) {
-                Some(b) => {
-                    let bb = b.borrow();
-                    let point = if selected_window {
-                        bb.point()
-                    } else {
-                        w.borrow().point
-                    }
-                    .clamp(bb.begv, bb.zv);
-                    let first_line = bb.text.line_of_pos(bb.begv);
-                    let point_line = bb.text.line_of_pos(point);
-                    let last_line = bb.text.line_of_pos(bb.zv);
-                    let point_line_start = bb.text.line_start(point_line);
-                    let mode_name = match buffer_setting(i, "mode-name", buf_id) {
-                        Value::Str(name) => name.borrow().to_unicode_lossy(),
-                        Value::Sym(name) => i.symbol_name(name),
-                        value => i.princ_to_string(&value).to_unicode_lossy(),
-                    };
-                    ModeLineContext {
-                        buffer_name: bb.name.to_unicode_lossy(),
-                        file_name: bb
-                            .file_name
-                            .as_ref()
-                            .map(|name| name.to_unicode_lossy())
-                            .unwrap_or_default(),
-                        mode_name,
-                        modified: bb.is_modified(),
-                        read_only: buffer_setting(i, "buffer-read-only", buf_id).truthy(),
-                        line: point_line.saturating_sub(first_line).saturating_add(1),
-                        column: display_columns(
-                            &bb.text.substring(point_line_start, point),
-                            tab_width,
-                        ),
-                        line_count: last_line.saturating_sub(first_line).saturating_add(1),
-                        buffer_size: bb.zv.saturating_sub(bb.begv),
-                        point_offset: point.saturating_sub(bb.begv),
-                        narrowed: bb.begv > 0 || bb.zv < bb.text_len(),
-                    }
-                }
-                None => ModeLineContext {
-                    buffer_name: "???".to_owned(),
-                    file_name: String::new(),
-                    mode_name: String::new(),
-                    modified: false,
-                    read_only: false,
-                    line: 0,
-                    column: 0,
-                    line_count: 0,
-                    buffer_size: 0,
-                    point_offset: 0,
-                    narrowed: false,
-                },
-            };
-            let mode = format_mode_line_value(i, buf_id, &mode_line_format, &mode_context, 0);
             // GNU draws mode lines under `mode-line-active' on the
             // selected window, `mode-line-inactive' elsewhere — both
             // resolve through `mode-line' (inverse on a mono tty).
@@ -3043,19 +3131,18 @@ fn render_grid_internal(
             } else {
                 "mode-line-inactive"
             };
-            let mut ml = fctx.builtin(i, ml_name, 0).finish();
-            if ml == CellStyle::default() {
-                ml.inverse = true;
-            }
-            let mode_row = fit_text_to_cells_with_tab_width(&mode, window_width, tab_width).0;
-            let mode_cells = vec![ml; window_width];
-            let mode_chars = mode_row.chars().map(|_| ml).collect::<Vec<_>>();
-            place_text_row(
-                &mut screen_rows[my],
+            place_formatted_window_row(
+                i,
+                &mut fctx,
+                &mut screen_rows,
+                my,
                 window_left,
-                &mode_row,
-                &mode_cells,
-                &mode_chars,
+                window_width,
+                tab_width,
+                buf_id,
+                &mode_line_format,
+                &mode_context,
+                ml_name,
             );
             mode_rows.push(my);
         }
