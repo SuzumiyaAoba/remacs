@@ -496,8 +496,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("previous-frame", 0, 2, f_frame_self, ""),
     S!("old-selected-frame", 0, 0, f_old_selected_frame, ""),
     S!("old-selected-window", 0, 0, f_sel_window, ""),
-    S!("raise-frame", 0, 1, f_frame_live_nil, ""),
-    S!("lower-frame", 0, 1, f_frame_live_nil, ""),
+    S!("raise-frame", 0, 1, f_raise_frame, ""),
+    S!("lower-frame", 0, 1, f_lower_frame, ""),
     S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
     S!("make-frame-invisible", 0, 2, f_make_frame_invisible, ""),
     S!("iconify-frame", 0, 1, f_iconify_frame, ""),
@@ -3255,13 +3255,28 @@ fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     Ok(Value::Nil)
 }
 
-/// `raise-frame'/`lower-frame'/`iconify-frame' — frame-live-p check,
-/// then nil (no window manager to talk to).
-fn f_frame_live_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+fn f_raise_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_graphical(i, &frame)
+        && let Some(backend) = i.frame_window_backend.clone()
+    {
+        backend
+            .raise(frame.borrow().id)
+            .map_err(|error| i.error(format!("Frame raise failed: {error}")))?;
     }
+    Ok(Value::Nil)
+}
+
+fn f_lower_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_live(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_graphical(i, &frame)
+        && let Some(backend) = i.frame_window_backend.clone()
+    {
+        backend
+            .lower(frame.borrow().id)
+            .map_err(|error| i.error(format!("Frame lower failed: {error}")))?;
+    }
+    Ok(Value::Nil)
 }
 
 fn f_iconify_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

@@ -8,6 +8,8 @@ mod accessibility;
 #[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
 #[cfg(target_os = "macos")]
+use cocoa::foundation::NSInteger;
+#[cfg(target_os = "macos")]
 use objc::{msg_send, runtime::{BOOL, YES}, sel, sel_impl};
 mod keys;
 mod logic;
@@ -98,6 +100,7 @@ pub fn run_gui_with_dump(
         cx.spawn(async move |cx| {
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
+            let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut native_visibility = HashMap::<usize, bool>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
@@ -107,10 +110,19 @@ pub fn run_gui_with_dump(
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
                             let fullscreen = snapshot.fullscreen.clone();
+                            let behavior = (
+                                snapshot.auto_raise,
+                                snapshot.auto_lower,
+                                snapshot.z_group.clone(),
+                                snapshot.parent_frame.is_some(),
+                            );
                             if let Some(handle) = windows.get(&frame_id).copied() {
                                 let update_window_mode =
                                     window_modes.get(&frame_id) != Some(&fullscreen);
                                 let requested_fullscreen = fullscreen.clone();
+                                let update_behavior =
+                                    frame_behaviors.get(&frame_id) != Some(&behavior);
+                                let requested_behavior = behavior.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     if view.grid != grid || grid.blink_cursor {
                                         view.grid = grid;
@@ -122,13 +134,26 @@ pub fn run_gui_with_dump(
                                             requested_fullscreen.as_deref(),
                                         );
                                     }
+                                    if update_behavior {
+                                        view.set_frame_behavior(
+                                            requested_behavior.0,
+                                            requested_behavior.1,
+                                        );
+                                        set_frame_z_group_window(
+                                            window,
+                                            requested_behavior.2.as_deref(),
+                                            requested_behavior.3,
+                                        );
+                                    }
                                 });
                                 window_modes.insert(frame_id, fullscreen);
+                                frame_behaviors.insert(frame_id, behavior);
                                 native_visibility.entry(frame_id).or_insert(true);
                                 continue;
                             }
                             if let Some(handle) = primary_window.take() {
                                 let initial_fullscreen = fullscreen.clone();
+                                let initial_behavior = behavior.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
                                     view.grid = grid;
@@ -137,8 +162,18 @@ pub fn run_gui_with_dump(
                                         window,
                                         initial_fullscreen.as_deref(),
                                     );
+                                    view.set_frame_behavior(
+                                        initial_behavior.0,
+                                        initial_behavior.1,
+                                    );
+                                    set_frame_z_group_window(
+                                        window,
+                                        initial_behavior.2.as_deref(),
+                                        initial_behavior.3,
+                                    );
                                 });
                                 window_modes.insert(frame_id, fullscreen);
+                                frame_behaviors.insert(frame_id, behavior);
                                 native_visibility.insert(frame_id, true);
                                 windows.insert(frame_id, handle);
                                 continue;
@@ -164,6 +199,15 @@ pub fn run_gui_with_dump(
                                 }
                             };
                             window_modes.insert(frame_id, snapshot.fullscreen.clone());
+                            frame_behaviors.insert(frame_id, behavior.clone());
+                            let _ = handle.update(cx, move |view, window, _cx| {
+                                view.set_frame_behavior(behavior.0, behavior.1);
+                                set_frame_z_group_window(
+                                    window,
+                                    behavior.2.as_deref(),
+                                    behavior.3,
+                                );
+                            });
                             native_visibility.insert(frame_id, true);
                             windows.insert(frame_id, handle);
                         }
@@ -221,6 +265,17 @@ pub fn run_gui_with_dump(
                                     show_frame_window(window);
                                 } else {
                                     window.minimize_window();
+                                }
+                            });
+                        }
+                    }
+                    GuiRequest::FrameOrder { frame_id, raise } => {
+                        if let Some(handle) = windows.get(&frame_id).copied() {
+                            let _ = handle.update(cx, |_view, window, _cx| {
+                                if raise {
+                                    raise_frame_window(window);
+                                } else {
+                                    lower_frame_window(window);
                                 }
                             });
                         }
@@ -365,16 +420,8 @@ fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
 fn native_frame_visible(window: &Window) -> Option<bool> {
     #[cfg(target_os = "macos")]
     {
-        let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
-        let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-            return None;
-        };
+        let native_window = appkit_native_window(window)?;
         unsafe {
-            let view = handle.ns_view.as_ptr() as id;
-            let native_window: id = msg_send![view, window];
-            if native_window.is_null() {
-                return None;
-            }
             let minimized: BOOL = msg_send![native_window, isMiniaturized];
             Some(minimized != YES)
         }
@@ -388,25 +435,76 @@ fn native_frame_visible(window: &Window) -> Option<bool> {
 
 fn show_frame_window(window: &Window) {
     #[cfg(target_os = "macos")]
-    if let Some(handle) = (|| {
-        let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
-        let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-            return None;
-        };
-        Some(handle)
-    })() {
+    if let Some(native_window) = appkit_native_window(window) {
         unsafe {
-            let view = handle.ns_view.as_ptr() as id;
-            let native_window: id = msg_send![view, window];
-            if !native_window.is_null() {
-                let minimized: BOOL = msg_send![native_window, isMiniaturized];
-                if minimized == YES {
-                    let _: () = msg_send![native_window, deminiaturize: nil];
-                }
+            let minimized: BOOL = msg_send![native_window, isMiniaturized];
+            if minimized == YES {
+                let _: () = msg_send![native_window, deminiaturize: nil];
             }
         }
     }
     window.activate_window();
+}
+
+fn raise_frame_window(window: &Window) {
+    window.activate_window();
+}
+
+fn lower_frame_window(window: &Window) {
+    #[cfg(target_os = "macos")]
+    if let Some(native_window) = appkit_native_window(window) {
+        unsafe {
+            let _: () = msg_send![native_window, orderBack: nil];
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+}
+
+fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool) {
+    #[cfg(target_os = "macos")]
+    if let Some(native_window) = appkit_native_window(window) {
+        let level: NSInteger = match z_group {
+            Some("above") if child => 101,
+            Some("above") => 3,
+            Some("below") => 0,
+            _ if child => 101,
+            _ => 0,
+        };
+        unsafe {
+            let _: () = msg_send![native_window, setLevel: level];
+            match z_group {
+                Some("above") => {
+                    let _: () = msg_send![native_window, orderFront: nil];
+                }
+                Some("below") => {
+                    let _: () = msg_send![native_window, orderBack: nil];
+                }
+                _ => {}
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    match z_group {
+        Some("above") => window.activate_window(),
+        Some("below") => lower_frame_window(window),
+        _ => {
+            let _ = (window, child);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn appkit_native_window(window: &Window) -> Option<id> {
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
+    let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return None;
+    };
+    unsafe {
+        let view = handle.ns_view.as_ptr() as id;
+        let native_window: id = msg_send![view, window];
+        (!native_window.is_null()).then_some(native_window)
+    }
 }
 
 #[cfg(test)]

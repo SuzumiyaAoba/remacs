@@ -13,6 +13,7 @@ use remacs_runtime::frontend::{
     MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
+use std::{cell::Cell, rc::Rc};
 mod input;
 use input::TextInputState;
 
@@ -194,6 +195,8 @@ pub(super) struct EditorView {
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
     focus_subscriptions: Vec<Subscription>,
+    auto_raise: Rc<Cell<bool>>,
+    auto_lower: Rc<Cell<bool>>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -231,6 +234,8 @@ impl EditorView {
             scroll_bar_drag: None,
             toolbar_pressed: false,
             focus_subscriptions: Vec::new(),
+            auto_raise: Rc::new(Cell::new(false)),
+            auto_lower: Rc::new(Cell::new(false)),
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -242,6 +247,11 @@ impl EditorView {
 
     pub(super) fn set_frame_id(&self, frame_id: usize) {
         self.tx.set_frame_id(frame_id);
+    }
+
+    pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
+        self.auto_raise.set(auto_raise);
+        self.auto_lower.set(auto_lower);
     }
 }
 
@@ -1484,7 +1494,11 @@ pub(super) fn build_managed_editor_view(
         view.grid = grid;
     }
     let frame_events = view.tx.clone();
+    let auto_lower = view.auto_lower.clone();
     let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, cx| {
+        if auto_lower.get() {
+            crate::lower_frame_window(window);
+        }
         if let (Some(frame_id), Some(stack)) = (frame_events.frame_id(), cx.window_stack()) {
             let visible = stack.contains(&window.window_handle());
             let _ = frame_events.send_visibility_update(frame_id, visible);
@@ -1492,7 +1506,11 @@ pub(super) fn build_managed_editor_view(
     });
     view.focus_subscriptions.push(subscription);
     let frame_events = view.tx.clone();
+    let auto_raise = view.auto_raise.clone();
     let subscription = window.on_focus_in(&view.focus, cx, move |window, cx| {
+        if auto_raise.get() {
+            crate::raise_frame_window(window);
+        }
         if let Some(frame_id) = frame_events.frame_id() {
             let visible = cx
                 .window_stack()

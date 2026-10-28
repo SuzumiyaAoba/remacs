@@ -6105,7 +6105,7 @@ pub(crate) fn set_frame_visibility(
     frame.borrow_mut().params =
         crate::lisp::eval::plist_put_front(&params, &known_key, Value::t());
     if frame_is_graphical(i, frame)
-        && let Some(backend) = i.frame_visibility_backend.clone()
+        && let Some(backend) = i.frame_window_backend.clone()
     {
         backend
             .set_visible(frame.borrow().id, visible)

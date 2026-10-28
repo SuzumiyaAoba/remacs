@@ -122,12 +122,16 @@ pub(super) struct FrameSnapshot {
     pub top: Option<i128>,
     pub undecorated: bool,
     pub fullscreen: Option<String>,
+    pub auto_raise: bool,
+    pub auto_lower: bool,
+    pub z_group: Option<String>,
     pub grid: Grid,
 }
 
 pub(super) enum GuiRequest {
     FrameSnapshots(Vec<FrameSnapshot>),
     FrameVisibility { frame_id: usize, visible: bool },
+    FrameOrder { frame_id: usize, raise: bool },
     Prompt {
         frame_id: usize,
         message: String,
@@ -256,10 +260,28 @@ struct GuiFrameVisibilityBackend {
     requests: smol::channel::Sender<GuiRequest>,
 }
 
-impl remacs_runtime::frontend::FrameVisibilityBackend for GuiFrameVisibilityBackend {
+impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String> {
         self.requests
             .send_blocking(GuiRequest::FrameVisibility { frame_id, visible })
+            .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+
+    fn raise(&self, frame_id: usize) -> Result<(), String> {
+        self.requests
+            .send_blocking(GuiRequest::FrameOrder {
+                frame_id,
+                raise: true,
+            })
+            .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+
+    fn lower(&self, frame_id: usize) -> Result<(), String> {
+        self.requests
+            .send_blocking(GuiRequest::FrameOrder {
+                frame_id,
+                raise: false,
+            })
             .map_err(|_| "GUI window service is unavailable".to_owned())
     }
 }
@@ -905,6 +927,10 @@ impl KeyIo for ChanIo {
                     Value::Sym(symbol) => Some(i.symbol_name(symbol)),
                     _ => None,
                 };
+                let z_group = match frame_parameter_value(i, frame, "z-group") {
+                    Value::Sym(symbol) => Some(i.symbol_name(symbol)),
+                    _ => None,
+                };
                 snapshots.push(FrameSnapshot {
                     frame_id,
                     name,
@@ -915,6 +941,9 @@ impl KeyIo for ChanIo {
                     top: int_param("top"),
                     undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
                     fullscreen,
+                    auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
+                    auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),
+                    z_group,
                     grid,
                 });
             }
@@ -1130,7 +1159,7 @@ fn start_logic_inner(
                 i.set_file_dialog_backend(Some(Rc::new(GuiFileDialogBackend {
                     requests: gui_requests_tx.clone(),
                 })));
-                i.set_frame_visibility_backend(Some(Rc::new(GuiFrameVisibilityBackend {
+                i.set_frame_window_backend(Some(Rc::new(GuiFrameVisibilityBackend {
                     requests: gui_requests_tx.clone(),
                 })));
             }

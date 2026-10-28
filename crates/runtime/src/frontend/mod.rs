@@ -42,9 +42,11 @@ pub trait FileDialogBackend {
     ) -> Result<Option<String>, String>;
 }
 
-/// Host window visibility bridge used by GUI frame primitives.
-pub trait FrameVisibilityBackend {
+/// Host native window bridge used by GUI frame primitives.
+pub trait FrameWindowBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String>;
+    fn raise(&self, frame_id: usize) -> Result<(), String>;
+    fn lower(&self, frame_id: usize) -> Result<(), String>;
 }
 
 /// Input from a front-end: key events, committed text, or mouse actions.

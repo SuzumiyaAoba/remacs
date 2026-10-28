@@ -33,12 +33,12 @@ impl Interp {
         self.file_dialog_backend = backend;
     }
 
-    /// Install or remove the host window visibility backend.
-    pub fn set_frame_visibility_backend(
+    /// Install or remove the host native-window backend.
+    pub fn set_frame_window_backend(
         &mut self,
-        backend: Option<Rc<dyn crate::frontend::FrameVisibilityBackend>>,
+        backend: Option<Rc<dyn crate::frontend::FrameWindowBackend>>,
     ) {
-        self.frame_visibility_backend = backend;
+        self.frame_window_backend = backend;
     }
 
     pub(crate) fn reset_dump_execution(&mut self) {
