@@ -3667,10 +3667,10 @@ overlap DATE."
           (if duration
               (seq-filter
                (lambda (occurrence)
-                 (icalendar-date-time<=
-                  lower
-                  (icalendar-date/time-add-duration
-                   occurrence duration vtimezone)))
+                 (let ((end (icalendar-date/time-add-duration
+                             occurrence duration vtimezone)))
+                   (or (icalendar-date-time<= lower occurrence)
+                       (icalendar-date-time< lower end))))
                all-recurrences)
             all-recurrences)))
     (when recurrences
