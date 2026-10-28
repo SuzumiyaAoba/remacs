@@ -859,6 +859,64 @@ SIZE is a string Columns x Rows like for example \"3x2\"."
       (goto-char pos))
     (org-table-align)))
 
+(defun org-table--spaces-as-entities (count)
+  "Return Org entity text representing COUNT literal spaces."
+  (let (entities)
+    (while (> count 0)
+      (let ((n (min count 20)))
+        (push (concat "\\_" (make-string n ?\s) "{}") entities)
+        (setq count (- count n))))
+    (apply #'concat (nreverse entities))))
+
+(defun org-table--encode-csv-edge-spaces (field)
+  "Encode leading and trailing spaces in CSV FIELD as Org entities."
+  (let* ((len (length field))
+         (leading (if (string-match "\\` +" field) (match-end 0) 0))
+         (trailing (if (string-match " +\\'" field)
+                       (- len (match-beginning 0))
+                     0)))
+    (if (= leading len)
+        (org-table--spaces-as-entities len)
+      (concat (org-table--spaces-as-entities leading)
+              (substring field leading (- len trailing))
+              (org-table--spaces-as-entities trailing)))))
+
+(defun org-table--decode-edge-space-entities (field)
+  "Decode Org space entities at the edges of FIELD.
+Record the decoded edge spaces in text properties so alignment can
+serialize them back as entities and preserve them across re-alignment."
+  (let ((value field)
+        (leading 0)
+        (trailing 0))
+    (while (string-match "\\`\\\\_\\( +\\){}" value)
+      (setq leading (+ leading (length (match-string 1 value)))
+            value (replace-match "" t t value)))
+    (while (string-match "\\\\_\\( +\\){}\\'" value)
+      (setq trailing (+ trailing (length (match-string 1 value)))
+            value (replace-match "" t t value)))
+    (if (zerop (+ leading trailing))
+        field
+      (let ((decoded (concat (make-string leading ?\s) value
+                             (make-string trailing ?\s))))
+        (when (> (length decoded) 0)
+          (put-text-property 0 (length decoded)
+                             'org-table-literal-edge-spaces
+                             (cons leading trailing) decoded))
+        decoded))))
+
+(defun org-table--encode-literal-edge-spaces (field)
+  "Re-encode literal edge spaces previously decoded in FIELD."
+  (let ((edge-spaces (and (> (length field) 0)
+                          (get-text-property
+                           0 'org-table-literal-edge-spaces field))))
+    (if edge-spaces
+        (let ((leading (car edge-spaces))
+              (trailing (cdr edge-spaces)))
+          (concat (org-table--spaces-as-entities leading)
+                  (substring field leading (- (length field) trailing))
+                  (org-table--spaces-as-entities trailing)))
+      field)))
+
 ;;;###autoload
 (defun org-table-convert-region (beg0 end0 &optional separator)
   "Convert region to a table.
@@ -920,7 +978,11 @@ nil      When nil, the command tries to be smart and figure out the
 	   ((looking-at "^") (insert "| "))
 	   ((looking-at "[ \t]*$") (replace-match " |") (forward-line 1))
 	   ((looking-at "[ \t]*\"\\([^\"]*\\)\"")
-	    (replace-match (replace-regexp-in-string "\n" " " (match-string 1)) t t)
+	    (replace-match
+	     (save-match-data
+	       (org-table--encode-csv-edge-spaces
+	        (replace-regexp-in-string "\n" " " (match-string 1))))
+	     t t)
 	    (if (looking-at "\"") (insert "\"")))
 	   ((looking-at "[^,\n]+") (goto-char (match-end 0)))
 	   ((looking-at "[ \t]*,") (replace-match " | "))
@@ -4485,7 +4547,8 @@ FIELD's width.  Otherwise, it's calculated."
 				              (cl-mapcar
                                                (lambda (field width alignment)
                                                  (org-table--align-field
-                                                  field
+                                                  (org-table--encode-literal-edge-spaces
+                                                   field)
                                                   width
                                                   alignment
                                                   (funcall get-or-compute-cell-width field)))
@@ -5564,7 +5627,9 @@ The table is taken from the parameter TXT, or from the buffer at point."
 	              (skip-chars-backward " \t" q)
                       ;; Preserve text properties.  They are used when
                       ;; calculating cell width.
-	              (push (buffer-substring q (point)) row)))))
+	              (push (org-table--decode-edge-space-entities
+	                     (buffer-substring q (point)))
+	                    row)))))
 	       (nreverse row)))
 	   table)
 	  (forward-line))
