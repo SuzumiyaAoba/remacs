@@ -5,6 +5,7 @@ use super::{
     monitor::monitor_geometry,
 };
 use gpui::*;
+use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
@@ -28,6 +29,16 @@ struct ScrollBarDrag {
     window_id: usize,
     orientation: GridScrollBarOrientation,
     pointer_offset: f32,
+}
+
+struct HelpTooltipView {
+    text: String,
+}
+
+impl Render for HelpTooltipView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().bg(rgb(0x303438)).child(self.text.clone())
+    }
 }
 
 fn scroll_bar_axis(bar: &GridScrollBar, point: Point<Pixels>) -> f32 {
@@ -315,6 +326,8 @@ impl Render for EditorView {
             .unwrap_or(BG);
         let grid = self.grid.clone();
         let images = grid.images.clone();
+        let help_echoes = grid.help_echoes.clone();
+        let explicit_tooltip = grid.tooltip.clone();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
         let scroll_grid = grid.clone();
@@ -884,6 +897,32 @@ impl Render for EditorView {
                     .into_iter()
                     .map(|image| grid_image_element(image, cell_width, line_height)),
             )
+            .children(help_echoes.into_iter().map(|region| {
+                let text = region.text;
+                div()
+                    .absolute()
+                    .left(cell_width * region.left as f32)
+                    .top(line_height * region.row as f32)
+                    .w(cell_width * region.width as f32)
+                    .h(line_height)
+                    .id((
+                        "help-echo",
+                        (region.row as u64).saturating_mul(1 << 32) + region.left as u64,
+                    ))
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| HelpTooltipView { text: text.clone() }).into()
+                    })
+            }))
+            .when_some(explicit_tooltip, |this, text| {
+                this.child(
+                    div()
+                        .absolute()
+                        .left(px(12.0))
+                        .top(px(12.0))
+                        .bg(rgb(0x303438))
+                        .child(text),
+                )
+            })
     }
 }
 

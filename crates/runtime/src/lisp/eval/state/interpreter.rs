@@ -45,6 +45,8 @@ pub struct Interp {
     pub output: Option<OutputSink>,
     /// Last thing shown in the echo area (tests inspect this).
     pub echo_message: crate::lisp::text::EmacsText,
+    /// Active graphical tooltip requested by `x-show-tip'.
+    pub gui_tip: Option<String>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,

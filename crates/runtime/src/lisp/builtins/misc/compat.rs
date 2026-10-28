@@ -142,8 +142,19 @@ pub(super) fn f_x_show_tip(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !matches!(&a[0], Value::Str(_)) {
         return Err(i.wrong_type_mut("stringp", &a[0]));
     }
-    let _ = crate::editor::frame_live(i, &arg(&a, 1))?;
-    Err(i.error("Window system frame should be used"))
+    let frame = crate::editor::frame_live(i, &arg(&a, 1))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
+    }
+    let Value::Str(text) = &a[0] else {
+        unreachable!();
+    };
+    i.gui_tip = Some(text.borrow().to_unicode_lossy());
+    Ok(Value::Nil)
+}
+
+pub(super) fn f_x_hide_tip(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::from_bool(i.gui_tip.take().is_some()))
 }
 
 /// `gnutls-available-p' — GNU returns the GnuTLS capability list.

@@ -139,6 +139,30 @@ pub struct GridToolBarItem {
     pub command: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridHelpEcho {
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+    pub text: String,
+}
+
+fn push_help_echo(regions: &mut Vec<GridHelpEcho>, next: GridHelpEcho) {
+    if let Some(previous) = regions.last_mut()
+        && previous.row == next.row
+        && previous.text == next.text
+        && next.left <= previous.left.saturating_add(previous.width)
+    {
+        let end = previous
+            .left
+            .saturating_add(previous.width)
+            .max(next.left.saturating_add(next.width));
+        previous.width = end.saturating_sub(previous.left);
+    } else {
+        regions.push(next);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GridScrollBarOrientation {
     Vertical,
@@ -275,6 +299,8 @@ pub struct Grid {
     pub images: Vec<GridImage>,
     pub menus: Vec<GridMenu>,
     pub tool_bar_items: Vec<GridToolBarItem>,
+    pub help_echoes: Vec<GridHelpEcho>,
+    pub tooltip: Option<String>,
     pub scroll_bars: Vec<GridScrollBar>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
@@ -333,6 +359,8 @@ impl Grid {
             images: Vec::new(),
             menus: Vec::new(),
             tool_bar_items: Vec::new(),
+            help_echoes: Vec::new(),
+            tooltip: None,
             scroll_bars: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -1009,6 +1037,57 @@ fn format_mode_line_string(value: &str, context: &ModeLineContext) -> String {
         output.push_str(&field);
     }
     output
+}
+
+fn mode_line_help_echo(
+    i: &Interp,
+    buffer_id: usize,
+    value: &Value,
+    depth: usize,
+) -> Option<String> {
+    if depth > 24 {
+        return None;
+    }
+    let help_echo = i.q_soft("help-echo");
+    match value {
+        Value::Str(string) => {
+            let plist = Value::list(crate::buffer::primitives::str_plist_at(
+                i.str_props(string),
+                0,
+            ));
+            help_echo
+                .map(|property| crate::lisp::eval::plist_get(&plist, property))
+                .and_then(|value| match value {
+                    Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+                    _ => None,
+                })
+        }
+        Value::Sym(symbol) => mode_line_variable(i, buffer_id, &i.symbol_name(*symbol))
+            .filter(|current| !matches!(current, Value::Sym(id) if id == symbol))
+            .and_then(|current| mode_line_help_echo(i, buffer_id, &current, depth + 1)),
+        Value::Cons(_) => {
+            let elements = value.list_to_vec().ok()?;
+            if matches!(elements.first(), Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == ":propertize")
+                && elements.len() >= 2
+            {
+                if let Some(property) = help_echo {
+                    let plist = Value::list(elements.iter().skip(2).cloned().collect());
+                    if let Value::Str(text) = crate::lisp::eval::plist_get(&plist, property) {
+                        return Some(text.borrow().to_unicode_lossy());
+                    }
+                }
+                return mode_line_help_echo(i, buffer_id, &elements[1], depth + 1);
+            }
+            elements
+                .iter()
+                .find_map(|element| mode_line_help_echo(i, buffer_id, element, depth + 1))
+        }
+        Value::Vec(vector) => vector
+            .borrow()
+            .iter()
+            .find_map(|element| mode_line_help_echo(i, buffer_id, element, depth + 1)),
+        _ => None,
+    }
 }
 
 fn format_mode_line_minor_modes(
@@ -2537,6 +2616,9 @@ struct WindowFaces {
     /// insertion index).  Later-inserted props merge on top (GNU's
     /// interval "last write wins").
     prop_faces: Vec<(usize, usize, Value, usize)>,
+    /// `help-echo` text-property runs and overlay values for hover tooltips.
+    help_echo_props: Vec<(usize, usize, Value, usize)>,
+    help_echo_overlays: Vec<(crate::buffer::Overlay, Value)>,
     /// `display` text-property runs; the run is replaced once, at its start.
     display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
     composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
@@ -2616,6 +2698,18 @@ fn window_faces(
             (!value.is_nil()).then(|| (overlay.clone(), value))
         })
         .collect();
+    let help_echo = i.q_soft("help-echo");
+    let help_echo_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| overlay.buffer == Some(bb.id) && overlay.matches_window(i, win))
+        .filter_map(|overlay| {
+            let value = help_echo
+                .map(|property| overlay.property(i, &Value::Sym(property)))
+                .unwrap_or(Value::Nil);
+            (!value.is_nil()).then(|| (overlay.clone(), value))
+        })
+        .collect();
     let before_string = i.q_soft("before-string");
     let after_string = i.q_soft("after-string");
     let mut overlay_strings: Vec<(crate::buffer::Overlay, OverlayStrings)> = bb
@@ -2690,6 +2784,17 @@ fn window_faces(
         .filter(|(_, tp)| tp.prop == ctx.face || tp.prop == ctx.font_lock_face)
         .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
         .collect();
+    let help_echo_props: Vec<(usize, usize, Value, usize)> = help_echo.map_or_else(
+        Vec::new,
+        |property| {
+            properties
+                .iter()
+                .enumerate()
+                .filter(|(_, tp)| tp.prop == property)
+                .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
+                .collect()
+        },
+    );
     let display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
         i.q_soft("display").map_or_else(Vec::new, |display| {
             properties
@@ -2755,6 +2860,8 @@ fn window_faces(
     WindowFaces {
         overlays,
         prop_faces,
+        help_echo_props,
+        help_echo_overlays,
         display_props,
         composition_props,
         display_tables,
@@ -2772,6 +2879,32 @@ fn overlay_strings_at(faces: &WindowFaces, position: usize) -> Vec<String> {
         .get(&position)
         .cloned()
         .unwrap_or_default()
+}
+
+fn help_echo_at(i: &Interp, faces: &WindowFaces, position: usize) -> Option<String> {
+    let mut overlays: Vec<_> = faces
+        .help_echo_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| position >= overlay.start && position < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    for (_, index) in overlays.into_iter().rev() {
+        let value = &faces.help_echo_overlays[index].1;
+        if let Value::Str(text) = value {
+            return Some(text.borrow().to_unicode_lossy());
+        }
+    }
+    faces
+        .help_echo_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| insertion)
+        .and_then(|(_, _, value, _)| match value {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        })
 }
 
 fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
@@ -3192,6 +3325,8 @@ fn render_grid_internal(
     let mut images = Vec::new();
     let menus = render_menu_bar(i);
     let mut tool_bar_items = Vec::new();
+    let mut help_echoes = Vec::new();
+    let tooltip = i.gui_tip.clone();
     let mut scroll_bars = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -3215,6 +3350,8 @@ fn render_grid_internal(
                 images,
                 menus,
                 tool_bar_items,
+                help_echoes,
+                tooltip,
                 scroll_bars,
                 attrs,
                 char_attrs,
@@ -3759,6 +3896,14 @@ fn render_grid_internal(
                 &mode_context,
                 "tab-line",
             );
+            if let Some(text) = mode_line_help_echo(i, buf_id, &tab_line_format, 0) {
+                push_help_echo(&mut help_echoes, GridHelpEcho {
+                    row: auxiliary_row,
+                    left: window_left,
+                    width: window_width,
+                    text,
+                });
+            }
             auxiliary_row += 1;
         }
         if header_line_enabled && auxiliary_row < content_top {
@@ -3775,6 +3920,14 @@ fn render_grid_internal(
                 &mode_context,
                 "header-line",
             );
+            if let Some(text) = mode_line_help_echo(i, buf_id, &header_line_format, 0) {
+                push_help_echo(&mut help_echoes, GridHelpEcho {
+                    row: auxiliary_row,
+                    left: window_left,
+                    width: window_width,
+                    text,
+                });
+            }
         }
         let mut visible_end = start;
         let mut screen_row = content_top;
@@ -3953,6 +4106,37 @@ fn render_grid_internal(
                     },
                     segment_end == line_len,
                 );
+                if let Some(wf) = &wf {
+                    for index in 0..segment_len {
+                        let Some(text) = help_echo_at(i, wf, segment_pos + index) else {
+                            continue;
+                        };
+                        let source_column = rendered
+                            .source_columns
+                            .get(index)
+                            .copied()
+                            .unwrap_or(0);
+                        let source_end = rendered
+                            .source_columns
+                            .get(index + 1)
+                            .copied()
+                            .unwrap_or_else(|| source_column.saturating_add(1));
+                        let visible_column = source_column.saturating_sub(row_hscroll);
+                        if visible_column >= content_width {
+                            continue;
+                        }
+                        let visible_width = source_end
+                            .saturating_sub(source_column)
+                            .max(1)
+                            .min(content_width.saturating_sub(visible_column));
+                        push_help_echo(&mut help_echoes, GridHelpEcho {
+                            row: y,
+                            left: content_left.saturating_add(visible_column),
+                            width: visible_width,
+                            text,
+                        });
+                    }
+                }
                 let first_line = line_number.saturating_sub(1) == first_buffer_line;
                 let last_line = line_number.saturating_sub(1) == last_buffer_line;
                 let mut left_indicator = if wrap_lines && segment_start > 0 {
@@ -4176,6 +4360,14 @@ fn render_grid_internal(
                 &mode_context,
                 ml_name,
             );
+            if let Some(text) = mode_line_help_echo(i, buf_id, &mode_line_format, 0) {
+                push_help_echo(&mut help_echoes, GridHelpEcho {
+                    row: my,
+                    left: window_left,
+                    width: window_width,
+                    text,
+                });
+            }
             mode_rows.push(my);
         }
     }
@@ -4280,6 +4472,8 @@ fn render_grid_internal(
         images,
         menus,
         tool_bar_items,
+        help_echoes,
+        tooltip,
         scroll_bars,
         attrs,
         char_attrs,

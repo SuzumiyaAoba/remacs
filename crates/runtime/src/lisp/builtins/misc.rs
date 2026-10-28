@@ -160,7 +160,7 @@ use compat::{
     f_internal_handle_focus_in, f_make_glyph_code, f_message_box, f_module_load,
     f_network_lookup_address_info, f_process_arg_err, f_profiler_cpu_running_p,
     f_re_describe_compiled, f_send_string_to_terminal, f_set_output_flow_control, f_signal_names,
-    f_version_list_not_zero, f_x_close_connection, f_x_get_resource, f_x_open_connection,
+    f_version_list_not_zero, f_x_close_connection, f_x_get_resource, f_x_hide_tip, f_x_open_connection,
     f_x_parse_geometry, f_x_show_tip,
 };
 mod buffers;
@@ -1555,7 +1555,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-get-clipboard", 0, 0, f_nil, ""),
     S!("x-get-resource", 2, 4, f_x_get_resource, ""),
     S!("x-get-selection", 0, 2, f_nil, ""),
-    S!("x-hide-tip", 0, 0, f_nil, ""),
+    S!("x-hide-tip", 0, 0, f_x_hide_tip, ""),
     S!(
         "x-parse-geometry",
         1,
