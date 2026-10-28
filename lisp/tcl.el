@@ -238,8 +238,8 @@ quoted for Tcl."
     (modify-syntax-entry ?=  "_"  st)
     (modify-syntax-entry ?>  "_"  st)
     (modify-syntax-entry ?|  "_"  st)
-    (modify-syntax-entry ?\( "()" st)
-    (modify-syntax-entry ?\) ")(" st)
+    (modify-syntax-entry ?\( "." st)
+    (modify-syntax-entry ?\) "." st)
     (modify-syntax-entry ?\; "."  st)
     (modify-syntax-entry ?\n ">"  st)
     ;; (modify-syntax-entry ?\f ">"  st)
@@ -416,9 +416,8 @@ This variable is generally set from `tcl-proc-regexp',
         (string-to-syntax "."))
        ((zerop (nth 0 ppss))
         ;; Not within a { ... }, so can't be truncated by a }.
-        ;; FIXME: The syntax-table also considers () and [] as paren
-        ;; delimiters just like {}, even though Tcl treats them differently.
-        ;; Tho I'm not sure it's worth worrying about, either.
+        ;; Square brackets also have generic delimiter syntax, though Tcl
+        ;; uses them for command substitution.
         nil)
        (t
         ;; A double quote within a {...}: leave it as a normal string
