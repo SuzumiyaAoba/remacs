@@ -136,7 +136,10 @@
   "Initial block for html page.")
 
 (defconst cal-html-html-subst-list
+  ;;Remacs: Escape source text before it is inserted as generated HTML.
   '(("&" . "&amp;")
+    ("<" . "&lt;")
+    (">" . "&gt;")
     ("\n" . "<BR>\n"))
   "Alist of symbols and their HTML replacements.")
 
