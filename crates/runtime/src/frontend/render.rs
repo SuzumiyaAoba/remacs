@@ -2059,6 +2059,7 @@ struct WindowFaces {
     prop_faces: Vec<(usize, usize, Value, usize)>,
     /// `display` text-property runs; the run is replaced once, at its start.
     display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
+    composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
     /// Overlay strings positioned at the overlay's start/end boundaries.
     overlay_strings: HashMap<usize, Vec<String>>,
     /// Invisible text ranges and visible overlays carrying `invisible`.
@@ -2223,6 +2224,22 @@ fn window_faces(
                 })
                 .collect()
         });
+    let composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
+        i.q_soft("composition").map_or_else(Vec::new, |composition| {
+            properties
+                .iter()
+                .enumerate()
+                .filter(|(_, tp)| tp.prop == composition)
+                .map(|(idx, tp)| {
+                    (
+                        tp.start,
+                        tp.end,
+                        composition_display_replacement(&tp.value),
+                        idx,
+                    )
+                })
+                .collect()
+        });
     let invisible_props: Vec<(usize, usize, Value)> = properties
         .iter()
         .filter(|tp| tp.prop == ctx.invisible)
@@ -2237,6 +2254,7 @@ fn window_faces(
         overlays,
         prop_faces,
         display_props,
+        composition_props,
         overlay_strings,
         invisible_overlays,
         invisible_props,
@@ -2372,17 +2390,64 @@ fn display_replacement_at(
     faces: &WindowFaces,
     position: usize,
 ) -> Option<DisplayReplacement> {
-    let (start, _, replacement, _) = faces
-        .display_props
-        .iter()
-        .filter(|(start, end, _, _)| position >= *start && position < *end)
-        .max_by_key(|(_, _, _, insertion)| insertion)?;
-    let replacement = replacement.as_ref()?;
-    if position == *start {
-        Some(replacement.clone())
-    } else {
-        Some(DisplayReplacement::Hidden)
+    fn from_property_run(
+        properties: &[(usize, usize, Option<DisplayReplacement>, usize)],
+        position: usize,
+    ) -> Option<DisplayReplacement> {
+        let (start, _, replacement, _) = properties
+            .iter()
+            .filter(|(start, end, _, _)| position >= *start && position < *end)
+            .max_by_key(|(_, _, _, insertion)| insertion)?;
+        let replacement = replacement.as_ref()?;
+        if position == *start {
+            Some(replacement.clone())
+        } else {
+            Some(DisplayReplacement::Hidden)
+        }
     }
+
+    from_property_run(&faces.display_props, position)
+        .or_else(|| from_property_run(&faces.composition_props, position))
+}
+
+fn composition_display_replacement(value: &Value) -> Option<DisplayReplacement> {
+    let Value::Cons(outer) = value else {
+        return None;
+    };
+    let composition_spec = outer.borrow().car.clone();
+    let Value::Cons(spec) = composition_spec else {
+        return None;
+    };
+    let components = spec.borrow().cdr.clone();
+    let mut text = String::new();
+    fn append_character(text: &mut String, value: &Value) {
+        if let Value::Int(code) = value
+            && let Ok(code) = u32::try_from(*code)
+            && let Some(character) = EmacsChar::new(code).and_then(EmacsChar::unicode)
+        {
+            text.push(character);
+        }
+    }
+    match components {
+        Value::Int(code) => {
+            let code = u32::try_from(code).ok()?;
+            text.push(EmacsChar::new(code)?.unicode().unwrap_or('\u{fffd}'));
+        }
+        Value::Str(string) => text.push_str(&string.borrow().to_unicode_lossy()),
+        Value::Vec(vector) => {
+            for component in vector.borrow().iter() {
+                append_character(&mut text, component);
+            }
+        }
+        Value::Cons(_) => {
+            let components = components.list_to_vec().ok()?;
+            for component in &components {
+                append_character(&mut text, component);
+            }
+        }
+        _ => return None,
+    }
+    (!text.is_empty()).then_some(DisplayReplacement::Text(text))
 }
 
 fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
