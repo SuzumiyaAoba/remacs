@@ -867,6 +867,20 @@ If OLD, return the old target.  If MOVE, move point before it."
 
 (declare-function make-symbolic-link "fileio.c")
 
+(defun wdired--replace-symlink (target link)
+  "Replace LINK with a symbolic link to TARGET, preserving LINK on failure."
+  (let ((temp-link (make-temp-file
+                    (expand-file-name ".wdired-link-"
+                                      (file-name-directory link)))))
+    (unwind-protect
+        (progn
+          (delete-file temp-link)
+          (make-symbolic-link target temp-link)
+          (rename-file temp-link link t)
+          (setq temp-link nil))
+      (when temp-link
+        (ignore-errors (delete-file temp-link))))))
+
 ;; Perform the changes in the target of the changed links.
 (defun wdired-do-symlink-changes ()
   (let ((changes nil)
@@ -881,10 +895,8 @@ If OLD, return the old target.  If MOVE, move point before it."
         (if (equal link-to-new "") ;empty filename!
             (setq link-to-new (null-device)))
         (condition-case err
-            (progn
-              (delete-file link-from)
-              (make-symbolic-link
-               (substitute-in-file-name link-to-new) link-from))
+            (wdired--replace-symlink
+             (substitute-in-file-name link-to-new) link-from)
           (error
            (setq errors (1+ errors))
            (dired-log "Link `%s' to `%s' failed:\n%s\n"
