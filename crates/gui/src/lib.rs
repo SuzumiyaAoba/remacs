@@ -93,6 +93,7 @@ pub fn run_gui_with_dump(
 
         cx.spawn(async move |cx| {
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
+            let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
                 match request {
@@ -100,21 +101,38 @@ pub fn run_gui_with_dump(
                         for snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
+                            let fullscreen = snapshot.fullscreen.clone();
                             if let Some(handle) = windows.get(&frame_id).copied() {
-                                let _ = handle.update(cx, move |view, _window, cx| {
+                                let update_window_mode =
+                                    window_modes.get(&frame_id) != Some(&fullscreen);
+                                let requested_fullscreen = fullscreen.clone();
+                                let _ = handle.update(cx, move |view, window, cx| {
                                     if view.grid != grid || grid.blink_cursor {
                                         view.grid = grid;
                                         cx.notify();
                                     }
+                                    if update_window_mode {
+                                        apply_frame_window_state(
+                                            window,
+                                            requested_fullscreen.as_deref(),
+                                        );
+                                    }
                                 });
+                                window_modes.insert(frame_id, fullscreen);
                                 continue;
                             }
                             if let Some(handle) = primary_window.take() {
-                                let _ = handle.update(cx, move |view, _window, cx| {
+                                let initial_fullscreen = fullscreen.clone();
+                                let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
                                     view.grid = grid;
                                     cx.notify();
+                                    apply_frame_window_state(
+                                        window,
+                                        initial_fullscreen.as_deref(),
+                                    );
                                 });
+                                window_modes.insert(frame_id, fullscreen);
                                 windows.insert(frame_id, handle);
                                 continue;
                             }
@@ -138,6 +156,7 @@ pub fn run_gui_with_dump(
                                     continue;
                                 }
                             };
+                            window_modes.insert(frame_id, snapshot.fullscreen.clone());
                             windows.insert(frame_id, handle);
                         }
                     }
@@ -247,8 +266,13 @@ fn frame_window_options(
     } else {
         Bounds::new(point(px(80.0), px(80.0)), content_size)
     };
+    let window_bounds = match frame.fullscreen.as_deref() {
+        Some("maximized") => WindowBounds::Maximized(bounds),
+        Some("fullboth" | "fullwidth" | "fullheight") => WindowBounds::Fullscreen(bounds),
+        _ => WindowBounds::Windowed(bounds),
+    };
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_bounds: Some(window_bounds),
         kind: if child {
             WindowKind::Floating
         } else {
@@ -267,6 +291,35 @@ fn frame_window_options(
         is_resizable: !child,
         is_minimizable: !child,
         ..Default::default()
+    }
+}
+
+fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
+    match fullscreen {
+        Some("maximized") => {
+            if window.is_fullscreen() {
+                window.toggle_fullscreen();
+            }
+            if !window.is_maximized() {
+                window.zoom_window();
+            }
+        }
+        Some("fullboth" | "fullwidth" | "fullheight") => {
+            if window.is_maximized() {
+                window.zoom_window();
+            }
+            if !window.is_fullscreen() {
+                window.toggle_fullscreen();
+            }
+        }
+        _ => {
+            if window.is_fullscreen() {
+                window.toggle_fullscreen();
+            }
+            if window.is_maximized() {
+                window.zoom_window();
+            }
+        }
     }
 }
 

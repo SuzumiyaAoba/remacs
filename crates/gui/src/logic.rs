@@ -107,6 +107,7 @@ pub(super) struct FrameSnapshot {
     pub left: Option<i128>,
     pub top: Option<i128>,
     pub undecorated: bool,
+    pub fullscreen: Option<String>,
     pub grid: Grid,
 }
 
@@ -864,6 +865,10 @@ impl KeyIo for ChanIo {
                 };
                 let name = frame.borrow().name.borrow().to_string();
                 let int_param = |name: &str| frame_parameter_value(i, frame, name).int();
+                let fullscreen = match frame_parameter_value(i, frame, "fullscreen") {
+                    Value::Sym(symbol) => Some(i.symbol_name(symbol)),
+                    _ => None,
+                };
                 snapshots.push(FrameSnapshot {
                     frame_id,
                     name,
@@ -873,6 +878,7 @@ impl KeyIo for ChanIo {
                     left: int_param("left"),
                     top: int_param("top"),
                     undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
+                    fullscreen,
                     grid,
                 });
             }
