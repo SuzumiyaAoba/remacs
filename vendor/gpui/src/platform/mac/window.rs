@@ -24,7 +24,7 @@ use cocoa::{
     foundation::{
         NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
-        NSUserDefaults,
+        NSUserDefaults, NSURL,
     },
 };
 
@@ -1478,6 +1478,16 @@ impl PlatformWindow for MacWindow {
         let appearance = unsafe { super::window_appearance::native_appearance(appearance) };
         unsafe {
             let _: () = msg_send![window, setAppearance: appearance];
+        }
+    }
+
+    fn set_represented_file(&self, path: Option<String>) {
+        let window = self.0.lock().native_window;
+        unsafe {
+            let url = path
+                .map(|path| NSURL::fileURLWithPath_(nil, ns_string(&path)))
+                .unwrap_or(nil);
+            window.setRepresentedURL_(url);
         }
     }
 

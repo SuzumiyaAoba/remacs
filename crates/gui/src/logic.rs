@@ -176,6 +176,7 @@ pub(super) struct FrameSnapshot {
     pub undecorated: bool,
     pub ns_transparent_titlebar: bool,
     pub ns_appearance: Option<gpui::WindowAppearance>,
+    pub represented_file: Option<String>,
     pub fullscreen: Option<String>,
     pub auto_raise: bool,
     pub auto_lower: bool,
@@ -757,6 +758,21 @@ fn frame_ns_appearance(
         },
         _ => None,
     }
+}
+
+fn frame_proxy_file(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> Option<String> {
+    if !cfg!(target_os = "macos")
+        || !i
+            .intern_soft("ns-use-proxy-icon")
+            .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy())
+    {
+        return None;
+    }
+    let buffer_id = frame.borrow().selected.borrow().buffer;
+    i.buffers
+        .get(buffer_id)
+        .and_then(|buffer| buffer.borrow().file_name.clone())
+        .map(|file| file.to_unicode_lossy())
 }
 
 impl ChanIo {
@@ -1433,6 +1449,7 @@ impl KeyIo for ChanIo {
                     )
                     .truthy(),
                     ns_appearance: frame_ns_appearance(i, frame),
+                    represented_file: frame_proxy_file(i, frame),
                     fullscreen,
                     auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
                     auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),

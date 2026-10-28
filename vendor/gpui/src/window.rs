@@ -1718,6 +1718,11 @@ impl Window {
         self.appearance = self.platform_window.appearance();
     }
 
+    /// Set the file represented by the native titlebar proxy icon.
+    pub fn set_represented_file(&self, path: Option<String>) {
+        self.platform_window.set_represented_file(path);
+    }
+
     /// Update whether this window has native decorations and a transparent titlebar.
     pub fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
         self.platform_window
