@@ -157,7 +157,7 @@ so it does not work when `delete-selection-save-to-register' is nil."
     (user-error "Can't work without delete-selection-save-to-register"))
   (let ((old-text (get-register delete-selection-save-to-register))
         (count (if (consp arg) (point-max)
-                 (prefix-numeric-value current-prefix-arg))))
+                 (prefix-numeric-value arg))))
     (if (not (and old-text (> (length old-text) 0)))
         (message "No known previous replacement")
       (let ((string (delete-selection--replacement-text)))
