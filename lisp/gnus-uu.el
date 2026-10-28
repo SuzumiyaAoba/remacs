@@ -1844,18 +1844,30 @@ Gnus might fail to display all of it.")
   (if dir
       (gnus-message 7 "Deleting directory %s..." dir)
     (setq dir gnus-uu-work-dir))
+  ;; Delete a symlink itself; never recurse through its target.
+  (when (and dir (file-symlink-p dir))
+    (condition-case err
+        (delete-file dir)
+      (error (gnus-message 3 "Deleting file %s failed... %s" dir err)))
+    (setq dir nil))
   (when (and dir
 	     (file-exists-p dir))
     (let ((files (directory-files dir t nil t))
 	  file)
       (while (setq file (pop files))
 	(unless (member (file-name-nondirectory file) '("." ".."))
-	  (if (file-directory-p file)
-	      (gnus-uu-delete-work-dir file)
-	    (gnus-message 9 "Deleting file %s..." file)
-            (condition-case err
-                (delete-file file)
-              (error (gnus-message 3 "Deleting file %s failed... %s" file err))))))
+	  (cond ((file-symlink-p file)
+	         (gnus-message 9 "Deleting file %s..." file)
+	         (condition-case err
+	             (delete-file file)
+	           (error (gnus-message 3 "Deleting file %s failed... %s" file err))))
+	        ((file-directory-p file)
+	         (gnus-uu-delete-work-dir file))
+	        (t
+	         (gnus-message 9 "Deleting file %s..." file)
+	         (condition-case err
+	             (delete-file file)
+	           (error (gnus-message 3 "Deleting file %s failed... %s" file err))))))
       (condition-case err
           (delete-directory dir)
         (error (gnus-message 3 "Deleting directory %s failed... %s" file err))))
