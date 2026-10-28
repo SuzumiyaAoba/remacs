@@ -1022,19 +1022,40 @@ When called interactively, prompt for REGEXP."
 
 ;; yEnc
 
+(defun gnus-uu--safe-work-file-name (file-name)
+  "Expand FILE-NAME under `gnus-uu-work-dir', or return nil if it escapes."
+  (let* ((work-dir (file-name-as-directory
+                    (expand-file-name gnus-uu-work-dir)))
+         (path (expand-file-name file-name work-dir))
+         (parent (file-name-directory path)))
+    (when (and (not (equal path (directory-file-name work-dir)))
+               (string-prefix-p work-dir path)
+               (or (not (file-directory-p parent))
+                   (file-in-directory-p parent work-dir))
+               (or (not (or (file-exists-p path)
+                            (file-symlink-p path)))
+                   (file-in-directory-p path work-dir)))
+      path)))
+
 (defun gnus-uu-yenc-article (_buffer _in-state)
   (with-current-buffer gnus-original-article-buffer
     (widen)
     (let ((file-name (yenc-extract-filename))
+          file-path
 	  state) ;; start-char
       (when (not file-name)
 	(setq state (list 'wrong-type)))
+
+      (when file-name
+	(setq file-path (gnus-uu--safe-work-file-name file-name))
+	(unless file-path
+	  (setq state (list 'wrong-type))))
 
       (if (memq 'wrong-type state)
 	  ()
 	(when (yenc-first-part-p)
 	  (setq gnus-uu-yenc-article-name
-		(expand-file-name file-name gnus-uu-work-dir))
+		file-path)
 	  (push 'begin state))
 	(when (yenc-last-part-p)
 	  (push 'end state))
