@@ -336,6 +336,10 @@ pub struct Grid {
     pub blink_interval: f64,
     /// Default face background used outside the visible text rows.
     pub default_bg: Option<CellColor>,
+    /// Pixel height for each display row. Empty grids use the frontend default.
+    pub row_heights: Vec<usize>,
+    /// Default text row height used when the viewport needs more rows.
+    pub default_row_height: usize,
     /// Pointer shape at the current mouse position, if it is over buffer text.
     pub hover_cursor: Option<GridPointerShape>,
     /// Unicode text and visible positions for the active OS text client.
@@ -405,6 +409,8 @@ impl Grid {
             blink_cursor: false,
             blink_interval: 0.5,
             default_bg: None,
+            row_heights: Vec::new(),
+            default_row_height: 19,
             hover_cursor: None,
             input: None,
         }
@@ -2527,6 +2533,7 @@ struct FaceCtx {
     font_lock_face: u32,
     mouse_face: u32,
     pointer: u32,
+    line_spacing: u32,
     mark_active: u32,
     inherit: u32,
     invisible: u32,
@@ -2602,6 +2609,7 @@ impl FaceCtx {
             font_lock_face: sym("font-lock-face"),
             mouse_face: sym("mouse-face"),
             pointer: sym("pointer"),
+            line_spacing: sym("line-spacing"),
             mark_active: sym("mark-active"),
             inherit: sym(":inherit"),
             invisible: sym("invisible"),
@@ -3006,6 +3014,10 @@ struct WindowFaces {
     mouse_face: Option<(usize, usize, Value)>,
     /// The pointer property supplied by the hovered text or overlay.
     pointer: Option<Value>,
+    /// Newline line-spacing text-property runs.
+    line_spacing_props: Vec<(usize, usize, Value, usize)>,
+    /// Newline line-spacing overlay properties, with window restrictions applied.
+    line_spacing_overlays: Vec<(crate::buffer::Overlay, Value)>,
     /// `help-echo` text-property runs and overlay values for hover tooltips.
     help_echo_props: Vec<(usize, usize, Value, usize)>,
     help_echo_overlays: Vec<(crate::buffer::Overlay, Value)>,
@@ -3305,6 +3317,25 @@ fn window_faces(
         order.last().map(|(_, candidate)| candidates[*candidate].2.clone())
     });
     let pointer = pointer_overlay.or(pointer_prop);
+    let line_spacing_props = properties
+        .iter()
+        .enumerate()
+        .filter(|(_, tp)| tp.prop == ctx.line_spacing)
+        .map(|(index, tp)| (tp.start, tp.end, tp.value.clone(), index))
+        .collect();
+    let line_spacing_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| {
+            overlay.buffer == Some(bb.id)
+                && overlay.start < overlay.end
+                && overlay.matches_window(i, win)
+        })
+        .filter_map(|overlay| {
+            let spacing = overlay.property(i, &Value::Sym(ctx.line_spacing));
+            (!spacing.is_nil()).then(|| (overlay.clone(), spacing))
+        })
+        .collect();
     let invisibility_spec = i
         .buffer_local_toplevel_value(ctx.buffer_invisibility_spec, bb.id)
         .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
@@ -3335,6 +3366,8 @@ fn window_faces(
         prop_faces,
         mouse_face,
         pointer,
+        line_spacing_props,
+        line_spacing_overlays,
         help_echo_props,
         help_echo_overlays,
         display_props,
@@ -3380,6 +3413,49 @@ fn help_echo_at(i: &Interp, faces: &WindowFaces, position: usize) -> Option<Stri
             Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
             _ => None,
         })
+}
+
+fn line_spacing_pixels(value: &Value, default_line_height: usize) -> Option<usize> {
+    match value {
+        Value::Int(pixels) => Some(usize::try_from((*pixels).max(0)).unwrap_or(usize::MAX)),
+        Value::Float(ratio) if ratio.is_finite() => {
+            let pixels = (ratio.max(0.0) * default_line_height as f64).round();
+            Some(pixels.min(usize::MAX as f64) as usize)
+        }
+        _ => None,
+    }
+}
+
+fn line_spacing_at_pos(
+    i: &Interp,
+    faces: &WindowFaces,
+    position: usize,
+    default_spacing: usize,
+    default_line_height: usize,
+) -> usize {
+    let mut overlays: Vec<_> = faces
+        .line_spacing_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| position >= overlay.start && position < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    let overlay_spacing = overlays
+        .last()
+        .and_then(|(_, index)| {
+            line_spacing_pixels(
+                &faces.line_spacing_overlays[*index].1,
+                default_line_height,
+            )
+        });
+    let property_spacing = faces
+        .line_spacing_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| *insertion)
+        .and_then(|(_, _, value, _)| line_spacing_pixels(value, default_line_height));
+    default_spacing.max(overlay_spacing.or(property_spacing).unwrap_or(default_spacing))
 }
 
 fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
@@ -3878,6 +3954,8 @@ fn render_grid_internal(
     let default_style = fctx.builtin(i, "default", 0).finish();
     let default_bg = default_style.bg;
     let mut attrs = vec![vec![default_style; width]; height];
+    let mut row_heights = vec![19; height];
+    let mut default_row_height = 19;
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
     let menus = render_menu_bar(i);
@@ -3924,6 +4002,8 @@ fn render_grid_internal(
                 blink_cursor,
                 blink_interval,
                 default_bg,
+                row_heights,
+                default_row_height,
                 hover_cursor,
                 input,
             };
@@ -3942,6 +4022,12 @@ fn render_grid_internal(
         })
         .unwrap_or(8);
     let frame_char_height = crate::editor::frame_char_height(i, &frame).max(1);
+    row_heights.fill(frame_char_height);
+    default_row_height = frame_char_height;
+    let frame_line_spacing = i
+        .q_soft("line-spacing")
+        .map(|property| crate::lisp::eval::plist_get(&fb.params, property))
+        .unwrap_or(Value::Nil);
     let default_fringe_left = if graphical {
         frame_fringe_pixels(i, &fb.params, "left-fringe")
     } else {
@@ -4454,6 +4540,20 @@ fn render_grid_internal(
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
+        let buffer_line_spacing = buffer_setting(i, "line-spacing", buf_id);
+        let default_spacing_value = if buffer_line_spacing.is_nil() {
+            frame_line_spacing.clone()
+        } else {
+            buffer_line_spacing
+        };
+        let default_line_spacing = if graphical {
+            line_spacing_pixels(&default_spacing_value, frame_char_height).unwrap_or(0)
+        } else {
+            0
+        };
+        if selected_window {
+            default_row_height = frame_char_height.saturating_add(default_line_spacing);
+        }
         if selected_window
             && let Some(position) = mouse_position
             && position.buffer_id == buf_id
@@ -4615,6 +4715,30 @@ fn render_grid_internal(
                         .then_some(point - segment_start)
                 });
                 let y = screen_row;
+                let newline_spacing = if graphical
+                    && segment_end == line_len
+                    && row_end > line_pos.saturating_add(line_len)
+                {
+                    wf.as_ref()
+                        .map(|faces| {
+                            line_spacing_at_pos(
+                                i,
+                                faces,
+                                line_pos.saturating_add(line_len),
+                                default_line_spacing,
+                                frame_char_height,
+                            )
+                        })
+                        .unwrap_or(default_line_spacing)
+                } else {
+                    default_line_spacing
+                };
+                if let Some(row_height) = row_heights.get_mut(y) {
+                    // Grid rows are shared across side-by-side windows, so
+                    // reserve enough height for the tallest row at this y.
+                    *row_height = (*row_height)
+                        .max(frame_char_height.saturating_add(newline_spacing));
+                }
                 visible_end = if segment_end == line_len {
                     row_end
                 } else {
@@ -5102,6 +5226,8 @@ fn render_grid_internal(
         blink_cursor,
         blink_interval,
         default_bg,
+        row_heights,
+        default_row_height,
         hover_cursor,
         input,
     }

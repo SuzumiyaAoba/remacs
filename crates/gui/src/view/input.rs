@@ -3,7 +3,9 @@
 
 use std::ops::Range;
 
-use super::{EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT};
+use super::{
+    EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT, grid_row_height, grid_row_top,
+};
 use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
@@ -53,6 +55,22 @@ fn selected_document_range(input: &GridInput) -> Range<usize> {
         .unwrap_or(input.cursor..input.cursor)
 }
 
+fn grid_row_at_y(grid: &Grid, y: Pixels) -> usize {
+    if grid.row_heights.is_empty() {
+        return (f32::from(y) / LINE_HEIGHT).floor().max(0.0) as usize;
+    }
+    let y = f32::from(y).max(0.0);
+    let mut top = 0.0;
+    for (row, height) in grid.row_heights.iter().enumerate() {
+        let bottom = top + (*height).max(1) as f32;
+        if y < bottom {
+            return row;
+        }
+        top = bottom;
+    }
+    grid.row_heights.len()
+}
+
 pub(super) fn visible_input_position(
     grid: &Grid,
     utf16_offset: usize,
@@ -76,7 +94,7 @@ pub(super) fn mouse_position_for_point(
     window: &mut Window,
 ) -> Option<MousePosition> {
     let input = grid.input.as_ref()?;
-    let row = (f32::from(point.y) / LINE_HEIGHT).floor().max(0.0) as usize;
+    let row = grid_row_at_y(grid, point.y);
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
@@ -112,7 +130,7 @@ pub(super) fn mouse_position_for_text_point(
     window: &mut Window,
 ) -> Option<MousePosition> {
     let input = grid.input.as_ref()?;
-    let row = (f32::from(point.y) / LINE_HEIGHT).floor().max(0.0) as usize;
+    let row = grid_row_at_y(grid, point.y);
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
@@ -515,9 +533,12 @@ impl EntityInputHandler for EditorView {
             return Some(Bounds {
                 origin: point(
                     bounds.left() + base_x + left,
-                    bounds.top() + px(LINE_HEIGHT) * row as f32,
+                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT)),
                 ),
-                size: size(text_width.max(self.cell_width), px(LINE_HEIGHT)),
+                size: size(
+                    text_width.max(self.cell_width),
+                    grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
+                ),
             });
         };
         let visible_text = self.input.virtual_text(&input.text);
@@ -573,9 +594,12 @@ impl EntityInputHandler for EditorView {
             return Some(Bounds {
                 origin: point(
                     bounds.left() + base_x + left,
-                    bounds.top() + px(LINE_HEIGHT) * row as f32,
+                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT)),
                 ),
-                size: size(text_width.max(self.cell_width), px(LINE_HEIGHT)),
+                size: size(
+                    text_width.max(self.cell_width),
+                    grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
+                ),
             });
         }
 
@@ -597,9 +621,12 @@ impl EntityInputHandler for EditorView {
         Some(Bounds {
             origin: point(
                 bounds.left() + left,
-                bounds.top() + px(LINE_HEIGHT) * row as f32,
+                bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT)),
             ),
-            size: size(text_width.max(self.cell_width), px(LINE_HEIGHT)),
+            size: size(
+                text_width.max(self.cell_width),
+                grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
+            ),
         })
     }
 

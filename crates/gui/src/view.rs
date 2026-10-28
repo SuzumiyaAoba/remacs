@@ -25,6 +25,57 @@ const CURSOR: u32 = 0xc5c8c6;
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
 
+pub(super) fn grid_row_top(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
+    row_top_from_heights(&grid.row_heights, row, fallback)
+}
+
+pub(super) fn grid_row_height(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
+    row_height_from_heights(&grid.row_heights, row, fallback)
+}
+
+fn row_top_from_heights(row_heights: &[usize], row: usize, fallback: Pixels) -> Pixels {
+    if row_heights.is_empty() {
+        return fallback * row as f32;
+    }
+    let height = row_heights.iter().take(row).copied().sum::<usize>();
+    px(height as f32)
+}
+
+fn row_height_from_heights(row_heights: &[usize], row: usize, fallback: Pixels) -> Pixels {
+    row_heights
+        .get(row)
+        .copied()
+        .map(|height| px(height as f32))
+        .unwrap_or(fallback)
+}
+
+fn rows_fitting_viewport(grid: &Grid, height: Pixels, fallback: Pixels) -> usize {
+    let available = f32::from(height);
+    let default_height = grid.default_row_height.max(1) as f32;
+    let mut used = 0.0;
+    let mut rows = 0;
+    loop {
+        let row_height = grid
+            .row_heights
+            .get(rows)
+            .copied()
+            .map(|height| height.max(1) as f32)
+            .unwrap_or_else(|| {
+                if grid.row_heights.is_empty() {
+                    f32::from(fallback).max(1.0)
+                } else {
+                    default_height
+                }
+            });
+        if used + row_height > available {
+            break;
+        }
+        used += row_height;
+        rows += 1;
+    }
+    rows.max(3)
+}
+
 #[derive(Clone, Copy)]
 struct ScrollBarDrag {
     window_id: usize,
@@ -323,7 +374,7 @@ impl Render for EditorView {
         // Report grid-size changes to the logic thread.
         let vp = window.viewport_size();
         let cols = (f32::from(vp.width) / f32::from(cell_width)) as usize;
-        let rows = (f32::from(vp.height) / f32::from(line_height)) as usize;
+        let rows = rows_fitting_viewport(&self.grid, vp.height, line_height);
         let cols = cols.max(10);
         let rows = rows.max(3);
         if (cols, rows) != (self.cols, self.rows) {
@@ -435,6 +486,8 @@ impl Render for EditorView {
         let grid = self.grid.clone();
         let images = grid.images.clone();
         let help_echoes = grid.help_echoes.clone();
+        let help_row_heights = grid.row_heights.clone();
+        let image_row_heights = grid.row_heights.clone();
         let explicit_tooltip = grid.tooltip.clone();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
@@ -876,14 +929,17 @@ impl Render for EditorView {
                         );
                         window.handle_input(&focus, ElementInputHandler::new(bounds, entity), _cx);
                         for (y, line) in lines.iter().enumerate() {
-                            let origin =
-                                point(bounds.left(), bounds.top() + line_height * (y as f32));
+                            let origin = point(
+                                bounds.left(),
+                                bounds.top() + grid_row_top(&grid, y, line_height),
+                            );
                             let _ = line.paint(origin, line_height, window, _cx);
                             paint_face_boxes(
                                 &grid,
                                 y,
                                 line,
                                 bounds,
+                                grid_row_top(&grid, y, line_height),
                                 line_height,
                                 default_background,
                                 window,
@@ -943,7 +999,7 @@ impl Render for EditorView {
                             composition_origin.map(|(row, x)| {
                                 let origin = point(
                                     bounds.left() + x,
-                                    bounds.top() + line_height * (row as f32),
+                                    bounds.top() + grid_row_top(&grid, row, line_height),
                                 );
                                 let line = window.text_system().shape_line(
                                     marked.clone().into(),
@@ -1020,7 +1076,10 @@ impl Render for EditorView {
                                 ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
                             });
                             let origin =
-                                point(bounds.left() + x, bounds.top() + line_height * (row as f32));
+                                point(
+                                    bounds.left() + x,
+                                    bounds.top() + grid_row_top(&grid, row, line_height),
+                                );
                             match cursor.shape {
                                 remacs_runtime::frontend::GridCursorShape::Block => {
                                     let width = if cursor.thickness > 0 {
@@ -1148,16 +1207,20 @@ impl Render for EditorView {
             .children(
                 images
                     .into_iter()
-                    .map(|image| grid_image_element(image, cell_width, line_height)),
+                    .map(|image| {
+                        grid_image_element(image, cell_width, line_height, &image_row_heights)
+                    }),
             )
             .children(help_echoes.into_iter().map(|region| {
                 let text = region.text;
+                let top = row_top_from_heights(&help_row_heights, region.row, line_height);
+                let height = row_height_from_heights(&help_row_heights, region.row, line_height);
                 div()
                     .absolute()
                     .left(cell_width * region.left as f32)
-                    .top(line_height * region.row as f32)
+                    .top(top)
                     .w(cell_width * region.width as f32)
-                    .h(line_height)
+                    .h(height)
                     .id((
                         "help-echo",
                         (region.row as u64).saturating_mul(1 << 32) + region.left as u64,
@@ -1213,6 +1276,7 @@ fn grid_image_element(
     image: GridImage,
     cell_width: Pixels,
     line_height: Pixels,
+    row_heights: &[usize],
 ) -> impl IntoElement {
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
@@ -1239,7 +1303,7 @@ fn grid_image_element(
     div()
         .absolute()
         .left(cell_width * image.column as f32)
-        .top(line_height * image.row as f32)
+        .top(row_top_from_heights(row_heights, image.row, line_height))
         .child(source)
 }
 
@@ -1290,6 +1354,7 @@ fn paint_face_boxes(
     row_index: usize,
     line: &ShapedLine,
     bounds: Bounds<Pixels>,
+    row_top: Pixels,
     line_height: Pixels,
     default_background: u32,
     window: &mut Window,
@@ -1313,7 +1378,7 @@ fn paint_face_boxes(
                 paint_box_run(
                     line,
                     bounds,
-                    row_index,
+                    row_top,
                     line_height,
                     box_style,
                     fg,
@@ -1338,7 +1403,7 @@ fn paint_face_boxes(
                     paint_box_run(
                         line,
                         bounds,
-                        row_index,
+                        row_top,
                         line_height,
                         box_style,
                         fg,
@@ -1357,7 +1422,7 @@ fn paint_face_boxes(
         paint_box_run(
             line,
             bounds,
-            row_index,
+            row_top,
             line_height,
             box_style,
             fg,
@@ -1374,7 +1439,7 @@ fn paint_face_boxes(
 fn paint_box_run(
     line: &ShapedLine,
     bounds: Bounds<Pixels>,
-    row_index: usize,
+    row_top: Pixels,
     line_height: Pixels,
     box_style: BoxStyle,
     foreground: Option<CellColor>,
@@ -1424,7 +1489,7 @@ fn paint_box_run(
     };
     let vertical = px(f32::from(box_style.vertical_width.unsigned_abs()));
     let horizontal = px(f32::from(box_style.horizontal_width.unsigned_abs()));
-    let origin_y = bounds.top() + line_height * row_index as f32;
+    let origin_y = bounds.top() + row_top;
     let left_x = bounds.left() + left;
     let right_x = bounds.left() + right;
     let vertical_inset = box_style.vertical_width < 0;
