@@ -72,6 +72,7 @@ qa!(qa_process_names, "qa_process_names.el");
 qa!(qa_network_datagram, "qa_network_datagram.el");
 qa!(qa_network_nowait, "qa_network_nowait.el");
 qa!(qa_network_random_service, "qa_network_random_service.el");
+qa!(qa_nnrss_timezone_tokens, "qa_nnrss_timezone_tokens.el");
 qa!(qa_fresh_buffer_locals, "qa_fresh_buffer_locals.el");
 qa!(qa_buffer_local_value_type, "qa_buffer_local_value_type.el");
 qa!(qa_buffer2, "qa_buffer2.el");

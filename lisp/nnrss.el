@@ -467,7 +467,11 @@ which RSS 2.0 allows."
 	     (setq time "00:00:00"))
 	   (when (and (setq zone (aref vector 4))
 		      (not (string-match "\\`[A-Z+-]" zone)))
-	     (setq zone nil)))
+	     (setq zone nil))
+	   ;;Remacs: format-time-string needs a fixed offset in seconds, not the
+	   ;;RFC 822 token returned by timezone-parse-date.
+	   (when zone
+	     (setq zone (* 60 (timezone-zone-to-minute zone)))))
 	  ;; ISO 8601
 	  ((iso8601-valid-p date)
 	   (let ((decoded (decoded-time-set-defaults (iso8601-parse date))))
