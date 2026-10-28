@@ -98,6 +98,21 @@ pub struct GridCursor {
     pub selected: bool,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridImage {
+    pub row: usize,
+    pub column: usize,
+    pub source: GridImageSource,
+    pub width: Option<usize>,
+    pub height: Option<usize>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum GridImageSource {
+    File(String),
+    Data { format: String, bytes: Arc<[u8]> },
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -207,6 +222,8 @@ pub struct Grid {
     /// The realized default face style for the current frame.
     pub default_style: CellStyle,
     pub rows: Vec<String>,
+    /// Image runs from `display' properties, positioned in grid cells.
+    pub images: Vec<GridImage>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -261,6 +278,7 @@ impl Grid {
             font_families: Vec::new(),
             default_style: CellStyle::default(),
             rows: vec![String::new(); height],
+            images: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -343,39 +361,6 @@ fn display_char_width(ch: char) -> usize {
 
 fn display_columns(text: &EmacsText, tab_width: usize) -> usize {
     display_columns_of(text.chars(), tab_width)
-}
-
-fn visible_display_columns_of<F>(
-    text: &EmacsText,
-    limit: usize,
-    tab_width: usize,
-    mut visibility_at: F,
-) -> usize
-where
-    F: FnMut(usize) -> Visibility,
-{
-    let tab_width = tab_width.max(1);
-    let mut column = 0usize;
-    let mut hidden_run = false;
-    for (index, character) in text.chars().take(limit).enumerate() {
-        match visibility_at(index) {
-            Visibility::Visible => {
-                hidden_run = false;
-                let character = character.unicode().unwrap_or('\u{fffd}');
-                column = column.saturating_add(if character == '\t' {
-                    tab_width - column % tab_width
-                } else {
-                    display_char_width(character)
-                });
-            }
-            Visibility::Ellipsis if !hidden_run => {
-                hidden_run = true;
-                column = column.saturating_add(display_char_width('…'));
-            }
-            Visibility::Hidden | Visibility::Ellipsis => hidden_run = true,
-        }
-    }
-    column
 }
 
 fn display_columns_of(chars: impl Iterator<Item = EmacsChar>, tab_width: usize) -> usize {
@@ -632,9 +617,19 @@ struct RenderedRow {
     cell_attrs: Vec<CellStyle>,
     char_attrs: Vec<CellStyle>,
     source_offsets: Vec<usize>,
+    source_columns: Vec<usize>,
     cell_offsets: Vec<usize>,
     visible_columns: usize,
     padding_char_start: usize,
+    images: Vec<RenderedImage>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderedImage {
+    column: usize,
+    source: GridImageSource,
+    width: Option<usize>,
+    height: Option<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -642,6 +637,18 @@ enum Visibility {
     Visible,
     Hidden,
     Ellipsis,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum DisplayReplacement {
+    Text(String),
+    Image {
+        source: GridImageSource,
+        width: Option<usize>,
+        height: Option<usize>,
+    },
+    /// Another character in a run already replaced by its first character.
+    Hidden,
 }
 
 #[derive(Clone)]
@@ -762,7 +769,95 @@ fn compose_screen_rows(
 /// Render a Lisp line into a fixed number of display cells. The source
 /// and cell offset maps let the GUI position its caret in GPUI's shaped
 /// line while the terminal keeps using cell coordinates.
-fn render_text_row<F, V>(
+fn append_rendered_character(
+    display: char,
+    style: CellStyle,
+    hscroll: usize,
+    width: usize,
+    end_column: usize,
+    tab_width: usize,
+    column: &mut usize,
+    visible_columns: &mut usize,
+    rendered: &mut String,
+    cell_attrs: &mut [CellStyle],
+    char_attrs: &mut Vec<CellStyle>,
+    cell_offsets: &mut [usize],
+) -> bool {
+    let columns = if display == '\t' {
+        tab_width - *column % tab_width
+    } else {
+        display_char_width(display)
+    };
+    let start_column = *column;
+    let next_column = column.saturating_add(columns);
+    let before = rendered.len();
+
+    if columns == 0 {
+        if start_column >= hscroll && start_column < end_column {
+            rendered.push(display);
+            char_attrs.push(style);
+        }
+        return true;
+    }
+
+    if next_column <= hscroll {
+        *column = next_column;
+        return true;
+    }
+    if start_column >= end_column {
+        return false;
+    }
+
+    let cell_start = start_column.saturating_sub(hscroll);
+    let cell_end = next_column.min(end_column).saturating_sub(hscroll);
+    if start_column < hscroll || next_column > end_column {
+        // A horizontal boundary can bisect a wide glyph. Preserve its
+        // remaining cell geometry with blanks instead of shifting the
+        // following text or drawing half a glyph outside the viewport.
+        for cell in cell_start..cell_end {
+            if let Some(offset) = cell_offsets.get_mut(cell) {
+                *offset = rendered.len();
+            }
+            if let Some(attribute) = cell_attrs.get_mut(cell) {
+                *attribute = style;
+            }
+            rendered.push(' ');
+            char_attrs.push(style);
+            if let Some(offset) = cell_offsets.get_mut(cell + 1) {
+                *offset = rendered.len();
+            }
+        }
+    } else {
+        for cell in cell_start..cell_end {
+            if let Some(offset) = cell_offsets.get_mut(cell) {
+                *offset = before;
+            }
+            if let Some(attribute) = cell_attrs.get_mut(cell) {
+                *attribute = style;
+            }
+        }
+        if display == '\t' {
+            for cell in cell_start..cell_end {
+                rendered.push(' ');
+                char_attrs.push(style);
+                if let Some(offset) = cell_offsets.get_mut(cell + 1) {
+                    *offset = rendered.len();
+                }
+            }
+        } else {
+            rendered.push(display);
+            char_attrs.push(style);
+        }
+        if let Some(offset) = cell_offsets.get_mut(cell_end) {
+            *offset = rendered.len();
+        }
+    }
+    *visible_columns = (*visible_columns).max(cell_end.min(width));
+    *column = next_column;
+    true
+}
+
+fn render_text_row<F, V, D>(
     text: &EmacsText,
     hscroll: usize,
     width: usize,
@@ -770,108 +865,135 @@ fn render_text_row<F, V>(
     default_style: CellStyle,
     mut style_at: F,
     mut visibility_at: V,
+    mut display_at: D,
 ) -> RenderedRow
 where
     F: FnMut(usize) -> CellStyle,
     V: FnMut(usize) -> Visibility,
+    D: FnMut(usize) -> Option<DisplayReplacement>,
 {
     let chars: Vec<_> = text.chars().collect();
     let mut rendered = String::new();
     let mut char_attrs = Vec::new();
     let mut cell_attrs = vec![default_style; width];
     let mut source_offsets = vec![0; chars.len() + 1];
+    let mut source_columns = vec![0; chars.len() + 1];
     let mut cell_offsets = vec![0; width + 1];
     let mut column = 0usize;
     let mut visible_columns = 0usize;
     let end_column = hscroll.saturating_add(width);
     let tab_width = tab_width.max(1);
     let mut hidden_run = false;
+    let mut images = Vec::new();
 
     for (index, ch) in chars.iter().enumerate() {
         let visibility = visibility_at(index);
         let draw_ellipsis = visibility == Visibility::Ellipsis && !hidden_run;
         if visibility != Visibility::Visible && !draw_ellipsis {
             source_offsets[index + 1] = rendered.len();
+            source_columns[index + 1] = column;
             hidden_run = true;
             continue;
         }
         hidden_run = visibility != Visibility::Visible;
-        let display = if draw_ellipsis {
-            '…'
+        let style = style_at(index);
+        let replacement = if draw_ellipsis {
+            None
         } else {
-            match ch.unicode().unwrap_or('\u{fffd}') {
-                '\n' | '\r' => ' ',
-                other => other,
+            display_at(index)
+        };
+        let keep_rendering = match replacement {
+            Some(DisplayReplacement::Hidden) => true,
+            Some(DisplayReplacement::Text(replacement)) => {
+                let mut keep = true;
+                for raw_display in replacement.chars() {
+                    let display = match raw_display {
+                        '\n' | '\r' => ' ',
+                        other => other,
+                    };
+                    if !append_rendered_character(
+                        display,
+                        style,
+                        hscroll,
+                        width,
+                        end_column,
+                        tab_width,
+                        &mut column,
+                        &mut visible_columns,
+                        &mut rendered,
+                        &mut cell_attrs,
+                        &mut char_attrs,
+                        &mut cell_offsets,
+                    ) {
+                        keep = false;
+                        break;
+                    }
+                }
+                keep
+            }
+            Some(DisplayReplacement::Image {
+                source,
+                width: image_width,
+                height: image_height,
+            }) => {
+                let image_column = column;
+                let visible = image_column >= hscroll && image_column < end_column;
+                if visible {
+                    images.push(RenderedImage {
+                        column: image_column - hscroll,
+                        source,
+                        width: image_width,
+                        height: image_height,
+                    });
+                }
+                append_rendered_character(
+                    ' ',
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+            None => {
+                let display = if draw_ellipsis {
+                    '…'
+                } else {
+                    match ch.unicode().unwrap_or('\u{fffd}') {
+                        '\n' | '\r' => ' ',
+                        other => other,
+                    }
+                };
+                append_rendered_character(
+                    display,
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
             }
         };
-        let columns = if display == '\t' {
-            tab_width - column % tab_width
-        } else {
-            display_char_width(display)
-        };
-        let start_column = column;
-        let next_column = column.saturating_add(columns);
-        let before = rendered.len();
-
-        if columns == 0 {
-            if start_column >= hscroll && start_column < end_column {
-                let style = style_at(index);
-                rendered.push(display);
-                char_attrs.push(style);
-            }
-            source_offsets[index + 1] = if next_column <= hscroll {
-                0
-            } else {
-                rendered.len()
-            };
-            continue;
-        }
-
-        if next_column <= hscroll {
-            source_offsets[index + 1] = 0;
-            column = next_column;
-            continue;
-        }
-        if start_column >= end_column {
-            source_offsets[index + 1] = rendered.len();
-            source_offsets[index + 2..].fill(rendered.len());
+        let offset = if column <= hscroll { 0 } else { rendered.len() };
+        source_offsets[index + 1] = offset;
+        source_columns[index + 1] = column;
+        if !keep_rendering {
+            source_offsets[index + 2..].fill(offset);
+            source_columns[index + 2..].fill(column);
             break;
         }
-
-        let cell_start = start_column.saturating_sub(hscroll);
-        let cell_end = next_column.min(end_column).saturating_sub(hscroll);
-        let style = style_at(index);
-        if start_column < hscroll || next_column > end_column {
-            // A horizontal boundary can bisect a wide glyph. Preserve its
-            // remaining cell geometry with blanks instead of shifting the
-            // following text or drawing half a glyph outside the viewport.
-            for cell in cell_start..cell_end {
-                cell_offsets[cell] = rendered.len();
-                cell_attrs[cell] = style;
-                rendered.push(' ');
-                char_attrs.push(style);
-                cell_offsets[cell + 1] = rendered.len();
-            }
-        } else {
-            for cell in cell_start..cell_end {
-                cell_offsets[cell] = before;
-                cell_attrs[cell] = style;
-            }
-            if display == '\t' {
-                for cell in cell_start..cell_end {
-                    rendered.push(' ');
-                    char_attrs.push(style);
-                    cell_offsets[cell + 1] = rendered.len();
-                }
-            } else {
-                rendered.push(display);
-                char_attrs.push(style);
-            }
-            cell_offsets[cell_end] = rendered.len();
-        }
-        visible_columns = visible_columns.max(cell_end);
-        source_offsets[index + 1] = rendered.len();
-        column = next_column;
     }
 
     // The line end maps to the end of its visible text, before padding.
@@ -888,9 +1010,11 @@ where
         cell_attrs,
         char_attrs,
         source_offsets,
+        source_columns,
         cell_offsets,
         visible_columns,
         padding_char_start,
+        images,
     }
 }
 
@@ -1425,6 +1549,8 @@ struct WindowFaces {
     /// insertion index).  Later-inserted props merge on top (GNU's
     /// interval "last write wins").
     prop_faces: Vec<(usize, usize, Value, usize)>,
+    /// `display` text-property runs; the run is replaced once, at its start.
+    display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
     /// Invisible text ranges and visible overlays carrying `invisible`.
     invisible_overlays: Vec<(crate::buffer::Overlay, Value)>,
     invisible_props: Vec<(usize, usize, Value)>,
@@ -1496,6 +1622,22 @@ fn window_faces(
         .filter(|(_, tp)| tp.prop == ctx.face || tp.prop == ctx.font_lock_face)
         .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
         .collect();
+    let display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
+        i.q_soft("display").map_or_else(Vec::new, |display| {
+            properties
+                .iter()
+                .enumerate()
+                .filter(|(_, tp)| tp.prop == display)
+                .map(|(idx, tp)| {
+                    (
+                        tp.start,
+                        tp.end,
+                        display_value_replacement(i, &tp.value, bb.id),
+                        idx,
+                    )
+                })
+                .collect()
+        });
     let invisible_props: Vec<(usize, usize, Value)> = properties
         .iter()
         .filter(|tp| tp.prop == ctx.invisible)
@@ -1509,10 +1651,143 @@ fn window_faces(
     WindowFaces {
         overlays,
         prop_faces,
+        display_props,
         invisible_overlays,
         invisible_props,
         invisibility_spec,
         region,
+    }
+}
+
+fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
+    i.q_soft(name)
+        .map(|property| crate::lisp::eval::plist_get(plist, property))
+        .unwrap_or(Value::Nil)
+}
+
+fn image_dimension(value: Value) -> Option<usize> {
+    match value {
+        Value::Int(n) if n > 0 => usize::try_from(n).ok(),
+        _ => None,
+    }
+}
+
+fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {
+    let file = file.to_unicode_lossy();
+    let path = std::path::Path::new(&file);
+    if path.is_absolute() {
+        return file;
+    }
+    let default_directory = i
+        .q_soft("default-directory")
+        .and_then(|id| {
+            i.buffer_local_toplevel_value(id, buffer_id)
+                .or_else(|| i.default_toplevel_value(id))
+        })
+        .and_then(|value| match value {
+            Value::Str(directory) => Some(directory.borrow().to_unicode_lossy()),
+            _ => None,
+        });
+    match default_directory {
+        Some(directory) => std::path::Path::new(&directory)
+            .join(path)
+            .to_string_lossy()
+            .into_owned(),
+        None => file,
+    }
+}
+
+fn image_display_replacement(
+    i: &Interp,
+    value: &Value,
+    buffer_id: usize,
+) -> Option<DisplayReplacement> {
+    let Value::Cons(cell) = value else {
+        return None;
+    };
+    let (head, plist) = {
+        let cell = cell.borrow();
+        (cell.car.clone(), cell.cdr.clone())
+    };
+    if !matches!(head, Value::Sym(id) if i.symbol_name(id) == "image") {
+        return None;
+    }
+
+    let width = image_dimension(image_property(i, &plist, ":width"));
+    let height = image_dimension(image_property(i, &plist, ":height"));
+    let file = image_property(i, &plist, ":file");
+    if let Value::Str(file) = file {
+        return Some(DisplayReplacement::Image {
+            source: GridImageSource::File(image_file_for_buffer(
+                i,
+                buffer_id,
+                &file.borrow(),
+            )),
+            width,
+            height,
+        });
+    }
+
+    let data = image_property(i, &plist, ":data");
+    let Value::Str(data) = data else {
+        return None;
+    };
+    let Value::Sym(format) = image_property(i, &plist, ":type") else {
+        return None;
+    };
+    let format = i.symbol_name(format).to_lowercase();
+    if !matches!(
+        format.as_str(),
+        "png" | "jpeg" | "jpg" | "webp" | "gif" | "svg" | "bmp" | "tiff" | "tif"
+    ) {
+        return None;
+    }
+    let bytes = data
+        .borrow()
+        .chars()
+        .map(|character| {
+            character
+                .byte8()
+                .or_else(|| u8::try_from(character.code()).ok())
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(DisplayReplacement::Image {
+        source: GridImageSource::Data {
+            format,
+            bytes: bytes.into(),
+        },
+        width,
+        height,
+    })
+}
+
+fn display_value_replacement(
+    i: &Interp,
+    value: &Value,
+    buffer_id: usize,
+) -> Option<DisplayReplacement> {
+    match value {
+        Value::Str(string) => Some(DisplayReplacement::Text(
+            string.borrow().to_unicode_lossy(),
+        )),
+        _ => image_display_replacement(i, value, buffer_id),
+    }
+}
+
+fn display_replacement_at(
+    faces: &WindowFaces,
+    position: usize,
+) -> Option<DisplayReplacement> {
+    let (start, _, replacement, _) = faces
+        .display_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| insertion)?;
+    let replacement = replacement.as_ref()?;
+    if position == *start {
+        Some(replacement.clone())
+    } else {
+        Some(DisplayReplacement::Hidden)
     }
 }
 
@@ -1658,6 +1933,7 @@ fn render_grid_internal(
     let default_bg = default_style.bg;
     let mut attrs = vec![vec![default_style; width]; height];
     let mut char_attrs = vec![Vec::new(); height];
+    let mut images = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let mut positioned_cursors = Vec::new();
@@ -1677,6 +1953,7 @@ fn render_grid_internal(
                 font_families: fctx.font_families,
                 default_style,
                 rows,
+                images,
                 attrs,
                 char_attrs,
                 mode_rows,
@@ -1894,7 +2171,21 @@ fn render_grid_internal(
                         .map(|wf| visibility_at_pos(i, wf, line_pos + index))
                         .unwrap_or(Visibility::Visible)
                 },
+                |index| {
+                    wf.as_ref()
+                        .and_then(|wf| display_replacement_at(wf, line_pos + index))
+                },
             );
+            images.extend(rendered.images.iter().filter_map(|image| {
+                let column = window_left.saturating_add(image.column);
+                (column < width).then(|| GridImage {
+                    row: y,
+                    column,
+                    source: image.source.clone(),
+                    width: image.width,
+                    height: image.height,
+                })
+            }));
             // Empty tail of the row: the line-end face extends its
             // background over it iff the face's :extend holds (GNU
             // extend_face_to_end_of_line).
@@ -1931,14 +2222,11 @@ fn render_grid_internal(
             if let Some(point_index) = point_index
                 && window_width > 0
             {
-                let point_col = wf.as_ref().map_or_else(
-                    || display_columns_of(line.chars().take(point_index), tab_width),
-                    |wf| {
-                        visible_display_columns_of(&line, point_index, tab_width, |index| {
-                            visibility_at_pos(i, wf, line_pos + index)
-                        })
-                    },
-                );
+                let point_col = rendered
+                    .source_columns
+                    .get(point_index)
+                    .copied()
+                    .unwrap_or(0);
                 let col = point_col.saturating_sub(hscroll).min(window_width - 1);
                 let byte_index = if point_col < hscroll {
                     0
@@ -2107,7 +2395,18 @@ fn render_grid_internal(
                     .unwrap_or(default_style)
             },
             |_| Visibility::Visible,
+            |index| {
+                wf.as_ref()
+                    .and_then(|wf| display_replacement_at(wf, index))
+            },
         );
+        images.extend(rendered.images.iter().map(|image| GridImage {
+            row: y,
+            column: image.column,
+            source: image.source.clone(),
+            width: image.width,
+            height: image.height,
+        }));
         if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
             && snapshot.buffer_id == buffer.borrow().id
         {
@@ -2154,6 +2453,7 @@ fn render_grid_internal(
         font_families: fctx.font_families,
         default_style,
         rows,
+        images,
         attrs,
         char_attrs,
         mode_rows,

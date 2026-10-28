@@ -7,7 +7,8 @@ use super::{
 use gpui::*;
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, Grid, MouseButton as RemacsMouseButton,
+    BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource,
+    MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 mod input;
@@ -210,6 +211,7 @@ impl Render for EditorView {
             .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
             .unwrap_or(BG);
         let grid = self.grid.clone();
+        let images = grid.images.clone();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
         let scroll_grid = grid.clone();
@@ -651,7 +653,46 @@ impl Render for EditorView {
                 )
                 .size_full(),
             )
+            .children(
+                images
+                    .into_iter()
+                    .map(|image| grid_image_element(image, cell_width, line_height)),
+            )
     }
+}
+
+fn grid_image_element(
+    image: GridImage,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> impl IntoElement {
+    let source = match image.source {
+        GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
+        GridImageSource::Data { format, bytes } => {
+            let format = match format.as_str() {
+                "png" => ImageFormat::Png,
+                "jpeg" | "jpg" => ImageFormat::Jpeg,
+                "webp" => ImageFormat::Webp,
+                "gif" => ImageFormat::Gif,
+                "svg" => ImageFormat::Svg,
+                "bmp" => ImageFormat::Bmp,
+                "tiff" | "tif" => ImageFormat::Tiff,
+                _ => return div(),
+            };
+            img(std::sync::Arc::new(Image::from_bytes(format, bytes.to_vec())))
+        }
+    };
+    let source = match (image.width, image.height) {
+        (Some(width), Some(height)) => source.w(px(width as f32)).h(px(height as f32)),
+        (Some(width), None) => source.w(px(width as f32)),
+        (None, Some(height)) => source.h(px(height as f32)),
+        (None, None) => source,
+    };
+    div()
+        .absolute()
+        .left(cell_width * image.column as f32)
+        .top(line_height * image.row as f32)
+        .child(source)
 }
 
 #[cfg(target_os = "macos")]
