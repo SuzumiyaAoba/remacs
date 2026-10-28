@@ -48,11 +48,6 @@
 ;; To use PCL-CVS just use `M-x cvs-examine RET <dir> RET'.
 ;; There is a TeXinfo manual, which can be helpful to get started.
 
-;;; Bugs:
-
-;; - Extracting an old version seems not to recognize encoding correctly.
-;;   That's probably because it's done via a process rather than a file.
-
 ;;; Todo:
 
 ;; ******** FIX THE DOCUMENTATION *********
@@ -1878,6 +1873,7 @@ Signal an error if there is no backup file."
 (defun cvs-retrieve-revision (fileinfo rev)
   "Retrieve the given REVision of the file in FILEINFO into a new buffer."
   (let* ((file (cvs-fileinfo->full-name fileinfo))
+	 (expanded-file (expand-file-name file))
 	 (buffile (concat file "." rev)))
     (or (find-buffer-visiting buffile)
 	(with-current-buffer (create-file-buffer buffile)
@@ -1899,11 +1895,11 @@ Signal an error if there is no backup file."
             ;; Figure out the encoding used and decode the byte-sequence
             ;; into a sequence of chars.
             (decode-coding-inserted-region
-             (point-min) (point-max) file t nil nil t)
+             (point-min) (point-max) expanded-file t nil nil t)
             ;; Set buffer-file-coding-system.
             (after-insert-file-set-coding (buffer-size) t)
 	    (set-buffer-modified-p nil)
-	    (let ((buffer-file-name (expand-file-name file)))
+	    (let ((buffer-file-name expanded-file))
 	      (after-find-file))
 	    (setq buffer-read-only t)
 	    (message "Retrieving revision %s... Done" rev)
