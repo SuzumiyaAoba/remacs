@@ -1268,9 +1268,12 @@ The subdirectory will be created if necessary.  Returns the
   ;; Create a unique filename for the attachment.  Unfortunately RFC5545
   ;; has no mechanism for suggesting a filename, so we just use a unique
   ;; prefix of BASE64-DATA, or a random number as a fallback.
-  (let* ((nchars 4)
+  (let* ((nchars (min 4 (length base64-data)))
          (max-chars (length base64-data))
-         (prefix (substring base64-data 0 nchars))
+         (prefix (if (zerop max-chars)
+                     "empty"
+                   (substring base64-data 0 nchars)))
+         (empty-fallback-count 0)
          (extn (when mimetype
                  (concat "." (symbol-name
                               (mailcap-mime-type-to-extension mimetype)))))
@@ -1278,9 +1281,13 @@ The subdirectory will be created if necessary.  Returns the
                                  (concat prefix extn))))
     (while (file-exists-p path)
       (cl-incf nchars)
-      (setq prefix (if (< nchars max-chars)
-                       (substring base64-data 0 nchars)
-                     (number-to-string (random max-chars))))
+      (setq prefix
+            (if (zerop max-chars)
+                (prog1 (format "empty-%d" empty-fallback-count)
+                  (cl-incf empty-fallback-count))
+              (if (< nchars max-chars)
+                  (substring base64-data 0 nchars)
+                (number-to-string (random max-chars)))))
       (setq path (file-name-concat diary-icalendar-attachment-directory dir
                                    (concat prefix extn))))
     ;; Save the file and return its name:
