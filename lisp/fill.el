@@ -357,8 +357,9 @@ preceded by a space.  This blocks line-breaking in cases like
 \"(a jednak)\"."
   (save-excursion
     (skip-chars-backward " \t")
-    (backward-char 2)
-    (looking-at "[^[:alpha:]]\\cl")))
+    (when (>= (- (point) (point-min)) 2)
+      (backward-char 2)
+      (looking-at "[^[:alpha:]]\\cl"))))
 
 (defun fill-single-char-nobreak-p ()
   "Return non-nil if a one-letter word is before point.
@@ -367,8 +368,9 @@ to prevent the breaking of a line just after a one-letter word,
 which is an error according to some typographical conventions."
   (save-excursion
     (skip-chars-backward " \t")
-    (backward-char 2)
-    (looking-at "[[:space:]][[:alpha:]]")))
+    (when (>= (- (point) (point-min)) 2)
+      (backward-char 2)
+      (looking-at "[[:space:]][[:alpha:]]"))))
 
 (defcustom fill-nobreak-predicate nil
   "List of predicates for recognizing places not to break a line.
