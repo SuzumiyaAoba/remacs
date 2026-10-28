@@ -161,6 +161,10 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
     },
+    CharacterPalette {
+        frame_id: usize,
+        reply: SyncSender<Result<(), String>>,
+    },
     Prompt {
         frame_id: usize,
         message: String,
@@ -328,6 +332,16 @@ impl remacs_runtime::frontend::ColorPanelBackend for GuiColorPanelBackend {
         response
             .recv()
             .map_err(|_| "GUI color panel service stopped".to_owned())?
+    }
+
+    fn show_character_palette(&self, frame_id: usize) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::CharacterPalette { frame_id, reply })
+            .map_err(|_| "GUI character palette service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI character palette service stopped".to_owned())?
     }
 }
 

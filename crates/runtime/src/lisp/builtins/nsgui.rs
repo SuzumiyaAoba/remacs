@@ -541,7 +541,6 @@ winsys_fn!(f_ns_frame_edges);
 winsys_fn!(f_ns_frame_geometry);
 winsys_fn!(f_ns_mouse_absolute_pixel_position);
 winsys_fn!(f_ns_set_mouse_absolute_pixel_position);
-winsys_fn!(f_ns_show_character_palette);
 
 fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     fn optional_string(i: &mut Interp, value: Option<&Value>) -> Result<Option<String>, Flow> {
@@ -583,6 +582,22 @@ fn f_ns_popup_color_panel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     backend
         .show(frame.borrow().id)
         .map_err(|error| i.error(format!("Color panel failed: {error}")))?;
+    Ok(Value::Nil)
+}
+
+fn f_ns_show_character_palette(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let Some(frame) = i.selected_frame.clone() else {
+        return Err(winsys(i));
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(winsys(i));
+    }
+    let Some(backend) = i.color_panel_backend.clone() else {
+        return Err(winsys(i));
+    };
+    backend
+        .show_character_palette(frame.borrow().id)
+        .map_err(|error| i.error(format!("Character palette failed: {error}")))?;
     Ok(Value::Nil)
 }
 

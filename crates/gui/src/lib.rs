@@ -312,6 +312,19 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::CharacterPalette { frame_id, reply } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, |_view, window, _cx| {
+                                    show_native_character_palette(window)
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::FileDialog {
                         prompt,
                         directory,
@@ -572,6 +585,23 @@ fn show_native_color_panel(window: &Window) -> Result<(), String> {
     {
         let _ = window;
         Err("NS color panel is available only on macOS".to_owned())
+    }
+}
+
+fn show_native_character_palette(window: &Window) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        window.activate_window();
+        unsafe {
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let _: () = msg_send![app, orderFrontCharacterPalette: nil];
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        Err("Character Viewer is available only on macOS".to_owned())
     }
 }
 
