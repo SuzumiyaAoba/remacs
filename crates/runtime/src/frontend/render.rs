@@ -4,7 +4,11 @@ use crate::{
     buffer::Buffer,
     lisp::{Interp, Value},
 };
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    ops::Range,
+    sync::Arc,
+};
 use unicode_width::UnicodeWidthChar;
 
 /// A terminal color: RGB. Face color specs (names, `#rgb' forms) are
@@ -376,6 +380,40 @@ fn display_columns_of(chars: impl Iterator<Item = EmacsChar>, tab_width: usize) 
         columns = columns.saturating_add(width);
     }
     columns
+}
+
+fn wrap_ranges(text: &EmacsText, width: usize, tab_width: usize) -> Vec<Range<usize>> {
+    let chars: Vec<_> = text.chars().collect();
+    if chars.is_empty() {
+        return vec![0..0];
+    }
+    if width == 0 {
+        return vec![0..chars.len()];
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    let mut column = 0usize;
+    let tab_width = tab_width.max(1);
+    for (index, character) in chars.iter().enumerate() {
+        let character = character.unicode().unwrap_or('\u{fffd}');
+        let mut character_width = if character == '\t' {
+            tab_width - column % tab_width
+        } else {
+            display_char_width(character)
+        };
+        if column > 0 && column.saturating_add(character_width) > width {
+            ranges.push(start..index);
+            start = index;
+            column = 0;
+            if character == '\t' {
+                character_width = tab_width;
+            }
+        }
+        column = column.saturating_add(character_width);
+    }
+    ranges.push(start..chars.len());
+    ranges
 }
 
 fn buffer_tab_width(i: &Interp, buffer: usize) -> usize {
@@ -907,6 +945,7 @@ fn render_text_row<F, V, D, B>(
     mut visibility_at: V,
     mut display_at: D,
     mut boundary_strings_at: B,
+    include_end_boundary: bool,
 ) -> RenderedRow
 where
     F: FnMut(usize) -> CellStyle,
@@ -1055,22 +1094,24 @@ where
         }
     }
 
-    for string in boundary_strings_at(chars.len()) {
-        if !append_rendered_text(
-            &string,
-            default_style,
-            hscroll,
-            width,
-            end_column,
-            tab_width,
-            &mut column,
-            &mut visible_columns,
-            &mut rendered,
-            &mut cell_attrs,
-            &mut char_attrs,
-            &mut cell_offsets,
-        ) {
-            break;
+    if include_end_boundary {
+        for string in boundary_strings_at(chars.len()) {
+            if !append_rendered_text(
+                &string,
+                default_style,
+                hscroll,
+                width,
+                end_column,
+                tab_width,
+                &mut column,
+                &mut visible_columns,
+                &mut rendered,
+                &mut cell_attrs,
+                &mut char_attrs,
+                &mut cell_offsets,
+            ) {
+                break;
+            }
         }
     }
     let offset = if column <= hscroll { 0 } else { rendered.len() };
@@ -2199,6 +2240,7 @@ fn render_grid_internal(
         let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
+        let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
         let text_rows = window_height.saturating_sub(1);
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
@@ -2230,7 +2272,7 @@ fn render_grid_internal(
                 let suspend_hs = suspend_hs && pt == old_pt;
                 let pt_line = bb.text.line_of_pos(pt);
                 let start_line = bb.text.line_of_pos(start);
-                let new_start = if pt_line < start_line {
+                let mut new_start = if pt_line < start_line {
                     let up = start_line - pt_line;
                     if up > text_rows {
                         bb.text.line_start(pt_line.saturating_sub(text_rows / 2))
@@ -2247,6 +2289,48 @@ fn render_grid_internal(
                 } else {
                     start
                 };
+                if wrap_lines && window_width > 0 {
+                    let new_start_line = bb.text.line_of_pos(new_start);
+                    let new_start_line_pos = bb.text.line_start(new_start_line);
+                    let start_offset = new_start.saturating_sub(new_start_line_pos);
+                    let point_line_pos = bb.text.line_start(pt_line);
+                    let point_index = pt.saturating_sub(point_line_pos);
+                    let mut recent_starts = VecDeque::new();
+                    let mut visual_row = 0usize;
+                    let mut point_visual_row = None;
+                    'lines: for line_number in new_start_line..=pt_line {
+                        let line_pos = bb.text.line_start(line_number);
+                        let line_end = bb.text.line_end(line_pos);
+                        let line = bb.text.substring(line_pos, line_end);
+                        let line_len = line.chars().count();
+                        for range in wrap_ranges(&line, window_width, tab_width) {
+                            if line_number == new_start_line
+                                && range.end <= start_offset
+                                && range.end < line_len
+                            {
+                                continue;
+                            }
+                            recent_starts.push_back(line_pos + range.start);
+                            if recent_starts.len() > text_rows {
+                                recent_starts.pop_front();
+                            }
+                            if line_number == pt_line
+                                && point_index >= range.start
+                                && (point_index < range.end
+                                    || (point_index == range.end && range.end == line_len))
+                            {
+                                point_visual_row = Some(visual_row);
+                                break 'lines;
+                            }
+                            visual_row = visual_row.saturating_add(1);
+                        }
+                    }
+                    if point_visual_row.is_some_and(|row| row >= text_rows)
+                        && let Some(row_start) = recent_starts.front()
+                    {
+                        new_start = *row_start;
+                    }
+                }
                 // Auto-hscroll only when `auto-hscroll-mode' allows it
                 // for this window's buffer and not suspended by an
                 // explicit `scroll-left'/`-right'/`set-window-hscroll'.
@@ -2257,7 +2341,9 @@ fn render_grid_internal(
                     .or_else(|| i.default_toplevel_value(ahs_id))
                     .map(|v| v.truthy())
                     .unwrap_or(true);
-                let new_hscroll = if window_width > 0 && ahs_on && !suspend_hs {
+                let new_hscroll = if wrap_lines {
+                    0
+                } else if window_width > 0 && ahs_on && !suspend_hs {
                     let col = display_columns(
                         &bb.text.substring(bb.text.line_start(pt_line), pt),
                         tab_width,
@@ -2292,13 +2378,11 @@ fn render_grid_internal(
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone())));
         let mut visible_end = start;
+        let mut screen_row = window_top;
         for row in 0..text_rows {
-            let y = window_top + row;
-            if y >= body_height {
+            if screen_row >= body_height || screen_row >= window_top + text_rows {
                 break;
             }
-            // Line-aligned rendering: `start' is a line start because
-            // the scroll code above always lands it on line_start().
             let (line, line_pos, row_end, point_index) = match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
@@ -2321,149 +2405,197 @@ fn render_grid_internal(
                 }
                 None => (EmacsText::new(), 0, 0, None),
             };
-            visible_end = row_end;
-            let mut rendered = render_text_row(
-                &line,
-                hscroll,
-                window_width,
-                tab_width,
-                default_style,
-                |index| {
-                    wf.as_ref()
-                        .map(|wf| style_at_pos(i, &mut fctx, wf, line_pos + index))
-                        .unwrap_or(default_style)
-                },
-                |index| {
-                    wf.as_ref()
-                        .map(|wf| visibility_at_pos(i, wf, line_pos + index))
-                        .unwrap_or(Visibility::Visible)
-                },
-                |index| {
-                    wf.as_ref()
-                        .and_then(|wf| display_replacement_at(wf, line_pos + index))
-                },
-                |index| {
-                    wf.as_ref()
-                        .map(|wf| overlay_strings_at(wf, line_pos + index))
-                        .unwrap_or_default()
-                },
-            );
-            images.extend(rendered.images.iter().filter_map(|image| {
-                let column = window_left.saturating_add(image.column);
-                (column < width).then(|| GridImage {
-                    row: y,
-                    column,
-                    source: image.source.clone(),
-                    width: image.width,
-                    height: image.height,
-                })
-            }));
-            // Empty tail of the row: the line-end face extends its
-            // background over it iff the face's :extend holds (GNU
-            // extend_face_to_end_of_line).
-            if let Some(wf) = &wf {
-                let end_pos = line_pos + line.chars().count();
-                let tail = style_at_pos(i, &mut fctx, wf, end_pos);
-                if tail.extend {
-                    for cell in rendered.visible_columns..window_width {
-                        let mut t = tail;
-                        t.fg = None;
-                        t.bold = false;
-                        t.italic = false;
-                        t.underline = false;
-                        t.overline = false;
-                        t.strike = false;
-                        t.inverse = false;
-                        t.extend = false;
-                        rendered.cell_attrs[cell] = t;
-                    }
-                    let mut tail = tail;
-                    tail.fg = None;
-                    tail.bold = false;
-                    tail.italic = false;
-                    tail.underline = false;
-                    tail.overline = false;
-                    tail.strike = false;
-                    tail.inverse = false;
-                    tail.extend = false;
-                    for style in &mut rendered.char_attrs[rendered.padding_char_start..] {
-                        *style = tail;
+            let line_len = line.chars().count();
+            let ranges = if wrap_lines {
+                wrap_ranges(&line, window_width, tab_width)
+            } else {
+                vec![0..line_len]
+            };
+            let start_offset = if row == 0 {
+                start.saturating_sub(line_pos).min(line_len)
+            } else {
+                0
+            };
+            for range in ranges {
+                if range.end < start_offset
+                    || (range.end == start_offset && range.end < line_len)
+                {
+                    continue;
+                }
+                if screen_row >= body_height || screen_row >= window_top + text_rows {
+                    break;
+                }
+                let segment_start = range.start.max(start_offset);
+                let segment_end = range.end;
+                let segment_len = segment_end.saturating_sub(segment_start);
+                let segment_text: EmacsText = line
+                    .chars()
+                    .skip(segment_start)
+                    .take(segment_len)
+                    .collect();
+                let segment_pos = line_pos + segment_start;
+                let point_index = point_index.and_then(|point| {
+                    (point >= segment_start
+                        && (point < segment_end
+                            || (point == segment_end && segment_end == line_len)))
+                        .then_some(point - segment_start)
+                });
+                let y = screen_row;
+                visible_end = if segment_end == line_len {
+                    row_end
+                } else {
+                    line_pos + segment_end
+                };
+                let row_hscroll = if wrap_lines { 0 } else { hscroll };
+                let mut rendered = render_text_row(
+                    &segment_text,
+                    row_hscroll,
+                    window_width,
+                    tab_width,
+                    default_style,
+                    |index| {
+                        wf.as_ref()
+                            .map(|wf| style_at_pos(i, &mut fctx, wf, segment_pos + index))
+                            .unwrap_or(default_style)
+                    },
+                    |index| {
+                        wf.as_ref()
+                            .map(|wf| visibility_at_pos(i, wf, segment_pos + index))
+                            .unwrap_or(Visibility::Visible)
+                    },
+                    |index| {
+                        wf.as_ref()
+                            .and_then(|wf| display_replacement_at(wf, segment_pos + index))
+                    },
+                    |index| {
+                        wf.as_ref()
+                            .map(|wf| overlay_strings_at(wf, segment_pos + index))
+                            .unwrap_or_default()
+                    },
+                    segment_end == line_len,
+                );
+                images.extend(rendered.images.iter().filter_map(|image| {
+                    let column = window_left.saturating_add(image.column);
+                    (column < width).then(|| GridImage {
+                        row: y,
+                        column,
+                        source: image.source.clone(),
+                        width: image.width,
+                        height: image.height,
+                    })
+                }));
+                // Empty tail of the row: the line-end face extends its
+                // background over it iff the face's :extend holds (GNU
+                // extend_face_to_end_of_line).
+                if segment_end == line_len {
+                    if let Some(wf) = &wf {
+                        let end_pos = line_pos + line_len;
+                        let tail = style_at_pos(i, &mut fctx, wf, end_pos);
+                        if tail.extend {
+                            for cell in rendered.visible_columns..window_width {
+                                let mut t = tail;
+                                t.fg = None;
+                                t.bold = false;
+                                t.italic = false;
+                                t.underline = false;
+                                t.overline = false;
+                                t.strike = false;
+                                t.inverse = false;
+                                t.extend = false;
+                                rendered.cell_attrs[cell] = t;
+                            }
+                            let mut tail = tail;
+                            tail.fg = None;
+                            tail.bold = false;
+                            tail.italic = false;
+                            tail.underline = false;
+                            tail.overline = false;
+                            tail.strike = false;
+                            tail.inverse = false;
+                            tail.extend = false;
+                            for style in &mut rendered.char_attrs[rendered.padding_char_start..] {
+                                *style = tail;
+                            }
+                        }
                     }
                 }
-            }
-            if let Some(point_index) = point_index
-                && window_width > 0
-            {
-                let point_col = rendered
-                    .source_columns
-                    .get(point_index)
-                    .copied()
-                    .unwrap_or(0);
-                let col = point_col.saturating_sub(hscroll).min(window_width - 1);
-                let byte_index = if point_col < hscroll {
-                    0
-                } else if point_col.saturating_sub(hscroll) >= window_width {
-                    rendered.cell_offsets[window_width - 1]
-                } else {
-                    rendered
-                        .source_offsets
+                if let Some(point_index) = point_index
+                    && window_width > 0
+                {
+                    let point_col = rendered
+                        .source_columns
                         .get(point_index)
                         .copied()
-                        .unwrap_or(rendered.text.len())
-                };
-                if selected_window {
-                    selected_cursor = Some((y, window_left, col, byte_index));
+                        .unwrap_or(0);
+                    let col = point_col
+                        .saturating_sub(row_hscroll)
+                        .min(window_width - 1);
+                    let byte_index = if point_col < row_hscroll {
+                        0
+                    } else if point_col.saturating_sub(row_hscroll) >= window_width {
+                        rendered.cell_offsets[window_width - 1]
+                    } else {
+                        rendered
+                            .source_offsets
+                            .get(point_index)
+                            .copied()
+                            .unwrap_or(rendered.text.len())
+                    };
+                    if selected_window {
+                        selected_cursor = Some((y, window_left, col, byte_index));
+                    }
+                    if let Some((shape, thickness)) = cursor_style {
+                        let stretch = segment_text.chars().nth(point_index).and_then(|ch| {
+                            let ch = ch.unicode().unwrap_or('\u{fffd}');
+                            let char_width = if ch == '\t' {
+                                tab_width - point_col % tab_width
+                            } else {
+                                display_char_width(ch)
+                            };
+                            let stretchable = if ch.is_whitespace() {
+                                stretch_cursor && char_width > 1
+                            } else {
+                                char_width > 1
+                            };
+                            (point_col >= row_hscroll
+                                && point_col.saturating_sub(row_hscroll) < window_width
+                                && stretchable)
+                                .then(|| rendered.source_offsets.get(point_index + 1).copied())
+                                .flatten()
+                        });
+                        positioned_cursors.push((
+                            GridCursor {
+                                row: y,
+                                column: col,
+                                index: byte_index,
+                                after_index: stretch,
+                                shape,
+                                thickness,
+                                color: cursor_color,
+                                selected: selected_window,
+                            },
+                            window_left,
+                        ));
+                    }
                 }
-                if let Some((shape, thickness)) = cursor_style {
-                    let stretch = line.chars().nth(point_index).and_then(|ch| {
-                        let ch = ch.unicode().unwrap_or('\u{fffd}');
-                        let char_width = if ch == '\t' {
-                            tab_width - point_col % tab_width
-                        } else {
-                            display_char_width(ch)
-                        };
-                        let stretchable = if ch.is_whitespace() {
-                            stretch_cursor && char_width > 1
-                        } else {
-                            char_width > 1
-                        };
-                        (point_col >= hscroll
-                            && point_col.saturating_sub(hscroll) < window_width
-                            && stretchable)
-                            .then(|| rendered.source_offsets.get(point_index + 1).copied())
-                            .flatten()
-                    });
-                    positioned_cursors.push((
-                        GridCursor {
+                if selected_window
+                    && input
+                        .as_ref()
+                        .is_some_and(|snapshot| snapshot.buffer_id == buf_id)
+                {
+                    if let Some(snapshot) = input.as_mut() {
+                        let row_index = snapshot.rows.len();
+                        snapshot.rows.push(GridInputRow {
                             row: y,
-                            column: col,
-                            index: byte_index,
-                            after_index: stretch,
-                            shape,
-                            thickness,
-                            color: cursor_color,
-                            selected: selected_window,
-                        },
-                        window_left,
-                    ));
+                            buffer_start: segment_pos,
+                            source_offsets: rendered.source_offsets.clone(),
+                        });
+                        input_screen_lefts.push((row_index, window_left));
+                    }
                 }
+                place_rendered_row(&mut screen_rows[y], window_left, &rendered);
+                screen_row += 1;
             }
-            if selected_window
-                && input
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.buffer_id == buf_id)
-            {
-                if let Some(snapshot) = input.as_mut() {
-                    let row_index = snapshot.rows.len();
-                    snapshot.rows.push(GridInputRow {
-                        row: y,
-                        buffer_start: line_pos,
-                        source_offsets: rendered.source_offsets.clone(),
-                    });
-                    input_screen_lefts.push((row_index, window_left));
-                }
-            }
-            place_rendered_row(&mut screen_rows[y], window_left, &rendered);
         }
         let tick = i
             .buffers
@@ -2576,6 +2708,7 @@ fn render_grid_internal(
                     .map(|wf| overlay_strings_at(wf, index))
                     .unwrap_or_default()
             },
+            true,
         );
         images.extend(rendered.images.iter().map(|image| GridImage {
             row: y,
