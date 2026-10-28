@@ -23,6 +23,11 @@ pub trait BellBackend {
     fn ring_bell(&self, frame_id: Option<usize>, visible: bool);
 }
 
+/// Native About panel used by graphical front-ends.
+pub trait AboutPanelBackend {
+    fn show(&self, frame_id: usize, version: &str) -> Result<(), String>;
+}
+
 /// Host dialog backend used by interactive graphical front-ends. The logic
 /// thread blocks until the UI returns the selected button index.
 pub trait DialogBackend {

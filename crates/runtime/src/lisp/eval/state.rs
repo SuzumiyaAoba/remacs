@@ -25,6 +25,14 @@ impl Interp {
         self.bell_backend = backend;
     }
 
+    /// Install or remove the native About panel used by graphical frames.
+    pub fn set_about_panel_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::AboutPanelBackend>>,
+    ) {
+        self.about_panel_backend = backend;
+    }
+
     /// Install or remove the host dialog backend used by graphical frames.
     pub fn set_dialog_backend(&mut self, backend: Option<Rc<dyn crate::frontend::DialogBackend>>) {
         self.dialog_backend = backend;

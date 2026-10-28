@@ -192,6 +192,11 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
     },
+    AboutPanel {
+        frame_id: usize,
+        version: String,
+        reply: SyncSender<Result<(), String>>,
+    },
     CharacterPalette {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
@@ -364,6 +369,26 @@ impl remacs_runtime::frontend::BellBackend for GuiBellBackend {
         let _ = self
             .requests
             .send_blocking(GuiRequest::Bell { frame_id, visible });
+    }
+}
+
+struct GuiAboutPanelBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::AboutPanelBackend for GuiAboutPanelBackend {
+    fn show(&self, frame_id: usize, version: &str) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::AboutPanel {
+                frame_id,
+                version: version.to_owned(),
+                reply,
+            })
+            .map_err(|_| "GUI About panel service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI About panel service stopped".to_owned())?
     }
 }
 
@@ -1543,6 +1568,10 @@ fn start_logic_inner(
             }
             if enable_gui_requests {
                 i.set_bell_backend(Some(Rc::new(GuiBellBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                #[cfg(target_os = "macos")]
+                i.set_about_panel_backend(Some(Rc::new(GuiAboutPanelBackend {
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_dialog_backend(Some(Rc::new(GuiDialogBackend {

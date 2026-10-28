@@ -392,6 +392,18 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::AboutPanel {
+                        frame_id,
+                        version,
+                        reply,
+                    } => {
+                        let result = if windows.contains_key(&frame_id) {
+                            show_native_about_panel(&version)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::CharacterPalette { frame_id, reply } => {
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             handle
@@ -848,6 +860,37 @@ fn ring_native_bell() {
         use std::io::Write;
         let _ = std::io::stderr().write_all(b"\x07");
     }
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_about_panel(version: &str) -> Result<(), String> {
+    unsafe {
+        let options: id = msg_send![class!(NSMutableDictionary), dictionary];
+        let name_key: id = msg_send![
+            NSString::alloc(nil).init_str("ApplicationName"),
+            autorelease
+        ];
+        let name: id = msg_send![NSString::alloc(nil).init_str("Remacs"), autorelease];
+        let version_key: id =
+            msg_send![NSString::alloc(nil).init_str("Version"), autorelease];
+        let version_value: id =
+            msg_send![NSString::alloc(nil).init_str(version), autorelease];
+        let app_version_key: id =
+            msg_send![NSString::alloc(nil).init_str("ApplicationVersion"), autorelease];
+        let app_version: id =
+            msg_send![NSString::alloc(nil).init_str(version), autorelease];
+        let _: () = msg_send![options, setObject: name forKey: name_key];
+        let _: () = msg_send![options, setObject: version_value forKey: version_key];
+        let _: () = msg_send![options, setObject: app_version forKey: app_version_key];
+        let app: id = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, orderFrontStandardAboutPanelWithOptions: options];
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_native_about_panel(_version: &str) -> Result<(), String> {
+    Err("The native About panel is available only on macOS".to_owned())
 }
 
 #[cfg(test)]

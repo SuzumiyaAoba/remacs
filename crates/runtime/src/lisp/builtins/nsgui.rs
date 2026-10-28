@@ -534,7 +534,33 @@ macro_rules! winsys_fn {
 
 winsys_fn!(f_ns_get_resource);
 winsys_fn!(f_ns_set_resource);
-winsys_fn!(f_ns_emacs_info_panel);
+
+fn f_ns_emacs_info_panel(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let Some(backend) = i.about_panel_backend.clone() else {
+        return Err(winsys(i));
+    };
+    let Some(frame) = i
+        .selected_frame
+        .clone()
+        .filter(|frame| !frame.borrow().dead)
+    else {
+        return Err(winsys(i));
+    };
+    let frame_id = frame.borrow().id;
+    let version = i
+        .q_soft("emacs-version")
+        .filter(|symbol| i.bound_p(*symbol))
+        .map(|symbol| {
+            i.princ_to_string(&i.symbol_value(symbol))
+                .to_unicode_lossy()
+        })
+        .unwrap_or_else(|| "31.1".to_owned());
+    backend
+        .show(frame_id, &version)
+        .map_err(|error| i.error(format!("Native About panel failed: {error}")))?;
+    Ok(Value::Nil)
+}
+
 winsys_fn!(f_ns_frame_edges);
 winsys_fn!(f_ns_frame_geometry);
 winsys_fn!(f_ns_mouse_absolute_pixel_position);

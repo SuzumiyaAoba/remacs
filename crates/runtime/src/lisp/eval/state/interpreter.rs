@@ -248,6 +248,8 @@ pub struct Interp {
     pub(crate) clipboard_backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
     /// Host bell bridge, installed by a GUI front-end.
     pub(crate) bell_backend: Option<Rc<dyn crate::frontend::BellBackend>>,
+    /// Host native About panel, installed by a macOS GUI front-end.
+    pub(crate) about_panel_backend: Option<Rc<dyn crate::frontend::AboutPanelBackend>>,
     /// Host dialog bridge, installed by a GUI front-end.
     pub(crate) dialog_backend: Option<Rc<dyn crate::frontend::DialogBackend>>,
     /// Host file panel bridge, installed by a GUI front-end.
