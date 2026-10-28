@@ -3859,10 +3859,13 @@ original message into it."
   (interactive)
   (rmail-start-mail nil nil nil nil nil rmail-buffer))
 
-;; FIXME should complain if there is nothing to continue.
 (defun rmail-continue ()
   "Continue composing outgoing message previously being composed."
   (interactive)
+  (unless (if (memq mail-user-agent '(message-user-agent gnus-user-agent))
+              (and (fboundp 'message-buffers) (message-buffers))
+            (get-buffer "*mail*"))
+    (user-error "There is no message to continue"))
   (rmail-start-mail t))
 
 (defun rmail-reply (just-sender)
