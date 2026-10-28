@@ -299,10 +299,21 @@ To test this function, evaluate:
 		         col (car (posn-col-row end))))
 	       (or (mouse-movement-p event) switch-frame-p))
 	;; Scroll if see if we're on the edge.
-	;; FIXME: should handle mouse-in-other window.
 	(cond
-	 ((or switch-frame-p (not (eq start-window (posn-window end))))
-	  t) ; wait for return to original window
+	 (switch-frame-p t)
+	 ((not (eq start-window (posn-window end)))
+	  ;; Coordinates are relative to each window.  Start scrolling the
+	  ;; window under the pointer from its current position.
+	  (let ((window (posn-window end)))
+	    (when (and (window-live-p window)
+	               (not (window-minibuffer-p window)))
+	      (select-window window)
+	      (setq start-window window
+		    start-row row
+		    start-col col
+		    window-last-row (- (window-height) 2)
+		    window-last-col (- (window-width) 2)
+		    col-scrolling-p (mouse-drag-should-do-col-scrolling)))))
 	 ((<= row 0) (mouse-drag-repeatedly-safe-scroll -1 0))
 	 ((>= row window-last-row) (mouse-drag-repeatedly-safe-scroll 1 0))
 	 ((and col-scrolling-p (<= col 1)) (mouse-drag-repeatedly-safe-scroll 0 -1))
@@ -321,6 +332,7 @@ To test this function, evaluate:
     ;; If it was a click and not a drag, prepare to pass the event on.
     ;; Is there a more correct way to reconstruct the event?
     (if (and (not have-scrolled)
+	     (eq (posn-window start-posn) (posn-window end))
 	     (mouse-drag-events-are-point-events-p start-posn end))
 	(push (cons (event-basic-type start-event) (cdr start-event))
 	      unread-command-events))
