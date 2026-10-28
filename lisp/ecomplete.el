@@ -64,8 +64,7 @@
   "The name of the file to store the ecomplete data."
   :type 'file)
 
-(defcustom ecomplete-database-file-coding-system 'iso-2022-7bit
-  ;; FIXME: We should transition to `utf-8-emacs-unix' somehow!
+(defcustom ecomplete-database-file-coding-system 'utf-8-emacs-unix
   "Coding system used for writing the ecomplete database file."
   :type '(symbol :tag "Coding system"))
 
@@ -96,12 +95,26 @@ string that was matched."
 
 (defvar ecomplete-database nil)
 
+(defun ecomplete--database-read-coding-system (file)
+  "Return the coding system for reading FILE.
+Use its coding cookie when present, and the previous default for legacy files."
+  (let ((coding
+         (with-temp-buffer
+           (insert-file-contents-literally file)
+           (car-safe (find-auto-coding (expand-file-name file)
+                                       (buffer-size))))))
+    (or coding
+        (if (eq ecomplete-database-file-coding-system 'utf-8-emacs-unix)
+            'iso-2022-7bit
+          ecomplete-database-file-coding-system))))
+
 ;;;###autoload
 (defun ecomplete-setup ()
   "Read the .ecompleterc file."
   (when (file-exists-p ecomplete-database-file)
     (with-temp-buffer
-      (let ((coding-system-for-read ecomplete-database-file-coding-system))
+      (let ((coding-system-for-read
+             (ecomplete--database-read-coding-system ecomplete-database-file)))
 	(insert-file-contents ecomplete-database-file)
 	(setq ecomplete-database (read (current-buffer)))))))
 
@@ -150,6 +163,10 @@ FORCE is non-nil, use TEXT exactly as is."
   ;; database!
   (when ecomplete-database
     (with-temp-buffer
+      (when (coding-system-p ecomplete-database-file-coding-system)
+        (insert ";; -*- coding: "
+                (symbol-name ecomplete-database-file-coding-system)
+                " -*-\n"))
       (let ((coding-system-for-write ecomplete-database-file-coding-system))
         (insert "(")
         (cl-loop for (type . elems) in ecomplete-database
@@ -160,6 +177,12 @@ FORCE is non-nil, use TEXT exactly as is."
 	           (insert "\n"))
 	         (insert ")\n"))
 	(insert ")")
+	(when (and (coding-system-p ecomplete-database-file-coding-system)
+	           (check-coding-systems-region
+	            (point-min) (point-max)
+	            (list ecomplete-database-file-coding-system)))
+	  (signal 'coding-system-error
+	          (list ecomplete-database-file-coding-system)))
 	(write-region (point-min) (point-max)
 		      ecomplete-database-file nil 'silent)))))
 
