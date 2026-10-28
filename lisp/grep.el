@@ -1219,7 +1219,7 @@ easily repeat a find command."
 
 (defconst grep-expand-keywords
   '(("<C>" . (mapconcat #'identity opts " "))
-    ("<D>" . (or dir "."))
+    ("<D>" . (shell-quote-argument (or dir ".") grep-quoting-style))
     ("<F>" . (if files-raw files (grep--shell-quote-files files)))
     ("<N>" . (null-device))
     ("<X>" . excl)
