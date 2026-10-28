@@ -1,6 +1,6 @@
 //! Frame/window/display compatibility primitives.
 
-use crate::editor::{WindowRef, sel_frame, sel_window, w_parent};
+use crate::editor::{FrameRef, WindowRef, sel_frame, sel_window, w_parent};
 use crate::lisp::eq_values;
 
 use crate::lisp::builtins::{arg, want_list};
@@ -525,18 +525,27 @@ pub(super) fn f_current_frame_configuration(i: &mut Interp, _a: crate::lisp::Arg
 }
 
 pub(super) fn f_display_pixel_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // TTY: "pixels" are char cells (Emacs reports frame width).
     let v = a.get(0).cloned().unwrap_or(Value::Nil);
-    let _ = decode_display(i, &v)?;
-    let w = sel_frame(i).map(|f| f.borrow().width).unwrap_or(80);
-    Ok(Value::Int(w as i128))
+    let frame = decode_display(i, &v)?;
+    let (width, _) = monitor_pixel_size(i, &frame).unwrap_or_else(|| {
+        (
+            crate::editor::frame_pixel_width(i, &frame) as i128,
+            crate::editor::frame_pixel_height(i, &frame) as i128,
+        )
+    });
+    Ok(Value::Int(width))
 }
 
 pub(super) fn f_display_pixel_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let v = a.get(0).cloned().unwrap_or(Value::Nil);
-    let _ = decode_display(i, &v)?;
-    let h = sel_frame(i).map(|f| f.borrow().height).unwrap_or(24);
-    Ok(Value::Int(h as i128))
+    let frame = decode_display(i, &v)?;
+    let (_, height) = monitor_pixel_size(i, &frame).unwrap_or_else(|| {
+        (
+            crate::editor::frame_pixel_width(i, &frame) as i128,
+            crate::editor::frame_pixel_height(i, &frame) as i128,
+        )
+    });
+    Ok(Value::Int(height))
 }
 
 pub(super) fn f_display_false(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1134,34 +1143,119 @@ pub(super) fn sel_frame_dims(i: &Interp) -> (i128, i128) {
     }
 }
 
-/// One monitor's attribute alist, shaped like GNU's tty result.
-pub(super) fn monitor_attributes(i: &mut Interp) -> Value {
-    let (w, h) = sel_frame_dims(i);
-    let fr = match sel_frame(i) {
-        Some(f) => Value::Frame(f),
-        None => Value::Nil,
-    };
-    let mut rect = |k: &str| -> Value {
+/// Monitor attributes are captured by the GUI front-end alongside frame
+/// geometry. Text-only interpreters retain the single synthetic monitor.
+fn monitor_attributes_list(i: &mut Interp, frame: &FrameRef) -> Value {
+    let monitor_list = i.q("display-monitor-attributes-list");
+    let stored = crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(monitor_list));
+    if !stored.is_nil() {
+        return stored;
+    }
+
+    let width = crate::editor::frame_pixel_width(i, frame) as i128;
+    let height = crate::editor::frame_pixel_height(i, frame) as i128;
+    let geometry = i.q("geometry");
+    let workarea = i.q("workarea");
+    let mm_size = i.q("mm-size");
+    let frames = i.q("frames");
+    let rect = |key, width, height| {
         Value::list(vec![
-            Value::Sym(i.intern(k)),
+            Value::Sym(key),
             Value::Int(0),
             Value::Int(0),
-            Value::Int(w),
-            Value::Int(h),
+            Value::Int(width),
+            Value::Int(height),
         ])
     };
-    Value::list(vec![
-        rect("geometry"),
-        rect("workarea"),
-        Value::list(vec![Value::Sym(i.q("mm-size")), Value::Nil, Value::Nil]),
-        Value::list(vec![Value::Sym(i.q("frames")), fr]),
-    ])
+    let attributes = Value::list(vec![
+        rect(geometry, width, height),
+        rect(workarea, width, height),
+        Value::list(vec![Value::Sym(mm_size), Value::Nil, Value::Nil]),
+        Value::list(vec![
+            Value::Sym(frames),
+            Value::list(vec![Value::Frame(frame.clone())]),
+        ]),
+    ]);
+    Value::list(vec![attributes])
+}
+
+/// Return the attributes for the monitor that currently contains FRAME.
+/// GNU's NS backend keeps the primary monitor first, so use that as the
+/// fallback if the frame has not yet been assigned to a native display.
+pub(super) fn monitor_attributes(i: &mut Interp, frame: &FrameRef) -> Value {
+    let attributes = monitor_attributes_list(i, frame)
+        .list_to_vec()
+        .unwrap_or_default();
+    let frames_key = i.q("frames");
+    let frame_value = Value::Frame(frame.clone());
+    for attribute in &attributes {
+        let Ok(entries) = attribute.list_to_vec() else {
+            continue;
+        };
+        let monitor_frames = entries.iter().find_map(|entry| {
+            let fields = entry.list_to_vec().ok()?;
+            if matches!(fields.first(), Some(Value::Sym(symbol)) if *symbol == frames_key) {
+                fields.get(1).cloned()
+            } else {
+                None
+            }
+        });
+        if monitor_frames
+            .and_then(|frames| frames.list_to_vec().ok())
+            .is_some_and(|frames| {
+                frames
+                    .iter()
+                    .any(|candidate| eq_values(candidate, &frame_value))
+            })
+        {
+            return attribute.clone();
+        }
+    }
+    attributes.into_iter().next().unwrap_or(Value::Nil)
+}
+
+fn monitor_pixel_size(i: &mut Interp, frame: &FrameRef) -> Option<(i128, i128)> {
+    let geometry = i.q("geometry");
+    let attributes = monitor_attributes_list(i, frame).list_to_vec().ok()?;
+    let mut bounds: Option<(i128, i128, i128, i128)> = None;
+    for attribute in attributes {
+        let entries = attribute.list_to_vec().ok()?;
+        let rectangle = entries.iter().find_map(|entry| {
+            let fields = entry.list_to_vec().ok()?;
+            if !matches!(fields.first(), Some(Value::Sym(symbol)) if *symbol == geometry) {
+                return None;
+            }
+            let x = fields.get(1)?.int()?;
+            let y = fields.get(2)?.int()?;
+            let width = fields.get(3)?.int()?;
+            let height = fields.get(4)?.int()?;
+            (width >= 0 && height >= 0).then_some((
+                x,
+                y,
+                x.saturating_add(width),
+                y.saturating_add(height),
+            ))
+        });
+        if let Some((left, top, right, bottom)) = rectangle {
+            bounds = Some(match bounds {
+                Some((min_x, min_y, max_x, max_y)) => (
+                    min_x.min(left),
+                    min_y.min(top),
+                    max_x.max(right),
+                    max_y.max(bottom),
+                ),
+                None => (left, top, right, bottom),
+            });
+        }
+    }
+    let (left, top, right, bottom) = bounds?;
+    Some((right.saturating_sub(left), bottom.saturating_sub(top)))
 }
 
 pub(super) fn f_frame_monitor_attributes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let v = a.get(0).cloned().unwrap_or(Value::Nil);
-    let _ = decode_display(i, &v)?;
-    Ok(monitor_attributes(i))
+    let frame = decode_display(i, &v)?;
+    Ok(monitor_attributes(i, &frame))
 }
 
 pub(super) fn f_display_monitor_attributes_list(
@@ -1169,8 +1263,8 @@ pub(super) fn f_display_monitor_attributes_list(
     a: crate::lisp::Argv,
 ) -> EvalResult {
     let v = a.get(0).cloned().unwrap_or(Value::Nil);
-    let _ = decode_display(i, &v)?;
-    Ok(Value::list(vec![monitor_attributes(i)]))
+    let frame = decode_display(i, &v)?;
+    Ok(monitor_attributes_list(i, &frame))
 }
 
 /// `frame-inner-width'/`frame-inner-height' — GNU's decode errors

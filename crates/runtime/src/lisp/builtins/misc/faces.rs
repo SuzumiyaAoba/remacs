@@ -36,11 +36,26 @@ pub(super) fn f_face_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(super) fn f_face_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    want_opt_frame(i, a.get(1).unwrap_or(&Value::Nil))?;
+    let frame_value = a.get(1).cloned().unwrap_or(Value::Nil);
+    want_opt_frame(i, &frame_value)?;
     if !face_exists(i, &a[0]) {
         return Err(crate::editor::invalid_face(i, &a[0]));
     }
-    // No fonts in batch.
+    let frame = match &frame_value {
+        Value::Nil => crate::editor::sel_frame(i),
+        Value::Frame(frame) => Some(frame.clone()),
+        _ => None,
+    };
+    if let Some(frame) = frame.filter(|frame| crate::editor::frame_is_graphical(i, frame)) {
+        let font = i.intern_soft("font");
+        let font = font
+            .map(|font| {
+                crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(font))
+            })
+            .filter(|font| !font.is_nil());
+        return Ok(font.unwrap_or_else(|| Value::string("Menlo")));
+    }
+    // Text terminals have no scalable font objects.
     Ok(Value::Nil)
 }
 
@@ -76,16 +91,42 @@ pub(super) fn f_invert_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     Ok(a[0].clone())
 }
 
-/// `window-font-width' / `window-font-height' — 1 (char cells) on a
-/// tty; GNU uses the plain "N is not a live window" error here.
-pub(super) fn f_window_font_metric(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Int(1)),
+/// `window-font-width' / `window-font-height' — use the window's
+/// default frame font metrics (the GPUI font is shared by all windows).
+fn window_font_metric(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+    horizontal: bool,
+) -> EvalResult {
+    let window = match arg(&a, 0) {
+        Value::Nil => crate::editor::sel_window(i),
+        Value::Window(window) => Some(window),
         other => {
             let shown = i.princ_to_string(&other);
-            Err(i.error(format!("{shown} is not a live window")))
+            return Err(i.error(format!("{shown} is not a live window")));
         }
-    }
+    };
+    let frame = window
+        .as_ref()
+        .and_then(|window| crate::editor::frame_of_window(i, window))
+        .or_else(|| crate::editor::sel_frame(i));
+    let Some(frame) = frame else {
+        return Ok(Value::Int(1));
+    };
+    let metric = if horizontal {
+        crate::editor::frame_char_width(i, &frame)
+    } else {
+        crate::editor::frame_char_height(i, &frame)
+    };
+    Ok(Value::Int(metric as i128))
+}
+
+pub(super) fn f_window_font_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    window_font_metric(i, a, true)
+}
+
+pub(super) fn f_window_font_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    window_font_metric(i, a, false)
 }
 
 /// `x-select-font' on an NS build: GNU decodes the optional FRAME

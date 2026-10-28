@@ -6,15 +6,17 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::editor::{
-    FrameRef, WindowRef, f_window_list, fmenu_shift, frame_any, frame_live, frame_of,
+    FrameRef, WindowRef, f_window_list, frame_any, frame_live, frame_of,
     frame_of_window, is_terminal, relay_children, sel_frame, sel_window, terminal_token, w_parent,
     w_siblings, win_any, win_err_live, win_err_valid, win_live, win_of, win_valid,
 };
 use crate::lisp::builtins::{S, arg, want_int};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::sym;
+use crate::lisp::text::EmacsText;
 use crate::lisp::value::{Subr, Value};
 use crate::lisp::{Interp, SymId};
+use unicode_width::UnicodeWidthChar;
 
 pub(crate) static SUBRS: &[Subr] = &[
     // --- tree/shape stubs ---
@@ -298,7 +300,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-bottom-divider-width", 0, 1, f_zero_winlive, ""),
     S!("window-right-divider-width", 0, 1, f_zero_winlive, ""),
     S!("window-divider-width-valid-p", 1, 1, f_false, ""),
-    S!("window-lines-pixel-dimensions", 0, 6, f_window_live_nil, ""),
+    S!(
+        "window-lines-pixel-dimensions",
+        0,
+        6,
+        f_window_lines_pixel_dimensions,
+        "Pixel coordinates for displayed lines."
+    ),
     S!("window-text-pixel-size", 0, 7, f_window_text_pixel_size, ""),
     S!("window-absolute-pixel-position", 0, 2, f_posn_pair, ""),
     S!(
@@ -421,16 +429,16 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("frame-id", 0, 1, f_frame_id, "Opaque frame id."),
-    S!("frame-native-width", 0, 1, f_frame_width, ""),
-    S!("frame-native-height", 0, 1, f_frame_height, ""),
+    S!("frame-native-width", 0, 1, f_frame_native_width, ""),
+    S!("frame-native-height", 0, 1, f_frame_native_height, ""),
     S!("frame-text-width", 0, 1, f_frame_width, ""),
     S!("frame-text-height", 0, 1, f_frame_height, ""),
     S!("frame-total-cols", 0, 1, f_frame_width, ""),
     S!("frame-total-lines", 0, 1, f_frame_height, ""),
     S!("frame-text-cols", 0, 1, f_frame_width, ""),
     S!("frame-text-lines", 0, 1, f_frame_height, ""),
-    S!("frame-char-width", 0, 1, f_one_framep, ""),
-    S!("frame-char-height", 0, 1, f_one_framep, ""),
+    S!("frame-char-width", 0, 1, f_frame_char_width, ""),
+    S!("frame-char-height", 0, 1, f_frame_char_height, ""),
     S!("frame-fringe-width", 0, 1, f_zero_framep, ""),
     S!("frame-internal-border-width", 0, 1, f_zero_framep, ""),
     S!("frame-right-divider-width", 0, 1, f_zero_framep, ""),
@@ -746,13 +754,22 @@ fn f_true2(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     f_t(i, a)
 }
 
-// frame-char-width/-height: GNU `decode_any_frame' on the optional
-// arg — a non-frame signals framep before the constant.
-fn f_one_framep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Int(1)),
-        other => Err(i.wrong_type_mut("framep", &other)),
+fn frame_metric_target(i: &mut Interp, value: &Value) -> Result<FrameRef, Flow> {
+    match value {
+        Value::Nil => sel_frame(i).ok_or_else(|| i.error("No frame")),
+        Value::Frame(frame) => Ok(frame.clone()),
+        other => Err(i.wrong_type_mut("framep", other)),
     }
+}
+
+fn f_frame_char_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_metric_target(i, &arg(&a, 0))?;
+    Ok(Value::Int(crate::editor::frame_char_width(i, &frame) as i128))
+}
+
+fn f_frame_char_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_metric_target(i, &arg(&a, 0))?;
+    Ok(Value::Int(crate::editor::frame_char_height(i, &frame) as i128))
 }
 
 /// `window-scroll-bars' — window-live-p check; batch GNU reports
@@ -1059,11 +1076,6 @@ fn f_prev_sibling(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     siblings(i, &arg(&a, 0), false)
 }
 
-fn f_window_height2(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().height as i128))
-}
-
 /// GNU window.el: `window-text-height' = `(window-edges W t)' height —
 /// the body, i.e. total minus the mode-line row (none on
 /// minibuffer/internal windows).
@@ -1073,6 +1085,7 @@ fn f_window_text_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
     Ok(Value::Int(wb.height.saturating_sub(ml) as i128))
 }
+
 
 fn f_window_new_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
@@ -1085,22 +1098,27 @@ fn f_window_new_pixel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_window_height_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    f_window_height2(i, a)
+    let w = win_of(i, &arg(&a, 0))?;
+    let (_, top, _, bottom) = pixel_edges_of(i, &Value::Window(w))?;
+    Ok(Value::Int(bottom.saturating_sub(top)))
 }
 
 fn f_window_width_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().width as i128))
+    let (left, _, right, _) = pixel_edges_of(i, &Value::Window(w))?;
+    Ok(Value::Int(right.saturating_sub(left)))
 }
 
 fn f_window_left_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().left as i128))
+    let (left, _, _, _) = pixel_edges_of(i, &Value::Window(w))?;
+    Ok(Value::Int(left))
 }
 
 fn f_window_top_px(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().top as i128))
+    let (_, top, _, _) = pixel_edges_of(i, &Value::Window(w))?;
+    Ok(Value::Int(top))
 }
 
 /// `window-old-point' — GNU decodes a LIVE window (old_pointm).
@@ -1831,40 +1849,119 @@ fn f_window_margins(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::cons(lv, rv))
 }
 
-/// Pixel-edge helpers shared by `window-inside-pixel-edges' /
-/// `window-absolute-pixel-edges' — GNU's batch inside geometry is the
-/// pre-split row space: subtract the menu-bar shift and the mode
-/// line (leaves only).
-fn inside_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128), Flow> {
-    let w = win_of(i, v)?;
-    let shift = frame_of_window(i, &w)
-        .map(|f| fmenu_shift(&f.borrow()))
-        .unwrap_or(0);
-    let wb = w.borrow();
-    let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
+#[derive(Clone, Copy)]
+struct PixelMap {
+    root_left: usize,
+    root_top: usize,
+    scale_x: f64,
+    scale_y: f64,
+}
+
+fn frame_pixel_map(i: &Interp, frame: &FrameRef) -> PixelMap {
+    let (root_left, root_top, root_width, root_height) = frame
+        .borrow()
+        .root
+        .as_ref()
+        .map(|root| {
+            let root = root.borrow();
+            (root.left, root.top, root.width, root.height)
+        })
+        .unwrap_or_else(|| {
+            let frame = frame.borrow();
+            (0, 0, frame.width, frame.height.saturating_sub(1))
+        });
+    let char_width = crate::editor::frame_char_width(i, frame);
+    let char_height = crate::editor::frame_char_height(i, frame);
+    let width = crate::editor::frame_pixel_width(i, frame);
+    let height = crate::editor::frame_pixel_height(i, frame).saturating_sub(char_height);
+    PixelMap {
+        root_left,
+        root_top,
+        scale_x: if root_width > 0 {
+            width as f64 / root_width as f64
+        } else {
+            char_width as f64
+        },
+        scale_y: if root_height > 0 {
+            height as f64 / root_height as f64
+        } else {
+            char_height as f64
+        },
+    }
+}
+
+fn pixelize_cell_edges(map: PixelMap, edges: (i128, i128, i128, i128)) -> (i128, i128, i128, i128) {
+    let scale_x =
+        |x: i128| (x.saturating_sub(map.root_left as i128) as f64 * map.scale_x).round() as i128;
+    let scale_y =
+        |y: i128| (y.saturating_sub(map.root_top as i128) as f64 * map.scale_y).round() as i128;
+    (
+        scale_x(edges.0),
+        scale_y(edges.1),
+        scale_x(edges.2),
+        scale_y(edges.3),
+    )
+}
+
+pub(crate) fn window_pixel_scale_x(i: &Interp, window: &WindowRef) -> f64 {
+    crate::editor::frame_of_window(i, window)
+        .map(|frame| frame_pixel_map(i, &frame).scale_x)
+        .unwrap_or(1.0)
+}
+
+pub(crate) fn window_pixel_scale_y(i: &Interp, window: &WindowRef) -> f64 {
+    crate::editor::frame_of_window(i, window)
+        .map(|frame| frame_pixel_map(i, &frame).scale_y)
+        .unwrap_or(1.0)
+}
+
+fn window_line_decorations(i: &mut Interp, w: &WindowRef) -> Result<(usize, usize, usize), Flow> {
+    let (minibuffer, leaf) = {
+        let wb = w.borrow();
+        (wb.minibuffer, wb.horiz.is_none())
+    };
+    let (header, tab, mode) = if leaf && !minibuffer {
+        (
+            window_format_line_height(i, &w, "header-line-format")?,
+            window_format_line_height(i, &w, "tab-line-format")?,
+            window_mode_line_height(i, &w)?,
+        )
+    } else {
+        (0, 0, 0)
+    };
+    Ok((header, tab, mode))
+}
+
+/// GUI pixel edges scale the window tree to the current frame size. Body
+/// edges then remove header, tab, and mode rows using their actual pixel
+/// height rather than the pre-resize cell allocation.
+fn inside_pixel_edges_of(i: &mut Interp, w: &WindowRef) -> Result<(i128, i128, i128, i128), Flow> {
+    let (header, tab, mode) = window_line_decorations(i, w)?;
+    let Some(frame) = frame_of_window(i, w) else {
+        return Err(i.error("No frame"));
+    };
+    let char_height = crate::editor::frame_char_height(i, &frame) as i128;
+    let full = pixel_edges_of(i, &Value::Window(w.clone()))?;
     Ok((
-        wb.left as i128,
-        wb.top.saturating_sub(shift) as i128,
-        (wb.left + wb.width) as i128,
-        (wb.top + wb.height).saturating_sub(shift + ml) as i128,
+        full.0,
+        full.1 + (header + tab) as i128 * char_height,
+        full.2,
+        full.3 - mode as i128 * char_height,
     ))
 }
-/// `window-pixel-edges': GNU's pixel edges are the *pre-split* row
-/// space (menu-bar shift undone) but still include the mode line —
-/// top equals `window-edges' minus the shift, bottom likewise.
-/// Verified on GNU -Q post-split: sel=(0 0 80 12) vs edges (0 1 80 13).
 fn pixel_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128), Flow> {
     let w = win_of(i, v)?;
-    let shift = frame_of_window(i, &w)
-        .map(|f| fmenu_shift(&f.borrow()))
-        .unwrap_or(0);
+    let Some(frame) = frame_of_window(i, &w) else {
+        return Err(i.error("No frame"));
+    };
     let wb = w.borrow();
-    Ok((
+    let edges = (
         wb.left as i128,
-        wb.top.saturating_sub(shift) as i128,
+        wb.top as i128,
         (wb.left + wb.width) as i128,
-        (wb.top + wb.height).saturating_sub(shift) as i128,
-    ))
+        (wb.top + wb.height) as i128,
+    );
+    Ok(pixelize_cell_edges(frame_pixel_map(i, &frame), edges))
 }
 
 fn f_window_pixel_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1882,7 +1979,7 @@ fn f_window_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU `window-pixel-edges'/`window-inside-pixel-edges': the arg is
     // decode_live_window — plain "X is not a live window" error.
     let w = crate::editor::win_err_live(i, &arg(&a, 0))?;
-    let (l, t, r, b) = inside_edges_of(i, &Value::Window(w))?;
+    let (l, t, r, b) = inside_pixel_edges_of(i, &w)?;
     Ok(Value::list(vec![
         Value::Int(l),
         Value::Int(t),
@@ -1896,25 +1993,53 @@ fn f_window_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// `frame-edges', which is nil on a tty — the list arithmetic dies
 /// with `wrong-type-argument number-or-marker-p nil'.
 fn f_window_absolute_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::win_err_valid(i, &arg(&a, 0))?;
-    Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil))
+    let w = crate::editor::win_err_valid(i, &arg(&a, 0))?;
+    let Some(frame) = crate::editor::frame_of_window(i, &w) else {
+        return Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil));
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil));
+    }
+    let (l, t, r, b) = pixel_edges_of(i, &Value::Window(w))?;
+    let l = l + crate::editor::frame_pixel_left(i, &frame);
+    let r = r + crate::editor::frame_pixel_left(i, &frame);
+    let t = t + crate::editor::frame_pixel_top(i, &frame);
+    let b = b + crate::editor::frame_pixel_top(i, &frame);
+    Ok(Value::list(vec![
+        Value::Int(l),
+        Value::Int(t),
+        Value::Int(r),
+        Value::Int(b),
+    ]))
 }
 
 /// `window-absolute-body-pixel-edges': live-window decode ("X is not
 /// a live window"), then the same `frame-edges' → nil → wta path.
 fn f_window_absolute_body_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::win_err_live(i, &arg(&a, 0))?;
-    Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil))
+    let w = crate::editor::win_err_live(i, &arg(&a, 0))?;
+    let Some(frame) = crate::editor::frame_of_window(i, &w) else {
+        return Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil));
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil));
+    }
+    let (l, t, r, b) = inside_pixel_edges_of(i, &w)?;
+    let l = l + crate::editor::frame_pixel_left(i, &frame);
+    let r = r + crate::editor::frame_pixel_left(i, &frame);
+    let t = t + crate::editor::frame_pixel_top(i, &frame);
+    let b = b + crate::editor::frame_pixel_top(i, &frame);
+    Ok(Value::list(vec![
+        Value::Int(l),
+        Value::Int(t),
+        Value::Int(r),
+        Value::Int(b),
+    ]))
 }
 
 fn f_window_body_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // Body excludes the mode line.
-    // GNU: `window-inside-edges' DEFALIASES to `window-body-edges'
-    // (window.el:3920) — same pre-shift row space and the same
-    // mode-line exclusion as `inside_edges_of', just through the
-    // live-window decode ("X is not a live window").
+    // Body excludes the header, tab, and mode lines.
     let w = crate::editor::win_err_live(i, &arg(&a, 0))?;
-    let (l, t, r, b) = inside_edges_of(i, &Value::Window(w))?;
+    let (l, t, r, b) = inside_pixel_edges_of(i, &w)?;
     Ok(Value::list(vec![
         Value::Int(l),
         Value::Int(t),
@@ -2071,9 +2196,29 @@ fn f_frame_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(f.borrow().width as i128))
 }
 
+fn f_frame_native_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_of(i, &arg(&a, 0))?;
+    let width = if crate::editor::frame_is_graphical(i, &frame) {
+        crate::editor::frame_pixel_width(i, &frame)
+    } else {
+        frame.borrow().width
+    };
+    Ok(Value::Int(width as i128))
+}
+
 fn f_frame_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = crate::editor::frame_of(i, &arg(&a, 0))?;
     Ok(Value::Int(f.borrow().height as i128))
+}
+
+fn f_frame_native_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_of(i, &arg(&a, 0))?;
+    let height = if crate::editor::frame_is_graphical(i, &frame) {
+        crate::editor::frame_pixel_height(i, &frame)
+    } else {
+        frame.borrow().height
+    };
+    Ok(Value::Int(height as i128))
 }
 
 fn f_set_frame_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2155,11 +2300,103 @@ fn f_tty_false(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// `window-live-p' check on an optional arg, then nil (all our
 /// windows are live).
-fn f_window_live_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
+fn f_window_lines_pixel_dimensions(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    if i.noninteractive {
+        return Ok(Value::Nil);
     }
+    let (height, minibuffer, leaf, width) = {
+        let window = window.borrow();
+        (
+            window.height,
+            window.minibuffer,
+            window.horiz.is_none(),
+            window.width,
+        )
+    };
+    let frame = crate::editor::frame_of_window(i, &window);
+    let char_height = frame
+        .as_ref()
+        .map(|frame| crate::editor::frame_char_height(i, frame))
+        .unwrap_or(1)
+        .max(1);
+    let char_width = frame
+        .as_ref()
+        .map(|frame| crate::editor::frame_char_width(i, frame))
+        .unwrap_or(1)
+        .max(1);
+    let rendered_rows = (height as f64 * window_pixel_scale_y(i, &window)
+        / char_height as f64)
+        .round()
+        .max(0.0) as usize;
+    let (header, tab, mode) = if leaf && !minibuffer {
+        (
+            window_format_line_height(i, &window, "header-line-format")?,
+            window_format_line_height(i, &window, "tab-line-format")?,
+            window_mode_line_height(i, &window)?,
+        )
+    } else {
+        (0, 0, 0)
+    };
+    let body_lines = rendered_rows.saturating_sub(header.saturating_add(tab).saturating_add(mode));
+    let body_start = header.saturating_add(tab);
+    let total_lines = body_start.saturating_add(body_lines).saturating_add(mode);
+    if total_lines == 0 {
+        return Ok(Value::Nil);
+    }
+    let body = a.get(3).is_some_and(Value::truthy);
+    let inverse = a.get(4).is_some_and(Value::truthy);
+    let left = a.get(5).is_some_and(Value::truthy);
+    let body_end = body_start.saturating_add(body_lines);
+    let first = match a.get(1) {
+        None | Some(Value::Nil) if body => body_start,
+        None | Some(Value::Nil) => 0,
+        Some(value) => want_int(i, value)?.max(0) as usize,
+    };
+    let last = match a.get(2) {
+        None | Some(Value::Nil) if body => body_end.saturating_sub(1),
+        None | Some(Value::Nil) => total_lines.saturating_sub(1),
+        Some(value) => want_int(i, value)?.max(0) as usize,
+    };
+    if first > last {
+        return Ok(Value::Nil);
+    }
+    let width_cells = if body {
+        crate::editor::win_body_width(i, &window)
+    } else {
+        width
+    };
+    let width_pixels = (width_cells as f64 * window_pixel_scale_x(i, &window))
+        .round()
+        .max(0.0) as usize;
+    let mut rows = Vec::new();
+    for index in first..=last.min(total_lines.saturating_sub(1)) {
+        let text_row = (body_start..body_end).contains(&index);
+        let (row_columns, first_columns) = if text_row {
+            window_line_display_metrics(i, &window, index - body_start)
+        } else {
+            (0, 0)
+        };
+        let row_width = row_columns.saturating_mul(char_width).min(width_pixels);
+        let left_glyph_width = first_columns.saturating_mul(char_width).min(width_pixels);
+        let x = if left && inverse {
+            left_glyph_width
+        } else if left {
+            width_pixels.saturating_sub(left_glyph_width)
+        } else if inverse {
+            width_pixels.saturating_sub(row_width)
+        } else {
+            row_width
+        };
+        let row_bottom = index.saturating_add(1).saturating_mul(char_height);
+        let y = if body {
+            row_bottom.saturating_sub(body_start.saturating_mul(char_height))
+        } else {
+            row_bottom
+        };
+        rows.push(Value::cons(Value::Int(x as i128), Value::Int(y as i128)));
+    }
+    Ok(Value::list(rows))
 }
 
 /// GNU's plain `error "N is not a valid window"' (window.c signals a
@@ -2340,7 +2577,9 @@ fn f_truncated_partial_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 /// GNU uses a typed `window-live-p' check here.
 fn f_window_mode_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let window = win_live(i, &arg(&a, 0))?;
-    Ok(Value::Int(window_mode_line_height(i, &window)? as i128))
+    let lines = window_mode_line_height(i, &window)?;
+    let pixels = lines.saturating_mul(window_char_height(i, &window));
+    Ok(Value::Int(pixels as i128))
 }
 
 pub(crate) fn window_format_line_height(
@@ -2372,18 +2611,22 @@ pub(crate) fn window_mode_line_height(
     }
 }
 
+fn window_char_height(i: &Interp, window: &WindowRef) -> usize {
+    crate::editor::frame_of_window(i, window)
+        .map(|frame| crate::editor::frame_char_height(i, &frame))
+        .unwrap_or(1)
+}
+
 fn f_window_header_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let window = win_live(i, &arg(&a, 0))?;
-    Ok(Value::Int(
-        window_format_line_height(i, &window, "header-line-format")? as i128,
-    ))
+    let lines = window_format_line_height(i, &window, "header-line-format")?;
+    Ok(Value::Int((lines * window_char_height(i, &window)) as i128))
 }
 
 fn f_window_tab_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let window = win_live(i, &arg(&a, 0))?;
-    Ok(Value::Int(
-        window_format_line_height(i, &window, "tab-line-format")? as i128,
-    ))
+    let lines = window_format_line_height(i, &window, "tab-line-format")?;
+    Ok(Value::Int((lines * window_char_height(i, &window)) as i128))
 }
 
 /// `frame-ancestor-p' — both args must be live frames; our single
@@ -2848,6 +3091,74 @@ fn f_terminal_list(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Batch text has no displayed glyph dimensions; requested mode,
 /// header and tab lines still contribute their terminal cell heights.
+fn text_line_columns(text: &EmacsText, tab_width: usize) -> Vec<usize> {
+    let tab_width = tab_width.max(1);
+    let mut columns = Vec::new();
+    let mut column = 0usize;
+    for character in text.chars() {
+        let character = character.unicode().unwrap_or('\u{fffd}');
+        if character == '\n' || character == '\r' {
+            columns.push(column);
+            column = 0;
+        } else if character == '\t' {
+            column = column.saturating_add(tab_width - column % tab_width);
+        } else {
+            column = column.saturating_add(UnicodeWidthChar::width(character).unwrap_or(1));
+        }
+    }
+    columns.push(column);
+    columns
+}
+
+fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (usize, usize) {
+    let (buffer, start, hscroll) = {
+        let window = window.borrow();
+        (window.buffer, window.start, window.hscroll)
+    };
+    let Some(buffer) = i.buffers.get(buffer) else {
+        return (0, 0);
+    };
+    let tab_width = i
+        .intern_soft("tab-width")
+        .and_then(|symbol| {
+            i.buffer_local_toplevel_value(symbol, buffer.borrow().id)
+                .or_else(|| i.default_toplevel_value(symbol))
+        })
+        .and_then(|value| value.int())
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(8)
+        .max(1);
+    let buffer = buffer.borrow();
+    let start_line = buffer.text.line_of_pos(start);
+    let line_start = buffer.text.line_start(start_line.saturating_add(row));
+    let line_end = buffer.text.line_end(line_start);
+    let line = buffer.text.substring(line_start, line_end);
+    let mut column = 0usize;
+    let mut visible_columns = 0usize;
+    let mut first_visible_columns = 0usize;
+    for character in line.chars() {
+        let character = character.unicode().unwrap_or('\u{fffd}');
+        let width = if character == '\t' {
+            tab_width - column % tab_width
+        } else {
+            UnicodeWidthChar::width(character).unwrap_or(1)
+        };
+        let visible_start = column.max(hscroll);
+        let visible_width = column
+            .saturating_add(width)
+            .saturating_sub(visible_start)
+            .min(width);
+        if visible_width > 0 {
+            visible_columns = visible_columns.saturating_add(visible_width);
+            if first_visible_columns == 0 {
+                first_visible_columns = visible_width;
+            }
+        }
+        column = column.saturating_add(width);
+    }
+    (visible_columns, first_visible_columns)
+}
+
 fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     let (buffer, height, minibuffer, params) = {
@@ -2881,8 +3192,73 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         ),
     };
     let to = arg(&a, 2);
-    if !to.is_nil() && i.sym_id(&to) != Some(sym::T) {
-        crate::lisp::builtins::want_int_or_mark(i, &to)?;
+    let to_position = if to.is_nil() || i.sym_id(&to) == Some(sym::T) {
+        end
+    } else {
+        crate::lisp::builtins::want_int_or_mark(i, &to)?.clamp(start, end)
+    };
+
+    let start0 = start.saturating_sub(1).max(0) as usize;
+    let end0 = to_position.saturating_sub(1).max(start0 as i128) as usize;
+    let segment = i
+        .buffers
+        .get(buffer)
+        .map(|buffer| buffer.borrow().text.substring(start0, end0))
+        .unwrap_or_default();
+    let tab_symbol = i.intern("tab-width");
+    let tab_width = i
+        .buffer_local_toplevel_value(tab_symbol, buffer)
+        .or_else(|| i.default_toplevel_value(tab_symbol))
+        .and_then(|value| value.int())
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(8)
+        .max(1);
+    let frame = crate::editor::frame_of_window(i, &w);
+    let (char_width, x_limit_default) = frame
+        .as_ref()
+        .map(|frame| {
+            let char_width = crate::editor::frame_char_width(i, frame).max(1);
+            let body_cells = w
+                .borrow()
+                .width
+                .saturating_sub(w.borrow().margins.0.saturating_add(w.borrow().margins.1));
+            let x_limit = (body_cells as f64 * window_pixel_scale_x(i, &w)).round() as usize;
+            (char_width, x_limit)
+        })
+        .unwrap_or((1, 0));
+    let x_limit = match a.get(3) {
+        Some(value) if !value.is_nil() => {
+            crate::lisp::builtins::want_int(i, value)?.max(0) as usize
+        }
+        _ => x_limit_default,
+    };
+    let y_limit = match a.get(4) {
+        Some(value) if !value.is_nil() => {
+            Some(crate::lisp::builtins::want_int(i, value)?.max(0) as usize)
+        }
+        _ => None,
+    };
+    let ignore_line_at_end = a.get(6).is_some_and(Value::truthy);
+    let mut text_lines = text_line_columns(&segment, tab_width);
+    let ends_at_line_start = segment
+        .chars()
+        .last()
+        .is_some_and(|character| matches!(character.unicode(), Some('\n' | '\r')));
+    if ignore_line_at_end && ends_at_line_start && !text_lines.is_empty() {
+        text_lines.pop();
+    }
+    let mut pixel_width = text_lines
+        .iter()
+        .map(|columns| {
+            columns
+                .saturating_mul(char_width)
+                .saturating_add(offset.max(0) as usize)
+        })
+        .max()
+        .unwrap_or(0)
+        .min(x_limit);
+    if x_limit == 0 {
+        pixel_width = 0;
     }
 
     // Read formats in WINDOW's buffer, which can differ from the
@@ -2909,24 +3285,34 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let tab = !minibuffer && formats[2] && height > 1 + usize::from(mode) + usize::from(header);
     let lines = arg(&a, 5);
     let all = i.sym_id(&lines) == Some(sym::T);
-    let mut measured_height = 0;
+    let requested_line_height = match frame.as_ref() {
+        Some(frame) => crate::editor::frame_char_height(i, frame).max(1),
+        None => 1,
+    };
+    let mut measured_height = text_lines.len().saturating_mul(requested_line_height);
     for (name, wanted) in [
         ("mode-line", mode),
         ("header-line", header),
         ("tab-line", tab),
     ] {
         if wanted && (all || i.sym_id(&lines).is_some_and(|s| i.symbol_name(s) == name)) {
-            measured_height += 1;
+            measured_height = measured_height.saturating_add(requested_line_height);
         }
+    }
+    if let Some(y_limit) = y_limit {
+        measured_height = measured_height.min(y_limit);
     }
     if offset != 0 {
         Ok(Value::list(vec![
-            Value::Int(0),
-            Value::Int(measured_height),
+            Value::Int(pixel_width as i128),
+            Value::Int(measured_height as i128),
             Value::Int(start),
         ]))
     } else {
-        Ok(Value::cons(Value::Int(0), Value::Int(measured_height)))
+        Ok(Value::cons(
+            Value::Int(pixel_width as i128),
+            Value::Int(measured_height as i128),
+        ))
     }
 }
 
@@ -3060,11 +3446,22 @@ pub(crate) fn f_run_window_scroll_functions(i: &mut Interp, a: crate::lisp::Argv
     result
 }
 
-/// `frame-scale-factor' — GNU Fframe_scale_factor decodes FRAME with
-/// decode_live_frame (wrong-type `frame-live-p'); batch scale is 1.0.
+/// `frame-scale-factor' — the GUI front-end reports its device scale;
+/// text frames retain GNU's unit scale.
 fn f_frame_scale_factor(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = frame_live(i, &arg(&a, 0))?;
-    Ok(Value::float(1.0))
+    let frame = frame_live(i, &arg(&a, 0))?;
+    let scale = i
+        .intern_soft("scale-factor")
+        .map(|parameter| {
+            crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(parameter))
+        })
+        .and_then(|value| match value {
+            Value::Float(value) => Some(*value),
+            Value::Int(value) => Some(value as f64),
+            _ => None,
+        })
+        .unwrap_or(1.0);
+    Ok(Value::float(scale))
 }
 
 /// `tty-frame-list-z-order' — GNU Ftty_frame_list_z_order decodes

@@ -277,8 +277,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "line-pixel-height",
         0,
         0,
-        f_one,
-        "Pixel height of a line (1 col)."
+        f_line_pixel_height,
+        "Pixel height of the line at point."
     ),
     S!(
         "window-line-height",
@@ -731,10 +731,6 @@ fn f_match_data_translate(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     Ok(Value::Nil)
-}
-
-fn f_one(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Int(1))
 }
 
 fn beg_end(
@@ -3606,9 +3602,11 @@ fn f_win_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if i.noninteractive {
         return Ok(Value::Nil);
     }
-    // tty approximation: every line is 1 row tall; VPOS is the row
-    // index inside the window (arg 0 = line offset, -1 = last line).
-    let w = crate::editor::sel_window(i).unwrap();
+    // GPUI and TTY rows each use the frame's default line height. VPOS
+    // remains a cell-row index while YPOS is a pixel offset in WINDOW.
+    let w = crate::editor::sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let frame = crate::editor::frame_of_window(i, &w).ok_or_else(|| i.error("No frame"))?;
+    let line_height = crate::editor::frame_char_height(i, &frame).max(1);
     let height = w.borrow().height;
     let line = a.get(0).and_then(|v| v.int()).unwrap_or(0);
     let vpos = if line < 0 {
@@ -3616,12 +3614,19 @@ fn f_win_line_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         (line as usize).min(height.saturating_sub(1))
     };
+    let y = vpos.saturating_mul(line_height);
     Ok(Value::list(vec![
-        Value::Int(1),
+        Value::Int(line_height as i128),
         Value::Int(vpos as i128),
-        Value::Int(0),
+        Value::Int(y as i128),
         Value::Int(0),
     ]))
+}
+
+fn f_line_pixel_height(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let window = crate::editor::sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let line_height = i.q("window-default-line-height");
+    i.apply(&Value::Sym(line_height), vec![Value::Window(window)])
 }
 
 fn f_backward_prefix_chars(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {

@@ -4,6 +4,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 mod keys;
 mod logic;
+mod monitor;
 mod view;
 use logic::{ClipboardRequest, start_logic_with_dump};
 use view::build_editor_view;

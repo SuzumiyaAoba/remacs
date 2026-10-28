@@ -1,7 +1,7 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{Grid, InputEvent, KeyIo, fit_text_to_cells, render_grid_with_input_cached},
-    lisp::Interp,
+    lisp::{Interp, Value},
 };
 use std::{
     io,
@@ -21,6 +21,50 @@ pub(super) enum GuiEvent {
     Text(String),
     ReplaceText { range: Range<usize>, text: String },
     Resize(usize, usize),
+    Geometry(GuiGeometry),
+}
+
+#[derive(Clone, PartialEq)]
+pub(super) struct MonitorGeometry {
+    pub display_id: u32,
+    pub geometry: [i128; 4],
+    pub workarea: [i128; 4],
+    pub mm_size: [Option<i128>; 2],
+    /// AppKit screen origin used to translate GPUI window bounds.
+    pub native_origin: [i128; 2],
+}
+
+#[derive(Clone, PartialEq)]
+pub(super) struct GuiGeometry {
+    pub cols: usize,
+    pub rows: usize,
+    pub pixel_width: i128,
+    pub pixel_height: i128,
+    pub char_width: i128,
+    pub char_height: i128,
+    pub scale_factor: f64,
+    pub frame_left: i128,
+    pub frame_top: i128,
+    pub current_display_id: Option<u32>,
+    pub monitors: Vec<MonitorGeometry>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct GeometrySymbols {
+    pub pixel_width: remacs_runtime::lisp::value::SymId,
+    pub pixel_height: remacs_runtime::lisp::value::SymId,
+    pub char_width: remacs_runtime::lisp::value::SymId,
+    pub char_height: remacs_runtime::lisp::value::SymId,
+    pub grid_cols: remacs_runtime::lisp::value::SymId,
+    pub grid_rows: remacs_runtime::lisp::value::SymId,
+    pub scale_factor: remacs_runtime::lisp::value::SymId,
+    pub frame_left: remacs_runtime::lisp::value::SymId,
+    pub frame_top: remacs_runtime::lisp::value::SymId,
+    pub monitor_attributes: remacs_runtime::lisp::value::SymId,
+    pub geometry: remacs_runtime::lisp::value::SymId,
+    pub workarea: remacs_runtime::lisp::value::SymId,
+    pub mm_size: remacs_runtime::lisp::value::SymId,
+    pub frames: remacs_runtime::lisp::value::SymId,
 }
 
 pub(super) enum ClipboardRequest {
@@ -77,6 +121,29 @@ pub(super) struct ChanIo {
     /// A resize is not represented by an input event, but still requires
     /// a fresh grid on the next command-loop iteration.
     pub(super) render_requested: bool,
+    pub(super) geometry: Option<GuiGeometry>,
+    pub(super) geometry_symbols: Option<GeometrySymbols>,
+}
+
+impl GeometrySymbols {
+    fn intern(i: &mut Interp) -> GeometrySymbols {
+        GeometrySymbols {
+            pixel_width: i.intern("pixel-width"),
+            pixel_height: i.intern("pixel-height"),
+            char_width: i.intern("char-width"),
+            char_height: i.intern("char-height"),
+            grid_cols: i.intern("grid-cols"),
+            grid_rows: i.intern("grid-rows"),
+            scale_factor: i.intern("scale-factor"),
+            frame_left: i.intern("left"),
+            frame_top: i.intern("top"),
+            monitor_attributes: i.intern("display-monitor-attributes-list"),
+            geometry: i.intern("geometry"),
+            workarea: i.intern("workarea"),
+            mm_size: i.intern("mm-size"),
+            frames: i.intern("frames"),
+        }
+    }
 }
 
 impl ChanIo {
@@ -148,6 +215,13 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
+            Ok(GuiEvent::Geometry(geometry)) => {
+                self.cols = geometry.cols.max(10);
+                self.rows = geometry.rows.max(3);
+                self.geometry = Some(geometry);
+                self.render_requested = true;
+                Ok(None)
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -180,6 +254,13 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
+            Ok(GuiEvent::Geometry(geometry)) => {
+                self.cols = geometry.cols.max(10);
+                self.rows = geometry.rows.max(3);
+                self.geometry = Some(geometry);
+                self.render_requested = true;
+                Ok(None)
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -193,6 +274,62 @@ impl KeyIo for ChanIo {
     }
 
     fn render(&mut self, i: &Interp) -> io::Result<()> {
+        if let (Some(geometry), Some(keys)) = (&self.geometry, self.geometry_symbols)
+            && let Some(frame) = i.selected_frame.as_ref()
+        {
+            let frames = Value::list(
+                i.frames
+                    .iter()
+                    .filter(|frame| !frame.borrow().dead)
+                    .cloned()
+                    .map(Value::Frame)
+                    .collect(),
+            );
+            let mut monitors = Vec::with_capacity(geometry.monitors.len());
+            for monitor in &geometry.monitors {
+                let monitor_frames = if geometry
+                    .current_display_id
+                    .is_none_or(|display_id| display_id == monitor.display_id)
+                {
+                    frames.clone()
+                } else {
+                    Value::Nil
+                };
+                let attr = |key, values: [i128; 4]| {
+                    let mut fields = Vec::with_capacity(5);
+                    fields.push(Value::Sym(key));
+                    fields.extend(values.into_iter().map(Value::Int));
+                    Value::list(fields)
+                };
+                monitors.push(Value::list(vec![
+                    attr(keys.geometry, monitor.geometry),
+                    attr(keys.workarea, monitor.workarea),
+                    Value::list(vec![
+                        Value::Sym(keys.mm_size),
+                        monitor.mm_size[0].map(Value::Int).unwrap_or(Value::Nil),
+                        monitor.mm_size[1].map(Value::Int).unwrap_or(Value::Nil),
+                    ]),
+                    Value::list(vec![Value::Sym(keys.frames), monitor_frames]),
+                ]));
+            }
+            let mut params = frame.borrow().params.clone();
+            for (key, value) in [
+                (keys.pixel_width, Value::Int(geometry.pixel_width)),
+                (keys.pixel_height, Value::Int(geometry.pixel_height)),
+                (keys.char_width, Value::Int(geometry.char_width)),
+                (keys.char_height, Value::Int(geometry.char_height)),
+                (keys.grid_cols, Value::Int(geometry.cols as i128)),
+                (keys.grid_rows, Value::Int(geometry.rows as i128)),
+                (keys.frame_left, Value::Int(geometry.frame_left)),
+                (keys.frame_top, Value::Int(geometry.frame_top)),
+                (keys.scale_factor, Value::float(geometry.scale_factor)),
+                (keys.monitor_attributes, Value::list(monitors)),
+            ] {
+                params =
+                    remacs_runtime::lisp::eval::plist_put_front(&params, &Value::Sym(key), value);
+            }
+            frame.borrow_mut().params = params;
+        }
         let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
         let grid = render_grid_with_input_cached(i, self.cols, self.rows, cached);
         self.send_grid(grid)
@@ -354,6 +491,12 @@ fn start_logic_inner(
                 rows: 24,
                 last: None,
                 render_requested: false,
+                geometry: None,
+                geometry_symbols: if enable_gui_selections {
+                    Some(GeometrySymbols::intern(&mut i))
+                } else {
+                    None
+                },
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
             // grid_tx drops here → the UI pump below quits the app.

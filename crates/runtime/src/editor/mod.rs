@@ -946,8 +946,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frame_height,
         "Height of FRAME in chars."
     ),
-    S!("frame-pixel-width", 0, 1, f_frame_width, ""),
-    S!("frame-pixel-height", 0, 1, f_frame_height, ""),
+    S!("frame-pixel-width", 0, 1, f_frame_pixel_width, ""),
+    S!("frame-pixel-height", 0, 1, f_frame_pixel_height, ""),
     S!(
         "frame-position",
         0,
@@ -5111,9 +5111,18 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Body excludes the header, tab, and mode lines.
     let mode_line = winxtra::window_mode_line_height(i, &w)?;
     let height = w.borrow().height;
-    Ok(Value::Int(
-        height.saturating_sub(mode_line.saturating_add(header).saturating_add(tab)) as i128,
-    ))
+    let body_height = height.saturating_sub(mode_line.saturating_add(header).saturating_add(tab));
+    if a.get(1).is_some_and(Value::truthy) {
+        let frame = frame_of_window(i, &w).ok_or_else(|| i.error("No frame"))?;
+        let total_pixels = (height as f64 * winxtra::window_pixel_scale_y(i, &w)).round();
+        let decoration_pixels =
+            (mode_line + header + tab).saturating_mul(frame_char_height(i, &frame)) as f64;
+        Ok(Value::Int(
+            (total_pixels - decoration_pixels).max(0.0) as i128,
+        ))
+    } else {
+        Ok(Value::Int(body_height as i128))
+    }
 }
 /// Body width excludes margins and the one-column window divider that
 /// separates horizontally adjacent windows on a tty.
@@ -5139,7 +5148,14 @@ fn f_window_total_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_window_body_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    Ok(Value::Int(win_body_width(i, &w) as i128))
+    let body_width = win_body_width(i, &w);
+    if a.get(1).is_some_and(Value::truthy) {
+        Ok(Value::Int(
+            (body_width as f64 * winxtra::window_pixel_scale_x(i, &w)).round() as i128,
+        ))
+    } else {
+        Ok(Value::Int(body_width as i128))
+    }
 }
 fn f_window_text_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
@@ -5869,6 +5885,51 @@ fn frame_parameter_value(i: &Interp, frame: &crate::editor::FrameRef, name: &str
     crate::lisp::eval::plist_get_v(&params, &Value::Sym(parameter))
 }
 
+pub(crate) fn frame_parameter_positive_size(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    name: &str,
+    fallback: usize,
+) -> usize {
+    frame_parameter_value(i, frame, name)
+        .int()
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback)
+}
+
+pub(crate) fn frame_char_width(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    frame_parameter_positive_size(i, frame, "char-width", 1)
+}
+
+pub(crate) fn frame_char_height(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    frame_parameter_positive_size(i, frame, "char-height", 1)
+}
+
+pub(crate) fn frame_pixel_width(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    let fallback = frame
+        .borrow()
+        .width
+        .saturating_mul(frame_char_width(i, frame));
+    frame_parameter_positive_size(i, frame, "pixel-width", fallback)
+}
+
+pub(crate) fn frame_pixel_height(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    let fallback = frame
+        .borrow()
+        .height
+        .saturating_mul(frame_char_height(i, frame));
+    frame_parameter_positive_size(i, frame, "pixel-height", fallback)
+}
+
+pub(crate) fn frame_pixel_left(i: &Interp, frame: &crate::editor::FrameRef) -> i128 {
+    frame_parameter_value(i, frame, "left").int().unwrap_or(0)
+}
+
+pub(crate) fn frame_pixel_top(i: &Interp, frame: &crate::editor::FrameRef) -> i128 {
+    frame_parameter_value(i, frame, "top").int().unwrap_or(0)
+}
+
 pub(crate) fn frame_system_type(i: &Interp, frame: &crate::editor::FrameRef) -> Value {
     let window_system = frame_parameter_value(i, frame, "window-system");
     if window_system.is_nil() {
@@ -6014,6 +6075,10 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Str(f.borrow().name.clone()));
     }
     if name == "font" {
+        let stored = crate::lisp::eval::plist_get_v(&f.borrow().params, &i.sym(ps));
+        if !stored.is_nil() {
+            return Ok(stored);
+        }
         return Ok(Value::string("tty"));
     }
     if name == "buffer-list" || name == "buried-buffer-list" {
@@ -6311,6 +6376,16 @@ fn f_set_frame_selected_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 fn f_frame_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     Ok(Value::Int(f.borrow().width as i128))
+}
+
+fn f_frame_pixel_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(frame_pixel_width(i, &frame) as i128))
+}
+
+fn f_frame_pixel_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(frame_pixel_height(i, &frame) as i128))
 }
 fn f_frame_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;

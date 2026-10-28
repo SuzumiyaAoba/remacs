@@ -1,7 +1,8 @@
 //! GPUI view construction and painting of frontend-neutral grids.
 use super::{
     keys::{command_keystroke, keystroke_to_code, unicode_key_text},
-    logic::GuiEvent,
+    logic::{GuiEvent, GuiGeometry},
+    monitor::monitor_geometry,
 };
 use gpui::*;
 use remacs_runtime::frontend::Grid;
@@ -25,6 +26,7 @@ pub(super) struct EditorView {
     rows: usize,
     input: TextInputState,
     cell_width: Pixels,
+    geometry: Option<GuiGeometry>,
 }
 
 impl EditorView {
@@ -37,6 +39,7 @@ impl EditorView {
             rows: 24,
             input: TextInputState::default(),
             cell_width: px(8.0),
+            geometry: None,
         }
     }
 }
@@ -64,6 +67,56 @@ impl Render for EditorView {
             self.cols = cols;
             self.rows = rows;
             let _ = self.tx.send(GuiEvent::Resize(cols, rows));
+        }
+        let scale_factor = window.scale_factor();
+        let to_pixels = |value: Pixels| f32::from(value).round() as i128;
+        let bounds = window.bounds();
+        let current_display_id = window.display(cx).map(|display| u32::from(display.id()));
+        let monitors = monitor_geometry(window, cx);
+        let frame_left = to_pixels(bounds.origin.x);
+        let frame_top = to_pixels(bounds.origin.y);
+        // Translate GPUI's AppKit screen-relative bounds to Emacs's global
+        // monitor coordinate system when the frame is on a secondary screen.
+        #[cfg(target_os = "macos")]
+        let frame_left = frame_left.saturating_add(
+            current_display_id
+                .and_then(|display_id| {
+                    monitors
+                        .iter()
+                        .find(|monitor| monitor.display_id == display_id)
+                })
+                .map(|monitor| monitor.native_origin[0])
+                .unwrap_or(0),
+        );
+        #[cfg(target_os = "macos")]
+        let frame_top = frame_top.saturating_add(
+            current_display_id
+                .and_then(|display_id| {
+                    monitors
+                        .iter()
+                        .find(|monitor| monitor.display_id == display_id)
+                })
+                .map(|monitor| {
+                    monitor.geometry[1].saturating_sub(monitor.native_origin[1])
+                })
+                .unwrap_or(0),
+        );
+        let geometry = GuiGeometry {
+            cols,
+            rows,
+            pixel_width: to_pixels(vp.width),
+            pixel_height: to_pixels(vp.height),
+            char_width: to_pixels(cell_width).max(1),
+            char_height: to_pixels(line_height).max(1),
+            scale_factor: scale_factor as f64,
+            frame_left,
+            frame_top,
+            current_display_id,
+            monitors,
+        };
+        if self.geometry.as_ref() != Some(&geometry) {
+            self.geometry = Some(geometry.clone());
+            let _ = self.tx.send(GuiEvent::Geometry(geometry));
         }
 
         let default_background = self

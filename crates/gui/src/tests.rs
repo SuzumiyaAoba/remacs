@@ -1,8 +1,8 @@
+use super::keys::unicode_key_text;
 use super::{
     ChanIo, EditorView, GuiEvent, build_editor_view, command_keystroke, keystroke_to_code,
     start_logic,
 };
-use super::keys::unicode_key_text;
 use gpui::{EntityInputHandler, Keystroke, Modifiers};
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{Grid, KeyIo};
@@ -238,6 +238,8 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             rows: 24,
             last: None,
             render_requested: false,
+            geometry: None,
+            geometry_symbols: None,
         },
         etx,
         grx,
@@ -590,6 +592,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::Text(text) => Some(text),
             GuiEvent::Resize(..) => None,
+            GuiEvent::Geometry(_) => None,
             GuiEvent::Key(code) => panic!("plain text also produced key {code}"),
             GuiEvent::ReplaceText { range, text } => {
                 panic!("plain text also produced ranged replacement {range:?}: {text:?}")
@@ -603,6 +606,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::Key(code) => Some(code),
             GuiEvent::Resize(..) => None,
+            GuiEvent::Geometry(_) => None,
             GuiEvent::Text(text) => panic!("command also inserted {text:?}"),
             GuiEvent::ReplaceText { range, text } => {
                 panic!("command also replaced {range:?} with {text:?}")
@@ -643,7 +647,7 @@ fn input_handler_commits_multichar_text_and_composition_only_once() {
     app.run_until_parked();
     assert!(
         rx.try_iter()
-            .all(|event| matches!(event, GuiEvent::Resize(..)))
+            .all(|event| matches!(event, GuiEvent::Resize(..) | GuiEvent::Geometry(_)))
     );
     handle
         .update(&mut app, |view, window, cx| {

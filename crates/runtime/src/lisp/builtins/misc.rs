@@ -204,7 +204,7 @@ use faces::{
     f_internal_make_lisp_face, f_invert_face, f_query_fontset, f_select_font_err,
     f_set_alt_font_family_alist, f_set_alt_font_registry_alist, f_set_font_selection_order,
     f_set_frame_font, f_set_fringe_bitmap_face, f_set_lisp_face_attr_resource,
-    f_window_font_metric, f_xw_color_defined_p,
+    f_window_font_height, f_window_font_width, f_xw_color_defined_p,
 };
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use faces::{parse_color_16, tty_color_desc};
@@ -1455,20 +1455,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
     // `keymap-of' does not exist in GNU Emacs 31.
     // ---------- display/font/image stubs (no GUI) ----------
-    S!("default-font-width", 0, 0, f_one, "Char cell width."),
-    S!("default-font-height", 0, 0, f_one, "Char cell height."),
+    S!("default-font-width", 0, 0, f_default_font_width, "Char cell width."),
+    S!("default-font-height", 0, 0, f_default_font_height, "Char cell height."),
     S!(
         "window-font-width",
         0,
         2,
-        f_window_font_metric,
+        f_window_font_width,
         "Char cell width."
     ),
     S!(
         "window-font-height",
         0,
         2,
-        f_window_font_metric,
+        f_window_font_height,
         "Char cell height."
     ),
     S!("color-distance", 2, 4, f_color_distance, "RGB distance."),
@@ -2073,8 +2073,18 @@ fn f_zero(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 /// ordering answer yield nil.
 // GNU fns.c value_cmp: ordering-equivalence is distinct from `equal'.
 
-fn f_one(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Int(1))
+fn f_default_font_width(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    Ok(Value::Int(
+        crate::editor::frame_char_width(i, &frame) as i128,
+    ))
+}
+
+fn f_default_font_height(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    Ok(Value::Int(
+        crate::editor::frame_char_height(i, &frame) as i128,
+    ))
 }
 
 // ---------- internals & platform stubs (probe-matched arities) ----------
