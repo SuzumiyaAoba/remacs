@@ -531,8 +531,8 @@ enable, ?l to disable)."
                             "Terminal is currently suspended")
                      nil ; The sequence will be sent upon resume.
                    (signal err))))
-        (push enable (terminal-parameter nil 'tty-mode-set-strings))
-        (push disable (terminal-parameter nil 'tty-mode-reset-strings))
+        (push enable (terminal-parameter terminal 'tty-mode-set-strings))
+        (push disable (terminal-parameter terminal 'tty-mode-reset-strings))
         (set-terminal-parameter terminal 'xterm-mouse-mode t)
         (set-terminal-parameter terminal 'xterm-mouse-utf-8
                                 xterm-mouse-utf-8)))))
@@ -556,12 +556,12 @@ enable, ?l to disable)."
                         "Terminal is currently suspended")
                  nil
                (signal err))))
-    (setf (terminal-parameter nil 'tty-mode-set-strings)
+    (setf (terminal-parameter terminal 'tty-mode-set-strings)
           (remq xterm-mouse-tracking-enable-sequence
-                (terminal-parameter nil 'tty-mode-set-strings)))
-    (setf (terminal-parameter nil 'tty-mode-reset-strings)
+                (terminal-parameter terminal 'tty-mode-set-strings)))
+    (setf (terminal-parameter terminal 'tty-mode-reset-strings)
           (remq xterm-mouse-tracking-disable-sequence
-                (terminal-parameter nil 'tty-mode-reset-strings)))
+                (terminal-parameter terminal 'tty-mode-reset-strings)))
     (set-terminal-parameter terminal 'xterm-mouse-mode nil)))
 
 (provide 'xt-mouse)
