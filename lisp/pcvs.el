@@ -475,6 +475,28 @@ the \\[cvs-mode-map] prefix."
 
 
 (defvar cvs-temp-buffers nil)
+
+(defvar-local cvs--other-window-scroll-buffer nil
+  "Buffer assigned by PCL-CVS as this buffer's scroll target.")
+
+(defun cvs--scroll-buffer-window-change (_frame)
+  "Clear stale PCL-CVS scroll targets after window buffer changes."
+  (let (active)
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when cvs--other-window-scroll-buffer
+          (let ((target cvs--other-window-scroll-buffer))
+            (if (and (eq target other-window-scroll-buffer)
+                     (buffer-live-p target)
+                     (get-buffer-window target t))
+                (setq active t)
+              (when (eq target other-window-scroll-buffer)
+                (kill-local-variable 'other-window-scroll-buffer))
+              (setq cvs--other-window-scroll-buffer nil))))))
+    (unless active
+      (remove-hook 'window-buffer-change-functions
+                   #'cvs--scroll-buffer-window-change))))
+
 (defun cvs-temp-buffer (&optional cmd normal nosetup)
   "Create a temporary buffer to run CMD in.
 If CMD is a string, use it to lookup `cvs-buffer-name-alist' to find
@@ -512,14 +534,18 @@ from the current buffer."
 	    (delete-process proc)
 	  (error "Can not run two cvs processes simultaneously"))))
 
-    (if (not name) (kill-local-variable 'other-window-scroll-buffer)
+    (if (not name)
+        (progn
+          (kill-local-variable 'other-window-scroll-buffer)
+          (kill-local-variable 'cvs--other-window-scroll-buffer))
       ;; Strangely, if no window is created, `display-buffer' ends up
       ;; doing a `switch-to-buffer' which does a `set-buffer', hence
       ;; the need for `save-excursion'.
       (unless nosetup (save-excursion (display-buffer buf)))
-      ;; FIXME: this doesn't do the right thing if the user later on
-      ;; does a `find-file-other-window' and `scroll-other-window'
-      (setq-local other-window-scroll-buffer buf))
+      (setq-local other-window-scroll-buffer buf
+                  cvs--other-window-scroll-buffer buf)
+      (add-hook 'window-buffer-change-functions
+                #'cvs--scroll-buffer-window-change))
 
     (add-to-list 'cvs-temp-buffers buf)
 
