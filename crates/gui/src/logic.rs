@@ -38,6 +38,11 @@ pub(super) enum GuiEvent {
         modifiers: i128,
         position: MousePosition,
     },
+    Scroll {
+        delta_lines: f32,
+        modifiers: i128,
+        position: MousePosition,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -140,6 +145,7 @@ pub(super) struct ChanIo {
     pub(super) geometry: Option<GuiGeometry>,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
+    pub(super) scroll_remainder: f32,
 }
 
 fn echo_char_width(character: char, column: usize) -> usize {
@@ -414,6 +420,28 @@ impl KeyIo for ChanIo {
                 modifiers,
                 position,
             )))),
+            Ok(GuiEvent::Scroll {
+                delta_lines,
+                modifiers,
+                position,
+            }) => {
+                if !delta_lines.is_finite() {
+                    return Ok(None);
+                }
+                let total_lines = self.scroll_remainder + delta_lines;
+                let whole_lines = total_lines.trunc();
+                self.scroll_remainder = total_lines - whole_lines;
+                if whole_lines == 0.0 {
+                    Ok(None)
+                } else {
+                    Ok(Some(InputEvent::MouseWheel {
+                        up: whole_lines < 0.0,
+                        modifiers,
+                        position,
+                        line_count: whole_lines.abs() as usize,
+                    }))
+                }
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -466,6 +494,7 @@ impl KeyIo for ChanIo {
                 self.mouse_down = None;
                 Ok(None)
             }
+            Ok(GuiEvent::Scroll { .. }) => Ok(None),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -703,6 +732,7 @@ fn start_logic_inner(
                     None
                 },
                 mouse_down: None,
+                scroll_remainder: 0.0,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
             // grid_tx drops here → the UI pump below quits the app.

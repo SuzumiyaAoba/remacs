@@ -206,6 +206,21 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             }
             InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse),
             InputEvent::Mouse(mouse) => dispatch_mouse(&term, i, mouse, &mut keys, &mut arg_mode)?,
+            InputEvent::MouseWheel {
+                up,
+                modifiers,
+                position,
+                line_count,
+            } => dispatch_mouse_wheel(
+                &term,
+                i,
+                up,
+                modifiers,
+                position,
+                line_count,
+                &mut keys,
+                &mut arg_mode,
+            )?,
         }
         render_needed = true;
         i.macro_replaying = false;
@@ -651,6 +666,31 @@ fn dispatch_mouse<T: KeyIo>(
         let _ = i.set_symbol(prefix_arg, Value::Int(1));
     }
 
+    let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
+    dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
+}
+
+fn dispatch_mouse_wheel<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    up: bool,
+    modifiers: i128,
+    position: MousePosition,
+    line_count: usize,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let base = if up { "wheel-up" } else { "wheel-down" };
+    let name = mouse_event_name(base, modifiers);
+    let key = crate::editor::event_code_for(&name);
+    let event = Value::list(vec![
+        Value::Sym(i.intern(&name)),
+        mouse_position_value(i, position).unwrap_or(Value::Nil),
+        Value::Nil,
+        Value::Int(line_count.max(1) as i128),
+    ]);
+    let last_input = i.q("last-input-event");
+    i.store_internal_value(last_input, event.clone());
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
     dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
 }
@@ -1102,6 +1142,26 @@ fn minibuf_loop<T: KeyIo>(
                 }
             }
             InputEvent::Mouse(_) => {}
+            InputEvent::MouseWheel {
+                up,
+                modifiers,
+                position,
+                line_count,
+            } if !single => {
+                if let Err(e) = dispatch_mouse_wheel(
+                    term,
+                    i,
+                    up,
+                    modifiers,
+                    position,
+                    line_count,
+                    &mut keys,
+                    &mut arg_mode,
+                ) {
+                    return Err(i.error(format!("minibuffer input: {e}")));
+                }
+            }
+            InputEvent::MouseWheel { .. } => {}
         }
         render_needed = true;
         if let Some(f) = i.minibuf_exit_fn.take() {

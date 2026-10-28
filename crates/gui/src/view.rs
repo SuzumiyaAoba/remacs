@@ -196,6 +196,8 @@ impl Render for EditorView {
         let grid = self.grid.clone();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
+        let scroll_grid = grid.clone();
+        let scroll_tx = self.tx.clone();
         let left_mouse_down_tx = self.tx.clone();
         let left_mouse_down_grid = mouse_grid.clone();
         let left_mouse_up_tx = self.tx.clone();
@@ -265,6 +267,23 @@ impl Render for EditorView {
                         modifiers: mouse_modifier_bits(&event.modifiers),
                         position,
                     });
+                }
+            })
+            .on_scroll_wheel(move |event, window, cx| {
+                if let Some(position) =
+                    input::mouse_position_for_point(&scroll_grid, event.position, window)
+                {
+                    let delta = event.delta.pixel_delta(line_height);
+                    let delta_lines = -f32::from(delta.y) / f32::from(line_height);
+                    if delta_lines != 0.0 {
+                        let _ = scroll_tx.send(GuiEvent::Scroll {
+                            delta_lines,
+                            modifiers: mouse_modifier_bits(&event.modifiers),
+                            position,
+                        });
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
                 }
             })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {

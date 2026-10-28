@@ -25,6 +25,13 @@ pub enum InputEvent {
     ReplaceText { range: Range<usize>, text: String },
     MouseDown(MouseInput),
     Mouse(MouseInput),
+    /// A wheel/trackpad event, with line count normalized by the front-end.
+    MouseWheel {
+        up: bool,
+        modifiers: i128,
+        position: MousePosition,
+        line_count: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
