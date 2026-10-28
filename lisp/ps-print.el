@@ -1184,8 +1184,8 @@
 ;; allow the number of lines of the current buffer or of its current region to
 ;; fit in this number of pages.
 ;;
-;; NOTE: line folding is not taken into account in this process and could
-;;       change the results.
+;; NOTE: `ps-nb-pages-buffer' and `ps-nb-pages-region' count logical lines;
+;;       additional lines caused by folding long lines are not included.
 ;;
 ;; The command `ps-print-customize' activates a customization buffer for
 ;; ps-print options.
@@ -3563,14 +3563,16 @@ Try: pr -t file | awk \\='{printf \"%3d %s\n\", length($0), $0}\\=' | sort -r | 
 ;;;###autoload
 (defun ps-nb-pages-buffer (nb-lines)
   "Display number of pages to print this buffer, for various font heights.
-The table depends on the current ps-print setup."
+The table depends on the current ps-print setup.  NB-LINES counts logical
+lines and does not include additional lines caused by folding long lines."
   (interactive (ps-count-lines-preprint (point-min) (point-max)))
   (ps-nb-pages nb-lines))
 
 ;;;###autoload
 (defun ps-nb-pages-region (nb-lines)
   "Display number of pages to print the region, for various font heights.
-The table depends on the current ps-print setup."
+The table depends on the current ps-print setup.  NB-LINES counts logical
+lines and does not include additional lines caused by folding long lines."
   (interactive (ps-count-lines-preprint (mark) (point)))
   (ps-nb-pages nb-lines))
 
@@ -4267,8 +4269,9 @@ Try: pr -t file | awk \\='{printf \"%3d %s\n\", length($0), $0}\\=' | sort -r | 
 
 (defun ps-nb-pages (nb-lines)
   "Display correspondence between font size and the number of pages.
-The correspondence is based on having NB-LINES lines of text,
-and on the current ps-print setup."
+The correspondence is based on having NB-LINES logical lines of text,
+without additional lines caused by folding long lines, and on the current
+ps-print setup."
   (let* ((ps-font-size-internal
 	  (or ps-font-size-internal
 	      (ps-get-font-size 'ps-font-size)))
@@ -4315,7 +4318,8 @@ and on the current ps-print setup."
     (goto-char (point-max))
     (or (bobp) (insert "\n" (make-string 75 ?\;) "\n"))
     (insert ps-setup
-	    (format "\nThere are %d lines.\n\n" nb-lines)
+	    (format "\nThere are %d logical lines (folded lines are not included).\n\n"
+		    nb-lines)
 	    "nb page / font size\n")
     (while (<= nb-page nb-page-max)
       (setq nb-lpp (ceiling (/ nb-lines (float nb-page)))
