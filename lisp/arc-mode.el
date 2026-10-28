@@ -1156,6 +1156,29 @@ return nil.  Otherwise point is returned."
       (archive-goto-file short))
     next))
 
+(defun archive--copy-file-target (file directory)
+  "Return FILE's path in DIRECTORY, or signal if it escapes DIRECTORY."
+  (let* ((directory (file-name-as-directory (expand-file-name directory)))
+         (path (expand-file-name file directory))
+         (path-name (if (memq system-type '(ms-dos windows-nt cygwin))
+                        (subst-char-in-string ?\\ ?/ file)
+                      file))
+         (inside (and (not (file-name-absolute-p file))
+                      (not (string-match
+                            "\\(?:\\`\\|/\\)\\.\\.\\(?:/\\|\\'\\)"
+                            path-name))
+                      (string-prefix-p directory path)))
+         (parent (directory-file-name path))
+         (root (directory-file-name directory)))
+    ;; Don't follow archive paths through symlinked destination entries.
+    (while (and inside (not (string= parent root)))
+      (when (file-symlink-p parent)
+        (setq inside nil))
+      (setq parent (directory-file-name (file-name-directory parent))))
+    (unless inside
+      (user-error "Archive member path escapes destination directory: %s" file))
+    path))
+
 (defun archive-copy-file (files new-name)
   "Copy FILES to a location specified by NEW-NAME.
 FILES can be a single file or a list of files.
@@ -1180,7 +1203,7 @@ NEW-NAME."
   (save-excursion
     (dolist (file files)
       (let* ((write-to (if (file-directory-p new-name)
-                           (expand-file-name file new-name)
+                           (archive--copy-file-target file new-name)
                          new-name))
              (write-to-dir (file-name-directory write-to)))
         (when (and (file-exists-p write-to)
