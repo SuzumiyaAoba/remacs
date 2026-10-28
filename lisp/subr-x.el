@@ -41078,7 +41078,10 @@ This does not modify SEQUENCE."
   (when (< n 0)
     (signal 'args-out-of-range (list sequence n)))
   (seq-concatenate
-   (if (listp sequence) 'list (type-of sequence))
+   (cond ((listp sequence) 'list)
+         ((bool-vector-p sequence) 'bool-vector)
+         ((char-table-p sequence) 'vector)
+         (t (type-of sequence)))
    (seq-subseq sequence 0 n)
    (seq-subseq sequence (1+ n))))
 
