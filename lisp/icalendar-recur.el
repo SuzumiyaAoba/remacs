@@ -1452,13 +1452,21 @@ the period."
     ;; be useful to include recurrences which start outside the window,
     ;; but end inside it.  This would mean we can't simply use
     ;; `recurrences-in-window' like this.
-    (let ((starts (icalendar-recur-recurrences-in-window lower upper component vtimezone))
-          (periods (seq-filter
-                    (lambda (vnode)
-                      (when (eq 'icalendar-period (icalendar-ast-node-type vnode))
-                        (icalendar-ast-node-value vnode)))
-                    (append
-                     (mapcar #'icalendar-ast-node-value rdate-nodes)))))
+    (let* ((starts
+            (icalendar-recur-recurrences-in-window lower upper component vtimezone))
+           (rdate-values
+            (apply #'append (mapcar #'icalendar-ast-node-value rdate-nodes)))
+           (periods
+            (seq-filter
+             (lambda (period)
+               (let ((start (icalendar-period-start period)))
+                 (and (icalendar-date/time<= lower start)
+                      (icalendar-date/time< start upper))))
+             (mapcar #'icalendar-ast-node-value
+                     (seq-filter
+                      (lambda (node)
+                        (eq 'icalendar-period (icalendar-ast-node-type node)))
+                      rdate-values))))
       (when (or starts periods)
         (seq-uniq
          (nconc (mapcar
