@@ -1516,14 +1516,35 @@ ordered for the current value of `calendar-date-style'."
    diary-sexp-entry-symbol
    (format "(diary-time-block :start '%s :end '%s)" start end)))
 
-(defun diary-icalendar-format-rrule-sexp (component)
+(defun diary-icalendar--serialize-ast-data (value)
+  "Copy VALUE while removing source-buffer metadata from iCalendar ASTs."
+  (cond
+   ((stringp value) (substring-no-properties value))
+   ((icalendar-ast-node-p value)
+    (diary-icalendar--serialize-ast-node value))
+   ((consp value)
+    (cons (diary-icalendar--serialize-ast-data (car value))
+          (diary-icalendar--serialize-ast-data (cdr value))))
+   (t value)))
+
+(defun diary-icalendar--serialize-ast-node (node)
+  "Return a data-only copy of iCalendar AST NODE."
+  (let* ((value (icalendar-ast-node-meta-get :value node))
+         (props (when value
+                  (list :value (diary-icalendar--serialize-ast-data value))))
+         (children (mapcar #'diary-icalendar--serialize-ast-node
+                           (icalendar-ast-node-children node))))
+    (cons (icalendar-ast-node-type node)
+          (cons props children))))
+
+(defun diary-icalendar-format-rrule-sexp (component index)
   "Format the recurrence rule data in COMPONENT as a diary S-expression.
 
 The returned string looks like \"%%(diary-rrule ...)\", and contains the
 necessary data from COMPONENT for the calendar to compute recurrences of
-the event."
+the event.  INDEX is used to resolve any time zone referenced by DTSTART."
   (icalendar-with-component component
-      ((icalendar-dtstart :value dtstart)
+      ((icalendar-dtstart :first dtstart-node :value dtstart)
        (icalendar-dtend :value dtend)
        (icalendar-duration :value duration)
        (icalendar-rrule :value rrule)
@@ -1531,10 +1552,15 @@ the event."
        (icalendar-exdate :all exdate-nodes))
     (unless (or rrule rdate-nodes)
       (diary-icalendar-signal-import-error "No recurrence data in component"))
-    (let ((exdates
-           (mapcar #'icalendar-ast-node-value
-                   (apply #'append
-                          (mapcar #'icalendar-ast-node-value exdate-nodes))))
+    (let* ((vtimezone
+            (when dtstart-node
+              (icalendar-with-property dtstart-node
+                ((icalendar-tzidparam :value tzid))
+                (when tzid (icalendar-index-get index :tzid tzid)))))
+           (exdates
+            (mapcar #'icalendar-ast-node-value
+                    (apply #'append
+                           (mapcar #'icalendar-ast-node-value exdate-nodes))))
           (rdates
            (mapcar #'icalendar-ast-node-value
                    (apply #'append
@@ -1558,13 +1584,15 @@ the event."
         (setq arg-plist (plist-put arg-plist :include `(quote ,rdates))))
       (when dtstart
         (setq arg-plist (plist-put arg-plist :start `(quote ,dtstart))))
+      (when vtimezone
+        (setq arg-plist
+              (plist-put arg-plist :vtimezone
+                         `(quote ,(diary-icalendar--serialize-ast-node vtimezone)))))
       (when dur-value
         (setq arg-plist (plist-put arg-plist :duration `(quote ,dur-value))))
       (when rrule
         ;; TODO: make this prettier to look at?
         (setq arg-plist (append (list :rule `(quote ,rrule)) arg-plist)))
-      ;; TODO: timezones??
-
       (setq arg-plist (cons 'diary-rrule arg-plist))
       (string-trim ; removing trailing \n added by pp
        (concat diary-sexp-entry-symbol
@@ -1784,7 +1812,7 @@ Returns a string containing the diary entry."
            (ical-priority priority)
            (ical-rrule-sexp
             (when (and is-recurring (bound-and-true-p ical-importing))
-              (diary-icalendar-format-rrule-sexp component)))
+              (diary-icalendar-format-rrule-sexp component index)))
            (ical-status (when status (icalendar-trimp (downcase status))))
            (ical-summary (icalendar-trimp summary))
            (ical-transparency transp)
@@ -3577,8 +3605,65 @@ inclusive.  START and END may be `icalendar-date' or
   (when (and (icalendar-date/time<= start date) (icalendar-date/time<= date end))
     entry))
 
+(defun diary-icalendar--local-midnight (date)
+  "Return DATE at local midnight with an explicit time zone offset."
+  (let* ((date (icalendar-date/time-to-date date))
+         (instant (encode-time (icalendar-date-to-date-time date)))
+         (zone (car (current-time-zone instant))))
+    (icalendar-date-time-variant (decode-time instant zone) :tz 'preserve)))
+
+(defun diary-icalendar--datetime-in-vtimezone (dt vtimezone)
+  "Return date-time DT with its time zone and DST slots set from VTIMEZONE."
+  (if (and vtimezone (cl-typep dt 'icalendar-date-time))
+      (icalendar-date-time-variant dt :tz vtimezone)
+    dt))
+
+(defun diary-icalendar--rrule-entries-for-date
+    (date entry rule start duration include exclude vtimezone)
+  "Return diary entries for DATE's recurrences in VTIMEZONE."
+  (let* ((start (diary-icalendar--datetime-in-vtimezone start vtimezone))
+         (include (mapcar (lambda (dt)
+                            (diary-icalendar--datetime-in-vtimezone dt vtimezone))
+                          include))
+         (exclude (mapcar (lambda (dt)
+                            (diary-icalendar--datetime-in-vtimezone dt vtimezone))
+                          exclude))
+         (component (icalendar-make-vevent
+                     (icalendar-rrule rule)
+                     (icalendar-dtstart start)
+                     (icalendar-rdate include)
+                     (icalendar-exdate exclude)))
+         (date (icalendar-date/time-to-date date))
+         (lower (diary-icalendar--local-midnight date))
+         (upper (diary-icalendar--local-midnight
+                 (icalendar-date-add date :day 1)))
+         (recurrences
+          (icalendar-recur-recurrences-in-window
+           lower upper component vtimezone)))
+    (when recurrences
+      (mapconcat
+       (lambda (occurrence)
+         (let* ((local-start
+                 (diary-icalendar-date/time-to-local occurrence vtimezone))
+                (local-end
+                 (when duration
+                   (diary-icalendar-date/time-to-local
+                    (icalendar-date/time-add-duration
+                     occurrence duration vtimezone)
+                    vtimezone)))
+                (time
+                 (if local-end
+                     (or (diary-icalendar-format-time-range
+                          local-start local-end t)
+                         (format "%s-%s"
+                                 (diary-icalendar-format-time local-start)
+                                 (diary-icalendar-format-time local-end)))
+                   (diary-icalendar-format-time local-start))))
+           (concat time " " entry)))
+       recurrences "\n"))))
+
 ;; To be called from diary-sexp-entry, where DATE, ENTRY are bound.
-(cl-defun diary-rrule (&key rule start duration include exclude)
+(cl-defun diary-rrule (&key rule start duration include exclude vtimezone)
   "Diary S-expression for iCalendar recurrence rules.
 
 Entry applies if the queried date matches the recurrence rule.
@@ -3588,7 +3673,8 @@ the recurrence data from an iCalendar component.  RULE should be an
 `icalendar-recur' value, START an `icalendar-date' or
 `icalendar-date-time', DURATION an `icalendar-dur-value', and INCLUDE
 and EXCLUDE should be lists of `icalendar-date' or `icalendar-date-time'
-values (of the same type as START)."
+values (of the same type as START).  VTIMEZONE, when supplied, should
+be an `icalendar-vtimezone' used to calculate local-time recurrences."
   ;; TODO: also support a format that is nicer to read and type by hand.
   ;; e.g. just letting a rule be specified in a recur-value string like
   ;;   :rule "FREQ=MONTHLY;BYDAY=1SU"
@@ -3613,21 +3699,11 @@ values (of the same type as START)."
             (when (member date (icalendar-recur-recurrences-in-interval interval vevent))
               entry)))
       (icalendar-date-time
-         ;; TODO.  If start is a date-time, it was probably imported from
-         ;; an iCalendar file, but in order to calculate recurrences, we
-         ;; really need all the time zone information from that file,
-         ;; not just the rule, start, include and exclude.  But encoding
-         ;; all that tz info in a diary s-exp is cumbersome and ugly and
-         ;; probably not worth the trouble.  Since this is the diary, we
-         ;; assume that all we really care about here is whether there
-         ;; are recurrences on a particular day.  Thus we convert
-         ;; HOURLY/MINUTELY/SECONDLY rules to a DAILY rule, and all
-         ;; values to plain dates.  This keeps things simple (and
-         ;; hopefully quicker) but means that information gets lost.  I
-         ;; hope this can be changed to do things right at some point,
-         ;; but that will require first adding more robust time zone
-         ;; support to the diary somehow -- perhaps via #included
-         ;; iCalendar files?
+       (if vtimezone
+           (diary-icalendar--rrule-entries-for-date
+            date entry rule start duration include exclude vtimezone)
+         ;; Without a VTIMEZONE, retain the existing date-only
+         ;; approximation for date-time recurrence rules.
          (let* ((date-rule (copy-sequence rule))
                 (start-date (icalendar-date-time-to-date start))
                 (include-dates (mapcar #'icalendar-date-time-to-date include))
@@ -3667,7 +3743,7 @@ values (of the same type as START)."
                    ((date date)
                     (entry date-entry))
                  (diary-rrule :rule date-rule :start start-date
-                              :include include-dates :exclude exclude-dates))))))))))
+                              :include include-dates :exclude exclude-dates)))))))))))
 
 (defun diary-icalendar-display-entries ()
   "Display iCalendar data from a file in the diary.
