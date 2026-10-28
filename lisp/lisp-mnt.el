@@ -334,7 +334,9 @@ Return argument is of the form (\"HOLDER\" \"YEAR1\" ... \"YEARN\")"
 	  (while (re-search-forward " *\n" nil t)
 	    (replace-match " "))
 	  (goto-char (point-min))
-	  (while (looking-at "\\([0-9]+\\)\\(?:[ \t]*-[ \t]*\\([0-9]+\\)\\)?\\(?:,?[ \t]+\\)")
+	  ;; Copyright years are four-digit years; don't mistake numbers in
+	  ;; the holder name for additional years.
+	  (while (looking-at "\\([0-9]\\{4\\}\\)\\(?:[ \t]*-[ \t]*\\([0-9]+\\)\\)?\\(?:,?[ \t]+\\)")
 	    (push (match-string-no-properties 1) years)
 	    (when (match-string-no-properties 2)
 	      (push (match-string-no-properties 2) years))
