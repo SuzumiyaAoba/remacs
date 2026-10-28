@@ -100,8 +100,10 @@
 		   ((equal elem "macdef")
 		    ;; We skip past the macro definition.
 		    (widen)
-		    (while (and (zerop (forward-line 1))
-				(looking-at "$")))
+		    (forward-line 1)
+		    (while (and (not (eobp))
+				(not (looking-at "[ \t]*$")))
+		      (forward-line 1))
 		    (narrow-to-region (point) (point)))
 		   ((member elem tokens)
 		    ;; Tokens that don't have a following value are ignored,
