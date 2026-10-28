@@ -1363,7 +1363,15 @@ UTC offsets local to that time zone."
                                       :dst (not (icalendar-daylight-component-p
                                                  component)))))
 
-      (let* (;; don't look for nonexistent intervals:
+      (if (and rrule (icalendar-rrule-count rrule))
+          ;; COUNT rules must be enumerated from DTSTART so a window after
+          ;; their last occurrence cannot produce additional recurrences.
+          (seq-filter
+           (lambda (dt)
+             (and (icalendar-date/time<= lower dt)
+                  (icalendar-date/time< dt upper)))
+           (icalendar-recur-recurrences-to-count component vtimezone))
+        (let* (;; don't look for nonexistent intervals:
              (low-start (if (icalendar-date/time< lower dtstart) dtstart lower))
              (until (icalendar-rrule-until rrule))
              (high-end (if (and until (icalendar-date/time< until upper)) until upper))
@@ -1388,7 +1396,7 @@ UTC offsets local to that time zone."
          (lambda (dt)
            (and (icalendar-date/time<= lower dt)
                 (icalendar-date/time< dt upper)))
-         recurrences)))))
+         recurrences))))))
 
 (defun icalendar-recur-recurrences-in-window-w/end-times
     (lower upper component &optional vtimezone)
