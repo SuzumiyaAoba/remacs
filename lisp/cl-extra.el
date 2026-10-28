@@ -916,12 +916,13 @@ Call `cl--find-class' to get TYPE's propname `cl--class'"
     (unless (eq (cl--slot-descriptor-type slot) t)
       (concat "    type = "
               (prin1-to-string (cl--slot-descriptor-type slot))))
-    ;; FIXME: The default init form is treated differently for structs and for
-    ;; eieio objects: for structs, the default is nil, for eieio-objects
-    ;; it's a special "unbound" value.
-    (unless nil ;; (eq (cl--slot-descriptor-initform slot) eieio-unbound)
-      (concat "    default = "
-              (prin1-to-string (cl--slot-descriptor-initform slot))))
+    ;; EIEIO stores an uninitialized slot as a quoted unbound init form.
+    (let ((initform (cl--slot-descriptor-initform slot)))
+      (unless (or (and (boundp 'eieio--unbound-form)
+                       (equal initform eieio--unbound-form))
+                  (and (boundp 'eieio--unbound)
+                       (eq initform eieio--unbound)))
+        (concat "    default = " (prin1-to-string initform))))
     (when (alist-get :printer (cl--slot-descriptor-props slot))
       (concat "    printer = "
               (prin1-to-string
