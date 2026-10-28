@@ -447,6 +447,8 @@ This variable is generally set from `tcl-proc-regexp',
 (defconst tcl-syntax-propertize-function
   ;; FIXME: Handle the [...] commands nested inside "..." strings.
   (syntax-propertize-rules
+   ;; Tcl folds backslash-newline before parsing, including inside comments.
+   ((concat (regexp-quote "\\") "\\(\n\\)[ \t]*") (1 " "))
    ;; Mark the few `#' that are not comment-markers.
    ((concat "[^" tcl--word-delimiters "][ \t]*\\(#\\)") (1 "."))
    ("\"" (0 (tcl--syntax-of-quote (match-beginning 0)))))
@@ -824,6 +826,11 @@ See documentation for variable `tcl-type-alist' for more information."
 	 (message "Indentation type %s" result))
     result))
 
+(defun tcl--virtually-blank-line-p ()
+  "Return non-nil if the rest of the line is blank or in a comment."
+  (or (looking-at "[ \t]*\\(#.*\\)?$")
+      (nth 4 (syntax-ppss (point))))
+
 (defun tcl-calculate-indent (&optional parse-start)
   "Return appropriate indentation for current line as Tcl code.
 In usual case returns an integer: the column to indent to.
@@ -876,19 +883,18 @@ Returns nil if line starts inside a string, t if in a comment."
 	       ;; on the same line, so what we do is skip all
 	       ;; "virtually blank" lines, looking for a non-blank
 	       ;; one.  A line is virtually blank if it only contains
-	       ;; a comment and whitespace.  FIXME continued comments
-	       ;; aren't supported.  They are a wart on Tcl anyway.
+	       ;; a comment and whitespace.
 	       ;; We do it this funky way because we want to know if
 	       ;; we've found a statement on some line _after_ the
 	       ;; line holding the sexp opener.
 	       (goto-char containing-sexp)
 	       (forward-char)
 	       (if (and (< (point) indent-point)
-			(looking-at "[ \t]*\\(#.*\\)?$"))
+			(tcl--virtually-blank-line-p))
 		   (progn
 		     (forward-line)
 		     (while (and (< (point) indent-point)
-				 (looking-at "[ \t]*\\(#.*\\)?$"))
+				 (tcl--virtually-blank-line-p))
 		       (setq found-next-line t)
 		       (forward-line))))
 	       (if (or continued-line
