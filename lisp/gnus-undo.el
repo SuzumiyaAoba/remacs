@@ -54,13 +54,8 @@
   "The number of undoable actions recorded."
   :type 'integer)
 
-(defcustom gnus-undo-mode nil
-  ;; FIXME: This is a buffer-local minor mode which requires running
-  ;; code upon activation/deactivation, so defining it as a defcustom
-  ;; doesn't seem very useful: setting it to non-nil via Customize
-  ;; probably won't do the right thing.
-  "Minor mode for undoing in Gnus buffers."
-  :type 'boolean)
+;; Don't make `gnus-undo-mode' a `defcustom': setting its default would
+;; bypass the per-buffer setup and teardown in `define-minor-mode' below.
 
 (defcustom gnus-undo-mode-hook nil
   "Hook called in all `gnus-undo-mode' buffers."
