@@ -1349,7 +1349,8 @@ UTC offsets local to that time zone."
       ((icalendar-dtstart :value dtstart)
        (icalendar-tzoffsetfrom :value offset-from)
        (icalendar-rrule :value rrule)
-       (icalendar-rdate :all rdate-nodes))
+       (icalendar-rdate :all rdate-nodes)
+       (icalendar-exdate :all exdate-nodes))
     (if (not (or rrule rdate-nodes))
         ;; No recurrences to calculate, so just return early:
         nil
@@ -1371,34 +1372,63 @@ UTC offsets local to that time zone."
              (and (icalendar-date/time<= lower dt)
                   (icalendar-date/time< dt upper)))
            (icalendar-recur-recurrences-to-count component vtimezone))
-        (let* (;; don't look for nonexistent intervals:
-             (low-start (if (icalendar-date/time< lower dtstart) dtstart lower))
-             (until (icalendar-rrule-until rrule))
-             (high-end (if (and until (icalendar-date/time< until upper)) until upper))
-             (curr-interval (icalendar-recur-find-interval low-start dtstart rrule
-                                               vtimezone))
-             (high-interval (icalendar-recur-find-interval high-end dtstart rrule
-                                               vtimezone))
-             (high-intbound (icalendar-recur-interval-high high-interval))
-             (recurrences nil))
+        (if rrule
+            (let* (;; don't look for nonexistent intervals:
+                   (low-start
+                    (if (icalendar-date/time< lower dtstart) dtstart lower))
+                   (until (icalendar-rrule-until rrule))
+                   (high-end
+                    (if (and until (icalendar-date/time< until upper))
+                        until upper))
+                   (curr-interval
+                    (icalendar-recur-find-interval low-start dtstart rrule
+                                                   vtimezone))
+                   (high-interval
+                    (icalendar-recur-find-interval high-end dtstart rrule
+                                                   vtimezone))
+                   (high-intbound (icalendar-recur-interval-high high-interval))
+                   (recurrences nil))
+              (while (icalendar-date-time<
+                      (icalendar-recur-interval-low curr-interval) high-intbound)
+                (setq recurrences
+                      (nconc
+                       (reverse
+                        (icalendar-recur-recurrences-in-interval
+                         curr-interval component vtimezone))
+                       recurrences))
+                (setq curr-interval (icalendar-recur-next-interval
+                                     curr-interval rrule vtimezone)))
 
-        (while (icalendar-date-time< (icalendar-recur-interval-low curr-interval) high-intbound)
-          (setq recurrences
-                (nconc
-                 (reverse
-                  (icalendar-recur-recurrences-in-interval
-                   curr-interval component vtimezone))
-                 recurrences))
-          (setq curr-interval (icalendar-recur-next-interval curr-interval rrule
-                                                 vtimezone)))
-
-        ;; exclude any recurrences inside the first and last intervals but
-        ;; outside the window before returning:
-        (seq-filter
-         (lambda (dt)
-           (and (icalendar-date/time<= lower dt)
-                (icalendar-date/time< dt upper)))
-         (nreverse recurrences))))))
+              ;; Exclude any recurrences inside the first and last
+              ;; intervals but outside the window before returning:
+              (seq-filter
+               (lambda (dt)
+                 (and (icalendar-date/time<= lower dt)
+                      (icalendar-date/time< dt upper)))
+               (nreverse recurrences)))
+          (let* ((rdates
+                  (mapcar #'icalendar-ast-node-value
+                          (apply #'append
+                                 (mapcar #'icalendar-ast-node-value rdate-nodes))))
+                 (exdates
+                  (mapcar #'icalendar-ast-node-value
+                          (apply #'append
+                                 (mapcar #'icalendar-ast-node-value exdate-nodes))))
+                 (recs
+                  (cons dtstart
+                        (seq-filter
+                         (lambda (rec)
+                           (not (cl-typep rec 'icalendar-period)))
+                         rdates))))
+            (sort
+             (seq-uniq
+              (seq-filter
+               (lambda (rec)
+                 (and (not (member rec exdates))
+                      (icalendar-date/time<= lower rec)
+                      (icalendar-date/time< rec upper)))
+               recs))
+             #'icalendar-date/time<)))))))
 
 (defun icalendar-recur-recurrences-in-window-w/end-times
     (lower upper component &optional vtimezone)
