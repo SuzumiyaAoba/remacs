@@ -900,15 +900,24 @@ Optional argument LOCAL is a local context to extend."
    local (car rest)
    (if (memq (elisp-scope--sym-bare next) '(the each)) (cdr rest) rest)))
 
+(defun elisp-scope-loop-for-bind (var local)
+  "Bind VAR, which may be a nested destructuring pattern, in LOCAL."
+  (if (consp var)
+      (elisp-scope-loop-for-bind
+       (cdr var) (elisp-scope-loop-for-bind (car var) local))
+    (let ((bare (elisp-scope--sym-bare var))
+          (beg (elisp-scope--sym-pos var)))
+      (if bare
+          (progn
+            (when beg (elisp-scope--binding bare beg))
+            (elisp-scope--local-new bare beg local))
+        local))))
+
 (defun elisp-scope-loop-for (local vars rest)
   (if vars
-      ;; FIXME: var need not be a symbol, see
-      ;; `cl-macs-loop-destructure-cons' test in cl-macs-tests.el.
       (let* ((var (car (ensure-list vars)))
-             (bare (bare-symbol var))
-             (beg (elisp-scope--sym-pos var)))
-        (when beg (elisp-scope--binding bare beg))
-        (elisp-scope-loop-for (elisp-scope--local-new bare beg local) (cdr-safe vars) rest))
+             (local (elisp-scope-loop-for-bind var local)))
+        (elisp-scope-loop-for local (cdr-safe vars) rest))
     (when-let* ((bare (elisp-scope--sym-bare (car rest)))
                 (more (cdr rest)))
       (cond
