@@ -49,6 +49,11 @@ pub trait FrameWindowBackend {
     fn lower(&self, frame_id: usize) -> Result<(), String>;
 }
 
+/// Host color panel used by native GUI faces.
+pub trait ColorPanelBackend {
+    fn show(&self, frame_id: usize) -> Result<(), String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),

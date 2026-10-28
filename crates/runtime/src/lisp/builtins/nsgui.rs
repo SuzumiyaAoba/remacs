@@ -537,7 +537,6 @@ winsys_fn!(f_ns_set_resource);
 winsys_fn!(f_ns_hide_emacs);
 winsys_fn!(f_ns_hide_others);
 winsys_fn!(f_ns_emacs_info_panel);
-winsys_fn!(f_ns_popup_color_panel);
 winsys_fn!(f_ns_frame_edges);
 winsys_fn!(f_ns_frame_geometry);
 winsys_fn!(f_ns_mouse_absolute_pixel_position);
@@ -571,6 +570,20 @@ fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         )
         .map_err(|error| i.error(format!("File dialog failed: {error}")))?;
     Ok(selected.map(Value::string).unwrap_or(Value::Nil))
+}
+
+fn f_ns_popup_color_panel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_live(i, &a.first().cloned().unwrap_or(Value::Nil))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(winsys(i));
+    }
+    let Some(backend) = i.color_panel_backend.clone() else {
+        return Err(winsys(i));
+    };
+    backend
+        .show(frame.borrow().id)
+        .map_err(|error| i.error(format!("Color panel failed: {error}")))?;
+    Ok(Value::Nil)
 }
 
 fn selection_symbol(i: &mut Interp, value: &Value) -> Result<SymId, Flow> {

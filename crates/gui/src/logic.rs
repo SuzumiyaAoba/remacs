@@ -150,6 +150,10 @@ pub(super) enum GuiRequest {
     FrameSnapshots(Vec<FrameSnapshot>),
     FrameVisibility { frame_id: usize, visible: bool },
     FrameOrder { frame_id: usize, raise: bool },
+    ColorPanel {
+        frame_id: usize,
+        reply: SyncSender<Result<(), String>>,
+    },
     Prompt {
         frame_id: usize,
         message: String,
@@ -301,6 +305,22 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
                 raise: false,
             })
             .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+}
+
+struct GuiColorPanelBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::ColorPanelBackend for GuiColorPanelBackend {
+    fn show(&self, frame_id: usize) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::ColorPanel { frame_id, reply })
+            .map_err(|_| "GUI color panel service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI color panel service stopped".to_owned())?
     }
 }
 
@@ -1232,6 +1252,9 @@ fn start_logic_inner(
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_frame_window_backend(Some(Rc::new(GuiFrameVisibilityBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                i.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {
                     requests: gui_requests_tx.clone(),
                 })));
             }

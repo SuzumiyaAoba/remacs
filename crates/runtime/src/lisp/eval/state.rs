@@ -41,6 +41,11 @@ impl Interp {
         self.frame_window_backend = backend;
     }
 
+    /// Install or remove the host color panel backend.
+    pub fn set_color_panel_backend(&mut self, backend: Option<Rc<dyn crate::frontend::ColorPanelBackend>>) {
+        self.color_panel_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

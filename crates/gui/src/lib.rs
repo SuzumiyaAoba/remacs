@@ -299,6 +299,19 @@ pub fn run_gui_with_dump(
                             });
                         }
                     }
+                    GuiRequest::ColorPanel { frame_id, reply } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, |_view, window, _cx| {
+                                    show_native_color_panel(window)
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::FileDialog {
                         prompt,
                         directory,
@@ -537,6 +550,28 @@ fn appkit_native_window(window: &Window) -> Option<id> {
         let view = handle.ns_view.as_ptr() as id;
         let native_window: id = msg_send![view, window];
         (!native_window.is_null()).then_some(native_window)
+    }
+}
+
+fn show_native_color_panel(window: &Window) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        appkit_native_window(window)
+            .ok_or_else(|| "native frame window is unavailable".to_owned())?;
+        window.activate_window();
+        unsafe {
+            let panel: id = msg_send![class!(NSColorPanel), sharedColorPanel];
+            if panel.is_null() {
+                return Err("NSColorPanel could not be created".to_owned());
+            }
+            let _: () = msg_send![panel, makeKeyAndOrderFront: nil];
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        Err("NS color panel is available only on macOS".to_owned())
     }
 }
 
