@@ -61,8 +61,11 @@ pub struct CellStyle {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub underline_color: Option<CellColor>,
+    pub underline_wave: bool,
     pub overline: bool,
     pub strike: bool,
+    pub strike_color: Option<CellColor>,
     /// `:inverse-video': swap foreground/background.  Front-ends invert
     /// themselves (so a colored inverse cell keeps its colors swapped
     /// rather than emitting SGR 7 on top of them).
@@ -109,8 +112,11 @@ struct StyleMix {
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
+    underline_color: Option<Option<CellColor>>,
+    underline_wave: Option<bool>,
     overline: Option<bool>,
     strike: Option<bool>,
+    strike_color: Option<Option<CellColor>>,
     inverse: Option<bool>,
     extend: Option<bool>,
 }
@@ -134,8 +140,11 @@ impl StyleMix {
             bold,
             italic,
             underline,
+            underline_color,
+            underline_wave,
             overline,
             strike,
+            strike_color,
             inverse,
             extend
         );
@@ -153,8 +162,11 @@ impl StyleMix {
             bold: self.bold.unwrap_or(false),
             italic: self.italic.unwrap_or(false),
             underline: self.underline.unwrap_or(false),
+            underline_color: self.underline_color.flatten(),
+            underline_wave: self.underline_wave.unwrap_or(false),
             overline: self.overline.unwrap_or(false),
             strike: self.strike.unwrap_or(false),
+            strike_color: self.strike_color.flatten(),
             inverse: self.inverse.unwrap_or(false),
             extend: self.extend.unwrap_or(false),
         }
@@ -173,8 +185,11 @@ impl PartialEq for StyleMix {
             && self.bold == o.bold
             && self.italic == o.italic
             && self.underline == o.underline
+            && self.underline_color == o.underline_color
+            && self.underline_wave == o.underline_wave
             && self.overline == o.overline
             && self.strike == o.strike
+            && self.strike_color == o.strike_color
             && self.inverse == o.inverse
             && self.extend == o.extend
     }
@@ -1050,6 +1065,23 @@ impl FaceCtx {
         Some(style)
     }
 
+    fn decoration_color(&self, value: &Value) -> Option<CellColor> {
+        match value {
+            Value::Cons(_) => self.color(&crate::lisp::eval::plist_get(value, self.box_color)),
+            _ => self.color(value),
+        }
+    }
+
+    fn underline_wave(&self, i: &Interp, value: &Value) -> bool {
+        let Value::Cons(_) = value else {
+            return false;
+        };
+        matches!(
+            crate::lisp::eval::plist_get(value, self.box_style),
+            Value::Sym(style) if i.symbol_name(style) == "wave"
+        )
+    }
+
     /// Merge one named face's attributes (spec layer first, then the
     /// new-frame defaults layer like GNU's realize_default_face, then
     /// the compiled-in basic-face fallbacks).
@@ -1126,9 +1158,16 @@ impl FaceCtx {
                 ":height" => mix.font_height = font_height_tenths(v),
                 ":box" => mix.box_style = Some(self.parse_box_style(i, v)),
                 ":slant" => mix.italic = Some(slant_italic(i, v)),
-                ":underline" => mix.underline = Some(v.truthy()),
+                ":underline" => {
+                    mix.underline = Some(v.truthy());
+                    mix.underline_color = Some(self.decoration_color(v));
+                    mix.underline_wave = Some(self.underline_wave(i, v));
+                }
                 ":overline" => mix.overline = Some(v.truthy()),
-                ":strike-through" => mix.strike = Some(v.truthy()),
+                ":strike-through" => {
+                    mix.strike = Some(v.truthy());
+                    mix.strike_color = Some(self.decoration_color(v));
+                }
                 ":inverse-video" => mix.inverse = Some(v.truthy()),
                 ":extend" => mix.extend = Some(v.truthy()),
                 _ => {}

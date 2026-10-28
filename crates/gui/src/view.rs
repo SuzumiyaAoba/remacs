@@ -369,12 +369,16 @@ impl Render for EditorView {
                                             background_color: bg,
                                             underline: st.underline.then(|| UnderlineStyle {
                                                 thickness: px(1.0),
-                                                color: None,
-                                                wavy: false,
+                                                color: st
+                                                    .underline_color
+                                                    .map(|color| rgb(color_rgb(color)).into()),
+                                                wavy: st.underline_wave,
                                             }),
                                             strikethrough: st.strike.then(|| StrikethroughStyle {
                                                 thickness: px(1.0),
-                                                color: None,
+                                                color: st
+                                                    .strike_color
+                                                    .map(|color| rgb(color_rgb(color)).into()),
                                             }),
                                         });
                                     };
