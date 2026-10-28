@@ -329,6 +329,8 @@ pub struct Grid {
     pub rows: Vec<String>,
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
+    /// Fill-column indicator glyphs overlaying otherwise blank text cells.
+    pub fill_column_indicators: Vec<GridFillColumnIndicator>,
     /// Bitmap face backgrounds referenced by `CellStyle::stipple`.
     pub stipples: Vec<GridStipple>,
     pub menus: Vec<GridMenu>,
@@ -362,6 +364,15 @@ pub struct Grid {
     pub hover_cursor: Option<GridPointerShape>,
     /// Unicode text and visible positions for the active OS text client.
     pub input: Option<GridInput>,
+}
+
+/// A buffer fill-column glyph positioned in a rendered grid row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridFillColumnIndicator {
+    pub row: usize,
+    pub column: usize,
+    pub character: char,
+    pub style: CellStyle,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -411,6 +422,7 @@ impl Grid {
             default_style: CellStyle::default(),
             rows: vec![String::new(); height],
             images: Vec::new(),
+            fill_column_indicators: Vec::new(),
             stipples: Vec::new(),
             menus: Vec::new(),
             tool_bar_items: Vec::new(),
@@ -657,6 +669,37 @@ fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
     i.buffer_local_toplevel_value(id, buffer)
         .or_else(|| i.default_toplevel_value(id))
         .unwrap_or(Value::Nil)
+}
+
+fn buffer_fill_column_indicator(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    faces: Option<&WindowFaces>,
+    buffer: usize,
+) -> Option<(usize, char, CellStyle)> {
+    if !buffer_setting(i, "display-fill-column-indicator", buffer).truthy() {
+        return None;
+    }
+    let Value::Int(character) = buffer_setting(i, "display-fill-column-indicator-character", buffer)
+    else {
+        return None;
+    };
+    let character = u32::try_from(character)
+        .ok()
+        .and_then(EmacsChar::new)
+        .and_then(EmacsChar::unicode)?;
+    let column = match buffer_setting(i, "display-fill-column-indicator-column", buffer) {
+        Value::Sym(symbol) if i.symbol_name(symbol) == "t" => {
+            buffer_setting(i, "fill-column", buffer).int()?
+        }
+        Value::Int(column) => column,
+        _ => return None,
+    };
+    let column = usize::try_from(column).ok()?;
+    let style = faces
+        .map(|faces| remapped_named_face(i, ctx, faces, "fill-column-indicator", 0).finish())
+        .unwrap_or_else(|| ctx.builtin(i, "fill-column-indicator", 0).finish());
+    Some((column, character, style))
 }
 
 fn line_prefix_at_pos(
@@ -4483,6 +4526,7 @@ fn render_grid_internal(
     let mut default_row_height = 19;
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
+    let mut fill_column_indicators = Vec::new();
     let menus = render_menu_bar(i);
     let mut tool_bar_items = Vec::new();
     let mut tab_bar_items = Vec::new();
@@ -4511,6 +4555,7 @@ fn render_grid_internal(
                 default_style,
                 rows,
                 images,
+                fill_column_indicators,
                 stipples: fctx.stipples,
                 menus,
                 tool_bar_items,
@@ -5068,6 +5113,8 @@ fn render_grid_internal(
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
+        let fill_column_indicator =
+            buffer_fill_column_indicator(i, &mut fctx, wf.as_ref(), buf_id);
         let buffer_line_spacing = buffer_setting(i, "line-spacing", buf_id);
         let default_spacing_value = if buffer_line_spacing.is_nil() {
             frame_line_spacing.clone()
@@ -5632,6 +5679,26 @@ fn render_grid_internal(
                     }
                 }
                 place_rendered_row(&mut screen_rows[y], content_left, &rendered);
+                if (!wrap_lines || segment_start == 0)
+                    && let Some((indicator_column, character, style)) = fill_column_indicator
+                    && indicator_column >= row_hscroll
+                {
+                    let visible_column = indicator_column - row_hscroll;
+                    if visible_column < content_width {
+                        let column = content_left.saturating_add(visible_column);
+                        if screen_rows[y]
+                            .get(column)
+                            .is_some_and(|cell| !cell.occupied)
+                        {
+                            fill_column_indicators.push(GridFillColumnIndicator {
+                                row: y,
+                                column,
+                                character,
+                                style,
+                            });
+                        }
+                    }
+                }
                 screen_row += 1;
             }
         }
@@ -5814,6 +5881,7 @@ fn render_grid_internal(
         default_style,
         rows,
         images,
+        fill_column_indicators,
         stipples: fctx.stipples,
         menus,
         tool_bar_items,

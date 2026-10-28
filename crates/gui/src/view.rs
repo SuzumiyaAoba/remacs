@@ -1317,6 +1317,73 @@ impl Render for EditorView {
                                 }
                             }
                         }
+                        for indicator in &grid.fill_column_indicators {
+                            let mut fill_font = composition_font.clone();
+                            if let Some(family) = indicator
+                                .style
+                                .font_family
+                                .and_then(|id| grid.font_families.get(id as usize))
+                            {
+                                fill_font.family = family.clone().into();
+                            }
+                            if let Some(weight) = indicator.style.font_weight {
+                                fill_font.weight = FontWeight(weight as f32);
+                            } else if indicator.style.bold {
+                                fill_font = fill_font.bold();
+                            }
+                            if let Some(width) = indicator.style.font_width {
+                                fill_font.stretch = FontStretch::from_percentage(width);
+                            }
+                            if indicator.style.italic {
+                                fill_font = fill_font.italic();
+                            }
+                            let (color, background_color) = style_colors(
+                                indicator.style,
+                                default_background,
+                                background_alpha,
+                            );
+                            let text = indicator.character.to_string();
+                            let line = window.text_system().shape_line(
+                                text.clone().into(),
+                                font_size,
+                                &[TextRun {
+                                    len: text.len(),
+                                    font: fill_font,
+                                    color,
+                                    background_color: if indicator.style.stipple.is_some() {
+                                        None
+                                    } else {
+                                        background_color
+                                    },
+                                    underline: indicator.style.underline.then(|| UnderlineStyle {
+                                        thickness: px(1.0),
+                                        color: indicator
+                                            .style
+                                            .underline_color
+                                            .map(|color| rgb(color_rgb(color)).into()),
+                                        wavy: indicator.style.underline_wave,
+                                    }),
+                                    strikethrough: indicator.style.strike.then(|| {
+                                        StrikethroughStyle {
+                                            thickness: px(1.0),
+                                            color: indicator
+                                                .style
+                                                .strike_color
+                                                .map(|color| rgb(color_rgb(color)).into()),
+                                        }
+                                    }),
+                                }],
+                                None,
+                            );
+                            let origin = point(
+                                bounds.left() + cell_width * indicator.column as f32,
+                                bounds.top()
+                                    + grid_row_top(&grid, indicator.row, line_height),
+                            );
+                            let row_height =
+                                grid_row_height(&grid, indicator.row, line_height);
+                            let _ = line.paint(origin, row_height, window, _cx);
+                        }
                         let fallback_cursor = grid.cursor.map(|(column, row)| {
                             let x = grid
                                 .cursor_index
