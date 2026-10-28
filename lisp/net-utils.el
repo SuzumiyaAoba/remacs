@@ -558,6 +558,7 @@ This command uses `nslookup-program' to look up DNS records."
                                       (and compression (list nil))
                                       right-parts))
                   (ipv4-tail (and text-parts
+                                  (stringp (car (last text-parts)))
                                   (string-match-p "\\."
                                                   (car (last text-parts)))))
                   (ipv4-octets (and ipv4-tail
