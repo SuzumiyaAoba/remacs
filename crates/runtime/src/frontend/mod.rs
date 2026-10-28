@@ -55,6 +55,13 @@ pub trait ColorPanelBackend {
     fn show_character_palette(&self, frame_id: usize) -> Result<(), String>;
 }
 
+/// Host application visibility bridge for NS hide commands.
+pub trait ApplicationVisibilityBackend {
+    fn hide(&self) -> Result<(), String>;
+    fn activate(&self) -> Result<(), String>;
+    fn hide_other_apps(&self) -> Result<(), String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),

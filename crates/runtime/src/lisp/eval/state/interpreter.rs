@@ -254,6 +254,8 @@ pub struct Interp {
     pub(crate) frame_window_backend: Option<Rc<dyn crate::frontend::FrameWindowBackend>>,
     /// Host native color panel bridge, installed by a GUI front-end.
     pub(crate) color_panel_backend: Option<Rc<dyn crate::frontend::ColorPanelBackend>>,
+    /// Host application hide/show bridge, installed by a GUI front-end.
+    pub(crate) application_visibility_backend: Option<Rc<dyn crate::frontend::ApplicationVisibilityBackend>>,
     /// NS selection values retained for local selection reads and ownership checks.
     pub(crate) nsgui_selections: HashMap<SymId, Value>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.

@@ -325,6 +325,24 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::HideApp { hide, reply } => {
+                        let result = cx
+                            .update(|app| {
+                                if hide {
+                                    app.hide();
+                                } else {
+                                    app.activate(false);
+                                }
+                            })
+                            .map_err(|error| error.to_string());
+                        let _ = reply.send(result);
+                    }
+                    GuiRequest::HideOtherApps(reply) => {
+                        let result = cx
+                            .update(|app| app.hide_other_apps())
+                            .map_err(|error| error.to_string());
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::FileDialog {
                         prompt,
                         directory,

@@ -46,6 +46,14 @@ impl Interp {
         self.color_panel_backend = backend;
     }
 
+    /// Install or remove the host application visibility backend.
+    pub fn set_application_visibility_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::ApplicationVisibilityBackend>>,
+    ) {
+        self.application_visibility_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

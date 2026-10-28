@@ -534,13 +534,34 @@ macro_rules! winsys_fn {
 
 winsys_fn!(f_ns_get_resource);
 winsys_fn!(f_ns_set_resource);
-winsys_fn!(f_ns_hide_emacs);
-winsys_fn!(f_ns_hide_others);
 winsys_fn!(f_ns_emacs_info_panel);
 winsys_fn!(f_ns_frame_edges);
 winsys_fn!(f_ns_frame_geometry);
 winsys_fn!(f_ns_mouse_absolute_pixel_position);
 winsys_fn!(f_ns_set_mouse_absolute_pixel_position);
+
+fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let Some(backend) = i.application_visibility_backend.clone() else {
+        return Err(winsys(i));
+    };
+    let result = if a[0].truthy() {
+        backend.hide()
+    } else {
+        backend.activate()
+    };
+    result.map_err(|error| i.error(format!("Application visibility failed: {error}")))?;
+    Ok(Value::Nil)
+}
+
+fn f_ns_hide_others(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let Some(backend) = i.application_visibility_backend.clone() else {
+        return Err(winsys(i));
+    };
+    backend
+        .hide_other_apps()
+        .map_err(|error| i.error(format!("Hiding other applications failed: {error}")))?;
+    Ok(Value::Nil)
+}
 
 fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     fn optional_string(i: &mut Interp, value: Option<&Value>) -> Result<Option<String>, Flow> {

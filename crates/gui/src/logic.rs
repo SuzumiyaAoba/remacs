@@ -165,6 +165,11 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
     },
+    HideApp {
+        hide: bool,
+        reply: SyncSender<Result<(), String>>,
+    },
+    HideOtherApps(SyncSender<Result<(), String>>),
     Prompt {
         frame_id: usize,
         message: String,
@@ -342,6 +347,44 @@ impl remacs_runtime::frontend::ColorPanelBackend for GuiColorPanelBackend {
         response
             .recv()
             .map_err(|_| "GUI character palette service stopped".to_owned())?
+    }
+}
+
+struct GuiApplicationVisibilityBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::ApplicationVisibilityBackend
+    for GuiApplicationVisibilityBackend
+{
+    fn hide(&self) -> Result<(), String> {
+        self.request_hide(true)
+    }
+
+    fn activate(&self) -> Result<(), String> {
+        self.request_hide(false)
+    }
+
+    fn hide_other_apps(&self) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::HideOtherApps(reply))
+            .map_err(|_| "GUI application service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI application service stopped".to_owned())?
+    }
+}
+
+impl GuiApplicationVisibilityBackend {
+    fn request_hide(&self, hide: bool) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::HideApp { hide, reply })
+            .map_err(|_| "GUI application service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI application service stopped".to_owned())?
     }
 }
 
@@ -1288,6 +1331,11 @@ fn start_logic_inner(
                 i.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {
                     requests: gui_requests_tx.clone(),
                 })));
+                i.set_application_visibility_backend(Some(Rc::new(
+                    GuiApplicationVisibilityBackend {
+                        requests: gui_requests_tx.clone(),
+                    },
+                )));
             }
             let _ = startup_tx.send(Ok(()));
             let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
