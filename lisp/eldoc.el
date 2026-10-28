@@ -722,6 +722,7 @@ This is meant to be used as a value for `eldoc-documentation-strategy'."
                         (push (cons f (eldoc--make-callback :patient f))
                               fns-and-callbacks)
                         nil))
+    (setq fns-and-callbacks (nreverse fns-and-callbacks))
     ;; Now call them.  The last one will trigger the display.
     (cl-loop for (f . callback) in fns-and-callbacks
              for str = (funcall f callback)
