@@ -2986,10 +2986,17 @@ fn render_grid_internal(
     let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;
 
     for w in &fb.windows {
-        let (buf_id, start, hscroll, raw_left, raw_top, raw_width, raw_height) = {
+        let (buf_id, start, hscroll, raw_left, raw_top, raw_width, raw_height, margins) = {
             let wb = w.borrow();
             (
-                wb.buffer, wb.start, wb.hscroll, wb.left, wb.top, wb.width, wb.height,
+                wb.buffer,
+                wb.start,
+                wb.hscroll,
+                wb.left,
+                wb.top,
+                wb.width,
+                wb.height,
+                wb.margins,
             )
         };
         let window_left = scale_edge(raw_left, root_left, scale_x, width);
@@ -3007,6 +3014,13 @@ fn render_grid_internal(
             body_height,
         );
         let window_width = window_right.saturating_sub(window_left);
+        let margin_left = margins.0.min(window_width.saturating_sub(1));
+        let margin_right = margins
+            .1
+            .min(window_width.saturating_sub(margin_left.saturating_add(1)));
+        let content_left_with_margin = window_left.saturating_add(margin_left);
+        let content_width_with_margins =
+            window_width.saturating_sub(margin_left.saturating_add(margin_right));
         let available_height = body_height.saturating_sub(window_top);
         let window_height = window_bottom
             .saturating_sub(window_top)
@@ -3053,12 +3067,13 @@ fn render_grid_internal(
         let gutter_width = if line_number_mode.truthy() {
             line_number_width
                 .saturating_add(1)
-                .min(window_width.saturating_sub(1))
+                .min(content_width_with_margins.saturating_sub(1))
         } else {
             0
         };
-        let content_left = window_left.saturating_add(gutter_width);
-        let content_width = window_width.saturating_sub(gutter_width);
+        let gutter_left = content_left_with_margin;
+        let content_left = gutter_left.saturating_add(gutter_width);
+        let content_width = content_width_with_margins.saturating_sub(gutter_width);
         let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
         let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
         let text_rows = window_height
@@ -3374,7 +3389,7 @@ fn render_grid_internal(
                     let prefix_chars = prefix.chars().map(|_| number_style).collect::<Vec<_>>();
                     place_text_row(
                         &mut screen_rows[y],
-                        window_left,
+                        gutter_left,
                         &prefix,
                         &prefix_cells,
                         &prefix_chars,
