@@ -414,17 +414,19 @@ This invokes `global-text-scale-adjust', which see."
 (defun mouse-wheel--add-binding (key fun)
   "Bind mouse wheel button KEY to function FUN.
 Save it for later removal by `mouse-wheel--remove-bindings'."
-  (global-set-key key fun)
-  (push (cons key fun) mouse-wheel--installed-bindings-alist))
+  (let ((old-binding (lookup-key (current-global-map) key)))
+    (global-set-key key fun)
+    (push (list key fun old-binding) mouse-wheel--installed-bindings-alist)))
 
 (defun mouse-wheel--remove-bindings ()
   "Remove all mouse wheel key bindings.
 This is a helper function for `mouse-wheel-mode'."
   (dolist (binding mouse-wheel--installed-bindings-alist)
-    (let ((key (car binding))
-          (fun (cdr binding)))
+    (let ((key (nth 0 binding))
+          (fun (nth 1 binding))
+          (old-binding (nth 2 binding)))
      (when (eq (lookup-key (current-global-map) key) fun)
-       (global-unset-key key))))
+       (define-key (current-global-map) key old-binding))))
   (setq mouse-wheel--installed-bindings-alist nil))
 
 (defun mouse-wheel--create-scroll-keys (binding event)
