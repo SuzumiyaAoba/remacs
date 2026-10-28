@@ -3850,7 +3850,8 @@ This function does not need to be invoked by the end user."
 	 (if (listp comint-redirect-output-buffer)
              comint-redirect-output-buffer
 	   (list comint-redirect-output-buffer)))
-	(filtered-input-string input-string))
+	(filtered-input-string input-string)
+        completed)
 
     ;; If there are any filter functions, give them a chance to modify
     ;; the string.
@@ -3893,15 +3894,16 @@ This function does not need to be invoked by the end user."
     ;; If we see the prompt, tidy up
     ;; We'll look for the prompt in the original string, so nobody can
     ;; clobber it
-    (and (string-match comint-redirect-finished-regexp
+    (when (setq completed (string-match comint-redirect-finished-regexp
                        (concat comint-redirect-previous-input-string
-                               input-string))
+                               input-string)))
 	 (progn
 	   (and comint-redirect-verbose
 		(message "Redirection completed"))
 	   (comint-redirect-cleanup)
 	   (run-hooks 'comint-redirect-hook)))
-    (setq comint-redirect-previous-input-string input-string)
+    (unless completed
+      (setq comint-redirect-previous-input-string input-string))
 
     ;; Echo input?
     (if comint-redirect-echo-input
