@@ -384,5 +384,10 @@ fn configure_ns_window_system(i: &mut Interp) {
             value,
         );
         frame.borrow_mut().params = params;
+        let update_faces = i.intern("frame-set-background-mode");
+        let _ = i.apply(
+            &remacs_runtime::lisp::Value::Sym(update_faces),
+            vec![remacs_runtime::lisp::Value::Frame(frame)],
+        );
     }
 }

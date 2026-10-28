@@ -892,7 +892,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_selected_frame,
         "The selected frame."
     ),
-    S!("framep", 1, 1, f_framep, "t if OBJECT is a frame."),
+    S!("framep", 1, 1, f_framep, "Display type of OBJECT if it is a frame."),
     S!("frame-live-p", 1, 1, f_frame_live_p, "t if FRAME is live."),
     S!("frame-list", 0, 0, f_frame_list, "All live frames."),
     S!("visible-frame-list", 0, 0, f_frame_list, ""),
@@ -5861,9 +5861,38 @@ fn f_display_pred_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
+fn frame_parameter_value(i: &Interp, frame: &crate::editor::FrameRef, name: &str) -> Value {
+    let Some(parameter) = i.intern_soft(name) else {
+        return Value::Nil;
+    };
+    let params = frame.borrow().params.clone();
+    crate::lisp::eval::plist_get_v(&params, &Value::Sym(parameter))
+}
+
+pub(crate) fn frame_system_type(i: &Interp, frame: &crate::editor::FrameRef) -> Value {
+    let window_system = frame_parameter_value(i, frame, "window-system");
+    if window_system.is_nil() {
+        Value::t()
+    } else {
+        window_system
+    }
+}
+
+pub(crate) fn frame_is_graphical(i: &Interp, frame: &crate::editor::FrameRef) -> bool {
+    let system = frame_parameter_value(i, frame, "window-system");
+    match system {
+        Value::Sym(system) => matches!(
+            i.symbol_name(system).as_str(),
+            "x" | "w32" | "ns" | "pgtk" | "haiku" | "android" | "gpui"
+        ),
+        _ => false,
+    }
+}
+
 fn f_display_color_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // TTY batch session: no color.
-    f_display_pred_nil(i, a)
+    let display = a.get(0).cloned().unwrap_or(Value::Nil);
+    let frame = crate::lisp::builtins::misc::decode_display(i, &display)?;
+    Ok(Value::from_bool(frame_is_graphical(i, &frame)))
 }
 
 fn f_selected_frame(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -5872,8 +5901,11 @@ fn f_selected_frame(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         None => Ok(Value::Nil),
     }
 }
-fn f_framep(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(matches!(&a[0], Value::Frame(_))))
+fn f_framep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    match &a[0] {
+        Value::Frame(frame) => Ok(frame_system_type(i, frame)),
+        _ => Ok(Value::Nil),
+    }
 }
 fn f_frame_live_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match &a[0] {
@@ -6369,8 +6401,8 @@ fn desc_rgb(i: &mut Interp, color: &Value, frame: &Value) -> EvalResult {
 /// nil on a tty.
 fn f_display_graphic_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let v = a.get(0).cloned().unwrap_or(Value::Nil);
-    let _ = crate::lisp::builtins::misc::decode_display(i, &v)?;
-    Ok(Value::Nil)
+    let frame = crate::lisp::builtins::misc::decode_display(i, &v)?;
+    Ok(Value::from_bool(frame_is_graphical(i, &frame)))
 }
 
 fn f_color_values(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

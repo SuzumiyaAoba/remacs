@@ -192,6 +192,7 @@ use display::{
     f_window_in_direction, f_window_left_column, f_window_line, f_window_main_window,
     f_window_max_chars, f_window_norm_buffer, f_window_norm_frame, f_window_normalize,
     f_window_preserve_size, f_window_sizable, f_window_with_parameter, f_windowp_nil,
+    f_xw_display_color_p,
 };
 mod faces;
 use faces::{
@@ -1176,7 +1177,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-open-connection", 1, 3, f_x_open_connection, ""),
     S!("x-close-connection", 1, 1, f_x_close_connection, ""),
     S!("x-display-list", 0, 0, f_nil, ""),
-    S!("xw-display-color-p", 0, 1, f_ns_display, ""),
+    S!("xw-display-color-p", 0, 1, f_xw_display_color_p, ""),
     S!("xw-color-defined-p", 1, 2, f_xw_color_defined_p, ""),
     S!("color-gray-p", 1, 2, f_color_gray_p, ""),
     S!("color-supported-p", 1, 3, f_color_defined_p, ""),

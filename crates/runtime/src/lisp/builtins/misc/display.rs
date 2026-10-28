@@ -407,6 +407,16 @@ pub(super) fn f_ns_display(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+/// GPUI's graphical frames expose the usual color display predicate
+/// through their `display-type' frame parameter.
+pub(super) fn f_xw_display_color_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = a.first().cloned().unwrap_or(Value::Nil);
+    let frame = decode_display(i, &display)?;
+    Ok(Value::from_bool(
+        crate::editor::frame_is_graphical(i, &frame),
+    ))
+}
+
 /// `scroll-bar-scale' — first arg is a cons (LISTP check), returns 0
 /// when there are no scroll bars.
 pub(super) fn f_scroll_bar_scale(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

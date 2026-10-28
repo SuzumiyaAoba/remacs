@@ -2811,13 +2811,20 @@ fn f_controlling_tty_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_terminal_live_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // Our only terminal is the singleton record (nil = default
-    // terminal); a live frame means its terminal is live.
-    Ok(Value::from_bool(match &a[0] {
-        Value::Nil => true,
-        Value::Frame(f) => !f.borrow().dead,
-        v => is_terminal(i, v),
-    }))
+    // A live terminal returns its window-system type (t for a text
+    // terminal), as GNU does; nil selects the current terminal.
+    let default_terminal = a[0].is_nil() || is_terminal(i, &a[0]);
+    let frame = match &a[0] {
+        Value::Nil => i.selected_frame.clone(),
+        Value::Frame(frame) if !frame.borrow().dead => Some(frame.clone()),
+        value if is_terminal(i, value) => i.selected_frame.clone(),
+        _ => None,
+    };
+    Ok(match frame {
+        Some(frame) => crate::editor::frame_system_type(i, &frame),
+        None if default_terminal => Value::t(),
+        None => Value::Nil,
+    })
 }
 
 fn f_uncombine_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
