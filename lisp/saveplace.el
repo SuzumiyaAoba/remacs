@@ -311,7 +311,9 @@ file:
                                      (boundp 'dired-subdir-alist)
 				     dired-subdir-alist
 				     (dired-current-directory))))
-      (message "Buffer `%s' not visiting a file or directory" (buffer-name))
+      (progn
+        (setq-local save-place-mode nil)
+        (message "Buffer `%s' not visiting a file or directory" (buffer-name)))
     (save-place--setup-hooks save-place-mode)
     (save-place--manage-timer)))
 
