@@ -921,7 +921,7 @@ The following %-sequences are provided:
 %m Remaining time (to charge or discharge) in minutes
 %h Remaining time (to charge or discharge) in hours
 %t Remaining time (to charge or discharge) in the form `h:min'"
-  (let ((count 0) props type line-status state load temperature
+  (let ((count 0) props type line-status state load temperature temperature-count
         secs mins hrs total-energy total-energy-full total-weighted-energy
         total-weighted-count total-rate total-tte total-ttf)
     ;; Merge information from all available or specified UPower
@@ -956,7 +956,9 @@ The following %-sequences are provided:
                      (or energy (* energy-full (/ percent 100.0))))))
           (when rate    (setq total-rate   (+ (or total-rate   0) rate)))
           (when percent (setq load         (+ (or load         0) percent)))
-          (when temp    (setq temperature  (+ (or temperature  0) temp)))
+          (when (and temp (/= temp 0))
+            (setq temperature-count (1+ (or temperature-count 0)))
+            (setq temperature (+ (or temperature 0) temp)))
           (when tte     (setq total-tte    (+ (or total-tte    0) tte)))
           (when ttf     (setq total-ttf    (+ (or total-ttf    0) ttf)))))))
     (cond
@@ -965,8 +967,8 @@ The following %-sequences are provided:
            (> (or total-energy-full 0) 0))
       (setq load (* 100.0 (/ total-weighted-energy total-energy-full)))
      (load (setq load (/ load count))))
-    (when (and (> count 1) temperature)
-      (setq temperature (/ temperature count)))
+    (when temperature-count
+      (setq temperature (/ temperature temperature-count)))
     (when (setq secs (if (eq line-status 'online) total-ttf total-tte))
       (setq mins (/ secs 60))
       (setq hrs (/ secs 3600)))
