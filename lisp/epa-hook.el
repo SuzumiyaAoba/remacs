@@ -80,7 +80,9 @@ After setting `epa-file-name-regexp-update' outside the Custom
 interface, update `file-name-handler-alist'."
   (interactive)
   (unless (equal (car epa-file-handler) epa-file-name-regexp)
-    (setcar epa-file-handler epa-file-name-regexp)))
+    (setcar epa-file-handler epa-file-name-regexp))
+  (unless (equal (car epa-file-auto-mode-alist-entry) epa-file-name-regexp)
+    (setcar epa-file-auto-mode-alist-entry epa-file-name-regexp)))
 
 (defun epa-file-find-file-hook ()
   (if (and buffer-file-name

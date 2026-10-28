@@ -25472,7 +25472,9 @@ No problems result if this variable is not bound.
   "Update `file-name-handler-alist' after configuring outside Custom.\nAfter setting `epa-file-name-regexp-update' outside the Custom\ninterface, update `file-name-handler-alist'."
   (interactive)
   (unless (equal (car epa-file-handler) epa-file-name-regexp)
-    (setcar epa-file-handler epa-file-name-regexp)))
+    (setcar epa-file-handler epa-file-name-regexp))
+  (unless (equal (car epa-file-auto-mode-alist-entry) epa-file-name-regexp)
+    (setcar epa-file-auto-mode-alist-entry epa-file-name-regexp)))
 
 (defun epa-file-find-file-hook nil
   (if
