@@ -10,7 +10,7 @@ use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
     GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
-    GridPointerShape, MouseButton as RemacsMouseButton,
+    GridPointerShape, GridStipple, MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 use std::{cell::Cell, rc::Rc};
@@ -985,7 +985,11 @@ impl Render for EditorView {
                                             len,
                                             font: f,
                                             color: fg,
-                                            background_color: bg,
+                                            background_color: if st.stipple.is_some() {
+                                                None
+                                            } else {
+                                                bg
+                                            },
                                             underline: st.underline.then(|| UnderlineStyle {
                                                 thickness: px(1.0),
                                                 color: st
@@ -1053,6 +1057,16 @@ impl Render for EditorView {
                             let origin = point(
                                 bounds.left(),
                                 bounds.top() + grid_row_top(&grid, y, line_height),
+                            );
+                            paint_stipple_backgrounds(
+                                &grid,
+                                y,
+                                line,
+                                bounds,
+                                grid_row_top(&grid, y, line_height),
+                                grid_row_height(&grid, y, line_height),
+                                default_background,
+                                window,
                             );
                             let _ = line.paint(origin, line_height, window, _cx);
                             paint_face_boxes(
@@ -1488,6 +1502,132 @@ fn mouse_modifier_bits(modifiers: &Modifiers) -> i128 {
         bits |= CHAR_SUPER;
     }
     bits
+}
+
+fn stipple_bit(stipple: &GridStipple, x: usize, y: usize) -> bool {
+    let width = usize::from(stipple.width);
+    let height = usize::from(stipple.height);
+    if width == 0 || height == 0 {
+        return false;
+    }
+    let row_bytes = width.div_ceil(8);
+    let index = (y % height) * row_bytes + (x % width) / 8;
+    stipple
+        .data
+        .get(index)
+        .is_some_and(|byte| byte & (1 << ((x % width) % 8)) != 0)
+}
+
+fn paint_stipple_region(
+    stipple: &GridStipple,
+    style: remacs_runtime::frontend::CellStyle,
+    left: Pixels,
+    width: Pixels,
+    row_top: Pixels,
+    row_height: Pixels,
+    bounds: Bounds<Pixels>,
+    default_background: u32,
+    window: &mut Window,
+) {
+    let width_px = f32::from(width).ceil().max(0.0) as usize;
+    let height_px = f32::from(row_height).ceil().max(0.0) as usize;
+    if width_px == 0 || height_px == 0 {
+        return;
+    }
+    let origin = point(bounds.left() + left, bounds.top() + row_top);
+    let (foreground, background) = style_colors(style, default_background);
+    window.paint_quad(fill(
+        Bounds {
+            origin,
+            size: size(px(width_px as f32), px(height_px as f32)),
+        },
+        background.unwrap_or_else(|| rgb(default_background).into()),
+    ));
+
+    let origin_x = f32::from(origin.x).floor() as isize;
+    let origin_y = f32::from(origin.y).floor() as isize;
+    let stipple_width = usize::from(stipple.width).max(1) as isize;
+    let stipple_height = usize::from(stipple.height).max(1) as isize;
+    for y in 0..height_px {
+        let pattern_y = (origin_y + y as isize).rem_euclid(stipple_height) as usize;
+        let mut x = 0usize;
+        while x < width_px {
+            let pattern_x = (origin_x + x as isize).rem_euclid(stipple_width) as usize;
+            if !stipple_bit(stipple, pattern_x, pattern_y) {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            x += 1;
+            while x < width_px {
+                let pattern_x = (origin_x + x as isize).rem_euclid(stipple_width) as usize;
+                if !stipple_bit(stipple, pattern_x, pattern_y) {
+                    break;
+                }
+                x += 1;
+            }
+            window.paint_quad(fill(
+                Bounds {
+                    origin: point(origin.x + px(start as f32), origin.y + px(y as f32)),
+                    size: size(px((x - start) as f32), px(1.0)),
+                },
+                foreground,
+            ));
+        }
+    }
+}
+
+fn paint_stipple_backgrounds(
+    grid: &Grid,
+    row_index: usize,
+    line: &ShapedLine,
+    bounds: Bounds<Pixels>,
+    row_top: Pixels,
+    row_height: Pixels,
+    default_background: u32,
+    window: &mut Window,
+) {
+    let Some(text) = grid.rows.get(row_index) else {
+        return;
+    };
+    let Some(styles) = grid
+        .char_attrs
+        .get(row_index)
+        .filter(|styles| !styles.is_empty())
+        .or_else(|| grid.attrs.get(row_index))
+    else {
+        return;
+    };
+    for (index, (byte, character)) in text.char_indices().enumerate() {
+        let Some(style) = styles.get(index).copied() else {
+            continue;
+        };
+        let Some(stipple) = style
+            .stipple
+            .and_then(|stipple| grid.stipples.get(stipple as usize))
+        else {
+            continue;
+        };
+        let end = byte + character.len_utf8();
+        let start_x = line.x_for_index(byte);
+        let end_x = line.x_for_index(end);
+        let (left, width) = if end_x >= start_x {
+            (start_x, end_x - start_x)
+        } else {
+            (end_x, start_x - end_x)
+        };
+        paint_stipple_region(
+            stipple,
+            style,
+            left,
+            width,
+            row_top,
+            row_height,
+            bounds,
+            default_background,
+            window,
+        );
+    }
 }
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'

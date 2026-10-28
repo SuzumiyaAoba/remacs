@@ -63,6 +63,8 @@ pub struct CellStyle {
     /// Explicit font height in tenths of a point.
     pub font_height: Option<u16>,
     pub box_style: Option<BoxStyle>,
+    /// Index into `Grid::stipples` for a bitmap background pattern.
+    pub stipple: Option<u16>,
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
@@ -101,6 +103,14 @@ pub struct GridCursor {
     pub thickness: usize,
     pub color: Option<CellColor>,
     pub selected: bool,
+}
+
+/// A 1-bit bitmap used as a face background stipple.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GridStipple {
+    pub width: u16,
+    pub height: u16,
+    pub data: Arc<[u8]>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -215,6 +225,7 @@ struct StyleMix {
     font_width: Option<u8>,
     font_height: Option<u16>,
     box_style: Option<Option<BoxStyle>>,
+    stipple: Option<Option<u16>>,
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
@@ -243,6 +254,7 @@ impl StyleMix {
             font_width,
             font_height,
             box_style,
+            stipple,
             bold,
             italic,
             underline,
@@ -265,6 +277,7 @@ impl StyleMix {
             font_width: self.font_width,
             font_height: self.font_height,
             box_style: self.box_style.flatten(),
+            stipple: self.stipple.flatten(),
             bold: self.bold.unwrap_or(false),
             italic: self.italic.unwrap_or(false),
             underline: self.underline.unwrap_or(false),
@@ -288,6 +301,7 @@ impl PartialEq for StyleMix {
             && self.font_width == o.font_width
             && self.font_height == o.font_height
             && self.box_style == o.box_style
+            && self.stipple == o.stipple
             && self.bold == o.bold
             && self.italic == o.italic
             && self.underline == o.underline
@@ -315,6 +329,8 @@ pub struct Grid {
     pub rows: Vec<String>,
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
+    /// Bitmap face backgrounds referenced by `CellStyle::stipple`.
+    pub stipples: Vec<GridStipple>,
     pub menus: Vec<GridMenu>,
     pub tool_bar_items: Vec<GridToolBarItem>,
     pub tab_bar_items: Vec<GridTabBarItem>,
@@ -395,6 +411,7 @@ impl Grid {
             default_style: CellStyle::default(),
             rows: vec![String::new(); height],
             images: Vec::new(),
+            stipples: Vec::new(),
             menus: Vec::new(),
             tool_bar_items: Vec::new(),
             tab_bar_items: Vec::new(),
@@ -2716,6 +2733,9 @@ struct FaceCtx {
     /// Face family names interned for compact, copyable cell styles.
     font_families: Vec<String>,
     font_family_ids: HashMap<String, u16>,
+    /// Bitmap face backgrounds interned for compact cell styles.
+    stipples: Vec<GridStipple>,
+    stipple_ids: HashMap<GridStipple, u16>,
     /// Resolved face name -> merged StyleMix.
     cache: HashMap<crate::lisp::value::SymId, StyleMix>,
 }
@@ -2791,6 +2811,8 @@ impl FaceCtx {
             colors,
             font_families: Vec::new(),
             font_family_ids: HashMap::new(),
+            stipples: Vec::new(),
+            stipple_ids: HashMap::new(),
             cache: HashMap::new(),
         }
     }
@@ -2837,6 +2859,53 @@ impl FaceCtx {
         self.font_families.push(family.clone());
         self.font_family_ids.insert(family, id);
         Some(id)
+    }
+
+    fn stipple_id(&mut self, value: &Value) -> Option<Option<u16>> {
+        if value.is_nil() {
+            return Some(None);
+        }
+        let values = match value {
+            Value::Vec(vector) => vector.borrow().clone(),
+            Value::Cons(_) => value.list_to_vec().ok()?,
+            _ => return None,
+        };
+        if values.len() != 3 {
+            return None;
+        }
+        let width = usize::try_from(values[0].int()?.max(1)).ok()?;
+        let height = usize::try_from(values[1].int()?.max(1)).ok()?;
+        let width = u16::try_from(width).ok()?;
+        let height = u16::try_from(height).ok()?;
+        let Value::Str(data) = &values[2] else {
+            return None;
+        };
+        let bytes: Vec<u8> = data
+            .borrow()
+            .chars()
+            .map(|character| {
+                character
+                    .byte8()
+                    .or_else(|| u8::try_from(character.code()).ok())
+            })
+            .collect::<Option<_>>()?;
+        let row_bytes = usize::from(width).div_ceil(8);
+        let data_len = row_bytes.checked_mul(usize::from(height))?;
+        if bytes.len() < data_len {
+            return None;
+        }
+        let stipple = GridStipple {
+            width,
+            height,
+            data: Arc::<[u8]>::from(bytes[..data_len].to_vec()),
+        };
+        if let Some(id) = self.stipple_ids.get(&stipple) {
+            return Some(Some(*id));
+        }
+        let id = u16::try_from(self.stipples.len()).ok()?;
+        self.stipples.push(stipple.clone());
+        self.stipple_ids.insert(stipple, id);
+        Some(Some(id))
     }
 
     fn parse_box_style(&self, i: &Interp, value: &Value) -> Option<BoxStyle> {
@@ -2971,6 +3040,7 @@ impl FaceCtx {
                 }
                 ":width" => mix.font_width = font_width_percent(i, v),
                 ":height" => mix.font_height = font_height_tenths(v),
+                ":stipple" => mix.stipple = self.stipple_id(v),
                 ":box" => mix.box_style = Some(self.parse_box_style(i, v)),
                 ":slant" => mix.italic = Some(slant_italic(i, v)),
                 ":underline" => {
@@ -4263,6 +4333,7 @@ fn render_grid_internal(
                 default_style,
                 rows,
                 images,
+                stipples: fctx.stipples,
                 menus,
                 tool_bar_items,
                 tab_bar_items,
@@ -5565,6 +5636,7 @@ fn render_grid_internal(
         default_style,
         rows,
         images,
+        stipples: fctx.stipples,
         menus,
         tool_bar_items,
         tab_bar_items,

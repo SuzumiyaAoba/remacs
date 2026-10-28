@@ -213,7 +213,7 @@ pub use command::{
 };
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridCursor, GridCursorShape, GridHelpEcho,
-    GridImage, GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu,
+    GridImage, GridImageSource, GridInput, GridInputRow, GridInputSelection, GridMenu, GridStipple,
     GridPointerShape,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, render_frame_grid_with_input_cached,
