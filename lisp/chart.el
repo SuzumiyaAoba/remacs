@@ -689,7 +689,7 @@ DIR is assumed to be a directory, verified by the caller."
 			       (current-buffer) nil)
           (goto-char (point-min))
           (message "Scanning output ...")
-          (while (re-search-forward "^\\([0-9]+\\)[ \t]+\\([^ \n]+\\)$" nil t)
+          (while (re-search-forward "^\\([0-9]+\\)[ \t]+\\(.*\\)$" nil t)
             (let* ((nam (buffer-substring (match-beginning 2) (match-end 2)))
 	           (num (buffer-substring (match-beginning 1) (match-end 1))))
 	      (setq nmlst (cons nam nmlst)
