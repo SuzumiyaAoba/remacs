@@ -397,6 +397,7 @@ fn f_get_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // for the buffer (1-based pos).
     match a.get(1) {
         Some(Value::Str(s)) => {
+            let unibyte = i.is_unibyte_str(s);
             let s = s.borrow().clone();
             let pos = match &a[0] {
                 // GNU: nil POSITION → 0 for the string case.
@@ -416,6 +417,10 @@ fn f_get_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 ));
             };
             if c < 128 {
+                Ok(Value::Int(c as i128))
+            } else if unibyte && c <= 255 {
+                // Bytes in an unibyte string are represented by their
+                // unsigned byte values, not multibyte eight-bit proxies.
                 Ok(Value::Int(c as i128))
             } else if let Some(b) = char::from_u32(c).and_then(crate::lisp::value::eight_bit_byte) {
                 // GNU returns the byte value of eight-bit chars.
@@ -450,6 +455,8 @@ fn f_get_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 },
                 Some(other) => return Err(i.wrong_type_mut("integer-or-marker-p", other)),
             };
+            let multibyte_symbol = i.q("enable-multibyte-characters");
+            let unibyte = !i.symbol_value(multibyte_symbol).truthy();
             let b = cur(i);
             let bb = b.borrow();
             // GNU: an explicit POSITION must satisfy BEGV <= pos < ZV and
@@ -480,6 +487,9 @@ fn f_get_byte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 (bb.text.char_at(pos as usize - 1)).code() as u32
             };
             if c < 128 {
+                Ok(Value::Int(c as i128))
+            } else if unibyte && c <= 255 {
+                // Unibyte buffers likewise contain raw 8-bit byte values.
                 Ok(Value::Int(c as i128))
             } else if let Some(b) = char::from_u32(c).and_then(crate::lisp::value::eight_bit_byte) {
                 Ok(Value::Int(b as i128))
