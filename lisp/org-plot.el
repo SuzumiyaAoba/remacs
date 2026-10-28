@@ -38,6 +38,10 @@
 (require 'org)
 (require 'org-table)
 
+(defun org-plot--gnuplot-quote-string (string)
+  "Escape single quotes in STRING for a single-quoted Gnuplot string."
+  (replace-regexp-in-string "'" "''" string t t))
+
 (declare-function gnuplot-mode "ext:gnuplot" ())
 (declare-function gnuplot-send-buffer-to-gnuplot "ext:gnuplot" ())
 
@@ -332,15 +336,16 @@ parameters used by the current plot type (see
 			       (and deps (not (member (1+ col) deps)))))
 		(setf res
 		      (cons
-		       (format plot-str data-file
+		       (format plot-str (org-plot--gnuplot-quote-string data-file)
 			       (or (and ind (> ind 0)
 					(not text-ind)
 					(format "%d:" ind)) "")
 			       (1+ col)
 			       (if text-ind (format ":xticlabel(%d)" ind) "")
 			       with
-			       (or (nth col col-labels)
-				   (format "%d" (1+ col))))
+			       (org-plot--gnuplot-quote-string
+				(or (nth col col-labels)
+				    (format "%d" (1+ col)))))
 		       res)))))))
     (3d :plot-cmd "splot"
 	:plot-pre (lambda (_table _data-file _num-cols params _plot-str)
@@ -350,7 +355,7 @@ parameters used by the current plot type (see
 	  (let* ((type (plist-get params :plot-type))
 		 (with (if (eq type 'grid) 'pm3d (plist-get params :with))))
 	    (list (format "'%s' matrix with %s title ''"
-			  data-file with)))))
+			  (org-plot--gnuplot-quote-string data-file) with)))))
     (grid :plot-cmd "splot"
 	  :plot-pre (lambda (_table _data-file _num-cols params _plot-str)
 		      (if (plist-get params :map) "set pm3d map" "set map"))
@@ -363,7 +368,7 @@ parameters used by the current plot type (see
 	    (let* ((type (plist-get params :plot-type))
 		   (with (if (eq type 'grid) 'pm3d (plist-get params :with))))
 	      (list (format "'%s' with %s title ''"
-			    data-file with)))))
+			    (org-plot--gnuplot-quote-string data-file) with)))))
     (radar :plot-func
 	   (lambda (table _data-file _num-cols params plot-str)
 	     (list (org--plot/radar table params)))))
@@ -587,7 +592,9 @@ manner suitable for prepending to a user-specified script."
 			       org-plot/gnuplot-term-extra
 			     (funcall org-plot/gnuplot-term-extra type))))
       (when file ; output file
-	(funcall ats (format "set output '%s'" (expand-file-name file))))
+	(funcall ats (format "set output '%s'"
+			     (org-plot--gnuplot-quote-string
+			      (expand-file-name file))))
 
       (when plot-pre
 	(funcall ats (funcall plot-pre table data-file num-cols params plot-str)))
@@ -597,7 +604,9 @@ manner suitable for prepending to a user-specified script."
 		   org-plot/gnuplot-script-preamble
 		 (funcall org-plot/gnuplot-script-preamble type)))
 
-      (when title (funcall ats (format "set title '%s'" title))) ; title
+      (when title
+	(funcall ats (format "set title '%s'"
+			     (org-plot--gnuplot-quote-string title)))) ; title
       (mapc ats lines)					       ; line
       (dolist (el sets) (funcall ats (format "set %s" el)))      ; set
       ;; Unless specified otherwise, values are TAB separated.

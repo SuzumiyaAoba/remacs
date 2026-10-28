@@ -81,6 +81,10 @@
   :type '(repeat (cons (symbol :tag "File extension")
 		       (string :tag "Gnuplot terminal"))))
 
+(defun org-babel-gnuplot-quote-string (string)
+  "Escape single quotes in STRING for a single-quoted Gnuplot string."
+  (replace-regexp-in-string "'" "''" string t t))
+
 (defun org-babel-gnuplot-process-vars (params)
   "Extract variables from PARAMS and process the variables.
 Dumps all vectors into files and returns an association list
@@ -145,8 +149,13 @@ code."
 	   (directory default-directory)
 	   (add-to-body (lambda (text) (setq body (concat text "\n" body)))))
       ;; append header argument settings to body
-      (when missing (funcall add-to-body (format "set datafile missing '%s'" missing)))
-      (when title (funcall add-to-body (format "set title '%s'" title)))
+      (when missing
+	(funcall add-to-body
+		 (format "set datafile missing '%s'"
+			 (org-babel-gnuplot-quote-string missing))))
+      (when title
+	(funcall add-to-body
+		 (format "set title '%s'" (org-babel-gnuplot-quote-string title))))
       (when lines (mapc (lambda (el) (funcall add-to-body el)) lines))
       (when sets
 	(mapc (lambda (el) (funcall add-to-body (format "set %s" el))) sets))
@@ -194,8 +203,7 @@ code."
       ;; subsequent 'output' directive goes to the right place.
       (when directory
 	(funcall add-to-body
-		 (format "cd '%s'" (replace-regexp-in-string
-				     "'" "''" directory t t)))))
+		 (format "cd '%s'" (org-babel-gnuplot-quote-string directory)))))
     body))
 
 (defun org-babel-execute:gnuplot (body params)
