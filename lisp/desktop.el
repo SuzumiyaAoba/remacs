@@ -1046,8 +1046,9 @@ MODE is the major mode.
 		  (null dired-skip)  ; bug#5755
 		  (with-current-buffer bufname desktop-save-buffer)))
 	 (or (null desktop-buffers-not-to-save-function)
-	     (funcall desktop-buffers-not-to-save-function
-		      filename bufname mode rest))
+	     ;; Remacs: Forward REST as the callback's individual optional arguments.
+	     (apply desktop-buffers-not-to-save-function
+		    filename bufname mode rest))
 	 t)))
 
 ;; ----------------------------------------------------------------------------
