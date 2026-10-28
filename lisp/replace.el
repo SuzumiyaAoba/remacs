@@ -2018,17 +2018,25 @@ See also `multi-occur'."
 			 (save-excursion
 			   (goto-char
                             (if (overlayp boo) (overlay-start boo) (point-min)))
-                           (let ((end (if (overlayp boo) (overlay-end boo))))
-			     (while (re-search-forward regexp end t)
+                           (let ((end (if (overlayp boo) (overlay-end boo)))
+                                 done)
+			     (while (and (not done) (re-search-forward regexp end t))
                                ;; Insert the replacement regexp.
-			       (let ((str (match-substitute-replacement
-                                           nlines)))
+			       (let* ((match-start (match-beginning 0))
+                                      (match-end (match-end 0))
+                                      (str (match-substitute-replacement
+                                            nlines)))
 			         (if str
 				     (with-current-buffer occur-buf
 				       (insert str)
 				       (setq count (1+ count))
 				       (or (zerop (current-column))
-					   (insert "\n"))))))))))
+					   (insert "\n"))))
+                                 ;; Ensure empty matches cannot stall the scan.
+                                 (when (= match-start match-end)
+                                   (if (< (point) (or end (point-max)))
+                                       (forward-char 1)
+                                     (setq done t))))))))))
                      count)
 		 ;; Perform normal occur.
 		 (occur-engine
