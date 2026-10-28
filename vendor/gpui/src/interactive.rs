@@ -17,6 +17,19 @@ pub trait KeyEvent: InputEvent {}
 /// A mouse event from the platform.
 pub trait MouseEvent: InputEvent {}
 
+/// The operation requested for an outgoing native text drag.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum ExternalDragOperation {
+    /// Copy the text at the drop target.
+    Copy,
+    /// Move the text to the drop target.
+    Move,
+    /// Create a link to the dragged text.
+    Link,
+    /// Let the drop target choose a private operation.
+    Generic,
+}
+
 /// The key down event equivalent for the platform.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {

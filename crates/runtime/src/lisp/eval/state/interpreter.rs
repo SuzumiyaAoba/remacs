@@ -258,6 +258,8 @@ pub struct Interp {
     pub(crate) frame_window_backend: Option<Rc<dyn crate::frontend::FrameWindowBackend>>,
     /// Host native color panel bridge, installed by a GUI front-end.
     pub(crate) color_panel_backend: Option<Rc<dyn crate::frontend::ColorPanelBackend>>,
+    /// Host external drag bridge, installed by a GUI front-end.
+    pub(crate) drag_backend: Option<Rc<dyn crate::frontend::DragBackend>>,
     /// Host application hide/show bridge, installed by a GUI front-end.
     pub(crate) application_visibility_backend: Option<Rc<dyn crate::frontend::ApplicationVisibilityBackend>>,
     /// NS selection values retained for local selection reads and ownership checks.

@@ -1,6 +1,6 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
+    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalDragOperation, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
@@ -86,6 +86,12 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+#[allow(non_upper_case_globals)]
+const NSDragOperationLink: NSDragOperation = 2;
+#[allow(non_upper_case_globals)]
+const NSDragOperationGeneric: NSDragOperation = 4;
+#[allow(non_upper_case_globals)]
+const NSDragOperationMove: NSDragOperation = 16;
 #[derive(PartialEq)]
 pub enum UserTabbingPreference {
     Never,
@@ -251,6 +257,23 @@ unsafe fn build_classes() {
                     sel!(characterIndexForPoint:),
                     character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
                 );
+
+                decl.add_protocol(Protocol::get("NSDraggingSource").unwrap());
+                decl.add_method(
+                    sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+                    dragging_source_operation_mask
+                        as extern "C" fn(&Object, Sel, id, NSUInteger) -> NSUInteger,
+                );
+                decl.add_method(
+                    sel!(draggingSession:endedAtPoint:operation:),
+                    dragging_session_ended
+                        as extern "C" fn(&Object, Sel, id, NSPoint, NSUInteger),
+                );
+                decl.add_method(
+                    sel!(ignoreModifierKeysForDraggingSession:),
+                    ignore_modifier_keys_for_dragging_session
+                        as extern "C" fn(&Object, Sel, id) -> BOOL,
+                );
             }
             decl.register()
         };
@@ -413,6 +436,10 @@ struct MacWindowState {
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
     external_text_dragged: bool,
+    drag_mouse_down_event: Option<id>,
+    drag_session: Option<id>,
+    drag_operation: Option<NSDragOperation>,
+    drag_completion: Option<Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>>,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
@@ -721,6 +748,10 @@ impl MacWindow {
                 do_command_handled: None,
                 external_files_dragged: false,
                 external_text_dragged: false,
+                drag_mouse_down_event: None,
+                drag_session: None,
+                drag_operation: None,
+                drag_completion: None,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 move_tab_to_new_window_callback: None,
@@ -1424,6 +1455,67 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn begin_text_drag_session(
+        &self,
+        text: String,
+        operation: ExternalDragOperation,
+        completion: Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>,
+    ) -> std::result::Result<(), String> {
+        let (view, event) = {
+            let mut state = self.0.lock();
+            if state.drag_completion.is_some() {
+                return Err("An external drag is already active".to_owned());
+            }
+            let Some(event) = state.drag_mouse_down_event.take() else {
+                drop(state);
+                completion(None);
+                return Ok(());
+            };
+            state.drag_operation = Some(match operation {
+                ExternalDragOperation::Copy => NSDragOperationCopy,
+                ExternalDragOperation::Move => NSDragOperationMove,
+                ExternalDragOperation::Link => NSDragOperationLink,
+                ExternalDragOperation::Generic => NSDragOperationGeneric,
+            });
+            state.drag_completion = Some(completion);
+            (state.native_view.as_ptr() as id, event)
+        };
+
+        let session: id = unsafe {
+            let pasteboard_item: id = msg_send![class!(NSPasteboardItem), new];
+            let text = ns_string(&text);
+            let _: BOOL = msg_send![pasteboard_item, setString: text forType: NSPasteboardTypeString];
+            let dragging_item: id = msg_send![class!(NSDraggingItem), alloc];
+            let dragging_item: id =
+                msg_send![dragging_item, initWithPasteboardWriter: pasteboard_item];
+            let items: id = msg_send![class!(NSMutableArray), array];
+            let _: () = msg_send![items, addObject: dragging_item];
+            let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
+            let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: nil];
+            let session: id =
+                msg_send![view, beginDraggingSessionWithItems: items event: event source: view];
+            let _: () = msg_send![dragging_item, release];
+            let _: () = msg_send![pasteboard_item, release];
+            let _: () = msg_send![event, release];
+            session
+        };
+
+        if session.is_null() {
+            let completion = {
+                let mut state = self.0.lock();
+                state.drag_operation = None;
+                state.drag_completion.take()
+            };
+            if let Some(completion) = completion {
+                completion(None);
+            }
+        } else {
+            let session: id = unsafe { msg_send![session, retain] };
+            self.0.lock().drag_session = Some(session);
+        }
+        Ok(())
+    }
+
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.as_ref().lock().request_frame_callback = Some(callback);
     }
@@ -1668,6 +1760,64 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
     }
 }
 
+extern "C" fn dragging_source_operation_mask(
+    this: &Object,
+    _: Sel,
+    _session: id,
+    _context: NSUInteger,
+) -> NSUInteger {
+    let state = unsafe { get_window_state(this) };
+    state
+        .lock()
+        .drag_operation
+        .unwrap_or(NSDragOperationNone)
+}
+
+extern "C" fn ignore_modifier_keys_for_dragging_session(
+    _: &Object,
+    _: Sel,
+    _session: id,
+) -> BOOL {
+    YES
+}
+
+extern "C" fn dragging_session_ended(
+    this: &Object,
+    _: Sel,
+    session: id,
+    _point: NSPoint,
+    operation: NSUInteger,
+) {
+    let state = unsafe { get_window_state(this) };
+    let (drag_session, completion) = {
+        let mut state = state.lock();
+        if state.drag_session != Some(session) {
+            return;
+        }
+        state.drag_operation = None;
+        (state.drag_session.take(), state.drag_completion.take())
+    };
+    if let Some(drag_session) = drag_session {
+        unsafe {
+            let _: () = msg_send![drag_session, release];
+        }
+    }
+    let operation = if operation == NSDragOperationCopy {
+        Some(ExternalDragOperation::Copy)
+    } else if operation == NSDragOperationMove {
+        Some(ExternalDragOperation::Move)
+    } else if operation == NSDragOperationLink {
+        Some(ExternalDragOperation::Link)
+    } else if operation == NSDragOperationGeneric {
+        Some(ExternalDragOperation::Generic)
+    } else {
+        None
+    };
+    if let Some(completion) = completion {
+        completion(operation);
+    }
+}
+
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
     handle_key_event(this, native_event, true)
 }
@@ -1890,6 +2040,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
         match &event {
             PlatformInput::MouseDown(_) => {
+                if let Some(previous) = lock.drag_mouse_down_event.replace(native_event) {
+                    unsafe {
+                        let _: () = msg_send![previous, release];
+                    }
+                }
+                unsafe {
+                    let _: id = msg_send![native_event, retain];
+                }
                 drop(lock);
                 unsafe {
                     let input_context: id = msg_send![this, inputContext];
@@ -1921,6 +2079,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
             PlatformInput::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;
+                if let Some(mouse_down_event) = lock.drag_mouse_down_event.take() {
+                    unsafe {
+                        let _: () = msg_send![mouse_down_event, release];
+                    }
+                }
             }
 
             PlatformInput::ModifiersChanged(ModifiersChangedEvent {
@@ -2111,12 +2274,26 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let close_callback = {
+        let (close_callback, mouse_down_event, drag_session, drag_completion) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
-            lock.close_callback.take()
+            (
+                lock.close_callback.take(),
+                lock.drag_mouse_down_event.take(),
+                lock.drag_session.take(),
+                lock.drag_completion.take(),
+            )
         };
 
+        if let Some(mouse_down_event) = mouse_down_event {
+            let _: () = msg_send![mouse_down_event, release];
+        }
+        if let Some(drag_session) = drag_session {
+            let _: () = msg_send![drag_session, release];
+        }
+        if let Some(drag_completion) = drag_completion {
+            drag_completion(None);
+        }
         if let Some(callback) = close_callback {
             callback();
         }

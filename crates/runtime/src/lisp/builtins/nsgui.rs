@@ -3,7 +3,7 @@
 //!
 //! Native NS functions that require an AppKit terminal continue to
 //! report "Window system is not in use or not initialized" when called
-//! without one.  The GUI front-end supplies a clipboard backend for the
+//! without one. The GUI front-end supplies clipboard and drag backends for
 //! NS selection primitives; PRIMARY and SECONDARY remain process-local.
 //! Functions that work without a display connection in GNU (font-name
 //! conversion, color lists, dock tile operations, sleep assertions,
@@ -816,15 +816,62 @@ fn f_ns_frame_restack(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Err(winsys(i))
 }
 
-/// `ns-begin-drag': GNU nsfns.m rejects a nil PBOARD ("Empty
-/// pasteboard") first, then `decode_window_system_frame' — frame-live-p,
-/// and "Window system frame should be used" on our tty frame.
+/// `ns-begin-drag': GNU nsselect.m rejects a nil PBOARD first, then decodes
+/// the frame and waits for the host drag session to complete.
 fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if a[1].is_nil() {
         return Err(i.error("Empty pasteboard"));
     }
-    let _ = crate::editor::frame_live(i, &a[0])?;
-    Err(i.error("Window system frame should be used"))
+    let frame = crate::editor::frame_live(i, &a[0])?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
+    }
+    let Some(backend) = i.drag_backend.clone() else {
+        return Err(winsys(i));
+    };
+
+    let entries = a[1]
+        .list_to_vec()
+        .map_err(|_| i.wrong_type_mut("listp", &a[1]))?;
+    let mut text = None;
+    for entry in entries {
+        let Value::Cons(entry) = entry else {
+            continue;
+        };
+        let (kind, value) = {
+            let entry = entry.borrow();
+            (entry.car.clone(), entry.cdr.clone())
+        };
+        if matches!(&kind, Value::Sym(symbol) if i.symbol_name(*symbol).as_str() == "string") {
+            text = Some(super::want_string(i, &value)?.to_unicode_lossy());
+            break;
+        }
+    }
+    let Some(text) = text else {
+        return Ok(Value::Nil);
+    };
+    let action = match a.get(2) {
+        None | Some(Value::Nil) => crate::frontend::DragAction::Copy,
+        Some(Value::Sym(symbol)) => match i.symbol_name(*symbol).as_str() {
+            "XdndActionCopy" => crate::frontend::DragAction::Copy,
+            "XdndActionMove" => crate::frontend::DragAction::Move,
+            "XdndActionLink" => crate::frontend::DragAction::Link,
+            "XdndActionPrivate" => crate::frontend::DragAction::Private,
+            _ => return Err(i.error("Invalid drag action")),
+        },
+        Some(value) => return Err(i.wrong_type_mut("symbolp", value)),
+    };
+    let result = backend
+        .begin_text_drag(frame.borrow().id, &text, action)
+        .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
+    let result = match result {
+        None => Value::Nil,
+        Some(crate::frontend::DragAction::Copy) => Value::Sym(i.intern("XdndActionCopy")),
+        Some(crate::frontend::DragAction::Move) => Value::Sym(i.intern("XdndActionMove")),
+        Some(crate::frontend::DragAction::Link) => Value::Sym(i.intern("XdndActionLink")),
+        Some(crate::frontend::DragAction::Private) => Value::Sym(i.intern("XdndActionPrivate")),
+    };
+    Ok(result)
 }
 // f_ns_do_applescript defined below — GNU CHECK_STRINGs SCRIPT first.
 winsys_fn!(f_x_apply_session_resources);

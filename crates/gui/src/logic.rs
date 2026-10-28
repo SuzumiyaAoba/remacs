@@ -1,8 +1,8 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
-        fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
+        DragAction, Grid, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
+        MousePosition, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
@@ -222,6 +222,13 @@ pub(super) enum GuiRequest {
         directory_only: bool,
         reply: SyncSender<Result<Option<String>, String>>,
     },
+    BeginTextDrag {
+        frame_id: usize,
+        text: String,
+        action: DragAction,
+        started: SyncSender<Result<(), String>>,
+        completed: SyncSender<Option<DragAction>>,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -303,6 +310,37 @@ impl remacs_runtime::frontend::DialogBackend for GuiDialogBackend {
 
 struct GuiFileDialogBackend {
     requests: smol::channel::Sender<GuiRequest>,
+}
+
+struct GuiDragBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
+    fn begin_text_drag(
+        &self,
+        frame_id: usize,
+        text: &str,
+        action: DragAction,
+    ) -> Result<Option<DragAction>, String> {
+        let (started, start_response) = mpsc::sync_channel(1);
+        let (completed, completion_response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::BeginTextDrag {
+                frame_id,
+                text: text.to_owned(),
+                action,
+                started,
+                completed,
+            })
+            .map_err(|_| "GUI drag service is unavailable".to_owned())?;
+        start_response
+            .recv()
+            .map_err(|_| "GUI drag service stopped".to_owned())??;
+        completion_response
+            .recv()
+            .map_err(|_| "GUI drag service stopped".to_owned())
+    }
 }
 
 impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
@@ -1593,6 +1631,10 @@ fn start_logic_inner(
                         requests: gui_requests_tx.clone(),
                     },
                 )));
+                #[cfg(target_os = "macos")]
+                i.set_drag_backend(Some(Rc::new(GuiDragBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
             }
             let initial_frame_size = i.selected_frame.as_ref().and_then(|frame| {
                 let has_size_parameter = [

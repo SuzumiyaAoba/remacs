@@ -59,6 +59,11 @@ impl Interp {
         self.color_panel_backend = backend;
     }
 
+    /// Install or remove the host external drag-and-drop backend.
+    pub fn set_drag_backend(&mut self, backend: Option<Rc<dyn crate::frontend::DragBackend>>) {
+        self.drag_backend = backend;
+    }
+
     /// Install or remove the host application visibility backend.
     pub fn set_application_visibility_backend(
         &mut self,

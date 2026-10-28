@@ -5,7 +5,8 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    ExternalText, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla,
+    ExternalDragOperation, ExternalText, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GpuSpecs, Hsla,
     InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
@@ -1704,6 +1705,20 @@ impl Window {
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()
+    }
+
+    /// Begin dragging text from this window to the operating system.
+    ///
+    /// The completion callback receives the operation accepted by the drop
+    /// target, or `None` if the drag was cancelled.
+    pub fn begin_text_drag_session(
+        &self,
+        text: String,
+        operation: ExternalDragOperation,
+        completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
+    ) -> std::result::Result<(), String> {
+        self.platform_window
+            .begin_text_drag_session(text, operation, Box::new(completion))
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {

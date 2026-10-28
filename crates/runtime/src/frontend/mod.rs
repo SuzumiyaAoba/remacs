@@ -65,6 +65,30 @@ pub trait ColorPanelBackend {
     fn show_character_palette(&self, frame_id: usize) -> Result<(), String>;
 }
 
+/// Operation requested for an outgoing drag-and-drop session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragAction {
+    /// Copy the dragged data at the destination.
+    Copy,
+    /// Move the dragged data to the destination.
+    Move,
+    /// Create a link to the dragged data at the destination.
+    Link,
+    /// The drop target chose an unspecified action.
+    Private,
+}
+
+/// Host operating-system bridge for outgoing GUI drags.
+pub trait DragBackend {
+    /// Begin dragging TEXT from FRAME and wait for the destination's action.
+    fn begin_text_drag(
+        &self,
+        frame_id: usize,
+        text: &str,
+        action: DragAction,
+    ) -> Result<Option<DragAction>, String>;
+}
+
 /// Host application visibility bridge for NS hide commands.
 pub trait ApplicationVisibilityBackend {
     fn hide(&self) -> Result<(), String>;
