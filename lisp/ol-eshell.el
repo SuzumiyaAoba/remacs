@@ -65,7 +65,7 @@ followed by a colon."
 When opened, the link switches back to the current eshell buffer and
 the current working directory."
   (when (eq major-mode 'eshell-mode)
-    (let* ((command (concat "cd " (eshell/pwd)))
+    (let* ((command (concat "cd " (eshell-quote-argument (eshell/pwd))))
            (link  (concat (buffer-name) ":" command)))
       (org-link-store-props
        :link (concat "eshell:" link)
