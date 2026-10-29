@@ -32836,10 +32836,16 @@ It is dangerous if either of these conditions are met:
 
 (defvar hack-local-variables--inhibit-eval nil
   "List of `eval' forms to ignore in file/dir local variables.")
+(make-variable-buffer-local 'hack-local-variables--inhibit-eval)
+
 (defun hack-one-local-variable (var val)
   "Set local variable VAR with value VAL.
 If VAR is `mode', call `VAL-mode' as a function unless it's
 already the major mode."
+  ;; Remacs: establish a buffer-local cell before the dynamic recursion guard
+  ;; is bound, so nested processing in another buffer has its own guard.
+  (when (eq var 'eval)
+    (make-local-variable 'hack-local-variables--inhibit-eval))
   (cond
    ((and (eq var 'eval) (member val hack-local-variables--inhibit-eval)) nil)
    ((eq var 'mode)
