@@ -410,7 +410,7 @@ fn f_ns_block_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_ns_unblock_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let tok = match &a[0] {
-        Value::Int(n) if *n >= 0 => *n as u64,
+        Value::Int(n) if (0..=crate::lisp::value::FIXNUM_MAX).contains(n) => *n as u64,
         _ => return Err(i.wrong_type_mut("wholenump", &a[0])),
     };
     let Some(o) = objc() else {
