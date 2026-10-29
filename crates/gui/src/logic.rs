@@ -1699,8 +1699,11 @@ impl KeyIo for ChanIo {
             .collect();
         let live_ids: std::collections::HashSet<_> =
             live_frames.iter().map(|frame| frame.borrow().id).collect();
+        self.frame_sizes.retain(|id, _| live_ids.contains(id));
         self.frame_grids.retain(|id, _| live_ids.contains(id));
         self.frame_runtime_sizes
+            .retain(|id, _| live_ids.contains(id));
+        self.frame_geometries
             .retain(|id, _| live_ids.contains(id));
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
         let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
