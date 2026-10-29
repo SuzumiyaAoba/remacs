@@ -1076,6 +1076,20 @@ solution."
                 arguments (cons arg arguments))))))
     (car arguments)))
 
+;; Remacs: distinguish a pipeline bar from the shell's || operator.
+(defun shell-directory-tracker--pipeline-separator-p (separator)
+  "Return non-nil if SEPARATOR contains a single pipeline bar."
+  (let ((index 0) (length (length separator)) pipeline)
+    (while (and (< index length) (not pipeline))
+      (when (and (eq (aref separator index) ?|)
+                 (not (and (> index 0)
+                           (eq (aref separator (1- index)) ?|)))
+                 (not (and (< (1+ index) length)
+                           (eq (aref separator (1+ index)) ?|))))
+        (setq pipeline t))
+      (setq index (1+ index)))
+    pipeline))
+
 (defun shell-directory-tracker (str)
   "Tracks cd, pushd and popd commands issued to the shell.
 This function is called on each input passed to the shell.
@@ -1103,16 +1117,25 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 			       str) ; skip whitespace
 			      (match-end 0)))
 		(case-fold-search)
-		end cmd arg1 cmd-subst-fn)
+		end cmd arg1 cmd-subst-fn separator next-start
+		in-pipeline pipeline-separator)
 	    (while (string-match shell-command-regexp str start)
-	      (setq end (match-end 0)
+	      (setq end (match-end 0))
+	      (string-match shell-command-separator-regexp str end)
+	      (setq next-start (match-end 0)
+		    separator (substring str end next-start)
+		    pipeline-separator
+		    (shell-directory-tracker--pipeline-separator-p separator)
 		    cmd (comint-arguments (substring str start end) 0 0)
 		    arg1 (comint-arguments (substring str start end) 1 1))
 	      (if arg1
 		  (setq arg1 (shell-unquote-argument arg1)))
               (if shell-has-auto-cd
                   (setq cmd-subst-fn (comint-substitute-in-file-name cmd)))
-	      (cond ((string-match (concat "\\`\\(" shell-popd-regexp
+	      ;; Pipeline stages run in subshells; don't update the parent cwd.
+	      (cond ((or in-pipeline pipeline-separator)
+		     nil)
+		    ((string-match (concat "\\`\\(" shell-popd-regexp
 					   "\\)\\($\\|[ \t]\\)")
 				   cmd)
 		     (shell-process-popd (comint-substitute-in-file-name arg1)))
@@ -1143,11 +1166,9 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 					cmd))
 		     (shell-process-cd (comint-substitute-in-file-name cmd)))
                     ((and shell-has-auto-cd (file-directory-p cmd-subst-fn))
-                     (shell-process-cd cmd-subst-fn)))
-	      (setq start (progn (string-match shell-command-separator-regexp
-					       str end)
-				 ;; skip again
-				 (match-end 0))))))))
+		     (shell-process-cd cmd-subst-fn)))
+	      (setq in-pipeline pipeline-separator
+		    start next-start))))))
 
 (defun shell-unquote-argument (string)
   "Remove all kinds of shell quoting from STRING."
