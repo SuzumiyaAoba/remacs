@@ -284,6 +284,76 @@ impl Isearch {
         self.case_fold.truthy()
     }
 
+    fn use_previous_search(&mut self, i: &mut Interp) -> bool {
+        let ring_symbol = i.intern(if self.regexp {
+            "regexp-search-ring"
+        } else {
+            "search-ring"
+        });
+        let Value::Cons(ring) = i.symbol_value(ring_symbol) else {
+            return false;
+        };
+        let first = ring.borrow().car.clone();
+        let Value::Str(text) = first else {
+            return false;
+        };
+        self.query = text.borrow().to_unicode_lossy();
+        if let Some(symbol) = i.intern_soft("isearch-last-case-fold-search")
+            .filter(|symbol| i.bound_p(*symbol))
+        {
+            self.case_fold = i.symbol_value(symbol);
+        }
+        let pointer = i.intern(if self.regexp {
+            "regexp-search-ring-yank-pointer"
+        } else {
+            "search-ring-yank-pointer"
+        });
+        let _ = i.set_symbol(pointer, Value::Int(0));
+        true
+    }
+
+    fn update_search_ring(&self, i: &mut Interp) {
+        if self.query.is_empty() {
+            return;
+        }
+        let (ring_name, max_name) = if self.regexp {
+            ("regexp-search-ring", "regexp-search-ring-max")
+        } else {
+            ("search-ring", "search-ring-max")
+        };
+        let ring = i.intern(ring_name);
+        if !i.bound_p(ring)
+            && let Err(flow) = i.set_symbol(ring, Value::Nil)
+        {
+            report_flow(i, flow);
+            return;
+        }
+        let max_symbol = i.intern(max_name);
+        let max = if i.bound_p(max_symbol) {
+            i.symbol_value(max_symbol)
+        } else {
+            Value::Int(16)
+        };
+        let value = Value::string(self.query.clone());
+        let add_to_history = Value::Sym(i.intern("add-to-history"));
+        let delete_duplicates = i.intern("history-delete-duplicates");
+        let depth = i.specbind_depth();
+        let result = i.specbind(delete_duplicates, Value::t()).and_then(|()| {
+            i.apply(
+                &add_to_history,
+                vec![Value::Sym(ring), value, max, Value::t()],
+            )
+        });
+        match (result, i.unbind_to(depth)) {
+            (Ok(_), Ok(())) => {}
+            (Err(flow), _) | (Ok(_), Err(flow)) => report_flow(i, flow),
+        }
+        let last_case_fold = i.intern("isearch-last-case-fold-search");
+        if let Err(flow) = i.set_symbol(last_case_fold, self.case_fold.clone()) {
+            report_flow(i, flow);
+        }
+    }
+
     fn search_updated_query(&mut self, i: &mut Interp, failure_start: usize) {
         let cur = self.cur();
         let case_fold_search = self.case_fold_for_search(i);
@@ -390,8 +460,11 @@ impl Isearch {
             // C-s / C-r: repeat search in that direction from just
             // past (before) the current match.
             19 | 18 => {
-                self.save_history();
                 let back = key == 18;
+                let reused_previous = self.query.is_empty()
+                    && back == self.backward
+                    && self.use_previous_search(i);
+                self.save_history();
                 let wrap_enabled = i
                     .intern_soft("isearch-wrap-pause")
                     .map(|symbol| {
@@ -413,6 +486,8 @@ impl Isearch {
                             }
                         })
                         .unwrap_or(cur)
+                } else if reused_previous {
+                    cur
                 } else if back {
                     cur.saturating_sub(1)
                 } else {
@@ -924,8 +999,16 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 end_hook_quit = true;
                 break;
             }
-            IsearchAction::Done => break,
+            IsearchAction::Done => {
+                if !st.failing {
+                    st.update_search_ring(i);
+                }
+                break;
+            }
             IsearchAction::ReDispatch(other) => {
+                if !st.failing {
+                    st.update_search_ring(i);
+                }
                 st.clear(i);
                 let mode_symbol = i.intern("isearch-mode");
                 let _ = i.set_symbol(mode_symbol, Value::Nil);
