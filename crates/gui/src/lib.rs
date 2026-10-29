@@ -392,6 +392,7 @@ pub fn run_gui_with_dump(
     let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
     let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
     let initial_sticky = initial_frame_size.is_some_and(|frame| frame.sticky);
+    let initial_shaded = initial_frame_size.is_some_and(|frame| frame.shaded);
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -460,6 +461,7 @@ pub fn run_gui_with_dump(
                 set_native_no_accept_focus(window, initial_no_accept_focus);
                 update_native_skip_taskbar(window, initial_skip_taskbar);
                 update_native_sticky(window, initial_sticky);
+                update_native_shaded(window, initial_shaded);
                 if initial_focus_on_map {
                     cx.activate(false);
                 }
@@ -493,6 +495,7 @@ pub fn run_gui_with_dump(
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
             let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
             let mut frame_sticky = HashMap::<usize, bool>::new();
+            let mut frame_shaded = HashMap::<usize, bool>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -533,6 +536,9 @@ pub fn run_gui_with_dump(
                             let sticky = snapshot.sticky;
                             let sticky_changed = frame_sticky.get(&frame_id) != Some(&sticky);
                             frame_sticky.insert(frame_id, sticky);
+                            let shaded = snapshot.shaded;
+                            let shaded_changed = frame_shaded.get(&frame_id) != Some(&shaded);
+                            frame_shaded.insert(frame_id, shaded);
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -571,6 +577,9 @@ pub fn run_gui_with_dump(
                                     }
                                     if sticky_changed {
                                         update_native_sticky(window, sticky);
+                                    }
+                                    if shaded_changed {
+                                        update_native_shaded(window, shaded);
                                     }
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
@@ -744,6 +753,7 @@ pub fn run_gui_with_dump(
                                 set_native_no_accept_focus(window, no_accept_focus);
                                 update_native_skip_taskbar(window, skip_taskbar);
                                 update_native_sticky(window, sticky);
+                                update_native_shaded(window, shaded);
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
@@ -813,6 +823,7 @@ pub fn run_gui_with_dump(
                             frame_focus_on_map.remove(&frame_id);
                             frame_skip_taskbar.remove(&frame_id);
                             frame_sticky.remove(&frame_id);
+                            frame_shaded.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -1629,6 +1640,12 @@ fn update_native_sticky(window: &Window, sticky: bool) {
     }
 }
 
+fn update_native_shaded(window: &Window, shaded: bool) {
+    if let Err(error) = set_native_shaded(window, shaded) {
+        eprintln!("remacs: failed to set shaded: {error}");
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
     let Some(native_window) = appkit_native_window(window) else {
@@ -1862,8 +1879,35 @@ fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
     )
 }
 
+#[cfg(target_os = "linux")]
+fn set_native_shaded(window: &Window, shaded: bool) -> Result<(), String> {
+    use xcb::Xid;
+
+    let Some(context) = xcb_window_context(window)? else {
+        return Ok(());
+    };
+    let net_wm_state = xcb_intern_atom(&context.connection, b"_NET_WM_STATE")?;
+    let shaded_atom = xcb_intern_atom(&context.connection, b"_NET_WM_STATE_SHADED")?;
+    xcb_send_client_message(
+        &context,
+        net_wm_state,
+        [
+            if shaded { 1 } else { 0 },
+            shaded_atom.resource_id(),
+            0,
+            1,
+            0,
+        ],
+    )
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn set_native_sticky(_window: &Window, _sticky: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_native_shaded(_window: &Window, _shaded: bool) -> Result<(), String> {
     Ok(())
 }
 
