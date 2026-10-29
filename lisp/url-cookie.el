@@ -316,7 +316,8 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
   (string-match-p "\\`[0-9]+\\(?:\\.[0-9]+\\)\\{3\\}\\'" host))
 
 (defun url-cookie--domain-match-p (host domain &optional include-subdomains)
-  ;;Remacs: enforce DNS-label boundaries and preserve host-only semantics.
+  ;;Remacs: enforce DNS-label boundaries, ignore trailing-dot domains, and
+  ;; preserve host-only semantics.
   "Return non-nil if HOST matches DOMAIN.
 When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
   (let ((host (downcase host))
@@ -325,6 +326,8 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	(and include-subdomains
 	     ;; RFC 6265 §5.1.3 allows suffix matching only for host names.
 	     (not (url-cookie--ipv4-address-p host))
+	     ;; A trailing dot makes a Domain attribute invalid (RFC 6265 §4.1.2.3).
+	     (not (string-suffix-p "." domain))
 	     (string-suffix-p (concat "." domain) host)))))
 
 (defun url-cookie--path-match-p (cookie-path request-path)
@@ -435,8 +438,11 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	 (domain-attribute
 	  (let* ((attribute (assoc-string "domain" args t))
 		 (value (cdr-safe attribute)))
-	    (and attribute (stringp value) (> (length value) 0) attribute)))
-	 ;;Remacs: RFC 6265 ignores an empty Domain attribute, leaving the cookie host-only.
+	    ;;Remacs: RFC 6265 ignores empty and trailing-dot Domain attributes,
+	    ;; leaving the cookie host-only.
+	    (and attribute (stringp value) (> (length value) 0)
+		 (not (eq ?. (aref value (1- (length value)))))
+		 attribute)))
 	 (domain (if domain-attribute
 		      (cdr-safe domain-attribute)
 		    (url-host url-current-object)))
