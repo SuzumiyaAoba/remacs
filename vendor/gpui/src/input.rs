@@ -77,6 +77,7 @@ pub trait EntityInputHandler: 'static + Sized {
 pub struct ElementInputHandler<V> {
     view: Entity<V>,
     element_bounds: Bounds<Pixels>,
+    apple_press_and_hold_enabled: bool,
 }
 
 impl<V: 'static> ElementInputHandler<V> {
@@ -87,7 +88,14 @@ impl<V: 'static> ElementInputHandler<V> {
         ElementInputHandler {
             view,
             element_bounds,
+            apple_press_and_hold_enabled: true,
         }
+    }
+
+    /// Use key repeat instead of macOS Press and Hold for this input client.
+    pub fn disable_apple_press_and_hold(mut self) -> Self {
+        self.apple_press_and_hold_enabled = false;
+        self
     }
 }
 
@@ -176,5 +184,9 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         self.view.update(cx, |view, cx| {
             view.character_index_for_point(point, window, cx)
         })
+    }
+
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        self.apple_press_and_hold_enabled
     }
 }

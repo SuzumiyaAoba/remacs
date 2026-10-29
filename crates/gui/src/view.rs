@@ -1543,7 +1543,11 @@ impl Render for EditorView {
                                 }
                             },
                         );
-                        window.handle_input(&focus, ElementInputHandler::new(bounds, entity), _cx);
+                        window.handle_input(
+                            &focus,
+                            ElementInputHandler::new(bounds, entity).disable_apple_press_and_hold(),
+                            _cx,
+                        );
                         for (y, line) in lines.iter().enumerate() {
                             if let Some(clips) =
                                 unscrolled_row_clips(&grid, y, bounds, cell_width, line_height)
