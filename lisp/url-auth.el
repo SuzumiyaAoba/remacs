@@ -440,7 +440,7 @@ via minibuffer."
                ;; Don't clear secret for `authsource' since it will
                ;; corrupt any future fetches for it.
                (not (eq (plist-get creds :source) 'authsource)))
-          (clear-string (plist-get creds :secret))))))
+          (clear-string (plist-get creds :secret)))))))
 
 (defun url-digest-auth (url &optional prompt overwrite realm attrs)
   "Get the HTTP Digest response string for the specified URL.
