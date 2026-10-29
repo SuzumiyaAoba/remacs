@@ -28,6 +28,7 @@ pub(super) struct Isearch {
     /// Snapshots of query/match state, one per reversible key operation.
     history: Vec<IsearchHistory>,
     pub(super) start: usize,
+    /// Search boundary, reset to the current match when direction changes.
     search_origin: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
@@ -1513,6 +1514,9 @@ impl Isearch {
                     self.backward = back;
                     let span = self.spans.last().copied().unwrap_or((cur, cur));
                     let point = if back { span.1 } else { span.0 };
+                    // Later query extensions in the new direction must
+                    // continue from the current match, not the entry point.
+                    self.search_origin = point;
                     self.positions.push(point);
                     self.spans.push(span);
                     self.failing = false;
@@ -1543,6 +1547,11 @@ impl Isearch {
                     return IsearchAction::Continue;
                 }
                 self.save_history();
+                if !same_direction {
+                    let span = self.spans.last().copied().unwrap_or((cur, cur));
+                    // Keep the new direction's boundary at the old match.
+                    self.search_origin = if back { span.1 } else { span.0 };
+                }
                 self.backward = back;
                 let wrap_enabled = i
                     .intern_soft("isearch-wrap-pause")

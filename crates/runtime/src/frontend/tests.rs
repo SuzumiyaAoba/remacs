@@ -538,6 +538,27 @@ fn isearch_backward_searches_backward() {
 }
 
 #[test]
+fn isearch_direction_change_applies_to_later_query_extensions() {
+    let mut i = isearch_interp("foox foo\n");
+    let mut st = Isearch::new(&mut i, false, false);
+    for c in "foo".chars() {
+        st.step(&mut i, c as i128);
+    }
+    st.step(&mut i, 19); // C-s → second occurrence
+    assert_eq!(st.spans.last(), Some(&(5, 8)));
+
+    st.step(&mut i, 18); // C-r changes the active direction
+    assert!(st.backward);
+    assert!(st.label().0.contains("I-search backward"));
+    st.step(&mut i, 'x' as i128);
+
+    assert_eq!(st.query, "foox");
+    assert!(!st.failing);
+    assert_eq!(point(&i), 0);
+    assert_eq!(st.spans.last(), Some(&(0, 4)));
+}
+
+#[test]
 fn isearch_other_key_redispatches() {
     let mut i = isearch_interp("text\n");
     let mut st = Isearch::new(&mut i, false, false);
