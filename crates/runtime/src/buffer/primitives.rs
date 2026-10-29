@@ -11144,6 +11144,62 @@ pub(crate) fn word_search_regexp<T: TextSource + ?Sized>(
     })
 }
 
+/// GNU `isearch-symbol-regexp': preserve symbol boundaries and allow
+/// punctuation between the exact symbols entered in the search string.
+pub(crate) fn symbol_search_regexp<T: TextSource + ?Sized>(
+    i: &Interp,
+    string: &T,
+    lax: bool,
+) -> EmacsText {
+    const NOT_WORD_SYMBOL_RE: &str =
+        "\\(?:\\s-\\|\\s.\\|\\s(\\|\\s)\\|\\s\"\\|\\s\\\\|\\s/\\|\\s$\\|\\s'\\|\\s<\\|\\s>\\|\\s!\\|\\s|\\)+";
+    string.with_text(|string| {
+        if string.is_empty() {
+            return EmacsText::new();
+        }
+        let chars: Vec<EmacsChar> = string.chars().collect();
+        let is_delimiter = |c: EmacsChar| {
+            !matches!(crate::editor::syntax_code_buf(i, c), b'w' | b'_')
+        };
+        if chars.iter().all(|c| is_delimiter(*c)) {
+            return EmacsText::from(NOT_WORD_SYMBOL_RE);
+        }
+        let leading = is_delimiter(chars[0]);
+        let trailing = is_delimiter(*chars.last().unwrap());
+        let mut out = EmacsText::from(if leading {
+            NOT_WORD_SYMBOL_RE
+        } else {
+            "\\_<"
+        });
+        let mut position = 0;
+        let mut first = true;
+        while position < chars.len() {
+            while position < chars.len() && is_delimiter(chars[position]) {
+                position += 1;
+            }
+            if position == chars.len() {
+                break;
+            }
+            if !first {
+                out.push_str(NOT_WORD_SYMBOL_RE);
+            }
+            first = false;
+            while position < chars.len() && !is_delimiter(chars[position]) {
+                push_regexp_quoted(chars[position], &mut out);
+                position += 1;
+            }
+        }
+        out.push_str(if trailing {
+            NOT_WORD_SYMBOL_RE
+        } else if lax {
+            ""
+        } else {
+            "\\_>"
+        });
+        out
+    })
+}
+
 fn word_search(i: &mut Interp, a: &[Value], backward: bool, lax: bool) -> EvalResult {
     let string = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
