@@ -1414,6 +1414,8 @@ It returns t if a desktop file was loaded, nil otherwise.
 	    (if desktop-autosave-was-enabled (desktop-auto-save-enable))
 	    t))
       ;; No desktop file found.
+      ;;Remacs: clear stale desktop state before notifying the user hook.
+      (desktop-clear)
       (let ((default-directory desktop-dirname))
         (run-hooks 'desktop-no-desktop-file-hook))
       (message "No desktop file.")
