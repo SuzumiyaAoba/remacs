@@ -3178,23 +3178,21 @@ fn paint_grid_compositions(
             line_height,
             window,
             |window| {
-                for character in composition.components.iter().skip(1) {
-                    let text = character.to_string();
-                    let component_line = window.text_system().shape_line(
-                        text.clone().into(),
-                        font_size,
-                        &[TextRun {
-                            len: text.len(),
-                            font: component_font.clone(),
-                            color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        }],
-                        None,
-                    );
-                    let _ = component_line.paint(origin, line_height, window, cx);
-                }
+                let text = composition.components.iter().collect::<String>();
+                let composition_line = window.text_system().shape_line(
+                    text.clone().into(),
+                    font_size,
+                    &[TextRun {
+                        len: text.len(),
+                        font: component_font,
+                        color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                let _ = composition_line.paint(origin, line_height, window, cx);
             },
         );
     }
