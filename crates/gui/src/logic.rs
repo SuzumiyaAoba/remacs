@@ -35,6 +35,17 @@ fn same_mouse_face_position(left: Option<MousePosition>, right: Option<MousePosi
     }
 }
 
+fn cursor_blink_animation_active(grid: &Grid) -> bool {
+    if !grid.blink_cursor {
+        return false;
+    }
+    if grid.blink_blinks <= 0 {
+        return true;
+    }
+    let elapsed = grid.blink_elapsed_since_input - grid.blink_delay;
+    elapsed < grid.blink_interval.max(0.05) * 2.0 * grid.blink_blinks as f64
+}
+
 /// Messages the UI thread sends to the editor logic thread.
 pub(super) enum GuiEvent {
     /// Input emitted by a particular native frame window.
@@ -1242,7 +1253,7 @@ impl ChanIo {
     }
 
     pub(super) fn send_grid(&mut self, grid: Grid) -> io::Result<()> {
-        let changed = grid.blink_cursor || self.last.as_ref() != Some(&grid);
+        let changed = cursor_blink_animation_active(&grid) || self.last.as_ref() != Some(&grid);
         if let Some(frame_id) = self.active_frame_id
             && let Some(snapshot) = self
                 .latest_snapshots
@@ -2014,7 +2025,9 @@ impl KeyIo for ChanIo {
     }
 
     fn render_on_idle(&self) -> bool {
-        self.last.as_ref().is_some_and(|grid| grid.blink_cursor)
+        self.last
+            .as_ref()
+            .is_some_and(cursor_blink_animation_active)
     }
 
     fn take_render_request(&mut self) -> bool {
