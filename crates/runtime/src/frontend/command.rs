@@ -236,6 +236,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::OpenFiles(files) => {
                 dispatch_ns_open_files(i, files, &mut keys, &mut arg_mode);
             }
+            InputEvent::NativeService { name, argument } => {
+                dispatch_ns_service(i, &name, &argument, &mut keys, &mut arg_mode);
+            }
             InputEvent::ColorDrop {
                 position,
                 color,
@@ -781,6 +784,20 @@ fn dispatch_ns_open_files(
         );
         dispatch_frontend_command(i, command, keys, arg_mode);
     }
+}
+
+fn dispatch_ns_service(
+    i: &mut Interp,
+    name: &str,
+    argument: &str,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
+    let service_name = i.intern("ns-input-spi-name");
+    let service_argument = i.intern("ns-input-spi-arg");
+    let _ = i.set_symbol(service_name, Value::string(name));
+    let _ = i.set_symbol(service_argument, Value::string(argument));
+    dispatch_frontend_command(i, "ns-spi-service-call", keys, arg_mode);
 }
 
 fn dispatch_frontend_command_with_args(
@@ -1583,6 +1600,9 @@ fn minibuf_loop<T: KeyIo>(
             }
             InputEvent::OpenFiles(files) => {
                 dispatch_ns_open_files(i, files, &mut keys, &mut arg_mode);
+            }
+            InputEvent::NativeService { name, argument } => {
+                dispatch_ns_service(i, &name, &argument, &mut keys, &mut arg_mode);
             }
             InputEvent::ColorDrop {
                 position,

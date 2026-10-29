@@ -47,6 +47,8 @@ pub(super) enum GuiEvent {
         color: String,
         background: bool,
     },
+    #[cfg(target_os = "macos")]
+    NativeService { name: String, argument: String },
     FrameFocus { frame_id: usize, focused: bool },
     FrameDeleteRequest { frame_id: usize },
     PowerOff,
@@ -760,6 +762,8 @@ pub(super) struct ChanIo {
     /// Keys pushed back via `unread` (unread-command-events).
     pub(super) pending: Vec<i128>,
     pub(super) pending_open_files: VecDeque<(String, Option<usize>)>,
+    #[cfg(target_os = "macos")]
+    pending_native_services: VecDeque<(String, String)>,
     pub(super) cols: usize,
     pub(super) rows: usize,
     /// Last grid sent, so `draw_echo` can patch just the echo row.
@@ -1224,6 +1228,10 @@ impl KeyIo for ChanIo {
         if let Some(file) = self.pending_open_files.pop_front() {
             return Ok(Some(InputEvent::OpenFiles(vec![file])));
         }
+        #[cfg(target_os = "macos")]
+        if let Some((name, argument)) = self.pending_native_services.pop_front() {
+            return Ok(Some(InputEvent::NativeService { name, argument }));
+        }
         let Some(event) = self.receive_event(dur)? else {
             return Ok(None);
         };
@@ -1253,6 +1261,10 @@ impl KeyIo for ChanIo {
                 color,
                 background,
             })),
+            #[cfg(target_os = "macos")]
+            GuiEvent::NativeService { name, argument } => {
+                Ok(Some(InputEvent::NativeService { name, argument }))
+            }
             GuiEvent::FrameFocus { frame_id, focused } => {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
@@ -1407,6 +1419,11 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::ColorDrop { .. } => Ok(None),
+            #[cfg(target_os = "macos")]
+            GuiEvent::NativeService { name, argument } => {
+                self.pending_native_services.push_back((name, argument));
+                Ok(None)
+            }
             GuiEvent::FrameFocus { frame_id, focused } => {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
@@ -2041,6 +2058,8 @@ fn start_logic_inner(
                 gui_requests: enable_gui_requests.then_some(gui_requests_tx),
                 pending: Vec::new(),
                 pending_open_files: VecDeque::new(),
+                #[cfg(target_os = "macos")]
+                pending_native_services: VecDeque::new(),
                 cols: 80,
                 rows: 24,
                 last: None,

@@ -109,6 +109,123 @@ fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String
 static DOCK_ATTENTION_REQUEST_ID: Mutex<NSInteger> = Mutex::new(-1);
 
 #[cfg(target_os = "macos")]
+static NATIVE_SERVICE_EVENT_SENDER: Mutex<Option<std::sync::mpsc::Sender<GuiEvent>>> =
+    Mutex::new(None);
+#[cfg(target_os = "macos")]
+static NATIVE_SERVICE_PROVIDER_CLASS: OnceLock<usize> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static NATIVE_SERVICE_PROVIDER: Mutex<usize> = Mutex::new(0);
+
+#[cfg(target_os = "macos")]
+fn native_service_provider_class() -> &'static Class {
+    let class = *NATIVE_SERVICE_PROVIDER_CLASS.get_or_init(|| {
+        let mut declaration = ClassDecl::new("RemacsNativeServiceProvider", class!(NSObject))
+            .expect("RemacsNativeServiceProvider must be registered once");
+        unsafe {
+            declaration.add_method(
+                sel!(requestService:userData:error:),
+                receive_native_service
+                    as extern "C" fn(&Object, Sel, id, id, *mut Object),
+            );
+        }
+        declaration.register() as *const Class as usize
+    });
+    unsafe { &*(class as *const Class) }
+}
+
+#[cfg(target_os = "macos")]
+fn appkit_string(value: id) -> Option<String> {
+    use std::ffi::CStr;
+
+    if value == nil {
+        return None;
+    }
+    let bytes = unsafe { NSString::UTF8String(value) };
+    (!bytes.is_null()).then(|| unsafe { CStr::from_ptr(bytes).to_string_lossy().into_owned() })
+}
+
+#[cfg(target_os = "macos")]
+fn service_pasteboard_text(pasteboard: id) -> Option<String> {
+    if pasteboard == nil {
+        return None;
+    }
+    let types = unsafe {
+        NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType])
+    };
+    let pasteboard_type: id = unsafe { msg_send![pasteboard, availableTypeFromArray: types] };
+    if pasteboard_type == nil {
+        return None;
+    }
+    let string: id = unsafe { msg_send![pasteboard, stringForType: pasteboard_type] };
+    if let Some(text) = appkit_string(string) {
+        return Some(text);
+    }
+    let data: id = unsafe { msg_send![pasteboard, dataForType: pasteboard_type] };
+    if data == nil {
+        return None;
+    }
+    let bytes: *const u8 = unsafe { msg_send![data, bytes] };
+    let length: usize = unsafe { msg_send![data, length] };
+    if bytes.is_null() {
+        return None;
+    }
+    String::from_utf8(unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec()).ok()
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn receive_native_service(
+    _this: &Object,
+    _cmd: Sel,
+    pasteboard: id,
+    user_data: id,
+    _error: *mut Object,
+) {
+    let Some(name) = appkit_string(user_data) else {
+        return;
+    };
+    let argument = service_pasteboard_text(pasteboard).unwrap_or_default();
+    let sender = NATIVE_SERVICE_EVENT_SENDER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    if let Some(sender) = sender {
+        let _ = sender.send(GuiEvent::NativeService { name, argument });
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn register_native_service_provider(
+    event_tx: std::sync::mpsc::Sender<GuiEvent>,
+) -> Result<(), String> {
+    *NATIVE_SERVICE_EVENT_SENDER
+        .lock()
+        .map_err(|_| "Unable to access macOS Services state".to_owned())? = Some(event_tx);
+    let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
+    if app == nil {
+        return Err("NSApplication is unavailable".to_owned());
+    }
+    let provider = {
+        let mut provider = NATIVE_SERVICE_PROVIDER
+            .lock()
+            .map_err(|_| "Unable to access macOS Services provider".to_owned())?;
+        if *provider == 0 {
+            let class = native_service_provider_class();
+            let allocated: id = unsafe { msg_send![class, alloc] };
+            let instance: id = unsafe { msg_send![allocated, init] };
+            if instance == nil {
+                return Err("Unable to create the macOS Services provider".to_owned());
+            }
+            *provider = instance as usize;
+        }
+        *provider as id
+    };
+    unsafe {
+        let _: () = msg_send![app, setServicesProvider: provider];
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn set_dock_badge(badge: Option<&str>) -> Result<(), String> {
     let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
     let dock: id = unsafe { msg_send![app, dockTile] };
@@ -255,6 +372,10 @@ pub fn run_gui_with_dump(
     application.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
         register_power_off_listener(event_tx.clone());
+        #[cfg(target_os = "macos")]
+        if let Err(error) = register_native_service_provider(event_tx.clone()) {
+            eprintln!("remacs: macOS Services input unavailable: {error}");
+        }
         cx.spawn(async move |cx| {
             while let Ok(request) = clipboard_requests.recv().await {
                 match request {

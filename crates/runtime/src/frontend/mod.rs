@@ -161,6 +161,8 @@ pub enum InputEvent {
     },
     /// Files opened by the operating system, optionally at a requested line.
     OpenFiles(Vec<(String, Option<usize>)>),
+    /// A request from a native macOS Services provider.
+    NativeService { name: String, argument: String },
     /// Apply a color dragged from the native color panel to the face under the pointer.
     ColorDrop {
         position: Option<MousePosition>,
