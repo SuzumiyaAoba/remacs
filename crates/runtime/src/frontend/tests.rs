@@ -431,6 +431,24 @@ fn isearch_del_after_failed_extension_restores_the_last_successful_match() {
 }
 
 #[test]
+fn isearch_meta_control_d_deletes_query_char_without_exiting() {
+    let mut i = isearch_interp("needle\n");
+    let mut st = Isearch::new(&mut i, false, false);
+    for c in "needle".chars() {
+        st.step(&mut i, c as i128);
+    }
+
+    // C-M-d is folded to M-^D before it reaches the shared I-search loop.
+    assert!(matches!(
+        st.step(&mut i, CHAR_META | 4),
+        IsearchAction::Continue
+    ));
+    assert_eq!(st.query, "needl");
+    assert!(!st.failing);
+    assert_eq!(point(&i), 5);
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
