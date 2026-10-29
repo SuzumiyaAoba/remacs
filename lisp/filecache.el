@@ -394,7 +394,10 @@ or the optional REGEXP argument."
     (delete-matching-lines elt))
   (goto-char (point-min))
   (while (re-search-forward file-cache-buffer-default-regexp nil t)
-    (file-cache-add-file (match-string-no-properties 0))))
+    (let ((file (match-string-no-properties 0)))
+      ;;Remacs: find/locate output may include directories, but this cache holds files.
+      (unless (file-directory-p file)
+        (file-cache-add-file file)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions to delete from the cache
