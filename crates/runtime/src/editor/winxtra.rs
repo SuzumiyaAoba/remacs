@@ -4373,10 +4373,80 @@ fn f_window_resize_apply(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// `window-resize-apply-total' — GNU Fwindow_resize_apply_total:
-/// decode_live_frame, applies totals unconditionally → t.
+fn window_new_total_size(i: &mut Interp, window: &WindowRef) -> Result<usize, Flow> {
+    let size = window.borrow().new_total;
+    if !(0..=crate::lisp::value::FIXNUM_MAX).contains(&size) {
+        return Err(i.wrong_type_mut("wholenump", &Value::Int(size)));
+    }
+    usize::try_from(size).map_err(|_| i.wrong_type_mut("wholenump", &Value::Int(size)))
+}
+
+fn apply_window_total(
+    i: &mut Interp,
+    window: &WindowRef,
+    horizontal: bool,
+    start: usize,
+) -> Result<usize, Flow> {
+    let total = window_new_total_size(i, window)?;
+    let (split_axis, children) = {
+        let mut data = window.borrow_mut();
+        if horizontal {
+            data.left = start;
+            data.width = total;
+        } else {
+            data.top = start;
+            data.height = total;
+        }
+        (data.horiz, data.children.clone())
+    };
+    let mut edge = start;
+    for child in children {
+        let child_start = if split_axis == Some(horizontal) {
+            edge
+        } else {
+            start
+        };
+        let child_total = apply_window_total(i, &child, horizontal, child_start)?;
+        if split_axis == Some(horizontal) {
+            edge = edge.saturating_add(child_total);
+        }
+    }
+    Ok(total)
+}
+
+/// `window-resize-apply-total' — apply pending `new_total' values and
+/// recompute the affected window tree's positions along the chosen axis.
 fn f_window_resize_apply_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = frame_live(i, &arg(&a, 0))?;
+    let frame = frame_live(i, &arg(&a, 0))?;
+    let horizontal = arg(&a, 1).truthy();
+    let (root, minibuffer, text_margin) = {
+        let frame = frame.borrow();
+        (frame.root.clone(), frame.minibuffer.clone(), frame.text_margin)
+    };
+    let Some(root) = root.or_else(|| minibuffer.clone()) else {
+        return Ok(Value::t());
+    };
+    {
+        let mut root = root.borrow_mut();
+        root.left = 0;
+        root.top = text_margin;
+    }
+    let start = if horizontal { 0 } else { text_margin };
+    apply_window_total(i, &root, horizontal, start)?;
+    if let Some(minibuffer) = minibuffer.filter(|window| !Rc::ptr_eq(window, &root)) {
+        let total = window_new_total_size(i, &minibuffer)?;
+        let root_bottom = {
+            let root = root.borrow();
+            root.top.saturating_add(root.height)
+        };
+        let mut minibuffer = minibuffer.borrow_mut();
+        if horizontal {
+            minibuffer.width = total;
+        } else {
+            minibuffer.top = root_bottom;
+            minibuffer.height = total;
+        }
+    }
     Ok(Value::t())
 }
 
