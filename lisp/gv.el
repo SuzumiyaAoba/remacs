@@ -61,8 +61,17 @@ DO must return an Elisp expression."
   "Return the symbol where the (setf NAME) function should be placed."
   (if (get name 'gv-expander)
       (error "gv-expander conflicts with (setf %S)" name))
-  ;; FIXME: This is wrong if `name' is uninterned (or interned elsewhere).
-  (intern (format "(setf %s)" name)))
+  (let ((interned (intern-soft (symbol-name name))))
+    (if (eq interned name)
+        (intern (format "(setf %s)" name))
+      ;; There is no corresponding interned setter name for an uninterned
+      ;; symbol, or for a symbol interned in another obarray.  Cache a unique
+      ;; uninterned setter on NAME so repeated lookups remain stable without
+      ;; merging same-named symbols.
+      (or (get name 'gv--setter-symbol)
+          (let ((setter (make-symbol (format "(setf %s)" name))))
+            (put name 'gv--setter-symbol setter)
+            setter)))))
 
 ;;;###autoload
 (defmacro gv-letplace (vars place &rest body)

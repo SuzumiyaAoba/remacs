@@ -133,6 +133,32 @@
   (setf (symbol-value sym) 42)
   (qa (symbol-value sym) 42))
 
+;; Issue #1997: distinct uninterned place names need distinct setter cells.
+(let* ((a (make-symbol "qa-gv-place"))
+       (b (make-symbol "qa-gv-place"))
+       (x 0)
+       (y 0)
+       (form (gv-get (list a)
+                     (lambda (_getter setter)
+                       (funcall setter 10))))
+       (setter-a (gv-setter a))
+       (setter-b (gv-setter b)))
+  (fset setter-a (lambda (value) (setq x value)))
+  (fset setter-b (lambda (value) (setq y value)))
+  (eval form)
+  (qa (list (eq setter-a setter-b) x y) '(nil 10 0)))
+
+(let* ((obarray-a (make-vector 17 0))
+       (obarray-b (make-vector 17 0))
+       (a (let ((obarray obarray-a)) (intern "qa-gv-other-obarray")))
+       (b (let ((obarray obarray-b)) (intern "qa-gv-other-obarray")))
+       (setter-a (gv-setter a))
+       (setter-b (gv-setter b)))
+  (qa (list (eq setter-a setter-b)
+            (eq setter-a (gv-setter a))
+            (eq setter-b (gv-setter b)))
+      '(nil t t)))
+
 ;; == gv-synthetic-place ==
 ;; signature is (GETTER SETTER) — produces a place EXPANSION used
 ;; inside `setf' — covered indirectly by all the `setf' paths above.
