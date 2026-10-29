@@ -10,7 +10,12 @@ use crate::{
     point, px,
 };
 use cocoa::{
-    appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
+    appkit::{
+        NSBeginFunctionKey, NSDeleteFunctionKey, NSDownArrowFunctionKey, NSEndFunctionKey,
+        NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType, NSHelpFunctionKey,
+        NSHomeFunctionKey, NSInsertFunctionKey, NSLeftArrowFunctionKey, NSPageDownFunctionKey,
+        NSPageUpFunctionKey, NSRightArrowFunctionKey, NSUpArrowFunctionKey,
+    },
     base::{YES, id},
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
@@ -25,6 +30,77 @@ const NUMPAD_ENTER_KEY: u16 = 0x03;
 pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
+
+// Apple virtual key codes preserve keypad identity when the character
+// reported by AppKit looks like a digit or a navigation key.
+fn keypad_key_name(key_code: CGKeyCode, first_char: Option<u16>) -> Option<&'static str> {
+    match key_code {
+        0x41 => Some(if first_char == Some(NSDeleteFunctionKey) {
+            "kp-delete"
+        } else {
+            "kp-decimal"
+        }),
+        0x43 => Some("kp-multiply"),
+        0x45 => Some("kp-add"),
+        0x47 => Some("kp-begin"),
+        0x4b => Some("kp-divide"),
+        0x4c => Some("kp-enter"),
+        0x4e => Some("kp-subtract"),
+        0x51 => Some("kp-equal"),
+        0x52 => Some(if matches!(first_char, Some(NSInsertFunctionKey | NSHelpFunctionKey)) {
+            "kp-insert"
+        } else {
+            "kp-0"
+        }),
+        0x53 => Some(if first_char == Some(NSEndFunctionKey) {
+            "kp-end"
+        } else {
+            "kp-1"
+        }),
+        0x54 => Some(if first_char == Some(NSDownArrowFunctionKey) {
+            "kp-down"
+        } else {
+            "kp-2"
+        }),
+        0x55 => Some(if first_char == Some(NSPageDownFunctionKey) {
+            "kp-next"
+        } else {
+            "kp-3"
+        }),
+        0x56 => Some(if first_char == Some(NSLeftArrowFunctionKey) {
+            "kp-left"
+        } else {
+            "kp-4"
+        }),
+        0x57 => Some(if first_char == Some(NSBeginFunctionKey) {
+            "kp-begin"
+        } else {
+            "kp-5"
+        }),
+        0x58 => Some(if first_char == Some(NSRightArrowFunctionKey) {
+            "kp-right"
+        } else {
+            "kp-6"
+        }),
+        0x59 => Some(if first_char == Some(NSHomeFunctionKey) {
+            "kp-home"
+        } else {
+            "kp-7"
+        }),
+        0x5b => Some(if first_char == Some(NSUpArrowFunctionKey) {
+            "kp-up"
+        } else {
+            "kp-8"
+        }),
+        0x5c => Some(if first_char == Some(NSPageUpFunctionKey) {
+            "kp-prior"
+        } else {
+            "kp-9"
+        }),
+        0x5f => Some("kp-separator"),
+        _ => None,
+    }
+}
 
 pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
@@ -329,7 +405,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 .is_none_or(|ch| !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch));
 
         #[allow(non_upper_case_globals)]
-        let key = match first_char {
+        let mut key = match first_char {
             Some(SPACE_KEY) => {
                 key_char = Some(" ".to_string());
                 "space".to_string()
@@ -454,6 +530,11 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 }
             }
         };
+
+        if let Some(keypad_key) = keypad_key_name(native_event.keyCode(), first_char) {
+            key = keypad_key.to_string();
+            key_char = None;
+        }
 
         Keystroke {
             modifiers: Modifiers {

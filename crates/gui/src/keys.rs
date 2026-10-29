@@ -196,18 +196,20 @@ pub(super) fn modifier_state_after_change(
 
 fn modifier_context(ks: &Keystroke) -> ModifierContext {
     let key = ks.key.as_str();
-    if matches!(
-        key,
-        "up" | "down"
-            | "left"
-            | "right"
-            | "home"
-            | "end"
-            | "delete"
-            | "insert"
-            | "pageup"
-            | "pagedown"
-    ) || (key.starts_with('f') && key[1..].parse::<u32>().is_ok())
+    if key.starts_with("kp-")
+        || matches!(
+            key,
+            "up" | "down"
+                | "left"
+                | "right"
+                | "home"
+                | "end"
+                | "delete"
+                | "insert"
+                | "pageup"
+                | "pagedown"
+        )
+        || (key.starts_with('f') && key[1..].parse::<u32>().is_ok())
     {
         ModifierContext::Function
     } else {
@@ -302,24 +304,26 @@ pub(super) fn mouse_modifier_bits(
 }
 
 fn is_named_key(ks: &Keystroke) -> bool {
-    matches!(
-        ks.key.as_str(),
-        "return"
-            | "enter"
-            | "tab"
-            | "backspace"
-            | "escape"
-            | "pageup"
-            | "pagedown"
-            | "up"
-            | "down"
-            | "left"
-            | "right"
-            | "home"
-            | "end"
-            | "delete"
-            | "insert"
-    ) || (ks.key.starts_with('f') && ks.key[1..].parse::<u32>().is_ok())
+    ks.key.starts_with("kp-")
+        || matches!(
+            ks.key.as_str(),
+            "return"
+                | "enter"
+                | "tab"
+                | "backspace"
+                | "escape"
+                | "pageup"
+                | "pagedown"
+                | "up"
+                | "down"
+                | "left"
+                | "right"
+                | "home"
+                | "end"
+                | "delete"
+                | "insert"
+        )
+        || (ks.key.starts_with('f') && ks.key[1..].parse::<u32>().is_ok())
 }
 
 pub(super) fn keystroke_to_code(ks: &Keystroke) -> Option<i128> {
@@ -348,6 +352,7 @@ pub(super) fn keystroke_to_code_with_mapping(
         "up" | "down" | "left" | "right" | "home" | "end" | "delete" | "insert" => {
             named(ks.key.as_str())
         }
+        s if s.starts_with("kp-") => named(s),
         s if s.len() > 1 && s.starts_with('f') && s[1..].parse::<u32>().is_ok() => named(s),
         s if s.chars().count() == 1 => {
             let physical = s.chars().next().unwrap_or('\0');
