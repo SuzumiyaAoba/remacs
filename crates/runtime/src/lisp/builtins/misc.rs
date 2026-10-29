@@ -1628,7 +1628,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_define_coding_system_alias,
         ""
     ),
-    S!("next-read-file-uses-dialog-p", 0, 0, f_nil, ""),
+    S!(
+        "next-read-file-uses-dialog-p",
+        0,
+        0,
+        f_next_read_file_uses_dialog_p,
+        ""
+    ),
     S!("lossage-size", 0, 1, f_lossage_size, ""),
     S!(
         "mouse-position-in-root-frame",
@@ -1990,6 +1996,28 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 fn f_t(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::t())
+}
+
+fn f_next_read_file_uses_dialog_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let use_dialog_box = i.q("use-dialog-box");
+    let use_file_dialog = i.q("use-file-dialog");
+    let last_nonmenu_event = i.q("last-nonmenu-event");
+    let last_input_event = i.q("last-input-event");
+    let event_allows_dialog = match i.symbol_value(last_nonmenu_event) {
+        Value::Nil => {
+            let last_input = i.symbol_value(last_input_event);
+            last_input.is_nil() || matches!(last_input, Value::Cons(_))
+        }
+        Value::Cons(_) => true,
+        _ => false,
+    };
+    let enabled = i.symbol_value(use_dialog_box).truthy()
+        && i.symbol_value(use_file_dialog).truthy()
+        && event_allows_dialog
+        && i.selected_frame.as_ref().is_some_and(|frame| {
+            crate::editor::frame_is_graphical(i, frame)
+        });
+    Ok(Value::from_bool(enabled))
 }
 
 fn f_nil(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
