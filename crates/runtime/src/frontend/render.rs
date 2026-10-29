@@ -2878,40 +2878,39 @@ struct RenderedImage {
 }
 
 impl RenderedImage {
-    fn cursor_dimensions(&self) -> (Option<usize>, Option<usize>) {
+    fn cursor_dimensions(&self) -> (Option<f64>, Option<f64>) {
         match (
             self.width,
             self.height,
             self.intrinsic_width,
             self.intrinsic_height,
         ) {
-            (Some(width), Some(height), _, _) => (Some(width), Some(height)),
+            (Some(width), Some(height), _, _) => (Some(width as f64), Some(height as f64)),
             (Some(width), None, Some(intrinsic_width), Some(intrinsic_height)) => (
-                Some(width),
+                Some(width as f64),
                 scale_image_dimension(intrinsic_height, width, intrinsic_width),
             ),
             (None, Some(height), Some(intrinsic_width), Some(intrinsic_height)) => (
                 scale_image_dimension(intrinsic_width, height, intrinsic_height),
-                Some(height),
+                Some(height as f64),
             ),
             (width, height, intrinsic_width, intrinsic_height) => (
-                width.or(intrinsic_width),
-                height.or(intrinsic_height),
+                width
+                    .map(|width| width as f64)
+                    .or_else(|| intrinsic_width.map(|width| width as f64)),
+                height
+                    .map(|height| height as f64)
+                    .or_else(|| intrinsic_height.map(|height| height as f64)),
             ),
         }
     }
 }
 
-fn scale_image_dimension(value: usize, scale: usize, basis: usize) -> Option<usize> {
+fn scale_image_dimension(value: usize, scale: usize, basis: usize) -> Option<f64> {
     if basis == 0 {
         return None;
     }
-    usize::try_from(
-        (value as u128)
-            .checked_mul(scale as u128)?
-            .checked_div(basis as u128)?,
-    )
-    .ok()
+    Some(value as f64 * scale as f64 / basis as f64)
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -7881,6 +7880,7 @@ fn render_grid_internal(
                         {
                             let large_masked_image = cursor_style.box_size.is_some_and(|size| {
                                 let (width, height) = image.cursor_dimensions();
+                                let size = size as f64;
                                 image.masked
                                     && (width.is_some_and(|width| width > size)
                                         || height.is_some_and(|height| height > size))
