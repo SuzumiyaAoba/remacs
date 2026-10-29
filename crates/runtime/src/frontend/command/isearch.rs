@@ -188,6 +188,32 @@ fn isearch_input_method_text(
     Ok(Some(text))
 }
 
+fn edit_isearch_query(
+    i: &mut Interp,
+    query: &str,
+    regexp: bool,
+) -> Result<String, crate::lisp::error::Flow> {
+    let initial = i
+        .prin1_to_string(&Value::string(query))
+        .to_unicode_lossy();
+    let history = if regexp {
+        "regexp-search-ring"
+    } else {
+        "search-ring"
+    };
+    let source = format!(
+        "(let ((map (copy-keymap minibuffer-local-map))) \
+           (define-key map \"\\C-s\" 'exit-minibuffer) \
+           (define-key map \"\\C-r\" 'exit-minibuffer) \
+           (read-from-minibuffer \"I-search edit: \" {} map nil '{}' nil t))",
+        initial, history
+    );
+    match i.eval_str(&source)? {
+        Value::Str(text) => Ok(text.borrow().to_unicode_lossy()),
+        other => Err(i.wrong_type_mut("stringp", &other)),
+    }
+}
+
 /// What the isearch driver should do after a key.
 pub(super) enum IsearchAction {
     /// Keep reading keys.
@@ -630,6 +656,19 @@ impl Isearch {
                         self.fail_pos = None;
                         self.search_replaced_query(i);
                     }
+                }
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | 'e' as i128) => {
+                self.save_history();
+                match edit_isearch_query(i, &self.query, self.regexp) {
+                    Ok(query) => {
+                        self.query = query;
+                        self.failing = false;
+                        self.fail_pos = None;
+                        self.search_replaced_query(i);
+                    }
+                    Err(flow) => report_flow(i, flow),
                 }
                 IsearchAction::Continue
             }
