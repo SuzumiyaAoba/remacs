@@ -567,19 +567,37 @@ winsys_fn!(f_ns_frame_geometry);
 fn f_ns_mouse_absolute_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let Some(frame) = i
         .selected_frame
-        .as_ref()
+        .clone()
         .filter(|frame| !frame.borrow().dead)
     else {
         return Err(winsys(i));
     };
-    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, &frame) {
         return Err(winsys(i));
     }
     let (x, y) = i.gui_mouse_absolute_position.unwrap_or((0, 0));
     Ok(Value::Cons(Cons::new(Value::Int(x), Value::Int(y))))
 }
 
-winsys_fn!(f_ns_set_mouse_absolute_pixel_position);
+fn f_ns_set_mouse_absolute_pixel_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let Some(frame) = i
+        .selected_frame
+        .clone()
+        .filter(|frame| !frame.borrow().dead)
+    else {
+        return Err(winsys(i));
+    };
+    if !cfg!(target_os = "macos") {
+        return Err(winsys(i));
+    }
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let x = super::misc::mouse_coordinate(i, &a[0])?;
+    let y = super::misc::mouse_coordinate(i, &a[1])?;
+    super::misc::warp_mouse_absolute(i, &frame, x, y)?;
+    Ok(Value::Nil)
+}
 
 fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Some(backend) = i.application_visibility_backend.clone() else {

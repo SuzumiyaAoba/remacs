@@ -201,6 +201,13 @@ pub(super) enum GuiRequest {
     FrameSnapshots(Vec<FrameSnapshot>),
     FrameVisibility { frame_id: usize, visible: bool },
     FrameOrder { frame_id: usize, raise: bool },
+    WarpPointer {
+        frame_id: usize,
+        x: i128,
+        y: i128,
+        absolute: bool,
+        reply: SyncSender<Result<(), String>>,
+    },
     Bell { frame_id: Option<usize>, visible: bool },
     ColorPanel {
         frame_id: usize,
@@ -391,6 +398,30 @@ struct GuiFrameVisibilityBackend {
     requests: smol::channel::Sender<GuiRequest>,
 }
 
+impl GuiFrameVisibilityBackend {
+    fn warp_pointer(
+        &self,
+        frame_id: usize,
+        x: i128,
+        y: i128,
+        absolute: bool,
+    ) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::WarpPointer {
+                frame_id,
+                x,
+                y,
+                absolute,
+                reply,
+            })
+            .map_err(|_| "GUI window service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI window service stopped".to_owned())?
+    }
+}
+
 impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String> {
         self.requests
@@ -414,6 +445,24 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
                 raise: false,
             })
             .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+
+    fn warp_pointer_in_frame(
+        &self,
+        frame_id: usize,
+        x: i128,
+        y: i128,
+    ) -> Result<(), String> {
+        self.warp_pointer(frame_id, x, y, false)
+    }
+
+    fn warp_pointer_absolute(
+        &self,
+        frame_id: usize,
+        x: i128,
+        y: i128,
+    ) -> Result<(), String> {
+        self.warp_pointer(frame_id, x, y, true)
     }
 }
 

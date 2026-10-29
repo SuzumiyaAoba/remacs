@@ -3,7 +3,7 @@
 use crate::editor::{FrameRef, WindowRef, sel_frame, sel_window, w_parent};
 use crate::lisp::eq_values;
 
-use crate::lisp::builtins::{arg, want_list};
+use crate::lisp::builtins::{arg, want_int, want_list};
 use crate::lisp::{
     Interp,
     error::{EvalResult, Flow},
@@ -470,13 +470,95 @@ pub(super) fn f_get_display_property(i: &mut Interp, a: crate::lisp::Argv) -> Ev
     Ok(Value::Nil)
 }
 
-/// `set-mouse-position' / `set-mouse-pixel-position' — frame-live-p
-/// check on FRAME; nil on a tty.
-pub(super) fn f_frame_live_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+pub(crate) fn mouse_coordinate(i: &mut Interp, value: &Value) -> Result<i128, Flow> {
+    let coordinate = want_int(i, value)?;
+    if coordinate < i32::MIN as i128 || coordinate > i32::MAX as i128 {
+        let condition = i.q("args-out-of-range");
+        return Err(i.signal_data(
+            condition,
+            vec![
+                value.clone(),
+                Value::Int(i32::MIN as i128),
+                Value::Int(i32::MAX as i128),
+            ],
+        ));
     }
+    Ok(coordinate)
+}
+
+pub(crate) fn warp_mouse_absolute(
+    i: &mut Interp,
+    frame: &FrameRef,
+    x: i128,
+    y: i128,
+) -> Result<(), Flow> {
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
+        return Ok(());
+    }
+    let backend = i
+        .frame_window_backend
+        .clone()
+        .ok_or_else(|| i.error("GUI pointer backend is unavailable"))?;
+    backend
+        .warp_pointer_absolute(frame.borrow().id, x, y)
+        .map_err(|message| i.error(message))?;
+    i.gui_mouse_absolute_position = Some((x, y));
+    Ok(())
+}
+
+fn warp_mouse_in_frame(i: &mut Interp, frame: &FrameRef, x: i128, y: i128) -> EvalResult {
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
+        return Ok(Value::Nil);
+    }
+    let backend = i
+        .frame_window_backend
+        .clone()
+        .ok_or_else(|| i.error("GUI pointer backend is unavailable"))?;
+    backend
+        .warp_pointer_in_frame(frame.borrow().id, x, y)
+        .map_err(|message| i.error(message))?;
+    Ok(Value::Nil)
+}
+
+pub(super) fn f_set_mouse_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
+    let x = mouse_coordinate(i, &a[1])?;
+    let y = mouse_coordinate(i, &a[2])?;
+    let char_width = crate::editor::frame_char_width(i, &frame) as i128;
+    let char_height = crate::editor::frame_char_height(i, &frame) as i128;
+    let border = crate::editor::frame_internal_border_width(i, &frame) as i128;
+    let top_margin = frame.borrow().text_margin as i128;
+    let pixel_x = border
+        .saturating_add(x.saturating_mul(char_width))
+        .saturating_add(char_width / 2)
+        .clamp(0, crate::editor::frame_pixel_width(i, &frame) as i128);
+    let pixel_y = border
+        .saturating_add(top_margin.saturating_mul(char_height))
+        .saturating_add(y.saturating_mul(char_height))
+        .saturating_add(char_height / 2)
+        .clamp(0, crate::editor::frame_pixel_height(i, &frame) as i128);
+    warp_mouse_in_frame(i, &frame, pixel_x, pixel_y)
+}
+
+pub(super) fn f_set_mouse_pixel_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
+    let x = mouse_coordinate(i, &a[1])?;
+    let y = mouse_coordinate(i, &a[2])?;
+    warp_mouse_in_frame(i, &frame, x, y)
+}
+
+pub(super) fn f_set_mouse_absolute_pixel_position(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+) -> EvalResult {
+    let frame = crate::editor::frame_live(i, &Value::Nil)?;
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let x = mouse_coordinate(i, &a[0])?;
+    let y = mouse_coordinate(i, &a[1])?;
+    warp_mouse_absolute(i, &frame, x, y)?;
+    Ok(Value::Nil)
 }
 
 /// `window-preserve-size' — GNU window.el: `window-normalize-window

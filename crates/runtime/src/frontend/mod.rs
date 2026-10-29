@@ -57,6 +57,20 @@ pub trait FrameWindowBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String>;
     fn raise(&self, frame_id: usize) -> Result<(), String>;
     fn lower(&self, frame_id: usize) -> Result<(), String>;
+    /// Move the pointer to pixel coordinates relative to FRAME's native area.
+    fn warp_pointer_in_frame(
+        &self,
+        frame_id: usize,
+        x: i128,
+        y: i128,
+    ) -> Result<(), String>;
+    /// Move the pointer to pixel coordinates relative to FRAME's display.
+    fn warp_pointer_absolute(
+        &self,
+        frame_id: usize,
+        x: i128,
+        y: i128,
+    ) -> Result<(), String>;
 }
 
 /// Host color panel used by native GUI faces.

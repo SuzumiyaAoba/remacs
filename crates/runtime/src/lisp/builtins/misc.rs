@@ -178,16 +178,17 @@ use diagnostics::{
 use keymaps::f_set_this_command_keys;
 mod display;
 #[allow(unused_imports)] // misc::* compatibility re-exports
-pub(crate) use display::{decode_display, win_min_size};
+pub(crate) use display::{decode_display, mouse_coordinate, warp_mouse_absolute, win_min_size};
 use display::{
     f_current_frame_configuration, f_delete_other_windows_internal, f_delete_windows_on,
     f_display_false, f_display_mm, f_display_monitor_attributes_list, f_display_pixel_height,
     f_display_pixel_width, f_display_planes, f_display_pred_false, f_display_screens,
     f_display_visual_class, f_fit_window_to_buffer, f_frame_configuration_p, f_frame_geometry,
-    f_frame_height_val, f_frame_live_nil, f_frame_monitor_attributes, f_frame_or_buffer_changed_p,
+    f_frame_height_val, f_frame_monitor_attributes, f_frame_or_buffer_changed_p,
     f_frame_outer_dim, f_frame_width_val, f_get_display_property, f_get_window_pred,
     f_move_to_window_line, f_ns_display, f_ns_frame_stub_err, f_pos_visible, f_scroll_bar_scale,
-    f_set_buffer_redisplay, f_tab_bar_height, f_window_at_side_p, f_window_child,
+    f_set_buffer_redisplay, f_set_mouse_absolute_pixel_position, f_set_mouse_pixel_position,
+    f_set_mouse_position, f_tab_bar_height, f_window_at_side_p, f_window_child,
     f_window_child_count, f_window_combined_p, f_window_cursor_info, f_window_display_buffer,
     f_window_in_direction, f_window_left_column, f_window_line, f_window_main_window,
     f_window_max_chars, f_window_norm_buffer, f_window_norm_frame, f_window_normalize,
@@ -1145,8 +1146,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("mouse-position", 0, 0, f_mouse_position, ""),
     S!("mouse-pixel-position", 0, 0, f_mouse_position, ""),
-    S!("set-mouse-position", 3, 3, f_frame_live_nil, ""),
-    S!("set-mouse-pixel-position", 3, 3, f_frame_live_nil, ""),
+    S!("set-mouse-position", 3, 3, f_set_mouse_position, ""),
+    S!(
+        "set-mouse-pixel-position",
+        3,
+        3,
+        f_set_mouse_pixel_position,
+        ""
+    ),
     S!("display-images-p", 0, 1, f_display_false, ""),
     S!("display-pixel-width", 0, 1, f_display_pixel_width, ""),
     S!("display-pixel-height", 0, 1, f_display_pixel_height, ""),
@@ -1451,7 +1458,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_terminal_coding_system,
         ""
     ),
-    S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
+    S!(
+        "set-mouse-absolute-pixel-position",
+        2,
+        2,
+        f_set_mouse_absolute_pixel_position,
+        ""
+    ),
     S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
     // `keymap-of' does not exist in GNU Emacs 31.
     // ---------- display/font/image stubs (no GUI) ----------

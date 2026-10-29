@@ -502,6 +502,25 @@ pub fn run_gui_with_dump(
                             });
                         }
                     }
+                    GuiRequest::WarpPointer {
+                        frame_id,
+                        x,
+                        y,
+                        absolute,
+                        reply,
+                    } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, |_view, window, cx| {
+                                    monitor::warp_mouse_pointer(window, cx, x, y, absolute)
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::Bell { frame_id, visible } => {
                         if visible {
                             let handle = frame_id
