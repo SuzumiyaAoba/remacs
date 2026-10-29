@@ -498,6 +498,12 @@ fn dispatch_key_core_inner(
     if command_event.is_none() {
         crate::editor::record_recent_input_event(i, input_event.clone());
     }
+    if keys.is_empty() {
+        // GNU resets this for each command key sequence; a Shift-modified
+        // event below may set it before an interactive `^' directive runs.
+        let shift_translated = i.q("this-command-keys-shift-translated");
+        i.store_internal_value(shift_translated, Value::Nil);
+    }
     {
         if *arg_mode {
             let digit = (48..58).contains(&key);
@@ -532,6 +538,10 @@ fn dispatch_key_core_inner(
             i.command_key_events.clear();
             i.command_raw_key_events.clear();
             i.command_key_start = 0;
+        }
+        if key & CHAR_SHIFT != 0 {
+            let shift_translated = i.q("this-command-keys-shift-translated");
+            i.store_internal_value(shift_translated, Value::t());
         }
         keys.push(key);
         let raw_events = keys

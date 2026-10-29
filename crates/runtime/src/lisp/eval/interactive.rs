@@ -167,6 +167,10 @@ impl Interp {
                 SpecPart::Reserved => return Err(self.error("\u{2018}+\u{2019} is not used in \u{2018}interactive\u{2019} for ordinary commands")),
                 SpecPart::Writable => crate::buffer::primitives::check_writable(self)?,
                 SpecPart::Ignored => {},
+                SpecPart::ShiftSelection => {
+                    let function = Value::Sym(self.q("handle-shift-selection"));
+                    self.apply(&function, Vec::new())?;
+                }
                 SpecPart::Argument { code, prompt } => {
                     // GNU formats even unused/invalid-code prompts first;
                     // this must remain before dispatch and its side effects.
