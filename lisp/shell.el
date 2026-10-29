@@ -1074,7 +1074,7 @@ solution."
          (t
           (setq options nil
                 arguments (cons arg arguments))))))
-    (or (car arguments) "")))
+    (car arguments)))
 
 (defun shell-directory-tracker (str)
   "Tracks cd, pushd and popd commands issued to the shell.
@@ -1119,14 +1119,24 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 		    ((string-match (concat "\\`\\(" shell-pushd-regexp
 					   "\\)\\($\\|[ \t]\\)")
 				   cmd)
-		     (shell-process-pushd (comint-substitute-in-file-name arg1)))
+			 (let* ((explicit arg1)
+				(dir (if explicit
+					 (comint-substitute-in-file-name arg1)
+				       "")))
+			   (unless (and explicit (zerop (length dir)))
+			     (shell-process-pushd dir))))
 		    ((string-match (concat "\\`\\(" shell-cd-regexp
 					   "\\)\\($\\|[ \t]\\)")
 				   cmd)
-			 (shell-process-cd
-                  (comint-substitute-in-file-name
-                   (shell-directory-tracker--cd-directory
-                    (substring str start end)))))
+			 (let* ((raw-directory
+				 (shell-directory-tracker--cd-directory
+				  (substring str start end)))
+				(explicit raw-directory)
+				(directory (if explicit
+					       (comint-substitute-in-file-name raw-directory)
+					     "")))
+			   (unless (and explicit (zerop (length directory)))
+			     (shell-process-cd directory))))
 		    ((and shell-chdrive-regexp
 			  (string-match (concat "\\`\\(" shell-chdrive-regexp
 						"\\)\\($\\|[ \t]\\)")
