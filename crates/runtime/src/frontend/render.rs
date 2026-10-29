@@ -888,6 +888,49 @@ pub(crate) fn position_display_cell(
     }
 }
 
+/// Approximate the text range that a redisplay pass can request fontification
+/// for in WINDOW. The small overestimate covers line breaks and wide cells.
+pub(crate) fn visible_fontification_range(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+) -> Option<(usize, usize)> {
+    let (buffer_id, start, height) = {
+        let window = window.borrow();
+        (window.buffer, window.start, window.height)
+    };
+    let buffer = i.buffers.get(buffer_id)?;
+    let (begv, zv) = {
+        let buffer = buffer.borrow();
+        (buffer.begv, buffer.zv)
+    };
+    let start = start.max(begv).min(zv);
+    let rows = height
+        .saturating_sub(if buffer_setting(i, "mode-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .saturating_sub(if buffer_setting(i, "header-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .saturating_sub(if buffer_setting(i, "tab-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .max(1);
+    let width = crate::editor::win_body_width(i, window).max(1);
+    let wrapped = !buffer_setting(i, "truncate-lines", buffer_id).truthy();
+    let cells = if wrapped {
+        rows.saturating_mul(width.saturating_add(1))
+    } else {
+        width.saturating_add(1)
+    };
+    Some((start, start.saturating_add(cells).min(zv)))
+}
+
 fn display_row_distance_from_start(
     text: &crate::buffer::SharedText,
     begv: usize,

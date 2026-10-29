@@ -3997,22 +3997,137 @@ pub(crate) fn run_pre_redisplay_function(
     i: &mut Interp,
     windows: Vec<WindowRef>,
 ) -> Result<(), Flow> {
-    let Some(function) = i
+    let windows: Vec<_> = windows
+        .into_iter()
+        .filter(|window| !window.borrow().dead)
+        .collect();
+    let function = i
         .intern_soft("pre-redisplay-function")
         .filter(|symbol| i.bound_p(*symbol))
         .map(|symbol| i.symbol_value(symbol))
-        .filter(|function| function.truthy())
+        .filter(|function| function.truthy());
+    if let Some(function) = function {
+        let windows_arg = Value::list(windows.iter().cloned().map(Value::Window).collect());
+        i.apply(&function, vec![windows_arg])?;
+    }
+    for window in windows {
+        run_window_fontification_functions(i, &window)?;
+    }
+    Ok(())
+}
+
+fn fontified_interval_end(
+    i: &Interp,
+    buffer_id: usize,
+    position: usize,
+    limit: usize,
+    property: SymId,
+) -> Option<usize> {
+    let buffer = i.buffers.get(buffer_id)?;
+    let buffer = buffer.borrow();
+    buffer
+        .text
+        .props
+        .borrow()
+        .iter()
+        .filter(|prop| {
+            prop.prop == property
+                && prop.start <= position
+                && position < prop.end
+                && prop.value.truthy()
+        })
+        .map(|prop| prop.end.min(limit))
+        .max()
+}
+
+fn run_window_fontification_functions(
+    i: &mut Interp,
+    window: &WindowRef,
+) -> Result<(), Flow> {
+    let buffer_id = window.borrow().buffer;
+    let Some((mut position, end)) = crate::frontend::visible_fontification_range(i, window)
     else {
         return Ok(());
     };
-    let windows = Value::list(
-        windows
-            .into_iter()
-            .filter(|window| !window.borrow().dead)
-            .map(Value::Window)
-            .collect(),
-    );
-    i.apply(&function, vec![windows])?;
+    if position >= end {
+        return Ok(());
+    }
+    let Some(fontification_functions) = i
+        .intern_soft("fontification-functions")
+        .filter(|symbol| i.bound_p(*symbol))
+    else {
+        return Ok(());
+    };
+    let functions = i
+        .buffer_local_toplevel_value(fontification_functions, buffer_id)
+        .or_else(|| i.default_toplevel_value(fontification_functions))
+        .unwrap_or(Value::Nil);
+    if functions.is_nil() {
+        return Ok(());
+    }
+    let Some(fontified) = i.intern_soft("fontified") else {
+        return Ok(());
+    };
+
+    let previous_buffer = i.current_buffer;
+    i.set_current_buffer(buffer_id);
+    let mark = i.specbind_depth();
+    let inhibit_redisplay = i.q("inhibit-redisplay");
+    let result = (|| {
+        i.specbind(inhibit_redisplay, Value::t())?;
+        while position < end {
+            if window.borrow().dead || !i.buffer_live(buffer_id) {
+                break;
+            }
+            let buffer = i
+                .buffers
+                .get(buffer_id)
+                .ok_or_else(|| i.error("Fontification buffer is no longer live"))?;
+            let fontified_value = {
+                let buffer = buffer.borrow();
+                crate::buffer::primitives::prop_at_bb(i, &buffer, position, fontified)
+            };
+            if fontified_value.truthy() {
+                position = fontified_interval_end(i, buffer_id, position, end, fontified)
+                    .unwrap_or(position.saturating_add(1))
+                    .max(position.saturating_add(1));
+                continue;
+            }
+            crate::lisp::builtins::evalfn::f_run_hook_with_args(
+                i,
+                vec![
+                    Value::Sym(fontification_functions),
+                    Value::Int(position as i128 + 1),
+                ]
+                .into(),
+            )?;
+            if i.buffer_live(buffer_id) {
+                i.set_current_buffer(buffer_id);
+            }
+            let buffer = i
+                .buffers
+                .get(buffer_id)
+                .ok_or_else(|| i.error("Fontification buffer is no longer live"))?;
+            let fontified_value = {
+                let buffer = buffer.borrow();
+                crate::buffer::primitives::prop_at_bb(i, &buffer, position, fontified)
+            };
+            if fontified_value.truthy() {
+                position = fontified_interval_end(i, buffer_id, position, end, fontified)
+                    .unwrap_or(position.saturating_add(1))
+                    .max(position.saturating_add(1));
+            } else {
+                position = position.saturating_add(1);
+            }
+        }
+        Ok(())
+    })();
+    let unwind = i.unbind_to(mark);
+    if i.buffer_live(previous_buffer) {
+        i.set_current_buffer(previous_buffer);
+    }
+    result?;
+    unwind?;
     Ok(())
 }
 

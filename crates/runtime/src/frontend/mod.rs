@@ -364,3 +364,4 @@ pub use render::{
 };
 pub(crate) use render::position_display_cell;
 pub(crate) use render::buffer_setting;
+pub(crate) use render::visible_fontification_range;
