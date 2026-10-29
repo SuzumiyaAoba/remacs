@@ -1197,6 +1197,16 @@ The following commands are accepted by the client:
   ;; character in order that it does not appear, to the code below,
   ;; that there is a zero-length argument there (bug#79889).
   (unless (process-get proc :authenticated)
+    (setq string (concat (process-get proc :auth-buffer) string))
+    (process-put proc :auth-buffer nil)
+    (let* ((auth-key (process-get proc :auth-key))
+           (auth-prefix (and (stringp auth-key) (concat "-auth " auth-key))))
+      (when (and auth-prefix
+                 (< (length string) (length auth-prefix))
+                 (equal string (substring auth-prefix 0 (length string))))
+        ;; The process filter may split the authentication token across calls.
+        (process-put proc :auth-buffer string)
+        (cl-return-from server--process-filter-1)))
     (if (and (string-match "-auth \\([!-~]+\\)[ \n]?" string)
 	     (equal (match-string 1 string) (process-get proc :auth-key)))
 	(progn
