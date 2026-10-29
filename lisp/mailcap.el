@@ -694,14 +694,17 @@ Also return non-nil if it has no test clause.  TYPE-INFO is an argument
 to supply to the test."
   (let* ((test-info (assq 'test viewer-info))
 	 (test (cdr test-info))
-	 (otest test)
 	 (viewer (cdr (assq 'viewer viewer-info)))
 	 (default-directory (expand-file-name "~/"))
-	 status cache result)
+	 status cache result test-key)
     (cond ((not (or (stringp viewer) (fboundp viewer)))
 	   nil)				; Non-existent Lisp function
 	  ((null test-info) t)		; No test clause
-	  ((setq cache (assoc test mailcap-viewer-test-cache))
+	  ((progn
+	     ;; Cache the expanded command so parameter-dependent tests do not
+	     ;; reuse results from messages with different Content-Type values.
+	     (setq test-key (mailcap-unescape-mime-test test type-info))
+	     (setq cache (assoc test-key mailcap-viewer-test-cache)))
 	   (cadr cache))
 	  (t
 	   (setq
@@ -718,12 +721,11 @@ to supply to the test."
 		   (symbolp (car test)))
 	      (eval test t))
 	     (t
-	      (setq test (mailcap-unescape-mime-test test type-info)
-		    test (list shell-file-name nil nil nil
-			       shell-command-switch test)
+	      (setq test (list shell-file-name nil nil nil
+			       shell-command-switch test-key)
 		    status (apply #'call-process test))
 	      (eq 0 status))))
-	   (push (list otest result) mailcap-viewer-test-cache)
+	   (push (list test-key result) mailcap-viewer-test-cache)
 	   result))))
 
 (defun mailcap-add-mailcap-entry (major minor info &optional storage)
