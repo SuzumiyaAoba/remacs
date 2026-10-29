@@ -1628,39 +1628,47 @@ fn f_window_resize_no_error(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     window_resize_impl(i, a, true)
 }
 
-/// Window's size on the split axis its parent combines along, or
-/// None when the window can't be resized that way (root leaf,
-/// minibuffer, or parent splits the other axis — GNU: the parent's
-/// combination direction must match the resize direction).
-fn resize_axis(w: &WindowRef, horizontal: bool) -> Option<(WindowRef, Vec<WindowRef>)> {
-    let p = w_parent(w)?;
-    let pb = p.borrow();
-    if pb.horiz != Some(horizontal) {
-        return None;
+/// Return the nearest ancestor combination that splits along the resize
+/// axis, the child branch containing W, and that combination's children.
+fn resize_axis(
+    w: &WindowRef,
+    horizontal: bool,
+) -> Option<(WindowRef, WindowRef, Vec<WindowRef>)> {
+    let mut child = w.clone();
+    let mut parent = w_parent(&child)?;
+    loop {
+        let (split_axis, children) = {
+            let parent = parent.borrow();
+            (parent.horiz, parent.children.clone())
+        };
+        if split_axis == Some(horizontal) {
+            return Some((parent, child, children));
+        }
+        child = parent.clone();
+        parent = w_parent(&child)?;
     }
-    Some((p.clone(), pb.children.clone()))
 }
 
 /// Maximum grow capacity: total slack the siblings above their
 /// minimum sizes.  Shrink capacity: W's own slack above its minimum.
 fn resize_caps(i: &mut Interp, w: &WindowRef, horizontal: bool) -> (i128, i128) {
-    let Some((_, kids)) = resize_axis(w, horizontal) else {
+    let Some((_, target, kids)) = resize_axis(w, horizontal) else {
         return (0, 0);
     };
     let wmin = crate::lisp::builtins::misc::win_min_size(
         i,
-        &Value::Window(w.clone()),
+        &Value::Window(target.clone()),
         horizontal,
         &Value::Nil,
     );
     let wsize = {
-        let wb = w.borrow();
+        let wb = target.borrow();
         (if horizontal { wb.width } else { wb.height }) as i128
     };
     let shrink = (wsize - wmin).max(0);
     let grow: i128 = kids
         .iter()
-        .filter(|k| !Rc::ptr_eq(k, w) && !k.borrow().dead)
+        .filter(|k| !Rc::ptr_eq(k, &target) && !k.borrow().dead)
         .map(|k| {
             let ks = {
                 let kb = k.borrow();
@@ -1808,17 +1816,17 @@ fn window_resize_pixelwise(
             Err(i.error(msg))
         }
     };
-    let Some((parent, kids)) = resize_axis(w, horizontal) else {
+    let Some((parent, target, kids)) = resize_axis(w, horizontal) else {
         return fail(i, "Invalid window size");
     };
-    let char_size = pixelwise_char_size(i, w, horizontal);
-    let (grow, shrink) = resize_caps_pixelwise(i, w, &kids, horizontal, ignore, char_size);
+    let char_size = pixelwise_char_size(i, &target, horizontal);
+    let (grow, shrink) = resize_caps_pixelwise(i, &target, &kids, horizontal, ignore, char_size);
     let magnitude = delta.abs();
     let pool = if delta > 0 {
         grow
     } else {
         kids.iter()
-            .filter(|sibling| !Rc::ptr_eq(sibling, w) && !sibling.borrow().dead)
+            .filter(|sibling| !Rc::ptr_eq(sibling, &target) && !sibling.borrow().dead)
             .map(|sibling| pixelwise_window_size(sibling, horizontal, char_size))
             .sum()
     };
@@ -1828,7 +1836,7 @@ fn window_resize_pixelwise(
     }
 
     {
-        let mut window = w.borrow_mut();
+        let mut window = target.borrow_mut();
         if horizontal {
             window.pixelwise_width_adjustment += delta;
         } else {
@@ -1838,11 +1846,11 @@ fn window_resize_pixelwise(
     let mut need = magnitude;
     let last = kids
         .iter()
-        .filter(|sibling| !Rc::ptr_eq(sibling, w) && !sibling.borrow().dead)
+        .filter(|sibling| !Rc::ptr_eq(sibling, &target) && !sibling.borrow().dead)
         .last()
         .cloned();
     for sibling in &kids {
-        if Rc::ptr_eq(sibling, w) || sibling.borrow().dead {
+        if Rc::ptr_eq(sibling, &target) || sibling.borrow().dead {
             continue;
         }
         let size = pixelwise_window_size(sibling, horizontal, char_size);
@@ -1973,10 +1981,10 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
     if a.get(4).is_some_and(Value::truthy) {
         return window_resize_pixelwise(i, &w, delta, horizontal, &ignore, no_error);
     }
-    let Some((p, kids)) = resize_axis(&w, horizontal) else {
+    let Some((p, target, kids)) = resize_axis(&w, horizontal) else {
         return fail(i, "Invalid window size");
     };
-    let (grow, shrink) = resize_caps(i, &w, horizontal);
+    let (grow, shrink) = resize_caps(i, &target, horizontal);
     let ok = if delta > 0 {
         delta <= grow
     } else {
@@ -1988,7 +1996,7 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
     // Apply: W takes DELTA; siblings give up (grow) or receive
     // (shrink) space proportional to their current sizes.
     {
-        let mut wb = w.borrow_mut();
+        let mut wb = target.borrow_mut();
         if horizontal {
             wb.width = (wb.width as i128 + delta).max(1) as usize;
         } else {
@@ -2001,7 +2009,7 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
         // Shrinking W releases space siblings soak up — proportional
         // to their current sizes (a sole sibling takes it all).
         kids.iter()
-            .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
+            .filter(|k| !Rc::ptr_eq(k, &target) && !k.borrow().dead)
             .map(|k| {
                 let kb = k.borrow();
                 (if horizontal { kb.width } else { kb.height }) as i128
@@ -2011,11 +2019,11 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
     let mut need = delta.abs();
     let last = kids
         .iter()
-        .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
+        .filter(|k| !Rc::ptr_eq(k, &target) && !k.borrow().dead)
         .last()
         .cloned();
     for k in &kids {
-        if Rc::ptr_eq(k, &w) || k.borrow().dead {
+        if Rc::ptr_eq(k, &target) || k.borrow().dead {
             continue;
         }
         let ksize = {
