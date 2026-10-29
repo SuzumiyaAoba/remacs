@@ -204,6 +204,8 @@ Will not do anything if `url-show-status' is nil."
   "Return the directory part of FILE, for a URL."
   (cond
    ((null file) "")
+   ((string-match "#" file)
+    (url-file-directory (substring file 0 (match-beginning 0))))
    ((string-match "\\?" file)
     (url-file-directory (substring file 0 (match-beginning 0))))
    ((string-match "\\(.*\\(/\\|%2[fF]\\)\\)" file)
@@ -214,6 +216,8 @@ Will not do anything if `url-show-status' is nil."
   "Return the nondirectory part of FILE, for a URL."
   (cond
    ((null file) "")
+   ((string-match "#" file)
+    (url-file-nondirectory (substring file 0 (match-beginning 0))))
    ((string-match "\\?" file)
     (url-file-nondirectory (substring file 0 (match-beginning 0))))
    ((string-match ".*\\(?:/\\|%2[fF]\\)\\(.*\\)" file)
