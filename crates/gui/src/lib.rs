@@ -391,6 +391,7 @@ pub fn run_gui_with_dump(
         .unwrap_or(true);
     let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
     let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
+    let initial_sticky = initial_frame_size.is_some_and(|frame| frame.sticky);
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -458,6 +459,7 @@ pub fn run_gui_with_dump(
             |window, cx| {
                 set_native_no_accept_focus(window, initial_no_accept_focus);
                 update_native_skip_taskbar(window, initial_skip_taskbar);
+                update_native_sticky(window, initial_sticky);
                 if initial_focus_on_map {
                     cx.activate(false);
                 }
@@ -490,6 +492,7 @@ pub fn run_gui_with_dump(
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
             let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
+            let mut frame_sticky = HashMap::<usize, bool>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -527,6 +530,9 @@ pub fn run_gui_with_dump(
                             let skip_taskbar_changed =
                                 frame_skip_taskbar.get(&frame_id) != Some(&skip_taskbar);
                             frame_skip_taskbar.insert(frame_id, skip_taskbar);
+                            let sticky = snapshot.sticky;
+                            let sticky_changed = frame_sticky.get(&frame_id) != Some(&sticky);
+                            frame_sticky.insert(frame_id, sticky);
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -562,6 +568,9 @@ pub fn run_gui_with_dump(
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     if skip_taskbar_changed {
                                         update_native_skip_taskbar(window, skip_taskbar);
+                                    }
+                                    if sticky_changed {
+                                        update_native_sticky(window, sticky);
                                     }
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
@@ -734,6 +743,7 @@ pub fn run_gui_with_dump(
                             let handle = match cx.open_window(options, move |window, app| {
                                 set_native_no_accept_focus(window, no_accept_focus);
                                 update_native_skip_taskbar(window, skip_taskbar);
+                                update_native_sticky(window, sticky);
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
@@ -802,6 +812,7 @@ pub fn run_gui_with_dump(
                             frame_behaviors.remove(&frame_id);
                             frame_focus_on_map.remove(&frame_id);
                             frame_skip_taskbar.remove(&frame_id);
+                            frame_sticky.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -1612,6 +1623,30 @@ fn update_native_skip_taskbar(window: &Window, skip_taskbar: bool) {
     }
 }
 
+fn update_native_sticky(window: &Window, sticky: bool) {
+    if let Err(error) = set_native_sticky(window, sticky) {
+        eprintln!("remacs: failed to set sticky: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
+    let Some(native_window) = appkit_native_window(window) else {
+        return Err("native frame window is unavailable".to_owned());
+    };
+    const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+    let behavior: usize = unsafe { msg_send![native_window, collectionBehavior] };
+    let behavior = if sticky {
+        behavior | CAN_JOIN_ALL_SPACES
+    } else {
+        behavior & !CAN_JOIN_ALL_SPACES
+    };
+    unsafe {
+        let _: () = msg_send![native_window, setCollectionBehavior: behavior];
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
     use raw_window_handle::RawWindowHandle;
@@ -1663,11 +1698,17 @@ fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), St
 }
 
 #[cfg(target_os = "linux")]
-fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
+struct XcbWindowContext {
+    connection: xcb::Connection,
+    root: xcb::x::Window,
+    window: xcb::x::Window,
+}
+
+#[cfg(target_os = "linux")]
+fn xcb_window_context(window: &Window) -> Result<Option<XcbWindowContext>, String> {
     use raw_window_handle::{
         HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
     };
-    use xcb::{Connection, Xid, x};
 
     let display = window
         .display_handle()
@@ -1677,16 +1718,16 @@ fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), St
         return Ok(());
     };
     let Some(raw_connection) = display.connection else {
-        return Ok(());
+        return Ok(None);
     };
     let handle = window
         .window_handle()
         .map_err(|error| error.to_string())?;
     let RawWindowHandle::Xcb(handle) = handle.as_raw() else {
-        return Ok(());
+        return Ok(None);
     };
     let connection = unsafe {
-        Connection::from_raw_conn_and_extensions_no_drop(
+        xcb::Connection::from_raw_conn_and_extensions_no_drop(
             raw_connection.as_ptr().cast(),
             &[],
             &[],
@@ -1700,41 +1741,130 @@ fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), St
         .nth(screen_index)
         .ok_or_else(|| "X11 screen is unavailable".to_owned())?
         .root();
-    let intern_atom = |name: &'static [u8]| -> Result<x::Atom, String> {
-        let cookie = connection.send_request(&x::InternAtom {
-            only_if_exists: false,
-            name,
-        });
-        connection
-            .wait_for_reply(cookie)
-            .map(|reply| reply.atom())
-            .map_err(|error| error.to_string())
+    Ok(Some(XcbWindowContext {
+        connection,
+        root,
+        window: xcb::x::Window::new(handle.window.get()),
+    }))
+}
+
+#[cfg(target_os = "linux")]
+fn xcb_intern_atom(
+    connection: &xcb::Connection,
+    name: &'static [u8],
+) -> Result<xcb::x::Atom, String> {
+    let cookie = connection.send_request(&xcb::x::InternAtom {
+        only_if_exists: false,
+        name,
+    });
+    connection
+        .wait_for_reply(cookie)
+        .map(|reply| reply.atom())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn xcb_send_client_message(
+    context: &XcbWindowContext,
+    message_type: xcb::x::Atom,
+    data: [u32; 5],
+) -> Result<(), String> {
+    let event = xcb::x::ClientMessageEvent::new(
+        context.window,
+        message_type,
+        xcb::x::ClientMessageData::Data32(data),
+    );
+    let cookie = context.connection.send_request_checked(&xcb::x::SendEvent {
+        propagate: false,
+        destination: xcb::x::SendEventDest::Window(context.root),
+        event_mask: xcb::x::EventMask::SUBSTRUCTURE_REDIRECT
+            | xcb::x::EventMask::SUBSTRUCTURE_NOTIFY,
+        event: &event,
+    });
+    context
+        .connection
+        .check_request(cookie)
+        .map_err(|error| error.to_string())?;
+    context
+        .connection
+        .flush()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
+    use xcb::Xid;
+
+    let Some(context) = xcb_window_context(window)? else {
+        return Ok(());
     };
-    let net_wm_state = intern_atom(b"_NET_WM_STATE")?;
-    let skip_taskbar_atom = intern_atom(b"_NET_WM_STATE_SKIP_TASKBAR")?;
-    let skip_pager_atom = intern_atom(b"_NET_WM_STATE_SKIP_PAGER")?;
-    let data = x::ClientMessageData::Data32([
+    let net_wm_state = xcb_intern_atom(&context.connection, b"_NET_WM_STATE")?;
+    let skip_taskbar_atom = xcb_intern_atom(&context.connection, b"_NET_WM_STATE_SKIP_TASKBAR")?;
+    let skip_pager_atom = xcb_intern_atom(&context.connection, b"_NET_WM_STATE_SKIP_PAGER")?;
+    let data = [
         if skip_taskbar { 1 } else { 0 },
         skip_taskbar_atom.resource_id(),
         skip_pager_atom.resource_id(),
         1,
         0,
-    ]);
-    let event = x::ClientMessageEvent::new(
-        x::Window::new(handle.window.get()),
+    ];
+    xcb_send_client_message(&context, net_wm_state, data)
+}
+
+#[cfg(target_os = "linux")]
+fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
+    use xcb::Xid;
+
+    let Some(context) = xcb_window_context(window)? else {
+        return Ok(());
+    };
+    // EWMH sticky state pins a window to the viewport, while the desktop
+    // property places it on every virtual desktop.
+    let net_wm_state = xcb_intern_atom(&context.connection, b"_NET_WM_STATE")?;
+    let sticky_atom = xcb_intern_atom(&context.connection, b"_NET_WM_STATE_STICKY")?;
+    xcb_send_client_message(
+        &context,
         net_wm_state,
-        data,
-    );
-    let cookie = connection.send_request_checked(&x::SendEvent {
-        propagate: false,
-        destination: x::SendEventDest::Window(root),
-        event_mask: x::EventMask::SUBSTRUCTURE_REDIRECT | x::EventMask::SUBSTRUCTURE_NOTIFY,
-        event: &event,
-    });
-    connection
-        .check_request(cookie)
-        .map_err(|error| error.to_string())?;
-    connection.flush().map_err(|error| error.to_string())
+        [
+            if sticky { 1 } else { 0 },
+            sticky_atom.resource_id(),
+            0,
+            1,
+            0,
+        ],
+    )?;
+
+    let net_wm_desktop = xcb_intern_atom(&context.connection, b"_NET_WM_DESKTOP")?;
+    let desktop = if sticky {
+        u32::MAX
+    } else {
+        let current_desktop = xcb_intern_atom(&context.connection, b"_NET_CURRENT_DESKTOP")?;
+        let cookie = context.connection.send_request(&xcb::x::GetProperty {
+            delete: false,
+            window: context.root,
+            property: current_desktop,
+            r#type: xcb::x::ATOM_CARDINAL,
+            long_offset: 0,
+            long_length: 1,
+        });
+        context
+            .connection
+            .wait_for_reply(cookie)
+            .map_err(|error| error.to_string())?
+            .value::<u32>()
+            .next()
+            .unwrap_or(0)
+    };
+    xcb_send_client_message(
+        &context,
+        net_wm_desktop,
+        [desktop, 1, 0, 0, 0],
+    )
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn set_native_sticky(_window: &Window, _sticky: bool) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]

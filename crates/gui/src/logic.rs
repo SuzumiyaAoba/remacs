@@ -201,6 +201,7 @@ pub(super) struct FrameSnapshot {
     pub no_accept_focus: bool,
     pub no_focus_on_map: bool,
     pub skip_taskbar: bool,
+    pub sticky: bool,
     pub grid: Grid,
 }
 
@@ -212,6 +213,7 @@ pub(super) struct InitialFrameSize {
     pub no_accept_focus: bool,
     pub no_focus_on_map: bool,
     pub skip_taskbar: bool,
+    pub sticky: bool,
 }
 
 pub(super) enum GuiRequest {
@@ -1821,6 +1823,7 @@ impl KeyIo for ChanIo {
                     no_accept_focus: frame_parameter_value(i, frame, "no-accept-focus").truthy(),
                     no_focus_on_map: frame_parameter_value(i, frame, "no-focus-on-map").truthy(),
                     skip_taskbar: frame_parameter_value(i, frame, "skip-taskbar").truthy(),
+                    sticky: frame_parameter_value(i, frame, "sticky").truthy(),
                     grid,
                 });
             }
@@ -2158,6 +2161,7 @@ fn start_logic_inner(
                     no_accept_focus: frame_parameter_value(&i, frame, "no-accept-focus").truthy(),
                     no_focus_on_map: frame_parameter_value(&i, frame, "no-focus-on-map").truthy(),
                     skip_taskbar: frame_parameter_value(&i, frame, "skip-taskbar").truthy(),
+                    sticky: frame_parameter_value(&i, frame, "sticky").truthy(),
                 }
             });
             let _ = initial_frame_size_tx.send(initial_frame_size);
