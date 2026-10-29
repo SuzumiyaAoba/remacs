@@ -263,6 +263,44 @@ impl Isearch {
             return false;
         }
 
+        let result = self.with_lisp_state(i, |i| i.apply(&function, Vec::new()));
+        if let Err(flow) = result {
+            report_flow(i, flow);
+        }
+        true
+    }
+
+    pub(super) fn run_lisp_hook(&self, i: &mut Interp, name: &str) {
+        let result = self.with_lisp_state(i, |i| {
+            crate::lisp::builtins::evalfn::safe_call_hook(i, name)
+        });
+        if let Err(flow) = result {
+            report_flow(i, flow);
+        }
+    }
+
+    pub(super) fn run_end_hook(&self, i: &mut Interp, quit: bool) {
+        let mark = i.specbind_depth();
+        if let Some(symbol) = i.intern_soft("isearch-mode-end-hook-quit")
+            && i.bound_p(symbol)
+            && let Err(flow) = i.specbind(symbol, if quit { Value::t() } else { Value::Nil })
+        {
+            let _ = i.unbind_to(mark);
+            report_flow(i, flow);
+            return;
+        }
+        self.run_lisp_hook(i, "isearch-mode-end-hook");
+        if let Err(flow) = i.unbind_to(mark) {
+            report_flow(i, flow);
+        }
+    }
+
+    fn with_lisp_state<T>(
+        &self,
+        i: &mut Interp,
+        action: impl FnOnce(&mut Interp) -> Result<T, crate::lisp::error::Flow>,
+    ) -> Result<T, crate::lisp::error::Flow> {
+        let mark = i.specbind_depth();
         let (match_start, match_end) = self.spans.last().copied().unwrap_or((self.start, self.start));
         let bindings = [
             ("isearch-string", Value::string(self.query.clone())),
@@ -285,7 +323,6 @@ impl Isearch {
                 Value::Int((if self.backward { match_end } else { match_start }) as i128 + 1),
             ),
         ];
-        let mut bound = 0;
         for (name, value) in bindings {
             let Some(symbol) = i.intern_soft(name) else {
                 continue;
@@ -294,22 +331,15 @@ impl Isearch {
                 continue;
             }
             if let Err(flow) = i.specbind(symbol, value) {
-                let _ = i.unbind(bound);
-                report_flow(i, flow);
-                return true;
+                let _ = i.unbind_to(mark);
+                return Err(flow);
             }
-            bound += 1;
         }
-        let result = i.apply(&function, Vec::new());
-        let unwind = i.unbind(bound);
-        if let Err(flow) = result {
-            report_flow(i, flow);
-            return true;
+        let result = action(i);
+        match (result, i.unbind_to(mark)) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(flow), _) | (Ok(_), Err(flow)) => Err(flow),
         }
-        if let Err(flow) = unwind {
-            report_flow(i, flow);
-        }
-        true
     }
 
     /// One `apply' of a Lisp helper; errors are ignored (highlighting
@@ -481,8 +511,13 @@ pub(super) fn isearch_loop<T: KeyIo>(
     regexp: bool,
 ) -> io::Result<()> {
     let mut st = Isearch::new(i, backward, regexp);
+    let mode_symbol = i.intern("isearch-mode");
+    let _ = i.set_symbol(mode_symbol, Value::string(" Isearch"));
+    st.run_lisp_hook(i, "isearch-mode-hook");
     let mut render_needed = true;
     let mut message_needed = true;
+    let mut update_hook_needed = true;
+    let mut end_hook_quit = false;
     loop {
         let event_activity = match crate::lisp::eval::threads::yield_now(i).and_then(|ran_thread| {
             crate::lisp::builtins::evalfn::thread_wait_events(i)
@@ -506,27 +541,30 @@ pub(super) fn isearch_loop<T: KeyIo>(
         let render_requested = term.borrow_mut().take_render_request();
         render_needed |= event_activity || window_activity || render_on_idle || render_requested;
         if render_needed {
-            let label = if message_needed && !st.call_message_function(i) {
-                let (label, failure_range) = st.label();
-                let properties = failure_range
-                    .map(|(start, end)| {
-                        vec![(
-                            start,
-                            end,
-                            vec![
-                                Value::Sym(i.intern("face")),
-                                Value::Sym(i.intern("isearch-fail")),
-                            ],
-                        )]
-                    })
-                    .unwrap_or_default();
-                i.set_echo_message_with_properties(EmacsText::from(label.as_str()), properties);
+            if message_needed {
+                if !st.call_message_function(i) {
+                    let (label, failure_range) = st.label();
+                    let properties = failure_range
+                        .map(|(start, end)| {
+                            vec![(
+                                start,
+                                end,
+                                vec![
+                                    Value::Sym(i.intern("face")),
+                                    Value::Sym(i.intern("isearch-fail")),
+                                ],
+                            )]
+                        })
+                        .unwrap_or_default();
+                    i.set_echo_message_with_properties(EmacsText::from(label.as_str()), properties);
+                }
                 message_needed = false;
-                label
-            } else {
-                message_needed = false;
-                i.echo_message.to_unicode_lossy()
-            };
+            }
+            if update_hook_needed {
+                st.run_lisp_hook(i, "isearch-update-post-hook");
+                update_hook_needed = false;
+            }
+            let label = i.echo_message.to_unicode_lossy();
             let mut t = term.borrow_mut();
             let _ = t.render(i);
             let _ = t.draw_echo_message_with_state(i, &label);
@@ -540,6 +578,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
         };
         let action = st.step(i, key);
         message_needed = true;
+        update_hook_needed = true;
         // Rebuild the isearch/lazy-highlight overlays so the next
         // render paints the matches (GNU: isearch-update →
         // isearch-highlight + lazy-highlight).
@@ -547,9 +586,16 @@ pub(super) fn isearch_loop<T: KeyIo>(
         render_needed = true;
         match action {
             IsearchAction::Continue => {}
-            IsearchAction::Abort | IsearchAction::Done => break,
+            IsearchAction::Abort => {
+                end_hook_quit = true;
+                break;
+            }
+            IsearchAction::Done => break,
             IsearchAction::ReDispatch(other) => {
                 st.clear(i);
+                let mode_symbol = i.intern("isearch-mode");
+                let _ = i.set_symbol(mode_symbol, Value::Nil);
+                st.run_end_hook(i, false);
                 let seq = Value::vector(vec![Value::Int(other)]);
                 if let LookupResult::Command(cmd) = lookup_command(i, &seq) {
                     if i.command_execute(&cmd).is_ok() {
@@ -561,5 +607,8 @@ pub(super) fn isearch_loop<T: KeyIo>(
         }
     }
     st.clear(i);
+    let mode_symbol = i.intern("isearch-mode");
+    let _ = i.set_symbol(mode_symbol, Value::Nil);
+    st.run_end_hook(i, end_hook_quit);
     Ok(())
 }
