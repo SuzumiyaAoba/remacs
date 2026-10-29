@@ -311,6 +311,10 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 	     (time-less-p (url-cookie--expires-date-to-time exp) nil)
 	   (error nil)))))
 
+(defun url-cookie--ipv4-address-p (host)
+  "Return non-nil if HOST has dotted-quad IPv4 address syntax."
+  (string-match-p "\\`[0-9]+\\(?:\\.[0-9]+\\)\\{3\\}\\'" host))
+
 (defun url-cookie--domain-match-p (host domain &optional include-subdomains)
   ;;Remacs: enforce DNS-label boundaries and preserve host-only semantics.
   "Return non-nil if HOST matches DOMAIN.
@@ -319,6 +323,8 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	(domain (downcase domain)))
     (or (string= host domain)
 	(and include-subdomains
+	     ;; RFC 6265 §5.1.3 allows suffix matching only for host names.
+	     (not (url-cookie--ipv4-address-p host))
 	     (string-suffix-p (concat "." domain) host)))))
 
 (defun url-cookie--path-match-p (cookie-path request-path)
