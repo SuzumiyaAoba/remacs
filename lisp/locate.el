@@ -383,6 +383,7 @@ except that FILTER is not optional."
 (defun locate-get-file-positions ()
   "Return list of start and end of the file name on the current line.
 This is a list of two buffer positions.
+Leading and trailing whitespace around the name is excluded.
 
 You should only call this function on lines that contain a file name
 listed by the locate program.  Inside inserted subdirectories, or if
@@ -390,10 +391,16 @@ there is no file name on the current line, the return value is
 meaningless.  You can check whether the current line contains a file
 listed by the locate program, using the function
 `locate-main-listing-line-p'."
-  (list (+ locate-filename-indentation
-           (line-beginning-position))
-        ;; Assume names end at the end of the line.
-        (line-end-position)))
+  (let* ((line-start (line-beginning-position))
+         (line-end (line-end-position))
+         (start (min line-end (+ locate-filename-indentation line-start))))
+    (save-excursion
+      (goto-char start)
+      (skip-chars-forward " \t" line-end)
+      (let ((file-start (point)))
+        (goto-char line-end)
+        (skip-chars-backward " \t" file-start)
+        (list file-start (point)))))
 
 ;; From SQL-mode
 (defun locate-current-line-number ()
@@ -422,9 +429,9 @@ This function returns nil if the current line either contains no
 file name or is inside a subdirectory."
   (save-excursion
     (forward-line 0)
-    (looking-at (concat "."
-			(make-string (1- locate-filename-indentation) ?\s)
-			"\\(/\\|[A-Za-z]:\\)"))))
+    (let ((positions (locate-get-file-positions)))
+      (goto-char (car positions))
+      (looking-at "\\(/\\|[A-Za-z]:\\)"))))
 
 (defun locate-mouse-view-file (event)
   "In Locate mode, view a file, using the mouse."
