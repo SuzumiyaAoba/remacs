@@ -451,51 +451,40 @@ impl Interp {
     /// Evaluate each element of a list form, using PRE_LEN when the
     /// caller already counted the spine (eval_form's check walk).
     pub fn eval_args_len(&mut self, args: &Value, pre_len: i128) -> Result<Argv, Flow> {
-        // Raw-pointer spine walk: GNU's `eval_sub' reads the cdr AFTER
-        // evaluating the car, so a `setcdr' by an argument is seen.
-        // Cells stay alive through `args' while the walk runs.
         let cap = if pre_len >= 0 {
             pre_len as usize
         } else {
-            self.raw_list_length(args).unwrap_or(4) as usize
+            self.raw_list_length(args)? as usize
         };
-        let mut out = Vec::with_capacity(cap);
-        let mut cur = args as *const Value;
+        // GNU eval_sub walks and saves the argument spine before evaluating
+        // the argument forms. Keep the cons cells so a later car mutation is
+        // visible when that argument is reached, while cdr mutations cannot
+        // insert, remove, or replace arguments in the active call.
+        let mut cells = Vec::with_capacity(cap);
+        let mut cur = args.clone();
         loop {
-            match unsafe { &*cur } {
-                Value::Nil => return Ok(Argv::new(out)),
+            match cur {
+                Value::Nil => break,
                 Value::Cons(c) => {
-                    let cell = RefCell::as_ptr(c);
-                    out.push(self.eval(unsafe { &(*cell).car })?);
-                    cur = unsafe { &(*cell).cdr };
+                    cur = c.borrow().cdr.clone();
+                    cells.push(c);
                 }
                 _ => {
                     return Err(self.error("Invalid function call form (dotted)"));
                 }
             }
         }
+        let mut out = Vec::with_capacity(cells.len());
+        for cell in cells {
+            let car = cell.borrow().car.clone();
+            out.push(self.eval(&car)?);
+        }
+        Ok(Argv::new(out))
     }
 
     /// Evaluate each element of a list form.
     pub fn eval_args(&mut self, args: &Value) -> Result<Vec<Value>, Flow> {
-        // Raw-pointer spine walk: GNU's `eval_sub' reads the cdr AFTER
-        // evaluating the car, so a `setcdr' by an argument is seen.
-        // Cells stay alive through `args' while the walk runs.
-        let mut out = Vec::with_capacity(self.raw_list_length(args).unwrap_or(4) as usize);
-        let mut cur = args as *const Value;
-        loop {
-            match unsafe { &*cur } {
-                Value::Nil => return Ok(out),
-                Value::Cons(c) => {
-                    let cell = RefCell::as_ptr(c);
-                    out.push(self.eval(unsafe { &(*cell).car })?);
-                    cur = unsafe { &(*cell).cdr };
-                }
-                _ => {
-                    return Err(self.error("Invalid function call form (dotted)"));
-                }
-            }
-        }
+        Ok(self.eval_args_len(args, -1)?.as_slice().to_vec())
     }
 
     /// Call `fun` with raw unevaluated `args` (a list). Evaluates args
