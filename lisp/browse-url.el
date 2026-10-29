@@ -778,33 +778,39 @@ interactively.  Turn the filename into a URL with function
 (defun browse-url-file-url (file)
   "Return the URL corresponding to FILE.
 Use variable `browse-url-filename-alist' to map filenames to URLs."
-  (when-let* ((coding (browse-url--file-name-coding-system)))
-    (setq file (encode-coding-string file coding)))
-  (if (and (file-remote-p file)
-           ;; We're applying special rules for FTP URLs for historical
-           ;; reasons.
-           (seq-find (lambda (match)
-                       (and (string-match-p (car match) file)
-                            (not (string-match "\\`file:" (cdr match)))))
-                     browse-url-filename-alist))
-      (setq file (browse-url-url-encode-chars file "[*\"()',=;?% ]"))
-    ;; Encode all other file names properly.
-    (let ((bits (file-name-split file)))
-      (setq file
-            (string-join
-             ;; On Windows, the first bit here might be "c:" or the
-             ;; like, so don't encode the ":" in the first bit.
-             (cons (let ((url-unreserved-chars
-                          (if (file-name-absolute-p file)
-                              (cons ?: url-unreserved-chars)
-                            url-unreserved-chars)))
-                     (url-hexify-string (car bits)))
-                   (mapcar #'url-hexify-string (cdr bits)))
-             "/"))))
-  (dolist (map browse-url-filename-alist)
-    (when (and map (string-match (car map) file))
-      (setq file (replace-match (cdr map) t nil file))))
-  file)
+  (let ((mapped nil))
+    ;; Match the original filename so spaces and non-ASCII characters
+    ;; remain available to `browse-url-filename-alist' regular expressions.
+    (dolist (map browse-url-filename-alist)
+      (when (and map (string-match (car map) file))
+        (setq file (replace-match (cdr map) t nil file)
+              mapped t)))
+    (if (and mapped (string-match-p "\\`[[:alpha:]][[:alnum:].+-]*:" file))
+        (url-encode-url file)
+      (when-let* ((coding (browse-url--file-name-coding-system)))
+        (setq file (encode-coding-string file coding)))
+      (if (and (file-remote-p file)
+               ;; We're applying special rules for FTP URLs for historical
+               ;; reasons.
+               (seq-find (lambda (match)
+                           (and (string-match-p (car match) file)
+                                (not (string-match "\\`file:" (cdr match)))))
+                         browse-url-filename-alist))
+          (setq file (browse-url-url-encode-chars file "[*\"()',=;?% ]"))
+        ;; Encode all other file names properly.
+        (let ((bits (file-name-split file)))
+          (setq file
+                (string-join
+                 ;; On Windows, the first bit here might be "c:" or the
+                 ;; like, so don't encode the ":" in the first bit.
+                 (cons (let ((url-unreserved-chars
+                              (if (file-name-absolute-p file)
+                                  (cons ?: url-unreserved-chars)
+                                url-unreserved-chars)))
+                         (url-hexify-string (car bits)))
+                       (mapcar #'url-hexify-string (cdr bits)))
+                 "/")))
+      file)))
 
 ;;;###autoload
 (defun browse-url-of-buffer (&optional buffer)
