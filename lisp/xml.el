@@ -436,7 +436,7 @@ Both features can be combined by providing a cons cell
 		       "\\`[ \t\n\r]*\\'"
 		       (buffer-substring-no-properties text-start (point-max)))
 		(error "XML: (Not Well-Formed) Character data outside document element"))
-	      (goto-char (point-max)))))
+	      (goto-char (point-max))))))
       (unless xml
 	(error "XML: (Not Well-Formed) Missing document element"))
       (if parse-dtd
