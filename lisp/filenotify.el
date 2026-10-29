@@ -129,6 +129,14 @@ Each element is a `file-notify--rename' defstruct.")
               (equal desc (file-notify--rename-desc rename)))))
    file-notify--pending-rename))
 
+(defun file-notify--pending-rename-remove-desc (desc)
+  "Discard pending rename events belonging to DESC."
+  (setq file-notify--pending-rename
+        (cl-remove-if
+         (lambda (rename)
+           (equal desc (file-notify--rename-desc rename)))
+         file-notify--pending-rename)))
+
 (defun file-notify--expand-file-name (watch file)
   "Full file name of FILE reported for WATCH."
   (directory-file-name
@@ -282,12 +290,15 @@ DESC is the back-end descriptor.  ACTIONS is a list of:
                 (and (eq action 'renamed-to)
                      (file-notify--pending-rename-find desc
                                                        file1-or-cookie))))
-          ;; An unrelated event from this descriptor means that a rename
-          ;; without a destination was outside the watched directories.
-          ;; Events from other descriptors do not invalidate its cookie.
+          ;; Cookie-less rename events can only be paired with the next
+          ;; rename-to from this descriptor.  A cookie-bearing rename can
+          ;; be interleaved with unrelated events, so keep it pending until
+          ;; its matching cookie arrives or the watch stops.
           (unless (memq action '(renamed-from renamed-to))
             (dolist (pending (copy-sequence file-notify--pending-rename))
-              (when (equal desc (file-notify--rename-desc pending))
+              (when (and (equal desc (file-notify--rename-desc pending))
+                         (or (null (file-notify--rename-cookie pending))
+                             (eq action 'stopped)))
                 (let ((callback
                        (file-notify--watch-callback
                         (file-notify--rename-watch pending))))
@@ -503,7 +514,8 @@ DESCRIPTOR should be an object returned by `file-notify-add-watch'."
                descriptor))
           (file-notify-error nil)))
       ;; Modify `file-notify-descriptors' and send a `stopped' event.
-      (file-notify--rm-descriptor descriptor))))
+      (file-notify--rm-descriptor descriptor)
+      (file-notify--pending-rename-remove-desc descriptor))))
 
 (defun file-notify-rm-all-watches ()
   "Remove all existing file notification watches from Emacs."

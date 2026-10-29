@@ -184,6 +184,7 @@ qa!(qa_file_broken_symlinks, "qa_file_broken_symlinks.el");
 qa!(qa_file_primitive_handlers, "qa_file_primitive_handlers.el");
 qa!(qa_file_handler_io, "qa_file_handler_io.el");
 qa!(qa_file_remote, "qa_file_remote.el");
+qa!(qa_filenotify_interleaved_rename, "qa_filenotify_interleaved_rename.el");
 qa!(qa_fill, "qa_fill.el");
 qa!(qa_fontlock, "qa_fontlock.el");
 qa!(qa_docstring_escape, "qa_docstring_escape.el");
