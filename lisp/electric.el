@@ -515,7 +515,8 @@ If multiple rules match, only first one is executed.")
                   ;; FIXME: check eolp before inserting \n?
                   (let ((electric-layout-mode nil)
                         (electric-pair-open-newline-between-pairs nil))
-                    (newline 1 t))))
+                    (unless (and (eolp) (eq (char-after) ?\n))
+                      (newline 1 t)))))
                (nl-before
                 (lambda ()
                   (save-excursion
@@ -551,7 +552,7 @@ If multiple rules match, only first one is executed.")
             (dolist (buf (buffer-list))
               (with-current-buffer buf
                 (when electric-layout-mode
-                  (throw 'enabled t)))))
+                  (throw 'enabled t))))))
       (add-hook 'post-self-insert-hook
                 #'electric-layout-post-self-insert-function
                 40)
