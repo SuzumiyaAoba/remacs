@@ -34,6 +34,7 @@ pub(super) struct Isearch {
     regexp_lax_whitespace: bool,
     quote_next: bool,
     meta_s_prefix: bool,
+    meta_s_h_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
     pub(super) match_ov: Option<Value>,
     /// `lazy-highlight' overlays on the other visible matches.
@@ -393,6 +394,8 @@ pub(super) enum IsearchAction {
     Done,
     /// Run `occur' using the current I-search string, then exit the loop.
     Occur(String),
+    /// Highlight all matches for the current I-search string and exit.
+    Highlight(String),
     /// Exit and re-dispatch this key as a command.
     ReDispatch(i128),
 }
@@ -442,6 +445,7 @@ impl Isearch {
             regexp_lax_whitespace,
             quote_next: false,
             meta_s_prefix: false,
+            meta_s_h_prefix: false,
             match_ov: None,
             lazy_ovs: Vec::new(),
         }
@@ -738,6 +742,26 @@ impl Isearch {
         }
     }
 
+    fn regexp_for_query(&self, i: &mut Interp) -> Option<String> {
+        let (pattern, regexp) = isearch_search_pattern(
+            i,
+            &self.query,
+            self.regexp,
+            self.word_search,
+            self.char_fold,
+            self.symbol_search,
+            self.lax_whitespace_enabled(),
+        )?;
+        if regexp {
+            return Some(pattern);
+        }
+        let quote = Value::Sym(i.intern("regexp-quote"));
+        match i.apply(&quote, vec![Value::string(pattern)]).ok()? {
+            Value::Str(pattern) => Some(pattern.borrow().to_unicode_lossy()),
+            _ => None,
+        }
+    }
+
     fn lax_whitespace_enabled(&self) -> bool {
         if self.regexp {
             self.regexp_lax_whitespace
@@ -842,6 +866,10 @@ impl Isearch {
         if self.meta_s_prefix {
             self.meta_s_prefix = false;
             match key {
+                c if c == 'h' as i128 => {
+                    self.meta_s_h_prefix = true;
+                    return IsearchAction::Continue;
+                }
                 c if c == 'i' as i128 => {
                     self.toggle_invisible(i);
                     return IsearchAction::Continue;
@@ -867,35 +895,9 @@ impl Isearch {
                     return IsearchAction::Continue;
                 }
                 c if c == 'o' as i128 => {
-                    let Some((pattern, regexp)) = isearch_search_pattern(
-                        i,
-                        &self.query,
-                        self.regexp,
-                        self.word_search,
-                        self.char_fold,
-                        self.symbol_search,
-                        self.lax_whitespace_enabled(),
-                    ) else {
-                        return IsearchAction::Continue;
-                    };
-                    let pattern = if regexp {
-                        pattern
-                    } else {
-                        let quote = Value::Sym(i.intern("regexp-quote"));
-                        match i.apply(&quote, vec![Value::string(pattern)]) {
-                            Ok(Value::Str(pattern)) => pattern.borrow().to_unicode_lossy(),
-                            Ok(other) => {
-                                let flow = i.wrong_type_mut("stringp", &other);
-                                report_flow(i, flow);
-                                return IsearchAction::Continue;
-                            }
-                            Err(flow) => {
-                                report_flow(i, flow);
-                                return IsearchAction::Continue;
-                            }
-                        }
-                    };
-                    return IsearchAction::Occur(pattern);
+                    return self
+                        .regexp_for_query(i)
+                        .map_or(IsearchAction::Continue, IsearchAction::Occur);
                 }
                 c if c == (CHAR_META | '<' as i128) => {
                     self.search_buffer_boundary(i, false);
@@ -908,6 +910,15 @@ impl Isearch {
                 7 => return self.step(i, key),
                 other => return IsearchAction::ReDispatch(other),
             }
+        }
+        if self.meta_s_h_prefix {
+            self.meta_s_h_prefix = false;
+            if key == 'r' as i128 {
+                return self
+                    .regexp_for_query(i)
+                    .map_or(IsearchAction::Continue, IsearchAction::Highlight);
+            }
+            return IsearchAction::ReDispatch(key);
         }
         match key {
             // C-g: undo a failing search back to the last successful state;
@@ -1477,6 +1488,28 @@ impl Isearch {
 /// Incremental search loop (C-s / C-r). Reads keys directly until the
 /// search exits via RET, C-g, or a non-search key (which is then
 /// re-dispatched as a command, like Emacs).
+fn run_isearch_highlight(i: &mut Interp, pattern: String, case_fold: Value) {
+    let depth = i.specbind_depth();
+    let result = (|| {
+        let case_fold_search = i.intern("case-fold-search");
+        i.specbind(case_fold_search, case_fold)?;
+        let search_upper_case = i.intern("search-upper-case");
+        i.specbind(search_upper_case, Value::Nil)?;
+        let require = Value::Sym(i.intern("require"));
+        let hi_lock = Value::Sym(i.intern("hi-lock"));
+        i.apply(&require, vec![hi_lock])?;
+        let read_face = Value::Sym(i.intern("hi-lock-read-face-name"));
+        let face = i.apply(&read_face, Vec::new())?;
+        let highlight = Value::Sym(i.intern("highlight-regexp"));
+        i.apply(&highlight, vec![Value::string(pattern), face, Value::Nil])?;
+        Ok(())
+    })();
+    match (result, i.unbind_to(depth)) {
+        (Ok(()), Ok(())) => {}
+        (Err(flow), _) | (Ok(()), Err(flow)) => report_flow(i, flow),
+    }
+}
+
 pub(super) fn isearch_loop<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
@@ -1611,6 +1644,17 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 } {
                     report_flow(i, flow);
                 }
+                return Ok(());
+            }
+            IsearchAction::Highlight(pattern) => {
+                if !st.failing {
+                    st.update_search_ring(i);
+                }
+                st.clear(i);
+                let mode_symbol = i.intern("isearch-mode");
+                let _ = i.set_symbol(mode_symbol, Value::Nil);
+                st.run_end_hook(i, false);
+                run_isearch_highlight(i, pattern, st.case_fold.clone());
                 return Ok(());
             }
         }
