@@ -445,6 +445,46 @@ fn isearch_cs_repeats_and_del_unwinds() {
 }
 
 #[test]
+fn isearch_repeat_after_failure_wraps_to_the_start() {
+    let mut i = isearch_interp("foo x foo\n");
+    let mut st = Isearch::new(&mut i, false, false);
+    for c in "foo".chars() {
+        st.step(&mut i, c as i128);
+    }
+    st.step(&mut i, 19); // C-s → second occurrence
+    assert_eq!(point(&i), 9);
+    st.step(&mut i, 19); // no further occurrence → failing
+    assert!(st.failing);
+
+    st.step(&mut i, 19); // C-s from failure wraps to the first occurrence
+    assert!(!st.failing);
+    assert_eq!(point(&i), 3);
+    assert_eq!(st.spans.last(), Some(&(0, 3)));
+    assert!(st.label().0.starts_with("Wrapped I-search: foo"));
+
+    i.current_buffer_ref().unwrap().borrow_mut().set_point(10);
+    let mut backward = Isearch::new(&mut i, true, false);
+    for c in "foo".chars() {
+        backward.step(&mut i, c as i128);
+    }
+    backward.step(&mut i, 18); // C-r → first occurrence
+    assert_eq!(point(&i), 0);
+    backward.step(&mut i, 18); // no earlier occurrence → failing
+    assert!(backward.failing);
+
+    backward.step(&mut i, 18); // C-r from failure wraps to the last occurrence
+    assert!(!backward.failing);
+    assert_eq!(point(&i), 6);
+    assert_eq!(backward.spans.last(), Some(&(6, 9)));
+    assert!(
+        backward
+            .label()
+            .0
+            .starts_with("Wrapped I-search backward: foo")
+    );
+}
+
+#[test]
 fn isearch_cg_restores_entry() {
     let mut i = isearch_interp("xx yy\n");
     let mut st = Isearch::new(&mut i, false, false);

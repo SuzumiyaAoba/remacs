@@ -18,6 +18,7 @@ pub(super) struct Isearch {
     /// Last successful regexp match-data, including group 0, 0-based.
     match_groups: Vec<Option<(usize, usize)>>,
     pub(super) failing: bool,
+    wrapped: bool,
     /// Character index in QUERY where the currently failing suffix begins.
     pub(super) fail_pos: Option<usize>,
     /// Current value of `isearch-case-fold-search'.
@@ -65,6 +66,7 @@ struct IsearchHistory {
     spans_len: usize,
     match_groups: Vec<Option<(usize, usize)>>,
     failing: bool,
+    wrapped: bool,
     fail_pos: Option<usize>,
     case_fold: Value,
     regexp: bool,
@@ -642,6 +644,7 @@ impl Isearch {
             spans: vec![(start, start)],
             match_groups: Vec::new(),
             failing: false,
+            wrapped: false,
             fail_pos: None,
             case_fold,
             invisible,
@@ -694,6 +697,7 @@ impl Isearch {
             spans_len: self.spans.len(),
             match_groups: self.match_groups.clone(),
             failing: self.failing,
+            wrapped: self.wrapped,
             fail_pos: self.fail_pos,
             case_fold: self.case_fold.clone(),
             regexp: self.regexp,
@@ -716,6 +720,7 @@ impl Isearch {
             self.spans.truncate(previous.spans_len);
             self.match_groups = previous.match_groups;
             self.failing = previous.failing;
+            self.wrapped = previous.wrapped;
             self.fail_pos = previous.fail_pos;
             self.case_fold = previous.case_fold;
             self.regexp = previous.regexp;
@@ -1549,15 +1554,15 @@ impl Isearch {
                         }
                     })
                     .unwrap_or(true);
-                let from = if self.failing && same_direction && wrap_enabled {
+                let wrapped = self.failing && same_direction && wrap_enabled;
+                if wrapped {
+                    self.wrapped = true;
+                }
+                let from = if wrapped {
                     i.current_buffer_ref()
                         .map(|buffer| {
                             let buffer = buffer.borrow();
-                            if back {
-                                buffer.text_len()
-                            } else {
-                                buffer.begv
-                            }
+                            if back { buffer.zv } else { buffer.begv }
                         })
                         .unwrap_or(cur)
                 } else if reused_previous {
@@ -1569,14 +1574,7 @@ impl Isearch {
                 };
                 let failure_start = self.fail_pos.unwrap_or(0);
                 let case_fold_search = self.case_fold_for_search(i);
-                self.repeat_searches(
-                    i,
-                    back,
-                    from,
-                    repeat_count,
-                    failure_start,
-                    case_fold_search,
-                );
+                self.repeat_searches(i, back, from, repeat_count, failure_start, case_fold_search);
                 IsearchAction::Continue
             }
             // DEL: unwind one step of the search.
@@ -1906,9 +1904,14 @@ impl Isearch {
         let dir = if self.backward { " backward" } else { "" };
         let re = if self.regexp { " regexp" } else { "" };
         let status = if self.failing { "Failing " } else { "" };
+        let wrapped = if self.wrapped {
+            if self.failing { "wrapped " } else { "Wrapped " }
+        } else {
+            ""
+        };
         let prefix = format!(
-            "{}{}I-search{}{}: ",
-            self.lazy_count_prefix, status, dir, re
+            "{}{}{}I-search{}{}: ",
+            self.lazy_count_prefix, status, wrapped, dir, re
         );
         let prefix_length = prefix.chars().count();
         let query_length = self.query.chars().count();
@@ -2035,6 +2038,10 @@ impl Isearch {
                 if self.failing { Value::Nil } else { Value::t() },
             ),
             (
+                "isearch-wrapped",
+                if self.wrapped { Value::t() } else { Value::Nil },
+            ),
+            (
                 "isearch-lazy-count-current",
                 self.lazy_count_current
                     .map(|count| Value::Int(count as i128))
@@ -2066,13 +2073,14 @@ impl Isearch {
             ),
         ];
         for (name, value) in bindings {
-            let lazy_count_variable = matches!(
+            let forced_variable = matches!(
                 name,
-                "isearch-lazy-count-current"
+                "isearch-wrapped"
+                    | "isearch-lazy-count-current"
                     | "isearch-lazy-count-total"
                     | "isearch-lazy-count-invisible"
             );
-            let symbol = if lazy_count_variable {
+            let symbol = if forced_variable {
                 i.intern(name)
             } else {
                 let Some(symbol) = i.intern_soft(name) else {
@@ -2080,7 +2088,7 @@ impl Isearch {
                 };
                 symbol
             };
-            if !lazy_count_variable && !i.bound_p(symbol) {
+            if !forced_variable && !i.bound_p(symbol) {
                 continue;
             }
             if let Err(flow) = i.specbind(symbol, value) {
