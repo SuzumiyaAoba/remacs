@@ -415,6 +415,30 @@ impl Isearch {
         }
     }
 
+    fn search_replaced_query(&mut self, i: &mut Interp) {
+        let case_fold_search = self.case_fold_for_search(i);
+        match isearch_search(
+            i,
+            &self.query,
+            self.backward,
+            self.regexp,
+            self.cur(),
+            case_fold_search,
+        ) {
+            Some((position, beg, end)) => {
+                self.positions.push(position);
+                self.spans.push((beg, end));
+                self.failing = false;
+                self.fail_pos = None;
+                self.go_to(i, position);
+            }
+            None => {
+                self.failing = true;
+                self.fail_pos = Some(0);
+            }
+        }
+    }
+
     /// Handle one key event; updates query/point/failing state.
     pub(super) fn step(&mut self, i: &mut Interp, key: i128) -> IsearchAction {
         let cur = self.cur();
@@ -566,6 +590,46 @@ impl Isearch {
                         report_flow(i, flow);
                     }
                     Err(flow) => report_flow(i, flow),
+                }
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | 'p' as i128) || c == (CHAR_META | 'n' as i128) => {
+                let advance = c == (CHAR_META | 'n' as i128);
+                let ring_symbol = i.intern(if self.regexp {
+                    "regexp-search-ring"
+                } else {
+                    "search-ring"
+                });
+                let ring = i
+                    .symbol_value(ring_symbol)
+                    .list_to_vec()
+                    .unwrap_or_default();
+                if !ring.is_empty() {
+                    let pointer_symbol = i.intern(if self.regexp {
+                        "regexp-search-ring-yank-pointer"
+                    } else {
+                        "search-ring-yank-pointer"
+                    });
+                    let length = ring.len() as i128;
+                    let pointer = i
+                        .symbol_value(pointer_symbol)
+                        .int()
+                        .unwrap_or(if advance { 0 } else { -1 });
+                    let index = (pointer + if advance { -1 } else { 1 }).rem_euclid(length);
+                    if let Value::Str(text) = ring[index as usize].clone() {
+                        self.save_history();
+                        let _ = i.set_symbol(pointer_symbol, Value::Int(index));
+                        self.query = text.borrow().to_unicode_lossy();
+                        if let Some(symbol) = i
+                            .intern_soft("isearch-last-case-fold-search")
+                            .filter(|symbol| i.bound_p(*symbol))
+                        {
+                            self.case_fold = i.symbol_value(symbol);
+                        }
+                        self.failing = false;
+                        self.fail_pos = None;
+                        self.search_replaced_query(i);
+                    }
                 }
                 IsearchAction::Continue
             }
