@@ -358,7 +358,7 @@ pub(super) fn keystroke_to_code_with_mapping(
             let physical = s.chars().next().unwrap_or('\0');
             // For modified combos the physical key is the event base;
             // for plain typing prefer the shift/IME-translated char.
-            let c = if mods & (CHAR_CTL | CHAR_META | CHAR_ALT | CHAR_HYPER | CHAR_SUPER) == 0 {
+            let mut c = if mods & (CHAR_CTL | CHAR_META | CHAR_ALT | CHAR_HYPER | CHAR_SUPER) == 0 {
                 ks.key_char
                     .as_deref()
                     .and_then(|t| t.chars().next())
@@ -367,6 +367,12 @@ pub(super) fn keystroke_to_code_with_mapping(
                 physical
             };
             if c.is_ascii_uppercase() && ks.modifiers.shift {
+                mods &= !CHAR_SHIFT;
+            } else if c.is_ascii_lowercase()
+                && ks.modifiers.shift
+                && mods & CHAR_CTL == 0
+            {
+                c = c.to_ascii_uppercase();
                 mods &= !CHAR_SHIFT;
             }
             if mods & CHAR_CTL != 0 && (matches!(c, '@'..='_') || matches!(c, 'a'..='z')) {
