@@ -358,7 +358,10 @@ pub(super) fn keystroke_to_code_with_mapping(
             let physical = s.chars().next().unwrap_or('\0');
             // For modified combos the physical key is the event base;
             // for plain typing prefer the shift/IME-translated char.
-            let mut c = if mods & (CHAR_CTL | CHAR_META | CHAR_ALT | CHAR_HYPER | CHAR_SUPER) == 0 {
+            let mut c = if mods
+                & (CHAR_CTL | CHAR_META | CHAR_ALT | CHAR_HYPER | CHAR_SUPER | CHAR_SHIFT)
+                == 0
+            {
                 ks.key_char
                     .as_deref()
                     .and_then(|t| t.chars().next())
@@ -405,11 +408,17 @@ pub(super) fn command_keystroke_with_mapping(
     mapping: ModifierMapping,
     physical: PhysicalModifierState,
 ) -> bool {
-    let (mods, _) = modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
+    let (mods, has_unmapped_modifier) =
+        modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
     // An unmapped physical modifier contributes no event bit. Named keys still
     // need to reach Emacs as their unmodified event (for example, Command-left
     // with ns-command-modifier set to `none` is still `left`).
-    mods & !CHAR_SHIFT != 0 || is_named_key(ks)
+    let shifted_character_keeps_modifier = !has_unmapped_modifier
+        && mods & CHAR_SHIFT != 0
+        && mods & !CHAR_SHIFT == 0
+        && keystroke_to_code_with_mapping(ks, mapping, physical)
+            .is_some_and(|code| code & CHAR_SHIFT != 0);
+    mods & !CHAR_SHIFT != 0 || is_named_key(ks) || shifted_character_keeps_modifier
 }
 
 pub(super) fn pass_text_to_os(

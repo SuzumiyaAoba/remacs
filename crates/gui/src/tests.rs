@@ -107,9 +107,32 @@ fn keystroke_shift_folds_into_char() {
     let code = keystroke_to_code(&ks("a", Some("A"), false, false, true, false)).unwrap();
     assert_eq!(code, 65);
     assert_eq!(code & CHAR_SHIFT, 0);
-    // Shifted symbol via key_char (S-1 → !).
+    // A shifted symbol keeps its physical key as the event base (S-1).
     let code = keystroke_to_code(&ks("1", Some("!"), false, false, true, false)).unwrap();
-    assert_eq!(code & !CHAR_SHIFT, '!' as i128);
+    assert_eq!(code, '1' as i128 | CHAR_SHIFT);
+}
+
+#[test]
+fn shift_only_symbol_keys_use_the_command_path() {
+    let shifted_space = ks("space", Some(" "), false, false, true, false);
+    assert!(command_keystroke(&shifted_space));
+    assert_eq!(
+        keystroke_to_code(&shifted_space),
+        Some(' ' as i128 | CHAR_SHIFT)
+    );
+
+    let shifted_digit = ks("1", Some("!"), false, false, true, false);
+    assert!(command_keystroke(&shifted_digit));
+    assert_eq!(
+        keystroke_to_code(&shifted_digit),
+        Some('1' as i128 | CHAR_SHIFT)
+    );
+
+    // A shifted letter folds to its uppercase character and can stay on the
+    // OS text-input path.
+    let shifted_letter = ks("a", Some("A"), false, false, true, false);
+    assert!(!command_keystroke(&shifted_letter));
+    assert_eq!(keystroke_to_code(&shifted_letter), Some('A' as i128));
 }
 
 #[test]
