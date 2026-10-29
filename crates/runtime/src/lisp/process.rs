@@ -4417,7 +4417,17 @@ unsafe fn sockaddr_to_value(sa: *const libc::sockaddr) -> Option<Value> {
     }
 }
 
-fn f_network_interface_list(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+fn f_network_interface_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let full = a.get(0).is_some_and(Value::truthy);
+    let family = match a.get(1) {
+        None | Some(Value::Nil) => None,
+        Some(Value::Sym(symbol)) => match i.symbol_name(*symbol).as_str() {
+            "ipv4" => Some(libc::AF_INET as i32),
+            "ipv6" => Some(libc::AF_INET6 as i32),
+            _ => return Err(i.error("Unsupported address family")),
+        },
+        Some(_) => return Err(i.error("Unsupported address family")),
+    };
     let mut out = Vec::new();
     unsafe {
         let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
@@ -4425,11 +4435,24 @@ fn f_network_interface_list(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResul
             let mut cur = addrs;
             while !cur.is_null() {
                 let ifa = &*cur;
-                if let Some(addr) = sockaddr_to_value(ifa.ifa_addr) {
+                if let Some(addr) = sockaddr_to_value(ifa.ifa_addr)
+                    && family.is_none_or(|family| family == (*ifa.ifa_addr).sa_family as i32)
+                {
                     let name = std::ffi::CStr::from_ptr(ifa.ifa_name)
                         .to_string_lossy()
                         .into_owned();
-                    out.push(Value::cons(Value::string(name), addr));
+                    if full {
+                        let broadcast = sockaddr_to_value(ifa.ifa_dstaddr).unwrap_or(Value::Nil);
+                        let netmask = sockaddr_to_value(ifa.ifa_netmask).unwrap_or(Value::Nil);
+                        out.push(Value::list(vec![
+                            Value::string(name),
+                            addr,
+                            broadcast,
+                            netmask,
+                        ]));
+                    } else {
+                        out.push(Value::cons(Value::string(name), addr));
+                    }
                 }
                 cur = ifa.ifa_next;
             }
@@ -4882,7 +4905,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         0,
         2,
         f_network_interface_list,
-        "Network interfaces and addresses."
+        "List network interfaces with optional full address info and family."
     ),
     S!(
         "network-interface-info",
