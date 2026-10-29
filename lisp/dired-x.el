@@ -304,16 +304,18 @@ Prefixed with one \\[universal-argument], unmark files instead.
 Prefixed with two \\[universal-argument]'s, prompt for MARKER-CHAR and mark files with it."
   (interactive (dired--mark-suffix-interactive-spec) dired-mode)
   (setq extension (ensure-list extension))
-  (dired-mark-files-regexp
-   (concat ".";; don't match names with nothing but an extension
-           "\\("
-           (mapconcat
-            (lambda (x)
-              (regexp-quote
-               (if (string-prefix-p "." x) x (concat "." x))))
-            extension "\\|")
-           "\\)$")
-   marker-char))
+  ;; Remacs: an empty extension list must not leave an empty regexp arm.
+  (when extension
+    (dired-mark-files-regexp
+     (concat ".";; don't match names with nothing but an extension
+             "\\("
+             (mapconcat
+              (lambda (x)
+                (regexp-quote
+                 (if (string-prefix-p "." x) x (concat "." x))))
+              extension "\\|")
+             "\\)$")
+     marker-char)))
 
 ;; Mark files ending with some suffix.
 (defun dired-mark-suffix (suffix &optional marker-char)
