@@ -364,6 +364,8 @@ fn f_ns_request_user_attention(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 /// Sleep-block tokens → NSProcessInfo activity objects.
 static SLEEP_MAP: OnceLock<std::sync::Mutex<HashMap<u64, usize>>> = OnceLock::new();
 static SLEEP_ID: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+const NS_ACTIVITY_USER_INITIATED: u64 = 0x00FF_FFFF;
+const NS_ACTIVITY_IDLE_DISPLAY_SLEEP_DISABLED: u64 = 1u64 << 40;
 
 fn sleep_map() -> &'static std::sync::Mutex<HashMap<u64, usize>> {
     SLEEP_MAP.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
@@ -383,11 +385,10 @@ fn f_ns_block_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if pi == 0 {
             return 0usize;
         }
-        // NSActivityUserInitiated | NSActivityIdleSystemSleepDisabled,
-        // | NSActivityIdleDisplaySleepDisabled when arg is nil.
-        let mut opts: u64 = (1u64 << 40) | 0x00FF_FFFF;
+        // NSActivityUserInitiated includes NSActivityIdleSystemSleepDisabled.
+        let mut opts = NS_ACTIVITY_USER_INITIATED;
         if a[1].is_nil() {
-            opts |= 1u64 << 46;
+            opts |= NS_ACTIVITY_IDLE_DISPLAY_SLEEP_DISABLED;
         }
         let reason = ns_str(o, &why.as_deref().map(|s| s.to_unicode_lossy()).unwrap_or_else(|| "Emacs".into()));
         let act = (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
