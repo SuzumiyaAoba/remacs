@@ -69,17 +69,16 @@ A typical attribute is `href'."
   (declare (obsolete dom-inner-text "31.1"))
   (if (eq (dom-tag node) 'script)
       ""
-    (mapconcat
-     (lambda (elem)
-       (cond
-        ((stringp elem)
-         elem)
-        ((eq (dom-tag elem) 'script)
-         "")
-        (t
-         (dom-texts elem separator))))
-     (dom-children node)
-     (or separator " "))))
+    (let ((texts
+           (mapcar (lambda (elem)
+                     (if (stringp elem)
+                         elem
+                       (dom-texts elem separator)))
+                   (dom-children node))))
+      (mapconcat
+       #'identity
+       (cl-remove-if (lambda (text) (equal text "")) texts)
+       (or separator " ")))))
 
 (defun dom-inner-text--1 (node)
   (dolist (child (dom-children node))
