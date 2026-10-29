@@ -508,7 +508,8 @@ If optional argument X is t, then return the basename
 of the file with the extension stripped off."
   (if (and fname
 	   (setq fname (url-file-nondirectory fname))
-	   (string-match "\\.[^./]+$" fname))
+	   (string-match "\\.[^./]+$" fname)
+	   (> (match-beginning 0) 0))
       (if x (substring fname 0 (match-beginning 0))
 	(substring fname (match-beginning 0) nil))
     ;;
