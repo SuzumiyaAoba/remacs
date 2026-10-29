@@ -270,13 +270,13 @@ pub struct GridComposition {
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
 struct StyleMix {
-    fg: Option<CellColor>,
-    bg: Option<CellColor>,
+    fg: Option<Option<CellColor>>,
+    bg: Option<Option<CellColor>>,
     distant_foreground: Option<Option<CellColor>>,
-    font_family: Option<u16>,
-    font_weight: Option<u16>,
-    font_width: Option<u8>,
-    font_height: Option<u16>,
+    font_family: Option<Option<u16>>,
+    font_weight: Option<Option<u16>>,
+    font_width: Option<Option<u8>>,
+    font_height: Option<Option<u16>>,
     box_style: Option<Option<BoxStyle>>,
     stipple: Option<Option<u16>>,
     bold: Option<bool>,
@@ -324,13 +324,13 @@ impl StyleMix {
 
     fn finish(&self) -> CellStyle {
         CellStyle {
-            fg: self.fg,
-            bg: self.bg,
+            fg: self.fg.flatten(),
+            bg: self.bg.flatten(),
             distant_foreground: self.distant_foreground.flatten(),
-            font_family: self.font_family,
-            font_weight: self.font_weight,
-            font_width: self.font_width,
-            font_height: self.font_height,
+            font_family: self.font_family.flatten(),
+            font_weight: self.font_weight.flatten(),
+            font_width: self.font_width.flatten(),
+            font_height: self.font_height.flatten(),
             box_style: self.box_style.flatten(),
             stipple: self.stipple.flatten(),
             bold: self.bold.unwrap_or(false),
@@ -1288,7 +1288,7 @@ fn frame_cursor_color(
         i.q_soft("remacs--cursor-face-background-override"),
     ) {
         if i.get_prop(cursor, override_property).truthy() {
-            if let Some(color) = face_ctx.named(i, &cursor, 0).bg {
+            if let Some(Some(color)) = face_ctx.named(i, &cursor, 0).bg {
                 return Some(color);
             }
         }
@@ -3373,6 +3373,8 @@ struct FaceCtx {
     stipple_ids: HashMap<GridStipple, u16>,
     /// Resolved face name -> merged StyleMix.
     cache: HashMap<crate::lisp::value::SymId, StyleMix>,
+    /// Resolved `default' face values used by :reset in other face specs.
+    default_style: Option<CellStyle>,
     /// Foreground from this frame's `foreground-color' parameter. It is a
     /// fallback for the default face, so an explicit default-face foreground
     /// still takes precedence.
@@ -3460,6 +3462,7 @@ impl FaceCtx {
             cache: HashMap::new(),
             frame_default_foreground: None,
             frame_default_background: None,
+            default_style: None,
         };
         if let Some(frame) = frame {
             ctx.frame_default_foreground = i
@@ -3645,11 +3648,15 @@ impl FaceCtx {
             mix.merge(&self.face_plist(i, plist, depth));
         }
         if i.symbol_name(*name) == "default" {
-            if mix.fg.is_none() {
-                mix.fg = self.frame_default_foreground;
+            if mix.fg.is_none()
+                && let Some(color) = self.frame_default_foreground
+            {
+                mix.fg = Some(Some(color));
             }
-            if mix.bg.is_none() {
-                mix.bg = self.frame_default_background;
+            if mix.bg.is_none()
+                && let Some(color) = self.frame_default_background
+            {
+                mix.bg = Some(Some(color));
             }
         }
         self.cache.insert(*name, mix);
@@ -3675,6 +3682,11 @@ impl FaceCtx {
     /// The attribute keywords of a plist, without :inherit.
     fn attrs(&mut self, i: &Interp, plist: &Value) -> StyleMix {
         let mut mix = StyleMix::default();
+        let default_style = self.default_style.unwrap_or_else(|| CellStyle {
+            fg: self.frame_default_foreground,
+            bg: self.frame_default_background,
+            ..CellStyle::default()
+        });
         let Ok(items) = plist.list_to_vec() else {
             return mix;
         };
@@ -3682,46 +3694,147 @@ impl FaceCtx {
             let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) else {
                 continue;
             };
+            let is_unspecified = matches!(v, Value::Sym(symbol) if i.symbol_name(*symbol) == "unspecified");
+            let is_reset = matches!(v, Value::Sym(symbol) if i.symbol_name(*symbol) == "reset");
             match i.symbol_name(k).as_str() {
                 ":foreground" => {
-                    if let Some(c) = self.color(v) {
-                        mix.fg = Some(c);
+                    if is_reset {
+                        mix.fg = Some(default_style.fg);
+                    } else if !is_unspecified
+                        && let Some(c) = self.color(v)
+                    {
+                        mix.fg = Some(Some(c));
                     }
                 }
-                ":distant-foreground" => mix.distant_foreground = Some(self.color(v)),
+                ":distant-foreground" => {
+                    if is_reset {
+                        mix.distant_foreground = Some(default_style.distant_foreground);
+                    } else if !is_unspecified {
+                        mix.distant_foreground = Some(self.color(v));
+                    }
+                }
                 ":background" => {
-                    if let Some(c) = self.color(v) {
-                        mix.bg = Some(c);
+                    if is_reset {
+                        mix.bg = Some(default_style.bg);
+                    } else if !is_unspecified
+                        && let Some(c) = self.color(v)
+                    {
+                        mix.bg = Some(Some(c));
                     }
                 }
-                ":family" => mix.font_family = self.font_family_id(v),
+                ":family" => {
+                    if is_reset {
+                        mix.font_family = Some(default_style.font_family);
+                    } else if !is_unspecified
+                        && let Some(family) = self.font_family_id(v)
+                    {
+                        mix.font_family = Some(Some(family));
+                    }
+                }
                 ":font" => {
-                    if let Value::Str(_) = v {
-                        mix.font_family = self.font_family_id(v);
+                    if is_reset {
+                        mix.font_family = Some(default_style.font_family);
+                        mix.font_weight = Some(default_style.font_weight);
+                        mix.font_width = Some(default_style.font_width);
+                        mix.font_height = Some(default_style.font_height);
+                        mix.bold = Some(default_style.bold);
+                        mix.italic = Some(default_style.italic);
+                    } else if !is_unspecified && let Value::Str(_) = v {
+                        if let Some(family) = self.font_family_id(v) {
+                            mix.font_family = Some(Some(family));
+                        }
                     }
                 }
                 ":weight" => {
-                    let weight = font_weight_value(i, v);
-                    mix.font_weight = Some(weight);
-                    mix.bold = Some(weight >= 600);
+                    if is_reset {
+                        mix.font_weight = Some(default_style.font_weight);
+                        mix.bold = Some(default_style.bold);
+                    } else if !is_unspecified {
+                        let weight = font_weight_value(i, v);
+                        mix.font_weight = Some(Some(weight));
+                        mix.bold = Some(weight >= 600);
+                    }
                 }
-                ":width" => mix.font_width = font_width_percent(i, v),
-                ":height" => mix.font_height = font_height_tenths(v),
-                ":stipple" => mix.stipple = self.stipple_id(v),
-                ":box" => mix.box_style = Some(self.parse_box_style(i, v)),
-                ":slant" => mix.italic = Some(slant_italic(i, v)),
+                ":width" => {
+                    if is_reset {
+                        mix.font_width = Some(default_style.font_width);
+                    } else if !is_unspecified
+                        && let Some(width) = font_width_percent(i, v)
+                    {
+                        mix.font_width = Some(Some(width));
+                    }
+                }
+                ":height" => {
+                    if is_reset {
+                        mix.font_height = Some(default_style.font_height);
+                    } else if !is_unspecified
+                        && let Some(height) = font_height_tenths(v)
+                    {
+                        mix.font_height = Some(Some(height));
+                    }
+                }
+                ":stipple" => {
+                    if is_reset {
+                        mix.stipple = Some(default_style.stipple);
+                    } else if !is_unspecified {
+                        mix.stipple = self.stipple_id(v);
+                    }
+                }
+                ":box" => {
+                    if is_reset {
+                        mix.box_style = Some(default_style.box_style);
+                    } else if !is_unspecified {
+                        mix.box_style = Some(self.parse_box_style(i, v));
+                    }
+                }
+                ":slant" => {
+                    if is_reset {
+                        mix.italic = Some(default_style.italic);
+                    } else if !is_unspecified {
+                        mix.italic = Some(slant_italic(i, v));
+                    }
+                }
                 ":underline" => {
-                    mix.underline = Some(v.truthy());
-                    mix.underline_color = Some(self.decoration_color(v));
-                    mix.underline_wave = Some(self.underline_wave(i, v));
+                    if is_reset {
+                        mix.underline = Some(default_style.underline);
+                        mix.underline_color = Some(default_style.underline_color);
+                        mix.underline_wave = Some(default_style.underline_wave);
+                    } else if !is_unspecified {
+                        mix.underline = Some(v.truthy());
+                        mix.underline_color = Some(self.decoration_color(v));
+                        mix.underline_wave = Some(self.underline_wave(i, v));
+                    }
                 }
-                ":overline" => mix.overline = Some(v.truthy()),
+                ":overline" => {
+                    if is_reset {
+                        mix.overline = Some(default_style.overline);
+                    } else if !is_unspecified {
+                        mix.overline = Some(v.truthy());
+                    }
+                }
                 ":strike-through" => {
-                    mix.strike = Some(v.truthy());
-                    mix.strike_color = Some(self.decoration_color(v));
+                    if is_reset {
+                        mix.strike = Some(default_style.strike);
+                        mix.strike_color = Some(default_style.strike_color);
+                    } else if !is_unspecified {
+                        mix.strike = Some(v.truthy());
+                        mix.strike_color = Some(self.decoration_color(v));
+                    }
                 }
-                ":inverse-video" => mix.inverse = Some(v.truthy()),
-                ":extend" => mix.extend = Some(v.truthy()),
+                ":inverse-video" => {
+                    if is_reset {
+                        mix.inverse = Some(default_style.inverse);
+                    } else if !is_unspecified {
+                        mix.inverse = Some(v.truthy());
+                    }
+                }
+                ":extend" => {
+                    if is_reset {
+                        mix.extend = Some(default_style.extend);
+                    } else if !is_unspecified {
+                        mix.extend = Some(v.truthy());
+                    }
+                }
                 _ => {}
             }
         }
@@ -3764,8 +3877,8 @@ impl FaceCtx {
                     if let Some(cs) = i.sym_id(&car).map(|s| i.symbol_name(s)) {
                         if let Some(c) = self.color(&cdr) {
                             match cs.as_str() {
-                                "foreground-color" => mix.fg = Some(c),
-                                "background-color" => mix.bg = Some(c),
+                                "foreground-color" => mix.fg = Some(Some(c)),
+                                "background-color" => mix.bg = Some(Some(c)),
                                 _ => {}
                             }
                         }
@@ -3889,7 +4002,7 @@ fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
         | "mode-line-inactive" => mix.inverse = Some(true),
         "region" => {
             // GNU's last-resort `(t :background "gray" :extend t)'.
-            mix.bg = Some(CellColor(190, 190, 190));
+            mix.bg = Some(Some(CellColor(190, 190, 190)));
             mix.extend = Some(true);
         }
         "lazy-highlight" => mix.underline = Some(true),
@@ -5540,6 +5653,7 @@ fn render_grid_internal(
     let mut rows = vec![String::new(); height];
     let mut fctx = FaceCtx::new(i, frame.as_ref());
     let default_style = fctx.builtin(i, "default", 0).finish();
+    fctx.default_style = Some(default_style);
     let default_bg = default_style.bg;
     let mut attrs = vec![vec![default_style; width]; height];
     let mut row_heights = vec![19; height];
