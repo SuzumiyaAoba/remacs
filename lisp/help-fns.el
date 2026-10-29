@@ -109,17 +109,32 @@ current help buffer.")
 (advice-add 'register-definition-prefixes :around
             #'help--register-definition-prefixes)
 
+(defun help--canonical-load-history-file (file)
+  "Return the canonical path for FILE, or nil if it cannot be located."
+  (let ((path (if (file-name-absolute-p file)
+                  file
+                (locate-library file))))
+    (when path
+      (condition-case nil
+          (file-truename path)
+        (error (expand-file-name path)))))
+
 (defun help--loaded-p (file)
   "Try and figure out if FILE has already been loaded."
-  ;; FIXME: this regexp business is not good enough: for file
+  ;; Remacs: compare canonical paths to avoid basename false positives.
   ;; `toto', it will say `toto' is loaded when in reality it was
   ;; just cedet/semantic/toto that has been loaded.
   (or (let ((feature (intern-soft file)))
         (and feature (featurep feature)))
-      (let* ((re (load-history-regexp file))
-             (done nil))
+      (let ((canonical-file (help--canonical-load-history-file file))
+            (done nil))
         (dolist (x load-history)
-          (and (stringp (car x)) (string-match-p re (car x)) (setq done t)))
+          (let ((loaded-file (and (stringp (car x))
+                                  (help--canonical-load-history-file (car x)))))
+            (and canonical-file
+                 loaded-file
+                 (equal canonical-file loaded-file)
+                 (setq done t))))
         done)))
 
 (defun help--load-prefixes (prefixes)
