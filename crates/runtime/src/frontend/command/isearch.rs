@@ -276,6 +276,19 @@ fn isearch_yank_word_or_char(i: &mut Interp, position: usize) -> Option<String> 
     Some(text.borrow().to_unicode_lossy())
 }
 
+fn isearch_yank_char(i: &mut Interp, position: usize) -> Option<String> {
+    let source = format!(
+        "(save-excursion (goto-char (min {} (point-max))) \
+           (buffer-substring-no-properties (point) \
+             (progn (forward-char 1) (point))))",
+        position.saturating_add(1)
+    );
+    let Value::Str(text) = i.eval_str(&source).ok()? else {
+        return None;
+    };
+    Some(text.borrow().to_unicode_lossy())
+}
+
 fn prepare_isearch_yanked_text(
     i: &mut Interp,
     text: &str,
@@ -1058,6 +1071,32 @@ impl Isearch {
                         .unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
                     self.query.push(ch);
+                    self.search_updated_query(i, failure_start);
+                }
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | CHAR_CTL | 'y' as i128)
+                || c == (CHAR_META | 25) =>
+            {
+                let anchor = if self.backward {
+                    self.spans.last().map(|span| span.1).unwrap_or(cur)
+                } else {
+                    cur
+                };
+                if let Some(text) = isearch_yank_char(i, anchor)
+                    && !text.is_empty()
+                {
+                    let failure_start = self
+                        .fail_pos
+                        .unwrap_or_else(|| self.query.chars().count());
+                    self.save_history();
+                    let text = prepare_isearch_yanked_text(
+                        i,
+                        &text,
+                        &self.case_fold,
+                        self.regexp,
+                    );
+                    self.query.push_str(&text);
                     self.search_updated_query(i, failure_start);
                 }
                 IsearchAction::Continue
