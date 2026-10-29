@@ -5411,7 +5411,7 @@ fn f_recenter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(b) = i.buffers.get(buf_id) {
         let bb = b.borrow();
         let line = bb.text.line_of_pos(bb.point());
-        let text_rows = height.saturating_sub(2).max(1);
+        let text_rows = height.saturating_sub(1).max(1);
         let target_line = match n {
             Some(k) if k < 0 => {
                 let row = (text_rows as i128 + k).max(0) as usize;
@@ -5475,9 +5475,9 @@ fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128, whole: bool) -> bool {
     let Some(b) = i.buffers.get(buf) else {
         return true;
     };
-    // Text rows = window height minus mode line AND the row the
-    // frame's mini-window occupies (see render_grid's wh).
-    let text_rows = height.saturating_sub(2).max(1);
+    // The window height already excludes the mini-window; only its mode
+    // line is outside the text area.
+    let text_rows = height.saturating_sub(1).max(1);
     let preserve_value = i
         .intern_soft("scroll-preserve-screen-position")
         .filter(|symbol| i.bound_p(*symbol))
@@ -5590,7 +5590,7 @@ fn scroll_edge_signal(i: &mut Interp, up: bool) -> EvalResult {
 fn scroll_default_lines(i: &mut Interp, w: &WindowRef) -> i128 {
     let ctx_id = i.q("next-screen-context-lines");
     let ctx = i.symbol_value(ctx_id).int().unwrap_or(2);
-    (w.borrow().height.saturating_sub(2) as i128 - ctx).max(1)
+    (w.borrow().height.saturating_sub(1) as i128 - ctx).max(1)
 }
 
 fn f_scroll_up(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
