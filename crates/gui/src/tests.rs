@@ -307,6 +307,8 @@ fn chanio_mouse_click_keeps_down_position_and_modifiers() {
         y: 12,
         row: 0,
         column: 4,
+        window_id: None,
+        area: None,
     };
     let end = MousePosition {
         buffer_position: 9,

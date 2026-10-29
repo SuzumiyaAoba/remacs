@@ -10,7 +10,7 @@ use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
-use remacs_runtime::frontend::{Grid, GridInput, MousePosition};
+use remacs_runtime::frontend::{Grid, GridInput, MouseArea, MousePosition};
 
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
@@ -134,6 +134,33 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         y: f32::from(point.y).round() as i128,
         row,
         column: character,
+        window_id: None,
+        area: None,
+    })
+}
+
+pub(super) fn mode_line_mouse_position(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+) -> Option<MousePosition> {
+    let row = grid_row_at_y(grid, point.y);
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
+    let mode_line = grid.mode_lines.iter().find(|mode_line| {
+        row == mode_line.row
+            && column >= mode_line.left
+            && column < mode_line.left.saturating_add(mode_line.width)
+    })?;
+    Some(MousePosition {
+        buffer_id: mode_line.buffer_id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: f32::from(point.x).round() as i128,
+        y: f32::from(point.y).round() as i128,
+        row,
+        column: column.saturating_sub(mode_line.left),
+        window_id: Some(mode_line.window_id),
+        area: Some(MouseArea::ModeLine),
     })
 }
 

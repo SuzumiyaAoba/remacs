@@ -436,6 +436,7 @@ pub(super) struct EditorView {
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
+    mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
     toolbar_pressed: bool,
     bell_flash: bool,
     bell_flash_generation: u64,
@@ -488,6 +489,7 @@ impl EditorView {
             runtime_frame_size: None,
             runtime_frame_position: None,
             scroll_bar_drag: None,
+            mouse_down_position: None,
             toolbar_pressed: false,
             bell_flash: false,
             bell_flash_generation: 0,
@@ -996,6 +998,7 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
+                        this.mouse_down_position = None;
                         let Some(point) = frame_content_point(
                             event.position,
                             window.viewport_size(),
@@ -1003,6 +1006,13 @@ impl Render for EditorView {
                         ) else {
                             return;
                         };
+                        let absolute_position = absolute_mouse_pixel_position(
+                            event.position,
+                            pointer_screen_left,
+                            pointer_screen_top,
+                            content_top_offset,
+                        );
+                        let _ = this.tx.send_mouse_move(None, Some(absolute_position));
                         if let Some(command) = popup_menu_command_at(
                             &left_mouse_down_grid.popup_menu_items,
                             point,
@@ -1063,7 +1073,15 @@ impl Render for EditorView {
                             point,
                             cell_width,
                             window,
-                        ) {
+                        )
+                        .or_else(|| {
+                            input::mode_line_mouse_position(
+                                &left_mouse_down_grid,
+                                point,
+                                cell_width,
+                            )
+                        }) {
+                            this.mouse_down_position = Some(position);
                             let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
                                 button: RemacsMouseButton::Left,
                                 click_count: event.click_count,
@@ -1145,19 +1163,38 @@ impl Render for EditorView {
                         cx.stop_propagation();
                         return;
                     }
-                    let Some(point) = frame_content_point(
+                    let point = frame_content_point(
                         event.position,
                         window.viewport_size(),
                         border,
-                    ) else {
-                        return;
-                    };
-                    if let Some(position) = input::mouse_position_for_point_with_cell_width(
-                        &left_mouse_up_grid,
-                        point,
-                        cell_width,
-                        window,
-                    ) {
+                    );
+                    let position = point
+                        .and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &left_mouse_up_grid,
+                                point,
+                                cell_width,
+                                window,
+                            )
+                            .or_else(|| {
+                                input::mode_line_mouse_position(
+                                    &left_mouse_up_grid,
+                                    point,
+                                    cell_width,
+                                )
+                            })
+                        })
+                        .or_else(|| {
+                            this.mouse_down_position.map(|mut position| {
+                                position.x = (f32::from(event.position.x) - f32::from(border))
+                                    .round() as i128;
+                                position.y = (f32::from(event.position.y) - f32::from(border))
+                                    .round() as i128;
+                                position
+                            })
+                        });
+                    this.mouse_down_position = None;
+                    if let Some(position) = position {
                         let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
                             button: RemacsMouseButton::Left,
                             click_count: event.click_count,
@@ -1180,6 +1217,13 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
+                    .or_else(|| {
+                        input::mode_line_mouse_position(
+                            &middle_mouse_down_grid,
+                            point,
+                            cell_width,
+                        )
+                    })
                 }) {
                     let _ = middle_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Middle,
@@ -1202,6 +1246,13 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
+                    .or_else(|| {
+                        input::mode_line_mouse_position(
+                            &middle_mouse_up_grid,
+                            point,
+                            cell_width,
+                        )
+                    })
                 }) {
                     let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Middle,
@@ -1224,6 +1275,13 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
+                    .or_else(|| {
+                        input::mode_line_mouse_position(
+                            &right_mouse_down_grid,
+                            point,
+                            cell_width,
+                        )
+                    })
                 }) {
                     let _ = right_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Right,
@@ -1246,6 +1304,13 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
+                    .or_else(|| {
+                        input::mode_line_mouse_position(
+                            &right_mouse_up_grid,
+                            point,
+                            cell_width,
+                        )
+                    })
                 }) {
                     let _ = right_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Right,

@@ -111,6 +111,8 @@ fn mouse_position(i: &Interp, character: usize) -> MousePosition {
         y: 0,
         row: 0,
         column: character,
+        window_id: None,
+        area: None,
     }
 }
 

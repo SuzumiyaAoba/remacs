@@ -255,7 +255,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 dispatch_mouse_down(i, mouse, &mut keys, &mut arg_mode)?
             }
             InputEvent::Mouse(mouse) => dispatch_mouse(&term, i, mouse, &mut keys, &mut arg_mode)?,
-            InputEvent::MouseMovement { .. } => {}
+            InputEvent::MouseMovement { position } => {
+                dispatch_mouse_movement(i, position, &mut keys, &mut arg_mode)?;
+            }
             InputEvent::MouseWheel {
                 up,
                 modifiers,
@@ -810,6 +812,23 @@ fn mouse_movement_event(i: &mut Interp, position: Option<MousePosition>) -> Valu
     Value::list(vec![Value::Sym(i.intern("mouse-movement")), position])
 }
 
+fn dispatch_mouse_movement(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let event = mouse_movement_event(i, position);
+    let key = crate::editor::event_code_for("mouse-movement");
+    let sequence = Value::vector(vec![Value::Int(key)]);
+    if matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None) {
+        return Ok(());
+    }
+    let last_input = i.q("last-input-event");
+    i.store_internal_value(last_input, event.clone());
+    dispatch_key_core_inner(i, key, keys, arg_mode, None, None, Some(&event))
+}
+
 fn dispatch_frontend_command_with_args(
     i: &mut Interp,
     command: &str,
@@ -876,8 +895,7 @@ fn dispatch_mouse<T: KeyIo>(
         .gui_mouse_position
         .replace((mouse.end.x, mouse.end.y));
 
-    let drag = mouse.start.buffer_id != mouse.end.buffer_id
-        || mouse.start.buffer_position != mouse.end.buffer_position;
+    let drag = mouse_input_dragged(mouse);
     let context_menu_mode = i
         .q_soft("context-menu-mode")
         .map(|symbol| i.symbol_value(symbol).truthy())
@@ -1156,9 +1174,17 @@ fn dispatch_color_drop(
     Ok(())
 }
 
+fn mouse_input_dragged(mouse: MouseInput) -> bool {
+    mouse.start.buffer_id != mouse.end.buffer_id
+        || mouse.start.buffer_position != mouse.end.buffer_position
+        || mouse.start.x != mouse.end.x
+        || mouse.start.y != mouse.end.y
+        || mouse.start.window_id != mouse.end.window_id
+        || mouse.start.area != mouse.end.area
+}
+
 fn mouse_event(i: &mut Interp, mouse: MouseInput) -> Option<(i128, Value)> {
-    let drag = mouse.start.buffer_id != mouse.end.buffer_id
-        || mouse.start.buffer_position != mouse.end.buffer_position;
+    let drag = mouse_input_dragged(mouse);
     let base = match (mouse.button, drag) {
         (MouseButton::Left, false) => "mouse-1",
         (MouseButton::Middle, false) => "mouse-2",
@@ -1260,19 +1286,35 @@ fn lookup_command_at_event(i: &mut Interp, seq: &Value, event: &Value) -> Lookup
 
 fn mouse_event_position(event: &Value) -> Option<Value> {
     let fields = event.list_to_vec().ok()?;
-    let posn = fields.get(1)?.list_to_vec().ok()?;
-    matches!(posn.get(1), Some(Value::Int(_))).then(|| posn[1].clone())
+    let position = fields.get(1)?.clone();
+    let posn = position.list_to_vec().ok()?;
+    match posn.get(1) {
+        Some(Value::Int(point)) => Some(Value::Int(*point)),
+        Some(_) if posn.len() >= 4 => Some(position),
+        _ => None,
+    }
 }
 
 fn mouse_position_value(i: &Interp, position: MousePosition) -> Option<Value> {
     let frame = i.selected_frame.as_ref()?;
     let (window, selected) = {
         let frame = frame.borrow();
-        let window = frame
-            .windows
-            .iter()
-            .find(|window| window.borrow().buffer == position.buffer_id)
-            .cloned();
+        let window = position
+            .window_id
+            .and_then(|window_id| {
+                frame
+                    .windows
+                    .iter()
+                    .find(|window| window.borrow().id == window_id)
+                    .cloned()
+            })
+            .or_else(|| {
+                frame
+                    .windows
+                    .iter()
+                    .find(|window| window.borrow().buffer == position.buffer_id)
+                    .cloned()
+            });
         (window, frame.selected.clone())
     };
     let window = window.or_else(|| {
@@ -1280,12 +1322,28 @@ fn mouse_position_value(i: &Interp, position: MousePosition) -> Option<Value> {
         let selected = selected_window.borrow();
         (selected.buffer == position.buffer_id).then(|| selected_window.clone())
     })?;
-    Some(Value::list(vec![
-        Value::Window(window),
-        Value::Int(position.buffer_position.saturating_add(1) as i128),
-        Value::cons(Value::Int(position.x), Value::Int(position.y)),
-        Value::Int(0),
-    ]))
+    let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
+    if let Some(crate::frontend::MouseArea::ModeLine) = position.area {
+        Some(Value::list(vec![
+            Value::Window(window),
+            Value::Sym(i.intern("mode-line")),
+            coordinates,
+            Value::Int(0),
+            Value::Nil,
+            Value::Nil,
+            Value::cons(
+                Value::Int(position.column as i128),
+                Value::Int(position.row as i128),
+            ),
+        ]))
+    } else {
+        Some(Value::list(vec![
+            Value::Window(window),
+            Value::Int(position.buffer_position.saturating_add(1) as i128),
+            coordinates,
+            Value::Int(0),
+        ]))
+    }
 }
 
 fn dispatch_frame_moved(

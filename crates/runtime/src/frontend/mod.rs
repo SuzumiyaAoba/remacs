@@ -210,6 +210,11 @@ pub enum MouseButton {
     Right,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseArea {
+    ModeLine,
+}
+
 /// A text position mapped from the front-end's most recent grid snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MousePosition {
@@ -224,6 +229,10 @@ pub struct MousePosition {
     /// Display row and character column.
     pub row: usize,
     pub column: usize,
+    /// Target window for non-buffer areas such as mode lines.
+    pub window_id: Option<usize>,
+    /// Window area under the pointer; nil denotes buffer text.
+    pub area: Option<MouseArea>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -316,7 +325,7 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
     GridCursorShape, GridHelpEcho, GridImage, GridImageSource, GridInput, GridInputRow,
-    GridInputSelection, GridMenu, GridStipple, GridPointerShape, GridVScroll,
+    GridInputSelection, GridMenu, GridStipple, GridPointerShape, GridModeLine, GridVScroll,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, render_frame_grid_with_input_cached,
     render_frame_grid_with_mouse_position_cached, render_grid, render_grid_with_input_cached,

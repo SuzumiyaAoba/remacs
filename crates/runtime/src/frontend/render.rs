@@ -229,6 +229,16 @@ pub struct GridBottomDivider {
     pub last_pixel_style: CellStyle,
 }
 
+/// A window's mode-line hit area, with the displayed buffer-name extent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridModeLine {
+    pub window_id: usize,
+    pub buffer_id: usize,
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+}
+
 /// A window body whose contents are raised by a pixel scroll offset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridVScroll {
@@ -369,6 +379,7 @@ pub struct Grid {
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
     pub bottom_dividers: Vec<GridBottomDivider>,
+    pub mode_lines: Vec<GridModeLine>,
     pub vscrolls: Vec<GridVScroll>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
@@ -462,6 +473,7 @@ impl Grid {
             popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
             bottom_dividers: Vec::new(),
+            mode_lines: Vec::new(),
             vscrolls: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -4657,6 +4669,7 @@ fn render_grid_internal(
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
     let mut bottom_dividers = Vec::new();
+    let mut mode_lines = Vec::new();
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -4689,6 +4702,7 @@ fn render_grid_internal(
                 popup_menu_items,
                 scroll_bars,
                 bottom_dividers,
+                mode_lines,
                 vscrolls,
                 attrs,
                 char_attrs,
@@ -5987,6 +6001,13 @@ fn render_grid_internal(
                 &mode_context,
                 ml_name,
             );
+            mode_lines.push(crate::frontend::GridModeLine {
+                window_id,
+                buffer_id: buf_id,
+                row: my,
+                left: window_left,
+                width: window_width,
+            });
             if let Some(text) = mode_line_help_echo(i, buf_id, &mode_line_format, 0) {
                 push_help_echo(&mut help_echoes, GridHelpEcho {
                     row: my,
@@ -6173,6 +6194,7 @@ fn render_grid_internal(
         popup_menu_items,
         scroll_bars,
         bottom_dividers,
+        mode_lines,
         vscrolls,
         attrs,
         char_attrs,
