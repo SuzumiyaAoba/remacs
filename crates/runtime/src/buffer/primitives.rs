@@ -11114,7 +11114,11 @@ fn f_posix_search_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// GNU `word-search-regexp' (isearch.el): quote each word, join with
 /// `\W+', bracket with `\<…\>' unless LAX (which drops the trailing
 /// `\>'); leading/trailing whitespace in STRING becomes `\W+'.
-fn word_search_regexp<T: TextSource + ?Sized>(i: &Interp, string: &T, lax: bool) -> EmacsText {
+pub(crate) fn word_search_regexp<T: TextSource + ?Sized>(
+    i: &Interp,
+    string: &T,
+    lax: bool,
+) -> EmacsText {
     string.with_text(|string| {
         if string.is_empty() { return EmacsText::new(); }
         let chars: Vec<EmacsChar> = string.chars().collect();

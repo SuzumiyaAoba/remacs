@@ -27,6 +27,7 @@ pub(super) struct Isearch {
     pub(super) start: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
+    word_search: bool,
     quote_next: bool,
     meta_s_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -43,6 +44,7 @@ struct IsearchHistory {
     fail_pos: Option<usize>,
     case_fold: Value,
     regexp: bool,
+    word_search: bool,
     invisible: Value,
 }
 
@@ -53,6 +55,7 @@ fn isearch_search(
     query: &str,
     backward: bool,
     regexp: bool,
+    word_search: bool,
     from: usize,
     case_fold_search: bool,
     allow_invisible: bool,
@@ -60,8 +63,14 @@ fn isearch_search(
     if query.is_empty() {
         return Some((from, from, from));
     }
+    let pattern = if word_search {
+        crate::buffer::primitives::word_search_regexp(i, query, false).to_unicode_lossy()
+    } else {
+        query.to_owned()
+    };
+    let regexp = regexp || word_search;
     let mut esc = String::new();
-    for c in query.chars() {
+    for c in pattern.chars() {
         if c == '\\' || c == '"' {
             esc.push('\\');
         }
@@ -298,6 +307,7 @@ impl Isearch {
             start,
             backward,
             regexp,
+            word_search: false,
             quote_next: false,
             meta_s_prefix: false,
             match_ov: None,
@@ -324,6 +334,7 @@ impl Isearch {
             fail_pos: self.fail_pos,
             case_fold: self.case_fold.clone(),
             regexp: self.regexp,
+            word_search: self.word_search,
             invisible: self.invisible.clone(),
         });
     }
@@ -337,6 +348,7 @@ impl Isearch {
             self.fail_pos = previous.fail_pos;
             self.case_fold = previous.case_fold;
             self.regexp = previous.regexp;
+            self.word_search = previous.word_search;
             self.invisible = previous.invisible;
             self.go_to(i, self.cur());
         }
@@ -446,6 +458,7 @@ impl Isearch {
                     &self.query,
                     false,
                     self.regexp,
+                    self.word_search,
                     match_start,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -458,6 +471,7 @@ impl Isearch {
                         &self.query,
                         true,
                         self.regexp,
+                        self.word_search,
                         self.start.min(match_end + 1),
                         case_fold_search,
                         self.invisible.truthy(),
@@ -469,6 +483,7 @@ impl Isearch {
                     &self.query,
                     false,
                     self.regexp,
+                    self.word_search,
                     match_start,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -480,6 +495,7 @@ impl Isearch {
                 &self.query,
                 self.backward,
                 self.regexp,
+                self.word_search,
                 self.start,
                 case_fold_search,
                 self.invisible.truthy(),
@@ -507,6 +523,7 @@ impl Isearch {
             &self.query,
             self.backward,
             self.regexp,
+            self.word_search,
             self.cur(),
             case_fold_search,
             self.invisible.truthy(),
@@ -528,6 +545,18 @@ impl Isearch {
     fn toggle_regexp(&mut self, i: &mut Interp) {
         self.save_history();
         self.regexp = !self.regexp;
+        self.word_search = false;
+        self.failing = false;
+        self.fail_pos = None;
+        self.search_replaced_query(i);
+    }
+
+    fn toggle_word_search(&mut self, i: &mut Interp) {
+        self.save_history();
+        self.word_search = !self.word_search;
+        if self.word_search {
+            self.regexp = false;
+        }
         self.failing = false;
         self.fail_pos = None;
         self.search_replaced_query(i);
@@ -573,6 +602,10 @@ impl Isearch {
                 }
                 c if c == 'r' as i128 => {
                     self.toggle_regexp(i);
+                    return IsearchAction::Continue;
+                }
+                c if c == 'w' as i128 => {
+                    self.toggle_word_search(i);
                     return IsearchAction::Continue;
                 }
                 7 => return self.step(i, key),
@@ -649,6 +682,7 @@ impl Isearch {
                     &self.query,
                     back,
                     self.regexp,
+                    self.word_search,
                     from,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -1090,6 +1124,7 @@ impl Isearch {
                     &self.query,
                     false,
                     self.regexp,
+                    self.word_search,
                     pos,
                     case_fold_search,
                     self.invisible.truthy(),
