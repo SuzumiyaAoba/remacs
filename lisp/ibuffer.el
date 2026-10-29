@@ -1472,11 +1472,12 @@ If point is on a group name, this function operates on that group."
     (if elide
 	`(if (> strlen 5)
 	     ,(if from-end-p
-                  ;; FIXME: this should probably also be using
-                  ;; `truncate-string-to-width' (Bug#24972)
+                  ;; Remacs: use display columns so wide suffixes survive.
 		  `(concat ,ellipsis
-			   (substring ,strvar
-				      (string-width ibuffer-eliding-string)))
+			   (truncate-string-to-width
+			    ,strvar
+			    strlen
+			    (string-width ,ellipsis)))
 		`(concat
 		  (truncate-string-to-width
                    ,strvar (- strlen (string-width ,ellipsis)) nil ?.)
