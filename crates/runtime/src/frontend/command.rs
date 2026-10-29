@@ -196,6 +196,12 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         let render_requested = term.borrow_mut().take_render_request();
         render_needed |= event_activity || window_activity || render_on_idle || render_requested;
         if render_needed {
+            if let Err(flow) = term.borrow_mut().run_pre_redisplay_functions(i) {
+                report_flow(i, flow);
+            }
+            if let Err(flow) = crate::editor::changes::run(i) {
+                report_flow(i, flow);
+            }
             term.borrow_mut().render(i)?;
             render_needed = false;
         }
@@ -2005,6 +2011,12 @@ fn minibuf_loop<T: KeyIo>(
             if single {
                 let _ = t.draw_echo(&shown.to_unicode_lossy());
             } else {
+                if let Err(flow) = t.run_pre_redisplay_functions(i) {
+                    report_flow(i, flow);
+                }
+                if let Err(flow) = crate::editor::changes::run(i) {
+                    report_flow(i, flow);
+                }
                 let _ = t.draw_echo_with_state(i, &shown.to_unicode_lossy());
             }
             render_needed = false;

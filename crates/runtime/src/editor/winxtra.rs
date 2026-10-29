@@ -3993,6 +3993,29 @@ pub(crate) fn f_run_window_scroll_functions(i: &mut Interp, a: crate::lisp::Argv
     result
 }
 
+pub(crate) fn run_pre_redisplay_function(
+    i: &mut Interp,
+    windows: Vec<WindowRef>,
+) -> Result<(), Flow> {
+    let Some(function) = i
+        .intern_soft("pre-redisplay-function")
+        .filter(|symbol| i.bound_p(*symbol))
+        .map(|symbol| i.symbol_value(symbol))
+        .filter(|function| function.truthy())
+    else {
+        return Ok(());
+    };
+    let windows = Value::list(
+        windows
+            .into_iter()
+            .filter(|window| !window.borrow().dead)
+            .map(Value::Window)
+            .collect(),
+    );
+    i.apply(&function, vec![windows])?;
+    Ok(())
+}
+
 /// `frame-scale-factor' — the GUI front-end reports its device scale;
 /// text frames retain GNU's unit scale.
 fn f_frame_scale_factor(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

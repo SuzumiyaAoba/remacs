@@ -264,6 +264,27 @@ pub trait KeyIo {
     }
     /// Push a key back onto the pending queue.
     fn unread(&mut self, k: i128);
+    /// Run the pre-redisplay callback for a specific set of windows.
+    fn run_pre_redisplay_for_windows(
+        &mut self,
+        i: &mut Interp,
+        windows: Vec<crate::editor::WindowRef>,
+    ) -> Result<(), crate::lisp::error::Flow> {
+        crate::editor::winxtra::run_pre_redisplay_function(i, windows)
+    }
+    /// Run the configured pre-redisplay function for the windows this
+    /// front-end will draw. Multi-window front-ends can override this.
+    fn run_pre_redisplay_functions(
+        &mut self,
+        i: &mut Interp,
+    ) -> Result<(), crate::lisp::error::Flow> {
+        let windows = i
+            .selected_frame
+            .as_ref()
+            .map(crate::editor::changes::frame_windows)
+            .unwrap_or_default();
+        self.run_pre_redisplay_for_windows(i, windows)
+    }
     /// Repaint the whole frame.
     fn render(&mut self, i: &Interp) -> io::Result<()>;
     /// Most recently observed native pointer position, in the display-relative

@@ -1614,6 +1614,44 @@ impl KeyIo for ChanIo {
         self.pending.push(k);
     }
 
+    fn run_pre_redisplay_functions(
+        &mut self,
+        i: &mut Interp,
+    ) -> Result<(), remacs_runtime::lisp::error::Flow> {
+        let frames = if self.gui_requests.is_some() {
+            let mut frames: Vec<_> = i
+                .frames
+                .iter()
+                .filter(|frame| {
+                    !frame.borrow().dead && frame_system_is_graphical(i, frame)
+                })
+                .cloned()
+                .collect();
+            if let Some(selected) = &i.selected_frame
+                && !frames.iter().any(|frame| Rc::ptr_eq(frame, selected))
+            {
+                frames.push(selected.clone());
+            }
+            frames
+        } else {
+            i.selected_frame.clone().into_iter().collect()
+        };
+        for frame in frames {
+            let windows = {
+                let frame = frame.borrow();
+                frame
+                    .windows
+                    .iter()
+                    .chain(frame.minibuffer.iter())
+                    .filter(|window| !window.borrow().dead)
+                    .cloned()
+                    .collect()
+            };
+            self.run_pre_redisplay_for_windows(i, windows)?;
+        }
+        Ok(())
+    }
+
     fn render(&mut self, i: &Interp) -> io::Result<()> {
         if let Some(frame) = i.selected_frame.as_ref() {
             self.active_frame_id = Some(frame.borrow().id);
