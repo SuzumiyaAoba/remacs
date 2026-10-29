@@ -88,6 +88,24 @@ fn isearch_extends_match_in_place_and_overlays_paint() {
 }
 
 #[test]
+fn isearch_lazy_highlight_uses_configured_match_limit() {
+    let text = vec!["x ".repeat(10); 21].join("\n");
+    let mut i = interp_with_frame(&text);
+    let mut st = Isearch::new(&mut i, false, false);
+    st.step(&mut i, 'x' as i128);
+    st.refresh_overlays(&mut i);
+    assert!(
+        st.lazy_ovs.len() > 200,
+        "nil max-at-a-time should highlight all visible matches; got {}",
+        st.lazy_ovs.len()
+    );
+
+    i.eval_str("(setq lazy-highlight-max-at-a-time 5)").unwrap();
+    st.refresh_overlays(&mut i);
+    assert_eq!(st.lazy_ovs.len(), 5);
+}
+
+#[test]
 fn regexp_isearch_highlights_capture_groups_and_clears_their_overlays() {
     let mut i = interp_with_frame("foo-42bar\n");
     let mut st = Isearch::new(&mut i, false, true);

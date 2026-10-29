@@ -2205,12 +2205,18 @@ impl Isearch {
             .unwrap_or(usize::MAX);
         let mut pos = wstart;
         let mut count = 0usize;
+        let max_at_a_time = i
+            .intern_soft("lazy-highlight-max-at-a-time")
+            .map(|symbol| i.symbol_value(symbol))
+            .and_then(|value| value.int())
+            .map(|limit| usize::try_from(limit.max(1)).unwrap_or(usize::MAX))
+            .unwrap_or(usize::MAX);
         let case_fold_search = self.case_fold.truthy();
         let pri = Value::Sym(i.q("priority"));
         let face = Value::Sym(i.q("face"));
         let lazy = Value::Sym(i.q("lazy-highlight"));
         let winprop = Value::Sym(i.q("window"));
-        while count < 200 {
+        while count < max_at_a_time {
             let Some((_, b, e, _)) = isearch_search(
                 i,
                 &self.query,
