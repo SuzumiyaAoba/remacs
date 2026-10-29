@@ -2165,6 +2165,7 @@ enum Visibility {
 #[derive(Clone, PartialEq, Eq)]
 enum DisplayReplacement {
     Text(String),
+    GlyphlessText(String, CellStyle),
     Image {
         source: GridImageSource,
         width: Option<usize>,
@@ -2614,6 +2615,22 @@ where
                 append_rendered_text(
                     &replacement,
                     style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+            Some(DisplayReplacement::GlyphlessText(replacement, glyphless_style)) => {
+                append_rendered_text(
+                    &replacement,
+                    glyphless_style,
                     hscroll,
                     width,
                     end_column,
@@ -4242,6 +4259,89 @@ fn raw_byte_replacement(
         .map(|byte| DisplayReplacement::Text(raw_byte_text(i, buffer_id, byte)))
 }
 
+fn glyphless_display_replacement(
+    i: &Interp,
+    buffer_id: usize,
+    character: EmacsChar,
+    graphical: bool,
+    glyphless_style: CellStyle,
+) -> Option<DisplayReplacement> {
+    let table = buffer_setting(i, "glyphless-char-display", buffer_id);
+    if !crate::lisp::builtins::misc::is_char_table(i, &table) {
+        return None;
+    }
+    let value = crate::lisp::builtins::misc::char_table_ref(
+        i,
+        &table,
+        character.code() as usize,
+    );
+    if value.is_nil() {
+        return None;
+    }
+
+    let value = match value {
+        Value::Cons(pair) => {
+            let pair = pair.borrow();
+            if graphical {
+                pair.car.clone()
+            } else {
+                pair.cdr.clone()
+            }
+        }
+        value => value,
+    };
+    if value.is_nil() {
+        return None;
+    }
+
+    let (text, boxed) = match value {
+        Value::Str(string) => (string.borrow().to_unicode_lossy(), true),
+        Value::Sym(method) => match i.symbol_name(method).as_str() {
+            "zero-width" => return Some(DisplayReplacement::Hidden),
+            "thin-space" => (" ".to_owned(), false),
+            "empty-box" => (" ".to_owned(), true),
+            "hex-code" => (format!("{:X}", character.code()), true),
+            "acronym" | "bidi-control" => {
+                let acronym = i
+                    .q_soft("char-acronym-table")
+                    .map(|id| i.symbol_value(id))
+                    .map(|table| {
+                        crate::lisp::builtins::misc::char_table_ref(
+                            i,
+                            &table,
+                            character.code() as usize,
+                        )
+                    })
+                    .and_then(|value| match value {
+                        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "UNK".to_owned());
+                (acronym, true)
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    if graphical {
+        let mut style = glyphless_style;
+        if boxed && style.box_style.is_none() {
+            style.box_style = Some(BoxStyle {
+                vertical_width: 1,
+                horizontal_width: 1,
+                color: style.fg,
+                kind: BoxStyleKind::Flat,
+            });
+        }
+        Some(DisplayReplacement::GlyphlessText(text, style))
+    } else if boxed {
+        Some(DisplayReplacement::Text(format!("[{text}]")))
+    } else {
+        Some(DisplayReplacement::Text(text))
+    }
+}
+
 fn ctl_arrow_replacement(character: EmacsChar, ctl_arrow: bool) -> Option<DisplayReplacement> {
     let code = character.code();
     if !ctl_arrow || (code >= 0x20 && code != 0x7f) || matches!(code, 0x09 | 0x0a) {
@@ -5384,6 +5484,7 @@ fn render_grid_internal(
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
+        let glyphless_style = fctx.builtin(i, "glyphless-char", 0).finish();
         let fill_column_indicator =
             buffer_fill_column_indicator(i, &mut fctx, wf.as_ref(), buf_id);
         let buffer_line_spacing = buffer_setting(i, "line-spacing", buf_id);
@@ -5749,6 +5850,16 @@ fn render_grid_internal(
                                 let wf = wf.as_ref()?;
                                 let character = *segment_chars.get(index)?;
                                 display_table_replacement(i, buf_id, wf, character)
+                            })
+                            .or_else(|| {
+                                let character = *segment_chars.get(index)?;
+                                glyphless_display_replacement(
+                                    i,
+                                    buf_id,
+                                    character,
+                                    graphical,
+                                    glyphless_style,
+                                )
                             })
                             .or_else(|| {
                                 let character = *segment_chars.get(index)?;
