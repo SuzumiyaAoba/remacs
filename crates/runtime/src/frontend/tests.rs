@@ -449,6 +449,18 @@ fn isearch_meta_control_d_deletes_query_char_without_exiting() {
 }
 
 #[test]
+fn isearch_cq_quotes_control_s_and_keeps_search_active() {
+    let mut i = isearch_interp("\u{13}text\n");
+    let mut st = Isearch::new(&mut i, false, false);
+
+    assert!(matches!(st.step(&mut i, 17), IsearchAction::Continue));
+    assert!(matches!(st.step(&mut i, 19), IsearchAction::Continue));
+    assert_eq!(st.query, "\u{13}");
+    assert!(!st.failing);
+    assert_eq!(point(&i), 1);
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
