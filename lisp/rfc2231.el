@@ -178,7 +178,7 @@ must never cause a Lisp error."
 	  (error
 	   (setq parameters nil)
 	   (when signal-error
-	     (signal err))))
+	     (signal err)))))
 
 	(when signal-error
 	  (dolist (attribute (delete-dups (mapcar #'car parameters)))
