@@ -1458,10 +1458,11 @@ this option to nil."
   (let ((tags)
         (tag-strings (split-string string ";")))
     (dolist (tag-string tag-strings tags)
-      (let ((pair (split-string tag-string "=")))
-        (push (if (consp pair)
-                  pair
-                `(,pair))
+      (let ((separator (string-match "=" tag-string)))
+        (push (if separator
+                  (list (substring tag-string 0 separator)
+                        (substring tag-string (1+ separator)))
+                (list tag-string))
               tags)))))
 
 ;; A benefit of this function being internal is not having to define a
