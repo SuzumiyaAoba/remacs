@@ -1314,6 +1314,21 @@ impl Isearch {
                     || c == (CHAR_META | 18)
                     || c == (CHAR_META | CHAR_CTL | 'r' as i128);
                 let same_direction = back == self.backward;
+                let repeat_on_direction_change = i
+                    .intern_soft("isearch-repeat-on-direction-change")
+                    .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy());
+                if !same_direction && !repeat_on_direction_change {
+                    self.save_history();
+                    self.backward = back;
+                    let span = self.spans.last().copied().unwrap_or((cur, cur));
+                    let point = if back { span.1 } else { span.0 };
+                    self.positions.push(point);
+                    self.spans.push(span);
+                    self.failing = false;
+                    self.fail_pos = None;
+                    self.go_to(i, point);
+                    return IsearchAction::Continue;
+                }
                 let reused_previous = self.query.is_empty()
                     && same_direction
                     && self.use_previous_search(i);
