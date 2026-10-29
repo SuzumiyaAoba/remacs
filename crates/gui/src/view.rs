@@ -167,8 +167,8 @@ pub(super) fn grid_row_height(grid: &Grid, row: usize, fallback: Pixels) -> Pixe
 }
 
 fn adjusted_row_height(height: usize, default_line_height: usize, fallback: Pixels) -> Pixels {
-    let extra = height.saturating_sub(default_line_height.max(1));
-    fallback.max(px(1.0)) + px(extra as f32)
+    let adjustment = height as i128 - default_line_height.max(1) as i128;
+    (fallback + px(adjustment as f32)).max(px(1.0))
 }
 
 fn row_top_from_heights(
