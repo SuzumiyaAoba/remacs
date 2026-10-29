@@ -5210,15 +5210,32 @@ fn image_display_replacement(
     ) {
         return None;
     }
-    let bytes = data
-        .borrow()
-        .chars()
-        .map(|character| {
-            character
-                .byte8()
-                .or_else(|| u8::try_from(character.code()).ok())
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let bytes = if format == "svg" {
+        data.borrow()
+            .chars()
+            .try_fold(Vec::new(), |mut bytes, character| {
+                if let Some(byte) = character.byte8() {
+                    bytes.push(byte);
+                } else if let Some(unicode) = character.unicode() {
+                    let mut encoded = [0; 4];
+                    bytes.extend_from_slice(unicode.encode_utf8(&mut encoded).as_bytes());
+                } else if let Ok(byte) = u8::try_from(character.code()) {
+                    bytes.push(byte);
+                } else {
+                    return None;
+                }
+                Some(bytes)
+            })?
+    } else {
+        data.borrow()
+            .chars()
+            .map(|character| {
+                character
+                    .byte8()
+                    .or_else(|| u8::try_from(character.code()).ok())
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
     let base_uri = if format == "svg" {
         match image_property(i, &plist, ":base-uri") {
             Value::Str(base_uri) => Some(image_file_for_buffer(
