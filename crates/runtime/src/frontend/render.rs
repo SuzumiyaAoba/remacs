@@ -7508,7 +7508,7 @@ fn render_grid_internal(
                                     && (image.width.is_some_and(|width| width > size)
                                         || image.height.is_some_and(|height| height > size))
                             });
-                            if !image.masked || large_masked_image {
+                            if large_masked_image {
                                 shape = GridCursorShape::Hollow;
                             }
                         }
