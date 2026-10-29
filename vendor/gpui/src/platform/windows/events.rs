@@ -43,6 +43,7 @@ impl WindowsWindowInner {
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
+            WM_SIZING => self.handle_sizing_msg(wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(handle),
             WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(handle),
@@ -165,6 +166,54 @@ impl WindowsWindowInner {
                 min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
         }
         Some(0)
+    }
+
+    fn handle_sizing_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        let (increments, scale_factor, border_offset) = {
+            let state = self.state.borrow();
+            (
+                state.resize_increments?,
+                state.scale_factor,
+                state.border_offset,
+            )
+        };
+        let edge = wparam.0 as u32;
+        let resize_left = matches!(edge, WMSZ_LEFT | WMSZ_TOPLEFT | WMSZ_BOTTOMLEFT);
+        let resize_right = matches!(edge, WMSZ_RIGHT | WMSZ_TOPRIGHT | WMSZ_BOTTOMRIGHT);
+        let resize_top = matches!(edge, WMSZ_TOP | WMSZ_TOPLEFT | WMSZ_TOPRIGHT);
+        let resize_bottom = matches!(edge, WMSZ_BOTTOM | WMSZ_BOTTOMLEFT | WMSZ_BOTTOMRIGHT);
+        if !(resize_left || resize_right || resize_top || resize_bottom) {
+            return None;
+        }
+        let width_increment = (increments.width.0 * scale_factor).round().max(1.0) as i32;
+        let height_increment = (increments.height.0 * scale_factor).round().max(1.0) as i32;
+        let snap = |extent: i32, increment: i32| {
+            (((extent.max(1) as f32 / increment as f32).round() as i32).max(1) * increment)
+                .max(increment)
+        };
+        unsafe {
+            let rect = &mut *(lparam.0 as *mut RECT);
+            if resize_left || resize_right {
+                let client_width = rect.right - rect.left - border_offset.width_offset;
+                let outer_width = snap(client_width, width_increment) + border_offset.width_offset;
+                if resize_left {
+                    rect.left = rect.right - outer_width;
+                } else {
+                    rect.right = rect.left + outer_width;
+                }
+            }
+            if resize_top || resize_bottom {
+                let client_height = rect.bottom - rect.top - border_offset.height_offset;
+                let outer_height =
+                    snap(client_height, height_increment) + border_offset.height_offset;
+                if resize_top {
+                    rect.top = rect.bottom - outer_height;
+                } else {
+                    rect.bottom = rect.top + outer_height;
+                }
+            }
+        }
+        Some(1)
     }
 
     fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {

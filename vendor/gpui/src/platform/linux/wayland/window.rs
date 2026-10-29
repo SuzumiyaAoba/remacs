@@ -105,6 +105,7 @@ pub struct WaylandWindowState {
     maximized: bool,
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
+    resize_increments: Option<Size<Pixels>>,
     client: WaylandClientStatePtr,
     handle: AnyWindowHandle,
     active: bool,
@@ -179,6 +180,7 @@ impl WaylandWindowState {
             maximized: false,
             tiling: Tiling::default(),
             window_bounds: options.bounds,
+            resize_increments: None,
             in_progress_configure: None,
             resize_throttle: false,
             client,
@@ -399,6 +401,17 @@ impl WaylandWindowStatePtr {
                         } else {
                             compute_outer_size(state.inset(), configure.size, state.tiling)
                         };
+                        if configure.resizing
+                            && let (Some(size), Some(increments)) =
+                                (configure.size.as_mut(), state.resize_increments)
+                        {
+                            let snap = |value: Pixels, increment: Pixels| {
+                                let increment = f32::from(increment).max(1.0);
+                                px((f32::from(value).max(increment) / increment).round() * increment)
+                            };
+                            size.width = snap(size.width, increments.width);
+                            size.height = snap(size.height, increments.height);
+                        }
                         if let Some(size) = configure.size {
                             state.window_bounds = Bounds {
                                 origin: Point::default(),
@@ -855,6 +868,10 @@ impl PlatformWindow for WaylandWindow {
             .executor
             .spawn(async move { state_ptr.resize(size) })
             .detach();
+    }
+
+    fn set_resize_increments(&self, increments: Size<Pixels>) {
+        self.borrow_mut().resize_increments = Some(increments);
     }
 
     fn scale_factor(&self) -> f32 {

@@ -34,6 +34,7 @@ pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
     pub min_size: Option<Size<Pixels>>,
+    pub resize_increments: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub appearance: WindowAppearance,
@@ -124,6 +125,7 @@ impl WindowsWindowState {
             logical_size,
             fullscreen_restore_bounds,
             border_offset,
+            resize_increments: None,
             appearance,
             scale_factor,
             restore_from_minimized,
@@ -560,6 +562,10 @@ impl PlatformWindow for WindowsWindow {
                 }
             })
             .detach();
+    }
+
+    fn set_resize_increments(&self, increments: Size<Pixels>) {
+        self.0.state.borrow_mut().resize_increments = Some(increments);
     }
 
     fn set_position(&mut self, position: Point<Pixels>, _display_id: Option<u32>) {

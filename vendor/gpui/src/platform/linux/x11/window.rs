@@ -1227,6 +1227,37 @@ impl PlatformWindow for X11Window {
         xcb_flush(&self.0.xcb);
     }
 
+    fn set_resize_increments(&self, increments: Size<Pixels>) {
+        let scale_factor = self.0.state.borrow().scale_factor;
+        let mut hints = match WmSizeHints::get_normal_hints(
+            self.0.xcb.as_ref(),
+            self.0.x_window,
+        )
+        .and_then(|cookie| cookie.reply_unchecked())
+        {
+            Ok(Some(hints)) => hints,
+            Ok(None) => WmSizeHints::new(),
+            Err(error) => {
+                log::error!("X11 get WM_SIZE_HINTS failed: {error}");
+                return;
+            }
+        };
+        let device_increment = |increment: Pixels| {
+            (increment.0 * scale_factor).round().max(1.0) as i32
+        };
+        hints.size_increment = Some((
+            device_increment(increments.width),
+            device_increment(increments.height),
+        ));
+        hints.base_size = Some((0, 0));
+        check_reply(
+            || "X11 setting resize increments failed.",
+            hints.set_normal_hints(self.0.xcb.as_ref(), self.0.x_window),
+        )
+        .log_err();
+        xcb_flush(self.0.xcb.as_ref());
+    }
+
     fn set_position(&mut self, position: Point<Pixels>, _display_id: Option<u32>) {
         let bounds = crate::bounds(position, self.bounds().size)
             .to_device_pixels(self.scale_factor())
