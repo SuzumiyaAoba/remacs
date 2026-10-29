@@ -265,6 +265,13 @@ pub(super) enum GuiRequest {
         started: SyncSender<Result<(), String>>,
         completed: SyncSender<Option<DragAction>>,
     },
+    BeginFileDrag {
+        frame_id: usize,
+        paths: Vec<String>,
+        action: DragAction,
+        started: SyncSender<Result<(), String>>,
+        completed: SyncSender<Option<DragAction>>,
+    },
     #[cfg(target_os = "macos")]
     AppleScript {
         script: String,
@@ -391,6 +398,31 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
             .send_blocking(GuiRequest::BeginTextDrag {
                 frame_id,
                 text: text.to_owned(),
+                action,
+                started,
+                completed,
+            })
+            .map_err(|_| "GUI drag service is unavailable".to_owned())?;
+        start_response
+            .recv()
+            .map_err(|_| "GUI drag service stopped".to_owned())??;
+        completion_response
+            .recv()
+            .map_err(|_| "GUI drag service stopped".to_owned())
+    }
+
+    fn begin_file_drag(
+        &self,
+        frame_id: usize,
+        paths: &[String],
+        action: DragAction,
+    ) -> Result<Option<DragAction>, String> {
+        let (started, start_response) = mpsc::sync_channel(1);
+        let (completed, completion_response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::BeginFileDrag {
+                frame_id,
+                paths: paths.to_vec(),
                 action,
                 started,
                 completed,

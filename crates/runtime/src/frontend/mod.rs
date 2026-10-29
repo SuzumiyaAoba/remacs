@@ -108,6 +108,14 @@ pub trait DragBackend {
         text: &str,
         action: DragAction,
     ) -> Result<Option<DragAction>, String>;
+
+    /// Begin dragging file paths from FRAME and wait for the destination's action.
+    fn begin_file_drag(
+        &self,
+        frame_id: usize,
+        paths: &[String],
+        action: DragAction,
+    ) -> Result<Option<DragAction>, String>;
 }
 
 /// Host application visibility bridge for NS hide commands.

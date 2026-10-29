@@ -1047,6 +1047,59 @@ pub fn run_gui_with_dump(
                         };
                         let _ = started.send(result);
                     }
+                    GuiRequest::BeginFileDrag {
+                        frame_id,
+                        paths,
+                        action,
+                        started,
+                        completed,
+                    } => {
+                        let operation = match action {
+                            remacs_runtime::frontend::DragAction::Copy => {
+                                ExternalDragOperation::Copy
+                            }
+                            remacs_runtime::frontend::DragAction::Move => {
+                                ExternalDragOperation::Move
+                            }
+                            remacs_runtime::frontend::DragAction::Link => {
+                                ExternalDragOperation::Link
+                            }
+                            remacs_runtime::frontend::DragAction::Private => {
+                                ExternalDragOperation::Generic
+                            }
+                        };
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, move |_view, window, _cx| {
+                                    window.begin_file_drag_session(
+                                        paths,
+                                        operation,
+                                        move |operation| {
+                                            let operation = operation.map(|operation| match operation {
+                                                ExternalDragOperation::Copy => {
+                                                    remacs_runtime::frontend::DragAction::Copy
+                                                }
+                                                ExternalDragOperation::Move => {
+                                                    remacs_runtime::frontend::DragAction::Move
+                                                }
+                                                ExternalDragOperation::Link => {
+                                                    remacs_runtime::frontend::DragAction::Link
+                                                }
+                                                ExternalDragOperation::Generic => {
+                                                    remacs_runtime::frontend::DragAction::Private
+                                                }
+                                            });
+                                            let _ = completed.send(operation);
+                                        },
+                                    )
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = started.send(result);
+                    }
                 }
             }
             let _ = cx.update(|app| app.quit());

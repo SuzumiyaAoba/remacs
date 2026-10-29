@@ -1743,6 +1743,20 @@ impl Window {
             .begin_text_drag_session(text, operation, Box::new(completion))
     }
 
+    /// Begin dragging files from this window to the operating system.
+    ///
+    /// The completion callback receives the operation accepted by the drop
+    /// target, or `None` if the drag was cancelled.
+    pub fn begin_file_drag_session(
+        &self,
+        paths: Vec<String>,
+        operation: ExternalDragOperation,
+        completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
+    ) -> std::result::Result<(), String> {
+        self.platform_window
+            .begin_file_drag_session(paths, operation, Box::new(completion))
+    }
+
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
         self.appearance = self.platform_window.appearance();
 

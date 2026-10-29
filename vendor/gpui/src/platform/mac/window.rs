@@ -14,7 +14,7 @@ use cocoa::{
     appkit::{
         NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
         NSColor, NSEvent, NSEventModifierFlags, NSColorPboardType, NSFilenamesPboardType, NSPasteboard,
-        NSPasteboardTypeString, NSScreen,
+        NSPasteboardTypeString, NSScreen, NSURLPboardType,
         NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
         NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
         NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
@@ -1550,6 +1550,87 @@ impl PlatformWindow for MacWindow {
             let pasteboard_item: id = msg_send![class!(NSPasteboardItem), new];
             let text = ns_string(&text);
             let _: BOOL = msg_send![pasteboard_item, setString: text forType: NSPasteboardTypeString];
+            let dragging_item: id = msg_send![class!(NSDraggingItem), alloc];
+            let dragging_item: id =
+                msg_send![dragging_item, initWithPasteboardWriter: pasteboard_item];
+            let items: id = msg_send![class!(NSMutableArray), array];
+            let _: () = msg_send![items, addObject: dragging_item];
+            let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
+            let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: nil];
+            let session: id =
+                msg_send![view, beginDraggingSessionWithItems: items event: event source: view];
+            let _: () = msg_send![dragging_item, release];
+            let _: () = msg_send![pasteboard_item, release];
+            let _: () = msg_send![event, release];
+            session
+        };
+
+        if session.is_null() {
+            let completion = {
+                let mut state = self.0.lock();
+                state.drag_operation = None;
+                state.drag_completion.take()
+            };
+            if let Some(completion) = completion {
+                completion(None);
+            }
+        } else {
+            let session: id = unsafe { msg_send![session, retain] };
+            self.0.lock().drag_session = Some(session);
+        }
+        Ok(())
+    }
+
+    fn begin_file_drag_session(
+        &self,
+        paths: Vec<String>,
+        operation: ExternalDragOperation,
+        completion: Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>,
+    ) -> std::result::Result<(), String> {
+        if paths.is_empty() {
+            return Err("No files were supplied for dragging".to_owned());
+        }
+        let (view, event) = {
+            let mut state = self.0.lock();
+            if state.drag_completion.is_some() {
+                return Err("An external drag is already active".to_owned());
+            }
+            let Some(event) = state.drag_mouse_down_event.take() else {
+                drop(state);
+                completion(None);
+                return Ok(());
+            };
+            state.drag_operation = Some(match operation {
+                ExternalDragOperation::Copy => NSDragOperationCopy,
+                ExternalDragOperation::Move => NSDragOperationMove,
+                ExternalDragOperation::Link => NSDragOperationLink,
+                ExternalDragOperation::Generic => NSDragOperationGeneric,
+            });
+            state.drag_completion = Some(completion);
+            (state.native_view.as_ptr() as id, event)
+        };
+
+        let session: id = unsafe {
+            let pasteboard_item: id = msg_send![class!(NSPasteboardItem), new];
+            let filenames: id = msg_send![class!(NSMutableArray), array];
+            for path in &paths {
+                let path = ns_string(path);
+                let _: () = msg_send![filenames, addObject: path];
+            }
+            let _: BOOL = msg_send![pasteboard_item, setPropertyList: filenames
+                                      forType: NSFilenamesPboardType];
+            if let [path] = paths.as_slice() {
+                let url = NSURL::fileURLWithPath_(nil, ns_string(path));
+                let url_string: id = msg_send![url, absoluteString];
+                let url_representation: id = msg_send![class!(NSMutableArray), array];
+                let _: () = msg_send![url_representation, addObject: url_string];
+                let _: () = msg_send![url_representation, addObject: ns_string("")];
+                let _: BOOL = msg_send![pasteboard_item, setPropertyList: url_representation
+                                          forType: NSURLPboardType];
+                let file_url_type = ns_string("public.file-url");
+                let _: BOOL = msg_send![pasteboard_item, setString: url_string
+                                          forType: file_url_type];
+            }
             let dragging_item: id = msg_send![class!(NSDraggingItem), alloc];
             let dragging_item: id =
                 msg_send![dragging_item, initWithPasteboardWriter: pasteboard_item];

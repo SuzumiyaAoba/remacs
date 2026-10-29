@@ -513,6 +513,14 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     ) -> std::result::Result<(), String> {
         Err("External text dragging is not supported on this platform".to_owned())
     }
+    fn begin_file_drag_session(
+        &self,
+        _paths: Vec<String>,
+        _operation: crate::ExternalDragOperation,
+        _completion: Box<dyn FnOnce(Option<crate::ExternalDragOperation>) + Send>,
+    ) -> std::result::Result<(), String> {
+        Err("External file dragging is not supported on this platform".to_owned())
+    }
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);

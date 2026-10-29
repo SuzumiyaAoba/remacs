@@ -850,6 +850,63 @@ fn f_ns_frame_restack(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// `ns-begin-drag': GNU nsselect.m rejects a nil PBOARD first, then decodes
 /// the frame and waits for the host drag session to complete.
+fn decode_file_drag_path(path: &str) -> Result<String, String> {
+    let path = if let Some(uri) = path.strip_prefix("file://") {
+        if uri.starts_with('/') {
+            uri
+        } else if let Some(uri) = uri.strip_prefix("localhost/") {
+            return decode_file_drag_path(&format!("file:///{uri}"));
+        } else {
+            return Err("File drag URI has a non-local host".to_owned());
+        }
+    } else {
+        return Ok(path.to_owned());
+    };
+
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
+                (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+        {
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Ok(String::from_utf8_lossy(&decoded).into_owned())
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn file_drag_paths(i: &mut Interp, value: &Value) -> EvalResult<Vec<String>> {
+    let entries = match value {
+        Value::Str(_) => vec![value.clone()],
+        Value::Nil => Vec::new(),
+        _ => value
+            .list_to_vec()
+            .map_err(|_| i.wrong_type_mut("listp", value))?,
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            let path = super::want_string(i, entry)?.to_unicode_lossy();
+            decode_file_drag_path(&path).map_err(|error| i.error(error))
+        })
+        .collect()
+}
+
 fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if a[1].is_nil() {
         return Err(i.error("Empty pasteboard"));
@@ -866,6 +923,7 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .list_to_vec()
         .map_err(|_| i.wrong_type_mut("listp", &a[1]))?;
     let mut text = None;
+    let mut files = Vec::new();
     for entry in entries {
         let Value::Cons(entry) = entry else {
             continue;
@@ -876,12 +934,13 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         if matches!(&kind, Value::Sym(symbol) if i.symbol_name(*symbol).as_str() == "string") {
             text = Some(super::want_string(i, &value)?.to_unicode_lossy());
-            break;
+        } else if matches!(&kind, Value::Sym(symbol) if i.symbol_name(*symbol).as_str() == "file") {
+            files.extend(file_drag_paths(i, &value)?);
         }
     }
-    let Some(text) = text else {
+    if files.is_empty() && text.is_none() {
         return Ok(Value::Nil);
-    };
+    }
     let action = match a.get(2) {
         None | Some(Value::Nil) => crate::frontend::DragAction::Copy,
         Some(Value::Sym(symbol)) => match i.symbol_name(*symbol).as_str() {
@@ -893,9 +952,12 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         Some(value) => return Err(i.wrong_type_mut("symbolp", value)),
     };
-    let result = backend
-        .begin_text_drag(frame.borrow().id, &text, action)
-        .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
+    let result = if files.is_empty() {
+        backend.begin_text_drag(frame.borrow().id, text.as_deref().unwrap(), action)
+    } else {
+        backend.begin_file_drag(frame.borrow().id, &files, action)
+    }
+    .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
     let result = match result {
         None => Value::Nil,
         Some(crate::frontend::DragAction::Copy) => Value::Sym(i.intern("XdndActionCopy")),
