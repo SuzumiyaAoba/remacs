@@ -3327,6 +3327,10 @@ struct WindowFaces {
     invisibility_spec: Value,
     /// Active region as a half-open range when the mark is active.
     region: Option<(usize, usize)>,
+    /// Whether this buffer requests trailing whitespace highlighting.
+    show_trailing_whitespace: bool,
+    /// Trailing spaces/tabs on the currently rendered line.
+    trailing_whitespace: Option<Range<usize>>,
 }
 
 #[derive(Clone)]
@@ -3714,6 +3718,8 @@ fn window_faces(
         invisible_props,
         invisibility_spec,
         region,
+        show_trailing_whitespace: buffer_setting(i, "show-trailing-whitespace", bb.id).truthy(),
+        trailing_whitespace: None,
     }
 }
 
@@ -4266,6 +4272,14 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
             0,
             &mut Vec::new(),
         ));
+    }
+    if wf.show_trailing_whitespace
+        && wf
+            .trailing_whitespace
+            .as_ref()
+            .is_some_and(|range| pos >= range.start && pos < range.end)
+    {
+        mix.merge(&remapped_named_face(i, ctx, wf, "trailing-whitespace", 0));
     }
     if let Some((start, end, face)) = &wf.mouse_face
         && pos >= *start
@@ -5222,7 +5236,7 @@ fn render_grid_internal(
             }
         }
         // Per-window face context (overlays, text props, region).
-        let wf = i
+        let mut wf = i
             .buffers
             .get(buf_id)
             .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
@@ -5322,7 +5336,15 @@ fn render_grid_internal(
             if screen_row >= body_height || screen_row >= window_top + text_rows {
                 break;
             }
-            let (line, line_pos, row_end, point_index, line_number, point_line_number) =
+            let (
+                line,
+                line_pos,
+                row_end,
+                point_index,
+                line_number,
+                point_line_number,
+                line_is_complete,
+            ) =
                 match i.buffers.get(buf_id) {
                 Some(b) => {
                     let bb = b.borrow();
@@ -5332,6 +5354,7 @@ fn render_grid_internal(
                         break;
                     }
                     let physical_end = bb.text.line_end(physical_start);
+                    let line_is_complete = physical_end <= bb.zv;
                     let ls = physical_start.max(bb.begv);
                     let le = physical_end.min(bb.zv);
                     let row_end = if le == physical_end
@@ -5358,15 +5381,40 @@ fn render_grid_internal(
                         point_index,
                         line_index + 1,
                         point_line_number,
+                        line_is_complete,
                     )
                 }
-                None => (EmacsText::new(), 0, 0, None, 1, usize::MAX),
+                None => (EmacsText::new(), 0, 0, None, 1, usize::MAX, false),
             };
             visible_end = row_end;
+            let line_len = line.chars().count();
+            let trailing_whitespace = if line_is_complete
+                && point_index != Some(line_len)
+                && wf
+                    .as_ref()
+                    .is_some_and(|faces| faces.show_trailing_whitespace)
+            {
+                let trailing_chars = line
+                    .chars()
+                    .rev()
+                    .take_while(|character| {
+                        character
+                            .unicode()
+                            .is_some_and(|character| matches!(character, ' ' | '\t'))
+                    })
+                    .count();
+                (trailing_chars > 0).then(|| {
+                    line_pos + line_len - trailing_chars..line_pos + line_len
+                })
+            } else {
+                None
+            };
+            if let Some(faces) = wf.as_mut() {
+                faces.trailing_whitespace = trailing_whitespace;
+            }
             if selective_display_hides_line(&selective_display, &line, tab_width) {
                 continue;
             }
-            let line_len = line.chars().count();
             let start_offset = if row == 0 {
                 start.saturating_sub(line_pos).min(line_len)
             } else {
