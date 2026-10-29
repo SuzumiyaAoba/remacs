@@ -712,7 +712,7 @@ pub(crate) fn win_min_size(i: &mut Interp, wv: &Value, horiz: bool, ignore: &Val
     })
 }
 
-fn window_is_size_fixed(
+pub(crate) fn window_is_size_fixed(
     i: &mut Interp,
     window: &Value,
     horizontal: bool,

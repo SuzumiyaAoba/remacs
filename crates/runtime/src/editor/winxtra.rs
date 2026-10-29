@@ -1649,41 +1649,81 @@ fn resize_axis(
     }
 }
 
+fn resize_eligible_siblings(
+    i: &mut Interp,
+    target: &WindowRef,
+    kids: &[WindowRef],
+    horizontal: bool,
+    ignore: &Value,
+) -> Result<Vec<WindowRef>, Flow> {
+    let mut eligible = Vec::new();
+    for sibling in kids {
+        if Rc::ptr_eq(sibling, target) || sibling.borrow().dead {
+            continue;
+        }
+        if crate::lisp::builtins::misc::window_is_size_fixed(
+            i,
+            &Value::Window(sibling.clone()),
+            horizontal,
+            ignore,
+        )? {
+            continue;
+        }
+        eligible.push(sibling.clone());
+    }
+    Ok(eligible)
+}
+
 /// Maximum grow capacity: total slack the siblings above their
 /// minimum sizes.  Shrink capacity: W's own slack above its minimum.
-fn resize_caps(i: &mut Interp, w: &WindowRef, horizontal: bool) -> (i128, i128) {
+fn resize_caps(
+    i: &mut Interp,
+    w: &WindowRef,
+    horizontal: bool,
+    ignore: &Value,
+) -> Result<(i128, i128, Vec<WindowRef>), Flow> {
     let Some((_, target, kids)) = resize_axis(w, horizontal) else {
-        return (0, 0);
+        return Ok((0, 0, Vec::new()));
     };
+    let target_fixed = crate::lisp::builtins::misc::window_is_size_fixed(
+        i,
+        &Value::Window(target.clone()),
+        horizontal,
+        ignore,
+    )?;
+    let eligible = resize_eligible_siblings(i, &target, &kids, horizontal, ignore)?;
     let wmin = crate::lisp::builtins::misc::win_min_size(
         i,
         &Value::Window(target.clone()),
         horizontal,
-        &Value::Nil,
+        ignore,
     );
     let wsize = {
         let wb = target.borrow();
         (if horizontal { wb.width } else { wb.height }) as i128
     };
-    let shrink = (wsize - wmin).max(0);
-    let grow: i128 = kids
-        .iter()
-        .filter(|k| !Rc::ptr_eq(k, &target) && !k.borrow().dead)
-        .map(|k| {
-            let ks = {
-                let kb = k.borrow();
-                (if horizontal { kb.width } else { kb.height }) as i128
+    let shrink = if target_fixed || eligible.is_empty() {
+        0
+    } else {
+        (wsize - wmin).max(0)
+    };
+    let mut grow = 0;
+    if !target_fixed {
+        for sibling in &eligible {
+            let size = {
+                let sibling = sibling.borrow();
+                (if horizontal { sibling.width } else { sibling.height }) as i128
             };
-            let kmin = crate::lisp::builtins::misc::win_min_size(
+            let minimum = crate::lisp::builtins::misc::win_min_size(
                 i,
-                &Value::Window(k.clone()),
+                &Value::Window(sibling.clone()),
                 horizontal,
-                &Value::Nil,
+                ignore,
             );
-            (ks - kmin).max(0)
-        })
-        .sum();
-    (grow, shrink)
+            grow += (size - minimum).max(0);
+        }
+    }
+    Ok((grow, shrink, eligible))
 }
 
 fn pixelwise_char_size(i: &Interp, w: &WindowRef, horizontal: bool) -> i128 {
@@ -1785,20 +1825,30 @@ fn resize_caps_pixelwise(
     horizontal: bool,
     ignore: &Value,
     char_size: i128,
-) -> (i128, i128) {
+) -> Result<(i128, i128, Vec<WindowRef>), Flow> {
+    let target_fixed = crate::lisp::builtins::misc::window_is_size_fixed(
+        i,
+        &Value::Window(w.clone()),
+        horizontal,
+        ignore,
+    )?;
+    let eligible = resize_eligible_siblings(i, w, kids, horizontal, ignore)?;
     let wsize = pixelwise_window_size(w, horizontal, char_size);
     let wmin = pixelwise_window_minimum(i, w, horizontal, ignore);
-    let shrink = (wsize - wmin).max(0);
-    let grow = kids
-        .iter()
-        .filter(|sibling| !Rc::ptr_eq(sibling, w) && !sibling.borrow().dead)
-        .map(|sibling| {
+    let shrink = if target_fixed || eligible.is_empty() {
+        0
+    } else {
+        (wsize - wmin).max(0)
+    };
+    let mut grow = 0;
+    if !target_fixed {
+        for sibling in &eligible {
             let size = pixelwise_window_size(sibling, horizontal, char_size);
             let minimum = pixelwise_window_minimum(i, sibling, horizontal, ignore);
-            (size - minimum).max(0)
-        })
-        .sum();
-    (grow, shrink)
+            grow += (size - minimum).max(0);
+        }
+    }
+    Ok((grow, shrink, eligible))
 }
 
 fn window_resize_pixelwise(
@@ -1820,13 +1870,14 @@ fn window_resize_pixelwise(
         return fail(i, "Invalid window size");
     };
     let char_size = pixelwise_char_size(i, &target, horizontal);
-    let (grow, shrink) = resize_caps_pixelwise(i, &target, &kids, horizontal, ignore, char_size);
+    let (grow, shrink, eligible) =
+        resize_caps_pixelwise(i, &target, &kids, horizontal, ignore, char_size)?;
     let magnitude = delta.abs();
     let pool = if delta > 0 {
         grow
     } else {
-        kids.iter()
-            .filter(|sibling| !Rc::ptr_eq(sibling, &target) && !sibling.borrow().dead)
+        eligible
+            .iter()
             .map(|sibling| pixelwise_window_size(sibling, horizontal, char_size))
             .sum()
     };
@@ -1844,15 +1895,8 @@ fn window_resize_pixelwise(
         }
     }
     let mut need = magnitude;
-    let last = kids
-        .iter()
-        .filter(|sibling| !Rc::ptr_eq(sibling, &target) && !sibling.borrow().dead)
-        .last()
-        .cloned();
-    for sibling in &kids {
-        if Rc::ptr_eq(sibling, &target) || sibling.borrow().dead {
-            continue;
-        }
+    let last = eligible.last().cloned();
+    for sibling in &eligible {
         let size = pixelwise_window_size(sibling, horizontal, char_size);
         let mut sibling_delta = if pool > 0 {
             if delta > 0 {
@@ -1920,7 +1964,8 @@ fn f_window_max_delta(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if w.borrow().minibuffer || w.borrow().horiz.is_some() {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(resize_caps(i, &w, horiz).0))
+    let (grow, _, _) = resize_caps(i, &w, horiz, &Value::Nil)?;
+    Ok(Value::Int(grow))
 }
 
 /// `window-min-delta' — how far WINDOW can shrink (positive amount).
@@ -1933,7 +1978,8 @@ fn f_window_min_delta(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if w.borrow().minibuffer || w.borrow().horiz.is_some() {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(resize_caps(i, &w, horiz).1))
+    let (_, shrink, _) = resize_caps(i, &w, horiz, &Value::Nil)?;
+    Ok(Value::Int(shrink))
 }
 
 /// Parse the ambiguous (WINDOW DELTA ...)/(DELTA WINDOW ...) arg
@@ -1984,7 +2030,7 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
     let Some((p, target, kids)) = resize_axis(&w, horizontal) else {
         return fail(i, "Invalid window size");
     };
-    let (grow, shrink) = resize_caps(i, &target, horizontal);
+    let (grow, shrink, eligible) = resize_caps(i, &target, horizontal, &ignore)?;
     let ok = if delta > 0 {
         delta <= grow
     } else {
@@ -2008,8 +2054,8 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
     } else {
         // Shrinking W releases space siblings soak up — proportional
         // to their current sizes (a sole sibling takes it all).
-        kids.iter()
-            .filter(|k| !Rc::ptr_eq(k, &target) && !k.borrow().dead)
+        eligible
+            .iter()
             .map(|k| {
                 let kb = k.borrow();
                 (if horizontal { kb.width } else { kb.height }) as i128
@@ -2017,15 +2063,8 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
             .sum()
     };
     let mut need = delta.abs();
-    let last = kids
-        .iter()
-        .filter(|k| !Rc::ptr_eq(k, &target) && !k.borrow().dead)
-        .last()
-        .cloned();
-    for k in &kids {
-        if Rc::ptr_eq(k, &target) || k.borrow().dead {
-            continue;
-        }
+    let last = eligible.last().cloned();
+    for k in &eligible {
         let ksize = {
             let kb = k.borrow();
             (if horizontal { kb.width } else { kb.height }) as i128
