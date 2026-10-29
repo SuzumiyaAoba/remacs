@@ -80,8 +80,9 @@ If a list, it is a list of the types of messages to be logged."
       (insert str)
       (set-syntax-table url-parse-args-syntax-table)
       (goto-char (point-min))
-      (while (not (eobp))
-	(skip-chars-forward "; \n\t")
+      (while (progn
+	       (skip-chars-forward "; \n\t")
+	       (not (eobp)))
 	(setq name-pos (point))
 	(skip-chars-forward "^ \n\t=;")
 	(unless nodowncase
@@ -111,8 +112,7 @@ If a list, it is a list of the types of messages to be logged."
 				      (skip-chars-forward "^;")
 				      (skip-chars-backward " \t")
 				      (point)))))))
-	(setq results (cons (cons name value) results))
-	(skip-chars-forward "; \n\t"))
+	(setq results (cons (cons name value) results)))
       ;;Remacs: return parameters in the order they appeared in the query.
       (nreverse results))))
 
