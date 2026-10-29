@@ -919,14 +919,22 @@ where every string is an outline heading at increasing level of deepness."
                              (alist-get (car list) tree nil nil #'equal)))
              tree))
          (trie-get (tree path)
+           ;; Internal nodes can hold entries as well as descendants; their
+           ;; value is (ENTRIES-VECTOR . CHILDREN). Leaves remain vectors.
            (mapcar (lambda (elt)
-                     (cons (car elt)
-                           (if (cdr elt)
-                               (trie-get (cdr elt) (cons (car elt) path))
-                             (apply #'vector (nreverse
-                                              (gethash (reverse
-                                                        (cons (car elt) path))
-                                                       hash))))))
+                     (let* ((name (car elt))
+                            (node-path (cons name path))
+                            (entries (gethash (reverse node-path) hash))
+                            (children (and (cdr elt)
+                                           (trie-get (cdr elt) node-path)))
+                            (value (cond
+                                    ((and entries children)
+                                     (cons (apply #'vector (nreverse entries))
+                                           children))
+                                    (entries
+                                     (apply #'vector (nreverse entries)))
+                                    (t children))))
+                       (cons name value)))
                    (reverse tree))))
       (dolist (entry entries)
         (dolist (path (funcall path-function entry))
@@ -939,10 +947,17 @@ where every string is an outline heading at increasing level of deepness."
   "Sort TREE using the sort function SORT-FUN."
   (unless level (setq level 1))
   (mapcar (lambda (elt)
-            (if (vectorp (cdr elt))
-                elt
-              (cons (car elt) (tabulated-list-groups-sort
-                               (cdr elt) sort-function (1+ level)))))
+            (let ((value (cdr elt)))
+              (cond
+               ((vectorp value) elt)
+               ((and (consp value) (vectorp (car value)))
+                (cons (car elt)
+                      (cons (car value)
+                            (tabulated-list-groups-sort
+                             (cdr value) sort-function (1+ level)))))
+               (t
+                (cons (car elt) (tabulated-list-groups-sort
+                                 value sort-function (1+ level)))))))
           (funcall sort-function tree level)))
 
 (defun tabulated-list-groups-flatten (tree)
@@ -960,6 +975,14 @@ where every string is an outline heading at increasing level of deepness."
                                              (append (cdr elt) nil))
                                        acc))
                        (setq header ""))
+                      ((and (consp (cdr elt)) (vectorp (cadr elt)))
+                       (setq header (format "%s%s %s\n" header
+                                            (make-string level ?*)
+                                            (car elt)))
+                       (setq acc (cons (cons (string-trim-right header)
+                                             (append (cadr elt) nil))
+                                       acc))
+                       (flatten (cddr elt) (1+ level)))
                       (t (flatten (cdr elt) (1+ level)))))
                    tree)))
       (flatten tree 1)
