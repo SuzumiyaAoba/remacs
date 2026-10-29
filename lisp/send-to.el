@@ -176,12 +176,14 @@ explicitly overridden."
   (fboundp 'shell-command-do-open))
 
 (defun send-to--open-externally (items)
-  "Open ITEMS externally (using a non-Emacs application)."
+  "Open ITEMS externally (using a non-Emacs application).
+Non-file text items are written to temporary files first."
   (unless (fboundp 'shell-command-do-open)
     (require 'dired-aux))
   (when (y-or-n-p (format "Open externally: %s ?"
                           (send-to--format-items items)))
-    (shell-command-do-open items)))
+    (shell-command-do-open
+     (seq-map #'send-to--convert-item-to-filename items))))
 
 (defun send-to--convert-item-to-filename (item)
   "Convert ITEM to a filename.
