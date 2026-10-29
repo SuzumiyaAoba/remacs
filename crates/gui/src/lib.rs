@@ -1362,7 +1362,11 @@ fn frame_window_options(
     let base_window = frame
         .parent_frame
         .and_then(|parent| windows.get(&parent))
-        .or_else(|| windows.values().next());
+        .or_else(|| {
+            frame
+                .primary_frame_id
+                .and_then(|primary| windows.get(&primary))
+        });
     let parent_bounds = base_window
         .and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
     let parameter_position = frame.left.zip(frame.top).map(|(left, top)| {

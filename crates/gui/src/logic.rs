@@ -180,6 +180,7 @@ impl FrameEventSender {
 #[derive(Clone)]
 pub(super) struct FrameSnapshot {
     pub frame_id: usize,
+    pub primary_frame_id: Option<usize>,
     pub name: String,
     pub parent_frame: Option<usize>,
     pub modifier_mapping: super::keys::ModifierMapping,
@@ -1882,6 +1883,7 @@ impl KeyIo for ChanIo {
                 };
                 snapshots.push(FrameSnapshot {
                     frame_id,
+                    primary_frame_id: self.primary_frame_id,
                     name,
                     parent_frame,
                     modifier_mapping: super::keys::ModifierMapping::from_interp(i),
