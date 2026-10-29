@@ -614,7 +614,8 @@ checksum before doing the check."
     (let ((encoded-name
 	   (encode-coding-string (tar-header-name header)
 				 tar-file-name-coding-system)))
-      (unless (< (length encoded-name) 99)
+      ;; The 100-byte field leaves room for a 99-byte name and its NUL.
+      (unless (< (length encoded-name) 100)
 	;; FIXME: Implement it.
 	(error "Long file name support is not implemented"))
       (insert encoded-name))
