@@ -520,6 +520,37 @@ fn isearch_input_method_keys_keep_search_active_and_transient_is_one_shot() {
 }
 
 #[test]
+fn isearch_query_replace_receives_active_query_and_regexp_mode() {
+    for (regexp, key) in [
+        (false, CHAR_META | '%' as i128),
+        (true, CHAR_META | CHAR_CTL | '%' as i128),
+    ] {
+        let mut i = interp_with_frame("foo foo\n");
+        i.eval_str(
+            r#"
+            (setq qa-isearch-query nil qa-isearch-regexp nil)
+            (defun isearch-query-replace ()
+              (setq qa-isearch-query isearch-string
+                    qa-isearch-regexp isearch-regexp))
+            (defun isearch-query-replace-regexp ()
+              (setq qa-isearch-query isearch-string
+                    qa-isearch-regexp isearch-regexp))
+            "#,
+        )
+        .unwrap();
+        let (mut term, _) = test_term(80, 24);
+        term.pending = vec![key, 'o' as i128, 'o' as i128, 'f' as i128];
+        let term = Rc::new(RefCell::new(term));
+
+        super::command::isearch_loop(&term, &mut i, false, regexp).unwrap();
+
+        let query = i.eval_str("qa-isearch-query").unwrap();
+        assert_eq!(i.prin1_to_string(&query), "\"foo\"");
+        assert_eq!(i.eval_str("qa-isearch-regexp").unwrap().truthy(), regexp);
+    }
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
