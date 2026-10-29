@@ -115,7 +115,7 @@ members of `visual-wrap--safe-display-specs' (which see)."
         ;; for example removed lines in diff-mode, where the first
         ;; character has the diff-indicator-removed face, while the
         ;; rest of the line has the diff-removed face.
-        ((= (char-before end) ?\n)
+        ((eq (char-before end) ?\n)
          (let ((eol-face (get-text-property (1- end) 'face)))
            ;; `eol-face' can be a face, a "face value"
            ;; (plist of face properties) or a list of one of those.
