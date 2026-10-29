@@ -6,7 +6,7 @@ use crate::{
     lisp::{Interp, Value},
 };
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     sync::Arc,
 };
@@ -5112,6 +5112,87 @@ fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> Strin
     }
 }
 
+fn append_image_load_path_directories(
+    i: &Interp,
+    buffer_id: usize,
+    value: Value,
+    directories: &mut Vec<String>,
+    visited: &mut HashSet<usize>,
+    depth: usize,
+) {
+    if depth > 16 {
+        return;
+    }
+    match value {
+        Value::Str(directory) => {
+            directories.push(image_file_for_buffer(i, buffer_id, &directory.borrow()));
+        }
+        Value::Sym(symbol) => append_image_load_path_directories(
+            i,
+            buffer_id,
+            i.symbol_value(symbol),
+            directories,
+            visited,
+            depth + 1,
+        ),
+        Value::Cons(cell) => {
+            let mut cursor = Value::Cons(cell);
+            let mut entered = Vec::new();
+            while let Value::Cons(cell) = cursor {
+                let identity = std::rc::Rc::as_ptr(&cell) as usize;
+                if !visited.insert(identity) {
+                    break;
+                }
+                entered.push(identity);
+                let (car, cdr) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                append_image_load_path_directories(
+                    i,
+                    buffer_id,
+                    car,
+                    directories,
+                    visited,
+                    depth + 1,
+                );
+                cursor = cdr;
+            }
+            for identity in entered {
+                visited.remove(&identity);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn image_file_from_load_path(i: &Interp, buffer_id: usize, file: &EmacsStr) -> Option<String> {
+    let file_name = file.to_unicode_lossy();
+    if std::path::Path::new(&file_name).is_absolute() {
+        return Some(file_name);
+    }
+    let image_load_path = i.q_soft("image-load-path")?;
+    let mut directories = Vec::new();
+    append_image_load_path_directories(
+        i,
+        buffer_id,
+        i.symbol_value(image_load_path),
+        &mut directories,
+        &mut HashSet::new(),
+        0,
+    );
+    directories.into_iter().find_map(|directory| {
+        let candidate = std::path::Path::new(&directory).join(&file_name);
+        (candidate.is_file() && std::fs::File::open(&candidate).is_ok())
+            .then(|| candidate.to_string_lossy().into_owned())
+    })
+}
+
+fn image_file_for_buffer_or_load_path(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {
+    image_file_from_load_path(i, buffer_id, file)
+        .unwrap_or_else(|| image_file_for_buffer(i, buffer_id, file))
+}
+
 fn svg_image_stylesheet(i: &Interp, plist: &Value) -> Option<String> {
     let css = match image_property(i, plist, ":css") {
         Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
@@ -5156,7 +5237,7 @@ fn image_display_replacement(
     let masked = !image_property(i, &plist, ":mask").is_nil();
     let file = image_property(i, &plist, ":file");
     if let Value::Str(file) = file {
-        let path = image_file_for_buffer(i, buffer_id, &file.borrow());
+        let path = image_file_for_buffer_or_load_path(i, buffer_id, &file.borrow());
         let declared_svg =
             matches!(image_property(i, &plist, ":type"), Value::Sym(id) if i.symbol_name(id) == "svg");
         let is_svg = declared_svg || path.to_ascii_lowercase().ends_with(".svg");
