@@ -382,6 +382,11 @@ impl Interp {
                 }
                 if self.is_macro_function(&fun) {
                     let key = Rc::as_ptr(cons) as usize;
+                    // Only dumped/compiled-equivalent bodies have already
+                    // expanded their macros in GNU.  Ordinary interpreted
+                    // functions must re-expand this call site each time;
+                    // macro functions can have observable expansion effects.
+                    let cache_macro = self.dumped_call_depth > 0;
                     // Inside dumped-library (compiled-equivalent) lambdas
                     // macro calls were expanded at "compile" time — i.e.
                     // against the pre-advice cell.  Strip any advice
@@ -392,29 +397,33 @@ impl Interp {
                     } else {
                         fun
                     };
-                    if let Some((stamp, fncell, expansion, _pin)) = self.macro_cache.get(&key) {
-                        // `(macro . f)' cells are mutated in place by
-                        // nadvice's gv machinery, so compare the cdr
-                        // too, not just the cons identity.
-                        let same_fn = match (&fun, fncell) {
-                            (Value::Cons(a), Value::Cons(b)) => {
-                                let (aa, bb) = (a.borrow(), b.borrow());
-                                crate::lisp::builtins::eq_values(&aa.car, &bb.car)
-                                    && crate::lisp::builtins::eq_values(&aa.cdr, &bb.cdr)
+                    if cache_macro {
+                        if let Some((stamp, fncell, expansion, _pin)) = self.macro_cache.get(&key) {
+                            // `(macro . f)' cells are mutated in place by
+                            // nadvice's gv machinery, so compare the cdr
+                            // too, not just the cons identity.
+                            let same_fn = match (&fun, fncell) {
+                                (Value::Cons(a), Value::Cons(b)) => {
+                                    let (aa, bb) = (a.borrow(), b.borrow());
+                                    crate::lisp::builtins::eq_values(&aa.car, &bb.car)
+                                        && crate::lisp::builtins::eq_values(&aa.cdr, &bb.cdr)
+                                }
+                                _ => crate::lisp::builtins::eq_values(&fun, fncell),
+                            };
+                            if *stamp == self.macro_gen && same_fn {
+                                let expansion = expansion.clone();
+                                return self.eval(&expansion);
                             }
-                            _ => crate::lisp::builtins::eq_values(&fun, fncell),
-                        };
-                        if *stamp == self.macro_gen && same_fn {
-                            let expansion = expansion.clone();
-                            return self.eval(&expansion);
                         }
                     }
                     let expansion = self.eval_macro_expand(&fun, &args)?;
-                    if self.macro_cache.len() >= 262144 {
-                        self.macro_cache.clear();
+                    if cache_macro {
+                        if self.macro_cache.len() >= 262144 {
+                            self.macro_cache.clear();
+                        }
+                        self.macro_cache
+                            .insert(key, (self.macro_gen, fun, expansion.clone(), form.clone()));
                     }
-                    self.macro_cache
-                        .insert(key, (self.macro_gen, fun, expansion.clone(), form.clone()));
                     return self.eval(&expansion);
                 }
                 self.call_function_len(&fun, &args, Some(id), spine_len, frame)
