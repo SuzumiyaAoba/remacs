@@ -1,4 +1,6 @@
 //! Command-line error messages and Lisp backtraces.
+use super::shutdown::batch_exit;
+use remacs_runtime::host;
 use remacs_runtime::lisp::{Flow, Interp, Value, reader::Reader};
 use std::rc::Rc;
 
@@ -115,6 +117,41 @@ pub(super) fn report_flow(i: &mut Interp, flow: Flow) {
         }
         Flow::Exit(code) => {
             remacs_runtime::lifecycle::exit(code);
+        }
+    }
+}
+
+/// Match GNU's startup error handling: batch mode reports and exits,
+/// while interactive startup prints the error through the editor command
+/// error path and returns control to the front-end loop.
+pub(super) fn report_startup_flow(i: &mut Interp, flow: Flow, batch: bool) -> bool {
+    if let Flow::Exit(code) = &flow {
+        remacs_runtime::lifecycle::exit(*code);
+    }
+    if batch {
+        report_flow(i, flow);
+        print_batch_backtrace(i);
+        batch_exit(i, 255);
+    }
+    let condition = match flow {
+        Flow::Signal(signal) => signal.condition,
+        Flow::Quit => {
+            host::finish_quit_unwind(i);
+            Value::list(vec![Value::Sym(host::symbol(i, "quit"))])
+        }
+        Flow::Throw(tag, value) => Value::list(vec![
+            Value::Sym(host::symbol(i, "no-catch")),
+            tag,
+            value,
+        ]),
+        Flow::Exit(_) => unreachable!(),
+    };
+    match remacs_runtime::frontend::batch_command_error(i, condition) {
+        Ok(_) => false,
+        Err(Flow::Exit(code)) => remacs_runtime::lifecycle::exit(code),
+        Err(flow) => {
+            report_flow(i, flow);
+            false
         }
     }
 }

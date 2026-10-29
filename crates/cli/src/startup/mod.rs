@@ -6,14 +6,14 @@ mod shutdown;
 
 use crate::arguments::StartupOptions;
 use actions::{Action, run_action, visit_file};
-use diagnostics::{eval_bisect, print_batch_backtrace, report_flow};
+use diagnostics::{eval_bisect, report_startup_flow};
 use queue::{Argument, CommandLine, argument_text};
 use remacs_runtime::host;
 use remacs_runtime::lisp::{EvalResult, Flow, Interp, Value};
 use shutdown::batch_exit;
 
 /// Apply the live argument stream before starting an editor front-end.
-/// Explicit exits, batch completion and command-line failures end the process.
+/// Batch failures end the process; interactive failures return to the front-end.
 pub fn run(i: &mut Interp, args: &[String]) {
     let mut batch = StartupOptions::scan(args).batch;
     // GNU captures this directory once before processing file arguments.
@@ -26,12 +26,17 @@ pub fn run(i: &mut Interp, args: &[String]) {
         let (argument, rest) = match queue.next(i) {
             Ok(Some(argument)) => argument,
             Ok(None) => break,
-            Err(flow) => argument_error(i, flow),
+            Err(flow) => {
+                argument_error(i, flow, batch);
+                return;
+            }
         };
         let (name, operand) = match argument {
             Argument::File(file) => {
                 inhibit_startup(i);
-                visit_file(i, &file, &file_directory);
+                if !visit_file(i, &file, &file_directory, batch) {
+                    return;
+                }
                 continue;
             }
             Argument::Option { name, operand } => (name, operand),
@@ -52,7 +57,8 @@ pub fn run(i: &mut Interp, args: &[String]) {
                     load_path_options.add(i, Value::string(&directory))
                 });
                 if let Err(flow) = result {
-                    argument_error(i, flow);
+                    argument_error(i, flow, batch);
+                    return;
                 }
             }
             "--eval" | "--execute" | "-f" | "--funcall" => {
@@ -62,13 +68,27 @@ pub fn run(i: &mut Interp, args: &[String]) {
                     "--eval" | "--execute" => Action::Eval(operand.unwrap()),
                     _ => Action::Funcall(operand.unwrap()),
                 };
-                finish_action(i, action, rest);
+                if !finish_action(i, action, rest, batch) {
+                    return;
+                }
             }
             "--load" | "-l" => {
-                finish_action(i, Action::Load(argument_text(&operand.unwrap())), rest);
+                if !finish_action(
+                    i,
+                    Action::Load(argument_text(&operand.unwrap())),
+                    rest,
+                    batch,
+                ) {
+                    return;
+                }
             }
             "--script" => {
-                if !run_action(i, Action::Script(argument_text(&operand.unwrap())), rest) {
+                if !run_action(
+                    i,
+                    Action::Script(argument_text(&operand.unwrap())),
+                    rest,
+                    batch,
+                ) {
                     batch_exit(i, 255);
                 }
                 batch_exit(i, 0);
@@ -78,7 +98,8 @@ pub fn run(i: &mut Interp, args: &[String]) {
                     Err(i.error(&format!("Unknown option `{name}'")))
                 })
                 .unwrap_err();
-                argument_error(i, flow);
+                argument_error(i, flow, batch);
+                return;
             }
         }
     }
@@ -89,19 +110,21 @@ pub fn run(i: &mut Interp, args: &[String]) {
     }
 }
 
-fn argument_error(i: &mut Interp, flow: Flow) -> ! {
-    report_flow(i, flow);
-    print_batch_backtrace(i);
-    batch_exit(i, 255);
+fn argument_error(i: &mut Interp, flow: Flow, batch: bool) {
+    let _ = report_startup_flow(i, flow, batch);
 }
 
-fn finish_action(i: &mut Interp, action: Action, rest: Value) {
-    if !run_action(i, action, rest) {
-        batch_exit(i, 255);
+fn finish_action(i: &mut Interp, action: Action, rest: Value, batch: bool) -> bool {
+    if !run_action(i, action, rest, batch) {
+        if batch {
+            batch_exit(i, 255);
+        }
+        return false;
     }
     if i.quit_editor {
         remacs_runtime::lifecycle::exit(0);
     }
+    true
 }
 
 /// The varalias `inhibit-splash-screen' shares this cell.

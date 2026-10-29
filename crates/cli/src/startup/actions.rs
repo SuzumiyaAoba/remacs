@@ -1,6 +1,5 @@
 //! Evaluation, function calls, and file-loading startup actions.
-use super::diagnostics::{print_batch_backtrace, report_flow};
-use super::shutdown::batch_exit;
+use super::diagnostics::report_startup_flow;
 use super::with_command_line_frames;
 use remacs_runtime::host;
 use remacs_runtime::lisp::{Flow, Interp, OutputSink, Value};
@@ -12,7 +11,7 @@ pub(super) enum Action {
     Script(String),
 }
 
-pub(super) fn run_action(i: &mut Interp, action: Action, rest: Value) -> bool {
+pub(super) fn run_action(i: &mut Interp, action: Action, rest: Value, batch: bool) -> bool {
     if matches!(action, Action::Script(_)) {
         i.noninteractive = true;
     }
@@ -51,16 +50,12 @@ pub(super) fn run_action(i: &mut Interp, action: Action, rest: Value) -> bool {
     match result {
         Ok(_) => true,
         Err(Flow::Exit(code)) => remacs_runtime::lifecycle::exit(code),
-        Err(flow) => {
-            report_flow(i, flow);
-            print_batch_backtrace(i);
-            false
-        }
+        Err(flow) => report_startup_flow(i, flow, batch),
     }
 }
 
 /// File visits use the captured startup directory, outside action frames.
-pub(super) fn visit_file(i: &mut Interp, file: &str, directory: &Value) {
+pub(super) fn visit_file(i: &mut Interp, file: &str, directory: &Value, batch: bool) -> bool {
     let result = (|| {
         let expand = Value::Sym(host::symbol(i, "expand-file-name"));
         let file = i.apply(&expand, vec![Value::string(file), directory.clone()])?;
@@ -68,12 +63,9 @@ pub(super) fn visit_file(i: &mut Interp, file: &str, directory: &Value) {
         i.apply(&visit, vec![file])
     })();
     match result {
-        Ok(_) => {}
+        Ok(_) => true,
         Err(Flow::Exit(code)) => remacs_runtime::lifecycle::exit(code),
-        Err(flow) => {
-            report_flow(i, flow);
-            batch_exit(i, 255);
-        }
+        Err(flow) => report_startup_flow(i, flow, batch),
     }
 }
 
