@@ -129,13 +129,21 @@ impl Interp {
             return id; // intern_soft miss sentinel: no alias chain
         }
         let mut cur = id;
-        for _ in 0..64 {
+        let mut seen = std::collections::HashSet::new();
+        loop {
             match self.obarray.symbol(cur).var_alias {
-                Some(next) => cur = next,
+                Some(next) => {
+                    // GNU follows aliases without a depth limit. If a cycle
+                    // was assembled through the `variable-alias' property,
+                    // indirect-variable returns its original argument.
+                    if !seen.insert(cur) {
+                        return id;
+                    }
+                    cur = next;
+                }
                 None => return cur,
             }
         }
-        cur
     }
 
     pub fn symbol_value(&self, id: SymId) -> Value {

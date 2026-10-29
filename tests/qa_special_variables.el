@@ -68,6 +68,31 @@
         '(innermost innermost))
 (qa qa-special-base 'outer)
 
+;; Alias chains are not limited to a fixed number of links.  In a malformed
+;; cycle installed through `put', GNU indirect-variable returns its input.
+(qa-lex
+ (let* ((base (intern "qasp-alias-depth-0"))
+        (last base))
+   (set base 99)
+   (dotimes (n 80)
+     (setq last (intern (format "qasp-alias-depth-%d" (1+ n))))
+     (defvaralias last (intern (format "qasp-alias-depth-%d" n))))
+   (list (eq (indirect-variable last) base) (symbol-value last)))
+ '(t 99))
+(qa-lex
+ (let* ((x (make-symbol "qasp-alias-cycle-x"))
+        (a (make-symbol "qasp-alias-cycle-a"))
+        (b (make-symbol "qasp-alias-cycle-b")))
+   (put x 'variable-alias a)
+   (put a 'variable-alias b)
+   (put b 'variable-alias a)
+   (list (eq (indirect-variable x) x)
+         (eq (indirect-variable a) a)
+         (eq (indirect-variable b) b)
+         (boundp x)
+         (condition-case nil (symbol-value x) (void-variable t))))
+ '(t t t nil t))
+
 ;; GNU intentionally leaves `features' available for lexical binding.
 (qa (special-variable-p 'features) nil)
 (qa-lex (let ((features nil))
