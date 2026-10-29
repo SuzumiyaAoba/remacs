@@ -843,14 +843,18 @@ impl Render for EditorView {
             }
         }
 
-        let default_background = self
-            .grid
-            .default_bg
-            .map(|color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32)
-            .unwrap_or_else(|| match self.appearance {
-                WindowAppearance::Light | WindowAppearance::VibrantLight => 0xf5f5f5,
-                WindowAppearance::Dark | WindowAppearance::VibrantDark => BG,
-            });
+        let default_background = self.grid.default_bg.map_or_else(
+            || {
+                gamma_correct_rgb(
+                    match self.appearance {
+                        WindowAppearance::Light | WindowAppearance::VibrantLight => 0xf5f5f5,
+                        WindowAppearance::Dark | WindowAppearance::VibrantDark => BG,
+                    },
+                    self.grid.gamma_exponent,
+                )
+            },
+            |color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32,
+        );
         let background_alpha = ((self.alpha_background as u32 * 255 + 50) / 100) as u8;
         let default_background_fill = rgba((default_background << 8) | u32::from(background_alpha));
         let modifier_mapping = self.modifier_mapping;
@@ -1426,8 +1430,12 @@ impl Render for EditorView {
                                         if len == 0 {
                                             return;
                                         }
-                                        let (fg, bg) =
-                                            style_colors(st, default_background, background_alpha);
+                                        let (fg, bg) = style_colors(
+                                            st,
+                                            default_background,
+                                            background_alpha,
+                                            grid.gamma_exponent,
+                                        );
                                         let mut f = text_font.clone();
                                         if let Some(family) = st
                                             .font_family
@@ -1491,7 +1499,7 @@ impl Render for EditorView {
                                     runs.push(TextRun {
                                         len: 0,
                                         font: text_font.clone(),
-                                        color: rgb(FG).into(),
+                                        color: rgb(gamma_correct_rgb(FG, grid.gamma_exponent)).into(),
                                         background_color: None,
                                         underline: None,
                                         strikethrough: None,
@@ -1629,6 +1637,7 @@ impl Render for EditorView {
                                 indicator.style,
                                 default_background,
                                 background_alpha,
+                                grid.gamma_exponent,
                             );
                             let text = indicator.character.to_string();
                             let line = window.text_system().shape_line(
@@ -1722,12 +1731,21 @@ impl Render for EditorView {
                                         len: end.saturating_sub(start),
                                         font: composition_font.clone(),
                                         color: if selected {
-                                            rgb(0xffffff).into()
+                                            rgb(gamma_correct_rgb(
+                                                0xffffff,
+                                                grid.gamma_exponent,
+                                            ))
+                                            .into()
                                         } else {
-                                            rgb(FG).into()
+                                            rgb(gamma_correct_rgb(FG, grid.gamma_exponent)).into()
                                         },
-                                        background_color: selected
-                                            .then(|| rgb(0x356fce).into()),
+                                        background_color: selected.then(|| {
+                                            rgb(gamma_correct_rgb(
+                                                0x356fce,
+                                                grid.gamma_exponent,
+                                            ))
+                                            .into()
+                                        }),
                                         underline: Some(UnderlineStyle {
                                             thickness: px(1.0),
                                             color: None,
@@ -1832,9 +1850,14 @@ impl Render for EditorView {
                                     .filter(|width| *width > px(0.0))
                                     .unwrap_or(cell_width)
                             };
-                            let rgb_color = cursor.color.map_or(CURSOR, |color| {
-                                ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
-                            });
+                            let rgb_color = cursor.color.map_or_else(
+                                || gamma_correct_rgb(CURSOR, grid.gamma_exponent),
+                                |color| {
+                                    ((color.0 as u32) << 16)
+                                        | ((color.1 as u32) << 8)
+                                        | color.2 as u32
+                                },
+                            );
                             let column = if cursor.selected && composition_caret.is_some() {
                                 (f32::from(x) / f32::from(cell_width)) as usize
                             } else {
@@ -2206,6 +2229,7 @@ fn paint_stipple_region(
     bounds: Bounds<Pixels>,
     default_background: u32,
     background_alpha: u8,
+    gamma_exponent: Option<f64>,
     window: &mut Window,
 ) {
     let width_px = f32::from(width).ceil().max(0.0) as usize;
@@ -2214,7 +2238,12 @@ fn paint_stipple_region(
         return;
     }
     let origin = point(bounds.left() + left, bounds.top() + row_top);
-    let (foreground, background) = style_colors(style, default_background, background_alpha);
+    let (foreground, background) = style_colors(
+        style,
+        default_background,
+        background_alpha,
+        gamma_exponent,
+    );
     window.paint_quad(fill(
         Bounds {
             origin,
@@ -2306,6 +2335,7 @@ fn paint_stipple_backgrounds(
             bounds,
             default_background,
             background_alpha,
+            grid.gamma_exponent,
             window,
         );
     }
@@ -2346,6 +2376,7 @@ fn paint_grid_row(
         row_top,
         line_height,
         default_background,
+        grid.gamma_exponent,
         window,
     );
 
@@ -2378,7 +2409,13 @@ fn paint_grid_row(
                         origin: point(bounds.left() + left, overline_y),
                         size: size(width, px(1.0)),
                     },
-                    style_colors(style, default_background, background_alpha).0,
+                    style_colors(
+                        style,
+                        default_background,
+                        background_alpha,
+                        grid.gamma_exponent,
+                    )
+                    .0,
                 ));
             }
         }
@@ -2441,6 +2478,7 @@ fn paint_vscroll_regions(
                     row_top,
                     line_height,
                     default_background,
+                    grid.gamma_exponent,
                     window,
                 );
 
@@ -2473,7 +2511,13 @@ fn paint_vscroll_regions(
                                     origin: point(bounds.left() + left, overline_y),
                                     size: size(width, px(1.0)),
                                 },
-                                style_colors(*style, default_background, background_alpha).0,
+                                style_colors(
+                                    *style,
+                                    default_background,
+                                    background_alpha,
+                                    grid.gamma_exponent,
+                                )
+                                .0,
                             ));
                         }
                     }
@@ -2523,7 +2567,13 @@ fn paint_grid_compositions(
         if composition.style.italic {
             component_font = component_font.italic();
         }
-        let color = style_colors(composition.style, default_background, background_alpha).0;
+        let color = style_colors(
+            composition.style,
+            default_background,
+            background_alpha,
+            grid.gamma_exponent,
+        )
+        .0;
         let x = line.x_for_index(composition.byte_index);
         let origin = point(
             bounds.left() + x,
@@ -2571,6 +2621,7 @@ fn paint_face_boxes(
     row_top: Pixels,
     line_height: Pixels,
     default_background: u32,
+    gamma_exponent: Option<f64>,
     window: &mut Window,
 ) {
     let Some(text) = grid.rows.get(row_index) else {
@@ -2600,6 +2651,7 @@ fn paint_face_boxes(
                     start,
                     end,
                     default_background,
+                    gamma_exponent,
                     window,
                 );
             }
@@ -2625,6 +2677,7 @@ fn paint_face_boxes(
                         start,
                         end,
                         default_background,
+                        gamma_exponent,
                         window,
                     );
                 }
@@ -2644,6 +2697,7 @@ fn paint_face_boxes(
             start,
             end,
             default_background,
+            gamma_exponent,
             window,
         );
     }
@@ -2661,6 +2715,7 @@ fn paint_box_run(
     start: usize,
     end: usize,
     default_background: u32,
+    gamma_exponent: Option<f64>,
     window: &mut Window,
 ) {
     let x1 = line.x_for_index(start);
@@ -2671,10 +2726,11 @@ fn paint_box_run(
         return;
     }
 
+    let corrected_foreground = gamma_correct_rgb(FG, gamma_exponent);
     let default_foreground = CellColor(
-        ((FG >> 16) & 0xff) as u8,
-        ((FG >> 8) & 0xff) as u8,
-        (FG & 0xff) as u8,
+        ((corrected_foreground >> 16) & 0xff) as u8,
+        ((corrected_foreground >> 8) & 0xff) as u8,
+        (corrected_foreground & 0xff) as u8,
     );
     let default_background = CellColor(
         ((default_background >> 16) & 0xff) as u8,
@@ -2767,6 +2823,17 @@ fn color_rgb(color: CellColor) -> u32 {
     ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
 }
 
+fn gamma_correct_rgb(color: u32, exponent: Option<f64>) -> u32 {
+    let Some(exponent) = exponent else {
+        return color;
+    };
+    let channel = |shift: u32| {
+        let value = ((color >> shift) & 0xff) as f64 / 255.0;
+        ((value.powf(exponent) * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u32) << shift
+    };
+    channel(16) | channel(8) | channel(0)
+}
+
 fn paint_bottom_dividers(
     grid: &Grid,
     bounds: Bounds<Pixels>,
@@ -2790,7 +2857,13 @@ fn paint_bottom_dividers(
             if height == 0 {
                 return;
             }
-            let color = style_colors(style, default_background, background_alpha).0;
+            let color = style_colors(
+                style,
+                default_background,
+                background_alpha,
+                grid.gamma_exponent,
+            )
+            .0;
             window.paint_quad(fill(
                 Bounds {
                     origin: point(left, top + px(offset as f32)),
@@ -2828,6 +2901,7 @@ fn style_colors(
     st: remacs_runtime::frontend::CellStyle,
     default_background: u32,
     background_alpha: u8,
+    gamma_exponent: Option<f64>,
 ) -> (Hsla, Option<Hsla>) {
     let rgb_color = |c: remacs_runtime::frontend::CellColor| {
         ((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32
@@ -2835,7 +2909,7 @@ fn style_colors(
     let foreground = st
         .fg
         .map(|color| rgb(rgb_color(color)).into())
-        .unwrap_or_else(|| rgb(FG).into());
+        .unwrap_or_else(|| rgb(gamma_correct_rgb(FG, gamma_exponent)).into());
     let background = st
         .bg
         .map(|color| background_rgba(rgb_color(color), background_alpha));

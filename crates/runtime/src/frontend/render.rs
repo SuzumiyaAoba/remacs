@@ -408,6 +408,9 @@ pub struct Grid {
     pub blink_interval: f64,
     /// Default face background used outside the visible text rows.
     pub default_bg: Option<CellColor>,
+    /// Gamma exponent for the frame's `screen-gamma' parameter. Color
+    /// channels in this grid have already been corrected with this value.
+    pub gamma_exponent: Option<f64>,
     /// Pixel height for each display row. Empty grids use the frontend default.
     pub row_heights: Vec<usize>,
     /// Base frame line height before line spacing and per-line overrides.
@@ -500,6 +503,7 @@ impl Grid {
             blink_cursor: false,
             blink_interval: 0.5,
             default_bg: None,
+            gamma_exponent: None,
             row_heights: Vec::new(),
             default_line_height: 19,
             default_row_height: 19,
@@ -5247,6 +5251,80 @@ pub fn render_frame_grid_with_mouse_position_cached(
     )
 }
 
+fn frame_gamma_exponent(i: &Interp, frame: &crate::editor::FrameRef) -> Option<f64> {
+    let parameter = i.intern_soft("screen-gamma")?;
+    let value = crate::lisp::eval::plist_get_v(
+        &frame.borrow().params,
+        &Value::Sym(parameter),
+    );
+    let screen_gamma = match value {
+        Value::Int(value) if value > 0 => value as f64,
+        Value::Float(value) if value.is_finite() && *value > 0.0 => *value,
+        _ => return None,
+    };
+    // GNU's viewing gamma is 0.4545. `screen-gamma' specifies the
+    // display's gamma, so a value of 2.2 leaves the colors unchanged.
+    let exponent = 1.0 / (0.4545 * screen_gamma);
+    exponent.is_finite().then_some(exponent)
+}
+
+fn gamma_correct_color(color: CellColor, exponent: f64) -> CellColor {
+    let channel = |value: u8| {
+        ((f64::from(value) / 255.0).powf(exponent) * 255.0 + 0.5)
+            .floor()
+            .clamp(0.0, 255.0) as u8
+    };
+    CellColor(channel(color.0), channel(color.1), channel(color.2))
+}
+
+fn gamma_correct_style(style: &mut CellStyle, exponent: f64) {
+    let correct = |color: &mut Option<CellColor>| {
+        if let Some(color) = color {
+            *color = gamma_correct_color(*color, exponent);
+        }
+    };
+    correct(&mut style.fg);
+    correct(&mut style.bg);
+    correct(&mut style.underline_color);
+    correct(&mut style.strike_color);
+    if let Some(box_style) = &mut style.box_style {
+        correct(&mut box_style.color);
+    }
+}
+
+fn gamma_correct_grid_colors(grid: &mut Grid, exponent: f64) {
+    gamma_correct_style(&mut grid.default_style, exponent);
+    if let Some(color) = &mut grid.default_bg {
+        *color = gamma_correct_color(*color, exponent);
+    }
+    for row in &mut grid.attrs {
+        for style in row {
+            gamma_correct_style(style, exponent);
+        }
+    }
+    for row in &mut grid.char_attrs {
+        for style in row {
+            gamma_correct_style(style, exponent);
+        }
+    }
+    for indicator in &mut grid.fill_column_indicators {
+        gamma_correct_style(&mut indicator.style, exponent);
+    }
+    for divider in &mut grid.bottom_dividers {
+        gamma_correct_style(&mut divider.style, exponent);
+        gamma_correct_style(&mut divider.first_pixel_style, exponent);
+        gamma_correct_style(&mut divider.last_pixel_style, exponent);
+    }
+    for composition in &mut grid.compositions {
+        gamma_correct_style(&mut composition.style, exponent);
+    }
+    for cursor in &mut grid.cursors {
+        if let Some(color) = &mut cursor.color {
+            *color = gamma_correct_color(*color, exponent);
+        }
+    }
+}
+
 fn minibuffer_display_rows(
     characters: &[EmacsChar],
     width: usize,
@@ -5328,6 +5406,10 @@ fn render_grid_internal(
     mouse_position: Option<MousePosition>,
 ) -> Grid {
     let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
+    let gamma_exponent = frame
+        .as_ref()
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+        .and_then(|frame| frame_gamma_exponent(i, frame));
     let mut rows = vec![String::new(); height];
     let mut fctx = FaceCtx::new(i, frame.as_ref());
     let default_style = fctx.builtin(i, "default", 0).finish();
@@ -5393,6 +5475,7 @@ fn render_grid_internal(
                 blink_cursor,
                 blink_interval,
                 default_bg,
+                gamma_exponent: None,
                 row_heights,
                 default_line_height,
                 default_row_height,
@@ -7083,7 +7166,7 @@ fn render_grid_internal(
             }
         }
     }
-    Grid {
+    let mut grid = Grid {
         title,
         font_families: fctx.font_families,
         default_style,
@@ -7111,11 +7194,16 @@ fn render_grid_internal(
         blink_cursor,
         blink_interval,
         default_bg,
+        gamma_exponent,
         row_heights,
         default_line_height,
         default_row_height,
         hover_cursor,
         pointer_visible: fb.pointer_visible,
         input,
+    };
+    if let Some(gamma) = gamma_exponent {
+        gamma_correct_grid_colors(&mut grid, gamma);
     }
+    grid
 }
