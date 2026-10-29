@@ -1081,10 +1081,10 @@ Point should be in or after a filename."
   (declare (obsolete "use (thing-at-point 'filename) instead." "29.1"))
   (save-excursion
     ;; First see if just past a filename.
-    (or (eobp)                             ; why?
-        (when (looking-at-p "[] \t\n[{}()]") ; whitespace or some parens
-          (skip-chars-backward " \n\t\r({[]})")
-          (or (bobp) (backward-char 1))))
+    (when (or (eobp)
+              (looking-at-p "[] \t\n[{}()]")) ; whitespace or some parens
+      (skip-chars-backward " \n\t\r({[]})")
+      (or (bobp) (backward-char 1)))
     (let ((filename-chars "-.[:alnum:]_/:$+@")
           start prefix)
       (if (looking-at-p (format "[%s]" filename-chars))
