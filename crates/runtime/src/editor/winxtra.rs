@@ -3286,47 +3286,19 @@ fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.error(format!("{shown} is not a valid window")));
         }
     }
-    let delta = match &arg(&a, 1) {
-        Value::Int(n) => *n,
-        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
+    let delta = arg(&a, 1);
+    let positive = {
+        let greater = Value::Sym(i.q(">"));
+        i.apply(&greater, vec![delta.clone(), Value::Int(0)])?.truthy()
     };
-    let wv = arg(&a, 0);
-    let horiz = arg(&a, 2).truthy();
-    let ignore = arg(&a, 3);
-    let actual = if delta < 0 {
-        let min = crate::lisp::builtins::misc::win_min_size(i, &wv, horiz, &ignore);
-        let size = match &wv {
-            Value::Window(w) => {
-                let w = w.borrow();
-                if horiz { w.width } else { w.height }
-            }
-            _ => {
-                if horiz {
-                    80
-                } else {
-                    24
-                }
-            }
-        } as i128;
-        if size <= min {
-            0
-        } else {
-            (min - size).max(delta)
-        }
-    } else if delta > 0 {
-        if crate::lisp::builtins::misc::window_is_size_fixed(i, &wv, horiz, &ignore)? {
-            0
-        } else {
-            delta
-        }
-    } else {
-        0
-    };
-    Ok(Value::from_bool(if delta > 0 {
-        actual >= delta
-    } else {
-        actual <= delta
-    }))
+    let sizable = Value::Sym(i.q("window-sizable"));
+    let actual = i.apply(
+        &sizable,
+        vec![arg(&a, 0), delta.clone(), arg(&a, 2), arg(&a, 3), arg(&a, 4)],
+    )?;
+    let comparison = Value::Sym(i.q(if positive { ">=" } else { "<=" }));
+    let result = i.apply(&comparison, vec![actual, delta])?;
+    Ok(Value::from_bool(result.truthy()))
 }
 
 /// `set-frame-position' — graphical frames retain their requested native

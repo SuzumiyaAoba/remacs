@@ -712,7 +712,7 @@ pub(crate) fn win_min_size(i: &mut Interp, wv: &Value, horiz: bool, ignore: &Val
     })
 }
 
-pub(crate) fn window_is_size_fixed(
+fn window_is_size_fixed(
     i: &mut Interp,
     window: &Value,
     horizontal: bool,
@@ -740,29 +740,36 @@ pub(super) fn f_window_sizable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             return Err(i.error(format!("{shown} is not a valid window")));
         }
     };
-    let delta = match &a[1] {
-        Value::Int(n) => *n,
-        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
-    };
+    let delta = a[1].clone();
     let horiz = !arg(&a, 2).is_nil();
     let ignore = arg(&a, 3);
-    if delta < 0 {
+    let less_than_zero = {
+        let less = Value::Sym(i.q("<"));
+        i.apply(&less, vec![delta.clone(), Value::Int(0)])?.truthy()
+    };
+    if less_than_zero {
         let min = win_min_size(i, &wv, horiz, &ignore);
         let (w, h) = win_dims(i, &a[0]);
         let size = if horiz { w } else { h } as i128;
         if size <= min {
             Ok(Value::Int(0))
         } else {
-            Ok(Value::Int((min - size).max(delta)))
+            let max = Value::Sym(i.q("max"));
+            i.apply(&max, vec![Value::Int(min - size), delta])
         }
-    } else if delta > 0 {
+    } else {
+        let greater_than_zero = {
+            let greater = Value::Sym(i.q(">"));
+            i.apply(&greater, vec![delta.clone(), Value::Int(0)])?.truthy()
+        };
+        if !greater_than_zero {
+            return Ok(Value::Int(0));
+        }
         if window_is_size_fixed(i, &wv, horiz, &ignore)? {
             Ok(Value::Int(0))
         } else {
-            Ok(Value::Int(delta))
+            Ok(delta)
         }
-    } else {
-        Ok(Value::Int(0))
     }
 }
 

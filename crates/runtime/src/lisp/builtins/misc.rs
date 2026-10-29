@@ -178,9 +178,7 @@ use diagnostics::{
 use keymaps::f_set_this_command_keys;
 mod display;
 #[allow(unused_imports)] // misc::* compatibility re-exports
-pub(crate) use display::{
-    decode_display, mouse_coordinate, warp_mouse_absolute, win_min_size, window_is_size_fixed,
-};
+pub(crate) use display::{decode_display, mouse_coordinate, warp_mouse_absolute, win_min_size};
 use display::{
     f_current_frame_configuration, f_delete_other_windows_internal, f_delete_windows_on,
     f_display_false, f_display_mm, f_display_monitor_attributes_list, f_display_pixel_height,
