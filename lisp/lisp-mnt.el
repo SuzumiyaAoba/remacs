@@ -342,7 +342,7 @@ Return argument is of the form (\"HOLDER\" \"YEAR1\" ... \"YEARN\")"
 	      (push (match-string-no-properties 2) years))
 	    (goto-char (match-end 0)))
 	  (setq holder (buffer-substring-no-properties (point) (point-max))))
-      (cons holder (nreverse years)))))
+      (cons holder (nreverse years))))))
 
 (defun lm-summary (&optional file)
   "Return the one-line summary of file FILE, or current buffer if FILE is nil."
