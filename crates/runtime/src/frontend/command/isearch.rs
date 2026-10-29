@@ -289,6 +289,20 @@ fn isearch_yank_char(i: &mut Interp, position: usize) -> Option<String> {
     Some(text.borrow().to_unicode_lossy())
 }
 
+fn isearch_yank_line(i: &mut Interp, position: usize) -> Option<String> {
+    let source = format!(
+        "(save-excursion (goto-char (min {} (point-max))) \
+           (let ((inhibit-field-text-motion t)) \
+             (buffer-substring-no-properties (point) \
+               (line-end-position (if (eolp) 2 1)))))",
+        position.saturating_add(1)
+    );
+    let Value::Str(text) = i.eval_str(&source).ok()? else {
+        return None;
+    };
+    Some(text.borrow().to_unicode_lossy())
+}
+
 fn prepare_isearch_yanked_text(
     i: &mut Interp,
     text: &str,
@@ -913,6 +927,30 @@ impl Isearch {
                     return self
                         .regexp_for_query(i)
                         .map_or(IsearchAction::Continue, IsearchAction::Occur);
+                }
+                c if c == 5 || c == (CHAR_CTL | 'e' as i128) => {
+                    let anchor = if self.backward {
+                        self.spans.last().map(|span| span.1).unwrap_or(cur)
+                    } else {
+                        cur
+                    };
+                    if let Some(text) = isearch_yank_line(i, anchor)
+                        && !text.is_empty()
+                    {
+                        let failure_start = self
+                            .fail_pos
+                            .unwrap_or_else(|| self.query.chars().count());
+                        self.save_history();
+                        let text = prepare_isearch_yanked_text(
+                            i,
+                            &text,
+                            &self.case_fold,
+                            self.regexp,
+                        );
+                        self.query.push_str(&text);
+                        self.search_updated_query(i, failure_start);
+                    }
+                    return IsearchAction::Continue;
                 }
                 c if c == (CHAR_META | '<' as i128) => {
                     self.search_buffer_boundary(i, false);
