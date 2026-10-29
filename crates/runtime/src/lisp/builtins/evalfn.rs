@@ -1291,6 +1291,39 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
     result
 }
 
+/// Rebuild a proper form while sharing every unchanged cons cell with the
+/// input, matching GNU `macroexp--cons'/`macroexp--accumulate'.
+fn macroexpand_rebuild_list(original: &Value, items: Vec<Value>) -> Value {
+    let mut old_cells = Vec::with_capacity(items.len());
+    let mut old_tail = original.clone();
+    for _ in 0..items.len() {
+        let Value::Cons(cell) = old_tail else {
+            return Value::list(items);
+        };
+        let (old_car, old_cdr) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        old_cells.push((Value::Cons(cell), old_car, old_cdr.clone()));
+        old_tail = old_cdr;
+    }
+    if !old_tail.is_nil() {
+        return Value::list(items);
+    }
+
+    let mut new_tail = Value::Nil;
+    for ((old_cell, old_car, old_cdr), new_car) in old_cells.into_iter().zip(items).rev() {
+        if crate::lisp::builtins::eq_values(&old_car, &new_car)
+            && crate::lisp::builtins::eq_values(&old_cdr, &new_tail)
+        {
+            new_tail = old_cell;
+        } else {
+            new_tail = Value::cons(new_car, new_tail);
+        }
+    }
+    new_tail
+}
+
 fn macroexpand_all_expanded(
     i: &mut Interp,
     expanded: Value,
@@ -1346,7 +1379,7 @@ fn macroexpand_all_expanded(
                         for it in body {
                             out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::DEFVAR | sym::DEFCONST
                         if items.len() >= 2
@@ -1364,7 +1397,7 @@ fn macroexpand_all_expanded(
                         for item in &items[2..] {
                             out.push(macroexpand_all(i, item)?);
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::DEFUN | sym::DEFMACRO if items.len() >= 3 => {
                         let mut out = items[..3].to_vec();
@@ -1386,7 +1419,7 @@ fn macroexpand_all_expanded(
                         for it in body {
                             out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::LAMBDA if items.len() >= 2 => {
                         let mut out = items[..2].to_vec();
@@ -1405,7 +1438,7 @@ fn macroexpand_all_expanded(
                         for it in body {
                             out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::FUNCTION if items.len() == 2 => {
                         // GNU `macroexp--expand-all' only descends into
@@ -1454,7 +1487,11 @@ fn macroexpand_all_expanded(
                                         i, env_id, &env, sm, &bound, it,
                                     )?);
                                 }
-                                return Ok(Value::list(vec![items[0].clone(), Value::list(lout)]));
+                                let function = macroexpand_rebuild_list(&items[1], lout);
+                                return Ok(macroexpand_rebuild_list(
+                                    &expanded,
+                                    vec![items[0].clone(), function],
+                                ));
                             }
                         }
                         return Ok(expanded);
@@ -1537,7 +1574,7 @@ fn macroexpand_all_expanded(
                                                         for p in &parts[1..] {
                                                             nb.push(expand_init(i, p)?);
                                                         }
-                                                        Value::list(nb)
+                                                        macroexpand_rebuild_list(&b, nb)
                                                     }
                                                 } else {
                                                     expand_init(i, &b)?
@@ -1563,6 +1600,12 @@ fn macroexpand_all_expanded(
                                         }
                                     }
                                 }
+                                let newvarlist = match newvarlist.list_to_vec() {
+                                    Ok(bindings) => {
+                                        macroexpand_rebuild_list(&items[1], bindings)
+                                    }
+                                    Err(_) => newvarlist,
+                                };
                                 out.push(newvarlist);
                             }
                             v => out.push(v.clone()),
@@ -1587,7 +1630,7 @@ fn macroexpand_all_expanded(
                                 out.push(macroexpand_all(i, it)?);
                             }
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::SETQ if sm => {
                         // GNU `cl--sm-macroexpand-1': `(setq ...)' with a
@@ -1633,7 +1676,10 @@ fn macroexpand_all_expanded(
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
                             let expr = macroexpand_all(i, &args[1])?;
-                            return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
+                            return Ok(macroexpand_rebuild_list(
+                                &expanded,
+                                vec![items[0].clone(), args[0].clone(), expr],
+                            ));
                         }
                         let mut assigns = Vec::new();
                         for pair in args.chunks(2) {
@@ -1652,7 +1698,10 @@ fn macroexpand_all_expanded(
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
                             let expr = macroexpand_all(i, &args[1])?;
-                            return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
+                            return Ok(macroexpand_rebuild_list(
+                                &expanded,
+                                vec![items[0].clone(), args[0].clone(), expr],
+                            ));
                         }
                         if nargs % 2 == 1 {
                             // `(signal 'wrong-number-of-arguments
@@ -1797,7 +1846,7 @@ fn macroexpand_all_expanded(
                         }
                         let mut out = vec![items[0].clone(), eexp];
                         out.extend(eargs);
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::CONDITION_CASE if items.len() >= 3 => {
                         // GNU `cl--sm-macroexpand-1': the error var
@@ -1820,13 +1869,13 @@ fn macroexpand_all_expanded(
                                             i, env_id, &env, sm, &bound, p,
                                         )?);
                                     }
-                                    out.push(Value::list(nh));
+                                    out.push(macroexpand_rebuild_list(h, nh));
                                     continue;
                                 }
                             }
                             out.push(h.clone());
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     sym::COND => {
                         // GNU `macroexp--expand-all': `(cond CLAUSES...)'
@@ -1845,12 +1894,12 @@ fn macroexpand_all_expanded(
                                 for p in &parts {
                                     nc.push(macroexpand_all(i, p)?);
                                 }
-                                out.push(Value::list(nc));
+                                out.push(macroexpand_rebuild_list(clause, nc));
                             } else {
                                 out.push(clause.clone());
                             }
                         }
-                        return Ok(Value::list(out));
+                        return Ok(macroexpand_rebuild_list(&expanded, out));
                     }
                     _ => {}
                 }
@@ -1873,11 +1922,12 @@ fn macroexpand_all_expanded(
                     for it in &litems[2..] {
                         fun_items.push(macroexpand_all(i, it)?);
                     }
-                    let mut res = vec![Value::list(fun_items)];
+                    let function = macroexpand_rebuild_list(&items[0], fun_items);
+                    let mut res = vec![function];
                     for it in &items[1..] {
                         res.push(macroexpand_all(i, it)?);
                     }
-                    return Ok(Value::list(res));
+                    return Ok(macroexpand_rebuild_list(&expanded, res));
                 }
             }
             if i.sym_id(&items[0]).is_none() {
@@ -1894,7 +1944,7 @@ fn macroexpand_all_expanded(
             for it in &items[1..] {
                 out.push(macroexpand_all(i, it)?);
             }
-            let result = Value::list(out);
+            let result = macroexpand_rebuild_list(&expanded, out);
             if let Some(handler) = &compiler_macro {
                 if super::equal_values(i, &expanded, &result)? {
                     return Ok(expanded);
