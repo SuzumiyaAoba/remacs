@@ -578,6 +578,41 @@ fn isearch_meta_s_o_passes_current_query_to_occur() {
 }
 
 #[test]
+fn isearch_repeat_keys_reuse_previous_search_string_in_both_directions() {
+    let mut forward = isearch_interp("foo x foo\n");
+    forward.eval_str("(setq search-ring '(\"foo\"))").unwrap();
+    forward
+        .current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .set_point(4);
+    let mut forward_state = Isearch::new(&mut forward, false, false);
+    assert!(matches!(
+        forward_state.step(&mut forward, 19),
+        IsearchAction::Continue
+    ));
+    assert_eq!(forward_state.query, "foo");
+    assert_eq!(forward_state.spans.last(), Some(&(6, 9)));
+    assert_eq!(point(&forward), 9);
+
+    let mut backward = isearch_interp("foo x foo\n");
+    backward.eval_str("(setq search-ring '(\"foo\"))").unwrap();
+    backward
+        .current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .set_point(9);
+    let mut backward_state = Isearch::new(&mut backward, true, false);
+    assert!(matches!(
+        backward_state.step(&mut backward, 18),
+        IsearchAction::Continue
+    ));
+    assert_eq!(backward_state.query, "foo");
+    assert_eq!(backward_state.spans.last(), Some(&(6, 9)));
+    assert_eq!(point(&backward), 6);
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
