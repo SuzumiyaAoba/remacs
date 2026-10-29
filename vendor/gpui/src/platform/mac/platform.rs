@@ -751,6 +751,15 @@ impl Platform for MacPlatform {
 
                     panel.setCanCreateDirectories(true.to_objc());
                     panel.setResolvesAliases_(false.to_objc());
+                    if let Some(directory) = options.directory.as_ref() {
+                        let path = ns_string(directory.to_string_lossy().as_ref());
+                        let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
+                        panel.setDirectoryURL(url);
+                    }
+                    if let Some(initial) = options.initial.as_ref() {
+                        let name = ns_string(initial);
+                        let _: () = msg_send![panel, setNameFieldStringValue: name];
+                    }
                     let done_tx = Cell::new(Some(done_tx));
                     let block = ConcreteBlock::new(move |response: NSModalResponse| {
                         let result = if response == NSModalResponse::NSModalResponseOk {

@@ -914,12 +914,35 @@ fn file_open_dialog(
         dialog_options |= FOS_PICKFOLDERS;
     }
 
+    if let Some(directory) = options.directory.as_ref()
+        && !directory.as_os_str().is_empty()
+        && let Some(full_path) = directory
+            .canonicalize()
+            .context("failed to canonicalize directory")
+            .log_err()
+    {
+        let full_path = SanitizedPath::new(&full_path);
+        let full_path_string = full_path.to_string();
+        let path_item: IShellItem =
+            unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+        unsafe {
+            folder_dialog
+                .SetFolder(&path_item)
+                .context("failed to set dialog folder")
+                .log_err()
+        };
+    }
+
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
 
         if let Some(prompt) = options.prompt {
             let prompt: &str = &prompt;
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
+        }
+
+        if let Some(initial) = options.initial {
+            folder_dialog.SetFileName(&HSTRING::from(initial))?;
         }
 
         if folder_dialog.Show(window).is_err() {

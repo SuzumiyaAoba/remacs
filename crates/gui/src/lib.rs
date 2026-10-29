@@ -1192,14 +1192,14 @@ pub fn run_gui_with_dump(
                         directory_only,
                         reply,
                     } => {
-                        // GPUI's path panel currently accepts mode and prompt;
-                        // its platform API does not expose the initial path.
-                        let _ = (directory, must_match, initial);
+                        let _ = must_match;
                         let options = PathPromptOptions {
                             files: !directory_only,
                             directories: directory_only,
                             multiple: false,
                             prompt: Some(prompt.into()),
+                            directory: directory.map(std::path::PathBuf::from),
+                            initial,
                         };
                         let result = match cx.update(|app| app.prompt_for_paths(options)) {
                             Ok(response) => match response.await {

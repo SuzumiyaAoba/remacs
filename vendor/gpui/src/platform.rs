@@ -1375,6 +1375,10 @@ pub struct PathPromptOptions {
     pub multiple: bool,
     /// The prompt to show to a user when selecting a path
     pub prompt: Option<SharedString>,
+    /// The directory to show when the prompt opens.
+    pub directory: Option<PathBuf>,
+    /// The initial filename to show in the prompt.
+    pub initial: Option<String>,
 }
 
 /// What kind of prompt styling to show
