@@ -960,8 +960,16 @@ impl Isearch {
             }
             // C-s / C-r: repeat search in that direction from just
             // past (before) the current match.
-            19 | 18 => {
-                let back = key == 18;
+            c if c == 19
+                || c == 18
+                || c == (CHAR_META | 19)
+                || c == (CHAR_META | 18)
+                || c == (CHAR_META | CHAR_CTL | 's' as i128)
+                || c == (CHAR_META | CHAR_CTL | 'r' as i128) =>
+            {
+                let back = c == 18
+                    || c == (CHAR_META | 18)
+                    || c == (CHAR_META | CHAR_CTL | 'r' as i128);
                 let reused_previous = self.query.is_empty()
                     && back == self.backward
                     && self.use_previous_search(i);
