@@ -4019,14 +4019,25 @@ fn f_tty_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 }
 
 fn f_x_focus_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU errors "Cannot switch to an invisible frame" etc. in batch;
-    // on a lone tty frame any arg raises `error'.
-    let _ = a;
-    let sym = i.q("error");
-    Err(i.signal_data(
-        sym,
-        vec![Value::string("Window system frame should be used")],
-    ))
+    let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+
+    // GPUI separates application activation from native-window activation.
+    // `select-frame-set-input-focus' first raises the frame, then reaches
+    // this primitive to bring the Remacs application forward as well.
+    if let Some(backend) = i.application_visibility_backend.clone() {
+        backend
+            .activate()
+            .map_err(|error| i.error(format!("Application activation failed: {error}")))?;
+    }
+    if let Some(backend) = i.frame_window_backend.clone() {
+        backend
+            .raise(frame.borrow().id)
+            .map_err(|error| i.error(format!("Frame focus failed: {error}")))?;
+    }
+    Ok(Value::Nil)
 }
 
 fn f_make_frame_visible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
