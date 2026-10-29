@@ -176,11 +176,11 @@ fn keystroke_named_keys() {
     use remacs_runtime::editor::event_code_for;
     assert_eq!(
         keystroke_to_code(&ks("return", None, false, false, false, false)),
-        Some(13)
+        Some(event_code_for("return"))
     );
     assert_eq!(
         keystroke_to_code(&ks("tab", None, false, false, false, false)),
-        Some(9)
+        Some(event_code_for("tab"))
     );
     assert_eq!(
         keystroke_to_code(&ks("backspace", None, false, false, false, false)),
@@ -188,7 +188,7 @@ fn keystroke_named_keys() {
     );
     assert_eq!(
         keystroke_to_code(&ks("escape", None, false, false, false, false)),
-        Some(27)
+        Some(event_code_for("escape"))
     );
     assert_eq!(
         keystroke_to_code(&ks("space", Some(" "), false, false, false, false)),

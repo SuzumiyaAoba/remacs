@@ -342,10 +342,12 @@ pub(super) fn keystroke_to_code_with_mapping(
     let (mut mods, _) = modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
     let named = |name: &str| remacs_runtime::editor::event_code_for(name);
     let base = match ks.key.as_str() {
-        "return" | "enter" => b'\r' as i128,
-        "tab" => b'\t' as i128,
+        // Keep special ASCII keys as named events so they remain distinct
+        // from the corresponding control characters (C-m, C-i, and C-[).
+        "return" | "enter" => named("return"),
+        "tab" => named("tab"),
         "backspace" => 127,
-        "escape" => 27,
+        "escape" => named("escape"),
         "space" => 32,
         "pageup" => named("prior"),
         "pagedown" => named("next"),
