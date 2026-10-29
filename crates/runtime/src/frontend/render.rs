@@ -553,7 +553,8 @@ fn input_snapshot(i: &Interp, cached: Option<&GridInput>) -> Option<GridInput> {
                 .or_else(|| bb.locals.get(&id).cloned())
         })
         .is_some_and(|value| value.truthy());
-    let selection = if mark_active {
+    let transient_mark_mode = buffer_setting(i, "transient-mark-mode", bb.id).truthy();
+    let selection = if mark_active && transient_mark_mode {
         bb.mark.as_ref().and_then(|mark| {
             let mark = mark.borrow();
             if mark.buffer != Some(bb.id) {
@@ -4124,8 +4125,10 @@ fn window_faces(
     let mouse_position = mouse_position
         .filter(|position| position.buffer_id == bb.id)
         .map(|position| position.buffer_position);
-    // Region: GNU shows it between the mark and the buffer's point
-    // while `mark-active' is non-nil.
+    // GNU's `redisplay--update-region-highlight' only displays the
+    // region while Transient Mark mode and `mark-active' are both set.
+    // Nonselected windows use their own window point, and are eligible
+    // only when `highlight-nonselected-windows' is non-nil.
     let region = {
         let active = i
             .buffer_local_toplevel_value(ctx.mark_active, bb.id)
@@ -4133,12 +4136,33 @@ fn window_faces(
             .or_else(|| bb.locals.get(&ctx.mark_active).cloned())
             .map(|v| v.truthy())
             .unwrap_or(false);
+        let transient_mark_mode = buffer_setting(i, "transient-mark-mode", bb.id).truthy();
+        let highlight_nonselected =
+            buffer_setting(i, "highlight-nonselected-windows", bb.id).truthy();
+        let window_present = matches!(win, Value::Window(_));
+        let selected_window = match win {
+            Value::Window(window) => crate::editor::sel_window(i)
+                .is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, window)),
+            _ => false,
+        };
+        let point = match win {
+            Value::Window(_window) if selected_window => bb.point(),
+            Value::Window(window) => window.borrow().point,
+            _ => bb.point(),
+        }
+        .clamp(bb.begv, bb.zv);
         let mark = bb.mark.as_ref().and_then(|m| {
             let mm = m.borrow();
             (mm.buffer == Some(bb.id)).then_some(mm.position)
         });
-        match (active, mark) {
-            (true, Some(mk)) if mk != bb.point() => Some((mk.min(bb.point()), mk.max(bb.point()))),
+        match (
+            active
+                && transient_mark_mode
+                && window_present
+                && (selected_window || highlight_nonselected),
+            mark,
+        ) {
+            (true, Some(mk)) if mk != point => Some((mk.min(point), mk.max(point))),
             _ => None,
         }
     };
