@@ -1989,21 +1989,6 @@ impl KeyIo for ChanIo {
 
         self.latest_snapshots = snapshots.clone();
         if let Some(updates) = &self.gui_requests {
-            let active_sources: std::collections::HashSet<_> = self
-                .frame_grids
-                .values()
-                .flat_map(|grid| grid.images.iter().map(|image| image.source.clone()))
-                .collect();
-            if let Ok(mut entries) = self.image_cache_entries.lock() {
-                entries.retain(|source, _| active_sources.contains(source));
-                for source in active_sources {
-                    entries.entry(source).or_insert(0);
-                }
-                let total = entries
-                    .values()
-                    .fold(0usize, |total, bytes| total.saturating_add(*bytes));
-                i.gui_image_cache_size.store(total, Ordering::Release);
-            }
             self.frame_snapshot_mailbox.publish(updates, snapshots)?;
         } else {
             if let Ok(mut entries) = self.image_cache_entries.lock() {

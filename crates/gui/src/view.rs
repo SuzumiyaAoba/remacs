@@ -2390,9 +2390,8 @@ fn grid_image_element(
             total.saturating_add(data.as_bytes(frame).map_or(0, <[u8]>::len))
         });
         if let Ok(mut entries) = image_cache_entries.lock()
-            && let Some(cached_bytes) = entries.get_mut(&cache_key)
         {
-            *cached_bytes = image_bytes;
+            entries.insert(cache_key.clone(), image_bytes);
             let total = entries
                 .values()
                 .fold(0usize, |total, bytes| total.saturating_add(*bytes));

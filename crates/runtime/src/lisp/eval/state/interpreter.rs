@@ -65,7 +65,7 @@ pub struct Interp {
     pub gui_mouse_frame_position: Option<(usize, i128, i128)>,
     /// The same pointer location in pixels for `mouse-pixel-position'.
     pub gui_mouse_frame_pixel_position: Option<(usize, i128, i128)>,
-    /// Decoded bytes used by currently displayed GUI image assets.
+    /// Decoded bytes retained by the GUI image asset cache.
     pub gui_image_cache_size: Arc<AtomicUsize>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
