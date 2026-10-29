@@ -89,6 +89,51 @@ fn isearch_search(
     }
 }
 
+fn isearch_yank_word_or_char(i: &mut Interp, position: usize) -> Option<String> {
+    let source = format!(
+        "(save-excursion (goto-char (min {} (point-max))) \
+           (buffer-substring-no-properties (point) \
+             (progn (if (or (eq (char-syntax (or (char-after) 0)) ?w) \
+                            (eq (char-syntax (or (char-after (1+ (point))) 0)) ?w)) \
+                        (forward-word 1) (forward-char 1)) \
+                    (point))))",
+        position.saturating_add(1)
+    );
+    let Value::Str(text) = i.eval_str(&source).ok()? else {
+        return None;
+    };
+    Some(text.borrow().to_unicode_lossy())
+}
+
+fn prepare_isearch_yanked_text(
+    i: &mut Interp,
+    text: &str,
+    case_fold: &Value,
+    regexp: bool,
+) -> String {
+    let mut value = Value::string(text);
+    let not_yanks = i
+        .intern_soft("search-upper-case")
+        .map(|symbol| i.symbol_value(symbol))
+        .is_some_and(|value| matches!(value, Value::Sym(symbol) if i.symbol_name(symbol) == "not-yanks"));
+    if case_fold.truthy() && not_yanks
+        && let Some(downcase) = i.intern_soft("downcase")
+        && let Ok(downcased) = i.apply(&Value::Sym(downcase), vec![value.clone()])
+    {
+        value = downcased;
+    }
+    if regexp
+        && let Some(regexp_quote) = i.intern_soft("regexp-quote")
+        && let Ok(quoted) = i.apply(&Value::Sym(regexp_quote), vec![value.clone()])
+    {
+        value = quoted;
+    }
+    match value {
+        Value::Str(text) => text.borrow().to_unicode_lossy(),
+        other => i.princ_to_string(&other).to_unicode_lossy(),
+    }
+}
+
 /// What the isearch driver should do after a key.
 pub(super) enum IsearchAction {
     /// Keep reading keys.
@@ -184,6 +229,67 @@ impl Isearch {
         self.case_fold.truthy()
     }
 
+    fn search_updated_query(&mut self, i: &mut Interp, failure_start: usize) {
+        let cur = self.cur();
+        let case_fold_search = self.case_fold_for_search(i);
+        let hit = if self.positions.len() > 1 {
+            let (match_start, match_end) = *self.spans.last().unwrap_or(&(cur, cur));
+            if self.backward {
+                match isearch_search(
+                    i,
+                    &self.query,
+                    false,
+                    self.regexp,
+                    match_start,
+                    case_fold_search,
+                ) {
+                    Some((_, beg, end)) if beg == match_start && end <= self.start => {
+                        Some((beg, beg, end))
+                    }
+                    _ => isearch_search(
+                        i,
+                        &self.query,
+                        true,
+                        self.regexp,
+                        self.start.min(match_end + 1),
+                        case_fold_search,
+                    ),
+                }
+            } else {
+                isearch_search(
+                    i,
+                    &self.query,
+                    false,
+                    self.regexp,
+                    match_start,
+                    case_fold_search,
+                )
+            }
+        } else {
+            isearch_search(
+                i,
+                &self.query,
+                self.backward,
+                self.regexp,
+                self.start,
+                case_fold_search,
+            )
+        };
+        match hit {
+            Some((position, beg, end)) => {
+                self.positions.push(position);
+                self.spans.push((beg, end));
+                self.failing = false;
+                self.fail_pos = None;
+                self.go_to(i, position);
+            }
+            None => {
+                self.failing = true;
+                self.fail_pos = Some(failure_start);
+            }
+        }
+    }
+
     /// Handle one key event; updates query/point/failing state.
     pub(super) fn step(&mut self, i: &mut Interp, key: i128) -> IsearchAction {
         let cur = self.cur();
@@ -228,6 +334,30 @@ impl Isearch {
                 self.restore_history(i);
                 IsearchAction::Continue
             }
+            c if c == 23 || c == (CHAR_CTL | 'w' as i128) => {
+                let anchor = if self.backward {
+                    self.spans.last().map(|span| span.1).unwrap_or(cur)
+                } else {
+                    cur
+                };
+                if let Some(text) = isearch_yank_word_or_char(i, anchor)
+                    && !text.is_empty()
+                {
+                    let failure_start = self
+                        .fail_pos
+                        .unwrap_or_else(|| self.query.chars().count());
+                    self.save_history();
+                    let text = prepare_isearch_yanked_text(
+                        i,
+                        &text,
+                        &self.case_fold,
+                        self.regexp,
+                    );
+                    self.query.push_str(&text);
+                    self.search_updated_query(i, failure_start);
+                }
+                IsearchAction::Continue
+            }
             c if c == (CHAR_META | 'c' as i128) => {
                 self.save_history();
                 self.case_fold = if self.case_fold.truthy() {
@@ -250,61 +380,7 @@ impl Isearch {
                 if let Some(ch) = char::from_u32(c as u32) {
                     self.query.push(ch);
                 }
-                let case_fold_search = self.case_fold_for_search(i);
-                // Extend the current match like GNU's
-                // `isearch-search-and-update': forward searches
-                // restart at the match's START (`isearch-other-end')
-                // so the match grows in place; backward searches try
-                // `looking-at' at the match start first (the new
-                // match must not reach past the entry point), else
-                // fall back to a real backward search.
-                let hit = if self.positions.len() > 1 {
-                    let (mb, me) = *self.spans.last().unwrap_or(&(cur, cur));
-                    if self.backward {
-                        match isearch_search(
-                            i,
-                            &self.query,
-                            false,
-                            self.regexp,
-                            mb,
-                            case_fold_search,
-                        ) {
-                            Some((_, b, e)) if b == mb && e <= self.start => Some((b, b, e)),
-                            _ => isearch_search(
-                                i,
-                                &self.query,
-                                true,
-                                self.regexp,
-                                self.start.min(me + 1),
-                                case_fold_search,
-                            ),
-                        }
-                    } else {
-                        isearch_search(i, &self.query, false, self.regexp, mb, case_fold_search)
-                    }
-                } else {
-                    isearch_search(
-                        i,
-                        &self.query,
-                        self.backward,
-                        self.regexp,
-                        self.start,
-                        case_fold_search,
-                    )
-                };
-                match hit {
-                    Some((p, b, e)) => {
-                        self.positions.push(p);
-                        self.spans.push((b, e));
-                        self.failing = false;
-                        self.fail_pos = None;
-                        self.go_to(i, p);
-                    }
-                    None => {
-                        self.failing = true;
-                        self.fail_pos = Some(failure_start);
-                    }
-                }
+                self.search_updated_query(i, failure_start);
                 IsearchAction::Continue
             }
             other => {
