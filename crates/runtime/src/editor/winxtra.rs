@@ -3921,8 +3921,12 @@ fn f_set_window_new_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_frame_pointer_visible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: FRAME is a plain
     // framep arg (dead frames ok); batch tty always shows it.
-    let _ = frame_any(i, &arg(&a, 0))?;
-    Ok(Value::t())
+    let frame = frame_any(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_graphical(i, &frame) {
+        Ok(Value::from_bool(frame.borrow().pointer_visible))
+    } else {
+        Ok(Value::t())
+    }
 }
 /// Mark WINDOW second most recently used only while the selected
 /// window still carries the latest selection count.

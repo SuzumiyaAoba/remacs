@@ -404,6 +404,8 @@ pub struct Grid {
     pub default_row_height: usize,
     /// Pointer shape at the current mouse position, if it is over buffer text.
     pub hover_cursor: Option<GridPointerShape>,
+    /// Whether the native mouse pointer should be visible over this frame.
+    pub pointer_visible: bool,
     /// Unicode text and visible positions for the active OS text client.
     pub input: Option<GridInput>,
 }
@@ -489,6 +491,7 @@ impl Grid {
             default_line_height: 19,
             default_row_height: 19,
             hover_cursor: None,
+            pointer_visible: true,
             input: None,
         }
     }
@@ -4763,6 +4766,7 @@ fn render_grid_internal(
                 default_line_height,
                 default_row_height,
                 hover_cursor,
+                pointer_visible: true,
                 input,
             };
         }
@@ -6264,6 +6268,7 @@ fn render_grid_internal(
         default_line_height,
         default_row_height,
         hover_cursor,
+        pointer_visible: fb.pointer_visible,
         input,
     }
 }

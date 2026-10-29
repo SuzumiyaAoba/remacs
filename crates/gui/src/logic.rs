@@ -1366,11 +1366,18 @@ impl KeyIo for ChanIo {
                 position,
                 absolute_position,
             } => {
+                let moved = absolute_position
+                    .is_some_and(|position| self.mouse_absolute_position != Some(position));
                 if let Some(position) = absolute_position {
                     self.mouse_absolute_position = Some(position);
                 }
                 self.update_mouse_face_position(frame_id, position);
-                Ok(None)
+                if moved {
+                    self.render_requested = true;
+                    Ok(Some(InputEvent::MouseMoved { frame_id }))
+                } else {
+                    Ok(None)
+                }
             }
             GuiEvent::MouseDragMove { position } => {
                 Ok(Some(InputEvent::MouseMovement { position }))

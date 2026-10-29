@@ -164,6 +164,8 @@ pub type WindowRef = Rc<RefCell<Window>>;
 /// An editor frame (a terminal or GUI frame).
 pub struct Frame {
     pub id: usize,
+    /// Whether the native mouse pointer is currently visible in this frame.
+    pub pointer_visible: bool,
     /// The Lisp name string, shared so mutations and text properties
     /// remain visible to frame reporting, printing, and name allocation.
     pub name: StrRef,
@@ -401,6 +403,7 @@ impl Frame {
         let frame = crate::lisp::memory::allocate(
             Frame {
                 id: next_frame_id(),
+                pointer_visible: true,
                 name: Value::string_ref("F1"),
                 windows: vec![main.clone()],
                 selected: main.clone(),

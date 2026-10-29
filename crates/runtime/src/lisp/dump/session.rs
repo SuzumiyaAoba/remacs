@@ -276,6 +276,7 @@ impl Image {
             };
             let object = crate::editor::Frame {
                 id: frame.id,
+                pointer_visible: true,
                 name: Value::string_ref(""),
                 windows: Vec::new(),
                 selected: selected.clone(),

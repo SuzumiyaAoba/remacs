@@ -839,7 +839,11 @@ impl Render for EditorView {
         let physical_modifier_state = self.physical_modifier_state.clone();
         let key_modifier_state = physical_modifier_state.clone();
         let bell_flash = self.bell_flash;
-        let mouse_cursor = gpui_cursor_style(self.grid.hover_cursor);
+        let mouse_cursor = if self.grid.pointer_visible {
+            gpui_cursor_style(self.grid.hover_cursor)
+        } else {
+            CursorStyle::None
+        };
         let grid = self.grid.clone();
         let images = grid.images.clone();
         let image_vscrolls = grid.vscrolls.clone();

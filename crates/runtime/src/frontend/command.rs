@@ -258,6 +258,7 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::MouseMovement { position } => {
                 dispatch_mouse_movement(i, position, &mut keys, &mut arg_mode)?;
             }
+            InputEvent::MouseMoved { frame_id } => reveal_pointer_after_mouse_move(i, frame_id),
             InputEvent::MouseWheel {
                 up,
                 modifiers,
@@ -525,6 +526,9 @@ fn dispatch_key_core_inner(
                 match result {
                     Ok(_) => {
                         boundary = !skip_command;
+                        if matches!(&cmd, Value::Sym(id) if i.symbol_name(*id) == "self-insert-command") {
+                            hide_pointer_after_self_insert(i);
+                        }
                     }
                     Err(flow) if command_flow.is_some() => {
                         **command_flow.as_mut().unwrap() = Some(flow);
@@ -667,6 +671,9 @@ fn dispatch_key_core_inner(
                                         char::from_u32(k as u32).unwrap_or('?').to_string()
                                     };
                                     let _ = crate::buffer::primitives::chg_insert_pt(i, &s, false);
+                                    if n == "self-insert-command" {
+                                        hide_pointer_after_self_insert(i);
+                                    }
                                 }
                                 post_command_undo_boundary(i);
                             }
@@ -803,6 +810,22 @@ fn dispatch_ns_service(
     let _ = i.set_symbol(service_name, Value::string(name));
     let _ = i.set_symbol(service_argument, Value::string(argument));
     dispatch_frontend_command(i, "ns-spi-service-call", keys, arg_mode);
+}
+
+fn reveal_pointer_after_mouse_move(i: &mut Interp, frame_id: Option<usize>) {
+    let frame = frame_id
+        .and_then(|frame_id| {
+            i.frames
+                .iter()
+                .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+                .cloned()
+        })
+        .or_else(|| i.selected_frame.clone());
+    if let Some(frame) = frame
+        && crate::editor::frame_is_graphical(i, &frame)
+    {
+        frame.borrow_mut().pointer_visible = true;
+    }
 }
 
 fn mouse_movement_event(i: &mut Interp, position: Option<MousePosition>) -> Value {
@@ -1400,6 +1423,20 @@ fn dispatch_frame_moved(
 
 /// Insert text committed by the operating system without interpreting
 /// control characters such as newline and TAB as key bindings.
+fn hide_pointer_after_self_insert(i: &mut Interp) {
+    let make_pointer_invisible = i
+        .q_soft("make-pointer-invisible")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
+    if !make_pointer_invisible {
+        return;
+    }
+    if let Some(frame) = i.selected_frame.clone()
+        && crate::editor::frame_is_graphical(i, &frame)
+    {
+        frame.borrow_mut().pointer_visible = false;
+    }
+}
+
 fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mut bool) {
     if text.is_empty() {
         return;
@@ -1439,7 +1476,10 @@ fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mu
 
     if i.current_buffer_ref().is_some() {
         match crate::buffer::primitives::chg_insert_pt(i, text, false) {
-            Ok(_) => post_command_undo_boundary(i),
+            Ok(_) => {
+                post_command_undo_boundary(i);
+                hide_pointer_after_self_insert(i);
+            }
             Err(flow) => report_flow(i, flow),
         }
     }
@@ -1481,6 +1521,7 @@ fn dispatch_text_range(
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
 
     let mut changed = false;
+    let mut inserted = false;
     if let Some(buffer) = i.current_buffer_ref() {
         let (start, end) = {
             let bb = buffer.borrow();
@@ -1502,10 +1543,16 @@ fn dispatch_text_range(
                 buffer.borrow_mut().set_point(start);
             }
             match crate::buffer::primitives::chg_insert_pt(i, text, false) {
-                Ok(_) => changed = true,
+                Ok(_) => {
+                    changed = true;
+                    inserted = true;
+                }
                 Err(flow) => report_flow(i, flow),
             }
         }
+    }
+    if inserted {
+        hide_pointer_after_self_insert(i);
     }
     if changed {
         post_command_undo_boundary(i);
@@ -1672,6 +1719,10 @@ fn minibuf_loop<T: KeyIo>(
                     term.borrow_mut().unread(character as i128);
                 }
                 return Ok(MinibufInput::Key(first));
+            }
+            InputEvent::MouseMoved { frame_id } => {
+                reveal_pointer_after_mouse_move(i, frame_id);
+                render_needed = true;
             }
             InputEvent::MouseMovement { position } if single => {
                 return Ok(MinibufInput::Event(mouse_movement_event(i, position)));
