@@ -31,7 +31,10 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{BOOL, Class, Object, Sel, YES},
+    runtime::{
+        BOOL, Class, Imp, Method, Object, Sel, YES, class_getInstanceMethod,
+        method_setImplementation, object_getClass,
+    },
     sel, sel_impl,
 };
 mod keys;
@@ -40,6 +43,18 @@ mod monitor;
 mod view;
 use logic::{ClipboardRequest, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames};
 use view::{EditorView, build_managed_editor_view};
+
+#[cfg(target_os = "macos")]
+static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
+
+#[cfg(target_os = "macos")]
+#[link(name = "objc", kind = "dylib")]
+unsafe extern "C" {
+    fn objc_getAssociatedObject(object: id, key: *const std::ffi::c_void) -> id;
+    fn objc_setAssociatedObject(object: id, key: *const std::ffi::c_void, value: id, policy: usize);
+}
 
 #[cfg(target_os = "macos")]
 fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String>, String> {
@@ -427,6 +442,7 @@ pub fn run_gui_with_dump(
                 ..Default::default()
             },
             |window, cx| {
+                set_native_no_accept_focus(window, initial_no_accept_focus);
                 if initial_focus_on_map {
                     cx.activate(false);
                 }
@@ -457,6 +473,7 @@ pub fn run_gui_with_dump(
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
+            let mut frame_focus_on_map = HashMap::<usize, bool>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -488,6 +505,8 @@ pub fn run_gui_with_dump(
                             let frame_left = snapshot.left;
                             let frame_top = snapshot.top;
                             let no_accept_focus = snapshot.no_accept_focus;
+                            let focus_on_map = !snapshot.no_focus_on_map && !no_accept_focus;
+                            frame_focus_on_map.insert(frame_id, focus_on_map);
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -527,7 +546,9 @@ pub fn run_gui_with_dump(
                                         view.set_internal_border_width(internal_border_width);
                                     let alpha_background_changed =
                                         view.set_alpha_background(alpha_background);
-                                    view.set_no_accept_focus(window, no_accept_focus);
+                                    if view.set_no_accept_focus(window, no_accept_focus) {
+                                        set_native_no_accept_focus(window, no_accept_focus);
+                                    }
                                     if update_appearance {
                                         window.set_window_appearance(ns_appearance);
                                     }
@@ -687,9 +708,8 @@ pub fn run_gui_with_dump(
                                 snapshot.ns_transparent_titlebar,
                             );
                             let event_tx = event_tx.clone();
-                            let no_accept_focus = snapshot.no_accept_focus;
-                            let focus_on_map = !snapshot.no_focus_on_map && !no_accept_focus;
                             let handle = match cx.open_window(options, move |window, app| {
+                                set_native_no_accept_focus(window, no_accept_focus);
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
@@ -755,6 +775,7 @@ pub fn run_gui_with_dump(
                             }
                             window_modes.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
+                            frame_focus_on_map.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -809,10 +830,14 @@ pub fn run_gui_with_dump(
                     }
                     GuiRequest::FrameVisibility { frame_id, visible } => {
                         native_visibility.insert(frame_id, visible);
+                        let focus_on_map = frame_focus_on_map
+                            .get(&frame_id)
+                            .copied()
+                            .unwrap_or(true);
                         if let Some(handle) = windows.get(&frame_id).copied() {
                             let _ = handle.update(cx, |_view, window, _cx| {
                                 if visible {
-                                    show_frame_window(window);
+                                    show_frame_window(window, focus_on_map);
                                 } else {
                                     window.minimize_window();
                                 }
@@ -1402,13 +1427,17 @@ fn native_frame_visible(window: &Window) -> Option<bool> {
     }
 }
 
-fn show_frame_window(window: &Window) {
+fn show_frame_window(window: &Window, focus_on_map: bool) {
     #[cfg(target_os = "macos")]
     if let Some(native_window) = appkit_native_window(window) {
         unsafe {
             let minimized: BOOL = msg_send![native_window, isMiniaturized];
             if minimized == YES {
                 let _: () = msg_send![native_window, deminiaturize: nil];
+            }
+            if !focus_on_map {
+                let _: () = msg_send![native_window, orderFront: nil];
+                return;
             }
         }
     }
@@ -1476,6 +1505,80 @@ fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool)
         }
     }
 }
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn gpui_can_become_key_window(this: &Object, selector: Sel) -> BOOL {
+    let associated_key = std::ptr::addr_of!(NO_ACCEPT_FOCUS_ASSOCIATED_KEY).cast();
+    let no_accept_focus = unsafe {
+        !objc_getAssociatedObject(this as *const Object as id, associated_key).is_null()
+    };
+    if no_accept_focus {
+        return NO;
+    }
+
+    let class = unsafe { object_getClass(this as *const Object) } as usize;
+    let original = GPUI_CAN_BECOME_KEY_ORIGINALS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .get(&class)
+        .copied();
+    if let Some(original) = original {
+        let original: unsafe extern "C" fn(&Object, Sel) -> BOOL =
+            unsafe { std::mem::transmute(original) };
+        unsafe { original(this, selector) }
+    } else {
+        YES
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_gpui_no_accept_focus_hooks() {
+    // GPUI 0.2.2 overrides canBecomeKeyWindow to always return YES. Preserve
+    // that implementation for ordinary windows, and gate only the GPUI
+    // window instances carrying Remacs' no-accept-focus frame parameter.
+    let originals = GPUI_CAN_BECOME_KEY_ORIGINALS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut originals = originals.lock().unwrap();
+    for class_name in ["GPUIWindow", "GPUIPanel"] {
+        let Some(class) = Class::get(class_name) else {
+            continue;
+        };
+        let class = class as *const Class;
+        let class_id = class as usize;
+        if originals.contains_key(&class_id) {
+            continue;
+        }
+        let method = unsafe { class_getInstanceMethod(class, sel!(canBecomeKeyWindow)) };
+        if method.is_null() {
+            continue;
+        }
+        let implementation: unsafe extern "C" fn(&Object, Sel) -> BOOL =
+            gpui_can_become_key_window;
+        let implementation: Imp = unsafe { std::mem::transmute(implementation) };
+        let original = unsafe { method_setImplementation(method as *mut Method, implementation) };
+        originals.insert(class_id, original as usize);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_native_no_accept_focus(window: &Window, no_accept_focus: bool) {
+    let Some(native_window) = appkit_native_window(window) else {
+        return;
+    };
+    install_gpui_no_accept_focus_hooks();
+    let associated_key = std::ptr::addr_of!(NO_ACCEPT_FOCUS_ASSOCIATED_KEY).cast();
+    let marker = if no_accept_focus {
+        class!(NSObject) as *const Class as *mut Object
+    } else {
+        nil
+    };
+    unsafe {
+        objc_setAssociatedObject(native_window, associated_key, marker, 0);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_native_no_accept_focus(_window: &Window, _no_accept_focus: bool) {}
 
 #[cfg(target_os = "macos")]
 fn appkit_native_window(window: &Window) -> Option<id> {

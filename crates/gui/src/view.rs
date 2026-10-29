@@ -638,15 +638,20 @@ impl EditorView {
         self.auto_lower.set(auto_lower);
     }
 
-    pub(super) fn set_no_accept_focus(&mut self, window: &mut Window, no_accept_focus: bool) {
+    pub(super) fn set_no_accept_focus(
+        &mut self,
+        window: &mut Window,
+        no_accept_focus: bool,
+    ) -> bool {
         if self.no_accept_focus.replace(no_accept_focus) == no_accept_focus {
-            return;
+            return false;
         }
         if no_accept_focus {
-            self.focus.blur(window);
+            window.blur();
         } else if window.is_window_active() {
             self.focus.focus(window);
         }
+        true
     }
 
     pub(super) fn flash_bell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2916,12 +2921,12 @@ pub(super) fn build_managed_editor_view(
         }
     });
     view.focus_subscriptions.push(subscription);
-    let focus = view.focus.clone();
     let no_accept_focus = view.no_accept_focus.clone();
+    let no_accept_focus_on_focus_in = no_accept_focus.clone();
     let frame_events = view.tx.clone();
     let subscription = window.on_focus_in(&view.focus, cx, move |window, cx| {
-        if no_accept_focus.get() {
-            focus.blur(window);
+        if no_accept_focus_on_focus_in.get() {
+            window.blur();
         }
         if let Some(frame_id) = frame_events.frame_id() {
             let visible = cx
