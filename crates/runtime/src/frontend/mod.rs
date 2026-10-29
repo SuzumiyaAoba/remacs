@@ -233,6 +233,8 @@ pub struct MousePosition {
     pub window_id: Option<usize>,
     /// Window area under the pointer; nil denotes buffer text.
     pub area: Option<MouseArea>,
+    /// The pointer is over the mode-line buffer-identification field.
+    pub mode_line_buffer_name: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

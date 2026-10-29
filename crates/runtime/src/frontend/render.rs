@@ -237,6 +237,7 @@ pub struct GridModeLine {
     pub row: usize,
     pub left: usize,
     pub width: usize,
+    pub buffer_name_range: Option<(usize, usize)>,
 }
 
 /// A window body whose contents are raised by a pixel scroll offset.
@@ -2235,6 +2236,51 @@ fn place_text_row(
         }
         column = column.saturating_add(char_width);
     }
+}
+
+fn screen_row_find_text_range(
+    screen_row: &[ScreenCell],
+    left: usize,
+    width: usize,
+    text: &str,
+) -> Option<(usize, usize)> {
+    let characters: Vec<char> = text.chars().collect();
+    if characters.is_empty() {
+        return None;
+    }
+    let right = left.saturating_add(width).min(screen_row.len());
+    for start in left..right {
+        if screen_row[start].continuation || screen_row[start].chars.is_empty() {
+            continue;
+        }
+        let mut column = start;
+        let mut index = 0;
+        while index < characters.len() && column < right {
+            let cell = &screen_row[column];
+            if cell.continuation {
+                column += 1;
+                continue;
+            }
+            if cell.chars.is_empty() {
+                break;
+            }
+            for (character, _) in &cell.chars {
+                if characters.get(index) != Some(character) {
+                    index = usize::MAX;
+                    break;
+                }
+                index += 1;
+            }
+            if index == usize::MAX {
+                break;
+            }
+            column += display_char_width(cell.chars[0].0).max(1);
+        }
+        if index == characters.len() {
+            return Some((start, column));
+        }
+    }
+    None
 }
 
 fn place_fringe_glyph(
@@ -6001,12 +6047,21 @@ fn render_grid_internal(
                 &mode_context,
                 ml_name,
             );
+            let buffer_name_range = screen_rows.get(my).and_then(|row| {
+                screen_row_find_text_range(
+                    row,
+                    window_left,
+                    window_width,
+                    &mode_context.buffer_name,
+                )
+            });
             mode_lines.push(crate::frontend::GridModeLine {
                 window_id,
                 buffer_id: buf_id,
                 row: my,
                 left: window_left,
                 width: window_width,
+                buffer_name_range,
             });
             if let Some(text) = mode_line_help_echo(i, buf_id, &mode_line_format, 0) {
                 push_help_echo(&mut help_echoes, GridHelpEcho {

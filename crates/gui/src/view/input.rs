@@ -136,6 +136,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         column: character,
         window_id: None,
         area: None,
+        mode_line_buffer_name: false,
     })
 }
 
@@ -161,6 +162,9 @@ pub(super) fn mode_line_mouse_position(
         column: column.saturating_sub(mode_line.left),
         window_id: Some(mode_line.window_id),
         area: Some(MouseArea::ModeLine),
+        mode_line_buffer_name: mode_line
+            .buffer_name_range
+            .is_some_and(|(left, right)| column >= left && column < right),
     })
 }
 

@@ -1324,12 +1324,29 @@ fn mouse_position_value(i: &Interp, position: MousePosition) -> Option<Value> {
     })?;
     let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
     if let Some(crate::frontend::MouseArea::ModeLine) = position.area {
+        let buffer_id = window.borrow().buffer;
+        let mode_line_string = position
+            .mode_line_buffer_name
+            .then(|| i.q_soft("mode-line-buffer-identification"))
+            .flatten()
+            .and_then(|id| {
+                i.buffer_local_toplevel_value(id, buffer_id)
+                    .or_else(|| i.default_toplevel_value(id))
+            })
+            .and_then(|value| match value {
+                Value::Cons(cell) => Some(Value::cons(
+                    cell.borrow().car.clone(),
+                    Value::Int(position.column as i128),
+                )),
+                _ => None,
+            })
+            .unwrap_or(Value::Nil);
         Some(Value::list(vec![
             Value::Window(window),
             Value::Sym(i.intern("mode-line")),
             coordinates,
             Value::Int(0),
-            Value::Nil,
+            mode_line_string,
             Value::Nil,
             Value::cons(
                 Value::Int(position.column as i128),
