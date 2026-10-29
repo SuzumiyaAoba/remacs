@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use num_traits::ToPrimitive;
 
 use crate::editor::{
     FrameRef, HorizontalScrollBarType, VerticalScrollBarType, WindowRef, f_window_list, frame_any,
@@ -246,8 +247,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "window-vscroll",
         0,
         2,
-        f_zero_winlive,
-        "Vertical scroll amount (0)."
+        f_window_vscroll,
+        "Vertical scroll amount."
     ),
     S!("set-window-vscroll", 2, 4, f_set_window_vscroll, ""),
     S!(
@@ -2211,9 +2212,41 @@ fn f_posn_pair(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_set_window_vscroll(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = win_live(i, &arg(&a, 0))?;
-    // A tty window has no vscroll; GNU reports 0.
-    Ok(Value::Int(0))
+    let window = win_live(i, &arg(&a, 0))?;
+    let value = match &a[1] {
+        Value::Int(value) => *value as f64,
+        Value::BigInt(value) => value.to_f64().unwrap_or_else(|| {
+            if value.sign() == num_bigint::Sign::Minus {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            }
+        }),
+        Value::Float(value) => **value,
+        other => return Err(i.wrong_type_mut("numberp", other)),
+    };
+    let pixels_p = a.get(2).is_some_and(Value::truthy);
+    let Some(frame) = crate::editor::frame_of_window(i, &window)
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+    else {
+        return Ok(Value::Int(0));
+    };
+    let value = if value.is_nan() { 0.0 } else { value.max(0.0) };
+    let line_height = crate::editor::frame_char_height(i, &frame).max(1) as f64;
+    let scale = if pixels_p { 1.0 } else { line_height };
+    let pixels = (value * scale).clamp(0.0, usize::MAX as f64).trunc() as usize;
+    {
+        let mut window = window.borrow_mut();
+        window.vscroll = pixels;
+        window.suspend_vscroll = true;
+    }
+    if pixels_p {
+        Ok(arg(&a, 1).clone())
+    } else if pixels == 0 {
+        Ok(Value::Int(0))
+    } else {
+        Ok(Value::float(pixels as f64 / line_height))
+    }
 }
 
 fn f_scroll_left(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -4053,6 +4086,22 @@ fn f_frame_bottom_divider_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
 fn f_zero_winlive(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _ = win_live(i, &arg(&a, 0))?;
     Ok(Value::Int(0))
+}
+
+fn f_window_vscroll(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    let Some(frame) = crate::editor::frame_of_window(i, &window)
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+    else {
+        return Ok(Value::Int(0));
+    };
+    let pixels = window.borrow().vscroll;
+    if pixels == 0 || arg(&a, 1).truthy() {
+        return Ok(Value::Int(pixels as i128));
+    }
+    Ok(Value::float(
+        pixels as f64 / crate::editor::frame_char_height(i, &frame).max(1) as f64,
+    ))
 }
 
 fn f_window_bottom_divider_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

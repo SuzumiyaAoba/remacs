@@ -13,7 +13,7 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
     GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
-    GridPointerShape, GridStipple, MouseButton as RemacsMouseButton,
+    GridPointerShape, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 use std::{cell::Cell, rc::Rc};
@@ -116,6 +116,108 @@ fn rows_fitting_viewport(grid: &Grid, height: Pixels, fallback: Pixels) -> usize
         rows += 1;
     }
     rows.max(3)
+}
+
+fn vscroll_pixels_for_cell(grid: &Grid, row: usize, column: usize) -> usize {
+    grid.vscrolls
+        .iter()
+        .find(|scroll| {
+            row >= scroll.top
+                && row < scroll.top.saturating_add(scroll.rows)
+                && column >= scroll.left
+                && column < scroll.left.saturating_add(scroll.width)
+        })
+        .map_or(0, |scroll| scroll.pixels)
+}
+
+fn vscroll_bounds_for_cell(
+    grid: &Grid,
+    row: usize,
+    column: usize,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> Option<Bounds<Pixels>> {
+    let scroll = grid.vscrolls.iter().find(|scroll| {
+        row >= scroll.top
+            && row < scroll.top.saturating_add(scroll.rows)
+            && column >= scroll.left
+            && column < scroll.left.saturating_add(scroll.width)
+    })?;
+    let first_row = scroll.top.min(grid.rows.len());
+    let end_row = scroll.top.saturating_add(scroll.rows).min(grid.rows.len());
+    if first_row >= end_row {
+        return None;
+    }
+    let top = bounds.top() + grid_row_top(grid, first_row, line_height);
+    let bottom = bounds.top() + grid_row_top(grid, end_row, line_height);
+    Some(Bounds {
+        origin: point(bounds.left() + cell_width * scroll.left as f32, top),
+        size: size(cell_width * scroll.width as f32, bottom - top),
+    })
+}
+
+fn with_vscroll_cell_clip<R>(
+    grid: &Grid,
+    row: usize,
+    column: usize,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    match vscroll_bounds_for_cell(grid, row, column, bounds, cell_width, line_height) {
+        Some(bounds) => window.with_content_mask(Some(ContentMask { bounds }), paint),
+        None => paint(window),
+    }
+}
+
+fn unscrolled_row_clips(
+    grid: &Grid,
+    row: usize,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> Option<Vec<Bounds<Pixels>>> {
+    let width = grid.attrs.get(row)?.len();
+    let mut covered = grid
+        .vscrolls
+        .iter()
+        .filter(|scroll| {
+            row >= scroll.top && row < scroll.top.saturating_add(scroll.rows)
+        })
+        .filter_map(|scroll| {
+            let left = scroll.left.min(width);
+            let right = scroll.left.saturating_add(scroll.width).min(width);
+            (left < right).then_some((left, right))
+        })
+        .collect::<Vec<_>>();
+    if covered.is_empty() {
+        return None;
+    }
+    covered.sort_unstable_by_key(|(left, _)| *left);
+
+    let row_top = bounds.top() + grid_row_top(grid, row, line_height);
+    let row_bottom = row_top + grid_row_height(grid, row, line_height);
+    let mut clips = Vec::new();
+    let mut left = 0;
+    for (covered_left, covered_right) in covered {
+        if covered_left > left {
+            clips.push(Bounds {
+                origin: point(bounds.left() + cell_width * left as f32, row_top),
+                size: size(cell_width * (covered_left - left) as f32, row_bottom - row_top),
+            });
+        }
+        left = left.max(covered_right);
+    }
+    if left < width {
+        clips.push(Bounds {
+            origin: point(bounds.left() + cell_width * left as f32, row_top),
+            size: size(cell_width * (width - left) as f32, row_bottom - row_top),
+        });
+    }
+    Some(clips)
 }
 
 #[derive(Clone, Copy)]
@@ -738,7 +840,9 @@ impl Render for EditorView {
         let mouse_cursor = gpui_cursor_style(self.grid.hover_cursor);
         let grid = self.grid.clone();
         let images = grid.images.clone();
+        let image_vscrolls = grid.vscrolls.clone();
         let help_echoes = grid.help_echoes.clone();
+        let help_vscrolls = grid.vscrolls.clone();
         let help_row_heights = grid.row_heights.clone();
         let help_default_line_height = grid.default_line_height;
         let image_row_heights = grid.row_heights.clone();
@@ -804,7 +908,14 @@ impl Render for EditorView {
                         window.viewport_size(),
                         border,
                     )
-                    .and_then(|point| input::mouse_position_for_point(&this.grid, point, window));
+                    .and_then(|point| {
+                        input::mouse_position_for_point_with_cell_width(
+                            &this.grid,
+                            point,
+                            cell_width,
+                            window,
+                        )
+                    });
                     let _ = file_drop_tx.send(GuiEvent::Drop {
                         position,
                         urls,
@@ -821,7 +932,14 @@ impl Render for EditorView {
                         window.viewport_size(),
                         border,
                     )
-                    .and_then(|point| input::mouse_position_for_point(&this.grid, point, window));
+                    .and_then(|point| {
+                        input::mouse_position_for_point_with_cell_width(
+                            &this.grid,
+                            point,
+                            cell_width,
+                            window,
+                        )
+                    });
                     let _ = text_drop_tx.send(GuiEvent::Drop {
                         position,
                         urls: vec![text.clone()],
@@ -838,7 +956,14 @@ impl Render for EditorView {
                         window.viewport_size(),
                         border,
                     )
-                    .and_then(|point| input::mouse_position_for_point(&this.grid, point, window));
+                    .and_then(|point| {
+                        input::mouse_position_for_point_with_cell_width(
+                            &this.grid,
+                            point,
+                            cell_width,
+                            window,
+                        )
+                    });
                     if let Some((kind, color)) = text
                         .0
                         .strip_prefix(COLOR_DROP_PREFIX)
@@ -933,9 +1058,10 @@ impl Render for EditorView {
                             cx.stop_propagation();
                             return;
                         }
-                        if let Some(position) = input::mouse_position_for_point(
+                        if let Some(position) = input::mouse_position_for_point_with_cell_width(
                             &left_mouse_down_grid,
                             point,
+                            cell_width,
                             window,
                         ) {
                             let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
@@ -966,7 +1092,12 @@ impl Render for EditorView {
                         border,
                     );
                     let position = point.and_then(|point| {
-                        input::mouse_position_for_text_point(&this.grid, point, window)
+                        input::mouse_position_for_text_point_with_cell_width(
+                            &this.grid,
+                            point,
+                            cell_width,
+                            window,
+                        )
                     });
                     let target = position.map(|position| {
                         (position.buffer_id, position.buffer_position)
@@ -1021,9 +1152,10 @@ impl Render for EditorView {
                     ) else {
                         return;
                     };
-                    if let Some(position) = input::mouse_position_for_point(
+                    if let Some(position) = input::mouse_position_for_point_with_cell_width(
                         &left_mouse_up_grid,
                         point,
+                        cell_width,
                         window,
                     ) {
                         let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
@@ -1042,7 +1174,12 @@ impl Render for EditorView {
             .on_mouse_down(MouseButton::Middle, move |event, window, _cx| {
                 let point = frame_content_point(event.position, window.viewport_size(), border);
                 if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point(&middle_mouse_down_grid, point, window)
+                    input::mouse_position_for_point_with_cell_width(
+                        &middle_mouse_down_grid,
+                        point,
+                        cell_width,
+                        window,
+                    )
                 }) {
                     let _ = middle_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Middle,
@@ -1059,7 +1196,12 @@ impl Render for EditorView {
             .on_mouse_up(MouseButton::Middle, move |event, window, _cx| {
                 let point = frame_content_point(event.position, window.viewport_size(), border);
                 if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point(&middle_mouse_up_grid, point, window)
+                    input::mouse_position_for_point_with_cell_width(
+                        &middle_mouse_up_grid,
+                        point,
+                        cell_width,
+                        window,
+                    )
                 }) {
                     let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Middle,
@@ -1076,7 +1218,12 @@ impl Render for EditorView {
             .on_mouse_down(MouseButton::Right, move |event, window, _cx| {
                 let point = frame_content_point(event.position, window.viewport_size(), border);
                 if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point(&right_mouse_down_grid, point, window)
+                    input::mouse_position_for_point_with_cell_width(
+                        &right_mouse_down_grid,
+                        point,
+                        cell_width,
+                        window,
+                    )
                 }) {
                     let _ = right_mouse_down_tx.send(GuiEvent::MouseDown {
                         button: RemacsMouseButton::Right,
@@ -1093,7 +1240,12 @@ impl Render for EditorView {
             .on_mouse_up(MouseButton::Right, move |event, window, _cx| {
                 let point = frame_content_point(event.position, window.viewport_size(), border);
                 if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point(&right_mouse_up_grid, point, window)
+                    input::mouse_position_for_point_with_cell_width(
+                        &right_mouse_up_grid,
+                        point,
+                        cell_width,
+                        window,
+                    )
                 }) {
                     let _ = right_mouse_up_tx.send(GuiEvent::MouseUp {
                         button: RemacsMouseButton::Right,
@@ -1110,7 +1262,12 @@ impl Render for EditorView {
             .on_scroll_wheel(move |event, window, cx| {
                 let point = frame_content_point(event.position, window.viewport_size(), border);
                 if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point(&scroll_grid, point, window)
+                    input::mouse_position_for_point_with_cell_width(
+                        &scroll_grid,
+                        point,
+                        cell_width,
+                        window,
+                    )
                 }) {
                     let delta = event.delta.pixel_delta(line_height);
                     let delta_lines = -f32::from(delta.y) / f32::from(line_height);
@@ -1293,68 +1450,52 @@ impl Render for EditorView {
                         );
                         window.handle_input(&focus, ElementInputHandler::new(bounds, entity), _cx);
                         for (y, line) in lines.iter().enumerate() {
-                            let origin = point(
-                                bounds.left(),
-                                bounds.top() + grid_row_top(&grid, y, line_height),
-                            );
-                            paint_stipple_backgrounds(
-                                &grid,
-                                y,
-                                line,
-                                bounds,
-                                grid_row_top(&grid, y, line_height),
-                                grid_row_height(&grid, y, line_height),
-                                default_background,
-                                background_alpha,
-                                window,
-                            );
-                            let _ = line.paint(origin, line_height, window, _cx);
-                            paint_face_boxes(
-                                &grid,
-                                y,
-                                line,
-                                bounds,
-                                grid_row_top(&grid, y, line_height),
-                                line_height,
-                                default_background,
-                                window,
-                            );
-                            let char_styles = grid
-                                .char_attrs
-                                .get(y)
-                                .filter(|styles| !styles.is_empty())
-                                .or_else(|| grid.attrs.get(y));
-                            if let Some(char_styles) = char_styles {
-                                let overline_y = origin.y
-                                    + (line_height - line.ascent - line.descent) / 2.0
-                                    + px(1.0);
-                                for (index, (byte, ch)) in grid.rows[y].char_indices().enumerate() {
-                                    let Some(style) = char_styles.get(index).copied() else {
-                                        continue;
-                                    };
-                                    if !style.overline {
-                                        continue;
-                                    }
-                                    let start = line.x_for_index(byte);
-                                    let end = line.x_for_index(byte + ch.len_utf8());
-                                    let (left, width) = if end >= start {
-                                        (start, end - start)
-                                    } else {
-                                        (end, start - end)
-                                    };
-                                    if width > px(0.0) {
-                                        window.paint_quad(fill(
-                                            Bounds {
-                                                origin: point(bounds.left() + left, overline_y),
-                                                size: size(width, px(1.0)),
-                                            },
-                                            style_colors(style, default_background, background_alpha)
-                                                .0,
-                                        ));
-                                    }
+                            if let Some(clips) =
+                                unscrolled_row_clips(&grid, y, bounds, cell_width, line_height)
+                            {
+                                for clip in clips {
+                                    window.with_content_mask(
+                                        Some(ContentMask { bounds: clip }),
+                                        |window| {
+                                            paint_grid_row(
+                                                &grid,
+                                                y,
+                                                line,
+                                                bounds,
+                                                line_height,
+                                                default_background,
+                                                background_alpha,
+                                                window,
+                                                _cx,
+                                            );
+                                        },
+                                    );
                                 }
+                            } else {
+                                paint_grid_row(
+                                    &grid,
+                                    y,
+                                    line,
+                                    bounds,
+                                    line_height,
+                                    default_background,
+                                    background_alpha,
+                                    window,
+                                    _cx,
+                                );
                             }
                         }
+                        paint_vscroll_regions(
+                            &grid,
+                            &lines,
+                            bounds,
+                            cell_width,
+                            line_height,
+                            default_background,
+                            background_alpha,
+                            window,
+                            _cx,
+                        );
                         paint_bottom_dividers(
                             &grid,
                             bounds,
@@ -1425,11 +1566,27 @@ impl Render for EditorView {
                             let origin = point(
                                 bounds.left() + cell_width * indicator.column as f32,
                                 bounds.top()
-                                    + grid_row_top(&grid, indicator.row, line_height),
+                                    + grid_row_top(&grid, indicator.row, line_height)
+                                    - px(vscroll_pixels_for_cell(
+                                        &grid,
+                                        indicator.row,
+                                        indicator.column,
+                                    ) as f32),
                             );
                             let row_height =
                                 grid_row_height(&grid, indicator.row, line_height);
-                            let _ = line.paint(origin, row_height, window, _cx);
+                            with_vscroll_cell_clip(
+                                &grid,
+                                indicator.row,
+                                indicator.column,
+                                bounds,
+                                cell_width,
+                                line_height,
+                                window,
+                                |window| {
+                                    let _ = line.paint(origin, row_height, window, _cx);
+                                },
+                            );
                         }
                         let fallback_cursor = grid.cursor.map(|(column, row)| {
                             let x = grid
@@ -1451,7 +1608,12 @@ impl Render for EditorView {
                             composition_origin.map(|(row, x)| {
                                 let origin = point(
                                     bounds.left() + x,
-                                    bounds.top() + grid_row_top(&grid, row, line_height),
+                                    bounds.top() + grid_row_top(&grid, row, line_height)
+                                        - px(vscroll_pixels_for_cell(
+                                            &grid,
+                                            row,
+                                            (f32::from(x) / f32::from(cell_width)) as usize,
+                                        ) as f32),
                                 );
                                 let selection_start = marked_selection.start.min(marked.len());
                                 let selection_end = marked_selection.end.min(marked.len());
@@ -1504,14 +1666,26 @@ impl Render for EditorView {
                                     &composition_runs,
                                     None,
                                 );
-                                window.paint_quad(fill(
-                                    Bounds {
-                                        origin,
-                                        size: size(line.width.max(cell_width), line_height),
+                                let column = (f32::from(x) / f32::from(cell_width)) as usize;
+                                with_vscroll_cell_clip(
+                                    &grid,
+                                    row,
+                                    column,
+                                    bounds,
+                                    cell_width,
+                                    line_height,
+                                    window,
+                                    |window| {
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin,
+                                                size: size(line.width.max(cell_width), line_height),
+                                            },
+                                            default_background_fill,
+                                        ));
+                                        let _ = line.paint(origin, line_height, window, _cx);
                                     },
-                                    default_background_fill,
-                                ));
-                                let _ = line.paint(origin, line_height, window, _cx);
+                                );
                                 (row, x + line.x_for_index(marked_cursor))
                             })
                         } else {
@@ -1561,12 +1735,26 @@ impl Render for EditorView {
                             let rgb_color = cursor.color.map_or(CURSOR, |color| {
                                 ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
                             });
+                            let column = if cursor.selected && composition_caret.is_some() {
+                                (f32::from(x) / f32::from(cell_width)) as usize
+                            } else {
+                                cursor.column
+                            };
                             let origin =
                                 point(
                                     bounds.left() + x,
-                                    bounds.top() + grid_row_top(&grid, row, line_height),
+                                    bounds.top() + grid_row_top(&grid, row, line_height)
+                                        - px(vscroll_pixels_for_cell(&grid, row, column) as f32),
                                 );
-                            match cursor.shape {
+                            with_vscroll_cell_clip(
+                                &grid,
+                                row,
+                                column,
+                                bounds,
+                                cell_width,
+                                line_height,
+                                window,
+                                |window| match cursor.shape {
                                 remacs_runtime::frontend::GridCursorShape::Block => {
                                     let width = if cursor.thickness > 0 {
                                         px(cursor.thickness as f32)
@@ -1644,7 +1832,8 @@ impl Render for EditorView {
                                         rgb(rgb_color),
                                     ));
                                 }
-                            }
+                                },
+                            );
                         }
                         for bar in &grid.scroll_bars {
                             let track_origin = point(
@@ -1704,11 +1893,21 @@ impl Render for EditorView {
                             &image_row_heights,
                             image_default_line_height,
                             border,
+                            &image_vscrolls,
                         )
                     }),
             )
             .children(help_echoes.into_iter().map(|region| {
                 let text = region.text;
+                let vscroll = help_vscrolls
+                    .iter()
+                    .find(|scroll| {
+                        region.row >= scroll.top
+                            && region.row < scroll.top.saturating_add(scroll.rows)
+                            && region.left >= scroll.left
+                            && region.left < scroll.left.saturating_add(scroll.width)
+                    })
+                    .map_or(0, |scroll| scroll.pixels);
                 let top = row_top_from_heights(
                     &help_row_heights,
                     help_default_line_height,
@@ -1724,7 +1923,7 @@ impl Render for EditorView {
                 div()
                     .absolute()
                     .left(border + cell_width * region.left as f32)
-                    .top(border + top)
+                    .top(border + top - px(vscroll as f32))
                     .w(cell_width * region.width as f32)
                     .h(height)
                     .id((
@@ -1785,7 +1984,8 @@ fn grid_image_element(
     row_heights: &[usize],
     default_line_height: usize,
     border: Pixels,
-) -> impl IntoElement {
+    vscrolls: &[GridVScroll],
+) -> AnyElement {
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::Data { format, bytes } => {
@@ -1797,7 +1997,7 @@ fn grid_image_element(
                 "svg" => ImageFormat::Svg,
                 "bmp" => ImageFormat::Bmp,
                 "tiff" | "tif" => ImageFormat::Tiff,
-                _ => return div(),
+                _ => return div().into_any_element(),
             };
             img(std::sync::Arc::new(Image::from_bytes(format, bytes.to_vec())))
         }
@@ -1808,19 +2008,55 @@ fn grid_image_element(
         (None, Some(height)) => source.h(px(height as f32)),
         (None, None) => source,
     };
-    div()
-        .absolute()
-        .left(border + cell_width * image.column as f32)
-        .top(
-            border
-                + row_top_from_heights(
-                    row_heights,
-                    default_line_height,
-                    image.row,
-                    line_height,
-                ),
-        )
-        .child(source)
+    let image_left = border + cell_width * image.column as f32;
+    let image_top =
+        border + row_top_from_heights(row_heights, default_line_height, image.row, line_height);
+    let scroll = vscrolls.iter().find(|scroll| {
+        image.row >= scroll.top
+            && image.row < scroll.top.saturating_add(scroll.rows)
+            && image.column >= scroll.left
+            && image.column < scroll.left.saturating_add(scroll.width)
+    });
+    if let Some(scroll) = scroll {
+        let first_row = scroll.top.min(row_heights.len());
+        let end_row = scroll.top.saturating_add(scroll.rows).min(row_heights.len());
+        let region_left = border + cell_width * scroll.left as f32;
+        let region_top = border
+            + row_top_from_heights(
+                row_heights,
+                default_line_height,
+                first_row,
+                line_height,
+            );
+        let region_bottom = border
+            + row_top_from_heights(
+                row_heights,
+                default_line_height,
+                end_row,
+                line_height,
+            );
+        let image = div()
+            .absolute()
+            .left(image_left - region_left)
+            .top(image_top - region_top - px(scroll.pixels as f32))
+            .child(source);
+        div()
+            .absolute()
+            .left(region_left)
+            .top(region_top)
+            .w(cell_width * scroll.width as f32)
+            .h(region_bottom - region_top)
+            .overflow_hidden()
+            .child(image)
+            .into_any_element()
+    } else {
+        div()
+            .absolute()
+            .left(image_left)
+            .top(image_top)
+            .child(source)
+            .into_any_element()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1972,6 +2208,178 @@ fn paint_stipple_backgrounds(
             background_alpha,
             window,
         );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_grid_row(
+    grid: &Grid,
+    row: usize,
+    line: &ShapedLine,
+    bounds: Bounds<Pixels>,
+    line_height: Pixels,
+    default_background: u32,
+    background_alpha: u8,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let row_top = grid_row_top(grid, row, line_height);
+    let row_height = grid_row_height(grid, row, line_height);
+    let origin = point(bounds.left(), bounds.top() + row_top);
+    paint_stipple_backgrounds(
+        grid,
+        row,
+        line,
+        bounds,
+        row_top,
+        row_height,
+        default_background,
+        background_alpha,
+        window,
+    );
+    let _ = line.paint(origin, line_height, window, cx);
+    paint_face_boxes(
+        grid,
+        row,
+        line,
+        bounds,
+        row_top,
+        line_height,
+        default_background,
+        window,
+    );
+
+    let styles = grid
+        .char_attrs
+        .get(row)
+        .filter(|styles| !styles.is_empty())
+        .or_else(|| grid.attrs.get(row));
+    if let Some(styles) = styles {
+        let overline_y = origin.y
+            + (line_height - line.ascent - line.descent) / 2.0
+            + px(1.0);
+        for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
+            let Some(style) = styles.get(index).copied() else {
+                continue;
+            };
+            if !style.overline {
+                continue;
+            }
+            let start = line.x_for_index(byte);
+            let end = line.x_for_index(byte + ch.len_utf8());
+            let (left, width) = if end >= start {
+                (start, end - start)
+            } else {
+                (end, start - end)
+            };
+            if width > px(0.0) {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(bounds.left() + left, overline_y),
+                        size: size(width, px(1.0)),
+                    },
+                    style_colors(style, default_background, background_alpha).0,
+                ));
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_vscroll_regions(
+    grid: &Grid,
+    lines: &[ShapedLine],
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    default_background: u32,
+    background_alpha: u8,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for scroll in &grid.vscrolls {
+        let first_row = scroll.top.min(lines.len());
+        let end_row = scroll.top.saturating_add(scroll.rows).min(lines.len());
+        if first_row >= end_row || scroll.width == 0 {
+            continue;
+        }
+
+        let region_top = bounds.top() + grid_row_top(grid, first_row, line_height);
+        let region_bottom = bounds.top() + grid_row_top(grid, end_row, line_height);
+        let region = Bounds {
+            origin: point(bounds.left() + cell_width * scroll.left as f32, region_top),
+            size: size(cell_width * scroll.width as f32, region_bottom - region_top),
+        };
+        let pixels = px(scroll.pixels as f32);
+
+        // The unscrolled rows were clipped out of this window's text area.
+        window.with_content_mask(Some(ContentMask { bounds: region }), |window| {
+            for row in first_row..end_row {
+                let Some(line) = lines.get(row) else {
+                    continue;
+                };
+                let row_top = grid_row_top(grid, row, line_height) - pixels;
+                let row_height = grid_row_height(grid, row, line_height);
+                let origin = point(bounds.left(), bounds.top() + row_top);
+                paint_stipple_backgrounds(
+                    grid,
+                    row,
+                    line,
+                    bounds,
+                    row_top,
+                    row_height,
+                    default_background,
+                    background_alpha,
+                    window,
+                );
+                let _ = line.paint(origin, line_height, window, cx);
+                paint_face_boxes(
+                    grid,
+                    row,
+                    line,
+                    bounds,
+                    row_top,
+                    line_height,
+                    default_background,
+                    window,
+                );
+
+                let styles = grid
+                    .char_attrs
+                    .get(row)
+                    .filter(|styles| !styles.is_empty())
+                    .or_else(|| grid.attrs.get(row));
+                if let Some(styles) = styles {
+                    let overline_y = origin.y
+                        + (line_height - line.ascent - line.descent) / 2.0
+                        + px(1.0);
+                    for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
+                        let Some(style) = styles.get(index) else {
+                            continue;
+                        };
+                        if !style.overline {
+                            continue;
+                        }
+                        let start = line.x_for_index(byte);
+                        let end = line.x_for_index(byte + ch.len_utf8());
+                        let (left, width) = if end >= start {
+                            (start, end - start)
+                        } else {
+                            (end, start - end)
+                        };
+                        if width > px(0.0) {
+                            window.paint_quad(fill(
+                                Bounds {
+                                    origin: point(bounds.left() + left, overline_y),
+                                    size: size(width, px(1.0)),
+                                },
+                                style_colors(*style, default_background, background_alpha).0,
+                            ));
+                        }
+                    }
+                }
+            }
+        });
     }
 }
 

@@ -88,13 +88,26 @@ pub(super) fn visible_input_position(
     })
 }
 
-pub(super) fn mouse_position_for_point(
+pub(super) fn mouse_position_for_point_with_cell_width(
     grid: &Grid,
     point: Point<Pixels>,
+    cell_width: Pixels,
     window: &mut Window,
 ) -> Option<MousePosition> {
     let input = grid.input.as_ref()?;
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
     let row = grid_row_at_y(grid, point.y);
+    let vscroll = grid
+        .vscrolls
+        .iter()
+        .find(|scroll| {
+            row >= scroll.top
+                && row < scroll.top.saturating_add(scroll.rows)
+                && column >= scroll.left
+                && column < scroll.left.saturating_add(scroll.width)
+        })
+        .map_or(0, |scroll| scroll.pixels);
+    let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
@@ -124,18 +137,33 @@ pub(super) fn mouse_position_for_point(
     })
 }
 
-pub(super) fn mouse_position_for_text_point(
+pub(super) fn mouse_position_for_text_point_with_cell_width(
     grid: &Grid,
     point: Point<Pixels>,
+    cell_width: Pixels,
     window: &mut Window,
 ) -> Option<MousePosition> {
     let input = grid.input.as_ref()?;
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
     let row = grid_row_at_y(grid, point.y);
+    let vscroll = grid
+        .vscrolls
+        .iter()
+        .find(|scroll| {
+            row >= scroll.top
+                && row < scroll.top.saturating_add(scroll.rows)
+                && column >= scroll.left
+                && column < scroll.left.saturating_add(scroll.width)
+        })
+        .map_or(0, |scroll| scroll.pixels);
+    let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
     let source_end = input_row.source_offsets.last()?;
-    (byte <= *source_end).then(|| mouse_position_for_point(grid, point, window)).flatten()
+    (byte <= *source_end)
+        .then(|| mouse_position_for_point_with_cell_width(grid, point, cell_width, window))
+        .flatten()
 }
 
 fn shape_grid_row(window: &Window, row: &str) -> gpui::ShapedLine {
@@ -534,10 +562,12 @@ impl EntityInputHandler for EditorView {
             } else {
                 (end, start - end)
             };
+            let column = (f32::from(base_x) / f32::from(self.cell_width)) as usize;
             return Some(Bounds {
                 origin: point(
                     bounds.left() + base_x + left,
-                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT)),
+                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT))
+                        - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
                 ),
                 size: size(
                     text_width.max(self.cell_width),
@@ -595,10 +625,12 @@ impl EntityInputHandler for EditorView {
             let row_text = self.grid.rows.get(row)?;
             let base_line = shape_grid_row(window, row_text);
             let base_x = base_line.x_for_index(base_byte);
+            let column = (f32::from(base_x) / f32::from(self.cell_width)) as usize;
             return Some(Bounds {
                 origin: point(
                     bounds.left() + base_x + left,
-                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT)),
+                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT))
+                        - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
                 ),
                 size: size(
                     text_width.max(self.cell_width),
@@ -622,10 +654,12 @@ impl EntityInputHandler for EditorView {
         } else {
             (end, start - end)
         };
+        let column = (f32::from(start) / f32::from(self.cell_width)) as usize;
         Some(Bounds {
             origin: point(
                 bounds.left() + left,
-                bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT)),
+                bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT))
+                    - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
             ),
             size: size(
                 text_width.max(self.cell_width),
@@ -640,7 +674,8 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        mouse_position_for_point(&self.grid, point, window).map(|position| position.utf16_offset)
+        mouse_position_for_point_with_cell_width(&self.grid, point, self.cell_width, window)
+            .map(|position| position.utf16_offset)
     }
 }
 

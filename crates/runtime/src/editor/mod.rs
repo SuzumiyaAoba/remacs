@@ -79,6 +79,8 @@ pub struct Window {
     pub redisplay_end: Option<(usize, u64, usize, usize)>,
     /// Horizontal scroll column.
     pub hscroll: usize,
+    /// Vertical scroll offset in pixels.
+    pub vscroll: usize,
     /// Screen layout (terminal cells, set by the front-end).
     pub top: usize,
     pub height: usize,
@@ -265,6 +267,7 @@ impl Window {
                 start: 0,
                 redisplay_end: None,
                 hscroll: 0,
+                vscroll: 0,
                 top: 0,
                 height: 24,
                 left: 0,

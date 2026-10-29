@@ -229,6 +229,19 @@ pub struct GridBottomDivider {
     pub last_pixel_style: CellStyle,
 }
 
+/// A window body whose contents are raised by a pixel scroll offset.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridVScroll {
+    pub window_id: usize,
+    /// Window text area in frame cells.
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub rows: usize,
+    /// Pixel amount to raise the contents.
+    pub pixels: usize,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -356,6 +369,7 @@ pub struct Grid {
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
     pub bottom_dividers: Vec<GridBottomDivider>,
+    pub vscrolls: Vec<GridVScroll>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -448,6 +462,7 @@ impl Grid {
             popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
             bottom_dividers: Vec::new(),
+            vscrolls: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -4642,6 +4657,7 @@ fn render_grid_internal(
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
     let mut bottom_dividers = Vec::new();
+    let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let mut positioned_cursors = Vec::new();
@@ -4673,6 +4689,7 @@ fn render_grid_internal(
                 popup_menu_items,
                 scroll_bars,
                 bottom_dividers,
+                vscrolls,
                 attrs,
                 char_attrs,
                 mode_rows,
@@ -4847,6 +4864,7 @@ fn render_grid_internal(
             buf_id,
             start,
             hscroll,
+            vscroll,
             raw_left,
             raw_top,
             raw_width,
@@ -4861,6 +4879,7 @@ fn render_grid_internal(
                 wb.buffer,
                 wb.start,
                 wb.hscroll,
+                wb.vscroll,
                 wb.left,
                 wb.top,
                 wb.width,
@@ -5045,6 +5064,16 @@ fn render_grid_internal(
         let text_rows = window_height
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
         let content_top = window_top + top_rows;
+        if graphical && vscroll > 0 && text_rows > 0 && window_width > 0 {
+            vscrolls.push(crate::frontend::GridVScroll {
+                window_id,
+                left: window_left,
+                top: content_top,
+                width: window_width,
+                rows: text_rows,
+                pixels: vscroll,
+            });
+        }
         // Keep point inside the window: scroll `start' the minimal
         // amount, or recenter when point is more than a window-height
         // away, and likewise `hscroll' horizontally (GNU
@@ -6144,6 +6173,7 @@ fn render_grid_internal(
         popup_menu_items,
         scroll_bars,
         bottom_dividers,
+        vscrolls,
         attrs,
         char_attrs,
         mode_rows,
