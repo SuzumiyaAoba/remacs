@@ -25,6 +25,7 @@ pub(super) struct Isearch {
     pub(super) start: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
+    quote_next: bool,
     /// The `isearch' overlay on the current match (handle or None).
     pub(super) match_ov: Option<Value>,
     /// `lazy-highlight' overlays on the other visible matches.
@@ -134,6 +135,20 @@ fn prepare_isearch_yanked_text(
     }
 }
 
+fn isearch_quoted_character(key: i128) -> Option<char> {
+    let mut code = u32::try_from(key).ok()?;
+    if key & CHAR_CTL != 0 {
+        code &= !(CHAR_CTL as u32);
+        code = match code {
+            0x20 => 0,
+            0x3f => 0x7f,
+            0x40..=0x7e => code & 0x1f,
+            _ => code,
+        };
+    }
+    char::from_u32(code)
+}
+
 /// What the isearch driver should do after a key.
 pub(super) enum IsearchAction {
     /// Keep reading keys.
@@ -168,6 +183,7 @@ impl Isearch {
             start,
             backward,
             regexp,
+            quote_next: false,
             match_ov: None,
             lazy_ovs: Vec::new(),
         }
@@ -293,6 +309,18 @@ impl Isearch {
     /// Handle one key event; updates query/point/failing state.
     pub(super) fn step(&mut self, i: &mut Interp, key: i128) -> IsearchAction {
         let cur = self.cur();
+        if self.quote_next {
+            self.quote_next = false;
+            if let Some(ch) = isearch_quoted_character(key) {
+                let failure_start = self
+                    .fail_pos
+                    .unwrap_or_else(|| self.query.chars().count());
+                self.save_history();
+                self.query.push(ch);
+                self.search_updated_query(i, failure_start);
+            }
+            return IsearchAction::Continue;
+        }
         match key {
             // C-g: undo a failing search back to the last successful state;
             // abort only when the search is currently successful.
@@ -371,6 +399,10 @@ impl Isearch {
             // DEL: unwind one step of the search.
             127 => {
                 self.restore_history(i);
+                IsearchAction::Continue
+            }
+            c if c == 17 || c == (CHAR_CTL | 'q' as i128) => {
+                self.quote_next = true;
                 IsearchAction::Continue
             }
             c if c == 25 || c == (CHAR_CTL | 'y' as i128) => {
