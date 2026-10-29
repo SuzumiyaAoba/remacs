@@ -3077,6 +3077,22 @@ See `term-prompt-regexp'."
 (defconst term--osc-max-bytes (* 32 1024 1024)
   "Limit the length of OSC sequences to keep in memory.")
 
+(defun term--prefix-length-for-columns (string columns)
+  "Return the largest character prefix of STRING that fits COLUMNS.
+Keep all characters together, even when the first character is wider than
+the available columns."
+  (let ((index 0)
+        (width 0)
+        (length (length string)))
+    (catch 'term--prefix-length-for-columns
+      (while (< index length)
+        (let ((char-width (max 0 (or (char-width (aref string index)) 0))))
+          (if (> (+ width char-width) columns)
+              (throw 'term--prefix-length-for-columns index)
+            (setq width (+ width char-width)
+                index (1+ index)))))
+      index)))
+
 (defun term-emulate-terminal (proc str)
   (when (buffer-live-p (process-buffer proc))
     (with-current-buffer (process-buffer proc)
@@ -3171,26 +3187,54 @@ See `term-prompt-regexp'."
                         (old-point (point))
                         columns)
                     (unless term-suppress-hard-newline
-                      (while (> (+ (length decoded-substring) old-column)
+                      (while (> (+ (string-width decoded-substring) old-column)
                                 term-width)
-                        (let* ((here-length (- term-width old-column))
-                               (to-insert (substring decoded-substring 0 here-length)))
-                          (setf decoded-substring (substring decoded-substring here-length))
-                          (insert to-insert)
-                          (setf term-current-column nil)
-                          ;; Since we've enough text to fill the whole line,
-                          ;; delete previous text regardless of
-                          ;; `term-insert-mode's value.
-                          (delete-region (point) (line-end-position))
-                          (if term-auto-margins
+                        (let* ((available (- term-width old-column))
+                               (here-length
+                                (term--prefix-length-for-columns
+                                 decoded-substring available))
+                               (first-width
+                                (if (> (length decoded-substring) 0)
+                                    (max 0 (or (char-width
+                                                (aref decoded-substring 0))
+                                               0))
+                                  0)))
+                          (if (and (zerop here-length)
+                                   term-auto-margins
+                                   (< old-column term-width)
+                                   (<= first-width term-width))
+                              ;; A wide character may not fit in the last
+                              ;; column; wrap before it rather than splitting
+                              ;; the character.
                               (progn
                                 (term-move-to-column 0)
                                 (term-down 1 t)
                                 (add-text-properties (1- (point)) (point)
                                                      '(term-line-wrap t rear-nonsticky t))
                                 (setq old-column 0))
-                            (term-move-columns -1)
-                            (setf old-column (term-current-column))))))
+                            (when (zerop here-length)
+                              ;; A character wider than the whole terminal
+                              ;; cannot be split or wrapped repeatedly.
+                              (setq here-length 1))
+                            (let ((to-insert
+                                   (substring decoded-substring 0 here-length)))
+                              (setf decoded-substring
+                                    (substring decoded-substring here-length))
+                              (insert to-insert)
+                              (setf term-current-column nil)
+                              ;; Since we've enough text to fill the whole line,
+                              ;; delete previous text regardless of
+                              ;; `term-insert-mode's value.
+                              (delete-region (point) (line-end-position))
+                              (if term-auto-margins
+                                  (progn
+                                    (term-move-to-column 0)
+                                    (term-down 1 t)
+                                    (add-text-properties (1- (point)) (point)
+                                                         '(term-line-wrap t rear-nonsticky t))
+                                    (setq old-column 0))
+                                (term-move-columns -1)
+                                (setf old-column (term-current-column))))))))
                     (insert decoded-substring)
                     (setq term-current-column (current-column)
                           columns (- term-current-column old-column))
