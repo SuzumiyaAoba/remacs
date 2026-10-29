@@ -76,6 +76,8 @@ pub struct Interp {
     /// C-g sets this; eval checks it between forms.
     /// Incoming host request, synchronized into the Lisp quit-flag cell.
     pub quit_flag: bool,
+    /// Asynchronous quit requests from the active frontend, when it has one.
+    pub quit_request: Option<Arc<crate::frontend::QuitRequest>>,
     pub(crate) bc_quit_counter: Option<Rc<std::cell::Cell<u8>>>,
     pub(crate) unwind_quit: Option<Value>,
     /// Values pushed by `throw` for debugging — not needed.

@@ -257,6 +257,7 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
     (
         ChanIo {
             events: erx,
+            quit_request: None,
             grids: gtx,
             legacy_grid_output: true,
             gui_requests: None,

@@ -8,6 +8,7 @@
 
 use std::io;
 use std::ops::Range;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::lisp::Interp;
@@ -84,6 +85,62 @@ pub trait FrameWindowBackend {
 pub trait ColorPanelBackend {
     fn show(&self, frame_id: usize) -> Result<(), String>;
     fn show_character_palette(&self, frame_id: usize) -> Result<(), String>;
+}
+
+/// A quit request raised by a front-end thread while the interpreter is busy.
+///
+/// The pending count is consumed by `Interp::maybe_quit`. Requests consumed
+/// there correspond to key events that are still in the front-end queue, so
+/// `KeyIo` suppresses those events when it eventually receives them. Requests
+/// whose key events reach `KeyIo` first are cleared there and keep their normal
+/// command-loop meaning.
+#[derive(Debug, Default)]
+pub struct QuitRequest {
+    pending: AtomicUsize,
+    consumed: AtomicUsize,
+}
+
+impl QuitRequest {
+    /// Record a quit key received by the front-end.
+    pub fn request(&self) {
+        let _ = self
+            .pending
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                Some(n.saturating_add(1))
+            });
+    }
+
+    /// Transfer all pending host requests to the interpreter and arrange for
+    /// their queued key events to be discarded later.
+    pub(crate) fn take_for_eval(&self) -> bool {
+        let count = self.pending.swap(0, Ordering::AcqRel);
+        if count == 0 {
+            return false;
+        }
+        let _ = self
+            .consumed
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                Some(n.saturating_add(count))
+            });
+        true
+    }
+
+    /// Return true when this key event belongs to a quit already delivered to
+    /// the interpreter. Otherwise clear its not-yet-delivered request.
+    pub fn discard_queued_key(&self) -> bool {
+        if decrement_if_positive(&self.consumed) {
+            true
+        } else {
+            decrement_if_positive(&self.pending);
+            false
+        }
+    }
+}
+
+fn decrement_if_positive(counter: &AtomicUsize) -> bool {
+    counter
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+        .is_ok()
 }
 
 /// Operation requested for an outgoing drag-and-drop session.

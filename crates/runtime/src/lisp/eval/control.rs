@@ -8,6 +8,14 @@ use crate::lisp::{
 };
 
 impl Interp {
+    /// Connect an asynchronous frontend quit source to this interpreter.
+    pub fn set_quit_request(
+        &mut self,
+        request: Option<std::sync::Arc<crate::frontend::QuitRequest>>,
+    ) {
+        self.quit_request = request;
+    }
+
     /// eval_sub/Ffuncall and Bcall share the counter, with different GNU
     /// error descriptors. The failed entry remains live during signaling.
     pub(crate) fn with_lisp_eval_depth(
@@ -316,6 +324,13 @@ impl Interp {
     /// GNU maybe_quit/process_quit_flag. Clear the flag without watchers
     /// before invoking a quit observer, throwing to input's tag, or exiting.
     pub(crate) fn maybe_quit(&mut self) -> Result<(), Flow> {
+        if self
+            .quit_request
+            .as_ref()
+            .is_some_and(|request| request.take_for_eval())
+        {
+            self.quit_flag = true;
+        }
         self.synchronize_quit_request();
         let Some(symbol) = self.q_soft("quit-flag") else {
             return Ok(());

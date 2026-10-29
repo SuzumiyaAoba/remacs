@@ -3,7 +3,7 @@ use remacs_runtime::{
     frontend::{
         AppleScriptResult, DragAction, Grid, GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
-        MousePosition, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
+        MousePosition, QuitRequest, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
@@ -113,13 +113,19 @@ pub(super) enum GuiEvent {
 pub(super) struct FrameEventSender {
     sender: Sender<GuiEvent>,
     frame_id: Rc<std::cell::Cell<Option<usize>>>,
+    quit_request: Option<Arc<QuitRequest>>,
 }
 
 impl FrameEventSender {
-    pub(super) fn new(sender: Sender<GuiEvent>, frame_id: Option<usize>) -> Self {
+    pub(super) fn new(
+        sender: Sender<GuiEvent>,
+        frame_id: Option<usize>,
+        quit_request: Option<Arc<QuitRequest>>,
+    ) -> Self {
         Self {
             sender,
             frame_id: Rc::new(std::cell::Cell::new(frame_id)),
+            quit_request,
         }
     }
 
@@ -156,6 +162,11 @@ impl FrameEventSender {
     }
 
     pub(super) fn send(&self, event: GuiEvent) -> Result<(), mpsc::SendError<GuiEvent>> {
+        if matches!(&event, GuiEvent::Key(7))
+            && let Some(quit_request) = &self.quit_request
+        {
+            quit_request.request();
+        }
         let event = match self.frame_id.get() {
             Some(frame_id) => GuiEvent::ForFrame {
                 frame_id,
@@ -880,6 +891,7 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
 /// thread inside `run_editor_with`.
 pub(super) struct ChanIo {
     pub(super) events: Receiver<GuiEvent>,
+    pub(super) quit_request: Option<Arc<QuitRequest>>,
     pub(super) grids: smol::channel::Sender<Grid>,
     pub(super) legacy_grid_output: bool,
     pub(super) gui_requests: Option<smol::channel::Sender<GuiRequest>>,
@@ -1159,6 +1171,14 @@ fn frame_proxy_file(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> Opt
 }
 
 impl ChanIo {
+    fn discard_quit_key(&self, key: i128) -> bool {
+        key == 7
+            && self
+                .quit_request
+                .as_ref()
+                .is_some_and(|request| request.discard_queued_key())
+    }
+
     fn update_mouse_face_position(
         &mut self,
         frame_id: Option<usize>,
@@ -1433,6 +1453,7 @@ impl KeyIo for ChanIo {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
+            GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
             GuiEvent::MenuCommand(command) => Ok(Some(InputEvent::Command(command))),
@@ -1635,6 +1656,7 @@ impl KeyIo for ChanIo {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
+            GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(k)),
             GuiEvent::Text(text) => {
                 let mut chars = text.chars().map(|ch| ch as i128);
@@ -2139,7 +2161,7 @@ impl KeyIo for ChanIo {
 pub(super) fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
+    let (events, _quit_request, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
         start_logic_inner(files, None, Vec::new(), false, true, false)?;
     Ok((events, grids))
 }
@@ -2150,7 +2172,7 @@ pub(super) fn start_logic_with_dump_for_test(
     dump_file: Option<String>,
     arguments: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
+    let (events, _quit_request, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
         start_logic_inner(files, dump_file, arguments, false, true, false)?;
     Ok((events, grids))
 }
@@ -2205,7 +2227,7 @@ pub(super) fn start_logic_with_dump(
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
-    let (events, grids, _gui_requests, clipboard, _initial_frame_size) =
+    let (events, _quit_request, grids, _gui_requests, clipboard, _initial_frame_size) =
         start_logic_inner(files, dump_file, arguments, true, true, false)?;
     Ok((events, grids, clipboard))
 }
@@ -2216,17 +2238,24 @@ pub(super) fn start_logic_with_frames(
     arguments: Vec<String>,
 ) -> io::Result<(
     Sender<GuiEvent>,
+    Arc<QuitRequest>,
     smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
     Option<InitialFrameSize>,
 )> {
-    let (events, grids, gui_requests, clipboard, initial_frame_size_rx) =
+    let (events, quit_request, grids, gui_requests, clipboard, initial_frame_size_rx) =
         start_logic_inner(files, dump_file, arguments, true, false, true)?;
     drop(grids);
     let initial_frame_size = initial_frame_size_rx
         .recv()
         .map_err(|_| io::Error::other("GUI startup frame size is unavailable"))?;
-    Ok((events, gui_requests, clipboard, initial_frame_size))
+    Ok((
+        events,
+        quit_request,
+        gui_requests,
+        clipboard,
+        initial_frame_size,
+    ))
 }
 
 fn start_logic_inner(
@@ -2238,6 +2267,7 @@ fn start_logic_inner(
     enable_gui_requests: bool,
 ) -> io::Result<(
     Sender<GuiEvent>,
+    Arc<QuitRequest>,
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
@@ -2246,6 +2276,8 @@ fn start_logic_inner(
     let wait_for_startup = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
     let (event_tx, event_rx) = mpsc::channel::<GuiEvent>();
+    let quit_request = Arc::new(QuitRequest::default());
+    let logic_quit_request = quit_request.clone();
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
     let (gui_requests_tx, gui_requests_rx) = smol::channel::unbounded::<GuiRequest>();
     let (clipboard_tx, clipboard_rx) = smol::channel::unbounded::<ClipboardRequest>();
@@ -2278,6 +2310,7 @@ fn start_logic_inner(
                     }
                 },
             };
+            i.set_quit_request(Some(logic_quit_request.clone()));
             if enable_gui_selections && cfg!(target_os = "macos") {
                 i.set_clipboard_backend(Some(Rc::new(GuiClipboardBackend {
                     requests: clipboard_tx,
@@ -2378,6 +2411,7 @@ fn start_logic_inner(
             let startup_frame_sizes = frame_sizes.clone();
             let io = ChanIo {
                 events: event_rx,
+                quit_request: Some(logic_quit_request.clone()),
                 grids: grid_tx,
                 legacy_grid_output,
                 gui_requests: enable_gui_requests.then_some(gui_requests_tx),
@@ -2468,6 +2502,7 @@ fn start_logic_inner(
     }
     Ok((
         event_tx,
+        quit_request,
         grid_rx,
         gui_requests_rx,
         clipboard_rx,

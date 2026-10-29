@@ -429,11 +429,12 @@ pub fn run_gui_with_dump(
     dump_file: Option<&str>,
     arguments: &[String],
 ) -> io::Result<()> {
-    let (event_tx, gui_requests, clipboard_requests, initial_frame_size) = start_logic_with_frames(
-        files.to_vec(),
-        dump_file.map(str::to_owned),
-        arguments.to_vec(),
-    )?;
+    let (event_tx, quit_request, gui_requests, clipboard_requests, initial_frame_size) =
+        start_logic_with_frames(
+            files.to_vec(),
+            dump_file.map(str::to_owned),
+            arguments.to_vec(),
+        )?;
     // Use explicit runtime dimensions from the user's frame alists before
     // opening the native window. The first frame snapshot corrects this
     // estimate using actual font metrics.
@@ -542,6 +543,7 @@ pub fn run_gui_with_dump(
                         window,
                         cx,
                         event_tx.clone(),
+                        quit_request.clone(),
                         None,
                         None,
                         initial_focus_on_map,
@@ -857,6 +859,7 @@ pub fn run_gui_with_dump(
                                 snapshot.ns_transparent_titlebar,
                             );
                             let event_tx = event_tx.clone();
+                            let quit_request = quit_request.clone();
                             let image_cache_entries = image_cache_entries.clone();
                             let image_cache_size = image_cache_size.clone();
                             let minimum_size = frame_minimum_size(
@@ -890,6 +893,7 @@ pub fn run_gui_with_dump(
                                         window,
                                         cx,
                                         event_tx,
+                                        quit_request,
                                         Some(frame_id),
                                         Some(grid),
                                         focus_on_map,

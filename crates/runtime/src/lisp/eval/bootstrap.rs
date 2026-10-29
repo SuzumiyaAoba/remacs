@@ -105,6 +105,7 @@ impl Interp {
             eval_depth: 0,
             explicit_eval_depth: 0,
             quit_flag: false,
+            quit_request: None,
             bc_quit_counter: None,
             unwind_quit: None,
             standard_output_sym,

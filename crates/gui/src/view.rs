@@ -14,7 +14,7 @@ use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridImage, GridImageSource,
     GridMenu, GridMenuItem, GridPointerShape, GridPopupMenuItem, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridTabBarItem, GridToolBarItem, GridVScroll,
-    MouseButton as RemacsMouseButton,
+    MouseButton as RemacsMouseButton, QuitRequest,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{
@@ -589,7 +589,7 @@ pub(super) struct EditorView {
 
 impl EditorView {
     pub(super) fn new(tx: Sender<GuiEvent>, cx: &mut Context<Self>) -> Self {
-        Self::new_for_frame(tx, None, cx)
+        Self::new_for_frame_with_quit(tx, None, None, cx)
     }
 
     pub(super) fn new_for_frame(
@@ -597,8 +597,17 @@ impl EditorView {
         frame_id: Option<usize>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_for_frame_with_quit(tx, frame_id, None, cx)
+    }
+
+    fn new_for_frame_with_quit(
+        tx: Sender<GuiEvent>,
+        frame_id: Option<usize>,
+        quit_request: Option<Arc<QuitRequest>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         EditorView {
-            tx: FrameEventSender::new(tx, frame_id),
+            tx: FrameEventSender::new(tx, frame_id, quit_request),
             image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
             image_cache_size: Arc::new(AtomicUsize::new(0)),
             focus: cx.focus_handle(),
@@ -3404,12 +3413,13 @@ pub(super) fn build_managed_editor_view(
     window: &mut Window,
     cx: &mut Context<EditorView>,
     event_tx: Sender<GuiEvent>,
+    quit_request: Arc<QuitRequest>,
     frame_id: Option<usize>,
     grid: Option<Grid>,
     focus_on_map: bool,
     no_accept_focus: bool,
 ) -> EditorView {
-    let mut view = EditorView::new_for_frame(event_tx, frame_id, cx);
+    let mut view = EditorView::new_for_frame_with_quit(event_tx, frame_id, Some(quit_request), cx);
     view.no_accept_focus.set(no_accept_focus);
     if let Some(grid) = grid {
         view.grid = grid;
