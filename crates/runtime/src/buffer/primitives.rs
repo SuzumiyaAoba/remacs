@@ -4943,7 +4943,6 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // buffer's syntax table.  Fetch the chain before borrowing the
     // buffer (the lookup itself touches the buffer).
     let syn = crate::editor::syntax_table_entries(i);
-    let wordp = |c: EmacsChar| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
     let (chars, begv, start) = {
         let bb = b.borrow();
@@ -4954,6 +4953,9 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         )
     };
     let len = chars.len();
+    let wordp = |position: usize| {
+        crate::editor::word_constituent_at(syn.as_ref(), &chars, position, begv, len)
+    };
     // GNU scan_words: each iteration skips non-word constituents, then
     // scans a word.  If a boundary is reached before completing ARG
     // words, point still moves to the boundary and nil is returned;
@@ -4963,7 +4965,7 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if n >= 0 {
         for _ in 0..n {
             let mut p = point;
-            while p < len && !wordp(chars[p]) {
+            while p < len && !wordp(p) {
                 p += 1;
             }
             if p == len {
@@ -4974,8 +4976,8 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let mut previous = chars[p];
             p += 1;
             while p < len
-                && wordp(chars[p])
-                && !crate::editor::word_boundary_p(i, previous, chars[p])
+                && wordp(p)
+                && !crate::editor::word_boundary_at(i, previous, chars[p], &chars, p, begv, len)
             {
                 previous = chars[p];
                 p += 1;
@@ -4985,7 +4987,7 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         for _ in 0..-n {
             let mut p = point;
-            while p > begv && !wordp(chars[p - 1]) {
+            while p > begv && !wordp(p - 1) {
                 p -= 1;
             }
             if p == begv {
@@ -4996,8 +4998,8 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let mut right = chars[p - 1];
             p -= 1;
             while p > begv
-                && wordp(chars[p - 1])
-                && !crate::editor::word_boundary_p(i, chars[p - 1], right)
+                && wordp(p - 1)
+                && !crate::editor::word_boundary_at(i, chars[p - 1], right, &chars, p, begv, len)
             {
                 right = chars[p - 1];
                 p -= 1;

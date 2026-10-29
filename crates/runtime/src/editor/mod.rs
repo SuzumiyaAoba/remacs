@@ -16985,33 +16985,42 @@ fn f_kill_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // nil and non-numbers signal fixnump.
     let n = crate::lisp::builtins::want_fixnum(i, &arg(&a, 0))?;
     let syn = syntax_table_entries(i);
-    let wordp = |c: EmacsChar| syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
-    let bb = b.borrow_mut();
-    let start = bb.point();
-    let len = bb.text_len();
+    let (chars, begv, len, start) = {
+        let bb = b.borrow();
+        (
+            (0..bb.text_len())
+                .map(|position| bb.text.char_at(position))
+                .collect::<Vec<_>>(),
+            bb.begv,
+            bb.text_len(),
+            bb.point(),
+        )
+    };
+    let wordp = |position: usize| {
+        word_constituent_at(syn.as_ref(), &chars, position, begv, len)
+    };
     let mut p = start;
     if n >= 0 {
         for _ in 0..n {
-            while p < len && !wordp(bb.text.char_at(p)) {
+            while p < len && !wordp(p) {
                 p += 1;
             }
-            while p < len && wordp(bb.text.char_at(p)) {
+            while p < len && wordp(p) {
                 p += 1;
             }
         }
     } else {
         // GNU forward-word with a negative count moves backward.
         for _ in 0..-n {
-            while p > 0 && !wordp(bb.text.char_at(p - 1)) {
+            while p > begv && !wordp(p - 1) {
                 p -= 1;
             }
-            while p > 0 && wordp(bb.text.char_at(p - 1)) {
+            while p > begv && wordp(p - 1) {
                 p -= 1;
             }
         }
     }
-    drop(bb);
     // GNU kill-word is `(kill-region (point) (progn (forward-word arg)
     // (point)))' — route through f_kill_region so consecutive kills
     // merge like GNU's command loop.
@@ -17025,20 +17034,30 @@ fn f_kill_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_backward_kill_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = want_num_or_mark(i, &arg(&a, 0))?;
     let syn = syntax_table_entries(i);
-    let wordp = |c: EmacsChar| syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
-    let bb = b.borrow_mut();
-    let end = bb.point();
+    let (chars, begv, end) = {
+        let bb = b.borrow();
+        (
+            (0..bb.text_len())
+                .map(|position| bb.text.char_at(position))
+                .collect::<Vec<_>>(),
+            bb.begv,
+            bb.point(),
+        )
+    };
+    let len = chars.len();
+    let wordp = |position: usize| {
+        word_constituent_at(syn.as_ref(), &chars, position, begv, len)
+    };
     let mut p = end;
     for _ in 0..n.max(0) {
-        while p > 0 && !wordp(bb.text.char_at(p - 1)) {
+        while p > begv && !wordp(p - 1) {
             p -= 1;
         }
-        while p > 0 && wordp(bb.text.char_at(p - 1)) {
+        while p > begv && wordp(p - 1) {
             p -= 1;
         }
     }
-    drop(bb);
     // GNU backward-kill-word = kill-word with a negative arg: the call is
     // (kill-region old-point new-point) with old-point > new-point, so
     // `(< end beg)' is t and the kill PREPENDS to the ring head.
@@ -17235,25 +17254,36 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
         _ => Value::Nil,
     };
     let syn = syntax_table_entries(i);
-    let wordp = |c: EmacsChar| syntax_entry_code(syn.as_ref(), c) == b'w';
-    let start = b.borrow().point();
-    let len = b.borrow().text_len();
+    let (chars, begv, len, start) = {
+        let bb = b.borrow();
+        (
+            (0..bb.text_len())
+                .map(|position| bb.text.char_at(position))
+                .collect::<Vec<_>>(),
+            bb.begv,
+            bb.text_len(),
+            bb.point(),
+        )
+    };
+    let wordp = |position: usize| {
+        word_constituent_at(syn.as_ref(), &chars, position, begv, len)
+    };
     let mut p = start;
     if n >= 0 {
         for _ in 0..n {
-            while p < len && !wordp(b.borrow().text.char_at(p)) {
+            while p < len && !wordp(p) {
                 p += 1;
             }
-            while p < len && wordp(b.borrow().text.char_at(p)) {
+            while p < len && wordp(p) {
                 p += 1;
             }
         }
     } else {
         for _ in 0..-n {
-            while p > 0 && !wordp(b.borrow().text.char_at(p - 1)) {
+            while p > begv && !wordp(p - 1) {
                 p -= 1;
             }
-            while p > 0 && wordp(b.borrow().text.char_at(p - 1)) {
+            while p > begv && wordp(p - 1) {
                 p -= 1;
             }
         }
@@ -20329,17 +20359,29 @@ fn f_count_words(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         bb.text.substring(s.min(e), s.max(e))
     };
     let syn = syntax_table_entries(i);
+    let characters: Vec<EmacsChar> = text.chars().collect();
+    let len = characters.len();
     let mut count = 0i128;
     let mut previous = None;
-    for c in text.chars() {
-        if syntax_entry_code(syn.as_ref(), c) != b'w' {
+    for position in 0..len {
+        if !word_constituent_at(syn.as_ref(), &characters, position, 0, len) {
             previous = None;
             continue;
         }
-        if previous.is_none_or(|p| word_boundary_p(i, p, c)) {
+        if previous.is_none_or(|p| {
+            word_boundary_at(
+                i,
+                characters[p],
+                characters[position],
+                &characters,
+                position,
+                0,
+                len,
+            )
+        }) {
             count += 1;
         }
-        previous = Some(c);
+        previous = Some(position);
     }
     Ok(Value::Int(count))
 }
@@ -20474,6 +20516,46 @@ pub(crate) fn syntax_table_entries(i: &Interp) -> Option<SynTable> {
     syntax_table_snapshot(i, table)
 }
 
+/// MidLetter punctuation marked as word constituents by Text mode.
+fn is_word_mid_punctuation(character: EmacsChar) -> bool {
+    matches!(character.code(), 0x00b7 | 0x05f4 | 0x2027 | 0xff1a)
+}
+
+fn unicode_letter_at(characters: &[EmacsChar], position: usize) -> bool {
+    characters
+        .get(position)
+        .and_then(|character| character.unicode())
+        .is_some_and(char::is_alphabetic)
+}
+
+/// Whether the character at POS is a word constituent, accounting for
+/// Text mode's MidLetter punctuation only when it is between letters.
+pub(crate) fn word_constituent_at(
+    syntax: Option<&SynTable>,
+    characters: &[EmacsChar],
+    position: usize,
+    begv: usize,
+    zv: usize,
+) -> bool {
+    let Some(character) = characters.get(position).copied() else {
+        return false;
+    };
+    if syntax_entry_code(syntax, character) != b'w' {
+        return false;
+    }
+    if !is_word_mid_punctuation(character) {
+        return true;
+    }
+    let next = position.saturating_add(1);
+    if position <= begv || next >= zv {
+        return false;
+    }
+    syntax_entry_code(syntax, characters[position - 1]) == b'w'
+        && syntax_entry_code(syntax, characters[next]) == b'w'
+        && unicode_letter_at(characters, position - 1)
+        && unicode_letter_at(characters, next)
+}
+
 /// GNU category.c `word_boundary_p': differing character scripts form a
 /// boundary unless the current category sets select an exception from
 /// `word-combining-categories'; equal scripts use
@@ -20537,6 +20619,36 @@ pub(crate) fn word_boundary_p(i: &mut Interp, left: EmacsChar, right: EmacsChar)
         }
     }
     default
+}
+
+/// MidLetter punctuation joins the letters on both sides as a single word,
+/// so the pairwise boundary test must ignore both adjacent boundaries.
+pub(crate) fn word_boundary_at(
+    i: &mut Interp,
+    left: EmacsChar,
+    right: EmacsChar,
+    characters: &[EmacsChar],
+    right_position: usize,
+    begv: usize,
+    zv: usize,
+) -> bool {
+    let left_position = right_position.saturating_sub(1);
+    let right_next = right_position.saturating_add(1);
+    if (is_word_mid_punctuation(right)
+        && right_position > begv
+        && right_next < zv
+        && unicode_letter_at(characters, right_position - 1)
+        && unicode_letter_at(characters, right_next))
+        || (is_word_mid_punctuation(left)
+            && left_position > begv
+            && right_position < zv
+            && unicode_letter_at(characters, left_position - 1)
+            && unicode_letter_at(characters, right_position))
+    {
+        false
+    } else {
+        word_boundary_p(i, left, right)
+    }
 }
 
 fn syntax_table_snapshot(i: &Interp, table: Value) -> Option<SynTable> {
