@@ -339,11 +339,13 @@ If called interactively, read the file names one by one."
   "Use the `find' command to add files to the file cache.
 Find is run in DIRECTORY."
   (interactive "DAdd files under directory: ")
-  (let ((dir (expand-file-name directory)))
+  (let ((dir (expand-file-name directory))
+	(null-delimited (not (memq system-type '(windows-nt cygwin)))))
     (when (memq system-type '(windows-nt cygwin))
       (if (eq file-cache-find-command-posix-flag 'not-defined)
 	  (setq file-cache-find-command-posix-flag
-		(executable-command-find-posix-p file-cache-find-command))))
+		(executable-command-find-posix-p file-cache-find-command)))
+	      (setq null-delimited file-cache-find-command-posix-flag))
     (with-temp-buffer
       (call-process file-cache-find-command nil t nil
 		    dir "-name"
@@ -352,8 +354,10 @@ Find is run in DIRECTORY."
 			    "\\*"
 			  "'*'")
 		      "*")
-		    "-print")
-      (file-cache--add-from-buffer))))
+		    (if null-delimited "-print0" "-print"))
+      (if null-delimited
+	  (file-cache--add-from-nul-buffer)
+	(file-cache--add-from-buffer)))))
 
 ;;;###autoload
 (defun file-cache-add-directory-using-locate (string)
@@ -398,6 +402,26 @@ or the optional REGEXP argument."
       ;;Remacs: find/locate output may include directories, but this cache holds files.
       (unless (file-directory-p file)
         (file-cache-add-file file)))))
+
+;;Remacs: parse `find -print0' output without splitting valid newline names.
+(defun file-cache--add-from-nul-buffer ()
+  "Add NUL-delimited file names from the current buffer to the cache."
+  (let ((start (point-min)))
+    (while (search-forward (char-to-string 0) nil t)
+      (let ((file (buffer-substring-no-properties start (1- (point))))
+	    (filtered nil))
+	(setq start (point))
+	(dolist (regexp file-cache-filter-regexps)
+	  (when (string-match regexp file)
+	    (setq filtered t)))
+	(when (and (> (length file) 0)
+		   ;; The default regexp only rejects empty lines; nonempty file
+		   ;; names may themselves contain newline characters.
+		   (or (equal file-cache-buffer-default-regexp "^.+$")
+		       (string-match file-cache-buffer-default-regexp file))
+		   (not filtered)
+		   (not (file-directory-p file)))
+	  (file-cache-add-file file)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions to delete from the cache
