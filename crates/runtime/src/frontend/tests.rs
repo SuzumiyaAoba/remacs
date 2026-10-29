@@ -551,6 +551,33 @@ fn isearch_query_replace_receives_active_query_and_regexp_mode() {
 }
 
 #[test]
+fn isearch_meta_s_o_passes_current_query_to_occur() {
+    let mut i = interp_with_frame("foo foo\n");
+    i.eval_str(
+        r#"
+        (setq qa-isearch-occur-pattern nil)
+        (defun occur (pattern &optional nlines)
+          (setq qa-isearch-occur-pattern pattern))
+        "#,
+    )
+    .unwrap();
+    let (mut term, _) = test_term(80, 24);
+    term.pending = vec![
+        'o' as i128,
+        CHAR_META | 's' as i128,
+        'o' as i128,
+        'o' as i128,
+        'f' as i128,
+    ];
+    let term = Rc::new(RefCell::new(term));
+
+    super::command::isearch_loop(&term, &mut i, false, false).unwrap();
+
+    let pattern = i.eval_str("qa-isearch-occur-pattern").unwrap();
+    assert_eq!(i.prin1_to_string(&pattern), "\"foo\"");
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
