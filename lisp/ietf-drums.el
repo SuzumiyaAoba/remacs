@@ -350,8 +350,16 @@ a list of address strings."
 
 (defun ietf-drums-quote-string (string)
   "Quote string if it needs quoting to be displayed in a header."
+  ;; Remacs: quote and backslash must be quoted-pairs inside the string.
   (if (string-match (concat "[^" ietf-drums-atext-token "]") string)
-      (concat "\"" string "\"")
+      (concat "\"" (mapconcat
+                    (lambda (char)
+                      (let ((text (char-to-string char)))
+                        (if (memq char '(?\" ?\\))
+                            (concat "\\" text)
+                          text)))
+                    (string-to-list string) "")
+              "\"")
     string))
 
 (defun ietf-drums-make-address (name address)
