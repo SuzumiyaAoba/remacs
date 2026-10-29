@@ -928,6 +928,95 @@ Also see the `dired-confirm-shell-command' variable."
 (defvar dired-mark-separator " "
   "Separates marked files in Dired shell commands.")
 
+(defun dired--shell-command-final-operator (command &optional w32-shell)
+  "Return a trailing unquoted shell operator and its start in COMMAND.
+The result is (OPERATOR . POSITION), where OPERATOR is `&' or `;'."
+  (let ((end (length command))
+        (index 0)
+        quote-stack
+        quote
+        escaped
+        comment
+        previous-operator)
+    (while (and (> end 0)
+                (memq (aref command (1- end)) '(?\s ?\t)))
+      (setq end (1- end)))
+    (let ((operator-position (1- end)))
+      (when (and (>= operator-position 0)
+                 (memq (aref command operator-position) '(?& ?;)))
+        (while (< index operator-position)
+          (let* ((character (aref command index))
+                 (next (and (< (1+ index) operator-position)
+                            (aref command (1+ index)))))
+            (cond
+             (comment
+              (when (eq character ?\n)
+                (setq comment nil))
+              (setq previous-operator nil))
+             ((and (not w32-shell) (eq quote ?'))
+              (when (eq character ?')
+                (setq quote (pop quote-stack)))
+              (setq previous-operator nil))
+             ((eq quote ?\")
+              (cond
+               ((and (not w32-shell) (eq character ?\\))
+                (when (and next (memq next '(?\\ ?` ?\" ?$ ?\n)))
+                  (setq index (1+ index))))
+               ((eq character ?\")
+                (setq quote (pop quote-stack)))
+               ((and (not w32-shell) (eq character ?`))
+                (push quote quote-stack)
+                (setq quote ?\`)))
+              (setq previous-operator nil))
+             ((and (not w32-shell) (eq quote ?\`))
+              (cond
+               ((eq character ?\\)
+                (when (and next (memq next '(?\\ ?` ?$ ?\n)))
+                  (setq index (1+ index))))
+               ((eq character ?\`)
+                (setq quote (pop quote-stack)))
+               ((memq character '(?' ?\"))
+                (push quote quote-stack)
+                (setq quote character)))
+              (setq previous-operator nil))
+             ((and (not w32-shell) (eq character ?\\))
+              (if (= (1+ index) operator-position)
+                  (setq escaped t)
+                (setq index (1+ index)))
+              (setq previous-operator nil))
+             ((and w32-shell (eq character ?^))
+              (if (= (1+ index) operator-position)
+                  (setq escaped t)
+                (setq index (1+ index)))
+              (setq previous-operator nil))
+             ((or (eq character ?\")
+                  (and (not w32-shell) (memq character '(?' ?\`))))
+              (push nil quote-stack)
+              (setq quote character
+                    previous-operator nil))
+             ((and (not w32-shell)
+                   (eq character ?#)
+                   (or (= index 0)
+                       (memq (aref command (1- index))
+                             '(?\s ?\t ?\n ?\r ?; ?& ?| ?\( ?\) ?< ?>))))
+              (setq comment t
+                    previous-operator nil))
+             (t
+              (setq previous-operator
+                    (and (memq character '(?& ?;)) character))))
+          (setq index (1+ index))))
+        (when (and (null quote)
+                   (not comment)
+                   (not escaped)
+                   ;; `&&', `;;', and `;&' are compound shell syntax,
+                   ;; not a trailing background/sequential suffix.
+                   (null previous-operator))
+          (let ((start operator-position))
+            (while (and (> start 0)
+                        (memq (aref command (1- start)) '(?\s ?\t)))
+              (setq start (1- start)))
+            (cons (aref command operator-position) start)))))))
+
 (defun dired-shell-stuff-it (command file-list on-each &optional _raw-arg)
   ;; "Make up a shell command line from COMMAND and FILE-LIST.
   ;; If ON-EACH is t, COMMAND should be applied to each file, else
@@ -936,19 +1025,24 @@ Also see the `dired-confirm-shell-command' variable."
   ;; Might be redefined for smarter things and could then use RAW-ARG
   ;; (coming from interactive P and currently ignored) to decide what to do.
   ;; Smart would be a way to access basename or extension of file names.
-  (let* ((in-background (string-match "[ \t]*&[ \t]*\\'" command))
-	 (command (if in-background
-		      (substring command 0 (match-beginning 0))
-		    command))
-	 (sequentially (string-match "[ \t]*;[ \t]*\\'" command))
-	 (command (if sequentially
-		      (substring command 0 (match-beginning 0))
-		    command))
-         (parallel-in-background
-          (and in-background (not sequentially) (not (eq system-type 'ms-dos))))
+  (let* ((file-remote (file-remote-p default-directory))
          (w32-shell (and (fboundp 'w32-shell-dos-semantics)
                          (w32-shell-dos-semantics)))
-         (file-remote (file-remote-p default-directory))
+         (windows-shell (and w32-shell (not file-remote)))
+         (background-operator
+          (dired--shell-command-final-operator command windows-shell))
+         (in-background (eq (car-safe background-operator) ?&))
+         (command (if in-background
+                      (substring command 0 (cdr background-operator))
+                    command))
+         (sequential-operator
+          (dired--shell-command-final-operator command windows-shell))
+         (sequentially (eq (car-safe sequential-operator) ?;))
+         (command (if sequentially
+                      (substring command 0 (cdr sequential-operator))
+                    command))
+         (parallel-in-background
+          (and in-background (not sequentially) (not (eq system-type 'ms-dos))))
          ;; The way to run a command in background in Windows shells
          ;; is to use the START command.  The /B switch means not to
          ;; create a new window for the command.
