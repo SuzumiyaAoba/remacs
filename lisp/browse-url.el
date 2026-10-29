@@ -786,7 +786,12 @@ Use variable `browse-url-filename-alist' to map filenames to URLs."
         (setq file (replace-match (cdr map) t nil file)
               mapped t)))
     (if (and mapped (string-match-p "\\`[[:alpha:]][[:alnum:].+-]*:" file))
-        (url-encode-url file)
+        (url-encode-url
+         (if (string-match-p "\\`file:" file)
+             ;; The mapped prefix turns a raw filename into a URI, so
+             ;; percent escapes in the path are literal filename data.
+             (browse-url-url-encode-chars file "%")
+           file))
       (when-let* ((coding (browse-url--file-name-coding-system)))
         (setq file (encode-coding-string file coding)))
       (if (and (file-remote-p file)
