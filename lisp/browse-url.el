@@ -553,7 +553,7 @@ process), or nil (we don't know)."
 
 (defun browse-url--mailto (url &rest args)
   "Call `browse-url-mailto-function' with URL and ARGS."
-  (funcall browse-url-mailto-function url args))
+  (apply browse-url-mailto-function url args))
 
 (defun browse-url--browser-kind-mailto (url)
   (browse-url--browser-kind browse-url-mailto-function url))
