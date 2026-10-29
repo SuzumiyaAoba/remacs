@@ -1215,16 +1215,6 @@ pub(super) fn f_window_with_parameter(i: &mut Interp, a: crate::lisp::Argv) -> E
     Ok(Value::Nil)
 }
 
-pub(super) fn sel_frame_dims(i: &Interp) -> (i128, i128) {
-    match &i.selected_frame {
-        Some(f) => {
-            let ff = f.borrow();
-            (ff.width as i128, ff.height as i128)
-        }
-        None => (80, 25),
-    }
-}
-
 /// Monitor attributes are captured by the GUI front-end alongside frame
 /// geometry. Text-only interpreters retain the single synthetic monitor.
 fn monitor_attributes_list(i: &mut Interp, frame: &FrameRef) -> Value {
@@ -1360,13 +1350,13 @@ pub(super) fn f_frame_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 }
 
 pub(super) fn f_frame_width_val(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
-    Ok(Value::Int(sel_frame_dims(i).0))
+    let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
+    Ok(Value::Int(crate::editor::frame_pixel_width(i, &frame) as i128))
 }
 
 pub(super) fn f_frame_height_val(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
-    Ok(Value::Int(sel_frame_dims(i).1))
+    let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
+    Ok(Value::Int(crate::editor::frame_pixel_height(i, &frame) as i128))
 }
 
 /// `frame-outer-width'/`frame-outer-height' — GNU consults
