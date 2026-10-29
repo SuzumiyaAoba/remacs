@@ -8615,6 +8615,38 @@ pub(crate) fn lookup_in_keymap(
     Ok(access_keymap(i, km, key, accept_default, false)?.unwrap_or(Value::Nil))
 }
 
+/// Look up the full key sequence in MAP, descending only through prefix
+/// keymaps. A non-keymap definition before the last event makes the sequence
+/// unbound, as in GNU `lookup-key'.
+pub(crate) fn lookup_keymap_sequence(
+    i: &mut Interp,
+    map: &Value,
+    keys: &[i128],
+) -> Result<Option<Value>, Flow> {
+    if keys.is_empty() || !is_keymap(i, map) {
+        return Ok(None);
+    }
+    let mut current = map.clone();
+    for (index, key) in keys.iter().enumerate() {
+        let binding = lookup_in_keymap(i, &current, *key, false)?;
+        if binding.is_nil() {
+            return Ok(None);
+        }
+        let definition = keymap_def(i, binding.clone())?;
+        if is_keymap(i, &definition) {
+            if index + 1 == keys.len() {
+                return Ok(Some(definition));
+            }
+            current = definition;
+        } else if index + 1 == keys.len() {
+            return Ok(Some(binding));
+        } else {
+            return Ok(None);
+        }
+    }
+    Ok(None)
+}
+
 /// `access_keymap' with NOINHERIT — the map's own elements only; used
 /// for define-key's prefix descent (parent bindings must not leak in).
 fn lookup_in_keymap_noinherit(
@@ -11039,7 +11071,40 @@ fn keyboard_interaction_allowed(i: &mut Interp) -> Result<(), Flow> {
     Ok(())
 }
 
+/// Apply GNU keyboard input modifiers and `keyboard-translate-table' to a
+/// raw character event before it enters the command loop or `read-event'.
+pub(crate) fn translate_keyboard_input_code(i: &mut Interp, mut code: i128) -> i128 {
+    let extra = i
+        .intern_soft("extra-keyboard-modifiers")
+        .filter(|symbol| i.bound_p(*symbol))
+        .and_then(|symbol| i.symbol_value(symbol).int())
+        .unwrap_or(0);
+    let control = extra & CHAR_CTL != 0 || ((extra & 0x7f) < 0x20 && extra & 0x7f != 0);
+    if control {
+        let modifiers = code & CHAR_MODIFIER_MASK;
+        let character = code & !CHAR_MODIFIER_MASK;
+        code = apply_mods_ev(character, CHAR_CTL) | modifiers;
+    }
+    code |= extra & !0xff7f & !CHAR_CTL;
+
+    if (0..=0x3f_ffff).contains(&code)
+        && code & CHAR_MODIFIER_MASK == 0
+        && let Some(table) = i
+            .intern_soft("keyboard-translate-table")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol))
+        && table.truthy()
+    {
+        let aref = Value::Sym(i.intern("aref"));
+        if let Ok(Value::Int(translated)) = i.apply(&aref, vec![table, Value::Int(code)]) {
+            code = translated;
+        }
+    }
+    code
+}
+
 fn keyboard_event_value(i: &mut Interp, code: i128) -> Value {
+    let code = translate_keyboard_input_code(i, code);
     match key_name_for(code) {
         Some(name) => Value::Sym(i.intern(&name)),
         None => Value::Int(code),
@@ -11186,7 +11251,8 @@ fn read_keyboard_event(i: &mut Interp, prompt: &str, deadline: EventDeadline) ->
             }
             crate::lisp::eval::MinibufInput::Text(t) => {
                 let n = t.chars().next().map(|c| (c).code() as i128).unwrap_or(0);
-                return Ok(record_keyboard_event(i, Value::Int(n)));
+                let event = keyboard_event_value(i, n);
+                return Ok(record_keyboard_event(i, event));
             }
         }
     }

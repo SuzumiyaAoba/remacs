@@ -187,6 +187,15 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             term.borrow_mut().render(i)?;
             render_needed = false;
         }
+        if let Some(key) = pop_unread_simple_key(i) {
+            dispatch_key_pretranslated(&term, i, key, &mut keys, &mut arg_mode)?;
+            render_needed = true;
+            i.macro_replaying = false;
+            if let Some(f) = i.macro_pending_flow.take() {
+                report_flow(i, f);
+            }
+            continue;
+        }
         // Replayed macro events take priority over real input;
         // `executing-kbd-macro` clears once the queue drains.
         let input = match i.macro_replay.pop_front() {
@@ -217,7 +226,9 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
         };
         match input {
             InputEvent::Key(key) => dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?,
-            InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+            InputEvent::Text(text) => {
+                dispatch_text(&term, i, &text, &mut keys, &mut arg_mode)?
+            }
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
@@ -891,7 +902,22 @@ fn dispatch_frontend_command_with_args(
     i.command_args = saved_args;
 }
 
-fn dispatch_key<T: KeyIo>(
+pub(super) fn dispatch_key<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    key: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let key = if i.macro_replaying {
+        key
+    } else {
+        crate::editor::translate_keyboard_input_code(i, key)
+    };
+    dispatch_key_pretranslated(term, i, key, keys, arg_mode)
+}
+
+fn dispatch_key_pretranslated<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
     key: i128,
@@ -1438,9 +1464,32 @@ fn hide_pointer_after_self_insert(i: &mut Interp) {
     }
 }
 
-fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mut bool) {
+pub(super) fn dispatch_text<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    text: &str,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
     if text.is_empty() {
-        return;
+        return Ok(());
+    }
+
+    let has_input_method = i
+        .intern_soft("current-input-method")
+        .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy());
+    let mut chars = text.chars();
+    if let Some(ch) = chars.next()
+        && chars.next().is_none()
+    {
+        let key = crate::editor::translate_keyboard_input_code(i, ch as i128);
+        if !has_input_method || key != ch as i128 {
+            // A single GUI text event is still a keyboard event.  Send it
+            // through normal key lookup so key-translation-map can affect
+            // otherwise printable characters, then let the dispatcher
+            // self-insert it when no binding applies.
+            return dispatch_key_pretranslated(term, i, key, keys, arg_mode);
+        }
     }
 
     // The OS text path bypasses `dispatch_key_core_inner', so record its
@@ -1485,6 +1534,7 @@ fn dispatch_text(i: &mut Interp, text: &str, keys: &mut Vec<i128>, arg_mode: &mu
         }
     }
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+    Ok(())
 }
 
 /// Replace the UTF-16 range used by the GUI text-input client. The event
@@ -1607,7 +1657,141 @@ enum LookupResult {
     None,
 }
 
+enum KeyTranslation {
+    Sequence(Vec<i128>),
+    Prefix,
+    Command(Value),
+}
+
+fn pop_unread_simple_key(i: &mut Interp) -> Option<i128> {
+    let symbol = i.intern_soft("unread-command-events")?;
+    let Value::Cons(queue) = i.symbol_value(symbol) else {
+        return None;
+    };
+    let event = queue.borrow().car.clone();
+    if !matches!(event, Value::Int(_) | Value::Sym(_)) {
+        return None;
+    }
+    let event = crate::editor::pop_unread_command_event(i)?;
+    let keys = crate::editor::key_seq(i, &Value::vector(vec![event])).ok()?;
+    (keys.len() == 1).then(|| keys[0])
+}
+
+fn translation_map_binding(
+    i: &mut Interp,
+    map_name: &str,
+    keys: &[i128],
+    allow_commands: bool,
+) -> Result<Option<KeyTranslation>, crate::lisp::Flow> {
+    let Some(symbol) = i.intern_soft(map_name).filter(|symbol| i.bound_p(*symbol)) else {
+        return Ok(None);
+    };
+    let map = i.symbol_value(symbol);
+    if !crate::editor::is_keymap(i, &map) {
+        return Ok(None);
+    }
+
+    let mut translated = Vec::with_capacity(keys.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    while cursor < keys.len() {
+        let mut replacement = None;
+        for end in (cursor + 1..=keys.len()).rev() {
+            let Some(binding) =
+                crate::editor::lookup_keymap_sequence(i, &map, &keys[cursor..end])?
+            else {
+                continue;
+            };
+            if crate::editor::is_keymap(i, &binding) {
+                if end == keys.len() {
+                    return Ok(Some(KeyTranslation::Prefix));
+                }
+                continue;
+            }
+            if allow_commands {
+                let commandp = Value::Sym(i.intern("commandp"));
+                if i.apply(&commandp, vec![binding.clone()])
+                    .is_ok_and(|command| command.truthy())
+                {
+                    return Ok(Some(KeyTranslation::Command(binding)));
+                }
+            }
+            if matches!(
+                &binding,
+                Value::Str(_) | Value::Vec(_) | Value::Int(_) | Value::Cons(_)
+            ) {
+                replacement = Some((crate::editor::key_seq(i, &binding)?, end));
+                break;
+            }
+        }
+        if let Some((sequence, end)) = replacement {
+            translated.extend(sequence);
+            cursor = end;
+            changed = true;
+        } else {
+            translated.push(keys[cursor]);
+            cursor += 1;
+        }
+    }
+    Ok(changed.then_some(KeyTranslation::Sequence(translated)))
+}
+
+fn translate_command_sequence(i: &mut Interp, keys: &[i128]) -> KeyTranslation {
+    let mut translated = keys.to_vec();
+    match translation_map_binding(i, "input-decode-map", &translated, false) {
+        Ok(Some(KeyTranslation::Prefix)) => return KeyTranslation::Prefix,
+        Ok(Some(KeyTranslation::Sequence(sequence))) => {
+            translated = sequence;
+        }
+        Ok(Some(KeyTranslation::Command(command))) => return KeyTranslation::Command(command),
+        Ok(None) | Err(_) => {}
+    }
+
+    let active = lookup_command_raw(
+        i,
+        &Value::vector(translated.iter().copied().map(Value::Int).collect()),
+    );
+    let function_translation_allowed = match active {
+        LookupResult::None => true,
+        LookupResult::Prefix => false,
+        LookupResult::Command(Value::Sym(symbol)) => i.symbol_name(symbol) == "undefined",
+        LookupResult::Command(_) => false,
+    };
+    if function_translation_allowed {
+        match translation_map_binding(i, "local-function-key-map", &translated, true) {
+            Ok(Some(KeyTranslation::Prefix)) => return KeyTranslation::Prefix,
+            Ok(Some(KeyTranslation::Sequence(sequence))) => translated = sequence,
+            Ok(Some(KeyTranslation::Command(command))) => {
+                return KeyTranslation::Command(command);
+            }
+            Ok(None) | Err(_) => {}
+        }
+    }
+
+    match translation_map_binding(i, "key-translation-map", &translated, false) {
+        Ok(Some(KeyTranslation::Prefix)) => KeyTranslation::Prefix,
+        Ok(Some(KeyTranslation::Sequence(sequence))) => KeyTranslation::Sequence(sequence),
+        Ok(Some(KeyTranslation::Command(command))) => KeyTranslation::Command(command),
+        Ok(None) | Err(_) => KeyTranslation::Sequence(translated),
+    }
+}
+
 fn lookup_command(i: &mut Interp, seq: &Value) -> LookupResult {
+    let keys = match seq {
+        Value::Vec(_) | Value::Str(_) => crate::editor::key_seq(i, seq).unwrap_or_default(),
+        _ => return LookupResult::None,
+    };
+    match translate_command_sequence(i, &keys) {
+        KeyTranslation::Prefix => LookupResult::Prefix,
+        KeyTranslation::Command(command) => LookupResult::Command(command),
+        KeyTranslation::Sequence(keys) => lookup_command_raw(
+            i,
+            &Value::vector(keys.into_iter().map(Value::Int).collect()),
+        ),
+    }
+}
+
+fn lookup_command_raw(i: &mut Interp, seq: &Value) -> LookupResult {
     let keys = match seq {
         Value::Vec(v) => v.borrow().clone(),
         _ => return LookupResult::None,
@@ -1698,6 +1882,22 @@ fn minibuf_loop<T: KeyIo>(
             }
             render_needed = false;
         }
+        if !single && let Some(key) = pop_unread_simple_key(i) {
+            if let Err(e) = dispatch_key_pretranslated(term, i, key, &mut keys, &mut arg_mode) {
+                return Err(i.error(format!("minibuffer input: {e}")));
+            }
+            if let Some(f) = i.minibuf_exit_fn.take() {
+                return Ok(MinibufInput::Call(f));
+            }
+            if i.minibuf_exited {
+                return Ok(MinibufInput::Text(i.minibuf_contents()));
+            }
+            if let Some(f) = i.minibuf_pending_flow.take() {
+                return Err(f);
+            }
+            render_needed = true;
+            continue;
+        }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
         let polled = term.borrow_mut().poll_input(Duration::from_millis(50));
@@ -1738,7 +1938,11 @@ fn minibuf_loop<T: KeyIo>(
                     return Err(i.error(format!("minibuffer input: {e}")));
                 }
             }
-            InputEvent::Text(text) => dispatch_text(i, &text, &mut keys, &mut arg_mode),
+            InputEvent::Text(text) => {
+                if let Err(e) = dispatch_text(term, i, &text, &mut keys, &mut arg_mode) {
+                    return Err(i.error(format!("minibuffer input: {e}")));
+                }
+            }
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }

@@ -255,6 +255,82 @@ fn mouse_position(i: &Interp, character: usize) -> MousePosition {
     }
 }
 
+fn dispatch_test_keys(i: &mut Interp, codes: &[i128]) {
+    let (frontend, _) = test_term(80, 25);
+    let term = Rc::new(RefCell::new(frontend));
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    for &code in codes {
+        super::dispatch_key(&term, i, code, &mut keys, &mut arg_mode).unwrap();
+    }
+}
+
+#[test]
+fn gui_text_input_applies_keyboard_translate_table() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq current-input-method nil) (keyboard-translate ?a ?b)")
+        .unwrap();
+    let (frontend, _) = test_term(80, 25);
+    let term = Rc::new(RefCell::new(frontend));
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+
+    super::dispatch_text(&term, &mut i, "a", &mut keys, &mut arg_mode).unwrap();
+
+    let text = i.eval_str("(buffer-string)").unwrap();
+    assert_eq!(i.prin1_to_string(&text), "\"b\"");
+}
+
+#[test]
+fn read_event_applies_extra_keyboard_modifiers() {
+    let mut i = crate::lisp::Interp::new();
+    i.minibuf_reader = Some(Rc::new(|_, _, _| {
+        Ok(crate::lisp::eval::MinibufInput::Key('b' as i128))
+    }));
+
+    let event = i
+        .eval_str("(let ((extra-keyboard-modifiers ?\\C-a)) (read-event))")
+        .unwrap();
+    assert_eq!(i.prin1_to_string(&event), "2");
+}
+
+#[test]
+fn gui_command_dispatch_applies_input_and_key_translation_maps() {
+    for map in ["input-decode-map", "key-translation-map"] {
+        let mut i = interp_with_frame("");
+        i.eval_str(&format!(
+            "(define-key {map} (kbd \"C-c a\") (kbd \"C-c b\")) \
+             (define-key global-map (kbd \"C-c b\") \
+               (lambda () (interactive) (insert \"translated\")))"
+        ))
+        .unwrap();
+        let (frontend, _) = test_term(80, 25);
+        let term = Rc::new(RefCell::new(frontend));
+        let mut keys = Vec::new();
+        let mut arg_mode = false;
+        super::dispatch_key(&term, &mut i, 3, &mut keys, &mut arg_mode).unwrap();
+        super::dispatch_text(&term, &mut i, "a", &mut keys, &mut arg_mode).unwrap();
+
+        let text = i.eval_str("(buffer-string)").unwrap();
+        assert_eq!(i.prin1_to_string(&text), "\"translated\"");
+    }
+}
+
+#[test]
+fn gui_command_dispatch_applies_function_key_map() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(define-key global-map [backtab] \
+         (lambda () (interactive) (insert \"backtab\")))",
+    )
+    .unwrap();
+
+    dispatch_test_keys(&mut i, &[9 | crate::editor::CHAR_SHIFT]);
+
+    let text = i.eval_str("(buffer-string)").unwrap();
+    assert_eq!(i.prin1_to_string(&text), "\"backtab\"");
+}
+
 fn dispatch_test_mouse(i: &mut Interp, mouse: MouseInput) {
     let (frontend, _) = test_term(80, 25);
     let term = Rc::new(RefCell::new(frontend));
@@ -542,7 +618,7 @@ fn isearch_query_replace_receives_active_query_and_regexp_mode() {
         term.pending = vec![key, 'o' as i128, 'o' as i128, 'f' as i128];
         let term = Rc::new(RefCell::new(term));
 
-        super::command::isearch_loop(&term, &mut i, false, regexp).unwrap();
+        super::isearch_loop(&term, &mut i, false, regexp).unwrap();
 
         let query = i.eval_str("qa-isearch-query").unwrap();
         assert_eq!(i.prin1_to_string(&query), "\"foo\"");
@@ -571,7 +647,7 @@ fn isearch_meta_s_o_passes_current_query_to_occur() {
     ];
     let term = Rc::new(RefCell::new(term));
 
-    super::command::isearch_loop(&term, &mut i, false, false).unwrap();
+    super::isearch_loop(&term, &mut i, false, false).unwrap();
 
     let pattern = i.eval_str("qa-isearch-occur-pattern").unwrap();
     assert_eq!(i.prin1_to_string(&pattern), "\"foo\"");
