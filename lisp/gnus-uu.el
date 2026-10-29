@@ -2015,7 +2015,8 @@ The user will be asked for a file name."
 (defun gnus-uu-post-encode-file (command path file-name)
   (eq 0 (call-process shell-file-name nil t nil shell-command-switch
 		      (format "%s %s %s"
-			      (shell-quote-argument command)
+			      (mapconcat #'shell-quote-argument
+					 (split-string-and-unquote command) " ")
 			      (shell-quote-argument path)
 			      (shell-quote-argument file-name))))
 
