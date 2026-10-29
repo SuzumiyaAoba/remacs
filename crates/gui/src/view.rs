@@ -774,6 +774,7 @@ impl Render for EditorView {
         let entity = cx.entity();
         let focus = self.focus.clone();
         let marked = self.input.marked.clone();
+        let marked_selection = self.input.selection_byte_range();
         let marked_cursor = self.input.selection_byte_end();
         let marked_origin = self
             .input
@@ -1452,21 +1453,55 @@ impl Render for EditorView {
                                     bounds.left() + x,
                                     bounds.top() + grid_row_top(&grid, row, line_height),
                                 );
-                                let line = window.text_system().shape_line(
-                                    marked.clone().into(),
-                                    font_size,
-                                    &[TextRun {
-                                        len: marked.len(),
+                                let selection_start = marked_selection.start.min(marked.len());
+                                let selection_end = marked_selection.end.min(marked.len());
+                                let composition_run = |start: usize, end: usize, selected: bool| {
+                                    TextRun {
+                                        len: end.saturating_sub(start),
                                         font: composition_font.clone(),
-                                        color: rgb(FG).into(),
-                                        background_color: None,
+                                        color: if selected {
+                                            rgb(0xffffff).into()
+                                        } else {
+                                            rgb(FG).into()
+                                        },
+                                        background_color: selected
+                                            .then(|| rgb(0x356fce).into()),
                                         underline: Some(UnderlineStyle {
                                             thickness: px(1.0),
                                             color: None,
                                             wavy: false,
                                         }),
                                         strikethrough: None,
-                                    }],
+                                    }
+                                };
+                                let mut composition_runs = Vec::new();
+                                if selection_start == selection_end {
+                                    composition_runs.push(composition_run(0, marked.len(), false));
+                                } else {
+                                    if selection_start > 0 {
+                                        composition_runs.push(composition_run(
+                                            0,
+                                            selection_start,
+                                            false,
+                                        ));
+                                    }
+                                    composition_runs.push(composition_run(
+                                        selection_start,
+                                        selection_end,
+                                        true,
+                                    ));
+                                    if selection_end < marked.len() {
+                                        composition_runs.push(composition_run(
+                                            selection_end,
+                                            marked.len(),
+                                            false,
+                                        ));
+                                    }
+                                }
+                                let line = window.text_system().shape_line(
+                                    marked.clone().into(),
+                                    font_size,
+                                    &composition_runs,
                                     None,
                                 );
                                 window.paint_quad(fill(

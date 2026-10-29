@@ -198,6 +198,10 @@ impl TextInputState {
         offset(&self.marked, self.selection.end, false).0
     }
 
+    pub(super) fn selection_byte_range(&self) -> Range<usize> {
+        range(&self.marked, self.selection.clone()).0
+    }
+
     fn virtual_text(&self, base: &str) -> String {
         let Some(replacement) = &self.replacement_range else {
             return base.to_owned();
