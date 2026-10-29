@@ -327,7 +327,28 @@ Only attributes that `tar-mode' can grok are mentioned.")
           (pax-decode-string (aref result pax-uname-index) coding))
     result))
 
-(defun tar-header-block-tokenize (pos coding &optional disable-slash)
+(defun tar-apply-pax-attributes (descriptor attrs)
+  "Apply PAX ATTRS to tar HEADER DESCRIPTOR and return it."
+  (let ((gid (pax-header-gid attrs))
+        (gname (pax-header-gname attrs))
+        (linkpath (pax-header-linkpath attrs))
+        (mtime (pax-header-mtime attrs))
+        (path (pax-header-path attrs))
+        (size (pax-header-size attrs))
+        (uid (pax-header-uid attrs))
+        (uname (pax-header-uname attrs)))
+    (when gid (setf (tar-header-gid descriptor) gid))
+    (when gname (setf (tar-header-gname descriptor) gname))
+    (when linkpath (setf (tar-header-link-name descriptor) linkpath))
+    (when mtime (setf (tar-header-date descriptor) mtime))
+    (when path (setf (tar-header-name descriptor) path))
+    (when size (setf (tar-header-size descriptor) size))
+    (when uid (setf (tar-header-uid descriptor) uid))
+    (when uname (setf (tar-header-uname descriptor) uname)))
+  descriptor)
+
+(defun tar-header-block-tokenize
+    (pos coding &optional disable-slash global-pax-attributes)
   "Return a `tar-header' structure.
 This is a list of name, mode, uid, gid, size,
 write-date, checksum, link-type, and link-name.
@@ -404,7 +425,8 @@ of the file header.  This is used for \"old GNU\" Tar format."
                                 ;; the trailing slash, because the
                                 ;; truncated name might by chance end
                                 ;; in a slash.
-				'ignore-trailing-slash)))
+				'ignore-trailing-slash
+                                global-pax-attributes)))
               ;; Fix the descriptor of the real file entry by using
               ;; the information from the long name entry.
               (cond
@@ -421,79 +443,79 @@ of the file header.  This is used for \"old GNU\" Tar format."
               (setf (tar-header-header-start descriptor)
                     (copy-marker (- pos 512) t))
               descriptor)
-          ;; Posix pax extended header.  FIXME: support ?g as well.
+          ;; POSIX pax extended header.
           (if (and (eq link-p (- ?x ?0))
                    (member magic-str '("ustar " "ustar\0")))
               ;;      Get whatever attributes are in the extended header,
               (let* ((extended-header-size
                       (tar-parse-octal-integer
                        string tar-size-offset tar-time-offset))
-                     (pax-attrs (tar-parse-pax-extended-header
-                                 pos extended-header-size))
-                     (gid (pax-header-gid pax-attrs))
-                     (gname (pax-header-gname pax-attrs))
-                     (linkpath (pax-header-linkpath pax-attrs))
-                     (mtime (pax-header-mtime pax-attrs))
-                     (path (pax-header-path pax-attrs))
-                     (size (pax-header-size pax-attrs))
-                     (uid (pax-header-uid pax-attrs))
-                     (uname (pax-header-uname pax-attrs))
+                     ;; Parsing uses a shared scratch vector; recursion may
+                     ;; parse another PAX header before these attributes are
+                     ;; applied.
+                     (pax-attrs (copy-sequence
+                                 (tar-parse-pax-extended-header
+                                  pos extended-header-size)))
                      ;; Tokenize the header of the _real_ file entry,
                      ;; which follows the padded extended header data.
                      (descriptor
                       (tar-header-block-tokenize
                        (+ pos (tar-roundup-512 extended-header-size))
-                       coding 'ignore-trailing-slash)))
+                       coding 'ignore-trailing-slash
+                       global-pax-attributes)))
                 ;; Fix the descriptor of the real file entry by
                 ;; overriding some of the fields with the information
                 ;; from the extended header.
-                (if gid
-                    (setf (tar-header-gid descriptor) gid))
-                (if gname
-                    (setf (tar-header-gname descriptor) gname))
-                (if linkpath
-                    (setf (tar-header-link-name descriptor) linkpath))
-                (if mtime
-                    (setf (tar-header-date descriptor) mtime))
-                (if path
-                    (setf (tar-header-name descriptor) path))
-                (if size
-                    (setf (tar-header-size descriptor) size))
-                (if uid
-                    (setf (tar-header-uid descriptor) uid))
-                (if uname
-                    (setf (tar-header-uname descriptor) uname))
-                descriptor)
-
-            (make-tar-header
-             (copy-marker pos nil)
-             name
-             (tar-parse-octal-integer string tar-mode-offset
-                                      tar-uid-offset)
-             (tar-parse-octal-integer string tar-uid-offset
-                                      tar-gid-offset)
-             (tar-parse-octal-integer string tar-gid-offset
-                                      tar-size-offset)
-             (tar-parse-octal-integer string tar-size-offset
-                                      tar-time-offset)
-             (tar-parse-octal-integer string tar-time-offset
-                                      tar-chk-offset)
-             (tar-parse-octal-integer string tar-chk-offset
-                                      tar-linkp-offset)
-             link-p
-             linkname
-             uname-valid-p
-             (when uname-valid-p
-               (decode-coding-string
-                (substring string tar-uname-offset uname-end) coding))
-             (when uname-valid-p
-               (decode-coding-string
-                (substring string tar-gname-offset gname-end) coding))
-             (tar-parse-octal-integer string tar-dmaj-offset
-                                      tar-dmin-offset)
-             (tar-parse-octal-integer string tar-dmin-offset
-                                      tar-prefix-offset)
-             )))))))
+                (tar-apply-pax-attributes descriptor pax-attrs))
+            (if (and (eq link-p (- ?g ?0))
+                     (member magic-str '("ustar " "ustar\0")))
+                ;; Global PAX attributes persist until replaced by a later
+                ;; global header, and do not themselves describe a file.
+                (let* ((extended-header-size
+                        (tar-parse-octal-integer
+                         string tar-size-offset tar-time-offset))
+                       (pax-attrs
+                        (tar-parse-pax-extended-header pos extended-header-size))
+                       (global-pax-attributes
+                        (or global-pax-attributes (make-vector 8 nil))))
+                  (dotimes (index (length pax-attrs))
+                    (when (aref pax-attrs index)
+                      (aset global-pax-attributes index (aref pax-attrs index))))
+                  (tar-header-block-tokenize
+                   (+ pos (tar-roundup-512 extended-header-size))
+                   coding disable-slash global-pax-attributes))
+              (let ((descriptor
+                     (make-tar-header
+                      (copy-marker pos nil)
+                      name
+                      (tar-parse-octal-integer string tar-mode-offset
+                                               tar-uid-offset)
+                      (tar-parse-octal-integer string tar-uid-offset
+                                               tar-gid-offset)
+                      (tar-parse-octal-integer string tar-gid-offset
+                                               tar-size-offset)
+                      (tar-parse-octal-integer string tar-size-offset
+                                               tar-time-offset)
+                      (tar-parse-octal-integer string tar-time-offset
+                                               tar-chk-offset)
+                      (tar-parse-octal-integer string tar-chk-offset
+                                               tar-linkp-offset)
+                      link-p
+                      linkname
+                      uname-valid-p
+                      (when uname-valid-p
+                        (decode-coding-string
+                         (substring string tar-uname-offset uname-end) coding))
+                      (when uname-valid-p
+                        (decode-coding-string
+                         (substring string tar-gname-offset gname-end) coding))
+                      (tar-parse-octal-integer string tar-dmaj-offset
+                                               tar-dmin-offset)
+                      (tar-parse-octal-integer string tar-dmin-offset
+                                               tar-prefix-offset))))
+                (if global-pax-attributes
+                    (tar-apply-pax-attributes descriptor global-pax-attributes)
+                  descriptor)))))))))
 
 ;; Pseudo-field.
 (defun tar-header-data-end (descriptor)
@@ -756,6 +778,7 @@ For instance, if mode is #o700, then it produces `rwx------'."
          (result '())
          (pos (point-min))
 	 (coding tar-file-name-coding-system)
+         (global-pax-attributes (make-vector 8 nil))
          (progress-reporter
           (with-current-buffer tar-data-buffer
             (make-progress-reporter "Parsing tar file..."
@@ -763,7 +786,9 @@ For instance, if mode is #o700, then it produces `rwx------'."
          descriptor)
     (with-current-buffer tar-data-buffer
       (while (and (< pos (point-max))
-                  (setq descriptor (tar-header-block-tokenize pos coding)))
+                  (setq descriptor
+                        (tar-header-block-tokenize
+                         pos coding nil global-pax-attributes)))
         (let ((size (tar-header-size descriptor)))
           (if (< size 0)
               (error "%s has size %s - corrupted"
