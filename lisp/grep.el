@@ -388,10 +388,8 @@ Notice that using \\[next-error] or \\[compile-goto-error] modifies
 (defconst grep-regexp-alist
   `((,(concat "^\\(?:"
               ;; Parse using NUL characters when `--null' is used.
-              ;; Note that we must still assume no newlines in
-              ;; filenames due to "foo: Is a directory." type
-              ;; messages.
-              "\\(?1:[^\0\n]+\\)\\(?3:\0\\)\\(?2:[0-9]+\\):"
+              ;; The NUL separator allows newlines in filenames.
+              "\\(?1:[^\0]+\\)\\(?3:\0\\)\\(?2:[0-9]+\\):"
               "\\|"
               ;; Fallback if `--null' is not used, use a tight regexp
               ;; to handle weird file names (with colons in them) as
@@ -486,7 +484,7 @@ buffer `default-directory'."
   (rx bol
       (or
        (group-n 2
-         (group-n 1 (+ (not (any 0 ?\n))))
+         (group-n 1 (+ (not (any 0))))
          0)
        (group-n 2
         (group-n 1 (+? nonl))
