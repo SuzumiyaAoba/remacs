@@ -39,6 +39,7 @@ struct IsearchHistory {
     failing: bool,
     fail_pos: Option<usize>,
     case_fold: Value,
+    regexp: bool,
 }
 
 /// Run one search; returns (point, match-beg, match-end) — all
@@ -272,6 +273,7 @@ impl Isearch {
             failing: self.failing,
             fail_pos: self.fail_pos,
             case_fold: self.case_fold.clone(),
+            regexp: self.regexp,
         });
     }
 
@@ -283,6 +285,7 @@ impl Isearch {
             self.failing = previous.failing;
             self.fail_pos = previous.fail_pos;
             self.case_fold = previous.case_fold;
+            self.regexp = previous.regexp;
             self.go_to(i, self.cur());
         }
     }
@@ -705,6 +708,14 @@ impl Isearch {
                 };
                 self.failing = false;
                 self.fail_pos = None;
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | 'r' as i128) => {
+                self.save_history();
+                self.regexp = !self.regexp;
+                self.failing = false;
+                self.fail_pos = None;
+                self.search_replaced_query(i);
                 IsearchAction::Continue
             }
             c if c >= 32
