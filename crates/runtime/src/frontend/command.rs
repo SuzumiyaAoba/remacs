@@ -129,26 +129,43 @@ pub fn batch_command_error(i: &mut Interp, condition: Value) -> crate::lisp::Eva
 /// and runs this on a dedicated logic thread (Interp is !Send).
 pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::Result<()> {
     let term = std::rc::Rc::new(std::cell::RefCell::new(frontend));
+    install_minibuf_reader(&term, i);
+    run_editor_with_shared(term, i)
+}
+
+/// Install minibuffer input before startup Lisp runs, so startup actions can
+/// prompt through the same front-end input loop as later commands.
+pub fn install_minibuf_reader<T: KeyIo + 'static>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) {
+    let t = term.clone();
+    i.minibuf_reader = Some(std::rc::Rc::new(move |interp, prompt, single| {
+        // The recursive minibuffer has its own key sequence while it
+        // runs. Preserve the outer command's sequence after the read.
+        let saved_command_keys = interp.command_key_events.clone();
+        let saved_raw_keys = interp.command_raw_key_events.clone();
+        let saved_key_start = interp.command_key_start;
+        let saved_capture = interp.command_key_capture_active;
+        let result = minibuf_loop::<T>(&t, interp, prompt, single);
+        interp.command_key_events = saved_command_keys;
+        interp.command_raw_key_events = saved_raw_keys;
+        interp.command_key_start = saved_key_start;
+        interp.command_key_capture_active = saved_capture;
+        result
+    }));
+}
+
+pub fn run_editor_with_shared<T: KeyIo + 'static>(
+    term: std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) -> io::Result<()> {
     // Install the interactive input hook so read-from-minibuffer,
     // M-x, y-or-n-p, read-char, and `interactive' spec codes can read
-    // input from inside the evaluator.
-    {
-        let t = term.clone();
-        i.minibuf_reader = Some(std::rc::Rc::new(move |interp, prompt, single| {
-            // The recursive minibuffer has its own key sequence while it
-            // runs.  Preserve the outer command's sequence so it remains
-            // visible after the prompted read returns.
-            let saved_command_keys = interp.command_key_events.clone();
-            let saved_raw_keys = interp.command_raw_key_events.clone();
-            let saved_key_start = interp.command_key_start;
-            let saved_capture = interp.command_key_capture_active;
-            let result = minibuf_loop::<T>(&t, interp, prompt, single);
-            interp.command_key_events = saved_command_keys;
-            interp.command_raw_key_events = saved_raw_keys;
-            interp.command_key_start = saved_key_start;
-            interp.command_key_capture_active = saved_capture;
-            result
-        }));
+    // input from inside the evaluator. Startup may already have installed
+    // this callback on the shared front-end before evaluating arguments.
+    if i.minibuf_reader.is_none() {
+        install_minibuf_reader(&term, i);
     }
     // Sync initial frame/window geometry, then watch for front-end resizes.
     let mut frontend_size = term.borrow().size();

@@ -9,6 +9,7 @@ use remacs_runtime::{
     lisp::{Interp, Value},
 };
 use std::{
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     io,
     ops::Range,
@@ -2155,7 +2156,7 @@ fn start_logic_inner(
     smol::channel::Receiver<ClipboardRequest>,
     mpsc::Receiver<Option<InitialFrameSize>>,
 )> {
-    let wait_for_dump = dump_file.is_some();
+    let wait_for_startup = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
     let (event_tx, event_rx) = mpsc::channel::<GuiEvent>();
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
@@ -2194,13 +2195,6 @@ fn start_logic_inner(
                     requests: clipboard_tx,
                     ready: clipboard_ready,
                 })));
-            }
-            if let Err(error) = apply_startup_arguments(&mut i, &files, &arguments) {
-                let message = format!("GUI startup: {error:?}");
-                eprintln!("remacs: {message}");
-                let _ = startup_tx.send(Err(message));
-                let _ = initial_frame_size_tx.send(None);
-                return;
             }
             if enable_gui_selections {
                 configure_gui_window_system(&mut i);
@@ -2247,6 +2241,14 @@ fn start_logic_inner(
                     requests: gui_requests_tx.clone(),
                 })));
             }
+            let initial_frame_dimensions = i
+                .frames
+                .iter()
+                .filter_map(|frame| {
+                    let frame = frame.borrow();
+                    (!frame.dead).then_some((frame.id, (frame.width, frame.height)))
+                })
+                .collect::<HashMap<_, _>>();
             let initial_frame_size = i.selected_frame.as_ref().map(|frame| {
                 let has_size_parameter = [
                     "initial-frame-alist",
@@ -2277,7 +2279,6 @@ fn start_logic_inner(
                 }
             });
             let _ = initial_frame_size_tx.send(initial_frame_size);
-            let _ = startup_tx.send(Ok(()));
             let selected_frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
             let mut frame_sizes = HashMap::new();
             if let Some(frame_id) = selected_frame_id {
@@ -2286,6 +2287,7 @@ fn start_logic_inner(
                     frame_sizes.insert(frame_id, (frame.width, frame.height));
                 }
             }
+            let startup_frame_sizes = frame_sizes.clone();
             let io = ChanIo {
                 events: event_rx,
                 grids: grid_tx,
@@ -2325,11 +2327,49 @@ fn start_logic_inner(
                 mouse_frame_position: None,
                 scroll_remainder: 0.0,
             };
-            let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);
+            let term = Rc::new(RefCell::new(io));
+            remacs_runtime::frontend::install_minibuf_reader(&term, &mut i);
+            if enable_gui_requests {
+                // For a dump-backed GUI, release the caller after the dump
+                // is loaded and the native window can be opened. Startup
+                // Lisp may now prompt through the installed reader.
+                let _ = startup_tx.send(Ok(()));
+            }
+            if let Err(error) = apply_startup_arguments(&mut i, &files, &arguments) {
+                let message = format!("GUI startup: {error:?}");
+                eprintln!("remacs: {message}");
+                let _ = startup_tx.send(Err(message));
+                return;
+            }
+            let changed_frame_sizes = i
+                .frames
+                .iter()
+                .filter_map(|frame| {
+                    let frame = frame.borrow();
+                    let size = (frame.width, frame.height);
+                    (!frame.dead
+                        && initial_frame_dimensions.get(&frame.id).copied() != Some(size))
+                    .then_some((frame.id, size.0, size.1))
+                })
+                .collect::<Vec<_>>();
+            {
+                let mut term = term.borrow_mut();
+                for (frame_id, width, height) in changed_frame_sizes {
+                    if startup_frame_sizes.get(&frame_id).copied()
+                        == term.frame_sizes.get(&frame_id).copied()
+                    {
+                        term.update_size(Some(frame_id), width, height);
+                    }
+                }
+            }
+            if !enable_gui_requests {
+                let _ = startup_tx.send(Ok(()));
+            }
+            let _ = remacs_runtime::frontend::run_editor_with_shared(term, &mut i);
             // The GUI request sender drops here → the UI pump quits the app.
         })
         .map_err(io::Error::other)?;
-    if wait_for_dump {
+    if wait_for_startup {
         startup_rx
             .recv()
             .map_err(io::Error::other)?

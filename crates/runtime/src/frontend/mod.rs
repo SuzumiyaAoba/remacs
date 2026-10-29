@@ -356,8 +356,8 @@ mod command;
 mod render;
 pub(crate) use command::minibuf_dispatch_key;
 pub use command::{
-    batch_command_error, dispatch_key_core, nonblocking_sleep, replay_macro_events,
-    run_batch_editor, run_editor_with,
+    batch_command_error, dispatch_key_core, install_minibuf_reader, nonblocking_sleep,
+    replay_macro_events, run_batch_editor, run_editor_with, run_editor_with_shared,
 };
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
