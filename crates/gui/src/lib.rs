@@ -36,6 +36,25 @@ unsafe extern "system" {
         height: i32,
         flags: u32,
     ) -> i32;
+    fn GetWindowRect(hwnd: *mut std::ffi::c_void, rect: *mut Win32Rect) -> i32;
+    fn GetClientRect(hwnd: *mut std::ffi::c_void, rect: *mut Win32Rect) -> i32;
+    fn CallWindowProcW(
+        previous: isize,
+        hwnd: *mut std::ffi::c_void,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize;
+    fn DefWindowProcW(
+        hwnd: *mut std::ffi::c_void,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize;
+    #[cfg(target_pointer_width = "64")]
+    fn GetWindowLongPtrW(hwnd: *mut std::ffi::c_void, index: i32) -> isize;
+    #[cfg(target_pointer_width = "64")]
+    fn SetWindowLongPtrW(hwnd: *mut std::ffi::c_void, index: i32, value: isize) -> isize;
 }
 #[cfg(target_os = "macos")]
 use objc::{
@@ -61,6 +80,47 @@ static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = O
 static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
 #[cfg(target_os = "windows")]
 static ORIGINAL_WINDOW_EX_STYLES: OnceLock<Mutex<HashMap<isize, i32>>> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static WINDOWS_MINIMUM_SIZES: OnceLock<Mutex<HashMap<isize, WindowsMinimumSizeState>>> =
+    OnceLock::new();
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Win32Point {
+    x: i32,
+    y: i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Win32Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct Win32MinMaxInfo {
+    reserved: Win32Point,
+    max_size: Win32Point,
+    max_position: Win32Point,
+    min_track_size: Win32Point,
+    max_track_size: Win32Point,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct WindowsMinimumSizeState {
+    original_window_proc: isize,
+    min_width: Option<i32>,
+    min_height: Option<i32>,
+    nonclient_width: i32,
+    nonclient_height: i32,
+}
 
 #[cfg(target_os = "macos")]
 #[link(name = "objc", kind = "dylib")]
@@ -2047,6 +2107,152 @@ fn set_native_minimum_size(
         .map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn remacs_minimum_size_window_proc(
+    hwnd: *mut std::ffi::c_void,
+    message: u32,
+    wparam: usize,
+    lparam: isize,
+) -> isize {
+    const WM_GETMINMAXINFO: u32 = 0x0024;
+    let state = WINDOWS_MINIMUM_SIZES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .get(&(hwnd as isize))
+        .copied();
+    let Some(state) = state else {
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    };
+    let result = unsafe {
+        CallWindowProcW(state.original_window_proc, hwnd, message, wparam, lparam)
+    };
+    if message == WM_GETMINMAXINFO && lparam != 0 {
+        let info = unsafe { &mut *(lparam as *mut Win32MinMaxInfo) };
+        if let Some(min_width) = state.min_width {
+            info.min_track_size.x = info
+                .min_track_size
+                .x
+                .max(min_width.saturating_add(state.nonclient_width));
+        }
+        if let Some(min_height) = state.min_height {
+            info.min_track_size.y = info
+                .min_track_size
+                .y
+                .max(min_height.saturating_add(state.nonclient_height));
+        }
+    }
+    result
+}
+
+#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
+unsafe fn windows_get_long_ptr(hwnd: *mut std::ffi::c_void, index: i32) -> isize {
+    unsafe { GetWindowLongPtrW(hwnd, index) }
+}
+
+#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
+unsafe fn windows_set_long_ptr(
+    hwnd: *mut std::ffi::c_void,
+    index: i32,
+    value: isize,
+) -> isize {
+    unsafe { SetWindowLongPtrW(hwnd, index, value) }
+}
+
+#[cfg(all(target_os = "windows", target_pointer_width = "32"))]
+unsafe fn windows_get_long_ptr(hwnd: *mut std::ffi::c_void, index: i32) -> isize {
+    unsafe { GetWindowLongW(hwnd, index) as isize }
+}
+
+#[cfg(all(target_os = "windows", target_pointer_width = "32"))]
+unsafe fn windows_set_long_ptr(
+    hwnd: *mut std::ffi::c_void,
+    index: i32,
+    value: isize,
+) -> isize {
+    unsafe { SetWindowLongW(hwnd, index, value as i32) as isize }
+}
+
+#[cfg(target_os = "windows")]
+fn set_native_minimum_size(
+    window: &Window,
+    minimum_size: Option<Size<Pixels>>,
+) -> Result<(), String> {
+    use raw_window_handle::RawWindowHandle;
+
+    const GWLP_WNDPROC: i32 = -4;
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+        .map_err(|error| error.to_string())?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return Ok(());
+    };
+    let hwnd_id = handle.hwnd.get();
+    let hwnd = hwnd_id as *mut std::ffi::c_void;
+    let (min_width, min_height) = match minimum_size {
+        Some(size) => {
+            let scale = window.scale_factor();
+            (
+                Some((size.width.0 * scale).ceil() as i32).filter(|value| *value > 0),
+                Some((size.height.0 * scale).ceil() as i32).filter(|value| *value > 0),
+            )
+        }
+        None => (None, None),
+    };
+    let states = WINDOWS_MINIMUM_SIZES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut states = states.lock().unwrap();
+    if min_width.is_none() && min_height.is_none() {
+        if let Some(state) = states.remove(&hwnd_id) {
+            drop(states);
+            unsafe { windows_set_long_ptr(hwnd, GWLP_WNDPROC, state.original_window_proc) };
+        }
+        return Ok(());
+    }
+    if let Some(state) = states.get_mut(&hwnd_id) {
+        state.min_width = min_width;
+        state.min_height = min_height;
+        return Ok(());
+    }
+    drop(states);
+
+    let original_window_proc = unsafe { windows_get_long_ptr(hwnd, GWLP_WNDPROC) };
+    if original_window_proc == 0 {
+        return Err("native window procedure is unavailable".to_owned());
+    }
+    let mut outer = Win32Rect::default();
+    let mut client = Win32Rect::default();
+    unsafe {
+        GetWindowRect(hwnd, &mut outer);
+        GetClientRect(hwnd, &mut client);
+    }
+    let nonclient_width = (outer.right - outer.left - (client.right - client.left)).max(0);
+    let nonclient_height = (outer.bottom - outer.top - (client.bottom - client.top)).max(0);
+    let replacement = remacs_minimum_size_window_proc as *const () as isize;
+    unsafe { windows_set_long_ptr(hwnd, GWLP_WNDPROC, replacement) };
+    WINDOWS_MINIMUM_SIZES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .insert(
+            hwnd_id,
+            WindowsMinimumSizeState {
+                original_window_proc,
+                min_width,
+                min_height,
+                nonclient_width,
+                nonclient_height,
+            },
+        );
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn set_native_minimum_size(
+    _window: &Window,
+    _minimum_size: Option<Size<Pixels>>,
+) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn set_native_sticky(_window: &Window, _sticky: bool) -> Result<(), String> {
     Ok(())
@@ -2054,14 +2260,6 @@ fn set_native_sticky(_window: &Window, _sticky: bool) -> Result<(), String> {
 
 #[cfg(not(target_os = "linux"))]
 fn set_native_shaded(_window: &Window, _shaded: bool) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn set_native_minimum_size(
-    _window: &Window,
-    _minimum_size: Option<Size<Pixels>>,
-) -> Result<(), String> {
     Ok(())
 }
 
