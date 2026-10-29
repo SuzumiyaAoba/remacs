@@ -4761,6 +4761,7 @@ dependencies = [
  "sha3",
  "tree-sitter",
  "tree-sitter-language",
+ "unicode-bidi",
  "unicode-width",
  "unicode_names2",
 ]

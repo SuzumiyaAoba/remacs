@@ -27,6 +27,7 @@ tree-sitter = { workspace = true }
 tree-sitter-language = { workspace = true }
 libloading = { workspace = true }
 unicode-width = { workspace = true }
+unicode-bidi = { workspace = true }
 unicode_names2 = { workspace = true }
 rustc-hash = { workspace = true }
 serde = { workspace = true }

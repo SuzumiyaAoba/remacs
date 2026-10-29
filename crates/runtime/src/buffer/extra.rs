@@ -8,6 +8,7 @@ use crate::lisp::builtins::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
+use unicode_bidi::{BidiInfo, Level};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!(
@@ -3657,17 +3658,72 @@ fn f_backward_prefix_chars(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult 
     Ok(Value::Nil)
 }
 
+fn visual_line_point_step(
+    line: &str,
+    point: usize,
+    direction: i128,
+    default_level: Option<Level>,
+) -> (Option<usize>, bool) {
+    let info = BidiInfo::new(line, default_level);
+    let Some(paragraph) = info.paragraphs.first() else {
+        return (None, default_level.is_some_and(|level| level.is_rtl()));
+    };
+    let paragraph_is_rtl = paragraph.level.is_rtl();
+    let char_count = line.chars().count();
+    if char_count == 0 {
+        return (None, paragraph_is_rtl);
+    }
+    let levels = info.reordered_levels_per_char(paragraph, 0..line.len());
+    if levels.len() != char_count {
+        return (None, paragraph_is_rtl);
+    }
+    let visual_to_logical = BidiInfo::reorder_visual(&levels);
+    if visual_to_logical.len() != char_count {
+        return (None, paragraph_is_rtl);
+    }
+    let mut logical_to_visual = vec![0; char_count];
+    for (visual, logical) in visual_to_logical.iter().copied().enumerate() {
+        if let Some(position) = logical_to_visual.get_mut(logical) {
+            *position = visual;
+        }
+    }
+    let point = point.min(char_count);
+    let visual_slot = if point < char_count {
+        let visual = logical_to_visual[point];
+        visual + if levels[point].is_rtl() { 1 } else { 0 }
+    } else {
+        let logical = char_count - 1;
+        let visual = logical_to_visual[logical];
+        visual + if levels[logical].is_rtl() { 0 } else { 1 }
+    };
+    let next_point = if direction > 0 {
+        visual_to_logical.get(visual_slot).map(|logical| {
+            if levels[*logical].is_rtl() {
+                *logical
+            } else {
+                logical.saturating_add(1)
+            }
+        })
+    } else {
+        visual_slot
+            .checked_sub(1)
+            .and_then(|visual| visual_to_logical.get(visual))
+            .map(|logical| {
+                if levels[*logical].is_rtl() {
+                    logical.saturating_add(1)
+                } else {
+                    *logical
+                }
+            })
+    };
+    (next_point, paragraph_is_rtl)
+}
+
 fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fmove_point_visually (xdisp.c): CHECK_FIXNUM, then
-    // dir = sign(arg) (0 counts as -1).  In a batch/TTY frame the glyph
-    // matrix is empty, so it falls into the `simulate_display' path:
-    // PT<=BEGV&&dir<0 -> beginning-of-buffer, PT>=ZV&&dir>0 ->
-    // end-of-buffer; otherwise it reseats the display iterator and
-    // steps to the next visual column.  In our no-glyph model the
-    // batch-observable steps are: from BEGV rightward one char; any
-    // interior position GNU's iterator signals (args-out-of-range PT
-    // PT) via the interval tree — we reproduce that shape rather than
-    // silently stepping.
+    // dir = sign(arg) (0 counts as -1).  Graphical frames compute the
+    // current line's visual order from its bidi levels.  Non-graphical
+    // frames retain the existing empty-glyph simulation below.
     let dir = match &a[0] {
         Value::Int(n) if *n > 0 => 1i128,
         Value::Int(_) => -1i128,
@@ -3684,13 +3740,62 @@ fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             bb.zv,
         )
     };
-    if pt <= begv && dir < 0 {
+    let graphical = i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame));
+    if !graphical && pt <= begv && dir < 0 {
         crate::buffer::primitives::goto_char_set_point(i, &b, edge_lo)?;
         return Err(i.signal_data(crate::lisp::sym::BEGINNING_OF_BUFFER, vec![]));
     }
-    if pt >= zv && dir > 0 {
+    if !graphical && pt >= zv && dir > 0 {
         crate::buffer::primitives::goto_char_set_point(i, &b, edge_hi)?;
         return Err(i.signal_data(crate::lisp::sym::END_OF_BUFFER, vec![]));
+    }
+    if graphical {
+        let buffer_id = b.borrow().id;
+        let bidi_display_reordering =
+            crate::frontend::buffer_setting(i, "bidi-display-reordering", buffer_id).truthy();
+        let bidi_paragraph_direction =
+            crate::frontend::buffer_setting(i, "bidi-paragraph-direction", buffer_id);
+        let default_level = match bidi_paragraph_direction {
+            Value::Sym(symbol) if i.symbol_name(symbol) == "left-to-right" => Some(Level::ltr()),
+            Value::Sym(symbol) if i.symbol_name(symbol) == "right-to-left" => Some(Level::rtl()),
+            _ => None,
+        };
+        let requested_point = {
+            let bb = b.borrow();
+            let point = bb.point();
+            let line_start = bb.text.line_start(bb.text.line_of_pos(point)).max(bb.begv);
+            let line_end = bb.text.line_end(line_start).min(bb.zv);
+            let line = bb.text.substring(line_start, line_end).to_unicode_lossy();
+            let char_point = point.saturating_sub(line_start);
+            let next_char_point = if bidi_display_reordering {
+                let (next, paragraph_is_rtl) =
+                    visual_line_point_step(&line, char_point, dir, default_level);
+                next.map_or_else(
+                    || {
+                        let logical_direction = if paragraph_is_rtl { -dir } else { dir };
+                        point as i128 + logical_direction
+                    },
+                    |offset| line_start.saturating_add(offset) as i128,
+                )
+            } else {
+                point as i128 + dir
+            };
+            next_char_point
+        };
+        if requested_point < edge_lo as i128 {
+            crate::buffer::primitives::goto_char_set_point(i, &b, edge_lo)?;
+            return Err(i.signal_data(crate::lisp::sym::BEGINNING_OF_BUFFER, vec![]));
+        }
+        if requested_point > edge_hi as i128 {
+            crate::buffer::primitives::goto_char_set_point(i, &b, edge_hi)?;
+            return Err(i.signal_data(crate::lisp::sym::END_OF_BUFFER, vec![]));
+        }
+        let final_point =
+            crate::buffer::primitives::goto_char_set_point(i, &b, requested_point as usize)?;
+        return Ok(Value::Int(final_point as i128 + 1));
     }
     if pt == begv && dir > 0 {
         // Only batch-observable non-error step: BEGV + rightward.
