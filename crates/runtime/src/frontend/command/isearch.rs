@@ -469,6 +469,18 @@ fn isearch_input_method_text(
     Ok(Some(text))
 }
 
+fn finish_transient_input_method(i: &mut Interp) {
+    let active = i
+        .intern_soft("current-transient-input-method")
+        .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy());
+    if active {
+        let command = Value::Sym(i.intern("deactivate-transient-input-method"));
+        if let Err(flow) = i.apply(&command, Vec::new()) {
+            report_flow(i, flow);
+        }
+    }
+}
+
 fn edit_isearch_query(
     i: &mut Interp,
     query: &str,
@@ -997,6 +1009,13 @@ impl Isearch {
         self.search_updated_query(i, failure_start);
     }
 
+    fn call_lisp_command(&self, i: &mut Interp, name: &str) {
+        let command = Value::Sym(i.intern(name));
+        if let Err(flow) = self.with_lisp_state(i, |i| i.apply(&command, Vec::new())) {
+            report_flow(i, flow);
+        }
+    }
+
     fn delete_query_char(&mut self, i: &mut Interp) {
         if self.query.is_empty() {
             return;
@@ -1299,6 +1318,10 @@ impl Isearch {
         }
         if self.cx_prefix {
             self.cx_prefix = false;
+            if key == '\\' as i128 {
+                self.call_lisp_command(i, "isearch-transient-input-method");
+                return IsearchAction::Continue;
+            }
             if key == '8' as i128 {
                 self.cx8_prefix = true;
                 return IsearchAction::Continue;
@@ -1603,11 +1626,12 @@ impl Isearch {
                 self.quote_next = true;
                 IsearchAction::Continue
             }
+            c if c == 30 || c == (CHAR_CTL | '^' as i128) => {
+                self.call_lisp_command(i, "isearch-toggle-specified-input-method");
+                IsearchAction::Continue
+            }
             c if c == 28 || c == (CHAR_CTL | '\\' as i128) => {
-                let toggle = Value::Sym(i.intern("toggle-input-method"));
-                if let Err(flow) = i.apply(&toggle, Vec::new()) {
-                    report_flow(i, flow);
-                }
+                self.call_lisp_command(i, "isearch-toggle-input-method");
                 IsearchAction::Continue
             }
             c if c == 9
@@ -1857,6 +1881,7 @@ impl Isearch {
                     }
                 };
                 if !text.is_empty() {
+                    finish_transient_input_method(i);
                     self.save_history();
                     self.query.push_str(&text);
                     self.search_updated_query(i, failure_start);

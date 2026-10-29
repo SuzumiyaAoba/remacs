@@ -461,6 +461,65 @@ fn isearch_cq_quotes_control_s_and_keeps_search_active() {
 }
 
 #[test]
+fn isearch_input_method_keys_keep_search_active_and_transient_is_one_shot() {
+    let mut i = isearch_interp("x\n");
+    i.eval_str(
+        r#"
+        (setq current-input-method nil
+              qa-isearch-toggle-input-method nil
+              qa-isearch-specified-input-method nil
+              qa-isearch-transient-input-method nil)
+        (defun isearch-toggle-input-method ()
+          (setq qa-isearch-toggle-input-method t))
+        (defun isearch-toggle-specified-input-method ()
+          (setq qa-isearch-specified-input-method t))
+        (defun isearch-transient-input-method ()
+          (setq qa-isearch-transient-input-method t
+                current-transient-input-method t))
+        (defun deactivate-transient-input-method ()
+          (setq current-transient-input-method nil))
+        "#,
+    )
+    .unwrap();
+    let mut st = Isearch::new(&mut i, false, false);
+
+    assert!(matches!(st.step(&mut i, 28), IsearchAction::Continue));
+    assert!(matches!(st.step(&mut i, 30), IsearchAction::Continue));
+    assert!(matches!(st.step(&mut i, 24), IsearchAction::Continue));
+    assert!(matches!(
+        st.step(&mut i, '\\' as i128),
+        IsearchAction::Continue
+    ));
+    assert!(matches!(
+        st.step(&mut i, 'x' as i128),
+        IsearchAction::Continue
+    ));
+
+    assert_eq!(st.query, "x");
+    assert_eq!(point(&i), 1);
+    assert!(
+        i.eval_str("qa-isearch-toggle-input-method")
+            .unwrap()
+            .truthy()
+    );
+    assert!(
+        i.eval_str("qa-isearch-specified-input-method")
+            .unwrap()
+            .truthy()
+    );
+    assert!(
+        i.eval_str("qa-isearch-transient-input-method")
+            .unwrap()
+            .truthy()
+    );
+    assert!(
+        !i.eval_str("current-transient-input-method")
+            .unwrap()
+            .truthy()
+    );
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
