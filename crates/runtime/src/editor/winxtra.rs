@@ -2235,16 +2235,28 @@ fn f_get_largest_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_posn_at_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU decodes WINDOW (arg2)
     // via decode_live_window even when the batch result is nil.
-    if a.len() > 1 {
-        let _ = win_live(i, &a[1])?;
-    }
+    let window = match a.get(1) {
+        None | Some(Value::Nil) => sel_window(i),
+        Some(value) => Some(win_live(i, value)?),
+    };
     // GNU Fposn_at_point CHECK_NUMBER_COERCE_MARKERs POS before
     // consulting the display — a cons errors even in batch.
     let pos = match a.get(0) {
-        None | Some(Value::Nil) => i
-            .current_buffer_ref()
-            .map(|b| b.borrow().point() as i128 + 1)
-            .unwrap_or(1),
+        None | Some(Value::Nil) => {
+            let selected = window.as_ref().is_some_and(|window| {
+                sel_window(i).is_some_and(|selected| Rc::ptr_eq(&selected, window))
+            });
+            if selected || window.is_none() {
+                i.current_buffer_ref()
+                    .map(|buffer| buffer.borrow().point() as i128 + 1)
+                    .unwrap_or(1)
+            } else {
+                window
+                    .as_ref()
+                    .map(|window| window.borrow().point as i128 + 1)
+                    .unwrap_or(1)
+            }
+        }
         Some(Value::Int(n)) => *n,
         Some(Value::Marker(m)) => m.borrow().position as i128 + 1,
         Some(other) => return Err(i.wrong_type_mut("integer-or-marker-p", other)),
@@ -2254,19 +2266,47 @@ fn f_posn_at_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // visible anywhere and the whole posn is nil.
         return Ok(Value::Nil);
     }
-    // GNU: point not in any window's text area → the minimal posn
-    // `(WINDOW POS (0 . 0) TIMESTAMP)' that its C `event-start'/`event-end'
-    // fallback also yields in batch — car MUST be the live window, else
-    // callers like `describe-key' trip `posn-set-point''s
-    // "Position not in text area of window" check.
-    let win = match sel_window(i) {
-        Some(w) => Value::Window(w),
-        None => return Ok(Value::Nil),
+    let Some(win) = window else {
+        return Ok(Value::Nil);
     };
+    let Some(position) = pos
+        .checked_sub(1)
+        .and_then(|position| usize::try_from(position).ok())
+    else {
+        return Ok(Value::Nil);
+    };
+    let Some((row, column)) = crate::frontend::position_display_cell(i, &win, position) else {
+        return Ok(Value::Nil);
+    };
+    let Some(frame) = crate::editor::frame_of_window(i, &win) else {
+        return Ok(Value::Nil);
+    };
+    let char_width = crate::editor::frame_parameter_positive_size(i, &frame, "char-width", 8);
+    let line_height = crate::editor::frame_char_height(i, &frame).max(1);
+    let (left_margin, left_fringe_override) = {
+        let window = win.borrow();
+        (
+            window.margins.0,
+            window.fringes.and_then(|fringes| fringes.0),
+        )
+    };
+    let left_fringe = if crate::editor::frame_is_graphical(i, &frame) {
+        left_fringe_override.unwrap_or_else(|| {
+            crate::editor::frame_parameter_positive_size(i, &frame, "left-fringe", 8)
+        })
+    } else {
+        0
+    };
+    let x = left_fringe
+        .saturating_add(left_margin.saturating_mul(char_width))
+        .saturating_add(column.saturating_mul(char_width));
+    // `posn-x-y' is relative to the window's text area; header and tab
+    // lines are already accounted for by `window-inside-pixel-edges'.
+    let y = row.saturating_mul(line_height);
     Ok(Value::list(vec![
-        win,
+        Value::Window(win),
         Value::Int(pos),
-        Value::cons(Value::Int(0), Value::Int(0)),
+        Value::cons(Value::Int(x as i128), Value::Int(y as i128)),
         Value::Int(0),
     ]))
 }
