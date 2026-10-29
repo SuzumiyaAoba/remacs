@@ -66,6 +66,8 @@ pub(super) enum GuiEvent {
     MouseMove {
         frame_id: Option<usize>,
         position: Option<MousePosition>,
+        /// Native pixel coordinates in the frontend's global desktop space.
+        absolute_position: Option<(i128, i128)>,
     },
     MouseDown {
         button: MouseButton,
@@ -152,10 +154,12 @@ impl FrameEventSender {
     pub(super) fn send_mouse_move(
         &self,
         position: Option<MousePosition>,
+        absolute_position: Option<(i128, i128)>,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
         self.sender.send(GuiEvent::MouseMove {
             frame_id: self.frame_id.get(),
             position,
+            absolute_position,
         })
     }
 }
@@ -600,6 +604,8 @@ pub(super) struct ChanIo {
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
     mouse_positions: HashMap<usize, MousePosition>,
     mouse_position: Option<MousePosition>,
+    /// Last native pointer location in the frontend's global desktop space.
+    mouse_absolute_position: Option<(i128, i128)>,
     pub(super) scroll_remainder: f32,
 }
 
@@ -1006,6 +1012,30 @@ impl ChanIo {
 }
 
 impl KeyIo for ChanIo {
+    fn mouse_absolute_pixel_position(&self, i: &Interp) -> Option<(i128, i128)> {
+        let (x, y) = self.mouse_absolute_position?;
+        let frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id)?;
+        let geometry = self.frame_geometries.get(&frame_id).or_else(|| {
+            (Some(frame_id) == self.primary_frame_id)
+                .then(|| self.geometry.as_ref())
+                .flatten()
+        });
+        let display_origin = geometry
+            .and_then(|geometry| {
+                let display_id = geometry.current_display_id?;
+                geometry
+                    .monitors
+                    .iter()
+                    .find(|monitor| monitor.display_id == display_id)
+                    .map(|monitor| (monitor.geometry[0], monitor.geometry[1]))
+            })
+            .unwrap_or((0, 0));
+        Some((
+            x.saturating_sub(display_origin.0),
+            y.saturating_sub(display_origin.1),
+        ))
+    }
+
     fn poll_input(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(InputEvent::Key(k)));
@@ -1101,7 +1131,11 @@ impl KeyIo for ChanIo {
             GuiEvent::MouseMove {
                 frame_id,
                 position,
+                absolute_position,
             } => {
+                if let Some(position) = absolute_position {
+                    self.mouse_absolute_position = Some(position);
+                }
                 self.update_mouse_face_position(frame_id, position);
                 Ok(None)
             }
@@ -1251,7 +1285,11 @@ impl KeyIo for ChanIo {
             GuiEvent::MouseMove {
                 frame_id,
                 position,
+                absolute_position,
             } => {
+                if let Some(position) = absolute_position {
+                    self.mouse_absolute_position = Some(position);
+                }
                 self.update_mouse_face_position(frame_id, position);
                 Ok(None)
             }
@@ -1840,6 +1878,7 @@ fn start_logic_inner(
                 mouse_down: None,
                 mouse_positions: HashMap::new(),
                 mouse_position: None,
+                mouse_absolute_position: None,
                 scroll_remainder: 0.0,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);

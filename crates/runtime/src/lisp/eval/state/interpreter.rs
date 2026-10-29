@@ -51,6 +51,9 @@ pub struct Interp {
     pub gui_popup_menu: Option<(Value, i128, i128)>,
     /// Last pointer position in window-relative pixels during mouse dispatch.
     pub gui_mouse_position: Option<(i128, i128)>,
+    /// Last native pointer position in display-relative pixels reported by
+    /// the GUI frontend.
+    pub gui_mouse_absolute_position: Option<(i128, i128)>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,

@@ -163,6 +163,20 @@ fn frame_content_point(
     Some(point(px(x - border), px(y - border)))
 }
 
+fn absolute_mouse_pixel_position(
+    position: Point<Pixels>,
+    screen_left: i128,
+    screen_top: i128,
+    content_top_offset: i128,
+) -> (i128, i128) {
+    (
+        screen_left.saturating_add(f32::from(position.x).round() as i128),
+        screen_top
+            .saturating_add(content_top_offset)
+            .saturating_add(f32::from(position.y).round() as i128),
+    )
+}
+
 fn scroll_bar_hit(grid: &Grid, point: Point<Pixels>) -> Option<(GridScrollBar, f32)> {
     let x = f32::from(point.x);
     let y = f32::from(point.y);
@@ -633,6 +647,10 @@ impl Render for EditorView {
                 .map(|monitor| monitor.geometry[1].saturating_sub(monitor.native_origin[1]))
                 .unwrap_or(0),
         );
+        let pointer_screen_left = frame_left;
+        let pointer_screen_top = frame_top;
+        let content_top_offset =
+            (f32::from(bounds.size.height) - f32::from(vp.height)).round() as i128;
         let geometry = GuiGeometry {
             cols,
             rows,
@@ -931,6 +949,12 @@ impl Render for EditorView {
             )
             .on_mouse_move(cx.listener(
                 move |this, event: &MouseMoveEvent, window, cx| {
+                    let absolute_position = absolute_mouse_pixel_position(
+                        event.position,
+                        pointer_screen_left,
+                        pointer_screen_top,
+                        content_top_offset,
+                    );
                     let point = frame_content_point(
                         event.position,
                         window.viewport_size(),
@@ -942,9 +966,10 @@ impl Render for EditorView {
                     let target = position.map(|position| {
                         (position.buffer_id, position.buffer_position)
                     });
-                    if this.mouse_face_position.replace(target) != target {
-                        let _ = this.tx.send_mouse_move(position);
-                    }
+                    let _ = this.mouse_face_position.replace(target);
+                    let _ = this
+                        .tx
+                        .send_mouse_move(position, Some(absolute_position));
                     if !event.dragging() {
                         return;
                     }
@@ -1245,11 +1270,17 @@ impl Render for EditorView {
                             }
                         });
                         window.on_mouse_event(
-                            move |_: &MouseExitEvent, phase, _window, _cx| {
-                                if phase == DispatchPhase::Bubble
-                                    && mouse_face_exit_position.replace(None).is_some()
-                                {
-                                    let _ = mouse_face_exit_tx.send_mouse_move(None);
+                            move |event: &MouseExitEvent, phase, _window, _cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    let _ = mouse_face_exit_position.replace(None);
+                                    let absolute_position = absolute_mouse_pixel_position(
+                                        event.position,
+                                        pointer_screen_left,
+                                        pointer_screen_top,
+                                        content_top_offset,
+                                    );
+                                    let _ = mouse_face_exit_tx
+                                        .send_mouse_move(None, Some(absolute_position));
                                 }
                             },
                         );

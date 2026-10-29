@@ -96,6 +96,7 @@ impl Interp {
             gui_tip: None,
             gui_popup_menu: None,
             gui_mouse_position: None,
+            gui_mouse_absolute_position: None,
             max_lisp_eval_depth: 1600,
             eval_depth: 0,
             explicit_eval_depth: 0,

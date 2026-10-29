@@ -12,6 +12,15 @@ use std::time::{Duration, Instant};
 mod isearch;
 use isearch::*;
 
+pub(super) fn sync_mouse_absolute_pixel_position<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) {
+    if let Some(position) = term.borrow().mouse_absolute_pixel_position(i) {
+        i.gui_mouse_absolute_position = Some(position);
+    }
+}
+
 /// A batch startup can reach the command loop when a replacement for
 /// `kill-emacs' returns.  The threaded GNU event loop waits for queued
 /// events and timers here; it neither enters terminal mode nor consumes
@@ -194,6 +203,7 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
                 let timeout = Duration::from_millis(50);
                 let polled = term.borrow_mut().poll_input(timeout)?;
                 apply_frame_selection(&term, i);
+                sync_mouse_absolute_pixel_position(&term, i);
                 if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved()
                     && let Err(flow) = dispatch_frame_moved(i, frame_id, left, top)
                 {
@@ -1539,6 +1549,7 @@ fn minibuf_loop<T: KeyIo>(
             }
         };
         apply_frame_selection(term, i);
+        sync_mouse_absolute_pixel_position(term, i);
         if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved() {
             dispatch_frame_moved(i, frame_id, left, top)?;
         }

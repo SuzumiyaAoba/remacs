@@ -206,6 +206,11 @@ pub trait KeyIo {
     fn unread(&mut self, k: i128);
     /// Repaint the whole frame.
     fn render(&mut self, i: &Interp) -> io::Result<()>;
+    /// Most recently observed native pointer position, in the display-relative
+    /// pixel coordinates of the selected frame, when the frontend has one.
+    fn mouse_absolute_pixel_position(&self, _i: &Interp) -> Option<(i128, i128)> {
+        None
+    }
     /// Whether this front-end needs periodic renders without input or
     /// runtime activity (for example, a terminal cursor animation).
     fn render_on_idle(&self) -> bool {

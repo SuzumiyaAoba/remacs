@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use super::{Interp, S, Subr};
 use crate::lisp::EvalResult;
 use crate::lisp::error::Flow;
-use crate::lisp::value::{SymId, Value};
+use crate::lisp::value::{Cons, SymId, Value};
 
 // ---------------------------------------------------------------------------
 // Objective-C runtime bridge (libobjc + AppKit/Foundation via dynlib)
@@ -563,7 +563,22 @@ fn f_ns_emacs_info_panel(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 winsys_fn!(f_ns_frame_edges);
 winsys_fn!(f_ns_frame_geometry);
-winsys_fn!(f_ns_mouse_absolute_pixel_position);
+
+fn f_ns_mouse_absolute_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let Some(frame) = i
+        .selected_frame
+        .as_ref()
+        .filter(|frame| !frame.borrow().dead)
+    else {
+        return Err(winsys(i));
+    };
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
+        return Err(winsys(i));
+    }
+    let (x, y) = i.gui_mouse_absolute_position.unwrap_or((0, 0));
+    Ok(Value::Cons(Cons::new(Value::Int(x), Value::Int(y))))
+}
+
 winsys_fn!(f_ns_set_mouse_absolute_pixel_position);
 
 fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
