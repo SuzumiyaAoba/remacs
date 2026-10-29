@@ -1166,6 +1166,7 @@ impl ChanIo {
         text: &str,
         reset_styles: bool,
         use_grid_cursor: bool,
+        move_cursor: bool,
     ) -> Grid {
         let echo_row = self.rows.saturating_sub(1);
         let selected_cursor = use_grid_cursor
@@ -1203,7 +1204,6 @@ impl ChanIo {
                 (shown, cursor_column, cursor_index.min(visible_bytes))
             }
         };
-        grid.cursors.retain(|cursor| !cursor.selected);
         if let Some(last) = grid.rows.last_mut() {
             *last = shown;
         }
@@ -1222,15 +1222,18 @@ impl ChanIo {
                 last.truncate(char_count);
             }
         }
-        let cx = cursor_column.min(self.cols.saturating_sub(1));
-        grid.cursor = Some((cx, echo_row));
-        grid.cursor_index = Some(cursor_index);
-        if let Some(mut cursor) = selected_cursor {
-            cursor.row = echo_row;
-            cursor.column = cx;
-            cursor.index = cursor_index;
-            cursor.after_index = None;
-            grid.cursors.push(cursor);
+        if move_cursor {
+            grid.cursors.retain(|cursor| !cursor.selected);
+            let cx = cursor_column.min(self.cols.saturating_sub(1));
+            grid.cursor = Some((cx, echo_row));
+            grid.cursor_index = Some(cursor_index);
+            if let Some(mut cursor) = selected_cursor {
+                cursor.row = echo_row;
+                cursor.column = cx;
+                cursor.index = cursor_index;
+                cursor.after_index = None;
+                grid.cursors.push(cursor);
+            }
         }
         grid
     }
@@ -1851,7 +1854,7 @@ impl KeyIo for ChanIo {
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
-        let grid = self.echo_grid(grid, text, true, false);
+        let grid = self.echo_grid(grid, text, true, false, true);
         self.send_grid(grid)
     }
 
@@ -1875,7 +1878,19 @@ impl KeyIo for ChanIo {
             let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
             render_grid_with_mouse_position_cached(i, cols, rows, cached, self.mouse_position)
         };
-        let grid = self.echo_grid(grid, text, false, true);
+        let grid = self.echo_grid(grid, text, false, true, true);
+        self.send_grid(grid)
+    }
+
+    fn draw_echo_message_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
+        let grid = self
+            .last
+            .clone()
+            .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
+        let move_cursor = i
+            .intern_soft("cursor-in-echo-area")
+            .is_some_and(|symbol| i.symbol_value(symbol).truthy());
+        let grid = self.echo_grid(grid, text, true, false, move_cursor);
         self.send_grid(grid)
     }
 

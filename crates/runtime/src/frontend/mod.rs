@@ -315,6 +315,11 @@ pub trait KeyIo {
     fn draw_echo_with_state(&mut self, _i: &Interp, text: &str) -> io::Result<()> {
         self.draw_echo(text)
     }
+    /// Show an echo-area message while preserving the displayed buffer cursor
+    /// unless `cursor-in-echo-area` requests moving it into the message.
+    fn draw_echo_message_with_state(&mut self, _i: &Interp, text: &str) -> io::Result<()> {
+        self.draw_echo(text)
+    }
     /// Current frame size in text cells.
     fn size(&self) -> (usize, usize);
 }

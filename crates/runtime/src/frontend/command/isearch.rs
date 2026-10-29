@@ -418,7 +418,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
         if render_needed {
             let mut t = term.borrow_mut();
             let _ = t.render(i);
-            let _ = t.draw_echo(&st.label());
+            let _ = t.draw_echo_message_with_state(i, &st.label());
             render_needed = false;
         }
         let polled_key = term.borrow_mut().poll_key(Duration::from_millis(50))?;
