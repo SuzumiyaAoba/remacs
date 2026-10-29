@@ -185,11 +185,20 @@ Linum mode is a buffer-local minor mode."
                     (let ((w (length (number-to-string
                                       (count-lines (point-min) (point-max))))))
                       (concat "%" (number-to-string w) "d")))))
-        (width 0))
+        (width 0)
+        ;; Remacs: a newline at point-max leaves a visible empty final line.
+        (final-empty-line
+         (and (> (point-max) (point-min))
+              (save-excursion
+                (goto-char (point-max))
+                (bolp))))
+        (done nil))
     (run-hooks 'linum-before-numbering-hook)
     ;; Create an overlay (or reuse an existing one) for each
     ;; line visible in this window, if necessary.
-    (while (and (not (eobp)) (< (point) limit))
+    (while (and (not done)
+                (or (and (not (eobp)) (< (point) limit))
+                    (and final-empty-line (eobp) (<= (point) limit))))
       (let* ((str (if fmt
                       (propertize (format fmt line) 'face 'linum)
                     (funcall linum-format line)))
@@ -210,8 +219,10 @@ Linum mode is a buffer-local minor mode."
             (overlay-put ov 'before-string
                          (propertize " " 'display `((margin left-margin) ,str)))
             (overlay-put ov 'linum-str str))))
-      (forward-line)
-      (setq line (1+ line)))
+        (if (eobp)
+            (setq done t)
+          (forward-line)
+          (setq line (1+ line))))
     (when (display-graphic-p)
       (setq width (ceiling
                    (/ (* width 1.0 (linum--face-width 'linum))
