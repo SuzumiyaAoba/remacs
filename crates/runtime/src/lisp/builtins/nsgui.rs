@@ -30,6 +30,7 @@ type MsgInt1 = unsafe extern "C" fn(usize, usize, usize) -> i64;
 type MsgU64_2 = unsafe extern "C" fn(usize, usize, u64, usize) -> usize;
 type MsgVoid0 = unsafe extern "C" fn(usize, usize);
 type MsgVoid1 = unsafe extern "C" fn(usize, usize, usize);
+type MsgVoid2 = unsafe extern "C" fn(usize, usize, usize, usize);
 type MsgDbl1 = unsafe extern "C" fn(usize, usize, f64);
 type MsgRange1 = unsafe extern "C" fn(usize, usize, usize) -> NsRange;
 type PoolPush = unsafe extern "C" fn() -> usize;
@@ -72,6 +73,7 @@ pub(crate) struct Objc {
     u64_2: MsgU64_2,
     void0: MsgVoid0,
     void1: MsgVoid1,
+    void2: MsgVoid2,
     dbl1: MsgDbl1,
     range1: MsgRange1,
     size0: MsgSize0,
@@ -106,6 +108,7 @@ fn objc() -> Option<&'static Objc> {
                 u64_2: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
                 void0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
                 void1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                void2: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
                 dbl1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
                 range1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
                 size0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
@@ -532,8 +535,76 @@ macro_rules! winsys_fn {
     };
 }
 
-winsys_fn!(f_ns_get_resource);
-winsys_fn!(f_ns_set_resource);
+fn ns_window_system_in_use(i: &Interp) -> bool {
+    cfg!(target_os = "macos")
+        && i.selected_frame
+            .as_ref()
+            .is_some_and(|frame| {
+                !frame.borrow().dead && crate::editor::frame_is_graphical(i, frame)
+            })
+}
+
+fn f_ns_get_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
+    }
+    let Value::Str(name) = &a[1] else {
+        return Err(i.wrong_type_mut("stringp", &a[1]));
+    };
+    let Some(o) = objc() else {
+        return Err(winsys(i));
+    };
+    let name = name.borrow().to_unicode_lossy();
+    let value = with_pool(o, |o| unsafe {
+        let defaults = (o.id0)(cls(o, "NSUserDefaults"), sel(o, "standardUserDefaults"));
+        if defaults == 0 {
+            return None;
+        }
+        let key = ns_str(o, &name);
+        let object = (o.id1)(defaults, sel(o, "objectForKey:"), key);
+        if object == 0 {
+            None
+        } else {
+            let description = (o.id0)(object, sel(o, "description"));
+            Some(utf8(o, description))
+        }
+    });
+    Ok(value.map(Value::string).unwrap_or(Value::Nil))
+}
+
+fn f_ns_set_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
+    }
+    let Value::Str(name) = &a[1] else {
+        return Err(i.wrong_type_mut("stringp", &a[1]));
+    };
+    let name = name.borrow().to_unicode_lossy();
+    let value = match &a[2] {
+        Value::Nil => None,
+        Value::Str(value) => Some(value.borrow().to_unicode_lossy()),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let Some(o) = objc() else {
+        return Err(winsys(i));
+    };
+    let result = with_pool(o, |o| unsafe {
+        let defaults = (o.id0)(cls(o, "NSUserDefaults"), sel(o, "standardUserDefaults"));
+        if defaults == 0 {
+            return Err("NSUserDefaults is unavailable".to_owned());
+        }
+        let key = ns_str(o, &name);
+        if let Some(value) = &value {
+            let value = ns_str(o, value);
+            (o.void2)(defaults, sel(o, "setObject:forKey:"), value, key);
+        } else {
+            (o.void1)(defaults, sel(o, "removeObjectForKey:"), key);
+        }
+        Ok(())
+    });
+    result.map_err(|message| i.error(message))?;
+    Ok(Value::Nil)
+}
 
 fn f_ns_emacs_info_panel(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let Some(backend) = i.about_panel_backend.clone() else {
