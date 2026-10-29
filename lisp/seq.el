@@ -355,6 +355,12 @@ This does not modify SEQUENCE."
 (cl-defmethod seq-reverse ((sequence sequence))
   (reverse sequence))
 
+(cl-defmethod seq-reverse ((sequence char-table))
+  ;; Character tables have a fixed range and cannot be reversed in place.
+  ;; `seq-subseq' converts their elements to a vector, which `nreverse' can
+  ;; reverse destructively.
+  (nreverse (seq-subseq sequence 0 (seq-length sequence))))
+
 (cl-defgeneric seq-concatenate (type &rest sequences)
   "Concatenate SEQUENCES into a single sequence of type TYPE.
 TYPE must be one of following symbols: `vector', `string', `list', or

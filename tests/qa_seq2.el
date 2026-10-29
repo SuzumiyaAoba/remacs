@@ -77,6 +77,17 @@
 ;; == seq-reverse ==
 (qa (seq-reverse '(a b c)) '(c b a))
 (qa (seq-reverse [a b c]) [c b a])
+(qa (let* ((table (make-char-table 'generic nil))
+           (length (seq-length table))
+           (last (1- length)))
+      (set-char-table-range table 0 'first)
+      (set-char-table-range table last 'last)
+      (let ((reversed (seq-reverse table)))
+        (list (vectorp reversed)
+              (= (length reversed) length)
+              (aref reversed 0)
+              (aref reversed last))))
+    '(t t last first))
 
 ;; == seq-contains-p / seq-contains / seq-empty-p / seq-set-equal-p ==
 (qa (seq-contains-p '(a b) 'b) t)
