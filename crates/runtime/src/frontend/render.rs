@@ -3272,10 +3272,14 @@ struct FaceCtx {
     stipple_ids: HashMap<GridStipple, u16>,
     /// Resolved face name -> merged StyleMix.
     cache: HashMap<crate::lisp::value::SymId, StyleMix>,
+    /// Foreground from this frame's `foreground-color' parameter. It is a
+    /// fallback for the default face, so an explicit default-face foreground
+    /// still takes precedence.
+    frame_default_foreground: Option<CellColor>,
 }
 
 impl FaceCtx {
-    fn new(i: &Interp) -> FaceCtx {
+    fn new(i: &Interp, frame: Option<&crate::editor::FrameRef>) -> FaceCtx {
         let sym = |n: &str| i.intern_soft(n).unwrap_or(u32::MAX);
         let mut colors: HashMap<EmacsText, (u8, u8, u8)> = HashMap::new();
         // The eight standard colors come from tty-standard-colors so
@@ -3328,7 +3332,7 @@ impl FaceCtx {
                 }
             }
         }
-        FaceCtx {
+        let mut ctx = FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
             mouse_face: sym("mouse-face"),
@@ -3349,7 +3353,17 @@ impl FaceCtx {
             stipples: Vec::new(),
             stipple_ids: HashMap::new(),
             cache: HashMap::new(),
-        }
+            frame_default_foreground: None,
+        };
+        ctx.frame_default_foreground = frame.and_then(|frame| {
+            let parameter = i.intern_soft("foreground-color")?;
+            let value = crate::lisp::eval::plist_get_v(
+                &frame.borrow().params,
+                &Value::Sym(parameter),
+            );
+            ctx.color(&value)
+        });
+        ctx
     }
 
     /// GNU `tty_color_standard_values' + `tty-color-canonicalize':
@@ -3523,6 +3537,9 @@ impl FaceCtx {
         }
         if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
             mix.merge(&self.face_plist(i, plist, depth));
+        }
+        if i.symbol_name(*name) == "default" && mix.fg.is_none() {
+            mix.fg = self.frame_default_foreground;
         }
         self.cache.insert(*name, mix);
         mix
@@ -5288,8 +5305,9 @@ fn render_grid_internal(
     frame_override: Option<&crate::editor::FrameRef>,
     mouse_position: Option<MousePosition>,
 ) -> Grid {
+    let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
     let mut rows = vec![String::new(); height];
-    let mut fctx = FaceCtx::new(i);
+    let mut fctx = FaceCtx::new(i, frame.as_ref());
     let default_style = fctx.builtin(i, "default", 0).finish();
     let default_bg = default_style.bg;
     let mut attrs = vec![vec![default_style; width]; height];
@@ -5322,7 +5340,7 @@ fn render_grid_internal(
     } else {
         None
     };
-    let frame = match frame_override.cloned().or_else(|| i.selected_frame.clone()) {
+    let frame = match frame {
         Some(f) => f,
         None => {
             return Grid {
