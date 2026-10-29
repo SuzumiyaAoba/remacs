@@ -431,9 +431,9 @@ Return nil if KEYWORD is not recognized as a JSON keyword."
         (json-advance 4)
         (string-to-number (match-string 0) 16))
        (t
-        (signal 'json-string-escape (list (point)))))
+        (signal 'json-string-escape (list (point))))))
      (t
-      (signal 'json-string-escape (list (point))))))))
+      (signal 'json-string-escape (list (point)))))))
 
 (defun json-read-string ()
   "Read the JSON string at point."
