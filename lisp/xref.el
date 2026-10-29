@@ -1219,10 +1219,12 @@ to that style.  Otherwise it is returned unchanged."
     (nondirectory
      (file-name-nondirectory group))
     (project-relative
-     (if (and project-root
-              (string-prefix-p project-root group))
-         (substring group (length project-root))
-       group))))
+     (let ((project-root (and project-root
+                              (file-name-as-directory project-root))))
+       (if (and project-root
+                (string-prefix-p project-root group))
+           (substring group (length project-root))
+         group)))))
 
 (defun xref--analyze (xrefs)
   "Find common groups in XREFS and format group names.
