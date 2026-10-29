@@ -52,6 +52,11 @@ pub(super) struct Isearch {
     pub(super) lazy_ovs: Vec<Value>,
     /// Per-capture overlays on the current regexp match.
     submatch_ovs: Vec<Value>,
+    lazy_count_current: Option<usize>,
+    lazy_count_total: Option<usize>,
+    lazy_count_invisible: Option<usize>,
+    lazy_count_prefix: String,
+    lazy_count_suffix: String,
 }
 
 struct IsearchHistory {
@@ -664,6 +669,11 @@ impl Isearch {
             match_ov: None,
             lazy_ovs: Vec::new(),
             submatch_ovs: Vec::new(),
+            lazy_count_current: None,
+            lazy_count_total: None,
+            lazy_count_invisible: None,
+            lazy_count_prefix: String::new(),
+            lazy_count_suffix: String::new(),
         }
     }
 
@@ -1896,7 +1906,10 @@ impl Isearch {
         let dir = if self.backward { " backward" } else { "" };
         let re = if self.regexp { " regexp" } else { "" };
         let status = if self.failing { "Failing " } else { "" };
-        let prefix = format!("{}I-search{}{}: ", status, dir, re);
+        let prefix = format!(
+            "{}{}I-search{}{}: ",
+            self.lazy_count_prefix, status, dir, re
+        );
         let prefix_length = prefix.chars().count();
         let query_length = self.query.chars().count();
         let failure = self.failing.then(|| {
@@ -1905,7 +1918,10 @@ impl Isearch {
                 prefix_length + query_length,
             )
         });
-        (format!("{prefix}{}", self.query), failure)
+        (
+            format!("{prefix}{}{}", self.query, self.lazy_count_suffix),
+            failure,
+        )
     }
 
     /// Call a user-supplied `isearch-message-function' with the Lisp-visible
@@ -1960,7 +1976,11 @@ impl Isearch {
         action: impl FnOnce(&mut Interp) -> Result<T, crate::lisp::error::Flow>,
     ) -> Result<T, crate::lisp::error::Flow> {
         let mark = i.specbind_depth();
-        let (match_start, match_end) = self.spans.last().copied().unwrap_or((self.start, self.start));
+        let (match_start, match_end) = self
+            .spans
+            .last()
+            .copied()
+            .unwrap_or((self.start, self.start));
         let regexp_function = if self.word_search {
             Value::Sym(i.intern("word-search-regexp"))
         } else if self.char_fold {
@@ -1980,7 +2000,11 @@ impl Isearch {
             ("isearch-message", Value::string(self.query.clone())),
             (
                 "isearch-forward",
-                if self.backward { Value::Nil } else { Value::t() },
+                if self.backward {
+                    Value::Nil
+                } else {
+                    Value::t()
+                },
             ),
             (
                 "isearch-regexp",
@@ -1991,7 +2015,11 @@ impl Isearch {
             ("isearch-invisible", self.invisible.clone()),
             (
                 "isearch-lax-whitespace",
-                if self.lax_whitespace { Value::t() } else { Value::Nil },
+                if self.lax_whitespace {
+                    Value::t()
+                } else {
+                    Value::Nil
+                },
             ),
             (
                 "isearch-regexp-lax-whitespace",
@@ -2006,17 +2034,53 @@ impl Isearch {
                 "isearch-success",
                 if self.failing { Value::Nil } else { Value::t() },
             ),
+            (
+                "isearch-lazy-count-current",
+                self.lazy_count_current
+                    .map(|count| Value::Int(count as i128))
+                    .unwrap_or(Value::Nil),
+            ),
+            (
+                "isearch-lazy-count-total",
+                self.lazy_count_total
+                    .map(|count| Value::Int(count as i128))
+                    .unwrap_or(Value::Nil),
+            ),
+            (
+                "isearch-lazy-count-invisible",
+                self.lazy_count_invisible
+                    .map(|count| Value::Int(count as i128))
+                    .unwrap_or(Value::Nil),
+            ),
             ("isearch-error", Value::Nil),
             (
                 "isearch-other-end",
-                Value::Int((if self.backward { match_end } else { match_start }) as i128 + 1),
+                Value::Int(
+                    (if self.backward {
+                        match_end
+                    } else {
+                        match_start
+                    }) as i128
+                        + 1,
+                ),
             ),
         ];
         for (name, value) in bindings {
-            let Some(symbol) = i.intern_soft(name) else {
-                continue;
+            let lazy_count_variable = matches!(
+                name,
+                "isearch-lazy-count-current"
+                    | "isearch-lazy-count-total"
+                    | "isearch-lazy-count-invisible"
+            );
+            let symbol = if lazy_count_variable {
+                i.intern(name)
+            } else {
+                let Some(symbol) = i.intern_soft(name) else {
+                    continue;
+                };
+                symbol
             };
-            if !i.bound_p(symbol) {
+            if !lazy_count_variable && !i.bound_p(symbol) {
                 continue;
             }
             if let Err(flow) = i.specbind(symbol, value) {
@@ -2052,6 +2116,152 @@ impl Isearch {
         for ov in self.submatch_ovs.drain(..) {
             Self::call(i, "delete-overlay", vec![ov]);
         }
+    }
+
+    fn clear_lazy_count(&mut self) {
+        self.lazy_count_current = None;
+        self.lazy_count_total = None;
+        self.lazy_count_invisible = None;
+        self.lazy_count_prefix.clear();
+        self.lazy_count_suffix.clear();
+    }
+
+    fn format_lazy_count(
+        i: &mut Interp,
+        format_name: &str,
+        default_format: Option<&str>,
+        current: usize,
+        total: usize,
+        invisible: Option<usize>,
+        backward: bool,
+    ) -> String {
+        let format_value = i
+            .intern_soft(format_name)
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol))
+            .unwrap_or_else(|| default_format.map(Value::string).unwrap_or(Value::Nil));
+        if format_value.is_nil() {
+            return String::new();
+        }
+
+        let format_function = Value::Sym(i.intern("format"));
+        let current = if backward && current > 0 {
+            total.saturating_sub(current).saturating_add(1)
+        } else {
+            current
+        };
+        let mut total_value = Value::Int(total as i128);
+        if let Some(invisible) = invisible {
+            let invisible_format = i
+                .intern_soft("lazy-count-invisible-format")
+                .filter(|symbol| i.bound_p(*symbol))
+                .map(|symbol| i.symbol_value(symbol))
+                .unwrap_or_else(|| Value::string(" (invisible %s)"));
+            if !invisible_format.is_nil()
+                && let Ok(Value::Str(suffix)) = i.apply(
+                    &format_function,
+                    vec![invisible_format, Value::Int(invisible as i128)],
+                )
+            {
+                total_value =
+                    Value::string(format!("{total}{}", suffix.borrow().to_unicode_lossy()));
+            }
+        }
+
+        match i.apply(
+            &format_function,
+            vec![format_value, Value::Int(current as i128), total_value],
+        ) {
+            Ok(Value::Str(value)) => value.borrow().to_unicode_lossy(),
+            _ => String::new(),
+        }
+    }
+
+    fn update_lazy_count(&mut self, i: &mut Interp, span: (usize, usize), restore: usize) {
+        self.clear_lazy_count();
+        let count_enabled = i
+            .intern_soft("isearch-lazy-count")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol).truthy())
+            .unwrap_or(false);
+        if !count_enabled || self.query.is_empty() || self.failing {
+            return;
+        }
+
+        let (begv, zv) = i
+            .current_buffer_ref()
+            .map(|buffer| {
+                let buffer = buffer.borrow();
+                (buffer.begv, buffer.zv)
+            })
+            .unwrap_or((self.start, self.start));
+        let case_fold_search = self.case_fold_for_search(i);
+        let mut pos = begv;
+        let mut total = 0usize;
+        let mut current_forward = 0usize;
+        let mut invisible = 0usize;
+        while pos <= zv {
+            let Some((_, beg, end, _)) = isearch_search(
+                i,
+                &self.query,
+                false,
+                self.regexp,
+                self.word_search,
+                self.char_fold,
+                self.symbol_search,
+                &self.regexp_function,
+                false,
+                self.lax_whitespace_enabled(),
+                pos,
+                case_fold_search,
+                true,
+            ) else {
+                break;
+            };
+            if beg > zv || end > zv {
+                break;
+            }
+            total = total.saturating_add(1);
+            if (beg, end) == span {
+                current_forward = total;
+            }
+            if isearch_span_invisible(i, beg, end) {
+                invisible = invisible.saturating_add(1);
+            }
+            let next = if beg == end {
+                end.saturating_add(1)
+            } else {
+                end
+            };
+            if next <= pos {
+                break;
+            }
+            pos = next;
+        }
+        self.go_to(i, restore);
+        let current = current_forward;
+        let invisible = (invisible > 0).then_some(invisible);
+        self.lazy_count_current = Some(current);
+        self.lazy_count_total = Some(total);
+        self.lazy_count_invisible = invisible;
+        self.lazy_count_prefix = Self::format_lazy_count(
+            i,
+            "lazy-count-prefix-format",
+            Some("%s/%s "),
+            current,
+            total,
+            invisible,
+            self.backward,
+        );
+        self.lazy_count_suffix = Self::format_lazy_count(
+            i,
+            "lazy-count-suffix-format",
+            None,
+            current,
+            total,
+            invisible,
+            self.backward,
+        );
     }
 
     /// Rebuild the highlight overlays after each key like GNU's
@@ -2090,6 +2300,11 @@ impl Isearch {
             .map(|s| i.symbol_value(s).truthy())
             .unwrap_or(true);
         let active = !self.query.is_empty() && span.0 < span.1 && hl_on;
+        if !self.query.is_empty() && span.0 < span.1 && !self.failing && lazy_on {
+            self.update_lazy_count(i, span, restore);
+        } else {
+            self.clear_lazy_count();
+        }
         match (self.match_ov.clone(), active) {
             (Some(ov), true) => {
                 Self::call(

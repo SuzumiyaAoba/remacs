@@ -88,6 +88,51 @@ fn isearch_extends_match_in_place_and_overlays_paint() {
 }
 
 #[test]
+fn isearch_lazy_count_formats_prefix_suffix_and_binds_counts() {
+    let mut i = interp_with_frame("foo foo foo\n");
+    i.eval_str(
+        r#"(setq isearch-lazy-count t
+                 lazy-count-prefix-format "[%s of %s] "
+                 lazy-count-suffix-format " <%s/%s>")"#,
+    )
+    .unwrap();
+    let mut st = Isearch::new(&mut i, false, false);
+    for c in "foo".chars() {
+        st.step(&mut i, c as i128);
+    }
+    st.refresh_overlays(&mut i);
+    assert_eq!(st.label().0, "[1 of 3] I-search: foo <1/3>");
+
+    st.step(&mut i, 19); // C-s → second occurrence
+    st.refresh_overlays(&mut i);
+    assert_eq!(st.label().0, "[2 of 3] I-search: foo <2/3>");
+    i.eval_str(
+        r#"(setq qa-isearch-lazy-count-values nil
+               isearch-update-post-hook
+               (lambda ()
+                 (setq qa-isearch-lazy-count-values
+                       (list isearch-lazy-count-current
+                             isearch-lazy-count-total
+                             isearch-lazy-count-invisible))))"#,
+    )
+    .unwrap();
+    st.run_lisp_hook(&mut i, "isearch-update-post-hook");
+    let count_values = i.eval_str("qa-isearch-lazy-count-values").unwrap();
+    assert_eq!(i.prin1_to_string(&count_values), "(2 3 nil)");
+
+    i.eval_str("(goto-char (point-max))").unwrap();
+    let mut backward = Isearch::new(&mut i, true, false);
+    for c in "foo".chars() {
+        backward.step(&mut i, c as i128);
+    }
+    backward.refresh_overlays(&mut i);
+    assert_eq!(backward.label().0, "[1 of 3] I-search backward: foo <1/3>");
+    backward.run_lisp_hook(&mut i, "isearch-update-post-hook");
+    let count_values = i.eval_str("qa-isearch-lazy-count-values").unwrap();
+    assert_eq!(i.prin1_to_string(&count_values), "(3 3 nil)");
+}
+
+#[test]
 fn isearch_lazy_highlight_uses_configured_match_limit() {
     let text = vec!["x ".repeat(10); 21].join("\n");
     let mut i = interp_with_frame(&text);
