@@ -33,6 +33,8 @@
 
 ;; -- fixtures -------------------------------------------------------------
 (defvar qasp-dyn 'top)                 ; dynamic variable for binding tests
+(defvar qasp-let-specs nil)            ; mutable variable list for let eval-order tests
+(defvar qasp-let-side-effect nil)      ; late let-spec validation test
 (defvar qasp-late)                     ; defvar with no init: unbound, special
 (defvar qasp-mk2 1)                    ; makunbound-in-let target
 (defvar qasp-docv 1 "qasp-docv docs")  ; docstring -> variable-documentation
@@ -66,6 +68,77 @@
              (b (progn (push 'ib o) 2)))
         (list a b (reverse o)))
       '(1 2 (ia ib))))
+;; GNU reads each binding in order as it evaluates its initializer. Changes
+;; to later binding specs and the binding-list tail therefore affect let and
+;; let*, while parallel `let' reads variable names after all initializers.
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x
+                    '(progn (setcar (cdr qasp-let-specs) '(qasp-let-y 9)) 1))
+              '(qasp-let-y 2)))
+  (qa (eval (list 'let qasp-let-specs '(list qasp-let-x qasp-let-y))) '(1 9)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x
+                    '(progn (setcdr qasp-let-specs nil) 1))
+              '(qasp-let-y 2)))
+  (qa (eval (list 'let qasp-let-specs
+                  '(list qasp-let-x (boundp 'qasp-let-y))))
+      '(1 nil)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list '(qasp-let-x 1)
+              (list 'qasp-let-y
+                    '(progn (setcar qasp-let-specs '(qasp-let-z 3)) 2))))
+  (qa (eval (list 'let qasp-let-specs
+                  '(list (boundp 'qasp-let-x) (boundp 'qasp-let-z) qasp-let-y)))
+      '(nil t 2)))
+(let ((qasp-let-specs nil) (qasp-let-side-effect nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x '(setq qasp-let-side-effect 'ran))
+              '(qasp-let-y 1 2)))
+  (qa (condition-case err
+          (eval (list 'let qasp-let-specs nil))
+        (error (list (car err) qasp-let-side-effect)))
+      '(error ran)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x
+                    '(progn (setcar (cdr qasp-let-specs) '(qasp-let-z 9)) 1))
+              '(qasp-let-y 2)))
+  (qa (eval (list 'let* qasp-let-specs
+                  '(list qasp-let-x (boundp 'qasp-let-y)
+                         (boundp 'qasp-let-z) qasp-let-z)))
+      '(1 nil t 9)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x
+                    '(progn (setcar (cdr qasp-let-specs) '(qasp-let-y 9)) 1))
+              '(qasp-let-y 2)))
+  (qa (eval (list 'let qasp-let-specs '(list qasp-let-x qasp-let-y)) t) '(1 9)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x
+                    '(progn (setcar (cdr qasp-let-specs) '(qasp-let-z 9)) 1))
+              '(qasp-let-y 2)))
+  (qa (eval (list 'let* qasp-let-specs
+                  '(list qasp-let-x qasp-let-z))
+             t)
+      '(1 9)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x '(progn (setcdr qasp-let-specs nil) 1))
+              '(qasp-let-y 2)))
+  (qa (eval (list 'let* qasp-let-specs
+                  '(list qasp-let-x (boundp 'qasp-let-y))))
+      '(1 nil)))
+(let ((qasp-let-specs nil))
+  (setq qasp-let-specs
+        (list (list 'qasp-let-x
+                    '(progn (setcar (car qasp-let-specs) 'qasp-let-z) 1))))
+  (qa (eval (list 'let* qasp-let-specs
+                  '(list (boundp 'qasp-let-x) (boundp 'qasp-let-z))))
+      '(t nil)))
 ;; dynamic let is visible through function calls, lexical let is not.
 (qa (let ((qasp-dyn 'inner)) (qasp-get-dyn)) 'inner)
 (let ((v 9))

@@ -305,46 +305,35 @@ fn sf_or(i: &mut Interp, args: Value) -> EvalResult {
     }
 }
 
-/// Validate a let-style VARLIST, returning (VAR . VALUEFORM) pairs.
+/// Validate and read one let-style binding specification.
 /// VAR is returned unchecked: GNU defers the `symbolp' test until bind
 /// time so that value-forms evaluate before it fires. A bare variable has
 /// no value-form: unlike `(VAR)', its implicit nil must not be evaluated.
-fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Option<Value>)>, Flow> {
-    match specs {
-        Value::Nil => return Ok(Vec::new()),
-        Value::Cons(_) => {}
-        _ => return Err(i.wrong_type_mut("listp", specs)),
+fn parse_let_spec(i: &mut Interp, spec: &Value) -> Result<(Value, Option<Value>), Flow> {
+    if i.sym_id(spec).is_some() {
+        // A bare symbol spec (possibly a positioned symbol) binds to nil.
+        return Ok((spec.clone(), None));
     }
-    let mut out = Vec::new();
-    let mut cur = specs as *const Value;
-    loop {
-        match unsafe { &*cur } {
-            Value::Nil => return Ok(out),
-            Value::Cons(c) => {
-                let cell = RefCell::as_ptr(c);
-                let spec = unsafe { &*cell }.car.clone();
-                if i.sym_id(&spec).is_some() {
-                    // A bare symbol spec (possibly a positioned symbol)
-                    // binds to nil.
-                    out.push((spec, None));
-                } else {
-                    // GNU: (cdr (cdr SPEC)) must be nil; the value-form
-                    // is (car (cdr SPEC)).
-                    let tail = let_cdr(i, &spec)?;
-                    if !let_cdr(i, &tail)?.is_nil() {
-                        // GNU's signal data splices the spec's
-                        // elements: `(error MSG + x 1)'.
-                        let mut data =
-                            vec![Value::string("`let' bindings can have only one value-form")];
-                        spec.each_car(|e| data.push(e.clone()));
-                        return Err(i.signal_data(sym::ERROR, data));
-                    }
-                    out.push((let_car(i, &spec)?, Some(let_car(i, &tail)?)));
-                }
-                cur = unsafe { &(*cell).cdr };
-            }
-            _ => return Err(i.wrong_type_mut("listp", unsafe { &*cur })),
-        }
+
+    // GNU: (cdr (cdr SPEC)) must be nil; the value-form is (car (cdr SPEC)).
+    let tail = let_cdr(i, spec)?;
+    if !let_cdr(i, &tail)?.is_nil() {
+        // GNU's signal data splices the spec's elements: `(error MSG + x 1)'.
+        let mut data = vec![Value::string("`let' bindings can have only one value-form")];
+        spec.each_car(|e| data.push(e.clone()));
+        return Err(i.signal_data(sym::ERROR, data));
+    }
+    Ok((let_car(i, spec)?, Some(let_car(i, &tail)?)))
+}
+
+/// Read the current variable name from a saved binding-list cell.
+/// Parallel `let' evaluates every initializer before it installs bindings,
+/// so earlier or later initializers can mutate the names in the list.
+fn let_spec_var(i: &mut Interp, spec: &Value) -> Result<Value, Flow> {
+    if i.sym_id(spec).is_some() {
+        Ok(spec.clone())
+    } else {
+        let_car(i, spec)
     }
 }
 
@@ -380,19 +369,40 @@ fn let_var(i: &mut Interp, v: &Value) -> Result<SymId, Flow> {
 }
 
 fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
-    let specs = parse_let_specs(i, &car(&args))?;
+    let mut cur = car(&args);
     let body = cdr(&args);
-    // GNU evaluates all value-forms first, then checks/binds the
-    // variables (parallel binding).
-    let mut evaluated = Vec::with_capacity(specs.len());
-    for (var, init) in &specs {
-        evaluated.push((var.clone(), eval_let_init(i, init)?));
+    // GNU walks the binding list as it evaluates each initializer. The
+    // current binding's value-form is captured before evaluation, but the
+    // next cdr is read after it, so edits to later specs remain visible.
+    // Keep each outer binding cell until the parallel binding phase: GNU
+    // reads its variable name only after all initializers have run.
+    let mut evaluated = Vec::new();
+    loop {
+        match cur {
+            Value::Nil => break,
+            Value::Cons(cell) => {
+                let spec = cell.borrow().car.clone();
+                let (_, init) = parse_let_spec(i, &spec)?;
+                let value = eval_let_init(i, &init)?;
+                evaluated.push((Value::Cons(cell.clone()), value));
+                cur = cell.borrow().cdr.clone();
+            }
+            other => return Err(i.wrong_type_mut("listp", &other)),
+        }
     }
     if i.lexical_binding_active() {
         let frame = crate::lisp::eval::lexenv_extend(&i.lexenv);
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
-        for (v, val) in evaluated {
+        for (binding, val) in evaluated {
+            let spec = car(&binding);
+            let v = match let_spec_var(i, &spec) {
+                Ok(v) => v,
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            };
             if i.dbg_flags & 0x100 != 0 && let_var(i, &v).map(|s| s == sym::NIL).unwrap_or(false) {
                 eprintln!(
                     "[let-nil-lex] spec={:?} val={:?}",
@@ -420,7 +430,15 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     } else {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
-        for (v, val) in evaluated {
+        for (binding, val) in evaluated {
+            let spec = car(&binding);
+            let v = match let_spec_var(i, &spec) {
+                Ok(v) => v,
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            };
             if i.dbg_flags & 0x100 != 0 && let_var(i, &v).map(|s| s == sym::NIL).unwrap_or(false) {
                 eprintln!(
                     "[let-nil] spec={:?} val={:?}",
@@ -446,22 +464,44 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
-    let specs = parse_let_specs(i, &car(&args))?;
+    let mut cur = car(&args);
     let body = cdr(&args);
     if i.lexical_binding_active() {
         let frame = crate::lisp::eval::lexenv_extend(&i.lexenv);
         let mark = i.specbind_depth();
         let saved = std::mem::replace(&mut i.lexenv, Some(frame.clone()));
         let mut r = Ok(Value::Nil);
-        for (var, init) in &specs {
-            r = eval_let_init(i, init).and_then(|v| {
-                let_var(i, var)
-                    .and_then(|s| i.bind_var(Some(&frame), s, v))
-                    .map(|_| Value::Nil)
-            });
+        loop {
+            let cell = match cur {
+                Value::Nil => break,
+                Value::Cons(cell) => cell,
+                other => {
+                    r = Err(i.wrong_type_mut("listp", &other));
+                    break;
+                }
+            };
+            let spec = cell.borrow().car.clone();
+            let (var, init) = match parse_let_spec(i, &spec) {
+                Ok(binding) => binding,
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            };
+            let value = match eval_let_init(i, &init) {
+                Ok(value) => value,
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            };
+            r = let_var(i, &var)
+                .and_then(|s| i.bind_var(Some(&frame), s, value))
+                .map(|_| Value::Nil);
             if r.is_err() {
                 break;
             }
+            cur = cell.borrow().cdr.clone();
         }
         if r.is_ok() {
             r = i.eval_progn(&body);
@@ -473,13 +513,37 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     } else {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
-        for (var, init) in &specs {
-            r = eval_let_init(i, init)
-                .and_then(|v| let_var(i, var).and_then(|s| i.specbind(s, v)))
+        loop {
+            let cell = match cur {
+                Value::Nil => break,
+                Value::Cons(cell) => cell,
+                other => {
+                    r = Err(i.wrong_type_mut("listp", &other));
+                    break;
+                }
+            };
+            let spec = cell.borrow().car.clone();
+            let (var, init) = match parse_let_spec(i, &spec) {
+                Ok(binding) => binding,
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            };
+            let value = match eval_let_init(i, &init) {
+                Ok(value) => value,
+                Err(e) => {
+                    r = Err(e);
+                    break;
+                }
+            };
+            r = let_var(i, &var)
+                .and_then(|s| i.specbind(s, value))
                 .map(|_| Value::Nil);
             if r.is_err() {
                 break;
             }
+            cur = cell.borrow().cdr.clone();
         }
         if r.is_ok() {
             r = i.eval_progn(&body);
