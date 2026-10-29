@@ -1302,12 +1302,16 @@ a previously found match."
 	      rend (point-max)))
       (goto-char rstart))
     (let ((count 0)
+	  (end-matched nil)
 	  (case-fold-search
 	   (if (and case-fold-search search-upper-case)
 	       (isearch-no-upper-case-p regexp t)
 	     case-fold-search)))
-      (while (and (< (point) rend)
-		  (re-search-forward regexp rend t))
+      (while (and (not end-matched)
+                  (<= (point) rend)
+                  (re-search-forward regexp rend t))
+        ;; Remacs: include a match at REND, then stop.
+        (setq end-matched (= (match-end 0) rend))
         ;; Ensure forward progress on zero-length matches like "^$".
         (when (and (= (match-beginning 0) (match-end 0))
                    (not (eobp)))
