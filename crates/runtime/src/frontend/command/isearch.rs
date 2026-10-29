@@ -56,6 +56,7 @@ struct IsearchHistory {
     lax_whitespace: bool,
     regexp_lax_whitespace: bool,
     invisible: Value,
+    backward: bool,
 }
 
 /// Run one search; returns (point, match-beg, match-end) — all
@@ -540,6 +541,7 @@ impl Isearch {
             lax_whitespace: self.lax_whitespace,
             regexp_lax_whitespace: self.regexp_lax_whitespace,
             invisible: self.invisible.clone(),
+            backward: self.backward,
         });
     }
 
@@ -558,6 +560,7 @@ impl Isearch {
             self.lax_whitespace = previous.lax_whitespace;
             self.regexp_lax_whitespace = previous.regexp_lax_whitespace;
             self.invisible = previous.invisible;
+            self.backward = previous.backward;
             self.go_to(i, self.cur());
         }
     }
@@ -1089,10 +1092,12 @@ impl Isearch {
                 let back = c == 18
                     || c == (CHAR_META | 18)
                     || c == (CHAR_META | CHAR_CTL | 'r' as i128);
+                let same_direction = back == self.backward;
                 let reused_previous = self.query.is_empty()
-                    && back == self.backward
+                    && same_direction
                     && self.use_previous_search(i);
                 self.save_history();
+                self.backward = back;
                 let wrap_enabled = i
                     .intern_soft("isearch-wrap-pause")
                     .map(|symbol| {
@@ -1103,7 +1108,7 @@ impl Isearch {
                         }
                     })
                     .unwrap_or(true);
-                let from = if self.failing && back == self.backward && wrap_enabled {
+                let from = if self.failing && same_direction && wrap_enabled {
                     i.current_buffer_ref()
                         .map(|buffer| {
                             let buffer = buffer.borrow();
