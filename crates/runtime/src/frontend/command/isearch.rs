@@ -52,6 +52,9 @@ pub(super) struct Isearch {
     pub(super) match_ov: Option<Value>,
     /// `lazy-highlight' overlays on the other visible matches.
     pub(super) lazy_ovs: Vec<Value>,
+    /// Pending visible-match scan, advanced by the isearch loop so the
+    /// configured initial delay and interval do not block input handling.
+    lazy_scan: Option<LazyHighlightScan>,
     /// Per-capture overlays on the current regexp match.
     submatch_ovs: Vec<Value>,
     lazy_count_current: Option<usize>,
@@ -59,6 +62,32 @@ pub(super) struct Isearch {
     lazy_count_invisible: Option<usize>,
     lazy_count_prefix: String,
     lazy_count_suffix: String,
+}
+
+struct LazyHighlightScan {
+    position: usize,
+    window_end: usize,
+    current_span: (usize, usize),
+    window: Value,
+    next_at: std::time::Instant,
+    interval: std::time::Duration,
+    max_at_a_time: usize,
+}
+
+fn isearch_delay_seconds(i: &mut Interp, name: &str, default: f64) -> f64 {
+    let Some(symbol) = i.intern_soft(name).filter(|symbol| i.bound_p(*symbol)) else {
+        return default;
+    };
+    match i.symbol_value(symbol) {
+        Value::Int(seconds) => (seconds as f64).max(0.0),
+        Value::Float(seconds) if (*seconds).is_finite() => (*seconds).max(0.0),
+        _ => default,
+    }
+}
+
+fn isearch_delay_duration(seconds: f64) -> std::time::Duration {
+    std::time::Duration::try_from_secs_f64(seconds)
+        .unwrap_or_else(|_| std::time::Duration::from_secs(365 * 24 * 60 * 60))
 }
 
 struct IsearchHistory {
@@ -684,6 +713,7 @@ impl Isearch {
             meta_s_h_prefix: false,
             match_ov: None,
             lazy_ovs: Vec::new(),
+            lazy_scan: None,
             submatch_ovs: Vec::new(),
             lazy_count_current: None,
             lazy_count_total: None,
@@ -2149,6 +2179,7 @@ impl Isearch {
 
     /// Delete the highlight overlays (`isearch-dehighlight').
     pub(super) fn clear(&mut self, i: &mut Interp) {
+        self.lazy_scan = None;
         if let Some(ov) = self.match_ov.take() {
             Self::call(i, "delete-overlay", vec![ov]);
         }
@@ -2324,6 +2355,7 @@ impl Isearch {
         for ov in self.lazy_ovs.drain(..) {
             Self::call(i, "delete-overlay", vec![ov]);
         }
+        self.lazy_scan = None;
         for ov in self.submatch_ovs.drain(..) {
             Self::call(i, "delete-overlay", vec![ov]);
         }
@@ -2460,21 +2492,76 @@ impl Isearch {
             .and_then(|v| v.int())
             .map(|n| n.max(1) as usize)
             .unwrap_or(usize::MAX);
-        let mut pos = wstart;
-        let mut count = 0usize;
         let max_at_a_time = i
             .intern_soft("lazy-highlight-max-at-a-time")
             .map(|symbol| i.symbol_value(symbol))
             .and_then(|value| value.int())
             .map(|limit| usize::try_from(limit.max(1)).unwrap_or(usize::MAX))
             .unwrap_or(usize::MAX);
+        let no_delay_length = i
+            .intern_soft("lazy-highlight-no-delay-length")
+            .filter(|symbol| i.bound_p(*symbol))
+            .and_then(|symbol| i.symbol_value(symbol).int())
+            .unwrap_or(3)
+            .max(0) as usize;
+        let initial_delay = if self.query.chars().count() < no_delay_length {
+            isearch_delay_seconds(i, "lazy-highlight-initial-delay", 0.25)
+        } else {
+            0.0
+        };
+        let interval = isearch_delay_duration(isearch_delay_seconds(
+            i,
+            "lazy-highlight-interval",
+            0.0,
+        ));
+        let delay = isearch_delay_duration(initial_delay);
+        let now = std::time::Instant::now();
+        self.lazy_scan = Some(LazyHighlightScan {
+            position: wstart,
+            window_end: wend,
+            current_span: span,
+            window: wv,
+            next_at: now.checked_add(delay).unwrap_or(now),
+            interval,
+            max_at_a_time,
+        });
+        if delay.is_zero() {
+            self.update_lazy_highlights(i);
+        }
+    }
+
+    /// Add the next visible lazy-highlight batch when its timer is due.
+    /// Positive intervals yield after each match so the command loop can
+    /// process input between updates; an interval of zero preserves the
+    /// existing immediate batch behavior.
+    pub(super) fn update_lazy_highlights(&mut self, i: &mut Interp) -> bool {
+        let Some(mut scan) = self.lazy_scan.take() else {
+            return false;
+        };
+        let now = std::time::Instant::now();
+        if now < scan.next_at {
+            self.lazy_scan = Some(scan);
+            return false;
+        }
+
+        let restore = i
+            .current_buffer_ref()
+            .map(|buffer| buffer.borrow().point())
+            .unwrap_or(self.cur());
+        let mut count = 0usize;
+        let mut highlighted = false;
+        let batch_limit = if scan.interval.is_zero() {
+            scan.max_at_a_time
+        } else {
+            1
+        };
         let case_fold_search = self.case_fold.truthy();
         let pri = Value::Sym(i.q("priority"));
         let face = Value::Sym(i.q("face"));
         let lazy = Value::Sym(i.q("lazy-highlight"));
         let winprop = Value::Sym(i.q("window"));
-        while count < max_at_a_time {
-            let Some((_, b, e, _)) = isearch_search(
+        while count < batch_limit {
+            let Some((_, beg, end, _)) = isearch_search(
                 i,
                 &self.query,
                 false,
@@ -2485,48 +2572,56 @@ impl Isearch {
                 &self.regexp_function,
                 false,
                 self.lax_whitespace_enabled(),
-                pos,
+                scan.position,
                 case_fold_search,
                 self.invisible.truthy(),
             ) else {
+                scan.position = scan.window_end;
                 break;
             };
-            if b >= wend || e <= b {
+            if beg >= scan.window_end || end <= beg {
+                scan.position = scan.window_end;
                 break;
             }
-            pos = e;
-            if (b, e) == span {
+            scan.position = end;
+            if (beg, end) == scan.current_span {
                 continue;
             }
-            let f = Value::Sym(i.q("make-overlay"));
-            let Ok(ov) = i.apply(
-                &f,
-                vec![Value::Int(b as i128 + 1), Value::Int(e as i128 + 1)],
+            let make_overlay = Value::Sym(i.q("make-overlay"));
+            let Ok(overlay) = i.apply(
+                &make_overlay,
+                vec![Value::Int(beg as i128 + 1), Value::Int(end as i128 + 1)],
             ) else {
+                scan.position = scan.window_end;
                 break;
             };
             Self::call(
                 i,
                 "overlay-put",
-                vec![ov.clone(), pri.clone(), Value::Int(1000)],
+                vec![overlay.clone(), pri.clone(), Value::Int(1000)],
             );
             Self::call(
                 i,
                 "overlay-put",
-                vec![ov.clone(), face.clone(), lazy.clone()],
+                vec![overlay.clone(), face.clone(), lazy.clone()],
             );
             Self::call(
                 i,
                 "overlay-put",
-                vec![ov.clone(), winprop.clone(), wv.clone()],
+                vec![overlay.clone(), winprop.clone(), scan.window.clone()],
             );
-            self.lazy_ovs.push(ov);
+            self.lazy_ovs.push(overlay);
+            highlighted = true;
             count += 1;
         }
-        // The scan's searches moved point to the last visible match;
-        // put it back where the last key left it (GNU does the same
-        // through save-excursion).
         self.go_to(i, restore);
+
+        if scan.position < scan.window_end {
+            let now = std::time::Instant::now();
+            scan.next_at = now.checked_add(scan.interval).unwrap_or(now);
+            self.lazy_scan = Some(scan);
+        }
+        highlighted
     }
 }
 
@@ -2595,6 +2690,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
         let render_on_idle = term.borrow().render_on_idle();
         let render_requested = term.borrow_mut().take_render_request();
         render_needed |= event_activity || window_activity || render_on_idle || render_requested;
+        render_needed |= st.update_lazy_highlights(i);
         if render_needed {
             if message_needed {
                 if !st.call_message_function(i) {
