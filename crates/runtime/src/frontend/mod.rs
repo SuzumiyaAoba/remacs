@@ -341,3 +341,5 @@ pub use render::{
     render_frame_grid_with_mouse_position_cached, render_grid, render_grid_with_input_cached,
     render_grid_with_mouse_position_cached,
 };
+pub(crate) use render::position_display_cell;
+pub(crate) use render::buffer_setting;

@@ -733,7 +733,7 @@ fn buffer_tab_width(i: &Interp, buffer: usize) -> usize {
         .unwrap_or(8)
 }
 
-fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
+pub(crate) fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
     let Some(id) = i.q_soft(name) else {
         return Value::Nil;
     };
@@ -795,6 +795,97 @@ fn display_row_index_from(
         }
     }
     Some(row.saturating_sub(1))
+}
+
+/// Return the display row and column for a buffer position relative to a
+/// window's text area, or None when it is outside the visible rows.
+pub(crate) fn position_display_cell(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+    position: usize,
+) -> Option<(usize, usize)> {
+    let (buffer_id, start, height, hscroll) = {
+        let window = window.borrow();
+        (window.buffer, window.start, window.height, window.hscroll)
+    };
+    let width = crate::editor::win_body_width(i, window).max(1);
+    let tab_width = buffer_tab_width(i, buffer_id);
+    let ctl_arrow = buffer_setting(i, "ctl-arrow", buffer_id).truthy();
+    let wrap_lines = !buffer_setting(i, "truncate-lines", buffer_id).truthy();
+    let text_rows = height
+        .saturating_sub(if buffer_setting(i, "mode-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .saturating_sub(if buffer_setting(i, "header-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .saturating_sub(if buffer_setting(i, "tab-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .max(1);
+    if let Some(buffer) = i.buffers.get(buffer_id) {
+        let bb = buffer.borrow();
+        if position < bb.begv || position > bb.zv || position < start {
+            return None;
+        }
+        let row = display_row_index_from(
+            &bb.text,
+            bb.begv,
+            bb.zv,
+            start.max(bb.begv),
+            position,
+            wrap_lines,
+            width,
+            tab_width,
+            ctl_arrow,
+            text_rows,
+        )?;
+        if row >= text_rows {
+            return None;
+        }
+        let line_start = bb.text.line_start(bb.text.line_of_pos(position)).max(bb.begv);
+        let line_end = bb.text.line_end(line_start).min(bb.zv);
+        let line = bb.text.substring(line_start, line_end);
+        let line_chars = line.chars().collect::<Vec<_>>();
+        let offset = position.saturating_sub(line_start).min(line_chars.len());
+        let ranges = if wrap_lines {
+            wrap_ranges(&line, width, tab_width, ctl_arrow)
+        } else {
+            vec![0..line_chars.len()]
+        };
+        let range = ranges
+            .iter()
+            .find(|range| {
+                offset >= range.start
+                    && (offset < range.end || (offset == range.end && range.end == line_chars.len()))
+            })
+            .or_else(|| ranges.iter().rev().find(|range| range.start <= offset))?;
+        let mut column = 0usize;
+        for character in line_chars.iter().take(offset).skip(range.start) {
+            let code = character.code();
+            let byte8 = character.byte8().is_some();
+            let character = character.unicode().unwrap_or('\u{fffd}');
+            let width = if character == '\t' {
+                tab_width.max(1) - column % tab_width.max(1)
+            } else if byte8 {
+                4
+            } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+                2
+            } else {
+                display_char_width(character)
+            };
+            column = column.saturating_add(width);
+        }
+        Some((row, column.saturating_sub(hscroll)))
+    } else {
+        None
+    }
 }
 
 fn display_row_distance_from_start(

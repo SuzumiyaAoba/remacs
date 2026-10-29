@@ -5245,7 +5245,7 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 /// Body width excludes margins and the one-column window divider that
 /// separates horizontally adjacent windows on a tty.
-fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
+pub(crate) fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
     let ww = w.borrow();
     let frame_w = i
         .frames
@@ -5971,8 +5971,68 @@ fn f_pos_visible_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     if i.noninteractive {
         return Ok(Value::Nil);
     }
-    let start = w.borrow().start as i128 + 1;
-    Ok(Value::from_bool(pos >= start))
+    let Some(position) = pos.checked_sub(1).and_then(|position| usize::try_from(position).ok()) else {
+        return Ok(Value::Nil);
+    };
+    let Some((row, column)) = crate::frontend::position_display_cell(i, &w, position) else {
+        return Ok(Value::Nil);
+    };
+    if arg(&a, 2).truthy() {
+        let frame = frame_of_window(i, &w);
+        let (char_width, line_height) = frame
+            .as_ref()
+            .map(|frame| {
+                (
+                    frame_parameter_positive_size(i, frame, "char-width", 8),
+                    frame_char_height(i, frame).max(1),
+                )
+            })
+            .unwrap_or((8, 19));
+        let (left_margin, left_fringe_override) = {
+            let window = w.borrow();
+            (
+                window.margins.0,
+                window.fringes.and_then(|fringes| fringes.0),
+            )
+        };
+        let left_fringe = frame.as_ref().map_or(0, |frame| {
+            if frame_is_graphical(i, frame) {
+                left_fringe_override.unwrap_or_else(|| {
+                    frame_parameter_positive_size(i, frame, "left-fringe", 8)
+                })
+            } else {
+                0
+            }
+        });
+        let buffer_id = w.borrow().buffer;
+        let header_rows = if crate::frontend::buffer_setting(
+            i,
+            "header-line-format",
+            buffer_id,
+        )
+        .is_nil()
+        {
+            0
+        } else {
+            1
+        };
+        let tab_rows = if crate::frontend::buffer_setting(i, "tab-line-format", buffer_id).is_nil()
+        {
+            0
+        } else {
+            1
+        };
+        Ok(Value::list(vec![
+            Value::Int(
+                (left_fringe + left_margin.saturating_mul(char_width)
+                    + column.saturating_mul(char_width)) as i128,
+            ),
+            Value::Int(row.saturating_add(header_rows).saturating_add(tab_rows)
+                .saturating_mul(line_height) as i128),
+        ]))
+    } else {
+        Ok(Value::t())
+    }
 }
 
 fn f_window_dedicated_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
