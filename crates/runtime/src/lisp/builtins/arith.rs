@@ -853,9 +853,6 @@ fn f_lognot(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn shift(i: &mut Interp, n: BigInt, count: BigInt) -> EvalResult {
-    if n.is_zero() {
-        return Ok(Value::Int(0));
-    }
     if count.is_negative() {
         let right = -count;
         if right >= BigInt::from(n.bits()) {
@@ -868,6 +865,9 @@ fn shift(i: &mut Interp, n: BigInt, count: BigInt) -> EvalResult {
     }) else {
         return Err(overflow_err(i, &Value::from_bigint(count)));
     };
+    if n.is_zero() {
+        return Ok(Value::Int(0));
+    }
     Ok(Value::from_bigint(n << left))
 }
 fn f_ash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
