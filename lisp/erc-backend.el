@@ -1454,6 +1454,29 @@ this option to nil."
   "Parse IRCv3 tags list in STRING to a (tag . value) alist."
   (erc--parse-message-tags string))
 
+(defun erc--unescape-tag-value (value)
+  "Unescape an IRCv3 message tag VALUE."
+  (let ((position 0)
+        (length (length value))
+        decoded)
+    (while (< position length)
+      (let ((character (aref value position)))
+        (if (and (eq character ?\\) (< (1+ position) length))
+            (let ((escaped (aref value (1+ position))))
+              (push (cond ((eq escaped ?s) ?\s)
+                          ((eq escaped ?:) ?;)
+                          ((eq escaped ?\\) ?\\)
+                          ((eq escaped ?r) ?\r)
+                          ((eq escaped ?n) ?\n)
+                          (t escaped))
+                    decoded)
+              (setq position (+ position 2)))
+          ;; IRCv3 drops a trailing backslash with no escape character.
+          (unless (eq character ?\\)
+            (push character decoded))
+          (setq position (1+ position)))))
+    (apply #'string (nreverse decoded))))
+
 (defun erc--parse-tags (string)
   (let ((tags)
         (tag-strings (split-string string ";")))
@@ -1461,7 +1484,8 @@ this option to nil."
       (let ((separator (string-match "=" tag-string)))
         (push (if separator
                   (list (substring tag-string 0 separator)
-                        (substring tag-string (1+ separator)))
+                        (erc--unescape-tag-value
+                         (substring tag-string (1+ separator))))
                 (list tag-string))
               tags)))))
 
