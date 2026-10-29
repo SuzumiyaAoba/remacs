@@ -410,6 +410,27 @@ fn isearch_chars_move_point_to_match() {
 }
 
 #[test]
+fn isearch_del_after_failed_extension_restores_the_last_successful_match() {
+    let mut i = isearch_interp("foo\n");
+    let mut st = Isearch::new(&mut i, false, false);
+    for c in "fo".chars() {
+        st.step(&mut i, c as i128);
+    }
+    let successful_point = point(&i);
+    let successful_span = *st.spans.last().unwrap();
+    assert_eq!(successful_span, (0, 2));
+
+    st.step(&mut i, 'z' as i128);
+    assert!(st.failing);
+    st.step(&mut i, 127); // DEL removes only the failing input character.
+
+    assert_eq!(st.query, "fo");
+    assert!(!st.failing);
+    assert_eq!(point(&i), successful_point);
+    assert_eq!(st.spans.last(), Some(&successful_span));
+}
+
+#[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
     let mut st = Isearch::new(&mut i, false, false);
