@@ -5421,9 +5421,14 @@ fn render_grid_internal(
         .as_ref()
         .map(|buffer| buffer_tab_width(i, buffer.borrow().id))
         .unwrap_or(8);
-    let mini_wrap_lines = mini_buf
-        .as_ref()
-        .is_none_or(|buffer| !buffer_setting(i, "truncate-lines", buffer.borrow().id).truthy());
+    let mini_wrap_lines = if mini_styled.is_none() {
+        !i.q_soft("message-truncate-lines")
+            .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+    } else {
+        mini_buf.as_ref().is_none_or(|buffer| {
+            !buffer_setting(i, "truncate-lines", buffer.borrow().id).truthy()
+        })
+    };
     let mini_ctl_arrow = mini_buf
         .as_ref()
         .is_some_and(|buffer| buffer_setting(i, "ctl-arrow", buffer.borrow().id).truthy());
