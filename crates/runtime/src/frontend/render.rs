@@ -4062,6 +4062,8 @@ fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
 /// faces and `face'/`font-lock-face' text-property runs collected
 /// once per render, and the active-region range.
 struct WindowFaces {
+    /// The window whose redisplay is using these face values.
+    window: Value,
     /// Buffer-local face replacements. Keep each cdr intact so direct
     /// composite specs remain distinct from face-remap helper entries.
     face_remappings: Vec<(crate::lisp::value::SymId, Value)>,
@@ -4498,6 +4500,7 @@ fn window_faces(
     .filter(|table| crate::lisp::builtins::misc::is_char_table(i, table))
     .collect();
     WindowFaces {
+        window: win.clone(),
         face_remappings,
         overlays,
         prop_faces,
@@ -5330,6 +5333,45 @@ fn remapped_named_face(
     }
 }
 
+fn filtered_face_spec(i: &Interp, value: &Value) -> Option<(Value, Value)> {
+    let Value::Cons(_) = value else {
+        return None;
+    };
+    let items = value.list_to_vec().ok()?;
+    if items.len() != 3
+        || !i
+            .sym_id(&items[0])
+            .is_some_and(|symbol| i.symbol_name(symbol) == ":filtered")
+    {
+        return None;
+    }
+    Some((items[1].clone(), items[2].clone()))
+}
+
+fn face_filter_matches(i: &Interp, filter: &Value, window: &Value) -> bool {
+    if i.q_soft("face-filters-always-match")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+    {
+        return true;
+    }
+    let Value::Window(window) = window else {
+        return false;
+    };
+    let Ok(items) = filter.list_to_vec() else {
+        return false;
+    };
+    if items.len() != 3
+        || !i
+            .sym_id(&items[0])
+            .is_some_and(|symbol| i.symbol_name(symbol) == ":window")
+    {
+        return false;
+    }
+    let parameters = window.borrow().params.clone();
+    let actual = crate::lisp::eval::plist_get_v(&parameters, &items[1]);
+    crate::lisp::builtins::eq_values_with_interp(i, &actual, &items[2])
+}
+
 /// Resolve a face spec while replacing named faces through the current
 /// buffer's face-remapping-alist. A remapped face can refer to itself
 /// as its base; that reference must use the normal face definition.
@@ -5343,6 +5385,20 @@ fn face_value_with_remapping(
 ) -> StyleMix {
     if depth >= 16 {
         return StyleMix::default();
+    }
+    if let Some((filter, face_spec)) = filtered_face_spec(i, value) {
+        return if face_filter_matches(i, &filter, &faces.window) {
+            face_value_with_remapping(
+                i,
+                ctx,
+                faces,
+                &face_spec,
+                depth + 1,
+                remapping_stack,
+            )
+        } else {
+            StyleMix::default()
+        };
     }
     let face = crate::editor::face_symbol(i, value);
     if let Some(face) = face {
