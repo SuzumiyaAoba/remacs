@@ -7,7 +7,7 @@ use crate::lisp::{
     obarray::sym,
     value::{SymId, Value},
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 // ---------- char tables (GNU chartab.c trie: 64/16/32/128)
 
@@ -43,6 +43,16 @@ pub(crate) fn char_table_vec(v: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
 pub(crate) fn is_char_table(_i: &Interp, v: &Value) -> bool {
     matches!(v, Value::Record(_))
         && v.record_kind() == Some(crate::lisp::value::RecordKind::CharTable)
+}
+
+fn char_table_identity(i: &Interp, v: &Value) -> Option<usize> {
+    if !is_char_table(i, v) {
+        return None;
+    }
+    match v {
+        Value::Record(r) => Some(Rc::as_ptr(r) as usize),
+        _ => None,
+    }
 }
 
 /// Build a char-table: Record [char-table SUBTYPE CONTENTS65 EXTRAS..]
@@ -697,8 +707,15 @@ impl CharTableSnapshot {
             return None;
         }
         let mut levels = Vec::new();
+        let mut seen = HashSet::new();
         let mut current = table.clone();
-        for _ in 0..64 {
+        loop {
+            let Some(identity) = char_table_identity(i, &current) else {
+                break;
+            };
+            if !seen.insert(identity) {
+                break;
+            }
             let contents = char_table_vec(&current)?;
             ct_uncompress_ascii(i, &current, &contents);
             levels.push((
@@ -738,7 +755,14 @@ impl CharTableSnapshot {
 
 pub(crate) fn char_table_ref(i: &Interp, table: &Value, idx: usize) -> Value {
     let mut cur = table.clone();
-    for _ in 0..64 {
+    let mut seen = HashSet::new();
+    loop {
+        let Some(identity) = char_table_identity(i, &cur) else {
+            return Value::Nil;
+        };
+        if !seen.insert(identity) {
+            return Value::Nil;
+        }
         let val = match char_table_vec(&cur) {
             Some(v) => {
                 if idx < 128 {
@@ -823,11 +847,18 @@ pub(super) fn f_set_char_table_parent(i: &mut Interp, a: crate::lisp::Argv) -> E
     }
     // GNU: "Attempt to make a chartable be its own parent".
     let mut temp = a[1].clone();
-    for _ in 0..64 {
+    let mut seen = HashSet::new();
+    loop {
         if temp.is_nil() {
             break;
         }
         if crate::lisp::builtins::eq_values(&temp, &a[0]) {
+            return Err(i.error("Attempt to make a chartable be its own parent"));
+        }
+        let Some(identity) = char_table_identity(i, &temp) else {
+            break;
+        };
+        if !seen.insert(identity) {
             return Err(i.error("Attempt to make a chartable be its own parent"));
         }
         temp = i.char_table_parent(&temp);
