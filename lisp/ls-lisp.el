@@ -506,20 +506,19 @@ elements for other directory entries with nil attributes."
   "Insert the file names (only) in FILE-ALIST into the current buffer.
 Format in columns, sorted vertically, following GNU ls -C.
 Responds to the window width as ls should but may not!"
-  (let (files fmt ncols collen (nfiles 0) (colwid 0))
+  (let (files ncols collen (nfiles 0) (colwid 0))
     ;; Count number of files as `nfiles', build list of filenames as
-    ;; `files', and find maximum filename length as `colwid':
+    ;; `files', and find maximum filename display width as `colwid':
     (let (file len)
       (while file-alist
 	(setq nfiles (1+ nfiles)
 	      file (caar file-alist)
 	      files (cons file files)
 	      file-alist (cdr file-alist)
-	      len (length file))
+	      len (string-width file))
 	(if (> len colwid) (setq colwid len))))
     (setq files (nreverse files)
 	  colwid (+ 2 colwid)		; 2 character column gap
-	  fmt (format "%%-%ds" colwid)	; print format
 	  ncols (max 1 (/ (window-width) colwid)) ; no of columns
 	  collen (/ nfiles ncols))	; floor of column length
     (if (> nfiles (* collen ncols)) (setq collen (1+ collen)))
@@ -528,7 +527,9 @@ Responds to the window width as ls should but may not!"
       (while (< i collen)
 	(setq j i)
 	(while (< j nfiles)
-	  (insert (format fmt (nth j files)))
+	  (let ((file (nth j files)))
+	    (insert file)
+	    (insert (make-string (max 0 (- colwid (string-width file))) ?\s)))
 	  (setq j (+ j collen)))
 	;; FJW: This is completely unnecessary, but I don't like
 	;; trailing white space...
