@@ -438,7 +438,8 @@ MAILCAPS if set; otherwise (on Unix) use the path from RFC 1524, plus
 	      ("/usr/local/etc/mailcap" system)))))
     (when (stringp path)
       (setq path (mapcar #'list (split-string path path-separator t))))
-    (when (or (null mailcap--computed-mime-data)
+    (when (or force
+              (null mailcap--computed-mime-data)
               (seq-some (lambda (f)
                           (file-has-changed-p (car f) 'mail-parse-mailcaps))
                         path))
