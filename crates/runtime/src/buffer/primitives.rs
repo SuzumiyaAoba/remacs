@@ -4879,8 +4879,112 @@ fn f_point_max(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(cur(i).borrow().text_len() as i128 + 1))
 }
 
+fn point_property_at_char(
+    i: &mut Interp,
+    property: crate::lisp::value::SymId,
+    char_index: usize,
+    begv: usize,
+    zv: usize,
+) -> Result<Value, Flow> {
+    if !(begv..zv).contains(&char_index) {
+        return Ok(Value::Nil);
+    }
+    f_get_char_property(
+        i,
+        vec![Value::Int(char_index as i128 + 1), Value::Sym(property)].into(),
+    )
+}
+
+/// GNU's set_point_both applies intangible text and the legacy
+/// point-entered/point-left properties whenever point motion hooks are
+/// enabled. Keep this on the Lisp `goto-char` path so Lisp movement
+/// helpers that deliberately bind `inhibit-point-motion-hooks` to nil
+/// get the same behavior.
+fn goto_char_set_point(
+    i: &mut Interp,
+    buffer: &Rc<RefCell<Buffer>>,
+    requested: usize,
+) -> EvalResult {
+    let (old, begv, zv) = {
+        let bb = buffer.borrow();
+        (bb.point(), bb.begv, bb.text_len())
+    };
+    let inhibit_hooks = i.q("inhibit-point-motion-hooks");
+    let hooks_enabled = !i.symbol_value(inhibit_hooks).truthy();
+    let mut new = requested.max(begv).min(zv);
+
+    // An intangible run forbids only positions between adjacent
+    // characters with the same non-nil value. In particular, either end
+    // of a one-character run is still a valid point position.
+    if hooks_enabled && new != old && begv < new && new < zv {
+        let intangible = i.q("intangible");
+        let before = point_property_at_char(i, intangible, new - 1, begv, zv)?;
+        if !before.is_nil() {
+            let after = point_property_at_char(i, intangible, new, begv, zv)?;
+            if crate::lisp::builtins::eq_values(&before, &after) {
+                let mut start = new;
+                while start > begv {
+                    let previous = point_property_at_char(i, intangible, start - 1, begv, zv)?;
+                    if !crate::lisp::builtins::eq_values(&previous, &before) {
+                        break;
+                    }
+                    start -= 1;
+                }
+                let mut end = new;
+                while end < zv {
+                    let next = point_property_at_char(i, intangible, end, begv, zv)?;
+                    if !crate::lisp::builtins::eq_values(&next, &before) {
+                        break;
+                    }
+                    end += 1;
+                }
+                new = if new > old { end } else { start };
+            }
+        }
+    }
+
+    buffer.borrow_mut().set_point(new);
+    if !hooks_enabled || old == new {
+        return Ok(Value::Nil);
+    }
+
+    // GNU compares point-left after/before the old position with
+    // point-entered after/before the new position. It runs every leaving
+    // function before any entering function, with the final positions.
+    let (point_left, point_entered) = (i.q("point-left"), i.q("point-entered"));
+    let mut left = Vec::new();
+    let mut entered = Vec::new();
+    for (old_char, new_char) in [
+        (Some(old), Some(new)),
+        (old.checked_sub(1), new.checked_sub(1)),
+    ] {
+        let old_value = match old_char {
+            Some(index) => point_property_at_char(i, point_left, index, begv, zv)?,
+            None => Value::Nil,
+        };
+        let new_value = match new_char {
+            Some(index) => point_property_at_char(i, point_entered, index, begv, zv)?,
+            None => Value::Nil,
+        };
+        if !crate::lisp::builtins::eq_values(&old_value, &new_value) {
+            if !old_value.is_nil() {
+                left.push(old_value);
+            }
+            if !new_value.is_nil() {
+                entered.push(new_value);
+            }
+        }
+    }
+    let old_position = Value::Int(old as i128 + 1);
+    let new_position = Value::Int(new as i128 + 1);
+    for function in left.into_iter().chain(entered) {
+        i.apply(&function, vec![old_position.clone(), new_position.clone()])?;
+    }
+    Ok(Value::Nil)
+}
+
 fn f_goto_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
+    let target = match &a[0] {
         Value::Marker(m) => {
             let (pos, buf) = {
                 let mm = m.borrow();
@@ -4891,9 +4995,7 @@ fn f_goto_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             if buf.is_none() {
                 return Err(i.error("Marker does not point anywhere"));
             }
-            cur(i).borrow_mut().set_point(pos);
-            // GNU returns the argument itself, marker object included.
-            Ok(a[0].clone())
+            pos
         }
         v => {
             if !v.fixnump() {
@@ -4901,15 +5003,17 @@ fn f_goto_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             let p = v.int().unwrap();
             let b = cur(i);
-            let mut bb = b.borrow_mut();
+            let bb = b.borrow();
             let idx = pos_idx(bb.text.len(), p);
             // Emacs clamps to the accessible region.
-            let idx = idx.max(bb.begv).min(bb.text_len());
-            bb.point = idx;
-            // GNU returns the ORIGINAL argument even when clamped.
-            Ok(a[0].clone())
+            idx.max(bb.begv).min(bb.text_len())
         }
-    }
+    };
+    let buffer = cur(i);
+    goto_char_set_point(i, &buffer, target)?;
+    // GNU returns the ORIGINAL argument, including marker objects and
+    // positions clamped to the accessible region.
+    Ok(a[0].clone())
 }
 
 fn f_forward_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
