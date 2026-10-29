@@ -370,7 +370,6 @@ fn let_var(i: &mut Interp, v: &Value) -> Result<SymId, Flow> {
 
 fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     let mut cur = car(&args);
-    let body = cdr(&args);
     // GNU walks the binding list as it evaluates each initializer. The
     // current binding's value-form is captured before evaluation, but the
     // next cdr is read after it, so edits to later specs remain visible.
@@ -421,6 +420,9 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         r = i.offer_flow(r);
         let saved = std::mem::replace(&mut i.lexenv, Some(frame));
         if r.is_ok() {
+            // Read the body after binding: initializer forms can mutate the
+            // active call's argument spine before GNU reaches Fprogn.
+            let body = cdr(&args);
             r = i.eval_progn(&body);
         }
         r = i.offer_flow(r);
@@ -455,6 +457,7 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
             }
         }
         if r.is_ok() {
+            let body = cdr(&args);
             r = i.eval_progn(&body);
         }
         r = i.offer_flow(r);
@@ -465,7 +468,6 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
 
 fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     let mut cur = car(&args);
-    let body = cdr(&args);
     if i.lexical_binding_active() {
         let frame = crate::lisp::eval::lexenv_extend(&i.lexenv);
         let mark = i.specbind_depth();
@@ -504,6 +506,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
             cur = cell.borrow().cdr.clone();
         }
         if r.is_ok() {
+            let body = cdr(&args);
             r = i.eval_progn(&body);
         }
         r = i.offer_flow(r);
@@ -546,6 +549,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
             cur = cell.borrow().cdr.clone();
         }
         if r.is_ok() {
+            let body = cdr(&args);
             r = i.eval_progn(&body);
         }
         r = i.offer_flow(r);

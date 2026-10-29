@@ -34,6 +34,7 @@
 ;; -- fixtures -------------------------------------------------------------
 (defvar qasp-dyn 'top)                 ; dynamic variable for binding tests
 (defvar qasp-let-specs nil)            ; mutable variable list for let eval-order tests
+(defvar qasp-let-form nil)              ; active let call for argument-spine tests
 (defvar qasp-let-side-effect nil)      ; late let-spec validation test
 (defvar qasp-late)                     ; defvar with no init: unbound, special
 (defvar qasp-mk2 1)                    ; makunbound-in-let target
@@ -139,6 +140,20 @@
   (qa (eval (list 'let* qasp-let-specs
                   '(list (boundp 'qasp-let-x) (boundp 'qasp-let-z))))
       '(t nil)))
+;; GNU reads the body after the initializers. Mutating the active call's
+;; argument cdr therefore removes body forms before either let variant runs.
+(let ((qasp-let-form nil))
+  (setq qasp-let-form
+        (list 'let (list (list 'qasp-let-x
+                               '(progn (setcdr (cdr qasp-let-form) nil) 1))
+                         'qasp-let-x)))
+  (qa (eval qasp-let-form) nil))
+(let ((qasp-let-form nil))
+  (setq qasp-let-form
+        (list 'let* (list (list 'qasp-let-x
+                                '(progn (setcdr (cdr qasp-let-form) nil) 1))
+                          'qasp-let-x)))
+  (qa (eval qasp-let-form) nil))
 ;; dynamic let is visible through function calls, lexical let is not.
 (qa (let ((qasp-dyn 'inner)) (qasp-get-dyn)) 'inner)
 (let ((v 9))
