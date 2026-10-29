@@ -393,6 +393,16 @@ pub fn run_gui_with_dump(
     let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
     let initial_sticky = initial_frame_size.is_some_and(|frame| frame.sticky);
     let initial_shaded = initial_frame_size.is_some_and(|frame| frame.shaded);
+    let initial_min_size = initial_frame_size
+        .and_then(|frame| {
+            frame_minimum_size(
+                frame.min_width,
+                frame.min_height,
+                8.0,
+                19.0,
+                frame.internal_border_width as f32 * 2.0,
+            )
+        });
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -455,6 +465,7 @@ pub fn run_gui_with_dump(
                     cx,
                 ))),
                 focus: initial_focus_on_map,
+                window_min_size: initial_min_size,
                 ..Default::default()
             },
             |window, cx| {
@@ -462,6 +473,7 @@ pub fn run_gui_with_dump(
                 update_native_skip_taskbar(window, initial_skip_taskbar);
                 update_native_sticky(window, initial_sticky);
                 update_native_shaded(window, initial_shaded);
+                update_native_minimum_size(window, initial_min_size);
                 if initial_focus_on_map {
                     cx.activate(false);
                 }
@@ -496,6 +508,8 @@ pub fn run_gui_with_dump(
             let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
             let mut frame_sticky = HashMap::<usize, bool>::new();
             let mut frame_shaded = HashMap::<usize, bool>::new();
+            let mut frame_minimum_cells =
+                HashMap::<usize, (Option<usize>, Option<usize>, usize, usize)>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -539,6 +553,22 @@ pub fn run_gui_with_dump(
                             let shaded = snapshot.shaded;
                             let shaded_changed = frame_shaded.get(&frame_id) != Some(&shaded);
                             frame_shaded.insert(frame_id, shaded);
+                            let minimum_cells = (
+                                snapshot.min_width,
+                                snapshot.min_height,
+                                snapshot.grid.default_line_height,
+                                internal_border_width,
+                            );
+                            let minimum_size_changed =
+                                frame_minimum_cells.get(&frame_id) != Some(&minimum_cells);
+                            frame_minimum_cells.insert(frame_id, minimum_cells);
+                            let minimum_size = frame_minimum_size(
+                                snapshot.min_width,
+                                snapshot.min_height,
+                                8.0,
+                                snapshot.grid.default_line_height.max(1) as f32,
+                                internal_border_width as f32 * 2.0,
+                            );
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -580,6 +610,9 @@ pub fn run_gui_with_dump(
                                     }
                                     if shaded_changed {
                                         update_native_shaded(window, shaded);
+                                    }
+                                    if minimum_size_changed {
+                                        update_native_minimum_size(window, minimum_size);
                                     }
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
@@ -749,11 +782,19 @@ pub fn run_gui_with_dump(
                                 snapshot.ns_transparent_titlebar,
                             );
                             let event_tx = event_tx.clone();
+                            let minimum_size = frame_minimum_size(
+                                snapshot.min_width,
+                                snapshot.min_height,
+                                8.0,
+                                snapshot.grid.default_line_height.max(1) as f32,
+                                snapshot.internal_border_width as f32 * 2.0,
+                            );
                             let handle = match cx.open_window(options, move |window, app| {
                                 set_native_no_accept_focus(window, no_accept_focus);
                                 update_native_skip_taskbar(window, skip_taskbar);
                                 update_native_sticky(window, sticky);
                                 update_native_shaded(window, shaded);
+                                update_native_minimum_size(window, minimum_size);
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
@@ -815,6 +856,7 @@ pub fn run_gui_with_dump(
                             if let Some(handle) = windows.remove(&frame_id) {
                                 let _ = handle.update(cx, |_view, window, _cx| {
                                     update_native_skip_taskbar(window, false);
+                                    update_native_minimum_size(window, None);
                                     window.remove_window();
                                 });
                             }
@@ -824,6 +866,7 @@ pub fn run_gui_with_dump(
                             frame_skip_taskbar.remove(&frame_id);
                             frame_sticky.remove(&frame_id);
                             frame_shaded.remove(&frame_id);
+                            frame_minimum_cells.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -1209,6 +1252,26 @@ pub fn run_gui_with_dump(
     }
 }
 
+fn frame_minimum_size(
+    min_width: Option<usize>,
+    min_height: Option<usize>,
+    cell_width: f32,
+    line_height: f32,
+    border: f32,
+) -> Option<Size<Pixels>> {
+    if min_width.is_none() && min_height.is_none() {
+        return None;
+    }
+    Some(size(
+        min_width
+            .map(|width| px(width as f32 * cell_width + border))
+            .unwrap_or(px(0.0)),
+        min_height
+            .map(|height| px(height as f32 * line_height + border))
+            .unwrap_or(px(0.0)),
+    ))
+}
+
 fn frame_window_options(
     frame: &FrameSnapshot,
     windows: &HashMap<usize, WindowHandle<EditorView>>,
@@ -1228,6 +1291,13 @@ fn frame_window_options(
             .max(57.0)
             + extra_row_height as f32
             + internal_border),
+    );
+    let window_min_size = frame_minimum_size(
+        frame.min_width,
+        frame.min_height,
+        8.0,
+        frame.grid.default_line_height.max(1) as f32,
+        internal_border,
     );
     let base_window = frame
         .parent_frame
@@ -1309,6 +1379,7 @@ fn frame_window_options(
     };
     WindowOptions {
         window_bounds: Some(window_bounds),
+        window_min_size,
         window_background: frame_background_appearance(frame),
         display_id: parameter_position
             .and_then(|(_, display_id)| display_id)
@@ -1646,6 +1717,30 @@ fn update_native_shaded(window: &Window, shaded: bool) {
     }
 }
 
+fn update_native_minimum_size(window: &Window, minimum_size: Option<Size<Pixels>>) {
+    if let Err(error) = set_native_minimum_size(window, minimum_size) {
+        eprintln!("remacs: failed to set frame minimum size: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_native_minimum_size(
+    window: &Window,
+    minimum_size: Option<Size<Pixels>>,
+) -> Result<(), String> {
+    let Some(native_window) = appkit_native_window(window) else {
+        return Err("native frame window is unavailable".to_owned());
+    };
+    let minimum_size = minimum_size.unwrap_or(size(px(0.0), px(0.0)));
+    unsafe {
+        let _: () = msg_send![native_window, setContentMinSize: NSSize {
+            width: minimum_size.width.to_f64(),
+            height: minimum_size.height.to_f64(),
+        }];
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
     let Some(native_window) = appkit_native_window(window) else {
@@ -1731,8 +1826,8 @@ fn xcb_window_context(window: &Window) -> Result<Option<XcbWindowContext>, Strin
         .display_handle()
         .map_err(|error| error.to_string())?;
     let RawDisplayHandle::Xcb(display) = display.as_raw() else {
-        // Wayland does not provide a client request for taskbar visibility.
-        return Ok(());
+        // XCB requests are only available for the X11 display backend.
+        return Ok(None);
     };
     let Some(raw_connection) = display.connection else {
         return Ok(None);
@@ -1901,6 +1996,57 @@ fn set_native_shaded(window: &Window, shaded: bool) -> Result<(), String> {
     )
 }
 
+#[cfg(target_os = "linux")]
+fn set_native_minimum_size(
+    window: &Window,
+    minimum_size: Option<Size<Pixels>>,
+) -> Result<(), String> {
+    let Some(context) = xcb_window_context(window)? else {
+        return Ok(());
+    };
+    const P_MIN_SIZE: u32 = 1 << 4;
+    let wm_normal_hints = xcb_intern_atom(&context.connection, b"WM_NORMAL_HINTS")?;
+    let wm_size_hints = xcb_intern_atom(&context.connection, b"WM_SIZE_HINTS")?;
+    let cookie = context.connection.send_request(&xcb::x::GetProperty {
+        delete: false,
+        window: context.window,
+        property: wm_normal_hints,
+        r#type: wm_size_hints,
+        long_offset: 0,
+        long_length: 18,
+    });
+    let reply = context
+        .connection
+        .wait_for_reply(cookie)
+        .map_err(|error| error.to_string())?;
+    let mut hints: Vec<u32> = reply.value::<u32>().take(18).collect();
+    hints.resize(18, 0);
+    if let Some(minimum_size) = minimum_size {
+        hints[0] |= P_MIN_SIZE;
+        hints[5] = minimum_size.width.0.max(0.0).ceil() as u32;
+        hints[6] = minimum_size.height.0.max(0.0).ceil() as u32;
+    } else {
+        hints[0] &= !P_MIN_SIZE;
+        hints[5] = 0;
+        hints[6] = 0;
+    }
+    let cookie = context.connection.send_request_checked(&xcb::x::ChangeProperty {
+        mode: xcb::x::PropMode::Replace,
+        window: context.window,
+        property: wm_normal_hints,
+        r#type: wm_size_hints,
+        data: &hints,
+    });
+    context
+        .connection
+        .check_request(cookie)
+        .map_err(|error| error.to_string())?;
+    context
+        .connection
+        .flush()
+        .map_err(|error| error.to_string())
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn set_native_sticky(_window: &Window, _sticky: bool) -> Result<(), String> {
     Ok(())
@@ -1908,6 +2054,14 @@ fn set_native_sticky(_window: &Window, _sticky: bool) -> Result<(), String> {
 
 #[cfg(not(target_os = "linux"))]
 fn set_native_shaded(_window: &Window, _shaded: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn set_native_minimum_size(
+    _window: &Window,
+    _minimum_size: Option<Size<Pixels>>,
+) -> Result<(), String> {
     Ok(())
 }
 

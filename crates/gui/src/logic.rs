@@ -203,6 +203,8 @@ pub(super) struct FrameSnapshot {
     pub skip_taskbar: bool,
     pub sticky: bool,
     pub shaded: bool,
+    pub min_width: Option<usize>,
+    pub min_height: Option<usize>,
     pub grid: Grid,
 }
 
@@ -210,12 +212,15 @@ pub(super) struct FrameSnapshot {
 pub(super) struct InitialFrameSize {
     pub width: usize,
     pub height: usize,
+    pub internal_border_width: usize,
     pub has_size_parameter: bool,
     pub no_accept_focus: bool,
     pub no_focus_on_map: bool,
     pub skip_taskbar: bool,
     pub sticky: bool,
     pub shaded: bool,
+    pub min_width: Option<usize>,
+    pub min_height: Option<usize>,
 }
 
 pub(super) enum GuiRequest {
@@ -986,6 +991,13 @@ fn frame_parameter_value(
         return Value::Nil;
     };
     remacs_runtime::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(symbol))
+}
+
+fn frame_minimum(i: &Interp, frame: &remacs_runtime::editor::FrameRef, name: &str) -> Option<usize> {
+    frame_parameter_value(i, frame, name)
+        .int()
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
 }
 
 fn frame_system_is_graphical(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> bool {
@@ -1827,6 +1839,8 @@ impl KeyIo for ChanIo {
                     skip_taskbar: frame_parameter_value(i, frame, "skip-taskbar").truthy(),
                     sticky: frame_parameter_value(i, frame, "sticky").truthy(),
                     shaded: frame_parameter_value(i, frame, "shaded").truthy(),
+                    min_width: frame_minimum(i, frame, "min-width"),
+                    min_height: frame_minimum(i, frame, "min-height"),
                     grid,
                 });
             }
@@ -2160,12 +2174,16 @@ fn start_logic_inner(
                 InitialFrameSize {
                     width: frame_state.width,
                     height: frame_state.height,
+                    internal_border_width: frame_minimum(&i, frame, "internal-border-width")
+                        .unwrap_or(0),
                     has_size_parameter,
                     no_accept_focus: frame_parameter_value(&i, frame, "no-accept-focus").truthy(),
                     no_focus_on_map: frame_parameter_value(&i, frame, "no-focus-on-map").truthy(),
                     skip_taskbar: frame_parameter_value(&i, frame, "skip-taskbar").truthy(),
                     sticky: frame_parameter_value(&i, frame, "sticky").truthy(),
                     shaded: frame_parameter_value(&i, frame, "shaded").truthy(),
+                    min_width: frame_minimum(&i, frame, "min-width"),
+                    min_height: frame_minimum(&i, frame, "min-height"),
                 }
             });
             let _ = initial_frame_size_tx.send(initial_frame_size);
