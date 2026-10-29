@@ -1557,8 +1557,8 @@ for decoding."
               (when (string-match "^[#&].*" arg)
                 (throw 'erc-decode-target arg)))))
     (when (stringp decode-target)
-      ;; FIXME `decode-target' should be passed as TARGET.
-      (setq decode-target (erc-decode-string-from-target decode-target nil)))
+      (setq decode-target
+            (erc-decode-string-from-target decode-target decode-target)))
     (setf (erc-response.unparsed parsed-response)
           (erc-decode-string-from-target
            (erc-response.unparsed parsed-response)
