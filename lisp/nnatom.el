@@ -264,7 +264,7 @@ return the subject.  Otherwise, return nil."
             `(((("text/plain") . ,(format "%s: %s\n" name uri))
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
                                          (xml-escape-string uri)
-                                         (xml-escape-string name)))))
+                                         (xml-escape-string name))))))
           (when-let* (((eq l 'link))
                       (attrs (dom-attributes link))
                       (label (or (cdr (assq 'title attrs))
