@@ -3314,7 +3314,11 @@ fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             (min - size).max(delta)
         }
     } else if delta > 0 {
-        delta
+        if crate::lisp::builtins::misc::window_is_size_fixed(i, &wv, horiz, &ignore)? {
+            0
+        } else {
+            delta
+        }
     } else {
         0
     };

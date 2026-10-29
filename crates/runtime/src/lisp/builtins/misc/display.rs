@@ -712,6 +712,21 @@ pub(crate) fn win_min_size(i: &mut Interp, wv: &Value, horiz: bool, ignore: &Val
     })
 }
 
+pub(crate) fn window_is_size_fixed(
+    i: &mut Interp,
+    window: &Value,
+    horizontal: bool,
+    ignore: &Value,
+) -> Result<bool, Flow> {
+    let function = Value::Sym(i.q("window-size-fixed-p"));
+    Ok(i
+        .apply(
+            &function,
+            vec![window.clone(), Value::from_bool(horizontal), ignore.clone()],
+        )?
+        .truthy())
+}
+
 /// `window-sizable' — GNU: normalize WINDOW (plain "N is not a valid
 /// window" error), DELTA must satisfy number-or-marker-p.  Negative
 /// DELTA clamps at the window's minimum size; positive DELTA returns
@@ -741,8 +756,11 @@ pub(super) fn f_window_sizable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             Ok(Value::Int((min - size).max(delta)))
         }
     } else if delta > 0 {
-        // `window-size-fixed-p' is nil on our model.
-        Ok(Value::Int(delta))
+        if window_is_size_fixed(i, &wv, horiz, &ignore)? {
+            Ok(Value::Int(0))
+        } else {
+            Ok(Value::Int(delta))
+        }
     } else {
         Ok(Value::Int(0))
     }
