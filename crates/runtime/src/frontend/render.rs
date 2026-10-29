@@ -4002,7 +4002,13 @@ fn slant_italic(i: &Interp, v: &Value) -> bool {
     match v {
         Value::Sym(s) => !matches!(
             i.symbol_name(*s).as_str(),
-            "normal" | "roman" | "unspecified" | "reversed-oblique" | "reversed-italic"
+            "normal"
+                | "roman"
+                | "unspecified"
+                | "reverse-oblique"
+                | "reverse-italic"
+                | "reversed-oblique"
+                | "reversed-italic"
         ),
         _ => false,
     }
