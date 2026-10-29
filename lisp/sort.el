@@ -624,9 +624,9 @@ is non-nil, it also prints a message describing the number of deletions."
 	(end (copy-marker end)))
     (save-excursion
       (goto-char (if reverse end beg))
-      (if (and reverse (bolp)) (forward-char -1))
+      (if (and reverse (bolp) (> (point) beg)) (forward-char -1))
       (while (if reverse
-		 (not first-line)
+		 (and (< beg end) (not first-line))
 	       (and (< (point) end) (not (eobp))))
 	(setq first-line (and reverse (or (<= (point) beg) (bobp))))
 	(setq line (buffer-substring-no-properties
