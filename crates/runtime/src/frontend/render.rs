@@ -275,6 +275,22 @@ pub struct GridBidiDisabledRange {
     pub end: usize,
 }
 
+/// Paragraph base direction requested by a buffer for one rendered row.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum GridBidiDirection {
+    LeftToRight,
+    RightToLeft,
+}
+
+/// A rendered row range with an explicit `bidi-paragraph-direction` value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridBidiParagraphRange {
+    pub row: usize,
+    pub start: usize,
+    pub end: usize,
+    pub direction: GridBidiDirection,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -413,6 +429,8 @@ pub struct Grid {
     pub compositions: Vec<GridComposition>,
     /// Text ranges whose source buffers have `bidi-display-reordering` nil.
     pub bidi_disabled_ranges: Vec<GridBidiDisabledRange>,
+    /// Text ranges whose buffers specify `bidi-paragraph-direction`.
+    pub bidi_paragraph_ranges: Vec<GridBidiParagraphRange>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -515,6 +533,7 @@ impl Grid {
             vscrolls: Vec::new(),
             compositions: Vec::new(),
             bidi_disabled_ranges: Vec::new(),
+            bidi_paragraph_ranges: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -5818,6 +5837,8 @@ fn render_grid_internal(
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
     let mut bidi_disabled_cell_ranges = Vec::<(usize, usize, usize)>::new();
+    let mut bidi_paragraph_cell_ranges =
+        Vec::<(usize, usize, usize, GridBidiDirection)>::new();
     let mut pending_compositions = Vec::<(usize, usize, Vec<char>, CellStyle)>::new();
     let mut fill_column_indicators = Vec::new();
     let menus = render_menu_bar(i);
@@ -5872,6 +5893,7 @@ fn render_grid_internal(
                 cursors: Vec::new(),
                 cursor_index,
                 bidi_disabled_ranges: Vec::new(),
+                bidi_paragraph_ranges: Vec::new(),
                 blink_cursor,
                 blink_interval,
                 default_bg,
@@ -6180,6 +6202,16 @@ fn render_grid_internal(
         let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
         let bidi_display_reordering =
             buffer_setting(i, "bidi-display-reordering", buf_id).truthy();
+        let bidi_paragraph_direction = match buffer_setting(i, "bidi-paragraph-direction", buf_id)
+        {
+            Value::Sym(symbol) if i.symbol_name(symbol) == "left-to-right" => {
+                Some(GridBidiDirection::LeftToRight)
+            }
+            Value::Sym(symbol) if i.symbol_name(symbol) == "right-to-left" => {
+                Some(GridBidiDirection::RightToLeft)
+            }
+            _ => None,
+        };
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
@@ -7321,6 +7353,16 @@ fn render_grid_internal(
                         content_left.saturating_add(content_width).min(width),
                     ));
                 }
+                if let Some(direction) = bidi_paragraph_direction
+                    && content_width > 0
+                {
+                    bidi_paragraph_cell_ranges.push((
+                        y,
+                        content_left,
+                        content_left.saturating_add(content_width).min(width),
+                        direction,
+                    ));
+                }
                 if (!wrap_lines || segment_start == 0)
                     && let Some((indicator_column, character, style)) = fill_column_indicator
                     && indicator_column >= row_hscroll
@@ -7607,6 +7649,35 @@ fn render_grid_internal(
             });
         }
     }
+    bidi_paragraph_cell_ranges.sort_unstable_by_key(|(row, left, right, direction)| {
+        (*row, *left, *right, *direction)
+    });
+    let mut bidi_paragraph_ranges = Vec::<GridBidiParagraphRange>::new();
+    for (row, left, right, direction) in bidi_paragraph_cell_ranges {
+        let Some(offsets) = cell_offsets.get(row) else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (offsets.get(left), offsets.get(right)) else {
+            continue;
+        };
+        if start >= end {
+            continue;
+        }
+        if let Some(previous) = bidi_paragraph_ranges.last_mut()
+            && previous.row == row
+            && previous.direction == direction
+            && *start <= previous.end
+        {
+            previous.end = previous.end.max(*end);
+        } else {
+            bidi_paragraph_ranges.push(GridBidiParagraphRange {
+                row,
+                start: *start,
+                end: *end,
+                direction,
+            });
+        }
+    }
     let cursors = positioned_cursors
         .into_iter()
         .map(|(mut cursor, screen_left)| {
@@ -7652,6 +7723,7 @@ fn render_grid_internal(
         vscrolls,
         compositions,
         bidi_disabled_ranges,
+        bidi_paragraph_ranges,
         attrs,
         char_attrs,
         mode_rows,

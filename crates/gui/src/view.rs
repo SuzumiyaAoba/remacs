@@ -11,9 +11,10 @@ use super::{
 use gpui::*;
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, Grid, GridImage, GridImageSource, GridMenu, GridMenuItem,
-    GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem, GridToolBarItem,
-    GridPointerShape, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
+    BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridImage, GridImageSource,
+    GridMenu, GridMenuItem, GridPointerShape, GridPopupMenuItem, GridScrollBar,
+    GridScrollBarOrientation, GridStipple, GridTabBarItem, GridToolBarItem, GridVScroll,
+    MouseButton as RemacsMouseButton,
 };
 use std::sync::mpsc::Sender;
 use std::{cell::Cell, rc::Rc};
@@ -27,6 +28,9 @@ const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
+const BIDI_PARAGRAPH_LTR_OPEN: &str = "\u{2066}";
+const BIDI_PARAGRAPH_RTL_OPEN: &str = "\u{2067}";
+const BIDI_PARAGRAPH_CLOSE: &str = "\u{2069}";
 const BIDI_DISABLED_OPEN: &str = "\u{2066}\u{202D}";
 const BIDI_DISABLED_CLOSE: &str = "\u{202C}\u{2069}";
 
@@ -48,6 +52,21 @@ fn append_styled_piece(
 
 fn grid_layout_index(grid: &Grid, row: usize, byte_index: usize) -> usize {
     let mut index = byte_index;
+    for range in grid
+        .bidi_paragraph_ranges
+        .iter()
+        .filter(|range| range.row == row)
+    {
+        if range.start <= byte_index {
+            index += match range.direction {
+                GridBidiDirection::LeftToRight => BIDI_PARAGRAPH_LTR_OPEN.len(),
+                GridBidiDirection::RightToLeft => BIDI_PARAGRAPH_RTL_OPEN.len(),
+            };
+        }
+        if range.end <= byte_index {
+            index += BIDI_PARAGRAPH_CLOSE.len();
+        }
+    }
     for range in grid
         .bidi_disabled_ranges
         .iter()
@@ -1471,15 +1490,47 @@ impl Render for EditorView {
                                     .filter(|range| range.row == y)
                                     .copied()
                                     .collect::<Vec<_>>();
+                                let bidi_paragraph_ranges = grid
+                                    .bidi_paragraph_ranges
+                                    .iter()
+                                    .filter(|range| range.row == y)
+                                    .copied()
+                                    .collect::<Vec<_>>();
                                 let mut shaping_text = String::with_capacity(
-                                    row.len() + bidi_disabled_ranges.len() * 12,
+                                    row.len()
+                                        + bidi_disabled_ranges.len() * 12
+                                        + bidi_paragraph_ranges.len() * 6,
                                 );
                                 let mut styled_spans = Vec::new();
                                 let mut open_range = 0;
                                 let mut close_range = 0;
+                                let mut open_paragraph = 0;
+                                let mut close_paragraph = 0;
                                 for (x, (byte, ch)) in row.char_indices().enumerate() {
                                     let st =
                                         cells.and_then(|c| c.get(x)).copied().unwrap_or_default();
+                                    while bidi_paragraph_ranges
+                                        .get(open_paragraph)
+                                        .is_some_and(|range| range.start == byte)
+                                    {
+                                        let marker = match bidi_paragraph_ranges[open_paragraph]
+                                            .direction
+                                        {
+                                            GridBidiDirection::LeftToRight => {
+                                                BIDI_PARAGRAPH_LTR_OPEN
+                                            }
+                                            GridBidiDirection::RightToLeft => {
+                                                BIDI_PARAGRAPH_RTL_OPEN
+                                            }
+                                        };
+                                        append_styled_piece(
+                                            &mut shaping_text,
+                                            &mut styled_spans,
+                                            marker,
+                                            st,
+                                        );
+                                        open_paragraph += 1;
+                                    }
                                     while bidi_disabled_ranges
                                         .get(open_range)
                                         .is_some_and(|range| range.start == byte)
@@ -1511,6 +1562,18 @@ impl Render for EditorView {
                                             st,
                                         );
                                         close_range += 1;
+                                    }
+                                    while bidi_paragraph_ranges
+                                        .get(close_paragraph)
+                                        .is_some_and(|range| range.end == end)
+                                    {
+                                        append_styled_piece(
+                                            &mut shaping_text,
+                                            &mut styled_spans,
+                                            BIDI_PARAGRAPH_CLOSE,
+                                            st,
+                                        );
+                                        close_paragraph += 1;
                                     }
                                 }
                                 let mut runs: Vec<TextRun> = Vec::new();
