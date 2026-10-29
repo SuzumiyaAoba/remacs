@@ -857,6 +857,13 @@ impl Render for EditorView {
         );
         let background_alpha = ((self.alpha_background as u32 * 255 + 50) / 100) as u8;
         let default_background_fill = rgba((default_background << 8) | u32::from(background_alpha));
+        let internal_border_background = self.grid.internal_border_style.bg.map_or(
+            default_background,
+            |color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32,
+        );
+        let internal_border_fill = rgba(
+            (internal_border_background << 8) | u32::from(background_alpha),
+        );
         let modifier_mapping = self.modifier_mapping;
         let physical_modifier_state = self.physical_modifier_state.clone();
         let key_modifier_state = physical_modifier_state.clone();
@@ -919,7 +926,8 @@ impl Render for EditorView {
         div()
             .size_full()
             .bg(default_background_fill)
-            .p(border)
+            .border(border)
+            .border_color(internal_border_fill)
             .cursor(mouse_cursor)
             .track_focus(&self.focus)
             .key_context("remacs")

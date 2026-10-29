@@ -382,6 +382,8 @@ pub struct Grid {
     pub font_families: Vec<String>,
     /// The realized default face style for the current frame.
     pub default_style: CellStyle,
+    /// The realized `internal-border' face style for the current frame.
+    pub internal_border_style: CellStyle,
     pub rows: Vec<String>,
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
@@ -485,6 +487,7 @@ impl Grid {
             title: "Remacs".to_owned(),
             font_families: Vec::new(),
             default_style: CellStyle::default(),
+            internal_border_style: CellStyle::default(),
             rows: vec![String::new(); height],
             images: Vec::new(),
             fill_column_indicators: Vec::new(),
@@ -5669,6 +5672,7 @@ fn resolve_grid_style(style: &mut CellStyle, exponent: Option<f64>, threshold: i
 
 fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) {
     resolve_grid_style(&mut grid.default_style, exponent, threshold);
+    resolve_grid_style(&mut grid.internal_border_style, exponent, threshold);
     if let Some(color) = &mut grid.default_bg {
         if let Some(exponent) = exponent {
             *color = gamma_correct_color(*color, exponent);
@@ -5793,6 +5797,7 @@ fn render_grid_internal(
     let mut fctx = FaceCtx::new(i, frame.as_ref());
     let default_style = fctx.builtin(i, "default", 0).finish();
     fctx.default_style = Some(default_style);
+    let internal_border_style = fctx.builtin(i, "internal-border", 0).finish();
     let default_bg = default_style.bg;
     let mut attrs = vec![vec![default_style; width]; height];
     let mut row_heights = vec![19; height];
@@ -5831,6 +5836,7 @@ fn render_grid_internal(
                 title: "Remacs".to_owned(),
                 font_families: fctx.font_families,
                 default_style,
+                internal_border_style,
                 rows,
                 images,
                 fill_column_indicators,
@@ -7581,6 +7587,7 @@ fn render_grid_internal(
         title,
         font_families: fctx.font_families,
         default_style,
+        internal_border_style,
         rows,
         images,
         fill_column_indicators,
