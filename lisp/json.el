@@ -433,7 +433,7 @@ Return nil if KEYWORD is not recognized as a JSON keyword."
        (t
         (signal 'json-string-escape (list (point)))))
      (t
-      (signal 'json-string-escape (list (point)))))))
+      (signal 'json-string-escape (list (point))))))))
 
 (defun json-read-string ()
   "Read the JSON string at point."
