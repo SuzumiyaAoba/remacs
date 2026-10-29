@@ -428,5 +428,5 @@ pub use render::{
     render_grid_with_mouse_position_cached,
 };
 pub(crate) use render::{position_at_display_cell, position_display_cell};
-pub(crate) use render::buffer_setting;
+pub(crate) use render::{buffer_setting, line_number_display_settings};
 pub(crate) use render::visible_fontification_range;

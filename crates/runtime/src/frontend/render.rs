@@ -854,6 +854,32 @@ pub(crate) fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
         .unwrap_or(Value::Nil)
 }
 
+pub(crate) fn line_number_display_settings(i: &Interp, buffer: usize) -> (usize, i128) {
+    let line_number_offset = match buffer_setting(i, "display-line-numbers-offset", buffer) {
+        Value::Int(offset) => offset,
+        _ => 0,
+    };
+    let default_width = i
+        .buffers
+        .get(buffer)
+        .map(|buffer| {
+            let buffer = buffer.borrow();
+            let last_line = buffer.text.line_of_pos(buffer.zv.min(buffer.text_len())) + 1;
+            (last_line as i128)
+                .saturating_add(line_number_offset)
+                .to_string()
+                .chars()
+                .count()
+                .max(1)
+        })
+        .unwrap_or(1);
+    let width = match buffer_setting(i, "display-line-numbers-width", buffer) {
+        Value::Int(width) if width > 0 => usize::try_from(width).unwrap_or(default_width),
+        _ => default_width,
+    };
+    (width, line_number_offset)
+}
+
 fn display_row_index_from(
     text: &crate::buffer::SharedText,
     begv: usize,
@@ -6691,28 +6717,8 @@ fn render_grid_internal(
         let header_line_format = buffer_setting(i, "header-line-format", buf_id);
         let header_line_enabled = !header_line_format.is_nil();
         let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
-        let line_number_offset = match buffer_setting(i, "display-line-numbers-offset", buf_id) {
-            Value::Int(offset) => offset,
-            _ => 0,
-        };
-        let default_line_number_width = i
-            .buffers
-            .get(buf_id)
-            .map(|buffer| {
-                let bb = buffer.borrow();
-                let last_line = bb.text.line_of_pos(bb.zv.min(bb.text_len())) + 1;
-                (last_line as i128)
-                    .saturating_add(line_number_offset)
-                    .to_string()
-                    .chars()
-                    .count()
-                    .max(1)
-            })
-            .unwrap_or(1);
-        let line_number_width = match buffer_setting(i, "display-line-numbers-width", buf_id) {
-            Value::Int(width) if width > 0 => usize::try_from(width).unwrap_or(default_line_number_width),
-            _ => default_line_number_width,
-        };
+        let (line_number_width, line_number_offset) =
+            line_number_display_settings(i, buf_id);
         let gutter_width = if line_number_mode.truthy() {
             line_number_width
                 .saturating_add(1)

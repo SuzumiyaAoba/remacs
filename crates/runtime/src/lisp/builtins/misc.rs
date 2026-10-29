@@ -186,7 +186,8 @@ use display::{
     f_display_visual_class, f_fit_window_to_buffer, f_frame_configuration_p, f_frame_geometry,
     f_frame_height_val, f_frame_monitor_attributes, f_frame_or_buffer_changed_p,
     f_frame_outer_dim, f_frame_width_val, f_get_display_property, f_get_window_pred,
-    f_move_to_window_line, f_ns_display, f_ns_frame_stub_err, f_pos_visible, f_scroll_bar_scale,
+    f_line_number_display_width, f_move_to_window_line, f_ns_display, f_ns_frame_stub_err,
+    f_pos_visible, f_scroll_bar_scale,
     f_set_buffer_redisplay, f_set_mouse_absolute_pixel_position, f_set_mouse_pixel_position,
     f_set_mouse_position, f_tab_bar_height, f_window_at_side_p, f_window_child,
     f_window_child_count, f_window_combined_p, f_window_cursor_info, f_window_display_buffer,
@@ -1644,7 +1645,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_mouse_position_root,
         ""
     ),
-    S!("line-number-display-width", 0, 1, f_zero, ""),
+    S!(
+        "line-number-display-width",
+        0,
+        1,
+        f_line_number_display_width,
+        "Return the width used for line numbers in the selected window.\nIf PIXELWISE is `columns', return the width in canonical columns as a float.\nIf PIXELWISE is non-nil, return pixels. Otherwise return the `line-number' face width, excluding 2 padding columns."
+    ),
     // `move-to-window-line' is a Lisp-level defun in GNU, not a subr.
     S!(
         "window-configuration-equal-p",

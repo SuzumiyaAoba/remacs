@@ -829,6 +829,39 @@ pub(super) fn f_selected_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalRe
     }
 }
 
+pub(super) fn f_line_number_display_width(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+) -> EvalResult {
+    let Some(window) = sel_window(i) else {
+        return Ok(Value::Int(0));
+    };
+    let buffer = window.borrow().buffer;
+    if !crate::frontend::buffer_setting(i, "display-line-numbers", buffer).truthy() {
+        return Ok(Value::Int(0));
+    }
+
+    let (columns, _) = crate::frontend::line_number_display_settings(i, buffer);
+    let frame = crate::editor::frame_of_window(i, &window).or_else(|| sel_frame(i));
+    let character_width = frame
+        .as_ref()
+        .map(|frame| crate::editor::frame_char_width(i, frame))
+        .unwrap_or(1)
+        .max(1);
+    let pixel_width = (columns as f64
+        * character_width as f64
+        * crate::editor::winxtra::window_pixel_scale_x(i, &window))
+    .round();
+
+    if matches!(arg(&a, 0), Value::Sym(symbol) if i.symbol_name(symbol) == "columns") {
+        Ok(Value::float(pixel_width / character_width as f64))
+    } else if arg(&a, 0).truthy() {
+        Ok(Value::Int(pixel_width as i128))
+    } else {
+        Ok(Value::Int(columns as i128))
+    }
+}
+
 pub(super) fn f_window_in_direction(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU window.el
     // `window-in-direction': `(window-normalize-window window t)' runs
