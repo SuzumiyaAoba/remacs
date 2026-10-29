@@ -257,18 +257,25 @@ fn sf_prog2(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
-    let mut cur = &args as *const Value;
+    let mut cur = args;
     let mut last = Value::t();
     loop {
-        match unsafe { &*cur } {
+        match cur {
             Value::Nil => return Ok(last),
-            Value::Cons(c) => {
-                let cell = RefCell::as_ptr(c);
-                last = i.eval(unsafe { &(*cell).car })?;
+            Value::Cons(cell) => {
+                // GNU saves the next cons before evaluating this form.
+                // Mutating this cell's cdr cannot insert or replace the
+                // next argument, though mutating that saved cell's car
+                // remains visible when it is reached.
+                let (form, next) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                last = i.eval(&form)?;
                 if last.is_nil() {
                     return Ok(Value::Nil);
                 }
-                cur = unsafe { &(*cell).cdr };
+                cur = next;
             }
             _ => return Err(i.error("dotted and")),
         }
@@ -276,17 +283,22 @@ fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_or(i: &mut Interp, args: Value) -> EvalResult {
-    let mut cur = &args as *const Value;
+    let mut cur = args;
     loop {
-        match unsafe { &*cur } {
+        match cur {
             Value::Nil => return Ok(Value::Nil),
-            Value::Cons(c) => {
-                let cell = RefCell::as_ptr(c);
-                let v = i.eval(unsafe { &(*cell).car })?;
+            Value::Cons(cell) => {
+                // Match `and'/'progn': freeze the next cons link before
+                // evaluating the current form, but read its car later.
+                let (form, next) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                let v = i.eval(&form)?;
                 if v.truthy() {
                     return Ok(v);
                 }
-                cur = unsafe { &(*cell).cdr };
+                cur = next;
             }
             _ => return Err(i.error("dotted or")),
         }
