@@ -849,7 +849,7 @@ Whitespace inside single- or double-quoted arguments does not separate them."
 			  (forward-char 1)
 			  t)))))
 	(push (buffer-substring-no-properties (car begins) (point))
-              args))
+              args)))
       (cons (nreverse args) (nreverse begins)))))
 
 (defun pcomplete-parse-arguments (&optional expand-p)
