@@ -1110,6 +1110,8 @@ the kill ring, use the \\[kill-matching-lines] command instead."
      (keep-lines-read-args "Flush lines containing match for regexp")))
   (if rstart
       (progn
+	;; Remacs: allow RSTART alone to select through the accessible end.
+	(setq rend (or rend (point-max)))
 	(goto-char (min rstart rend))
 	(setq rend (copy-marker (max rstart rend))))
     (if (and interactive (use-region-p))

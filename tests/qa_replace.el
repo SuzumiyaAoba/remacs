@@ -42,6 +42,14 @@
       (flush-lines "foo" 1 8)
       (buffer-string))
     "bar\nfoo2\nbaz\n")
+;; Remacs extension: GNU 31.1 rejects RSTART without REND, but the
+;; optional-argument interface permits using the accessible buffer end.
+(when qa--remacs
+  (qa (with-temp-buffer
+        (insert "x\ny\n")
+        (flush-lines "x" 1)
+        (buffer-string))
+      "y\n"))
 ;; case-sensitivity via case-fold-search
 (qa (with-temp-buffer
       (insert "Foo\nfoo\n")
