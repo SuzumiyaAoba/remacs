@@ -90,31 +90,39 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
       (when (not (looking-at-p "# Netscape HTTP Cookie File\n"))
 	(error (format "File %s doesn't look like a netscape cookie file" filename)))
       (while (not (eobp))
-	(when (not (looking-at-p (rx bol (* space) "#")))
+	;;Remacs: `#HttpOnly_' marks a record, so recognize it before comments.
+	(when (or (not (looking-at-p (rx bol (* space) "#")))
+		  (looking-at-p (rx bol (* space) "#HttpOnly_")))
 	  (let* ((line (buffer-substring (point) (save-excursion (end-of-line) (point))))
 		 (fields (split-string line "\t")))
 	    (cond
 	     ;;((>= 1 (length line) 0)
 	     ;; (message "skipping empty line"))
 	     ((= (length fields) 7)
-	      (let ((dom (nth 0 fields))
-		    (include-subdomains (string= (nth 1 fields) "TRUE"))
-		    (path (nth 2 fields))
-		    (secure (string= (nth 3 fields) "TRUE"))
-		    ;; session cookies (expire time = 0) are supposed
-		    ;; to be removed when the browser is closed, but
-		    ;; the main point of loading external cookie is to
-		    ;; reuse a browser session, so to prevent the
-		    ;; cookie from being detected as expired straight
-		    ;; away, make it expire a year from now
-		    (expires (format-time-string
-			      "%d %b %Y %T [GMT]"
-			      (let ((s (string-to-number (nth 4 fields))))
-				(if (and (zerop s) long-session)
-				    (time-add nil (* 365 24 60 60))
-				  s))))
-		    (key (nth 5 fields))
-		    (val (nth 6 fields)))
+	      (let* ((domain-field (nth 0 fields))
+		     (http-only (string-prefix-p "#HttpOnly_" domain-field))
+		     ;; This HTTP client has no page-script cookie API, so the flag
+		     ;; only marks the record and does not change cookie handling.
+		     (dom (if http-only
+			      (substring domain-field (length "#HttpOnly_"))
+			    domain-field))
+		     (include-subdomains (string= (nth 1 fields) "TRUE"))
+		     (path (nth 2 fields))
+		     (secure (string= (nth 3 fields) "TRUE"))
+		     ;; session cookies (expire time = 0) are supposed
+		     ;; to be removed when the browser is closed, but
+		     ;; the main point of loading external cookie is to
+		     ;; reuse a browser session, so to prevent the
+		     ;; cookie from being detected as expired straight
+		     ;; away, make it expire a year from now
+		     (expires (format-time-string
+			       "%d %b %Y %T [GMT]"
+			       (let ((s (string-to-number (nth 4 fields))))
+				 (if (and (zerop s) long-session)
+				     (time-add nil (* 365 24 60 60))
+				   s))))
+		     (key (nth 5 fields))
+		     (val (nth 6 fields)))
                 (incf n)
 		;; Netscape files encode include-subdomains separately; retain
 		;; that distinction using a leading dot in the stored domain.
