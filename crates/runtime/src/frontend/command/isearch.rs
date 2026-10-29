@@ -325,7 +325,32 @@ impl Isearch {
             19 | 18 => {
                 self.save_history();
                 let back = key == 18;
-                let from = if back { cur.saturating_sub(1) } else { cur + 1 };
+                let wrap_enabled = i
+                    .intern_soft("isearch-wrap-pause")
+                    .map(|symbol| {
+                        if i.bound_p(symbol) {
+                            i.symbol_value(symbol).truthy()
+                        } else {
+                            true
+                        }
+                    })
+                    .unwrap_or(true);
+                let from = if self.failing && back == self.backward && wrap_enabled {
+                    i.current_buffer_ref()
+                        .map(|buffer| {
+                            let buffer = buffer.borrow();
+                            if back {
+                                buffer.text_len()
+                            } else {
+                                buffer.begv
+                            }
+                        })
+                        .unwrap_or(cur)
+                } else if back {
+                    cur.saturating_sub(1)
+                } else {
+                    cur + 1
+                };
                 let failure_start = self.fail_pos.unwrap_or(0);
                 let case_fold_search = self.case_fold_for_search(i);
                 match isearch_search(i, &self.query, back, self.regexp, from, case_fold_search) {
