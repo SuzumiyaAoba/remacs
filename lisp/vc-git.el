@@ -599,6 +599,10 @@ or an empty string if none."
   (setf (vc-git-dir-status-state->files state)
         (delete filename (vc-git-dir-status-state->files state))))
 
+;; Remacs: Git SHA-1 and SHA-256 object IDs contain 40 or 64 hex digits.
+(defconst vc-git--object-id-regexp
+  "[0-9a-f]\\{40\\}\\(?:[0-9a-f]\\{24\\}\\)?")
+
 (defun vc-git-after-dir-status-stage (git-state)
   "Process sentinel for the various dir-status stages."
   (let (next-stage
@@ -616,7 +620,10 @@ or an empty string if none."
        (setq next-stage (if (vc-git--empty-db-p) 'ls-files-added 'diff-index)))
       ('ls-files-added
        (setq next-stage 'ls-files-unknown)
-       (while (re-search-forward "\\([0-7]\\{6\\}\\) [0-9a-f]\\{40\\} 0\t\\([^\0]+\\)\0" nil t)
+       (while (re-search-forward
+               (concat "\\([0-7]\\{6\\}\\) " vc-git--object-id-regexp
+                       " 0\t\\([^\0]+\\)\0")
+               nil t)
          (let ((new-perm (string-to-number (match-string 1) 8))
                (name (match-string 2)))
            (vc-git-dir-status-update-file
@@ -624,7 +631,10 @@ or an empty string if none."
             (vc-git-create-extra-fileinfo 0 new-perm)))))
       ('ls-files-up-to-date
        (setq next-stage 'ls-files-unknown)
-       (while (re-search-forward "\\([0-7]\\{6\\}\\) [0-9a-f]\\{40\\} \\([0-3]\\)\t\\([^\0]+\\)\0" nil t)
+       (while (re-search-forward
+               (concat "\\([0-7]\\{6\\}\\) " vc-git--object-id-regexp
+                       " \\([0-3]\\)\t\\([^\0]+\\)\0")
+               nil t)
          (let* ((perm (string-to-number (match-string 1) 8))
                 (state (match-string 2))
                 (name (match-string 3))
@@ -641,7 +651,10 @@ or an empty string if none."
       ('ls-files-conflict
        (setq next-stage 'ls-files-unknown)
        ;; It's enough to look for "3" to notice a conflict.
-       (while (re-search-forward "\\([0-7]\\{6\\}\\) [0-9a-f]\\{40\\} 3\t\\([^\0]+\\)\0" nil t)
+       (while (re-search-forward
+               (concat "\\([0-7]\\{6\\}\\) " vc-git--object-id-regexp
+                       " 3\t\\([^\0]+\\)\0")
+               nil t)
          (let ((perm (string-to-number (match-string 1) 8))
                (name (match-string 2)))
            (vc-git-dir-status-update-file
@@ -672,7 +685,9 @@ or an empty string if none."
        ;; of those just set to `removed', to `missing'.
        (setq next-stage 'ls-files-missing)
        (while (re-search-forward
-               ":\\([0-7]\\{6\\}\\) \\([0-7]\\{6\\}\\) [0-9a-f]\\{40\\} [0-9a-f]\\{40\\} \\(\\([ADMUT]\\)\0\\([^\0]+\\)\\|\\([CR]\\)[0-9]*\0\\([^\0]+\\)\0\\([^\0]+\\)\\)\0"
+               (concat ":\\([0-7]\\{6\\}\\) \\([0-7]\\{6\\}\\) "
+                       vc-git--object-id-regexp " " vc-git--object-id-regexp
+                       " \\(\\([ADMUT]\\)\0\\([^\0]+\\)\\|\\([CR]\\)[0-9]*\0\\([^\0]+\\)\0\\([^\0]+\\)\\)\0")
                nil t 1)
          (let ((old-perm (string-to-number (match-string 1) 8))
                (new-perm (string-to-number (match-string 2) 8))
