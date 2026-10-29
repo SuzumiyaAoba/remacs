@@ -29,6 +29,8 @@ pub(super) struct Isearch {
     pub(super) regexp: bool,
     word_search: bool,
     char_fold: bool,
+    lax_whitespace: bool,
+    regexp_lax_whitespace: bool,
     quote_next: bool,
     meta_s_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -47,6 +49,8 @@ struct IsearchHistory {
     regexp: bool,
     word_search: bool,
     char_fold: bool,
+    lax_whitespace: bool,
+    regexp_lax_whitespace: bool,
     invisible: Value,
 }
 
@@ -59,6 +63,7 @@ fn isearch_search(
     regexp: bool,
     word_search: bool,
     char_fold: bool,
+    lax_whitespace: bool,
     from: usize,
     case_fold_search: bool,
     allow_invisible: bool,
@@ -66,18 +71,26 @@ fn isearch_search(
     if query.is_empty() {
         return Some((from, from, from));
     }
-    let pattern = if char_fold {
+    let (mut pattern, mut regexp) = if char_fold {
         let function = Value::Sym(i.intern("char-fold-to-regexp"));
         match i.apply(&function, vec![Value::string(query)]) {
-            Ok(Value::Str(pattern)) => pattern.borrow().to_unicode_lossy(),
+            Ok(Value::Str(pattern)) => (pattern.borrow().to_unicode_lossy(), true),
             _ => return None,
         }
     } else if word_search {
-        crate::buffer::primitives::word_search_regexp(i, query, false).to_unicode_lossy()
+        (
+            crate::buffer::primitives::word_search_regexp(i, query, false).to_unicode_lossy(),
+            true,
+        )
     } else {
-        query.to_owned()
+        (query.to_owned(), regexp)
     };
-    let regexp = regexp || word_search || char_fold;
+    if lax_whitespace
+        && let Some(lax_pattern) = isearch_lax_whitespace_pattern(i, &pattern, regexp)
+    {
+        pattern = lax_pattern;
+        regexp = true;
+    }
     let mut esc = String::new();
     for c in pattern.chars() {
         if c == '\\' || c == '"' {
@@ -150,6 +163,71 @@ fn isearch_span_invisible(i: &mut Interp, beg: usize, end: usize) -> bool {
         i.apply(&invisible_p, vec![Value::Int(position as i128 + 1)])
             .is_ok_and(|value| value.truthy())
     })
+}
+
+fn isearch_lax_whitespace_pattern(i: &mut Interp, query: &str, regexp: bool) -> Option<String> {
+    let whitespace = i
+        .intern_soft("search-whitespace-regexp")
+        .filter(|symbol| i.bound_p(*symbol))
+        .map(|symbol| i.symbol_value(symbol))?;
+    let Value::Str(whitespace) = whitespace else {
+        return None;
+    };
+    let whitespace = whitespace.borrow().to_unicode_lossy();
+    if whitespace.is_empty() || !query.contains(' ') {
+        return None;
+    }
+
+    if regexp {
+        let mut pattern = String::new();
+        let mut in_class = false;
+        let mut escaped = false;
+        let mut replaced = false;
+        for ch in query.chars() {
+            if escaped {
+                pattern.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                pattern.push(ch);
+                escaped = true;
+            } else if ch == '[' {
+                in_class = true;
+                pattern.push(ch);
+            } else if ch == ']' {
+                in_class = false;
+                pattern.push(ch);
+            } else if ch == ' ' && !in_class {
+                pattern.push_str(&whitespace);
+                replaced = true;
+            } else {
+                pattern.push(ch);
+            }
+        }
+        return replaced.then_some(pattern);
+    }
+
+    let regexp_quote = Value::Sym(i.intern("regexp-quote"));
+    let mut pattern = String::new();
+    let mut literal = String::new();
+    for ch in query.chars() {
+        if ch == ' ' {
+            if !literal.is_empty() {
+                let quoted = i.apply(&regexp_quote, vec![Value::string(literal.clone())]).ok()?;
+                let Value::Str(quoted) = quoted else { return None; };
+                pattern.push_str(&quoted.borrow().to_unicode_lossy());
+                literal.clear();
+            }
+            pattern.push_str(&whitespace);
+        } else {
+            literal.push(ch);
+        }
+    }
+    if !literal.is_empty() {
+        let quoted = i.apply(&regexp_quote, vec![Value::string(literal)]).ok()?;
+        let Value::Str(quoted) = quoted else { return None; };
+        pattern.push_str(&quoted.borrow().to_unicode_lossy());
+    }
+    Some(pattern)
 }
 
 fn isearch_yank_word_or_char(i: &mut Interp, position: usize) -> Option<String> {
@@ -304,6 +382,16 @@ impl Isearch {
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
+        let lax_whitespace = i
+            .intern_soft("isearch-lax-whitespace")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol).truthy())
+            .unwrap_or(true);
+        let regexp_lax_whitespace = i
+            .intern_soft("isearch-regexp-lax-whitespace")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol).truthy())
+            .unwrap_or(false);
         Isearch {
             query: String::new(),
             positions: vec![start],
@@ -318,6 +406,8 @@ impl Isearch {
             regexp,
             word_search: false,
             char_fold: false,
+            lax_whitespace,
+            regexp_lax_whitespace,
             quote_next: false,
             meta_s_prefix: false,
             match_ov: None,
@@ -346,6 +436,8 @@ impl Isearch {
             regexp: self.regexp,
             word_search: self.word_search,
             char_fold: self.char_fold,
+            lax_whitespace: self.lax_whitespace,
+            regexp_lax_whitespace: self.regexp_lax_whitespace,
             invisible: self.invisible.clone(),
         });
     }
@@ -361,6 +453,8 @@ impl Isearch {
             self.regexp = previous.regexp;
             self.word_search = previous.word_search;
             self.char_fold = previous.char_fold;
+            self.lax_whitespace = previous.lax_whitespace;
+            self.regexp_lax_whitespace = previous.regexp_lax_whitespace;
             self.invisible = previous.invisible;
             self.go_to(i, self.cur());
         }
@@ -472,6 +566,7 @@ impl Isearch {
                     self.regexp,
                     self.word_search,
                     self.char_fold,
+                    self.lax_whitespace_enabled(),
                     match_start,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -486,6 +581,7 @@ impl Isearch {
                         self.regexp,
                         self.word_search,
                         self.char_fold,
+                        self.lax_whitespace_enabled(),
                         self.start.min(match_end + 1),
                         case_fold_search,
                         self.invisible.truthy(),
@@ -499,6 +595,7 @@ impl Isearch {
                     self.regexp,
                     self.word_search,
                     self.char_fold,
+                    self.lax_whitespace_enabled(),
                     match_start,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -512,6 +609,7 @@ impl Isearch {
                 self.regexp,
                 self.word_search,
                 self.char_fold,
+                self.lax_whitespace_enabled(),
                 self.start,
                 case_fold_search,
                 self.invisible.truthy(),
@@ -541,6 +639,7 @@ impl Isearch {
             self.regexp,
             self.word_search,
             self.char_fold,
+            self.lax_whitespace_enabled(),
             self.cur(),
             case_fold_search,
             self.invisible.truthy(),
@@ -556,6 +655,14 @@ impl Isearch {
                 self.failing = true;
                 self.fail_pos = Some(0);
             }
+        }
+    }
+
+    fn lax_whitespace_enabled(&self) -> bool {
+        if self.regexp {
+            self.regexp_lax_whitespace
+        } else {
+            self.lax_whitespace
         }
     }
 
@@ -587,6 +694,18 @@ impl Isearch {
         if self.char_fold {
             self.regexp = false;
             self.word_search = false;
+        }
+        self.failing = false;
+        self.fail_pos = None;
+        self.search_replaced_query(i);
+    }
+
+    fn toggle_lax_whitespace(&mut self, i: &mut Interp) {
+        self.save_history();
+        if self.regexp {
+            self.regexp_lax_whitespace = !self.regexp_lax_whitespace;
+        } else {
+            self.lax_whitespace = !self.lax_whitespace;
         }
         self.failing = false;
         self.fail_pos = None;
@@ -641,6 +760,10 @@ impl Isearch {
                 }
                 c if c == '\'' as i128 => {
                     self.toggle_char_fold(i);
+                    return IsearchAction::Continue;
+                }
+                c if c == ' ' as i128 => {
+                    self.toggle_lax_whitespace(i);
                     return IsearchAction::Continue;
                 }
                 7 => return self.step(i, key),
@@ -719,6 +842,7 @@ impl Isearch {
                     self.regexp,
                     self.word_search,
                     self.char_fold,
+                    self.lax_whitespace_enabled(),
                     from,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -1162,6 +1286,7 @@ impl Isearch {
                     self.regexp,
                     self.word_search,
                     self.char_fold,
+                    self.lax_whitespace_enabled(),
                     pos,
                     case_fold_search,
                     self.invisible.truthy(),
