@@ -4342,6 +4342,64 @@ fn glyphless_display_replacement(
     }
 }
 
+fn nobreak_char_face(nobreak_display: &Value, character: EmacsChar) -> Option<&'static str> {
+    if nobreak_display.is_nil() {
+        return None;
+    }
+    let code = character.code();
+    let space = matches!(
+        code,
+        0x00a0 | 0x1680 | 0x2000..=0x200a | 0x202f | 0x205f | 0x3000
+    );
+    let hyphen = matches!(code, 0x00ad | 0x2010 | 0x2011);
+    if !space && !hyphen {
+        return None;
+    }
+    if matches!(nobreak_display, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T)
+    {
+        Some(if space {
+            "nobreak-space"
+        } else {
+            "nobreak-hyphen"
+        })
+    } else {
+        Some("escape-glyph")
+    }
+}
+
+fn nobreak_char_replacement(
+    nobreak_display: &Value,
+    character: EmacsChar,
+) -> Option<DisplayReplacement> {
+    if nobreak_display.is_nil() {
+        return None;
+    }
+    let code = character.code();
+    let space = matches!(
+        code,
+        0x00a0 | 0x1680 | 0x2000..=0x200a | 0x202f | 0x205f | 0x3000
+    );
+    let hyphen = matches!(code, 0x00ad | 0x2010 | 0x2011);
+    if !space && !hyphen {
+        return None;
+    }
+    let escaped = !matches!(
+        nobreak_display,
+        Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T
+    );
+    if escaped {
+        Some(DisplayReplacement::Text(if space {
+            "\\ ".to_owned()
+        } else {
+            "\\-".to_owned()
+        }))
+    } else if code == 0x00ad {
+        Some(DisplayReplacement::Text("-".to_owned()))
+    } else {
+        None
+    }
+}
+
 fn ctl_arrow_replacement(character: EmacsChar, ctl_arrow: bool) -> Option<DisplayReplacement> {
     let code = character.code();
     if !ctl_arrow || (code >= 0x20 && code != 0x7f) || matches!(code, 0x09 | 0x0a) {
@@ -4433,6 +4491,16 @@ fn visibility_at_pos(i: &Interp, faces: &WindowFaces, pos: usize) -> Visibility 
 /// face, then text-property faces (insertion order — last write
 /// wins), then overlays in ascending priority.
 fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> CellStyle {
+    style_at_pos_with_named_face(i, ctx, wf, pos, None)
+}
+
+fn style_at_pos_with_named_face(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    wf: &WindowFaces,
+    pos: usize,
+    extra_face: Option<&str>,
+) -> CellStyle {
     let mut mix = remapped_named_face(i, ctx, wf, "default", 0);
     if let Some((rs, re)) = wf.region {
         if pos >= rs && pos < re {
@@ -4492,6 +4560,9 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
         mouse_face.bold = None;
         mouse_face.italic = None;
         mix.merge(&mouse_face);
+    }
+    if let Some(face) = extra_face {
+        mix.merge(&remapped_named_face(i, ctx, wf, face, 0));
     }
     mix.finish()
 }
@@ -5162,6 +5233,7 @@ fn render_grid_internal(
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
+        let nobreak_char_display = buffer_setting(i, "nobreak-char-display", buf_id);
         let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
         let mode_line_format = buffer_setting(i, "mode-line-format", buf_id);
         let mode_line_enabled = !mode_line_format.is_nil();
@@ -5834,9 +5906,30 @@ fn render_grid_internal(
                     tab_width,
                     default_style,
                     |index| {
-                        wf.as_ref()
-                            .map(|wf| style_at_pos(i, &mut fctx, wf, segment_pos + index))
-                            .unwrap_or(default_style)
+                        wf.as_ref().map_or(default_style, |wf| {
+                            let position = segment_pos + index;
+                            let extra_face = segment_chars.get(index).and_then(|character| {
+                                let has_display_override = display_replacement_at(wf, position)
+                                    .is_some()
+                                    || display_table_replacement(
+                                        i,
+                                        buf_id,
+                                        wf,
+                                        *character,
+                                    )
+                                    .is_some();
+                                (!has_display_override)
+                                    .then(|| nobreak_char_face(&nobreak_char_display, *character))
+                                    .flatten()
+                            });
+                            style_at_pos_with_named_face(
+                                i,
+                                &mut fctx,
+                                wf,
+                                position,
+                                extra_face,
+                            )
+                        })
                     },
                     |index| {
                         wf.as_ref()
@@ -5850,6 +5943,10 @@ fn render_grid_internal(
                                 let wf = wf.as_ref()?;
                                 let character = *segment_chars.get(index)?;
                                 display_table_replacement(i, buf_id, wf, character)
+                            })
+                            .or_else(|| {
+                                let character = *segment_chars.get(index)?;
+                                nobreak_char_replacement(&nobreak_char_display, character)
                             })
                             .or_else(|| {
                                 let character = *segment_chars.get(index)?;
