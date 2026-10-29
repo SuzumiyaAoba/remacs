@@ -385,6 +385,17 @@ pub struct Interp {
     /// `kbd_macro_events` length at the last command boundary; used by
     /// `cancel-kbd-macro-events`.
     pub kbd_macro_mark: usize,
+    /// Logical key events for the command currently being read or run.
+    pub(crate) command_key_events: Vec<Value>,
+    /// Start of the last key sequence in `command_key_events`.
+    pub(crate) command_key_start: usize,
+    /// Raw events for the last key sequence, before keymap translations.
+    pub(crate) command_raw_key_events: Vec<Value>,
+    /// Recent input history, including `(nil . COMMAND)` markers.
+    pub(crate) recent_key_events: Vec<Value>,
+    /// True while a command is running and `read-event` keys should be
+    /// appended to `this-command-keys`.
+    pub(crate) command_key_capture_active: bool,
     /// char-code property name → per-char entries (`put-char-code-property`).
     pub char_code_props: Vec<(String, Vec<(i64, Value)>)>,
     /// char-code property name → char-table backing store.

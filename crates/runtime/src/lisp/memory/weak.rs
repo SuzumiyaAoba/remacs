@@ -199,6 +199,9 @@ impl Graph {
             .chain(i.pending_insert_behind.iter())
             .chain(i.pending_insert_front.iter())
             .chain(i.kbd_macro_events.iter())
+            .chain(i.command_key_events.iter())
+            .chain(i.command_raw_key_events.iter())
+            .chain(i.recent_key_events.iter())
         {
             self.root(value);
         }

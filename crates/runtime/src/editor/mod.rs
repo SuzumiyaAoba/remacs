@@ -1257,18 +1257,18 @@ pub(crate) static SUBRS: &[Subr] = &[
         "this-single-command-keys",
         0,
         0,
-        f_this_command_keys_vector,
+        f_this_single_command_keys,
         ""
     ),
     S!(
         "this-single-command-raw-keys",
         0,
         0,
-        f_this_command_keys_vector,
+        f_this_single_command_raw_keys,
         ""
     ),
-    S!("recent-keys", 0, 1, f_this_command_keys_vector, ""),
-    S!("clear-this-command-keys", 0, 1, f_nil, ""),
+    S!("recent-keys", 0, 1, f_recent_keys, ""),
+    S!("clear-this-command-keys", 0, 1, f_clear_this_command_keys, ""),
     S!("input-pending-p", 0, 1, f_input_pending_p, ""),
     S!("discard-input", 0, 0, f_discard_input, ""),
     S!("last-nonminibuffer-frame", 0, 0, f_selected_frame, ""),
@@ -10989,9 +10989,26 @@ fn pop_input_method_event(i: &mut Interp, name: &str) -> Option<Value> {
     Some(event)
 }
 
+pub(crate) fn record_recent_input_event(i: &mut Interp, event: Value) {
+    // GNU's `recent-keys' defaults to the most recent 300 keyboard and
+    // mouse events.  Keyboard-macro events are intentionally omitted.
+    if i.macro_replaying {
+        return;
+    }
+    if i.recent_key_events.len() == 300 {
+        i.recent_key_events.remove(0);
+    }
+    i.recent_key_events.push(event);
+}
+
+pub(crate) fn record_recent_command(i: &mut Interp, command: Value) {
+    record_recent_input_event(i, Value::cons(Value::Nil, command));
+}
+
 fn record_keyboard_event(i: &mut Interp, event: Value) -> Value {
     let symbol = i.q("last-input-event");
     i.store_internal_value(symbol, event.clone());
+    record_recent_input_event(i, event.clone());
     event
 }
 
@@ -11215,6 +11232,12 @@ fn read_filtered_event(i: &mut Interp, a: crate::lisp::Argv, characters: Option<
     })();
     // Keep delayed events live while signal observers run, before unwinding.
     let result = i.offer_flow(result);
+    if !deadline.numeric && i.command_key_capture_active
+        && let Ok(event) = &result
+        && !event.is_nil()
+    {
+        i.command_key_events.push(event.clone());
+    }
     if result.is_ok() && !delayed.is_nil() { i.unread_switch_frame = delayed; }
     result
 }
@@ -11275,6 +11298,15 @@ pub(crate) fn f_read_key_sequence_vector(i: &mut Interp, a: crate::lisp::Argv) -
 fn read_key_sequence_events(i: &mut Interp, a: crate::lisp::Argv, vector: bool) -> EvalResult {
     let prompt = keyboard_prompt(i, &arg(&a, 0));
     let deadline = EventDeadline { numeric: false, end: None };
+    let continue_echo = arg(&a, 1).truthy();
+    let command_key_start = if continue_echo {
+        i.command_key_events.len()
+    } else {
+        i.command_key_events.clear();
+        i.command_key_start = 0;
+        0
+    };
+    i.command_raw_key_events.clear();
     let mut events = Vec::new();
     loop {
         events.push(read_keyboard_event(i, &(prompt).to_unicode_lossy(), deadline)?);
@@ -11283,6 +11315,10 @@ fn read_key_sequence_events(i: &mut Interp, a: crate::lisp::Argv, vector: bool) 
         let binding = keymap_def(i, binding)?;
         if !is_keymap(i, &binding) { break; }
     }
+    i.command_key_events
+        .extend(events.iter().cloned());
+    i.command_key_start = command_key_start;
+    i.command_raw_key_events = events.clone();
     if vector || events.iter().any(|event| !event.fixnump()
         || event.int().is_none_or(|code| code & ((1 << 27) - 1) >= 128)) {
         return Ok(Value::vector(events));
@@ -11297,13 +11333,74 @@ fn read_key_sequence_events(i: &mut Interp, a: crate::lisp::Argv, vector: bool) 
     if let Value::Str(string) = &result { i.mark_unibyte(string); }
     Ok(result)
 }
-fn f_this_command_keys(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let _ = i;
-    Ok(Value::string(""))
+fn command_keys_array(i: &mut Interp, events: &[Value], force_vector: bool) -> Value {
+    if force_vector
+        || events.iter().any(|event| {
+            !event.fixnump()
+                || event
+                    .int()
+                    .is_none_or(|code| code & ((1 << 27) - 1) >= 128)
+        })
+    {
+        return Value::vector(events.to_vec());
+    }
+
+    // alloc.c's make_event_array packs ASCII plus Meta into an unibyte
+    // string, matching the representation used by read-key-sequence.
+    let text: String = events
+        .iter()
+        .map(|event| {
+            let code = event.int().unwrap();
+            let byte = code as u8 | if code & CHAR_META != 0 { 0x80 } else { 0 };
+            char::from(byte)
+        })
+        .collect();
+    let result = Value::string(text);
+    if let Value::Str(string) = &result {
+        i.mark_unibyte(string);
+    }
+    result
 }
+
+fn f_this_command_keys(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let events = i.command_key_events.clone();
+    Ok(command_keys_array(i, &events, false))
+}
+
 fn f_this_command_keys_vector(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let _ = i;
-    Ok(Value::vector(Vec::new()))
+    Ok(Value::vector(i.command_key_events.clone()))
+}
+
+fn f_this_single_command_keys(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let start = i.command_key_start.min(i.command_key_events.len());
+    Ok(Value::vector(i.command_key_events[start..].to_vec()))
+}
+
+fn f_this_single_command_raw_keys(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::vector(i.command_raw_key_events.clone()))
+}
+
+fn f_recent_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let include_commands = arg(&a, 0).truthy();
+    let events = i
+        .recent_key_events
+        .iter()
+        .filter(|event| {
+            include_commands
+                || !matches!(event, Value::Cons(cell) if cell.borrow().car.is_nil())
+        })
+        .cloned()
+        .collect();
+    Ok(Value::vector(events))
+}
+
+fn f_clear_this_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    i.command_key_events.clear();
+    i.command_key_start = 0;
+    if arg(&a, 0).is_nil() {
+        i.recent_key_events.clear();
+    }
+    Ok(Value::Nil)
 }
 
 // ---------- kill ring ----------

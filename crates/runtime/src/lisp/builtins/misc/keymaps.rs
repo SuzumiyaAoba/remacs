@@ -693,6 +693,21 @@ pub(super) fn f_suppress_keymap(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     Ok(arg(&a, 1))
 }
 
-pub(super) fn f_set_this_command_keys(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+pub(super) fn f_set_this_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !matches!(a[0], Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &a[0]));
+    }
+    let mut keys = crate::editor::key_seq(i, &a[0])?
+        .into_iter()
+        .map(Value::Int)
+        .collect::<Vec<_>>();
+    // GNU's set--this-command-keys treats byte 248 at the beginning as
+    // the conventional `M-x' sequence, even when CONCAT made the string
+    // multibyte because the command name contains non-ASCII characters.
+    if matches!(keys.first(), Some(Value::Int(248))) {
+        keys[0] = Value::Int(crate::editor::CHAR_META | ('x' as i128));
+    }
+    i.command_key_events = keys.clone();
+    i.command_key_start = 0;
     Ok(Value::Nil)
 }

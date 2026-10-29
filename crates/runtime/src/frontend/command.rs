@@ -135,7 +135,19 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
     {
         let t = term.clone();
         i.minibuf_reader = Some(std::rc::Rc::new(move |interp, prompt, single| {
-            minibuf_loop::<T>(&t, interp, prompt, single)
+            // The recursive minibuffer has its own key sequence while it
+            // runs.  Preserve the outer command's sequence so it remains
+            // visible after the prompted read returns.
+            let saved_command_keys = interp.command_key_events.clone();
+            let saved_raw_keys = interp.command_raw_key_events.clone();
+            let saved_key_start = interp.command_key_start;
+            let saved_capture = interp.command_key_capture_active;
+            let result = minibuf_loop::<T>(&t, interp, prompt, single);
+            interp.command_key_events = saved_command_keys;
+            interp.command_raw_key_events = saved_raw_keys;
+            interp.command_key_start = saved_key_start;
+            interp.command_key_capture_active = saved_capture;
+            result
         }));
     }
     // Sync initial frame/window geometry, then watch for front-end resizes.
@@ -424,6 +436,12 @@ pub fn dispatch_key_core(
     dispatch_key_core_inner(i, key, keys, arg_mode, isearch, None, None)
 }
 
+fn key_event_lisp_value(i: &mut Interp, code: i128) -> Value {
+    crate::editor::key_name_for(code)
+        .map(|name| Value::Sym(i.intern(&name)))
+        .unwrap_or(Value::Int(code))
+}
+
 fn dispatch_key_core_inner(
     i: &mut Interp,
     key: i128,
@@ -436,33 +454,61 @@ fn dispatch_key_core_inner(
     // GNU read_char updates `last-input-event' for every event as it is
     // read, including prefix keys that do not execute a command yet.
     // `last-command-event' is updated later, when a command is found.
+    let input_event = command_event
+        .cloned()
+        .unwrap_or_else(|| key_event_lisp_value(i, key));
     let last_input_event = i.q("last-input-event");
-    i.store_internal_value(
-        last_input_event,
-        command_event.cloned().unwrap_or(Value::Int(key)),
-    );
+    i.store_internal_value(last_input_event, input_event.clone());
+    if command_event.is_none() {
+        crate::editor::record_recent_input_event(i, input_event.clone());
+    }
     {
         if *arg_mode {
             let digit = (48..58).contains(&key);
             let minus = key == 45;
             let cu = key == 21;
             if digit || minus || cu {
+                i.command_key_events = vec![input_event.clone()];
+                i.command_raw_key_events = vec![input_event.clone()];
+                i.command_key_start = 0;
                 let lce = i.q("last-command-event");
-                let _ = i.set_symbol(lce, command_event.cloned().unwrap_or(Value::Int(key)));
+                let _ = i.set_symbol(lce, input_event);
                 let name = if cu {
                     "universal-argument"
                 } else {
                     "digit-argument"
                 };
                 let id = i.intern(name);
+                let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
                 if i.command_execute(&Value::Sym(id)).is_ok() {
                     post_command_undo_boundary(i);
                 }
+                i.command_key_capture_active = was_capturing;
+                crate::editor::record_recent_command(i, Value::Sym(id));
+                i.command_key_events.clear();
+                i.command_raw_key_events.clear();
+                i.command_key_start = 0;
                 return Ok(());
             }
             *arg_mode = false;
         }
+        if keys.is_empty() {
+            i.command_key_events.clear();
+            i.command_raw_key_events.clear();
+            i.command_key_start = 0;
+        }
         keys.push(key);
+        let raw_events = keys
+            .iter()
+            .copied()
+            .map(|code| key_event_lisp_value(i, code))
+            .collect::<Vec<_>>();
+        i.command_raw_key_events = raw_events;
+        if let Some(last) = i.command_raw_key_events.last_mut()
+            && command_event.is_some()
+        {
+            *last = input_event.clone();
+        }
         // Record the event when defining a keyboard macro (replayed
         // keys are not re-recorded, matching GNU).
         if !i.macro_replaying {
@@ -472,10 +518,25 @@ fn dispatch_key_core_inner(
             }
         }
         let seq = Value::vector(keys.iter().map(|k| Value::Int(*k)).collect());
-        // Look up the key sequence.
-        let binding = command_event
-            .map(|event| lookup_command_at_event(i, &seq, event))
-            .unwrap_or_else(|| lookup_command(i, &seq));
+        // Look up the key sequence and retain the translated sequence
+        // separately from the raw events used to produce it.
+        let (binding, logical_keys) = match command_event {
+            Some(event) if mouse_event_position(event).is_some() => {
+                (lookup_command_at_event(i, &seq, event), keys.clone())
+            }
+            _ => lookup_command_with_sequence(i, &seq),
+        };
+        let logical_events = logical_keys
+            .into_iter()
+            .map(|code| key_event_lisp_value(i, code))
+            .collect();
+        i.command_key_events = logical_events;
+        if let Some(last) = i.command_key_events.last_mut()
+            && command_event.is_some()
+        {
+            *last = input_event.clone();
+        }
+        i.command_key_start = 0;
         match binding {
             LookupResult::Command(raw_cmd) => {
                 // GNU command_loop_1: a symbol binding is checked
@@ -489,9 +550,10 @@ fn dispatch_key_core_inner(
                         .unwrap_or_else(|| raw_cmd.clone()),
                     _ => raw_cmd.clone(),
                 };
+                crate::editor::record_recent_command(i, cmd.clone());
                 keys.clear();
                 let lce = i.q("last-command-event");
-                let _ = i.set_symbol(lce, command_event.cloned().unwrap_or(Value::Int(key)));
+                let _ = i.set_symbol(lce, input_event.clone());
                 let this_cmd = i.q("this-command");
                 let prev = i.symbol_value(this_cmd);
                 let lc = i.q("last-command");
@@ -520,14 +582,22 @@ fn dispatch_key_core_inner(
                 };
                 if let Some((back, re)) = isearch_cmd {
                     if let Some(hook) = isearch.as_mut() {
-                        hook(i, back, re)?;
+                        let was_capturing =
+                            std::mem::replace(&mut i.command_key_capture_active, true);
+                        let result = hook(i, back, re);
+                        i.command_key_capture_active = was_capturing;
+                        result?;
                         post_command_undo_boundary(i);
+                        i.command_key_events.clear();
+                        i.command_raw_key_events.clear();
+                        i.command_key_start = 0;
                         return Ok(());
                     }
                 }
                 // GNU command_loop_1: `pre-command-hook' runs before
                 // the command, `post-command-hook' after it — even on
                 // error (both via safe_run_hooks).
+                let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
                 let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
                 let ignore_command = i.q("ignore");
                 let skip_command =
@@ -630,6 +700,7 @@ fn dispatch_key_core_inner(
                 if !command_flow.as_ref().is_some_and(|flow| flow.is_some()) {
                     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
                 }
+                i.command_key_capture_active = was_capturing;
                 // Continue arg entry after C-u / M-digit / M--.
                 if let Value::Sym(id) = &cmd {
                     let n = i.symbol_name(*id);
@@ -641,6 +712,9 @@ fn dispatch_key_core_inner(
                 // Command boundary: `cancel-kbd-macro-events` truncates
                 // back to this mark.
                 i.kbd_macro_mark = i.kbd_macro_events.len();
+                i.command_key_events.clear();
+                i.command_raw_key_events.clear();
+                i.command_key_start = 0;
             }
             LookupResult::Prefix => {
                 // keep reading keys
@@ -661,12 +735,15 @@ fn dispatch_key_core_inner(
                             None
                         };
                         if let Some(n) = name {
+                            let cmd_sym = Value::Sym(i.intern(n));
+                            crate::editor::record_recent_command(i, cmd_sym.clone());
                             let this_cmd = i.q("this-command");
                             let prev = i.symbol_value(this_cmd);
                             let lc = i.q("last-command");
                             let _ = i.set_symbol(lc, prev);
-                            let cmd_sym = Value::Sym(i.intern(n));
                             let _ = i.set_symbol(this_cmd, cmd_sym);
+                            let was_capturing =
+                                std::mem::replace(&mut i.command_key_capture_active, true);
                             let _ = crate::lisp::builtins::evalfn::safe_call_hook(
                                 i,
                                 "pre-command-hook",
@@ -702,6 +779,10 @@ fn dispatch_key_core_inner(
                                 i,
                                 "post-command-hook",
                             );
+                            i.command_key_capture_active = was_capturing;
+                            i.command_key_events.clear();
+                            i.command_raw_key_events.clear();
+                            i.command_key_start = 0;
                             return Ok(());
                         }
                     }
@@ -714,6 +795,9 @@ fn dispatch_key_core_inner(
                         .join(" ")
                 ));
                 keys.clear();
+                i.command_key_events.clear();
+                i.command_raw_key_events.clear();
+                i.command_key_start = 0;
             }
         }
     }
@@ -862,6 +946,7 @@ fn dispatch_mouse_movement(
     arg_mode: &mut bool,
 ) -> io::Result<()> {
     let event = mouse_movement_event(i, position);
+    crate::editor::record_recent_input_event(i, event.clone());
     let key = crate::editor::event_code_for("mouse-movement");
     let sequence = Value::vector(vec![Value::Int(key)]);
     if matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None) {
@@ -883,6 +968,7 @@ fn dispatch_frontend_command_with_args(
     *arg_mode = false;
     i.gui_popup_menu = None;
     let command = Value::Sym(i.intern(command));
+    crate::editor::record_recent_command(i, command.clone());
     let saved_args = std::mem::replace(
         &mut i.command_args,
         args.iter().copied().map(Value::Int).collect(),
@@ -900,14 +986,19 @@ fn dispatch_frontend_command_with_args(
     let _ = i.set_symbol(current_prefix, prefix_value);
     let _ = i.set_symbol(prefix, Value::Nil);
 
+    let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
     match i.command_execute(&command) {
         Ok(_) => post_command_undo_boundary(i),
         Err(flow) => report_flow(i, flow),
     }
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+    i.command_key_capture_active = was_capturing;
     i.kbd_macro_mark = i.kbd_macro_events.len();
     i.command_args = saved_args;
+    i.command_key_events.clear();
+    i.command_raw_key_events.clear();
+    i.command_key_start = 0;
 }
 
 pub(super) fn dispatch_key<T: KeyIo>(
@@ -946,6 +1037,7 @@ fn dispatch_mouse<T: KeyIo>(
     let Some((mut key, mut event)) = mouse_event(i, mouse) else {
         return Ok(());
     };
+    crate::editor::record_recent_input_event(i, event.clone());
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
     i.gui_popup_menu = None;
@@ -1033,6 +1125,7 @@ fn dispatch_mouse_wheel<T: KeyIo>(
         Value::Nil,
         Value::Int(line_count.max(1) as i128),
     ]);
+    crate::editor::record_recent_input_event(i, event.clone());
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
@@ -1061,6 +1154,7 @@ fn dispatch_mouse_down(
         mouse_position_value(i, mouse.end).unwrap_or(Value::Nil),
         Value::Int(mouse.click_count.max(1) as i128),
     ]);
+    crate::editor::record_recent_input_event(i, event.clone());
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
 
@@ -1502,6 +1596,16 @@ pub(super) fn dispatch_text<T: KeyIo>(
 
     // The OS text path bypasses `dispatch_key_core_inner', so record its
     // characters explicitly while a keyboard macro is being defined.
+    let text_events = text
+        .chars()
+        .map(|character| Value::Int(character as i128))
+        .collect::<Vec<_>>();
+    for event in &text_events {
+        crate::editor::record_recent_input_event(i, event.clone());
+    }
+    i.command_key_events = text_events.clone();
+    i.command_raw_key_events = text_events;
+    i.command_key_start = 0;
     if !i.macro_replaying {
         let defining = i.q("defining-kbd-macro");
         if i.symbol_value(defining).truthy() {
@@ -1528,8 +1632,12 @@ pub(super) fn dispatch_text<T: KeyIo>(
     let _ = i.set_symbol(this_command, Value::Sym(self_insert));
     if let Some(ch) = text.chars().last() {
         let last_event = i.q("last-command-event");
-        let _ = i.set_symbol(last_event, Value::Int(ch as i128));
+        let event = Value::Int(ch as i128);
+        let _ = i.set_symbol(last_event, event.clone());
+        let last_input = i.q("last-input-event");
+        i.store_internal_value(last_input, event);
     }
+    let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
 
     if i.current_buffer_ref().is_some() {
@@ -1542,6 +1650,10 @@ pub(super) fn dispatch_text<T: KeyIo>(
         }
     }
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
+    i.command_key_capture_active = was_capturing;
+    i.command_key_events.clear();
+    i.command_raw_key_events.clear();
+    i.command_key_start = 0;
     Ok(())
 }
 
@@ -1784,19 +1896,26 @@ fn translate_command_sequence(i: &mut Interp, keys: &[i128]) -> KeyTranslation {
     }
 }
 
-fn lookup_command(i: &mut Interp, seq: &Value) -> LookupResult {
+fn lookup_command_with_sequence(i: &mut Interp, seq: &Value) -> (LookupResult, Vec<i128>) {
     let keys = match seq {
         Value::Vec(_) | Value::Str(_) => crate::editor::key_seq(i, seq).unwrap_or_default(),
-        _ => return LookupResult::None,
+        _ => return (LookupResult::None, Vec::new()),
     };
     match translate_command_sequence(i, &keys) {
-        KeyTranslation::Prefix => LookupResult::Prefix,
-        KeyTranslation::Command(command) => LookupResult::Command(command),
-        KeyTranslation::Sequence(keys) => lookup_command_raw(
-            i,
-            &Value::vector(keys.into_iter().map(Value::Int).collect()),
+        KeyTranslation::Prefix => (LookupResult::Prefix, keys),
+        KeyTranslation::Command(command) => (LookupResult::Command(command), keys),
+        KeyTranslation::Sequence(translated) => (
+            lookup_command_raw(
+                i,
+                &Value::vector(translated.iter().copied().map(Value::Int).collect()),
+            ),
+            translated,
         ),
     }
+}
+
+fn lookup_command(i: &mut Interp, seq: &Value) -> LookupResult {
+    lookup_command_with_sequence(i, seq).0
 }
 
 fn lookup_command_raw(i: &mut Interp, seq: &Value) -> LookupResult {
