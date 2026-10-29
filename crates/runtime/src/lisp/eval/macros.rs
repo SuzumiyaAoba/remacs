@@ -317,6 +317,12 @@ impl Interp {
                 }
                 _ => return Ok(cur),
             };
+            // GNU stops when a macro returns the exact form it was given.
+            // Without this identity check, `macroexpand' loops forever on
+            // self-preserving macros.
+            if crate::lisp::builtins::eq_values(&next, &cur) {
+                return Ok(cur);
+            }
             cur = next;
         }
     }
