@@ -53,6 +53,7 @@ qa!(qa_interactive_ignore, "qa_interactive_ignore.el");
 qa!(qa_apply, "qa_apply.el");
 qa!(qa_apply2, "qa_apply2.el");
 qa!(qa_arith, "qa_arith.el");
+qa!(qa_setq_validation_order, "qa_setq_validation_order.el");
 qa!(qa_random_unibyte_seed, "qa_random_unibyte_seed.el");
 qa!(qa_array, "qa_array.el");
 qa!(qa_backquote, "qa_backquote.el");

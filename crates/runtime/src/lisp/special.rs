@@ -507,17 +507,20 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
                         }
                     }
                 };
-                let sid = i
-                    .sym_id(&sym_v)
-                    .ok_or_else(|| i.wrong_type_mut("symbolp", &sym_v))?;
                 // GNU `Fsetq': a dangling symbol without a value form
-                // signals `wrong-number-of-arguments' BEFORE the
-                // missing value could evaluate.
+                // signals `wrong-number-of-arguments' before any symbolp
+                // check; there is no RHS to evaluate in this case.
                 if matches!(next2, Value::Nil) && !matches!(next1, Value::Cons(_)) {
                     return Err(i.wrong_number_of_args(&Value::Sym(who), n));
                 }
                 n += 1;
+                // GNU evaluates a paired RHS before validating its variable
+                // name.  Thus `(setq 5 (setq side 'ran))' runs the RHS and
+                // only then signals `(wrong-type-argument symbolp 5)'.
                 last = i.eval(&val_f)?;
+                let sid = i
+                    .sym_id(&sym_v)
+                    .ok_or_else(|| i.wrong_type_mut("symbolp", &sym_v))?;
                 if default {
                     i.set_symbol_default(sid, last.clone())?;
                 } else {
