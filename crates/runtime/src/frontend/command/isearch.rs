@@ -373,6 +373,34 @@ impl Isearch {
                 self.restore_history(i);
                 IsearchAction::Continue
             }
+            c if c == 25 || c == (CHAR_CTL | 'y' as i128) => {
+                let current_kill = Value::Sym(i.intern("current-kill"));
+                match i.apply(&current_kill, vec![Value::Int(0)]) {
+                    Ok(Value::Str(text)) => {
+                        let text = text.borrow().to_unicode_lossy();
+                        if !text.is_empty() {
+                            let failure_start = self
+                                .fail_pos
+                                .unwrap_or_else(|| self.query.chars().count());
+                            self.save_history();
+                            let text = prepare_isearch_yanked_text(
+                                i,
+                                &text,
+                                &self.case_fold,
+                                self.regexp,
+                            );
+                            self.query.push_str(&text);
+                            self.search_updated_query(i, failure_start);
+                        }
+                    }
+                    Ok(other) => {
+                        let flow = i.wrong_type_mut("stringp", &other);
+                        report_flow(i, flow);
+                    }
+                    Err(flow) => report_flow(i, flow),
+                }
+                IsearchAction::Continue
+            }
             c if c == 23 || c == (CHAR_CTL | 'w' as i128) => {
                 let anchor = if self.backward {
                     self.spans.last().map(|span| span.1).unwrap_or(cur)
