@@ -13,9 +13,16 @@ impl Interp {
     /// non-symbol value (or UNBOUND sym).
     pub fn indirect_function_value(&self, v: &Value) -> Value {
         let mut cur = crate::lisp::builtins::misc::unpos(self, v);
-        for _ in 0..64 {
+        let mut seen = std::collections::HashSet::new();
+        loop {
             match cur {
                 Value::Sym(id) => {
+                    // Function aliases can be arbitrarily long.  GNU
+                    // validates cycles at assignment time, but guard here
+                    // too because this helper cannot return a Lisp signal.
+                    if !seen.insert(id) {
+                        return Value::Sym(id);
+                    }
                     let f = self.symbol_function(id);
                     match f {
                         Value::Sym(next) if next != sym::UNBOUND => cur = Value::Sym(next),
@@ -25,7 +32,6 @@ impl Interp {
                 other => return other,
             }
         }
-        cur
     }
 
     /// `boundp`: is the effective value non-void?
@@ -39,12 +45,12 @@ impl Interp {
                 // GNU resolves `defalias' chains: the alias's final
                 // target decides.
                 let mut f = self.symbol_function(*id);
-                let mut hops = 0usize;
+                let mut seen = std::collections::HashSet::new();
+                seen.insert(*id);
                 while let Value::Sym(next) = f {
-                    if next == sym::UNBOUND || hops >= 64 {
+                    if next == sym::UNBOUND || !seen.insert(next) {
                         return false;
                     }
-                    hops += 1;
                     f = self.symbol_function(next);
                 }
                 match f {
