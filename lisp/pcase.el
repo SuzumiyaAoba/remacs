@@ -811,6 +811,7 @@ a specific leaf type.  Which bit represents which type is unspecified.")
     '(:pcase--fail . nil))
    ((and (eq (car-safe pat) 'pred)
          (symbolp (cadr pat))
+         (get (cadr pat) 'pure)
          (get (cadr pat) 'side-effect-free))
     (ignore-errors
       (if (funcall (cadr pat) elem)
@@ -836,6 +837,7 @@ a specific leaf type.  Which bit represents which type is unspecified.")
     '(:pcase--fail . nil))
    ((and (eq (car-safe pat) 'pred)
          (symbolp (cadr pat))
+         (get (cadr pat) 'pure)
          (get (cadr pat) 'side-effect-free)
 	 (ignore-errors
 	   (let ((p (cadr pat)) (all t))
@@ -895,8 +897,7 @@ A and B can be one of:
           '(:pcase--fail . nil))))
      ((and (eq 'quote (car-safe pat))
            (symbolp (cadr upat))
-           (or (get (cadr upat) 'pure)  ;FIXME: Drop this `or'?
-               (symbolp (cadr pat)) (stringp (cadr pat)) (numberp (cadr pat)))
+           (get (cadr upat) 'pure)
            (get (cadr upat) 'side-effect-free)
            (ignore-errors
              (setq test (list (funcall (cadr upat) (cadr pat))))))

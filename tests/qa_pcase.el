@@ -101,6 +101,24 @@
 (qa (pcase 4 ((pred (lambda (n) (> n 2))) 'big)) 'big)
 (qa (pcase :k1 ((pred keywordp) 'kw)) 'kw)
 (qa (pcase '(a b) ((pred (equal '(a b))) 'ok)) 'ok)
+;; Issue #1694: side-effect-free does not mean invariant under dynamic state.
+;; Macro expansion must not discard a later literal clause based on the
+;; predicate's expansion-time result.
+(defvar qa-pcase-dynamic-state 'foo)
+(defvar qa-pcase-dynamic-input nil)
+(defun qa-pcase-dynamic-pred (x) (eq x qa-pcase-dynamic-state))
+(put 'qa-pcase-dynamic-pred 'side-effect-free t)
+(qa (let ((expanded
+           (let ((qa-pcase-dynamic-state 'foo))
+             (macroexpand-all
+              '(pcase qa-pcase-dynamic-input
+                 ((pred qa-pcase-dynamic-pred) 'first)
+                 ('foo 'second)
+                 (_ 'other))))))
+      (let ((qa-pcase-dynamic-state 'bar)
+            (qa-pcase-dynamic-input 'foo))
+        (eval expanded)))
+    'second)
 ;; (pred (F a b)) calls F with EXPVAL as the LAST arg.
 (qa (pcase 4 ((pred (= 4)) 'eq4)) 'eq4)
 (qa (pcase 4 ((pred (= 3)) 'eq3) (_ 'no)) 'no)
