@@ -1694,6 +1694,227 @@ fn resize_caps(i: &mut Interp, w: &WindowRef, horizontal: bool) -> (i128, i128) 
     (grow, shrink)
 }
 
+fn pixelwise_char_size(i: &Interp, w: &WindowRef, horizontal: bool) -> i128 {
+    let Some(frame) = crate::editor::frame_of_window(i, w) else {
+        return 1;
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return 1;
+    }
+    if horizontal {
+        crate::editor::frame_char_width(i, &frame).max(1) as i128
+    } else {
+        crate::editor::frame_char_height(i, &frame).max(1) as i128
+    }
+}
+
+pub(crate) fn pixelwise_window_extent_adjustment(
+    w: &WindowRef,
+    horizontal: bool,
+) -> i128 {
+    let (local, extent) = {
+        let window = w.borrow();
+        (
+            if horizontal {
+                window.pixelwise_width_adjustment
+            } else {
+                window.pixelwise_height_adjustment
+            },
+            if horizontal { window.width } else { window.height },
+        )
+    };
+    let Some(parent) = crate::editor::w_parent(w) else {
+        return local;
+    };
+    let inherited = pixelwise_window_extent_adjustment(&parent, horizontal);
+    let (axis, children, total) = {
+        let parent = parent.borrow();
+        let children = parent.children.clone();
+        let total = children
+            .iter()
+            .map(|child| {
+                let child = child.borrow();
+                if horizontal {
+                    child.width
+                } else {
+                    child.height
+                }
+            })
+            .sum::<usize>();
+        (parent.horiz, children, total)
+    };
+    if axis != Some(horizontal) || total == 0 {
+        return local + inherited;
+    }
+    let Some(index) = children.iter().position(|child| Rc::ptr_eq(child, w)) else {
+        return local + inherited;
+    };
+    let start = children[..index]
+        .iter()
+        .map(|child| {
+            let child = child.borrow();
+            if horizontal {
+                child.width
+            } else {
+                child.height
+            }
+        })
+        .sum::<usize>();
+    let edge_adjustment = |edge: usize| {
+        (inherited as f64 * edge as f64 / total as f64).round() as i128
+    };
+    local + edge_adjustment(start + extent) - edge_adjustment(start)
+}
+
+fn pixelwise_window_size(w: &WindowRef, horizontal: bool, char_size: i128) -> i128 {
+    let wb = w.borrow();
+    let cells = if horizontal {
+        wb.width
+    } else {
+        wb.height
+    };
+    drop(wb);
+    cells as i128 * char_size + pixelwise_window_extent_adjustment(w, horizontal)
+}
+
+fn pixelwise_window_minimum(
+    i: &mut Interp,
+    w: &WindowRef,
+    horizontal: bool,
+    ignore: &Value,
+) -> i128 {
+    crate::editor::window_minimum(i, w, horizontal, ignore, true)
+}
+
+fn resize_caps_pixelwise(
+    i: &mut Interp,
+    w: &WindowRef,
+    kids: &[WindowRef],
+    horizontal: bool,
+    ignore: &Value,
+    char_size: i128,
+) -> (i128, i128) {
+    let wsize = pixelwise_window_size(w, horizontal, char_size);
+    let wmin = pixelwise_window_minimum(i, w, horizontal, ignore);
+    let shrink = (wsize - wmin).max(0);
+    let grow = kids
+        .iter()
+        .filter(|sibling| !Rc::ptr_eq(sibling, w) && !sibling.borrow().dead)
+        .map(|sibling| {
+            let size = pixelwise_window_size(sibling, horizontal, char_size);
+            let minimum = pixelwise_window_minimum(i, sibling, horizontal, ignore);
+            (size - minimum).max(0)
+        })
+        .sum();
+    (grow, shrink)
+}
+
+fn window_resize_pixelwise(
+    i: &mut Interp,
+    w: &WindowRef,
+    delta: i128,
+    horizontal: bool,
+    ignore: &Value,
+    no_error: bool,
+) -> EvalResult {
+    let fail = |i: &mut Interp, msg: &str| -> EvalResult {
+        if no_error {
+            Ok(Value::Nil)
+        } else {
+            Err(i.error(msg))
+        }
+    };
+    let Some((parent, kids)) = resize_axis(w, horizontal) else {
+        return fail(i, "Invalid window size");
+    };
+    let char_size = pixelwise_char_size(i, w, horizontal);
+    let (grow, shrink) = resize_caps_pixelwise(i, w, &kids, horizontal, ignore, char_size);
+    let magnitude = delta.abs();
+    let pool = if delta > 0 {
+        grow
+    } else {
+        kids.iter()
+            .filter(|sibling| !Rc::ptr_eq(sibling, w) && !sibling.borrow().dead)
+            .map(|sibling| pixelwise_window_size(sibling, horizontal, char_size))
+            .sum()
+    };
+    let capacity = if delta > 0 { grow } else { shrink };
+    if magnitude > capacity || magnitude == 0 {
+        return fail(i, "Invalid window size");
+    }
+
+    {
+        let mut window = w.borrow_mut();
+        if horizontal {
+            window.pixelwise_width_adjustment += delta;
+        } else {
+            window.pixelwise_height_adjustment += delta;
+        }
+    }
+    let mut need = magnitude;
+    let last = kids
+        .iter()
+        .filter(|sibling| !Rc::ptr_eq(sibling, w) && !sibling.borrow().dead)
+        .last()
+        .cloned();
+    for sibling in &kids {
+        if Rc::ptr_eq(sibling, w) || sibling.borrow().dead {
+            continue;
+        }
+        let size = pixelwise_window_size(sibling, horizontal, char_size);
+        let mut sibling_delta = if pool > 0 {
+            if delta > 0 {
+                let minimum = pixelwise_window_minimum(i, sibling, horizontal, ignore);
+                let slack = (size - minimum).max(0);
+                -(need * slack / pool).min(slack).min(need)
+            } else {
+                (need * size / pool).min(need)
+            }
+        } else {
+            0
+        };
+        if last.as_ref().is_some_and(|last| Rc::ptr_eq(last, sibling)) {
+            sibling_delta = if delta > 0 { -need } else { need };
+        }
+        need -= sibling_delta.abs();
+        let mut sibling = sibling.borrow_mut();
+        if horizontal {
+            sibling.pixelwise_width_adjustment += sibling_delta;
+        } else {
+            sibling.pixelwise_height_adjustment += sibling_delta;
+        }
+    }
+    crate::editor::relay_children(&parent);
+    let parent_extent = pixelwise_window_size(&parent, horizontal, char_size) as f64;
+    let parent_normal = {
+        let parent = parent.borrow();
+        if horizontal {
+            parent.normal_size.1
+        } else {
+            parent.normal_size.0
+        }
+    };
+    if parent_extent > 0.0 {
+        for child in &kids {
+            let extent = pixelwise_window_size(child, horizontal, char_size) as f64;
+            let mut child = child.borrow_mut();
+            if child.dead {
+                continue;
+            }
+            if horizontal {
+                child.normal_size.1 = parent_normal * extent / parent_extent;
+            } else {
+                child.normal_size.0 = parent_normal * extent / parent_extent;
+            }
+        }
+    }
+    if no_error {
+        Ok(Value::Nil)
+    } else {
+        Ok(Value::t())
+    }
+}
+
 /// `window-max-delta' — how far WINDOW can grow (batch: siblings'
 /// slack; 0 for root/minibuffer).
 fn f_window_max_delta(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1763,6 +1984,10 @@ fn window_resize_impl(i: &mut Interp, a: crate::lisp::Argv, no_error: bool) -> E
     }
     if delta == 0 {
         return fail(i, "Invalid window size");
+    }
+    let ignore = arg(&a, 3);
+    if a.get(4).is_some_and(Value::truthy) {
+        return window_resize_pixelwise(i, &w, delta, horizontal, &ignore, no_error);
     }
     let Some((p, kids)) = resize_axis(&w, horizontal) else {
         return fail(i, "Invalid window size");
@@ -2408,19 +2633,56 @@ fn inside_pixel_edges_of(i: &mut Interp, w: &WindowRef) -> Result<(i128, i128, i
         full.3 - mode as i128 * char_height,
     ))
 }
+
+pub(crate) fn pixelwise_window_origin_offset(w: &WindowRef) -> (i128, i128) {
+    let mut left = 0i128;
+    let mut top = 0i128;
+    let mut child = w.clone();
+    while let Some(parent) = crate::editor::w_parent(&child) {
+        let (axis, siblings) = {
+            let parent = parent.borrow();
+            (parent.horiz, parent.children.clone())
+        };
+        if let Some(horizontal) = axis {
+            for sibling in &siblings {
+                if Rc::ptr_eq(sibling, &child) {
+                    break;
+                }
+                if horizontal {
+                    left += pixelwise_window_extent_adjustment(sibling, true);
+                } else {
+                    top += pixelwise_window_extent_adjustment(sibling, false);
+                }
+            }
+        }
+        child = parent;
+    }
+    (left, top)
+}
+
 fn pixel_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128), Flow> {
     let w = win_of(i, v)?;
     let Some(frame) = frame_of_window(i, &w) else {
         return Err(i.error("No frame"));
     };
-    let wb = w.borrow();
-    let edges = (
-        wb.left as i128,
-        wb.top as i128,
-        (wb.left + wb.width) as i128,
-        (wb.top + wb.height) as i128,
-    );
-    Ok(pixelize_cell_edges(frame_pixel_map(i, &frame), edges))
+    let edges = {
+        let wb = w.borrow();
+        (
+            wb.left as i128,
+            wb.top as i128,
+            (wb.left + wb.width) as i128,
+            (wb.top + wb.height) as i128,
+        )
+    };
+    let mut edges = pixelize_cell_edges(frame_pixel_map(i, &frame), edges);
+    let (left, top) = pixelwise_window_origin_offset(&w);
+    let width_adjustment = pixelwise_window_extent_adjustment(&w, true);
+    let height_adjustment = pixelwise_window_extent_adjustment(&w, false);
+    edges.0 += left;
+    edges.1 += top;
+    edges.2 += left + width_adjustment;
+    edges.3 += top + height_adjustment;
+    Ok(edges)
 }
 
 fn f_window_pixel_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

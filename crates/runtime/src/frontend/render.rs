@@ -291,6 +291,19 @@ pub struct GridBidiParagraphRange {
     pub direction: GridBidiDirection,
 }
 
+/// A rendered window region whose horizontal pixel bounds differ from its
+/// character-cell bounds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridPixelwiseSegment {
+    pub row: usize,
+    pub start: usize,
+    pub end: usize,
+    pub left_column: usize,
+    pub right_column: usize,
+    pub x_offset: i128,
+    pub width_adjustment: i128,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -433,6 +446,8 @@ pub struct Grid {
     pub bidi_paragraph_ranges: Vec<GridBidiParagraphRange>,
     /// Whether the GUI native frame may resize by individual pixels.
     pub frame_resize_pixelwise: bool,
+    /// Row-local windows with pixelwise horizontal offsets or widths.
+    pub pixelwise_segments: Vec<GridPixelwiseSegment>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -537,6 +552,7 @@ impl Grid {
             bidi_disabled_ranges: Vec::new(),
             bidi_paragraph_ranges: Vec::new(),
             frame_resize_pixelwise: false,
+            pixelwise_segments: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -5901,6 +5917,7 @@ fn render_grid_internal(
                 bidi_disabled_ranges: Vec::new(),
                 bidi_paragraph_ranges: Vec::new(),
                 frame_resize_pixelwise,
+                pixelwise_segments: Vec::new(),
                 blink_cursor,
                 blink_interval,
                 default_bg,
@@ -6044,6 +6061,8 @@ fn render_grid_internal(
     let mut screen_rows: Vec<Vec<ScreenCell>> = (0..height)
         .map(|_| (0..width).map(|_| ScreenCell::new(default_style)).collect())
         .collect();
+    let mut pixelwise_row_boundaries = Vec::<(usize, i128)>::new();
+    let mut pixelwise_cell_segments = Vec::<(usize, usize, usize, i128, i128)>::new();
     if tab_bar_rows > 0 {
         tab_bar_items = render_tab_bar(
             i,
@@ -6068,6 +6087,38 @@ fn render_grid_internal(
         );
     }
     let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;
+    let mut pixelwise_windows = fb.root.iter().cloned().collect::<Vec<_>>();
+    while let Some(window) = pixelwise_windows.pop() {
+        let (top, window_height, children) = {
+            let window = window.borrow();
+            (
+                window.top,
+                window.height,
+                window.children.clone(),
+            )
+        };
+        pixelwise_windows.extend(children);
+        if window_height > 0 {
+            let top_row = scale_edge(top, root_top, scale_y, body_height)
+                .saturating_add(chrome_rows);
+            let bottom = scale_edge(
+                top.saturating_add(window_height),
+                root_top,
+                scale_y,
+                body_height,
+            )
+            .saturating_add(chrome_rows)
+            .min(height);
+            if bottom > top_row {
+                let (_, top_offset) =
+                    crate::editor::winxtra::pixelwise_window_origin_offset(&window);
+                let height_adjustment = crate::editor::winxtra::pixelwise_window_extent_adjustment(
+                    &window, false,
+                );
+                pixelwise_row_boundaries.push((bottom - 1, top_offset + height_adjustment));
+            }
+        }
+    }
 
     for w in &fb.windows {
         let (
@@ -6173,6 +6224,23 @@ fn render_grid_internal(
         let window_top = raw_window_top.saturating_add(top_scroll_rows);
         let window_width = raw_window_width.saturating_sub(vertical_scroll_cells);
         let window_height = raw_window_height.saturating_sub(horizontal_scroll_rows);
+        let (pixelwise_x_offset, _) =
+            crate::editor::winxtra::pixelwise_window_origin_offset(w);
+        let pixelwise_width_adjustment =
+            crate::editor::winxtra::pixelwise_window_extent_adjustment(w, true);
+        if pixelwise_x_offset != 0 || pixelwise_width_adjustment != 0 {
+            let left = window_left.min(width);
+            let right = window_left.saturating_add(window_width).min(width);
+            for row in window_top..window_top.saturating_add(window_height).min(height) {
+                pixelwise_cell_segments.push((
+                    row,
+                    left,
+                    right,
+                    pixelwise_x_offset,
+                    pixelwise_width_adjustment,
+                ));
+            }
+        }
         let (fringe_left_pixels, fringe_right_pixels) = if graphical {
             fringes
                 .map(|(left, right, _, _)| {
@@ -7614,11 +7682,63 @@ fn render_grid_internal(
             &mut screen_rows,
         );
     }
+    pixelwise_row_boundaries.sort_unstable_by_key(|(row, offset)| (*row, offset.unsigned_abs()));
+    let mut boundary_offsets = vec![None; row_heights.len()];
+    let mut entries = pixelwise_row_boundaries.into_iter().peekable();
+    while let Some((row, offset)) = entries.next() {
+        let row = row.min(row_heights.len().saturating_sub(1));
+        let mut chosen = offset;
+        while entries.peek().is_some_and(|(next_row, _)| *next_row == row) {
+            if let Some((_, candidate)) = entries.next()
+                && candidate.unsigned_abs() > chosen.unsigned_abs()
+            {
+                chosen = candidate;
+            }
+        }
+        if let Some(boundary) = boundary_offsets.get_mut(row) {
+            *boundary = Some(chosen);
+        }
+    }
+    let mut previous_offset = 0i128;
+    for (row, boundary) in boundary_offsets.into_iter().enumerate() {
+        let Some(offset) = boundary else {
+            continue;
+        };
+        let delta = offset - previous_offset;
+        if let Some(height) = row_heights.get_mut(row) {
+            *height = (*height as i128 + delta).clamp(1, usize::MAX as i128) as usize;
+        }
+        previous_offset = offset;
+    }
     let (composed_rows, composed_attrs, composed_char_attrs, cell_offsets) =
         compose_screen_rows(&screen_rows, width, default_style);
     rows = composed_rows;
     attrs = composed_attrs;
     char_attrs = composed_char_attrs;
+    pixelwise_cell_segments.sort_unstable_by_key(|(row, left, right, _, _)| {
+        (*row, *left, *right)
+    });
+    let mut pixelwise_segments = Vec::<GridPixelwiseSegment>::new();
+    for (row, left, right, x_offset, width_adjustment) in pixelwise_cell_segments {
+        let Some(offsets) = cell_offsets.get(row) else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (offsets.get(left), offsets.get(right)) else {
+            continue;
+        };
+        if start >= end {
+            continue;
+        }
+        pixelwise_segments.push(GridPixelwiseSegment {
+            row,
+            start: *start,
+            end: *end,
+            left_column: left,
+            right_column: right,
+            x_offset,
+            width_adjustment,
+        });
+    }
     let compositions = pending_compositions
         .into_iter()
         .filter_map(|(row, column, components, style)| {
@@ -7732,6 +7852,7 @@ fn render_grid_internal(
         bidi_disabled_ranges,
         bidi_paragraph_ranges,
         frame_resize_pixelwise,
+        pixelwise_segments,
         attrs,
         char_attrs,
         mode_rows,

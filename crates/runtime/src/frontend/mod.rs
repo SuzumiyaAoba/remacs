@@ -363,7 +363,7 @@ pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
     GridCursorShape, GridHelpEcho, GridImage, GridImageSource, GridInput, GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
-    GridInputSelection, GridMenu, GridStipple, GridPointerShape,
+    GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
     GridModeLine, GridVScroll,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, render_frame_grid_with_input_cached,

@@ -139,6 +139,10 @@ struct WindowData {
     left: usize,
     width: usize,
     #[serde(default)]
+    pixelwise_width_adjustment: Option<String>,
+    #[serde(default)]
+    pixelwise_height_adjustment: Option<String>,
+    #[serde(default)]
     normal_size: Option<(f64, f64)>,
     dedicated: Ref,
     minibuffer: bool,
@@ -487,6 +491,18 @@ impl Image {
             w.height = data.height;
             w.left = data.left;
             w.width = data.width;
+            w.pixelwise_width_adjustment = data
+                .pixelwise_width_adjustment
+                .as_deref()
+                .unwrap_or("0")
+                .parse()
+                .map_err(|_| "Invalid dumped window pixel width adjustment")?;
+            w.pixelwise_height_adjustment = data
+                .pixelwise_height_adjustment
+                .as_deref()
+                .unwrap_or("0")
+                .parse()
+                .map_err(|_| "Invalid dumped window pixel height adjustment")?;
             w.dedicated = dedicated;
             w.minibuffer = data.minibuffer;
             w.params = params;
@@ -967,6 +983,8 @@ impl Image {
             height: w.height,
             left: w.left,
             width: w.width,
+            pixelwise_width_adjustment: Some(w.pixelwise_width_adjustment.to_string()),
+            pixelwise_height_adjustment: Some(w.pixelwise_height_adjustment.to_string()),
             normal_size: Some(w.normal_size),
             dedicated: e.value(&w.dedicated)?,
             minibuffer: w.minibuffer,

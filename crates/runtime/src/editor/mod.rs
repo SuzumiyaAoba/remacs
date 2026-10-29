@@ -86,6 +86,9 @@ pub struct Window {
     pub height: usize,
     pub left: usize,
     pub width: usize,
+    /// Pixelwise adjustment to the cell-derived width and height.
+    pub pixelwise_width_adjustment: i128,
+    pub pixelwise_height_adjustment: i128,
     /// GNU normal_lines/normal_cols: intended height/width fractions,
     /// retained independently of integer cell rounding during layout.
     pub normal_size: (f64, f64),
@@ -276,6 +279,8 @@ impl Window {
                 height: 24,
                 left: 0,
                 width: 80,
+                pixelwise_width_adjustment: 0,
+                pixelwise_height_adjustment: 0,
                 normal_size: (1.0, 1.0),
                 dedicated: Value::Nil,
                 minibuffer: false,
@@ -18054,6 +18059,21 @@ pub(crate) fn window_minimum(
             sizes.into_iter().max().unwrap_or(0)
         };
     }
+    let pixel_unit = if pixelwise && !(minibuffer && !horizontal) {
+        crate::editor::frame_of_window(i, w)
+            .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+            .map(|frame| {
+                if horizontal {
+                    crate::editor::frame_char_width(i, &frame)
+                } else {
+                    crate::editor::frame_char_height(i, &frame)
+                }
+            })
+            .unwrap_or(1)
+            .max(1) as i128
+    } else {
+        1
+    };
     let variable = |i: &mut Interp, name: &str| {
         let symbol = i.intern(name);
         i.buffers
@@ -18091,11 +18111,16 @@ pub(crate) fn window_minimum(
             false
         };
         if fixed_axis {
-            return size as i128;
+            let adjustment = if pixelwise {
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, horizontal)
+            } else {
+                0
+            };
+            return size as i128 * pixel_unit + adjustment;
         }
     }
     if ignore_safe {
-        return safe;
+        return safe * pixel_unit;
     }
     let decoration = if horizontal {
         let min_margins = i.q("min-margins");
@@ -18137,7 +18162,7 @@ pub(crate) fn window_minimum(
         .int()
         .unwrap_or(if horizontal { 10 } else { 4 })
     };
-    (safe + decoration).max(preferred)
+    (safe * pixel_unit + decoration * pixel_unit).max(preferred * pixel_unit)
 }
 
 /// Minimum-size tuples in the exact header order, including independently

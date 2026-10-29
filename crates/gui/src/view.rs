@@ -82,6 +82,25 @@ fn grid_layout_index(grid: &Grid, row: usize, byte_index: usize) -> usize {
     index
 }
 
+fn grid_pixelwise_x_offset(grid: &Grid, row: usize, byte_index: usize) -> i128 {
+    grid.pixelwise_segments
+        .iter()
+        .find(|segment| {
+            segment.row == row && segment.start <= byte_index && byte_index < segment.end
+        })
+        .or_else(|| {
+            grid.pixelwise_segments
+                .iter()
+                .find(|segment| segment.row == row && segment.end == byte_index)
+        })
+        .map_or(0, |segment| segment.x_offset)
+}
+
+fn grid_line_x(grid: &Grid, row: usize, line: &ShapedLine, byte_index: usize) -> Pixels {
+    line.x_for_index(grid_layout_index(grid, row, byte_index))
+        + px(grid_pixelwise_x_offset(grid, row, byte_index) as f32)
+}
+
 pub(super) fn grid_row_top(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
     row_top_from_heights(
         &grid.row_heights,
@@ -1718,6 +1737,7 @@ impl Render for EditorView {
                                                 line,
                                                 bounds,
                                                 line_height,
+                                                cell_width,
                                                 default_background,
                                                 background_alpha,
                                                 window,
@@ -1733,6 +1753,7 @@ impl Render for EditorView {
                                     line,
                                     bounds,
                                     line_height,
+                                    cell_width,
                                     default_background,
                                     background_alpha,
                                     window,
@@ -1862,7 +1883,7 @@ impl Render for EditorView {
                                 .cursor_index
                                 .and_then(|index| {
                                     lines.get(row).map(|line| {
-                                        line.x_for_index(grid_layout_index(&grid, row, index))
+                                        grid_line_x(&grid, row, line, index)
                                     })
                                 })
                                 .unwrap_or(cell_width * (column as f32));
@@ -1873,7 +1894,7 @@ impl Render for EditorView {
                             .flatten()
                             .and_then(|(row, index)| {
                                 lines.get(row).map(|line| {
-                                    (row, line.x_for_index(grid_layout_index(&grid, row, index)))
+                                    (row, grid_line_x(&grid, row, line, index))
                                 })
                             })
                             .or(fallback_cursor);
@@ -1999,14 +2020,10 @@ impl Render for EditorView {
                                 composition_caret
                                     .map(|(_, x)| x)
                                     .unwrap_or_else(|| {
-                                        line.x_for_index(grid_layout_index(
-                                            &grid,
-                                            row,
-                                            cursor.index,
-                                        ))
+                                        grid_line_x(&grid, row, line, cursor.index)
                                     })
                             } else {
-                                line.x_for_index(grid_layout_index(&grid, row, cursor.index))
+                                grid_line_x(&grid, row, line, cursor.index)
                             };
                             let glyph_width = if cursor.selected && composition_caret.is_some() {
                                 cell_width
@@ -2014,9 +2031,7 @@ impl Render for EditorView {
                                 cursor
                                     .after_index
                                     .map(|end| {
-                                        let end_x = line.x_for_index(grid_layout_index(
-                                            &grid, row, end,
-                                        ));
+                                        let end_x = grid_line_x(&grid, row, line, end);
                                         if end_x >= x { end_x - x } else { x - end_x }
                                     })
                                     .filter(|width| *width > px(0.0))
@@ -2490,8 +2505,8 @@ fn paint_stipple_backgrounds(
             continue;
         };
         let end = byte + character.len_utf8();
-        let start_x = line.x_for_index(grid_layout_index(grid, row_index, byte));
-        let end_x = line.x_for_index(grid_layout_index(grid, row_index, end));
+        let start_x = grid_line_x(grid, row_index, line, byte);
+        let end_x = grid_line_x(grid, row_index, line, end);
         let (left, width) = if end_x >= start_x {
             (start_x, end_x - start_x)
         } else {
@@ -2514,12 +2529,88 @@ fn paint_stipple_backgrounds(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn paint_grid_line(
+    grid: &Grid,
+    row: usize,
+    line: &ShapedLine,
+    origin: Point<Pixels>,
+    row_height: Pixels,
+    cell_width: Pixels,
+    line_height: Pixels,
+    default_background: u32,
+    background_alpha: u8,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut segments = grid
+        .pixelwise_segments
+        .iter()
+        .filter(|segment| segment.row == row)
+        .collect::<Vec<_>>();
+    if segments.is_empty() || cell_width <= px(0.0) {
+        let _ = line.paint(origin, line_height, window, cx);
+        return;
+    }
+    segments.sort_unstable_by_key(|segment| (segment.left_column, segment.right_column));
+    let columns = grid.attrs.get(row).map_or(0, Vec::len);
+    let mut column = 0usize;
+    for segment in &segments {
+        let left = segment.left_column.min(columns);
+        let right = segment.right_column.min(columns);
+        if left > column {
+            let clip = Bounds {
+                origin: point(origin.x + cell_width * column as f32, origin.y),
+                size: size(cell_width * (left - column) as f32, row_height),
+            };
+            window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+                let _ = line.paint(origin, line_height, window, cx);
+            });
+        }
+        column = column.max(right);
+    }
+    if column < columns {
+        let clip = Bounds {
+            origin: point(origin.x + cell_width * column as f32, origin.y),
+            size: size(cell_width * (columns - column) as f32, row_height),
+        };
+        window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+            let _ = line.paint(origin, line_height, window, cx);
+        });
+    }
+
+    let background = rgba((default_background << 8) | u32::from(background_alpha));
+    for segment in segments {
+        let left = segment.left_column.min(columns);
+        let right = segment.right_column.min(columns);
+        if left >= right {
+            continue;
+        }
+        let x = origin.x + cell_width * left as f32 + px(segment.x_offset as f32);
+        let width = (cell_width * (right - left) as f32 + px(segment.width_adjustment as f32))
+            .max(px(0.0));
+        if width <= px(0.0) {
+            continue;
+        }
+        let clip = Bounds {
+            origin: point(x, origin.y),
+            size: size(width, row_height),
+        };
+        window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
+            window.paint_quad(fill(clip, background));
+            let shifted_origin = point(origin.x + px(segment.x_offset as f32), origin.y);
+            let _ = line.paint(shifted_origin, line_height, window, cx);
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_grid_row(
     grid: &Grid,
     row: usize,
     line: &ShapedLine,
     bounds: Bounds<Pixels>,
     line_height: Pixels,
+    cell_width: Pixels,
     default_background: u32,
     background_alpha: u8,
     window: &mut Window,
@@ -2539,7 +2630,19 @@ fn paint_grid_row(
         background_alpha,
         window,
     );
-    let _ = line.paint(origin, line_height, window, cx);
+    paint_grid_line(
+        grid,
+        row,
+        line,
+        origin,
+        row_height,
+        cell_width,
+        line_height,
+        default_background,
+        background_alpha,
+        window,
+        cx,
+    );
     paint_face_boxes(
         grid,
         row,
@@ -2568,8 +2671,8 @@ fn paint_grid_row(
             if !style.overline {
                 continue;
             }
-            let start = line.x_for_index(grid_layout_index(grid, row, byte));
-            let end = line.x_for_index(grid_layout_index(grid, row, byte + ch.len_utf8()));
+            let start = grid_line_x(grid, row, line, byte);
+            let end = grid_line_x(grid, row, line, byte + ch.len_utf8());
             let (left, width) = if end >= start {
                 (start, end - start)
             } else {
@@ -2641,7 +2744,19 @@ fn paint_vscroll_regions(
                     background_alpha,
                     window,
                 );
-                let _ = line.paint(origin, line_height, window, cx);
+                paint_grid_line(
+                    grid,
+                    row,
+                    line,
+                    origin,
+                    row_height,
+                    cell_width,
+                    line_height,
+                    default_background,
+                    background_alpha,
+                    window,
+                    cx,
+                );
                 paint_face_boxes(
                     grid,
                     row,
@@ -2670,12 +2785,8 @@ fn paint_vscroll_regions(
                         if !style.overline {
                             continue;
                         }
-                        let start = line.x_for_index(grid_layout_index(grid, row, byte));
-                        let end = line.x_for_index(grid_layout_index(
-                            grid,
-                            row,
-                            byte + ch.len_utf8(),
-                        ));
+                        let start = grid_line_x(grid, row, line, byte);
+                        let end = grid_line_x(grid, row, line, byte + ch.len_utf8());
                         let (left, width) = if end >= start {
                             (start, end - start)
                         } else {
@@ -2750,11 +2861,7 @@ fn paint_grid_compositions(
             grid.gamma_exponent,
         )
         .0;
-        let x = line.x_for_index(grid_layout_index(
-            grid,
-            composition.row,
-            composition.byte_index,
-        ));
+        let x = grid_line_x(grid, composition.row, line, composition.byte_index);
         let origin = point(
             bounds.left() + x,
             bounds.top() + grid_row_top(grid, composition.row, line_height)
@@ -2906,8 +3013,8 @@ fn paint_box_run(
     gamma_exponent: Option<f64>,
     window: &mut Window,
 ) {
-    let x1 = line.x_for_index(grid_layout_index(grid, row_index, start));
-    let x2 = line.x_for_index(grid_layout_index(grid, row_index, end));
+    let x1 = grid_line_x(grid, row_index, line, start);
+    let x2 = grid_line_x(grid, row_index, line, end);
     let left = x1.min(x2);
     let right = x1.max(x2);
     if right <= left {
