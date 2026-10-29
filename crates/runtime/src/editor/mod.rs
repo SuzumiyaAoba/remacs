@@ -5453,9 +5453,11 @@ pub(crate) fn scroll_arg(i: &mut Interp, v: &Value, default: i128) -> Result<i12
 /// The selected window's point is the buffer's point; any other
 /// window's is `window-point'.  Without this the redisplay layer's
 /// point-visible snap (`render_grid') cancels every scroll whose
-/// point escapes the window.  Returns false when the scroll hit the
-/// buffer boundary before N lines (partial scroll, like GNU).
-fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128) -> bool {
+/// point escapes the window.  `whole' says the caller requested a
+/// screenful; it controls `scroll-preserve-screen-position' when set
+/// to t.  Returns false when the scroll hit the buffer boundary before
+/// N lines (partial scroll, like GNU).
+fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128, whole: bool) -> bool {
     let (buf, selected, start, height) = {
         let sel = i
             .selected_frame
@@ -5471,6 +5473,14 @@ fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128) -> bool {
     // Text rows = window height minus mode line AND the row the
     // frame's mini-window occupies (see render_grid's wh).
     let text_rows = height.saturating_sub(2).max(1);
+    let preserve_value = i
+        .intern_soft("scroll-preserve-screen-position")
+        .filter(|symbol| i.bound_p(*symbol))
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    let preserve_screen_position = preserve_value.truthy();
+    let preserve_always = preserve_screen_position
+        && !matches!(&preserve_value, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T);
     let (new_start, new_point, hit_edge) = {
         let bb = b.borrow();
         let len = bb.text.len();
@@ -5479,6 +5489,11 @@ fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128) -> bool {
         } else {
             w.borrow().point
         };
+        let point_vpos = bb
+            .text
+            .line_of_pos(point)
+            .saturating_sub(bb.text.line_of_pos(start));
+        let point_column = point.saturating_sub(bb.text.line_start(point));
         let mut new_start = start;
         let mut hit_edge = false;
         if n > 0 {
@@ -5514,13 +5529,28 @@ fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128) -> bool {
                 last_vis = q;
             }
         }
-        let new_point = if n > 0 && point < new_start {
+        let snapped_point = if n > 0 && point < new_start {
             Some(new_start)
         } else if n < 0 && point > bb.text.line_end(last_vis) {
             Some(last_vis)
         } else {
             None
         };
+        let new_point =
+            if preserve_screen_position && (whole || preserve_always || snapped_point.is_some()) {
+                let mut preserved_point = new_start;
+                for _ in 0..point_vpos.min(text_rows.saturating_sub(1)) {
+                    let end = bb.text.line_end(preserved_point);
+                    if end >= len {
+                        break;
+                    }
+                    preserved_point = end + 1;
+                }
+                let end = bb.text.line_end(preserved_point);
+                Some(preserved_point + point_column.min(end.saturating_sub(preserved_point)))
+            } else {
+                snapped_point
+            };
         (new_start, new_point, hit_edge)
     };
     w.borrow_mut().start = new_start;
@@ -5561,14 +5591,18 @@ fn scroll_default_lines(i: &mut Interp, w: &WindowRef) -> i128 {
 fn f_scroll_up(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = sel_window(i).unwrap();
     let default = scroll_default_lines(i, &w);
-    let n = scroll_arg(i, &arg(&a, 0), default)?;
+    let argument = arg(&a, 0);
+    let whole = argument.is_nil()
+        || matches!(&argument, Value::Sym(symbol) if i.symbol_name(*symbol) == "-");
+    let n = scroll_arg(i, &argument, default)?;
     if n < 0 {
-        return f_scroll_down(i, crate::lisp::Argv::new(vec![Value::Int(-n)]));
+        let reverse = if whole { Value::Nil } else { Value::Int(-n) };
+        return f_scroll_down(i, crate::lisp::Argv::new(vec![reverse]));
     }
     // GNU window_scroll treats n==0 like a forward scroll: it
     // "succeeds" scrolling zero lines but still signals
     // end-of-buffer.
-    if n == 0 || !window_scroll(i, &w, n) {
+    if n == 0 || !window_scroll(i, &w, n, whole) {
         scroll_edge_signal(i, true)?;
     }
     Ok(Value::Nil)
@@ -5577,16 +5611,20 @@ fn f_scroll_up(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_scroll_down(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = sel_window(i).unwrap();
     let default = scroll_default_lines(i, &w);
-    let n = scroll_arg(i, &arg(&a, 0), default)?;
+    let argument = arg(&a, 0);
+    let whole = argument.is_nil()
+        || matches!(&argument, Value::Sym(symbol) if i.symbol_name(*symbol) == "-");
+    let n = scroll_arg(i, &argument, default)?;
     if n < 0 {
-        return f_scroll_up(i, crate::lisp::Argv::new(vec![Value::Int(-n)]));
+        let reverse = if whole { Value::Nil } else { Value::Int(-n) };
+        return f_scroll_up(i, crate::lisp::Argv::new(vec![reverse]));
     }
     // GNU: scroll-down delegates to window_scroll with -n; a zero
     // count is a *forward* zero-line scroll → end-of-buffer (the
     // subr always signals when nothing moved).
     if n == 0 {
         scroll_edge_signal(i, true)?;
-    } else if !window_scroll(i, &w, -n) {
+    } else if !window_scroll(i, &w, -n, whole) {
         scroll_edge_signal(i, false)?;
     }
     Ok(Value::Nil)
@@ -5787,7 +5825,7 @@ fn other_scroll_raw(i: &mut Interp, w: &WindowRef, arg: &Value, dir: i128) -> Ev
     } else {
         n
     };
-    if !window_scroll(i, w, lines) && lines != 0 {
+    if !window_scroll(i, w, lines, whole) && lines != 0 {
         let sym = i.intern(if lines > 0 {
             "end-of-buffer"
         } else {
