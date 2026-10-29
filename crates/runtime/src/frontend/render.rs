@@ -107,6 +107,13 @@ pub struct GridCursor {
     pub selected: bool,
 }
 
+#[derive(Clone, Copy)]
+struct CursorStyle {
+    shape: GridCursorShape,
+    thickness: usize,
+    box_size: Option<usize>,
+}
+
 /// A 1-bit bitmap used as a face background stipple.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GridStipple {
@@ -1408,7 +1415,7 @@ fn symbol_is(i: &Interp, value: &Value, name: &str) -> bool {
         .is_some_and(|id| matches!(value, Value::Sym(symbol) if *symbol == id))
 }
 
-fn parse_cursor_type(i: &Interp, value: &Value) -> Option<(GridCursorShape, usize)> {
+fn parse_cursor_type(i: &Interp, value: &Value) -> Option<CursorStyle> {
     let (name, explicit_size) = match value {
         Value::Sym(symbol) => (i.symbol_name(*symbol), None),
         Value::Cons(cons) => {
@@ -1429,10 +1436,24 @@ fn parse_cursor_type(i: &Interp, value: &Value) -> Option<(GridCursorShape, usiz
         _ => return None,
     };
     let thickness = explicit_size.unwrap_or(default_size);
-    if explicit_size.is_some() && thickness == 0 {
+    if explicit_size.is_some() && thickness == 0 && shape != GridCursorShape::Block {
         None
     } else {
-        Some((shape, thickness))
+        Some(CursorStyle {
+            shape,
+            // `(box . SIZE)' specifies the masked-image hollow threshold;
+            // it does not change the width of a block cursor.
+            thickness: if shape == GridCursorShape::Block {
+                0
+            } else {
+                thickness
+            },
+            box_size: if shape == GridCursorShape::Block {
+                explicit_size
+            } else {
+                None
+            },
+        })
     }
 }
 
@@ -1441,7 +1462,7 @@ fn cursor_type_for_window(
     window: &std::rc::Rc<std::cell::RefCell<crate::editor::Window>>,
     buffer: usize,
     selected: bool,
-) -> Option<(GridCursorShape, usize)> {
+) -> Option<CursorStyle> {
     let buffer_type = buffer_setting(i, "cursor-type", buffer);
     let window_type = window.borrow().cursor_type.clone();
     let effective_type = if symbol_is(i, &window_type, "t") {
@@ -1457,7 +1478,11 @@ fn cursor_type_for_window(
         return None;
     }
     if symbol_is(i, &nonselected, "t") {
-        Some((GridCursorShape::Hollow, 0))
+        Some(CursorStyle {
+            shape: GridCursorShape::Hollow,
+            thickness: 0,
+            box_size: None,
+        })
     } else {
         parse_cursor_type(i, &nonselected)
     }
@@ -2748,6 +2773,7 @@ struct RenderedImage {
     source: GridImageSource,
     width: Option<usize>,
     height: Option<usize>,
+    masked: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -2773,6 +2799,7 @@ enum DisplayReplacement {
         source: GridImageSource,
         width: Option<usize>,
         height: Option<usize>,
+        masked: bool,
     },
     /// Another character in a run already replaced by its first character.
     Hidden,
@@ -3312,6 +3339,7 @@ where
                 source,
                 width: image_width,
                 height: image_height,
+                masked,
             }) => {
                 let image_column = column;
                 let visible = image_column >= hscroll && image_column < end_column;
@@ -3321,6 +3349,7 @@ where
                         source,
                         width: image_width,
                         height: image_height,
+                        masked,
                     });
                 }
                 append_rendered_character(
@@ -4898,6 +4927,7 @@ fn image_display_replacement(
 
     let width = image_dimension(image_property(i, &plist, ":width"));
     let height = image_dimension(image_property(i, &plist, ":height"));
+    let masked = !image_property(i, &plist, ":mask").is_nil();
     let file = image_property(i, &plist, ":file");
     if let Value::Str(file) = file {
         return Some(DisplayReplacement::Image {
@@ -4908,6 +4938,7 @@ fn image_display_replacement(
             )),
             width,
             height,
+            masked,
         });
     }
 
@@ -4941,6 +4972,7 @@ fn image_display_replacement(
         },
         width,
         height,
+        masked,
     })
 }
 
@@ -7461,8 +7493,25 @@ fn render_grid_internal(
                         selected_cursor = Some((y, content_left, col, byte_index));
                     }
                     if !hide_cursor
-                        && let Some((shape, thickness)) = cursor_style
+                        && let Some(cursor_style) = cursor_style
                     {
+                        let mut shape = cursor_style.shape;
+                        if shape == GridCursorShape::Block
+                            && point_visible
+                            && let Some(image) = rendered
+                                .images
+                                .iter()
+                                .find(|image| image.column == col)
+                        {
+                            let large_masked_image = cursor_style.box_size.is_some_and(|size| {
+                                image.masked
+                                    && (image.width.is_some_and(|width| width > size)
+                                        || image.height.is_some_and(|height| height > size))
+                            });
+                            if !image.masked || large_masked_image {
+                                shape = GridCursorShape::Hollow;
+                            }
+                        }
                         let stretch = segment_text.chars().nth(point_index).and_then(|ch| {
                             let ch = ch.unicode().unwrap_or('\u{fffd}');
                             let char_width = if ch == '\t' {
@@ -7488,7 +7537,7 @@ fn render_grid_internal(
                                 index: byte_index,
                                 after_index: stretch,
                                 shape,
-                                thickness,
+                                thickness: cursor_style.thickness,
                                 color: cursor_color,
                                 selected: selected_window,
                             },
