@@ -489,6 +489,18 @@ can be determined, a default according to the shell type is used."
   (let ((res (shell--unquote&requote-argument qstr upos)))
     (cons (nth 1 res) (nth 2 res))))
 
+(defun shell--unquote-double-quoted (string)
+  "Remove POSIX double-quote escapes from STRING."
+  (let ((string (replace-regexp-in-string
+                 (regexp-quote (string ?\\ ?\n)) "" string)))
+    (replace-regexp-in-string
+     "\\\\\\(.\\)"
+     (lambda (escape)
+       (if (memq (aref escape 1) '(?$ 96 ?\" ?\\))
+           (substring escape 1)
+         escape))
+     string)))
+
 (defun shell--parse-pcomplete-arguments ()
   "Parse whitespace separated arguments in the current region."
   ;; FIXME: share code with shell--unquote&requote-argument.
@@ -505,7 +517,7 @@ can be determined, a default according to the shell type is used."
                   (concat
                    "\\(?:[^\s\t\n\\\"';]+"
                    "\\|'\\([^']*\\)'?"
-                   "\\|\"\\(\\(?:[^\"\\]\\|\\\\.\\)*\\)\"?"
+                   "\\|\"\\(\\(?:[^\"\\]\\|\\\\.\\|\\\\\n\\)*\\)\"?"
                    "\\|\\\\\\(\\(?:.\\|\n\\)?\\)\\)"))
             (goto-char (match-end 0))
             (cond
@@ -521,8 +533,7 @@ can be determined, a default according to the shell type is used."
                     arg))
              ((match-beginning 2)       ;Double quote.
               (push (if (null comint-file-name-quote-list) (match-string 2)
-                      (replace-regexp-in-string
-                       "\\\\\\(.\\)" "\\1" (match-string 2)))
+                      (shell--unquote-double-quoted (match-string 2)))
                     arg))
              ((match-beginning 1)       ;Single quote.
               (push (match-string 1) arg))
