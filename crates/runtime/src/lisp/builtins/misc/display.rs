@@ -732,14 +732,7 @@ fn window_is_size_fixed(
 /// DELTA clamps at the window's minimum size; positive DELTA returns
 /// DELTA unless the window is size-fixed.
 pub(super) fn f_window_sizable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let wv = match &a[0] {
-        Value::Window(_) => a[0].clone(),
-        Value::Nil => f_selected_window(i, vec![].into())?,
-        other => {
-            let shown = i.princ_to_string(other);
-            return Err(i.error(format!("{shown} is not a valid window")));
-        }
-    };
+    let wv = Value::Window(crate::editor::win_err_valid(i, &a[0])?);
     let delta = a[1].clone();
     let horiz = !arg(&a, 2).is_nil();
     let ignore = arg(&a, 3);

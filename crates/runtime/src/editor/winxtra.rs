@@ -1581,19 +1581,9 @@ fn f_window_has_params(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// Safe minimum plus decorations, clamped to `window-min-height'/
 /// `window-min-width' unless IGNORE suppresses them.
 fn f_win_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let wv = match &arg(&a, 0) {
-        Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
-        v @ Value::Window(_) => v.clone(),
-        other => {
-            let shown = i.princ_to_string(other);
-            return Err(i.error(format!("{shown} is not a valid window")));
-        }
-    };
+    let window = crate::editor::win_err_valid(i, &arg(&a, 0))?;
     let horiz = arg(&a, 1).truthy();
     let ignore = arg(&a, 2);
-    let Value::Window(window) = wv else {
-        return Err(err_not_valid_window(i, &wv));
-    };
     Ok(Value::Int(crate::editor::window_minimum(
         i,
         &window,
@@ -1606,18 +1596,12 @@ fn f_win_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// `window-size' — GNU's subr uses CHECK_VALID_WINDOW (typed
 /// `window-valid-p' error) and returns the total size.
 fn f_window_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let w = match arg(&a, 0) {
-        Value::Nil => sel_window(i),
-        Value::Window(w) => Some(w),
-        other => return Err(i.wrong_type_mut("window-valid-p", &other)),
-    };
+    let w = crate::editor::win_valid(i, &arg(&a, 0))?;
     let horiz = arg(&a, 1).truthy();
-    let (wd, ht) = w
-        .map(|w| {
-            let w = w.borrow();
-            (w.width, w.height)
-        })
-        .unwrap_or((80, 24));
+    let (wd, ht) = {
+        let w = w.borrow();
+        (w.width, w.height)
+    };
     Ok(Value::Int(if horiz { wd } else { ht } as i128))
 }
 
@@ -3279,13 +3263,7 @@ fn err_not_live_window(i: &mut Interp, v: &Value) -> Flow {
 /// `window-sizable-p' — GNU: normalize WINDOW, then compare
 /// `window-sizable' against DELTA.
 fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => {}
-        ref other => {
-            let shown = i.princ_to_string(other);
-            return Err(i.error(format!("{shown} is not a valid window")));
-        }
-    }
+    let window = Value::Window(crate::editor::win_err_valid(i, &arg(&a, 0))?);
     let delta = arg(&a, 1);
     let positive = {
         let greater = Value::Sym(i.q(">"));
@@ -3294,7 +3272,7 @@ fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sizable = Value::Sym(i.q("window-sizable"));
     let actual = i.apply(
         &sizable,
-        vec![arg(&a, 0), delta.clone(), arg(&a, 2), arg(&a, 3), arg(&a, 4)],
+        vec![window, delta.clone(), arg(&a, 2), arg(&a, 3), arg(&a, 4)],
     )?;
     let comparison = Value::Sym(i.q(if positive { ">=" } else { "<=" }));
     let result = i.apply(&comparison, vec![actual, delta])?;
