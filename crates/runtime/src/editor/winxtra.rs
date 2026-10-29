@@ -3599,18 +3599,21 @@ fn f_window_prev_buffers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_window_discard_buffer_from_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let bufv = arg(&a, 0);
     let bid = match &bufv {
-        Value::Buffer(b) => Some(b.borrow().id),
-        _ => None,
+        Value::Buffer(b) => {
+            let id = b.borrow().id;
+            if !i.buffer_live(id) {
+                return Err(i.error("Not a live buffer"));
+            }
+            id
+        }
+        other => return Err(i.wrong_type_mut("bufferp", other)),
     };
     let w = match &a[1] {
         Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
         other => win_live(i, other)?,
     };
     let same_buf = |v: &Value| -> bool {
-        match (v, bid) {
-            (Value::Buffer(b), Some(id)) => b.borrow().id == id,
-            _ => false,
-        }
+        matches!(v, Value::Buffer(b) if b.borrow().id == bid)
     };
     let all = arg(&a, 2).truthy();
     // prev-buffers entries are (BUFFER START MARKER POINT MARKER).
