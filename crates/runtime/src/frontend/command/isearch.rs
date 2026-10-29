@@ -25,6 +25,7 @@ pub(super) struct Isearch {
     /// Snapshots of query/match state, one per reversible key operation.
     history: Vec<IsearchHistory>,
     pub(super) start: usize,
+    search_origin: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
     word_search: bool,
@@ -57,6 +58,7 @@ struct IsearchHistory {
     regexp_lax_whitespace: bool,
     invisible: Value,
     backward: bool,
+    search_origin: usize,
 }
 
 /// Run one search; returns (point, match-beg, match-end) — all
@@ -460,6 +462,8 @@ pub(super) enum IsearchAction {
     QueryReplace(bool),
     /// Highlight all matches for the current I-search string and exit.
     Highlight(String, bool),
+    /// Run a command without leaving I-search.
+    RunCommand(i128),
     /// Exit and re-dispatch this key as a command.
     ReDispatch(i128),
 }
@@ -500,6 +504,7 @@ impl Isearch {
             invisible,
             history: Vec::new(),
             start,
+            search_origin: start,
             backward,
             regexp,
             word_search: false,
@@ -542,6 +547,7 @@ impl Isearch {
             regexp_lax_whitespace: self.regexp_lax_whitespace,
             invisible: self.invisible.clone(),
             backward: self.backward,
+            search_origin: self.search_origin,
         });
     }
 
@@ -561,6 +567,7 @@ impl Isearch {
             self.regexp_lax_whitespace = previous.regexp_lax_whitespace;
             self.invisible = previous.invisible;
             self.backward = previous.backward;
+            self.search_origin = previous.search_origin;
             self.go_to(i, self.cur());
         }
     }
@@ -677,7 +684,7 @@ impl Isearch {
                     case_fold_search,
                     self.invisible.truthy(),
                 ) {
-                    Some((_, beg, end)) if beg == match_start && end <= self.start => {
+                    Some((_, beg, end)) if beg == match_start && end <= self.search_origin => {
                         Some((beg, beg, end))
                     }
                     _ => isearch_search(
@@ -689,7 +696,7 @@ impl Isearch {
                         self.char_fold,
                         self.symbol_search,
                         self.lax_whitespace_enabled(),
-                        self.start.min(match_end + 1),
+                        self.search_origin.min(match_end + 1),
                         case_fold_search,
                         self.invisible.truthy(),
                     ),
@@ -719,7 +726,7 @@ impl Isearch {
                 self.char_fold,
                 self.symbol_search,
                 self.lax_whitespace_enabled(),
-                self.start,
+                self.search_origin,
                 case_fold_search,
                 self.invisible.truthy(),
             )
@@ -1397,10 +1404,40 @@ impl Isearch {
                 IsearchAction::Continue
             }
             other => {
-                if let Some(b) = i.current_buffer_ref() {
-                    b.borrow_mut().set_mark(self.start);
+                let option = i
+                    .intern_soft("search-exit-option")
+                    .map(|symbol| i.symbol_value(symbol))
+                    .unwrap_or(Value::t());
+                if matches!(&option, Value::Sym(symbol) if i.symbol_name(*symbol) == "append") {
+                    if let Some(ch) = isearch_quoted_character(other) {
+                        let failure_start = self
+                            .fail_pos
+                            .unwrap_or_else(|| self.query.chars().count());
+                        self.save_history();
+                        self.query.push(ch);
+                        self.search_updated_query(i, failure_start);
+                    }
+                    IsearchAction::Continue
+                } else if matches!(&option, Value::Sym(symbol) if i.symbol_name(*symbol) == "edit") {
+                    self.save_history();
+                    match edit_isearch_query(i, &self.query, self.regexp) {
+                        Ok(query) => {
+                            self.query = query;
+                            self.failing = false;
+                            self.fail_pos = None;
+                            self.search_replaced_query(i);
+                        }
+                        Err(flow) => report_flow(i, flow),
+                    }
+                    IsearchAction::Continue
+                } else if option.is_nil() {
+                    IsearchAction::RunCommand(other)
+                } else {
+                    if let Some(b) = i.current_buffer_ref() {
+                        b.borrow_mut().set_mark(self.start);
+                    }
+                    IsearchAction::ReDispatch(other)
                 }
-                IsearchAction::ReDispatch(other)
             }
         }
     }
@@ -1842,6 +1879,24 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     st.update_search_ring(i);
                 }
                 break;
+            }
+            IsearchAction::RunCommand(other) => {
+                let seq = Value::vector(vec![Value::Int(other)]);
+                if let LookupResult::Command(cmd) = lookup_command(i, &seq) {
+                    match i.command_execute(&cmd) {
+                        Ok(_) => post_command_undo_boundary(i),
+                        Err(flow) => report_flow(i, flow),
+                    }
+                }
+                if let Some(buffer) = i.current_buffer_ref() {
+                    let point = buffer.borrow().point();
+                    st.search_origin = point;
+                    st.positions = vec![point];
+                    st.spans = vec![(point, point)];
+                }
+                st.failing = false;
+                st.fail_pos = None;
+                st.refresh_overlays(i);
             }
             IsearchAction::ReDispatch(other) => {
                 if !st.failing {
