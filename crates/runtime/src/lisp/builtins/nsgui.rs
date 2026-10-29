@@ -983,10 +983,30 @@ winsys_fn!(f_x_apply_session_resources);
 /// `ns-perform-service': GNU checks SERVICE is a string *before*
 /// `check_window_system'.
 fn f_ns_perform_service(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    if !matches!(a[0], Value::Str(_)) {
+    let Value::Str(service) = &a[0] else {
         return Err(i.wrong_type_mut("stringp", &a[0]));
+    };
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
     }
-    Err(winsys(i))
+    let send = match &a[1] {
+        Value::Nil => None,
+        Value::Str(send) => Some(send.borrow().to_unicode_lossy()),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let Some(backend) = i.native_service_backend.clone() else {
+        return Err(winsys(i));
+    };
+    let service = service.borrow().to_unicode_lossy();
+    match backend.perform_service(&service, send.as_deref()) {
+        Ok(Some(result)) => Ok(Value::string(result)),
+        Ok(None) => Ok(Value::Nil),
+        Err(message) if message == "service not available" => {
+            let quit = i.q("quit");
+            Err(i.signal_data(quit, vec![Value::string(message)]))
+        }
+        Err(message) => Err(i.error(message)),
+    }
 }
 
 /// `ns-do-applescript': GNU CHECK_STRINGs SCRIPT *before*

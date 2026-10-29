@@ -8,13 +8,16 @@ mod accessibility;
 #[cfg(target_os = "macos")]
 mod applescript;
 #[cfg(target_os = "macos")]
-use cocoa::base::{id, nil};
+use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString, NSStringPboardType};
 #[cfg(target_os = "macos")]
-use cocoa::foundation::{NSInteger, NSString};
+use cocoa::base::{NO, id, nil};
+#[cfg(target_os = "macos")]
+use cocoa::foundation::{NSArray, NSInteger, NSString};
 #[cfg(target_os = "macos")]
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {
     fn NSBeep();
+    fn NSPerformService(service_name: id, pasteboard: id) -> objc::runtime::BOOL;
 }
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
@@ -32,6 +35,68 @@ use view::{EditorView, build_managed_editor_view};
 
 /// Launch the gpui front-end. `files` are visited via `find-file`
 /// once the evaluator boots on the logic thread.
+#[cfg(target_os = "macos")]
+fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String>, String> {
+    use std::ffi::CStr;
+
+    let service_name: id =
+        unsafe { msg_send![NSString::alloc(nil).init_str(service), autorelease] };
+    let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
+    if pasteboard == nil {
+        return Err("Unable to create a service pasteboard".to_owned());
+    }
+
+    let send_types = unsafe {
+        NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType])
+    };
+    if let Some(send) = send {
+        let send: id = unsafe { msg_send![NSString::alloc(nil).init_str(send), autorelease] };
+        unsafe {
+            pasteboard.declareTypes_owner(send_types, nil);
+            pasteboard.setString_forType(send, NSPasteboardTypeString);
+            pasteboard.setString_forType(send, NSStringPboardType);
+        }
+    } else {
+        unsafe {
+            pasteboard.clearContents();
+        }
+    }
+
+    if unsafe { NSPerformService(service_name, pasteboard) } == NO {
+        return Err("service not available".to_owned());
+    }
+    if unsafe { NSArray::count(pasteboard.types()) } == 0 {
+        return Ok(Some(String::new()));
+    }
+
+    let return_type = unsafe { pasteboard.availableTypeFromArray(send_types) };
+    if return_type == nil {
+        return Ok(None);
+    }
+    let string = unsafe { pasteboard.stringForType(return_type) };
+    if string != nil {
+        let bytes = unsafe { NSString::UTF8String(string) };
+        if !bytes.is_null() {
+            return Ok(Some(
+                unsafe { CStr::from_ptr(bytes) }
+                    .to_string_lossy()
+                    .into_owned(),
+            ));
+        }
+    }
+    let data = unsafe { pasteboard.dataForType(return_type) };
+    if data == nil {
+        return Ok(None);
+    }
+    let bytes: *const u8 = unsafe { msg_send![data, bytes] };
+    let length: usize = unsafe { msg_send![data, length] };
+    if bytes.is_null() {
+        return Ok(None);
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
+    Ok(String::from_utf8(bytes.to_vec()).ok())
+}
+
 pub fn run_gui(files: &[String]) -> io::Result<()> {
     run_gui_with_dump(files, None, &[])
 }
@@ -603,6 +668,18 @@ pub fn run_gui_with_dump(
                         let result = cx
                             .update(|_app| applescript::execute(&script))
                             .unwrap_or_else(|error| Err(error.to_string()));
+                        let _ = reply.send(result);
+                    }
+                    #[cfg(target_os = "macos")]
+                    GuiRequest::PerformService {
+                        service,
+                        send,
+                        reply,
+                    } => {
+                        let result = cx
+                            .update(|_app| perform_ns_service(&service, send.as_deref()))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
                         let _ = reply.send(result);
                     }
                     GuiRequest::FileDialog {

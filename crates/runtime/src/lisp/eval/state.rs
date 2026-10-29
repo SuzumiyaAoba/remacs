@@ -80,6 +80,14 @@ impl Interp {
         self.apple_script_backend = backend;
     }
 
+    /// Install or remove the native macOS Services bridge.
+    pub fn set_native_service_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::NativeServiceBackend>>,
+    ) {
+        self.native_service_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

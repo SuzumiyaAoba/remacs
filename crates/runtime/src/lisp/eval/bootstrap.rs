@@ -167,6 +167,7 @@ impl Interp {
             drag_backend: None,
             application_visibility_backend: None,
             apple_script_backend: None,
+            native_service_backend: None,
             nsgui_selections: HashMap::default(),
             unread_switch_frame: Value::Nil,
             minibuf_level: 0,

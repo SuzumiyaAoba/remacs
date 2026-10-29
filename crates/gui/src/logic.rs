@@ -254,6 +254,12 @@ pub(super) enum GuiRequest {
         script: String,
         reply: SyncSender<Result<AppleScriptResult, String>>,
     },
+    #[cfg(target_os = "macos")]
+    PerformService {
+        service: String,
+        send: Option<String>,
+        reply: SyncSender<Result<Option<String>, String>>,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -581,6 +587,32 @@ impl remacs_runtime::frontend::AppleScriptBackend for GuiAppleScriptBackend {
             .recv()
             .map_err(|_| "GUI AppleScript service stopped".to_owned())?;
         result
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct GuiNativeServiceBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+#[cfg(target_os = "macos")]
+impl remacs_runtime::frontend::NativeServiceBackend for GuiNativeServiceBackend {
+    fn perform_service(
+        &self,
+        service: &str,
+        send: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::PerformService {
+                service: service.to_owned(),
+                send: send.map(str::to_owned),
+                reply,
+            })
+            .map_err(|_| "GUI Services bridge is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI Services bridge stopped".to_owned())?
     }
 }
 
@@ -1856,6 +1888,10 @@ fn start_logic_inner(
                 )));
                 #[cfg(target_os = "macos")]
                 i.set_apple_script_backend(Some(Rc::new(GuiAppleScriptBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                #[cfg(target_os = "macos")]
+                i.set_native_service_backend(Some(Rc::new(GuiNativeServiceBackend {
                     requests: gui_requests_tx.clone(),
                 })));
                 #[cfg(target_os = "macos")]

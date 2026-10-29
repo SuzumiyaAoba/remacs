@@ -124,6 +124,11 @@ pub trait AppleScriptBackend {
     fn execute(&self, script: &str) -> Result<AppleScriptResult, String>;
 }
 
+/// Native macOS Services bridge used by NS frontend primitives.
+pub trait NativeServiceBackend {
+    fn perform_service(&self, service: &str, send: Option<&str>) -> Result<Option<String>, String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),
