@@ -1601,20 +1601,26 @@ For example, returns 1325 for 1:25pm.
 Returns `diary-unknown-time' (default value -9999) if no time is recognized.
 The recognized forms are XXXX, X:XX, or XX:XX (military time), and XXam,
 XXAM, XXpm, XXPM, XX:XXam, XX:XXAM, XX:XXpm, or XX:XXPM.  A period (.) can
-be used instead of a colon (:) to separate the hour and minute parts."
+be used instead of a colon (:) to separate the hour and minute parts.
+Hours and minutes must be within their usual ranges."
   (let (case-fold-search)
-    (cond ((string-match                ; military time
-            "\\`[ \t\n]*\\([0-9]?[0-9]\\)[:.]?\\([0-9][0-9]\\)\\(\\>\\|[^ap]\\)"
-            s)
+    (cond ((and (string-match             ; military time
+                 "\\`[ \t\n]*\\([0-9]?[0-9]\\)[:.]?\\([0-9][0-9]\\)\\(\\>\\|[^[:alnum:]]\\)"
+                 s)
+                (<= 0 (string-to-number (match-string 1 s)) 23)
+                (<= 0 (string-to-number (match-string 2 s)) 59))
            (+ (* 100 (string-to-number (match-string 1 s)))
               (string-to-number (match-string 2 s))))
-          ((string-match                ; hour only (XXam or XXpm)
-            "\\`[ \t\n]*\\([0-9]?[0-9]\\)\\([ap]\\)m\\>" s)
+          ((and (string-match            ; hour only (XXam or XXpm)
+                "\\`[ \t\n]*\\([0-9]?[0-9]\\)\\([ap]\\)m\\>" s)
+                (<= 1 (string-to-number (match-string 1 s)) 12))
            (+ (* 100 (% (string-to-number (match-string 1 s)) 12))
               (if (equal ?a (downcase (aref s (match-beginning 2))))
                   0 1200)))
-          ((string-match        ; hour and minute (XX:XXam or XX:XXpm)
-            "\\`[ \t\n]*\\([0-9]?[0-9]\\)[:.]\\([0-9][0-9]\\)\\([ap]\\)m\\>" s)
+          ((and (string-match    ; hour and minute (XX:XXam or XX:XXpm)
+                "\\`[ \t\n]*\\([0-9]?[0-9]\\)[:.]\\([0-9][0-9]\\)\\([ap]\\)m\\>" s)
+                (<= 1 (string-to-number (match-string 1 s)) 12)
+                (<= 0 (string-to-number (match-string 2 s)) 59))
            (+ (* 100 (% (string-to-number (match-string 1 s)) 12))
               (string-to-number (match-string 2 s))
               (if (equal ?a (downcase (aref s (match-beginning 3))))
