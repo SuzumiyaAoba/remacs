@@ -18,6 +18,8 @@ pub(super) struct Isearch {
     pub(super) failing: bool,
     /// Character index in QUERY where the currently failing suffix begins.
     pub(super) fail_pos: Option<usize>,
+    /// Current value of `isearch-case-fold-search'.
+    pub(super) case_fold: Value,
     /// Snapshots of query/match state, one per reversible key operation.
     history: Vec<IsearchHistory>,
     pub(super) start: usize,
@@ -35,6 +37,7 @@ struct IsearchHistory {
     spans_len: usize,
     failing: bool,
     fail_pos: Option<usize>,
+    case_fold: Value,
 }
 
 /// Run one search; returns (point, match-beg, match-end) — all
@@ -45,6 +48,7 @@ fn isearch_search(
     backward: bool,
     regexp: bool,
     from: usize,
+    case_fold_search: bool,
 ) -> Option<(usize, usize, usize)> {
     if query.is_empty() {
         return Some((from, from, from));
@@ -64,9 +68,11 @@ fn isearch_search(
     };
     // +1 for the point→char offset used by these primitives.
     let src = format!(
-        "(progn (goto-char (min {} (point-max))) \
+        "(let ((case-fold-search {})) \
+           (progn (goto-char (min {} (point-max))) \
            (and ({} \"{}\" nil t) \
-                (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0)))))",
+                (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0))))))",
+        if case_fold_search { "t" } else { "nil" },
         from + 1,
         fn_name,
         esc
@@ -101,12 +107,18 @@ impl Isearch {
             .current_buffer_ref()
             .map(|b| b.borrow().point())
             .unwrap_or(0);
+        let case_fold = i
+            .intern_soft("case-fold-search")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol))
+            .unwrap_or(Value::Nil);
         Isearch {
             query: String::new(),
             positions: vec![start],
             spans: vec![(start, start)],
             failing: false,
             fail_pos: None,
+            case_fold,
             history: Vec::new(),
             start,
             backward,
@@ -133,6 +145,7 @@ impl Isearch {
             spans_len: self.spans.len(),
             failing: self.failing,
             fail_pos: self.fail_pos,
+            case_fold: self.case_fold.clone(),
         });
     }
 
@@ -143,8 +156,32 @@ impl Isearch {
             self.spans.truncate(previous.spans_len);
             self.failing = previous.failing;
             self.fail_pos = previous.fail_pos;
+            self.case_fold = previous.case_fold;
             self.go_to(i, self.cur());
         }
+    }
+
+    fn case_fold_for_search(&mut self, i: &mut Interp) -> bool {
+        if matches!(&self.case_fold, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T)
+            && i
+                .intern_soft("search-upper-case")
+                .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy())
+            && let Some(no_upper_case) = i.intern_soft("isearch-no-upper-case-p")
+            && let Ok(result) = i.apply(
+                &Value::Sym(no_upper_case),
+                vec![
+                    Value::string(self.query.clone()),
+                    if self.regexp { Value::t() } else { Value::Nil },
+                ],
+            )
+        {
+            self.case_fold = if result.truthy() {
+                Value::t()
+            } else {
+                Value::Nil
+            };
+        }
+        self.case_fold.truthy()
     }
 
     /// Handle one key event; updates query/point/failing state.
@@ -170,7 +207,8 @@ impl Isearch {
                 let back = key == 18;
                 let from = if back { cur.saturating_sub(1) } else { cur + 1 };
                 let failure_start = self.fail_pos.unwrap_or(0);
-                match isearch_search(i, &self.query, back, self.regexp, from) {
+                let case_fold_search = self.case_fold_for_search(i);
+                match isearch_search(i, &self.query, back, self.regexp, from, case_fold_search) {
                     Some((p, b, e)) => {
                         self.positions.push(p);
                         self.spans.push((b, e));
@@ -190,6 +228,17 @@ impl Isearch {
                 self.restore_history(i);
                 IsearchAction::Continue
             }
+            c if c == (CHAR_META | 'c' as i128) => {
+                self.save_history();
+                self.case_fold = if self.case_fold.truthy() {
+                    Value::Nil
+                } else {
+                    Value::Sym(i.intern("yes"))
+                };
+                self.failing = false;
+                self.fail_pos = None;
+                IsearchAction::Continue
+            }
             c if c >= 32
                 && c < 0x110000
                 && c & (CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER) == 0 =>
@@ -201,6 +250,7 @@ impl Isearch {
                 if let Some(ch) = char::from_u32(c as u32) {
                     self.query.push(ch);
                 }
+                let case_fold_search = self.case_fold_for_search(i);
                 // Extend the current match like GNU's
                 // `isearch-search-and-update': forward searches
                 // restart at the match's START (`isearch-other-end')
@@ -211,7 +261,14 @@ impl Isearch {
                 let hit = if self.positions.len() > 1 {
                     let (mb, me) = *self.spans.last().unwrap_or(&(cur, cur));
                     if self.backward {
-                        match isearch_search(i, &self.query, false, self.regexp, mb) {
+                        match isearch_search(
+                            i,
+                            &self.query,
+                            false,
+                            self.regexp,
+                            mb,
+                            case_fold_search,
+                        ) {
                             Some((_, b, e)) if b == mb && e <= self.start => Some((b, b, e)),
                             _ => isearch_search(
                                 i,
@@ -219,13 +276,21 @@ impl Isearch {
                                 true,
                                 self.regexp,
                                 self.start.min(me + 1),
+                                case_fold_search,
                             ),
                         }
                     } else {
-                        isearch_search(i, &self.query, false, self.regexp, mb)
+                        isearch_search(i, &self.query, false, self.regexp, mb, case_fold_search)
                     }
                 } else {
-                    isearch_search(i, &self.query, self.backward, self.regexp, self.start)
+                    isearch_search(
+                        i,
+                        &self.query,
+                        self.backward,
+                        self.regexp,
+                        self.start,
+                        case_fold_search,
+                    )
                 };
                 match hit {
                     Some((p, b, e)) => {
@@ -332,6 +397,7 @@ impl Isearch {
                 "isearch-regexp",
                 if self.regexp { Value::t() } else { Value::Nil },
             ),
+            ("isearch-case-fold-search", self.case_fold.clone()),
             (
                 "isearch-success",
                 if self.failing { Value::Nil } else { Value::t() },
@@ -473,12 +539,15 @@ impl Isearch {
             .unwrap_or(usize::MAX);
         let mut pos = wstart;
         let mut count = 0usize;
+        let case_fold_search = self.case_fold.truthy();
         let pri = Value::Sym(i.q("priority"));
         let face = Value::Sym(i.q("face"));
         let lazy = Value::Sym(i.q("lazy-highlight"));
         let winprop = Value::Sym(i.q("window"));
         while count < 200 {
-            let Some((_, b, e)) = isearch_search(i, &self.query, false, self.regexp, pos) else {
+            let Some((_, b, e)) =
+                isearch_search(i, &self.query, false, self.regexp, pos, case_fold_search)
+            else {
                 break;
             };
             if b >= wend || e <= b {
