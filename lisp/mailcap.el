@@ -582,7 +582,7 @@ If SOURCE, mark the entry with this as the source."
 	      (skip-chars-forward "^;")
 	      (if (eq (char-after (1- (point))) ?\\ )
 		  (progn
-		    (subst-char-in-region (1- (point)) (point) ?\\ ? )
+		    (delete-char -1)
 		    (skip-chars-forward ";"))
 		(setq done t))))
 	  (setq	value (buffer-substring val-pos (point))))
