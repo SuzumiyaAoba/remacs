@@ -409,7 +409,7 @@ Return the number of minutes."
                                      (match-string 6 date)))))
                        (and (iso8601--valid-year-string-p year-string)
                             (<= 1 month 12)
-                            (<= 1 day (date-days-in-month year month))))
+                            (<= 1 day (date-days-in-month year month)))))
                     ((iso8601--match iso8601--without-day-match date)
                      (let ((year (match-string 1 date))
                            (month (string-to-number (match-string 2 date))))
