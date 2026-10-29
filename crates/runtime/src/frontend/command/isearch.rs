@@ -394,6 +394,8 @@ pub(super) enum IsearchAction {
     Done,
     /// Run `occur' using the current I-search string, then exit the loop.
     Occur(String),
+    /// Start query replacement using the current I-search string.
+    QueryReplace(bool),
     /// Highlight all matches for the current I-search string and exit.
     Highlight(String, bool),
     /// Exit and re-dispatch this key as a command.
@@ -1080,6 +1082,10 @@ impl Isearch {
                 }
                 IsearchAction::Continue
             }
+            c if c == (CHAR_META | '%' as i128) => IsearchAction::QueryReplace(false),
+            c if c == (CHAR_META | CHAR_CTL | '%' as i128) => {
+                IsearchAction::QueryReplace(true)
+            }
             c if c == (CHAR_META | 'p' as i128) || c == (CHAR_META | 'n' as i128) => {
                 let advance = c == (CHAR_META | 'n' as i128);
                 let ring_symbol = i.intern(if self.regexp {
@@ -1279,6 +1285,20 @@ impl Isearch {
     ) -> Result<T, crate::lisp::error::Flow> {
         let mark = i.specbind_depth();
         let (match_start, match_end) = self.spans.last().copied().unwrap_or((self.start, self.start));
+        let regexp_function = if self.word_search {
+            Value::Sym(i.intern("word-search-regexp"))
+        } else if self.char_fold {
+            Value::Sym(i.intern("char-fold-to-regexp"))
+        } else if self.symbol_search {
+            Value::Sym(i.intern("isearch-symbol-regexp"))
+        } else {
+            Value::Nil
+        };
+        let input_method_function = i
+            .intern_soft("input-method-function")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol))
+            .unwrap_or(Value::Nil);
         let bindings = [
             ("isearch-string", Value::string(self.query.clone())),
             ("isearch-message", Value::string(self.query.clone())),
@@ -1290,7 +1310,22 @@ impl Isearch {
                 "isearch-regexp",
                 if self.regexp { Value::t() } else { Value::Nil },
             ),
+            ("isearch-regexp-function", regexp_function),
             ("isearch-case-fold-search", self.case_fold.clone()),
+            ("isearch-invisible", self.invisible.clone()),
+            (
+                "isearch-lax-whitespace",
+                if self.lax_whitespace { Value::t() } else { Value::Nil },
+            ),
+            (
+                "isearch-regexp-lax-whitespace",
+                if self.regexp_lax_whitespace {
+                    Value::t()
+                } else {
+                    Value::Nil
+                },
+            ),
+            ("isearch-input-method-function", input_method_function),
             (
                 "isearch-success",
                 if self.failing { Value::Nil } else { Value::t() },
@@ -1628,6 +1663,24 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     if i.command_execute(&cmd).is_ok() {
                         post_command_undo_boundary(i);
                     }
+                }
+                return Ok(());
+            }
+            IsearchAction::QueryReplace(regexp) => {
+                st.update_search_ring(i);
+                st.clear(i);
+                let command = Value::Sym(i.intern(if regexp {
+                    "isearch-query-replace-regexp"
+                } else {
+                    "isearch-query-replace"
+                }));
+                if let Err(flow) = st.with_lisp_state(i, |i| i.apply(&command, Vec::new())) {
+                    report_flow(i, flow);
+                }
+                let mode_symbol = i.intern("isearch-mode");
+                if !i.symbol_value(mode_symbol).is_nil() {
+                    let _ = i.set_symbol(mode_symbol, Value::Nil);
+                    st.run_end_hook(i, false);
                 }
                 return Ok(());
             }
