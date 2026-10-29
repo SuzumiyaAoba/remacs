@@ -3593,11 +3593,9 @@ fn f_window_prev_buffers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(w.borrow().prev_buffers.clone())
 }
 
-/// `window-discard-buffer-from-window' — GNU window.el: remove BUFFER
-/// from WINDOW's prev-buffers/next-buffers lists and from the
-/// `quit-restore'/`quit-restore-prev' parameters (list entries whose
-/// car is BUFFER are dropped; a bare BUFFER parameter resets to nil
-/// only when it names the discarded buffer).
+/// `window-discard-buffer-from-window' — GNU removes BUFFER from
+/// WINDOW's prev-buffers/next-buffers lists; ALL also clears matching
+/// fourth-field or nested-buffer references in quit-restore records.
 fn f_window_discard_buffer_from_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let bufv = arg(&a, 0);
     let bid = match &bufv {
@@ -3614,6 +3612,7 @@ fn f_window_discard_buffer_from_window(i: &mut Interp, a: crate::lisp::Argv) -> 
             _ => false,
         }
     };
+    let all = arg(&a, 2).truthy();
     // prev-buffers entries are (BUFFER START MARKER POINT MARKER).
     let mut wb = w.borrow_mut();
     if let Ok(items) = wb.prev_buffers.clone().list_to_vec() {
@@ -3634,19 +3633,36 @@ fn f_window_discard_buffer_from_window(i: &mut Interp, a: crate::lisp::Argv) -> 
         wb.next_buffers = Value::list(kept);
     }
     drop(wb);
-    // GNU also clears quit-restore entries that reference the buffer;
-    // parameter values are (window|frame . buffer) conses or bare
-    // buffer objects.
-    for pname in ["quit-restore", "quit-restore-prev"] {
-        let pid = i.intern(pname);
-        let v = crate::lisp::eval::plist_get(&w.borrow().params, pid);
-        let stale = match &v {
-            Value::Cons(c) => same_buf(&c.borrow().cdr),
-            v2 => same_buf(v2),
+
+    if all {
+        let record_references_buffer = |record: &Value| -> bool {
+            let Ok(fields) = record.list_to_vec() else {
+                return false;
+            };
+            if fields.get(3).is_some_and(|value| same_buf(value)) {
+                return true;
+            }
+            match fields.get(1) {
+                Some(Value::Cons(pair)) => same_buf(&pair.borrow().car),
+                _ => false,
+            }
         };
-        if stale {
-            let new = crate::lisp::eval::plist_put(&w.borrow().params, pid, Value::Nil);
-            w.borrow_mut().params = new;
+        let quit_restore = i.intern("quit-restore");
+        let quit_restore_prev = i.intern("quit-restore-prev");
+        let params = w.borrow().params.clone();
+        let restore = crate::lisp::eval::plist_get(&params, quit_restore);
+        let restore_prev = crate::lisp::eval::plist_get(&params, quit_restore_prev);
+        if record_references_buffer(&restore_prev) {
+            let params = w.borrow().params.clone();
+            let params = crate::lisp::eval::plist_put(&params, quit_restore_prev, Value::Nil);
+            w.borrow_mut().params = params;
+        }
+        if record_references_buffer(&restore) {
+            let params = w.borrow().params.clone();
+            let restore_prev = crate::lisp::eval::plist_get(&params, quit_restore_prev);
+            let params = crate::lisp::eval::plist_put(&params, quit_restore, restore_prev);
+            let params = crate::lisp::eval::plist_put(&params, quit_restore_prev, Value::Nil);
+            w.borrow_mut().params = params;
         }
     }
     Ok(Value::Nil)
