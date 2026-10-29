@@ -321,6 +321,8 @@ fn set_dock_badge(badge: Option<&str>) -> Result<(), String> {
         return Ok(());
     }
     let badge: id = badge.map_or(nil, |badge| unsafe {
+        // GNU passes this through a C string, so content after NUL is ignored.
+        let badge = badge.split('\0').next().unwrap_or_default();
         msg_send![NSString::alloc(nil).init_str(badge), autorelease]
     });
     unsafe {

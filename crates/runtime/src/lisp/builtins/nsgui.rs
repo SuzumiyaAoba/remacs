@@ -136,7 +136,8 @@ fn sel(o: &Objc, name: &str) -> usize {
 
 /// `[NSString stringWithUTF8String: S]' → autoreleased id.
 fn ns_str(o: &Objc, s: &str) -> usize {
-    let c = std::ffi::CString::new(s).unwrap_or_default();
+    let prefix = s.split('\0').next().unwrap_or_default();
+    let c = std::ffi::CString::new(prefix).expect("prefix before NUL is NUL-free");
     unsafe {
         (o.id1)(
             cls(o, "NSString"),
