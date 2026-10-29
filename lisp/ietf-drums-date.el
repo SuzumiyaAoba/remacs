@@ -96,7 +96,7 @@ treat them as whitespace (per RFC822)."
       (skip-ignored)		;; Skip leading whitespace.
       (while (and (< index end)
                   (not (and comment-eof
-                            (eq (aref string index) ?\()))
+                            (eq (aref string index) ?\()))))
         (if (and comment-eof (eq (aref string index) ?,))
             (progn
               (push (aref string index) list)
