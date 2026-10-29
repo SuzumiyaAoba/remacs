@@ -110,7 +110,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
-    let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
+    let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
     let (character, _) = input_row
         .source_offsets
         .iter()
@@ -190,7 +190,7 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
-    let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
+    let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
     let source_start = input_row.source_offsets.first()?;
     let source_end = input_row.source_offsets.last()?;
     (*source_start..=*source_end)
@@ -199,13 +199,23 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         .flatten()
 }
 
-fn shape_grid_row(window: &Window, row: &str) -> gpui::ShapedLine {
+fn grid_font_family(grid: &Grid, window: &mut Window) -> String {
+    let requested_family = grid
+        .default_style
+        .font_family
+        .and_then(|id| grid.font_families.get(id as usize))
+        .cloned();
+    super::font_family(window, requested_family)
+}
+
+fn shape_grid_row(grid: &Grid, window: &mut Window, row: &str) -> gpui::ShapedLine {
+    let family = grid_font_family(grid, window);
     window.text_system().shape_line(
         row.to_owned().into(),
         px(FONT_SIZE),
         &[gpui::TextRun {
             len: row.len(),
-            font: font("Menlo"),
+            font: font(family),
             color: rgb(FG).into(),
             background_color: None,
             underline: None,
@@ -544,6 +554,7 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
+        let family = grid_font_family(&self.grid, window);
         let Some(input) = self.grid.input.as_ref() else {
             let (column, row) = self.grid.cursor?;
             let base_x = self
@@ -551,7 +562,7 @@ impl EntityInputHandler for EditorView {
                 .cursor_index
                 .and_then(|index| {
                     let row_text = self.grid.rows.get(row)?;
-                    Some(shape_grid_row(window, row_text).x_for_index(index))
+                    Some(shape_grid_row(&self.grid, window, row_text).x_for_index(index))
                 })
                 .unwrap_or(self.cell_width * column as f32);
             let mark_start = self
@@ -576,7 +587,7 @@ impl EntityInputHandler for EditorView {
                 px(FONT_SIZE),
                 &[gpui::TextRun {
                     len: self.input.marked.len(),
-                    font: font("Menlo"),
+                    font: font(family.clone()),
                     color: rgb(FG).into(),
                     background_color: None,
                     underline: Some(gpui::UnderlineStyle {
@@ -635,7 +646,7 @@ impl EntityInputHandler for EditorView {
                 px(FONT_SIZE),
                 &[gpui::TextRun {
                     len: composition.len(),
-                    font: font("Menlo"),
+                    font: font(family.clone()),
                     color: rgb(FG).into(),
                     background_color: None,
                     underline: Some(gpui::UnderlineStyle {
@@ -656,7 +667,7 @@ impl EntityInputHandler for EditorView {
                 (end, start - end)
             };
             let row_text = self.grid.rows.get(row)?;
-            let base_line = shape_grid_row(window, row_text);
+            let base_line = shape_grid_row(&self.grid, window, row_text);
             let base_x = base_line.x_for_index(base_byte);
             let column = (f32::from(base_x) / f32::from(self.cell_width)) as usize;
             return Some(Bounds {
@@ -676,7 +687,7 @@ impl EntityInputHandler for EditorView {
         let (row, start_byte) = visible_input_position(&self.grid, base_range.start, false)?;
         let end_position = visible_input_position(&self.grid, base_range.end, true);
         let row_text = self.grid.rows.get(row)?;
-        let layout = shape_grid_row(window, row_text);
+        let layout = shape_grid_row(&self.grid, window, row_text);
         let start = layout.x_for_index(start_byte);
         let end = match end_position {
             Some((end_row, end_byte)) if end_row == row => layout.x_for_index(end_byte),

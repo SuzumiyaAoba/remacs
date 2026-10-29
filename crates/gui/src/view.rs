@@ -16,7 +16,8 @@ use remacs_runtime::frontend::{
     GridScrollBarOrientation, GridStipple, GridTabBarItem, GridToolBarItem, GridVScroll,
     MouseButton as RemacsMouseButton,
 };
-use std::sync::mpsc::Sender;
+use std::collections::HashSet;
+use std::sync::{OnceLock, mpsc::Sender};
 use std::{cell::Cell, rc::Rc};
 mod input;
 use input::TextInputState;
@@ -28,6 +29,52 @@ const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
+
+static FONT_FAMILY_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+
+pub(super) fn font_family(window: &mut Window, requested: Option<String>) -> String {
+    let available = FONT_FAMILY_NAMES.get_or_init(|| {
+        window
+            .text_system()
+            .all_font_names()
+            .into_iter()
+            .map(|family| family.to_lowercase())
+            .collect()
+    });
+    if let Some(requested) = requested
+        && available.contains(&requested.to_lowercase())
+    {
+        return requested;
+    }
+
+    let candidates: &[&str] = if cfg!(target_os = "macos") {
+        &["Menlo", "SF Mono", "Monaco", "Courier New", "Lilex", "DejaVu Sans Mono"]
+    } else if cfg!(target_os = "windows") {
+        &[
+            "Consolas",
+            "Cascadia Mono",
+            "Lucida Console",
+            "Courier New",
+            "Lilex",
+            "DejaVu Sans Mono",
+        ]
+    } else {
+        &[
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Noto Sans Mono",
+            "Ubuntu Mono",
+            "Cousine",
+            "FreeMono",
+            "Lilex",
+        ]
+    };
+    candidates
+        .iter()
+        .find(|family| available.contains(&family.to_lowercase()))
+        .map(|family| (*family).to_owned())
+        .unwrap_or_else(|| "monospace".to_owned())
+}
 const BIDI_PARAGRAPH_LTR_OPEN: &str = "\u{2066}";
 const BIDI_PARAGRAPH_RTL_OPEN: &str = "\u{2067}";
 const BIDI_PARAGRAPH_CLOSE: &str = "\u{2069}";
@@ -673,11 +720,11 @@ impl EditorView {
         let width = width.max(10);
         let height = height.max(3);
         let default_style = self.grid.default_style;
-        let family = default_style
+        let requested_family = default_style
             .font_family
             .and_then(|id| self.grid.font_families.get(id as usize))
-            .cloned()
-            .unwrap_or_else(|| "Menlo".to_owned());
+            .cloned();
+        let family = font_family(window, requested_family);
         let mut text_font = font(family);
         if let Some(weight) = default_style.font_weight {
             text_font.weight = FontWeight(weight as f32);
@@ -777,11 +824,11 @@ impl Render for EditorView {
 
         let font_families = self.grid.font_families.clone();
         let default_style = self.grid.default_style;
-        let family = default_style
+        let requested_family = default_style
             .font_family
             .and_then(|id| font_families.get(id as usize))
-            .cloned()
-            .unwrap_or_else(|| "Menlo".to_owned());
+            .cloned();
+        let family = font_family(window, requested_family);
         let mut text_font = font(family);
         if let Some(weight) = default_style.font_weight {
             text_font.weight = FontWeight(weight as f32);
@@ -1630,7 +1677,7 @@ impl Render for EditorView {
                                             .font_family
                                             .and_then(|id| font_families.get(id as usize))
                                         {
-                                            f.family = family.clone().into();
+                                            f.family = font_family(window, Some(family.clone())).into();
                                         }
                                         if let Some(weight) = st.font_weight {
                                             f.weight = FontWeight(weight as f32);
@@ -1801,7 +1848,7 @@ impl Render for EditorView {
                                 .font_family
                                 .and_then(|id| grid.font_families.get(id as usize))
                             {
-                                fill_font.family = family.clone().into();
+                                fill_font.family = font_family(window, Some(family.clone())).into();
                             }
                             if let Some(weight) = indicator.style.font_weight {
                                 fill_font.weight = FontWeight(weight as f32);
@@ -2841,7 +2888,7 @@ fn paint_grid_compositions(
             .font_family
             .and_then(|id| grid.font_families.get(id as usize))
         {
-            component_font.family = family.clone().into();
+            component_font.family = font_family(window, Some(family.clone())).into();
         }
         if let Some(weight) = composition.style.font_weight {
             component_font.weight = FontWeight(weight as f32);
