@@ -18,6 +18,8 @@ pub(super) struct Isearch {
     pub(super) failing: bool,
     /// Character index in QUERY where the currently failing suffix begins.
     pub(super) fail_pos: Option<usize>,
+    /// Snapshots of query/match state, one per reversible key operation.
+    history: Vec<IsearchHistory>,
     pub(super) start: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
@@ -25,6 +27,14 @@ pub(super) struct Isearch {
     pub(super) match_ov: Option<Value>,
     /// `lazy-highlight' overlays on the other visible matches.
     pub(super) lazy_ovs: Vec<Value>,
+}
+
+struct IsearchHistory {
+    query_len: usize,
+    positions_len: usize,
+    spans_len: usize,
+    failing: bool,
+    fail_pos: Option<usize>,
 }
 
 /// Run one search; returns (point, match-beg, match-end) — all
@@ -97,6 +107,7 @@ impl Isearch {
             spans: vec![(start, start)],
             failing: false,
             fail_pos: None,
+            history: Vec::new(),
             start,
             backward,
             regexp,
@@ -112,6 +123,27 @@ impl Isearch {
     pub(super) fn go_to(&self, i: &Interp, p: usize) {
         if let Some(b) = i.current_buffer_ref() {
             b.borrow_mut().set_point(p);
+        }
+    }
+
+    fn save_history(&mut self) {
+        self.history.push(IsearchHistory {
+            query_len: self.query.len(),
+            positions_len: self.positions.len(),
+            spans_len: self.spans.len(),
+            failing: self.failing,
+            fail_pos: self.fail_pos,
+        });
+    }
+
+    fn restore_history(&mut self, i: &Interp) {
+        if let Some(previous) = self.history.pop() {
+            self.query.truncate(previous.query_len);
+            self.positions.truncate(previous.positions_len);
+            self.spans.truncate(previous.spans_len);
+            self.failing = previous.failing;
+            self.fail_pos = previous.fail_pos;
+            self.go_to(i, self.cur());
         }
     }
 
@@ -134,6 +166,7 @@ impl Isearch {
             // C-s / C-r: repeat search in that direction from just
             // past (before) the current match.
             19 | 18 => {
+                self.save_history();
                 let back = key == 18;
                 let from = if back { cur.saturating_sub(1) } else { cur + 1 };
                 let failure_start = self.fail_pos.unwrap_or(0);
@@ -154,22 +187,7 @@ impl Isearch {
             }
             // DEL: unwind one step of the search.
             127 => {
-                if self.positions.len() > 1 {
-                    self.positions.pop();
-                    self.spans.pop();
-                    // If the tail of query grew since the last repeat,
-                    // pop a char too.
-                    if !self.query.is_empty() {
-                        self.query.pop();
-                    }
-                    self.go_to(i, self.cur());
-                    self.failing = false;
-                    self.fail_pos = None;
-                } else if !self.query.is_empty() {
-                    self.query.pop();
-                    self.failing = false;
-                    self.fail_pos = None;
-                }
+                self.restore_history(i);
                 IsearchAction::Continue
             }
             c if c >= 32
@@ -179,6 +197,7 @@ impl Isearch {
                 let failure_start = self
                     .fail_pos
                     .unwrap_or_else(|| self.query.chars().count());
+                self.save_history();
                 if let Some(ch) = char::from_u32(c as u32) {
                     self.query.push(ch);
                 }
