@@ -433,6 +433,14 @@ fn dispatch_key_core_inner(
     mut command_flow: Option<&mut Option<crate::lisp::Flow>>,
     command_event: Option<&Value>,
 ) -> io::Result<()> {
+    // GNU read_char updates `last-input-event' for every event as it is
+    // read, including prefix keys that do not execute a command yet.
+    // `last-command-event' is updated later, when a command is found.
+    let last_input_event = i.q("last-input-event");
+    i.store_internal_value(
+        last_input_event,
+        command_event.cloned().unwrap_or(Value::Int(key)),
+    );
     {
         if *arg_mode {
             let digit = (48..58).contains(&key);
