@@ -275,10 +275,12 @@ fn f_ns_font_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 // ---------------------------------------------------------------------------
 
 fn f_ns_list_colors(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU checks FRAMEP (a live frame) when the arg is non-nil.
     if let Some(v) = a.first() {
-        if !v.is_nil() && !matches!(v, Value::Frame(_)) {
-            return Err(i.wrong_type_mut("framep", v));
+        if !v.is_nil() {
+            let frame = crate::editor::frame_any(i, v)?;
+            if !crate::editor::frame_is_nextstep(i, &frame) {
+                return Err(i.error("non-Nextstep frame used in `ns-list-colors'"));
+            }
         }
     }
     let Some(o) = objc() else {

@@ -6196,6 +6196,13 @@ pub(crate) fn frame_is_graphical(i: &Interp, frame: &crate::editor::FrameRef) ->
     }
 }
 
+pub(crate) fn frame_is_nextstep(i: &Interp, frame: &crate::editor::FrameRef) -> bool {
+    matches!(
+        frame_parameter_value(i, frame, "window-system"),
+        Value::Sym(system) if i.symbol_name(system) == "ns"
+    )
+}
+
 fn f_display_color_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let display = a.get(0).cloned().unwrap_or(Value::Nil);
     let frame = crate::lisp::builtins::misc::decode_display(i, &display)?;
