@@ -135,7 +135,15 @@ pub struct GridImage {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum GridImageSource {
     File(String),
-    Data { format: String, bytes: Arc<[u8]> },
+    Data {
+        format: String,
+        bytes: Arc<[u8]>,
+    },
+    DataWithBaseUri {
+        format: String,
+        bytes: Arc<[u8]>,
+        base_uri: String,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -5125,16 +5133,34 @@ fn image_display_replacement(
                 .or_else(|| u8::try_from(character.code()).ok())
         })
         .collect::<Option<Vec<_>>>()?;
+    let base_uri = if format == "svg" {
+        match image_property(i, &plist, ":base-uri") {
+            Value::Str(base_uri) => Some(image_file_for_buffer(
+                i,
+                buffer_id,
+                &base_uri.borrow(),
+            )),
+            _ => None,
+        }
+    } else {
+        None
+    };
     let (intrinsic_width, intrinsic_height) = if format == "svg" {
         svg_intrinsic_dimensions(&bytes)
     } else {
         (None, None)
     };
-    Some(DisplayReplacement::Image {
-        source: GridImageSource::Data {
+    let bytes = Arc::<[u8]>::from(bytes);
+    let source = match base_uri {
+        Some(base_uri) => GridImageSource::DataWithBaseUri {
             format,
-            bytes: bytes.into(),
+            bytes,
+            base_uri,
         },
+        None => GridImageSource::Data { format, bytes },
+    };
+    Some(DisplayReplacement::Image {
+        source,
         width,
         height,
         masked,

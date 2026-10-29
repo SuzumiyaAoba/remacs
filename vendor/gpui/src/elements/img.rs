@@ -45,6 +45,13 @@ pub enum ImageSource {
     Render(Arc<RenderImage>),
     /// Cached image data
     Image(Arc<Image>),
+    /// Cached image data with an SVG base URI for relative embedded resources.
+    ImageWithBaseUri {
+        /// The image data to decode.
+        image: Arc<Image>,
+        /// The filename used to resolve relative SVG references.
+        base_uri: PathBuf,
+    },
     /// A custom loading function to use
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
@@ -543,6 +550,10 @@ impl ImageSource {
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
+            ImageSource::ImageWithBaseUri { image, base_uri } => {
+                let source = (image.clone(), base_uri.clone());
+                window.use_asset::<AssetLogger<ImageDecoderWithBaseUri>>(&source, cx)
+            }
         }
     }
 
@@ -563,6 +574,10 @@ impl ImageSource {
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.get_asset::<AssetLogger<ImageDecoder>>(data, cx),
+            ImageSource::ImageWithBaseUri { image, base_uri } => {
+                let source = (image.clone(), base_uri.clone());
+                window.get_asset::<AssetLogger<ImageDecoderWithBaseUri>>(&source, cx)
+            }
         }
     }
 
@@ -574,6 +589,10 @@ impl ImageSource {
             }
             ImageSource::Custom(_) | ImageSource::Render(_) => {}
             ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
+            ImageSource::ImageWithBaseUri { image, base_uri } => {
+                let source = (image.clone(), base_uri.clone());
+                cx.remove_asset::<AssetLogger<ImageDecoderWithBaseUri>>(&source);
+            }
         }
     }
 }
@@ -591,6 +610,26 @@ impl Asset for ImageDecoder {
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let renderer = cx.svg_renderer();
         async move { source.to_image_data(renderer).map_err(Into::into) }
+    }
+}
+
+#[derive(Clone)]
+enum ImageDecoderWithBaseUri {}
+
+impl Asset for ImageDecoderWithBaseUri {
+    type Source = (Arc<Image>, PathBuf);
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        (image, base_uri): Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let renderer = cx.svg_renderer();
+        async move {
+            image
+                .to_image_data_with_base_uri(renderer, Some(&base_uri))
+                .map_err(Into::into)
+        }
     }
 }
 

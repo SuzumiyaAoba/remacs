@@ -2372,25 +2372,27 @@ fn grid_image_element(
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::Data { format, bytes } => {
-            let format = match format.as_str() {
-                "png" => ImageFormat::Png,
-                "jpeg" | "jpg" => ImageFormat::Jpeg,
-                "webp" => ImageFormat::Webp,
-                "gif" => ImageFormat::Gif,
-                "svg" => ImageFormat::Svg,
-                "bmp" => ImageFormat::Bmp,
-                "tiff" | "tif" => ImageFormat::Tiff,
-                _ => return div().into_any_element(),
+            let Some(source) = grid_data_image(format, bytes, None) else {
+                return div().into_any_element();
             };
-            img(std::sync::Arc::new(Image::from_bytes(format, bytes.to_vec())))
+            source
+        }
+        GridImageSource::DataWithBaseUri {
+            format,
+            bytes,
+            base_uri,
+        } => {
+            let Some(source) = grid_data_image(format, bytes, Some(base_uri)) else {
+                return div().into_any_element();
+            };
+            source
         }
     };
     let source = source.on_render_image_loaded(move |data| {
         let image_bytes = (0..data.frame_count()).fold(0usize, |total, frame| {
             total.saturating_add(data.as_bytes(frame).map_or(0, <[u8]>::len))
         });
-        if let Ok(mut entries) = image_cache_entries.lock()
-        {
+        if let Ok(mut entries) = image_cache_entries.lock() {
             entries.insert(cache_key.clone(), image_bytes);
             let total = entries
                 .values()
@@ -2452,6 +2454,26 @@ fn grid_image_element(
             .top(image_top)
             .child(source)
             .into_any_element()
+    }
+}
+
+fn grid_data_image(format: String, bytes: Arc<[u8]>, base_uri: Option<String>) -> Option<Img> {
+    let format = match format.as_str() {
+        "png" => ImageFormat::Png,
+        "jpeg" | "jpg" => ImageFormat::Jpeg,
+        "webp" => ImageFormat::Webp,
+        "gif" => ImageFormat::Gif,
+        "svg" => ImageFormat::Svg,
+        "bmp" => ImageFormat::Bmp,
+        "tiff" | "tif" => ImageFormat::Tiff,
+        _ => return None,
+    };
+    match base_uri {
+        Some(base_uri) => Some(img(ImageSource::ImageWithBaseUri {
+            image: Arc::new(Image::from_bytes(format, bytes.to_vec())),
+            base_uri: std::path::PathBuf::from(base_uri),
+        })),
+        None => Some(img(Arc::new(Image::from_bytes(format, bytes.to_vec())))),
     }
 }
 

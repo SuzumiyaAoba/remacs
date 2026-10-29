@@ -1780,6 +1780,15 @@ impl Image {
 
     /// Convert the clipboard image to an `ImageData` object.
     pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
+        self.to_image_data_with_base_uri(svg_renderer, None)
+    }
+
+    /// Convert the image to decoded data using a base URI for SVG resources.
+    pub fn to_image_data_with_base_uri(
+        &self,
+        svg_renderer: SvgRenderer,
+        base_uri: Option<&Path>,
+    ) -> Result<Arc<RenderImage>> {
         fn frames_for_image(
             bytes: &[u8],
             format: image::ImageFormat,
@@ -1816,7 +1825,11 @@ impl Image {
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Svg => {
-                let pixmap = svg_renderer.render_pixmap(&self.bytes, SvgSize::ScaleFactor(1.0))?;
+                let pixmap = svg_renderer.render_pixmap_with_base_uri(
+                    &self.bytes,
+                    SvgSize::ScaleFactor(1.0),
+                    base_uri,
+                )?;
 
                 let buffer =
                     image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
