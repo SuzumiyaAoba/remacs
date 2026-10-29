@@ -5411,8 +5411,13 @@ fn f_recenter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(b) = i.buffers.get(buf_id) {
         let bb = b.borrow();
         let line = bb.text.line_of_pos(bb.point());
+        let text_rows = height.saturating_sub(2).max(1);
         let target_line = match n {
-            Some(k) => line.saturating_sub(k.max(0) as usize),
+            Some(k) if k < 0 => {
+                let row = (text_rows as i128 + k).max(0) as usize;
+                line.saturating_sub(row)
+            }
+            Some(k) => line.saturating_sub(k as usize),
             None => line.saturating_sub(height / 2),
         };
         drop(bb);
