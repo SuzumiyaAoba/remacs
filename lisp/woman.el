@@ -4225,8 +4225,9 @@ Delete line from point and eol unless LEAVE-EOL is non-nil."
     (let ((i (woman-get-numeric-arg)))
       (woman-delete-line) (or leave-eol (delete-char 1))
       ;; i = 0 if the argument was not a number
-      ;; FIXME should this be >= 0? How else to reset to 0 indent?
-      (if (> i 0) (setq woman-prevailing-indent i))))
+      ;; No argument was handled by the `eolp' branch above, so an
+      ;; explicit zero can reset the prevailing indent.
+      (if (>= i 0) (setq woman-prevailing-indent i))))
   woman-prevailing-indent)
 
 (defun woman2-RS (to)
