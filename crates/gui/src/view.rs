@@ -826,6 +826,10 @@ impl EditorView {
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = window.is_window_active();
+        if !active {
+            self.physical_modifier_state
+                .set(PhysicalModifierState::default());
+        }
         if let Some(frame_id) = self.tx.frame_id() {
             if self.last_window_active != Some(active) {
                 if active && self.auto_raise.get() {
