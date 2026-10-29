@@ -578,7 +578,10 @@ pub fn run_gui_with_dump(
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
                 match request {
-                    GuiRequest::FrameSnapshots(snapshots) => {
+                    GuiRequest::FrameSnapshots(mailbox) => {
+                        let Some(snapshots) = mailbox.take_latest() else {
+                            continue;
+                        };
                         let live_frames: HashSet<_> =
                             snapshots.iter().map(|snapshot| snapshot.frame_id).collect();
                         for snapshot in snapshots {

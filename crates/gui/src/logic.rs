@@ -212,6 +212,59 @@ pub(super) struct FrameSnapshot {
     pub grid: Grid,
 }
 
+#[derive(Default)]
+struct FrameSnapshotMailboxState {
+    latest: Option<Vec<FrameSnapshot>>,
+    notification_queued: bool,
+}
+
+/// Keeps only the newest frame snapshots while the UI thread is busy.
+#[derive(Default)]
+pub(super) struct FrameSnapshotMailbox {
+    state: Mutex<FrameSnapshotMailboxState>,
+}
+
+impl FrameSnapshotMailbox {
+    fn publish(
+        self: &Arc<Self>,
+        sender: &smol::channel::Sender<GuiRequest>,
+        snapshots: Vec<FrameSnapshot>,
+    ) -> io::Result<()> {
+        let (notify, stale_snapshots) = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("frame snapshot mailbox is poisoned"))?;
+            let stale_snapshots = state.latest.replace(snapshots);
+            let notify = !state.notification_queued;
+            state.notification_queued = true;
+            (notify, stale_snapshots)
+        };
+        drop(stale_snapshots);
+
+        if notify
+            && sender
+                .send_blocking(GuiRequest::FrameSnapshots(self.clone()))
+                .is_err()
+        {
+            if let Ok(mut state) = self.state.lock() {
+                state.notification_queued = false;
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "gui window closed",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn take_latest(&self) -> Option<Vec<FrameSnapshot>> {
+        let mut state = self.state.lock().ok()?;
+        state.notification_queued = false;
+        state.latest.take()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct InitialFrameSize {
     pub width: usize,
@@ -228,7 +281,7 @@ pub(super) struct InitialFrameSize {
 }
 
 pub(super) enum GuiRequest {
-    FrameSnapshots(Vec<FrameSnapshot>),
+    FrameSnapshots(Arc<FrameSnapshotMailbox>),
     FrameVisibility { frame_id: usize, visible: bool },
     FrameOrder { frame_id: usize, raise: bool },
     WarpPointer {
@@ -837,6 +890,7 @@ pub(super) struct ChanIo {
     frame_geometries: HashMap<usize, GuiGeometry>,
     frame_grids: HashMap<usize, Grid>,
     latest_snapshots: Vec<FrameSnapshot>,
+    frame_snapshot_mailbox: Arc<FrameSnapshotMailbox>,
     active_frame_id: Option<usize>,
     primary_frame_id: Option<usize>,
     pending_frame_selection: Option<usize>,
@@ -1198,11 +1252,8 @@ impl ChanIo {
             snapshot.grid = grid.clone();
             self.frame_grids.insert(frame_id, grid.clone());
             if let Some(updates) = &self.gui_requests {
-                updates
-                    .send_blocking(GuiRequest::FrameSnapshots(self.latest_snapshots.clone()))
-                    .map_err(|_| {
-                        io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
-                    })?;
+                self.frame_snapshot_mailbox
+                    .publish(updates, self.latest_snapshots.clone())?;
             }
         }
         self.last = Some(grid.clone());
@@ -1953,11 +2004,7 @@ impl KeyIo for ChanIo {
                     .fold(0usize, |total, bytes| total.saturating_add(*bytes));
                 i.gui_image_cache_size.store(total, Ordering::Release);
             }
-            updates
-                .send_blocking(GuiRequest::FrameSnapshots(snapshots))
-                .map_err(|_| {
-                io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
-            })?;
+            self.frame_snapshot_mailbox.publish(updates, snapshots)?;
         } else {
             if let Ok(mut entries) = self.image_cache_entries.lock() {
                 entries.clear();
@@ -2205,6 +2252,7 @@ fn start_logic_inner(
     let (gui_requests_tx, gui_requests_rx) = smol::channel::unbounded::<GuiRequest>();
     let (clipboard_tx, clipboard_rx) = smol::channel::unbounded::<ClipboardRequest>();
     let (initial_frame_size_tx, initial_frame_size_rx) = mpsc::sync_channel(1);
+    let frame_snapshot_mailbox = Arc::new(FrameSnapshotMailbox::default());
     let clipboard_ready = Arc::new(AtomicBool::new(false));
     clipboard_tx
         .send_blocking(ClipboardRequest::Ready(clipboard_ready.clone()))
@@ -2349,6 +2397,7 @@ fn start_logic_inner(
                 frame_geometries: HashMap::new(),
                 frame_grids: HashMap::new(),
                 latest_snapshots: Vec::new(),
+                frame_snapshot_mailbox: frame_snapshot_mailbox.clone(),
                 active_frame_id: selected_frame_id,
                 primary_frame_id: selected_frame_id,
                 pending_frame_selection: None,

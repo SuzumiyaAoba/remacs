@@ -271,6 +271,9 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             frame_geometries: std::collections::HashMap::new(),
             frame_grids: std::collections::HashMap::new(),
             latest_snapshots: Vec::new(),
+            frame_snapshot_mailbox: std::sync::Arc::new(
+                super::logic::FrameSnapshotMailbox::default(),
+            ),
             active_frame_id: None,
             primary_frame_id: None,
             pending_frame_selection: None,
