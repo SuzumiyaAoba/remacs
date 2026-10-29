@@ -36,6 +36,9 @@ pub(super) struct Isearch {
     quote_next: bool,
     yank_until_char: bool,
     help_prefix: bool,
+    cx_prefix: bool,
+    cx8_prefix: bool,
+    cx8_emoji_prefix: bool,
     meta_s_prefix: bool,
     meta_s_h_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -449,6 +452,63 @@ fn edit_isearch_query(
     }
 }
 
+fn read_isearch_character_by_name(
+    i: &mut Interp,
+) -> Result<String, crate::lisp::error::Flow> {
+    let read_char = Value::Sym(i.intern("read-char-by-name"));
+    let value = i.apply(
+        &read_char,
+        vec![Value::string("Add character to search (Unicode name or hex): ")],
+    )?;
+    let Some(character) = value
+        .int()
+        .and_then(|code| u32::try_from(code).ok())
+        .and_then(char::from_u32)
+    else {
+        return Err(i.wrong_type_mut("characterp", &value));
+    };
+    Ok(character.to_string())
+}
+
+fn read_isearch_emoji(i: &mut Interp) -> Result<String, crate::lisp::error::Flow> {
+    let require = Value::Sym(i.intern("require"));
+    let emoji_feature = Value::Sym(i.intern("emoji"));
+    i.apply(&require, vec![emoji_feature])?;
+    let initialize = Value::Sym(i.intern("emoji--init"));
+    i.apply(&initialize, Vec::new())?;
+    let read_emoji = Value::Sym(i.intern("emoji--read-emoji"));
+    let result = i.apply(&read_emoji, Vec::new())?;
+    let Value::Cons(result) = result else {
+        return Err(i.wrong_type_mut("consp", &result));
+    };
+    let (glyph, derived) = {
+        let result = result.borrow();
+        (result.car.clone(), result.cdr.clone())
+    };
+    let emoji = if derived.is_nil() {
+        glyph
+    } else {
+        let mut choices = vec![glyph];
+        if let Ok(derived) = derived.list_to_vec() {
+            choices.extend(derived);
+        }
+        let completing_read = Value::Sym(i.intern("completing-read"));
+        i.apply(
+            &completing_read,
+            vec![
+                Value::string("Select derivation: "),
+                Value::list(choices),
+                Value::Nil,
+                Value::t(),
+            ],
+        )?
+    };
+    match emoji {
+        Value::Str(text) => Ok(text.borrow().to_unicode_lossy()),
+        other => Err(i.wrong_type_mut("stringp", &other)),
+    }
+}
+
 /// What the isearch driver should do after a key.
 pub(super) enum IsearchAction {
     /// Keep reading keys.
@@ -516,6 +576,9 @@ impl Isearch {
             quote_next: false,
             yank_until_char: false,
             help_prefix: false,
+            cx_prefix: false,
+            cx8_prefix: false,
+            cx8_emoji_prefix: false,
             meta_s_prefix: false,
             meta_s_h_prefix: false,
             match_ov: None,
@@ -777,6 +840,18 @@ impl Isearch {
         }
     }
 
+    fn append_query_text(&mut self, i: &mut Interp, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let failure_start = self
+            .fail_pos
+            .unwrap_or_else(|| self.query.chars().count());
+        self.save_history();
+        self.query.push_str(text);
+        self.search_updated_query(i, failure_start);
+    }
+
     fn delete_query_char(&mut self, i: &mut Interp) {
         if self.query.is_empty() {
             return;
@@ -991,6 +1066,40 @@ impl Isearch {
             }
             return IsearchAction::Continue;
         }
+        if self.cx8_emoji_prefix {
+            self.cx8_emoji_prefix = false;
+            if key == 13 {
+                match read_isearch_emoji(i) {
+                    Ok(text) => self.append_query_text(i, &text),
+                    Err(flow) => report_flow(i, flow),
+                }
+                return IsearchAction::Continue;
+            }
+            return IsearchAction::ReDispatch(key);
+        }
+        if self.cx8_prefix {
+            self.cx8_prefix = false;
+            if key == 13 {
+                match read_isearch_character_by_name(i) {
+                    Ok(text) => self.append_query_text(i, &text),
+                    Err(flow) => report_flow(i, flow),
+                }
+                return IsearchAction::Continue;
+            }
+            if key == 'e' as i128 {
+                self.cx8_emoji_prefix = true;
+                return IsearchAction::Continue;
+            }
+            return IsearchAction::ReDispatch(key);
+        }
+        if self.cx_prefix {
+            self.cx_prefix = false;
+            if key == '8' as i128 {
+                self.cx8_prefix = true;
+                return IsearchAction::Continue;
+            }
+            return IsearchAction::ReDispatch(key);
+        }
         if self.help_prefix {
             self.help_prefix = false;
             if key == 8 || key == (CHAR_CTL | 'h' as i128) {
@@ -1201,6 +1310,10 @@ impl Isearch {
             }
             c if c == 8 || c == (CHAR_CTL | 'h' as i128) => {
                 self.help_prefix = true;
+                IsearchAction::Continue
+            }
+            c if c == 24 || c == (CHAR_CTL | 'x' as i128) => {
+                self.cx_prefix = true;
                 IsearchAction::Continue
             }
             c if c == 17 || c == (CHAR_CTL | 'q' as i128) => {
