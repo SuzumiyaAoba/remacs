@@ -11,7 +11,8 @@ use super::{
 use gpui::*;
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridImage, GridImageSource,
+    BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridCursor, GridImage,
+    GridImageSource,
     GridMenu, GridMenuItem, GridPointerShape, GridPopupMenuItem, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridTabBarItem, GridToolBarItem, GridVScroll,
     MouseButton as RemacsMouseButton, QuitRequest,
@@ -1043,6 +1044,10 @@ impl Render for EditorView {
         };
         let grid = self.grid.clone();
         let images = grid.images.clone();
+        let image_cursors = grid.cursors.clone();
+        let image_blink_cursor = grid.blink_cursor;
+        let image_blink_visible = grid_cursor_blink_visible(&grid);
+        let image_gamma_exponent = grid.gamma_exponent;
         let image_cache_entries = self.image_cache_entries.clone();
         let image_cache_size = self.image_cache_size.clone();
         let image_vscrolls = grid.vscrolls.clone();
@@ -2074,18 +2079,15 @@ impl Render for EditorView {
                             None
                         };
 
-                        let blink_visible = if grid.blink_cursor {
-                            let elapsed = grid.blink_elapsed_since_input - grid.blink_delay;
-                            let interval = grid.blink_interval.max(0.05);
-                            let completed = grid.blink_blinks > 0
-                                && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
-                            elapsed < 0.0
-                                || completed
-                                || (elapsed / interval).floor() as u64 % 2 == 1
-                        } else {
-                            true
-                        };
+                        let blink_visible = grid_cursor_blink_visible(&grid);
                         for cursor in &grid.cursors {
+                            // Image children are painted after this canvas.
+                            // Their cursor overlay is drawn above the image instead.
+                            if grid.images.iter().any(|image| {
+                                image.row == cursor.row && image.column == cursor.column
+                            }) {
+                                continue;
+                            }
                             if cursor.selected && grid.blink_cursor && !blink_visible {
                                 continue;
                             }
@@ -2277,6 +2279,17 @@ impl Render for EditorView {
                 images
                     .into_iter()
                     .map(|image| {
+                        let cursors = image_cursors
+                            .iter()
+                            .copied()
+                            .filter(|cursor| {
+                                cursor.row == image.row
+                                    && cursor.column == image.column
+                                    && (!cursor.selected
+                                        || !image_blink_cursor
+                                        || image_blink_visible)
+                            })
+                            .collect();
                         grid_image_element(
                             image,
                             cell_width,
@@ -2285,6 +2298,8 @@ impl Render for EditorView {
                             image_default_line_height,
                             border,
                             &image_vscrolls,
+                            cursors,
+                            image_gamma_exponent,
                             image_cache_entries.clone(),
                             image_cache_size.clone(),
                         )
@@ -2378,6 +2393,8 @@ fn grid_image_element(
     default_line_height: usize,
     border: Pixels,
     vscrolls: &[GridVScroll],
+    cursors: Vec<GridCursor>,
+    gamma_exponent: Option<f64>,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
     image_cache_size: Arc<AtomicUsize>,
 ) -> AnyElement {
@@ -2440,6 +2457,7 @@ fn grid_image_element(
         (None, None) => source,
     };
     let image_left = border + cell_width * image.column as f32;
+    let image_column = image.column;
     let image_top =
         border + row_top_from_heights(row_heights, default_line_height, image.row, line_height);
     let scroll = vscrolls.iter().find(|scroll| {
@@ -2466,11 +2484,20 @@ fn grid_image_element(
                 end_row,
                 line_height,
             );
-        let image = div()
+        let mut image_element = div()
             .absolute()
             .left(image_left - region_left)
             .top(image_top - region_top - px(scroll.pixels as f32))
             .child(source);
+        for cursor in cursors {
+            image_element = image_element.child(grid_image_cursor_overlay(
+                cursor,
+                image_column,
+                cell_width,
+                line_height,
+                gamma_exponent,
+            ));
+        }
         div()
             .absolute()
             .left(region_left)
@@ -2478,16 +2505,140 @@ fn grid_image_element(
             .w(cell_width * scroll.width as f32)
             .h(region_bottom - region_top)
             .overflow_hidden()
-            .child(image)
+            .child(image_element)
             .into_any_element()
     } else {
-        div()
+        let mut image_element = div()
             .absolute()
             .left(image_left)
             .top(image_top)
-            .child(source)
-            .into_any_element()
+            .child(source);
+        for cursor in cursors {
+            image_element = image_element.child(grid_image_cursor_overlay(
+                cursor,
+                image_column,
+                cell_width,
+                line_height,
+                gamma_exponent,
+            ));
+        }
+        image_element.into_any_element()
     }
+}
+
+fn grid_cursor_blink_visible(grid: &Grid) -> bool {
+    if !grid.blink_cursor {
+        return true;
+    }
+    let elapsed = grid.blink_elapsed_since_input - grid.blink_delay;
+    let interval = grid.blink_interval.max(0.05);
+    let completed = grid.blink_blinks > 0
+        && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
+    elapsed < 0.0 || completed || (elapsed / interval).floor() as u64 % 2 == 1
+}
+
+fn grid_image_cursor_overlay(
+    cursor: GridCursor,
+    image_column: usize,
+    cell_width: Pixels,
+    line_height: Pixels,
+    gamma_exponent: Option<f64>,
+) -> AnyElement {
+    let rgb_color = cursor.color.map_or_else(
+        || gamma_correct_rgb(CURSOR, gamma_exponent),
+        |color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32,
+    );
+    let width = match cursor.shape {
+        remacs_runtime::frontend::GridCursorShape::Bar => {
+            px(cursor.thickness.max(1) as f32)
+        }
+        remacs_runtime::frontend::GridCursorShape::HBar => cell_width,
+        remacs_runtime::frontend::GridCursorShape::Block
+        | remacs_runtime::frontend::GridCursorShape::Hollow => {
+            if cursor.thickness > 0 {
+                px(cursor.thickness as f32)
+            } else {
+                cell_width
+            }
+        }
+    };
+    let height = match cursor.shape {
+        remacs_runtime::frontend::GridCursorShape::HBar => {
+            px(cursor.thickness.max(1) as f32)
+        }
+        _ => line_height,
+    };
+    let left = cell_width * cursor.column.saturating_sub(image_column) as f32;
+    canvas(
+        |_bounds, _window, _cx| (),
+        move |bounds, (), window, _cx| match cursor.shape {
+            remacs_runtime::frontend::GridCursorShape::Block => {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: bounds.origin,
+                        size: size(width, height),
+                    },
+                    rgba((rgb_color << 8) | 0x80),
+                ));
+            }
+            remacs_runtime::frontend::GridCursorShape::Hollow => {
+                let color = rgb(rgb_color);
+                let edge = px(1.0);
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: bounds.origin,
+                        size: size(width, edge),
+                    },
+                    color,
+                ));
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(bounds.origin.x, bounds.origin.y + height - edge),
+                        size: size(width, edge),
+                    },
+                    color,
+                ));
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: bounds.origin,
+                        size: size(edge, height),
+                    },
+                    color,
+                ));
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(bounds.origin.x + width - edge, bounds.origin.y),
+                        size: size(edge, height),
+                    },
+                    color,
+                ));
+            }
+            remacs_runtime::frontend::GridCursorShape::Bar => {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: bounds.origin,
+                        size: size(width, height),
+                    },
+                    rgb(rgb_color),
+                ));
+            }
+            remacs_runtime::frontend::GridCursorShape::HBar => {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(bounds.origin.x, bounds.origin.y + line_height - height),
+                        size: size(width, height),
+                    },
+                    rgb(rgb_color),
+                ));
+            }
+        },
+    )
+    .absolute()
+    .left(left)
+    .top(px(0.0))
+    .w(width)
+    .h(line_height)
+    .into_any_element()
 }
 
 fn grid_data_image(
