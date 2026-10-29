@@ -27,6 +27,41 @@ const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
+const BIDI_DISABLED_OPEN: &str = "\u{2066}\u{202D}";
+const BIDI_DISABLED_CLOSE: &str = "\u{202C}\u{2069}";
+
+fn append_styled_piece(
+    text: &mut String,
+    spans: &mut Vec<(usize, remacs_runtime::frontend::CellStyle)>,
+    piece: &str,
+    style: remacs_runtime::frontend::CellStyle,
+) {
+    text.push_str(piece);
+    if let Some((len, previous_style)) = spans.last_mut()
+        && *previous_style == style
+    {
+        *len += piece.len();
+    } else if !piece.is_empty() {
+        spans.push((piece.len(), style));
+    }
+}
+
+fn grid_layout_index(grid: &Grid, row: usize, byte_index: usize) -> usize {
+    let mut index = byte_index;
+    for range in grid
+        .bidi_disabled_ranges
+        .iter()
+        .filter(|range| range.row == row)
+    {
+        if range.start <= byte_index {
+            index += BIDI_DISABLED_OPEN.len();
+        }
+        if range.end <= byte_index {
+            index += BIDI_DISABLED_CLOSE.len();
+        }
+    }
+    index
+}
 
 pub(super) fn grid_row_top(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
     row_top_from_heights(
@@ -1430,9 +1465,55 @@ impl Render for EditorView {
                                     .get(y)
                                     .filter(|cells| !cells.is_empty())
                                     .or_else(|| grid.attrs.get(y));
+                                let bidi_disabled_ranges = grid
+                                    .bidi_disabled_ranges
+                                    .iter()
+                                    .filter(|range| range.row == y)
+                                    .copied()
+                                    .collect::<Vec<_>>();
+                                let mut shaping_text = String::with_capacity(
+                                    row.len() + bidi_disabled_ranges.len() * 12,
+                                );
+                                let mut styled_spans = Vec::new();
+                                let mut open_range = 0;
+                                let mut close_range = 0;
+                                for (x, (byte, ch)) in row.char_indices().enumerate() {
+                                    let st =
+                                        cells.and_then(|c| c.get(x)).copied().unwrap_or_default();
+                                    while bidi_disabled_ranges
+                                        .get(open_range)
+                                        .is_some_and(|range| range.start == byte)
+                                    {
+                                        append_styled_piece(
+                                            &mut shaping_text,
+                                            &mut styled_spans,
+                                            BIDI_DISABLED_OPEN,
+                                            st,
+                                        );
+                                        open_range += 1;
+                                    }
+                                    let mut encoded = [0; 4];
+                                    append_styled_piece(
+                                        &mut shaping_text,
+                                        &mut styled_spans,
+                                        ch.encode_utf8(&mut encoded),
+                                        st,
+                                    );
+                                    let end = byte + ch.len_utf8();
+                                    while bidi_disabled_ranges
+                                        .get(close_range)
+                                        .is_some_and(|range| range.end == end)
+                                    {
+                                        append_styled_piece(
+                                            &mut shaping_text,
+                                            &mut styled_spans,
+                                            BIDI_DISABLED_CLOSE,
+                                            st,
+                                        );
+                                        close_range += 1;
+                                    }
+                                }
                                 let mut runs: Vec<TextRun> = Vec::new();
-                                let mut cur: Option<remacs_runtime::frontend::CellStyle> = None;
-                                let mut run_bytes = 0usize;
                                 let mut push_run =
                                     |st: remacs_runtime::frontend::CellStyle, len: usize| {
                                         if len == 0 {
@@ -1486,22 +1567,8 @@ impl Render for EditorView {
                                             }),
                                         });
                                     };
-                                for (x, ch) in row.chars().enumerate() {
-                                    let st =
-                                        cells.and_then(|c| c.get(x)).copied().unwrap_or_default();
-                                    match cur {
-                                        Some(c) if c == st => run_bytes += ch.len_utf8(),
-                                        _ => {
-                                            if let Some(c) = cur {
-                                                push_run(c, run_bytes);
-                                            }
-                                            cur = Some(st);
-                                            run_bytes = ch.len_utf8();
-                                        }
-                                    }
-                                }
-                                if let Some(c) = cur {
-                                    push_run(c, run_bytes);
+                                for (len, style) in styled_spans {
+                                    push_run(style, len);
                                 }
                                 if runs.is_empty() {
                                     runs.push(TextRun {
@@ -1514,7 +1581,7 @@ impl Render for EditorView {
                                     });
                                 }
                                 window.text_system().shape_line(
-                                    row.clone().into(),
+                                    shaping_text.into(),
                                     font_size,
                                     &runs,
                                     None,
@@ -1713,7 +1780,9 @@ impl Render for EditorView {
                             let x = grid
                                 .cursor_index
                                 .and_then(|index| {
-                                    lines.get(row).map(|line| line.x_for_index(index))
+                                    lines.get(row).map(|line| {
+                                        line.x_for_index(grid_layout_index(&grid, row, index))
+                                    })
                                 })
                                 .unwrap_or(cell_width * (column as f32));
                             (row, x)
@@ -1722,7 +1791,9 @@ impl Render for EditorView {
                             .then_some(marked_origin)
                             .flatten()
                             .and_then(|(row, index)| {
-                                lines.get(row).map(|line| (row, line.x_for_index(index)))
+                                lines.get(row).map(|line| {
+                                    (row, line.x_for_index(grid_layout_index(&grid, row, index)))
+                                })
                             })
                             .or(fallback_cursor);
                         let composition_caret = if !marked.is_empty() {
@@ -1846,9 +1917,15 @@ impl Render for EditorView {
                             let x = if cursor.selected {
                                 composition_caret
                                     .map(|(_, x)| x)
-                                    .unwrap_or_else(|| line.x_for_index(cursor.index))
+                                    .unwrap_or_else(|| {
+                                        line.x_for_index(grid_layout_index(
+                                            &grid,
+                                            row,
+                                            cursor.index,
+                                        ))
+                                    })
                             } else {
-                                line.x_for_index(cursor.index)
+                                line.x_for_index(grid_layout_index(&grid, row, cursor.index))
                             };
                             let glyph_width = if cursor.selected && composition_caret.is_some() {
                                 cell_width
@@ -1856,7 +1933,9 @@ impl Render for EditorView {
                                 cursor
                                     .after_index
                                     .map(|end| {
-                                        let end_x = line.x_for_index(end);
+                                        let end_x = line.x_for_index(grid_layout_index(
+                                            &grid, row, end,
+                                        ));
                                         if end_x >= x { end_x - x } else { x - end_x }
                                     })
                                     .filter(|width| *width > px(0.0))
@@ -2330,8 +2409,8 @@ fn paint_stipple_backgrounds(
             continue;
         };
         let end = byte + character.len_utf8();
-        let start_x = line.x_for_index(byte);
-        let end_x = line.x_for_index(end);
+        let start_x = line.x_for_index(grid_layout_index(grid, row_index, byte));
+        let end_x = line.x_for_index(grid_layout_index(grid, row_index, end));
         let (left, width) = if end_x >= start_x {
             (start_x, end_x - start_x)
         } else {
@@ -2408,8 +2487,8 @@ fn paint_grid_row(
             if !style.overline {
                 continue;
             }
-            let start = line.x_for_index(byte);
-            let end = line.x_for_index(byte + ch.len_utf8());
+            let start = line.x_for_index(grid_layout_index(grid, row, byte));
+            let end = line.x_for_index(grid_layout_index(grid, row, byte + ch.len_utf8()));
             let (left, width) = if end >= start {
                 (start, end - start)
             } else {
@@ -2510,8 +2589,12 @@ fn paint_vscroll_regions(
                         if !style.overline {
                             continue;
                         }
-                        let start = line.x_for_index(byte);
-                        let end = line.x_for_index(byte + ch.len_utf8());
+                        let start = line.x_for_index(grid_layout_index(grid, row, byte));
+                        let end = line.x_for_index(grid_layout_index(
+                            grid,
+                            row,
+                            byte + ch.len_utf8(),
+                        ));
                         let (left, width) = if end >= start {
                             (start, end - start)
                         } else {
@@ -2586,7 +2669,11 @@ fn paint_grid_compositions(
             grid.gamma_exponent,
         )
         .0;
-        let x = line.x_for_index(composition.byte_index);
+        let x = line.x_for_index(grid_layout_index(
+            grid,
+            composition.row,
+            composition.byte_index,
+        ));
         let origin = point(
             bounds.left() + x,
             bounds.top() + grid_row_top(grid, composition.row, line_height)
@@ -2653,6 +2740,8 @@ fn paint_face_boxes(
         let Some(box_style) = style.box_style else {
             if let Some((box_style, fg, bg, start, end)) = current.take() {
                 paint_box_run(
+                    grid,
+                    row_index,
                     line,
                     bounds,
                     row_top,
@@ -2679,6 +2768,8 @@ fn paint_face_boxes(
             _ => {
                 if let Some((box_style, fg, bg, start, end)) = current.take() {
                     paint_box_run(
+                        grid,
+                        row_index,
                         line,
                         bounds,
                         row_top,
@@ -2699,6 +2790,8 @@ fn paint_face_boxes(
     }
     if let Some((box_style, fg, bg, start, end)) = current {
         paint_box_run(
+            grid,
+            row_index,
             line,
             bounds,
             row_top,
@@ -2717,6 +2810,8 @@ fn paint_face_boxes(
 
 #[allow(clippy::too_many_arguments)]
 fn paint_box_run(
+    grid: &Grid,
+    row_index: usize,
     line: &ShapedLine,
     bounds: Bounds<Pixels>,
     row_top: Pixels,
@@ -2730,8 +2825,8 @@ fn paint_box_run(
     gamma_exponent: Option<f64>,
     window: &mut Window,
 ) {
-    let x1 = line.x_for_index(start);
-    let x2 = line.x_for_index(end);
+    let x1 = line.x_for_index(grid_layout_index(grid, row_index, start));
+    let x2 = line.x_for_index(grid_layout_index(grid, row_index, end));
     let left = x1.min(x2);
     let right = x1.max(x2);
     if right <= left {

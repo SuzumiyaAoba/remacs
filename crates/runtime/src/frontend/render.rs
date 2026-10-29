@@ -266,6 +266,15 @@ pub struct GridComposition {
     pub style: CellStyle,
 }
 
+/// A text range in a grid row whose source buffer disables bidirectional
+/// display reordering. Offsets are UTF-8 byte offsets in `Grid::rows[row]`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridBidiDisabledRange {
+    pub row: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -402,6 +411,8 @@ pub struct Grid {
     pub mode_lines: Vec<GridModeLine>,
     pub vscrolls: Vec<GridVScroll>,
     pub compositions: Vec<GridComposition>,
+    /// Text ranges whose source buffers have `bidi-display-reordering` nil.
+    pub bidi_disabled_ranges: Vec<GridBidiDisabledRange>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -503,6 +514,7 @@ impl Grid {
             mode_lines: Vec::new(),
             vscrolls: Vec::new(),
             compositions: Vec::new(),
+            bidi_disabled_ranges: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -5805,6 +5817,7 @@ fn render_grid_internal(
     let mut default_row_height = 19;
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
+    let mut bidi_disabled_cell_ranges = Vec::<(usize, usize, usize)>::new();
     let mut pending_compositions = Vec::<(usize, usize, Vec<char>, CellStyle)>::new();
     let mut fill_column_indicators = Vec::new();
     let menus = render_menu_bar(i);
@@ -5858,6 +5871,7 @@ fn render_grid_internal(
                 cursor: cursor_pos,
                 cursors: Vec::new(),
                 cursor_index,
+                bidi_disabled_ranges: Vec::new(),
                 blink_cursor,
                 blink_interval,
                 default_bg,
@@ -6164,6 +6178,8 @@ fn render_grid_internal(
         }
         let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
         let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
+        let bidi_display_reordering =
+            buffer_setting(i, "bidi-display-reordering", buf_id).truthy();
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
@@ -7298,6 +7314,13 @@ fn render_grid_internal(
                     }
                 }
                 place_rendered_row(&mut screen_rows[y], content_left, &rendered);
+                if !bidi_display_reordering && content_width > 0 {
+                    bidi_disabled_cell_ranges.push((
+                        y,
+                        content_left,
+                        content_left.saturating_add(content_width).min(width),
+                    ));
+                }
                 if (!wrap_lines || segment_start == 0)
                     && let Some((indicator_column, character, style)) = fill_column_indicator
                     && indicator_column >= row_hscroll
@@ -7559,6 +7582,31 @@ fn render_grid_internal(
             })
         })
         .collect();
+    bidi_disabled_cell_ranges.sort_unstable();
+    let mut bidi_disabled_ranges = Vec::<GridBidiDisabledRange>::new();
+    for (row, left, right) in bidi_disabled_cell_ranges {
+        let Some(offsets) = cell_offsets.get(row) else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (offsets.get(left), offsets.get(right)) else {
+            continue;
+        };
+        if start >= end {
+            continue;
+        }
+        if let Some(previous) = bidi_disabled_ranges.last_mut()
+            && previous.row == row
+            && *start <= previous.end
+        {
+            previous.end = previous.end.max(*end);
+        } else {
+            bidi_disabled_ranges.push(GridBidiDisabledRange {
+                row,
+                start: *start,
+                end: *end,
+            });
+        }
+    }
     let cursors = positioned_cursors
         .into_iter()
         .map(|(mut cursor, screen_left)| {
@@ -7603,6 +7651,7 @@ fn render_grid_internal(
         mode_lines,
         vscrolls,
         compositions,
+        bidi_disabled_ranges,
         attrs,
         char_attrs,
         mode_rows,
