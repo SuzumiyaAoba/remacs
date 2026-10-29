@@ -679,7 +679,9 @@ the test clause will be unchanged."
 	      (downcase-region (+ 2 save-pos) (point))
 	      (setq subst (buffer-substring (+ 2 save-pos) (point)))
 	      (delete-region save-pos (1+ (point)))
-	      (insert (or (cdr (assoc subst type-info)) "\"\"")))
+	      ;; Keep message parameters as one shell argument; they come from
+	      ;; untrusted Content-Type headers.
+	      (insert (shell-quote-argument (or (cdr (assoc subst type-info)) ""))))
 	     (t nil))))
 	(buffer-string)))
      (t (error "Bad value to mailcap-unescape-mime-test: %s" test)))))
