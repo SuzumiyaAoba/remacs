@@ -162,6 +162,8 @@ pub struct Window {
     /// the buffer's `cursor-type' variable.  Set by
     /// `set-window-cursor-type'.
     pub cursor_type: Value,
+    /// Whether redisplay should draw this window's text cursor.
+    pub cursor_visible: bool,
 }
 
 pub type WindowRef = Rc<RefCell<Window>>;
@@ -313,6 +315,7 @@ impl Window {
                 change_size: None,
                 change_start: None,
                 cursor_type: Value::t(),
+                cursor_visible: true,
             },
             crate::lisp::Value::Window,
         )
@@ -6273,22 +6276,29 @@ fn f_frame_visible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// `internal-show-cursor' — GNU Finternal_show_cursor CHECK_WINDOWs
-/// the first arg; headless: no visible effect, returns nil.
+/// `internal-show-cursor' — update the selected or specified window's
+/// cursor visibility.  The frontend consumes this state on redisplay.
 fn f_internal_show_cursor(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU decode_any_window: nil means the SELECTED window.
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("windowp", other)),
+    let window = match &a[0] {
+        Value::Nil => sel_window(i),
+        Value::Window(window) => Some(window.clone()),
+        other => return Err(i.wrong_type_mut("windowp", other)),
+    };
+    if let Some(window) = window {
+        window.borrow_mut().cursor_visible = a[1].truthy();
     }
+    Ok(Value::Nil)
 }
 
 fn f_show_cursor_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: optional WINDOW arg (nil = selected); ours always shows.
-    match a.first() {
-        None | Some(Value::Nil) | Some(Value::Window(_)) => Ok(Value::t()),
-        Some(other) => Err(i.wrong_type_mut("windowp", other)),
-    }
+    let window = match a.first() {
+        None | Some(Value::Nil) => sel_window(i),
+        Some(Value::Window(window)) => Some(window.clone()),
+        Some(other) => return Err(i.wrong_type_mut("windowp", other)),
+    };
+    Ok(Value::from_bool(
+        window.is_some_and(|window| window.borrow().cursor_visible),
+    ))
 }
 
 fn f_frame_focus_state(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

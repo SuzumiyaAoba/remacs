@@ -467,6 +467,10 @@ pub struct Grid {
     pub cursor_index: Option<usize>,
     pub blink_cursor: bool,
     pub blink_interval: f64,
+    pub blink_delay: f64,
+    pub blink_blinks: i128,
+    /// Time since the most recent GUI input event.
+    pub blink_elapsed_since_input: f64,
     /// Default face background used outside the visible text rows.
     pub default_bg: Option<CellColor>,
     /// Gamma exponent for the frame's `screen-gamma' parameter. Color
@@ -568,6 +572,9 @@ impl Grid {
             cursor_index: None,
             blink_cursor: false,
             blink_interval: 0.5,
+            blink_delay: 0.5,
+            blink_blinks: 10,
+            blink_elapsed_since_input: 0.0,
             default_bg: None,
             gamma_exponent: None,
             row_heights: Vec::new(),
@@ -1463,6 +1470,9 @@ fn cursor_type_for_window(
     buffer: usize,
     selected: bool,
 ) -> Option<CursorStyle> {
+    if !window.borrow().cursor_visible {
+        return None;
+    }
     let buffer_type = buffer_setting(i, "cursor-type", buffer);
     let window_type = window.borrow().cursor_type.clone();
     let effective_type = if symbol_is(i, &window_type, "t") {
@@ -1515,7 +1525,7 @@ fn frame_cursor_color(
     face_ctx.color(&value)
 }
 
-fn blink_cursor_settings(i: &Interp) -> (bool, f64) {
+fn blink_cursor_settings(i: &Interp) -> (bool, f64, f64, i128) {
     let enabled = i
         .q_soft("blink-cursor-mode")
         .is_some_and(|id| i.symbol_value(id).truthy());
@@ -1526,9 +1536,28 @@ fn blink_cursor_settings(i: &Interp) -> (bool, f64) {
             Value::Float(value) => Some(*value),
             _ => None,
         });
+    let delay = i
+        .q_soft("blink-cursor-delay")
+        .and_then(|id| match i.symbol_value(id) {
+            Value::Int(value) => Some(value as f64),
+            Value::Float(value) => Some(*value),
+            _ => None,
+        })
+        .filter(|value| *value >= 0.0)
+        .unwrap_or(0.5)
+        .max(0.2);
+    let blinks = i
+        .q_soft("blink-cursor-blinks")
+        .and_then(|id| match i.symbol_value(id) {
+            Value::Int(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or(10);
     (
         enabled,
         interval.filter(|value| *value > 0.0).unwrap_or(0.5),
+        delay,
+        blinks,
     )
 }
 
@@ -6115,7 +6144,7 @@ fn render_grid_internal(
     let mut input_screen_lefts = Vec::new();
     let mut cursor_index = None;
     let mut hover_cursor = None;
-    let (blink_cursor, blink_interval) = blink_cursor_settings(i);
+    let (blink_cursor, blink_interval, blink_delay, blink_blinks) = blink_cursor_settings(i);
     let mut input = if include_input {
         input_snapshot(i, cached_input)
     } else {
@@ -6156,6 +6185,9 @@ fn render_grid_internal(
                 pixelwise_segments: Vec::new(),
                 blink_cursor,
                 blink_interval,
+                blink_delay,
+                blink_blinks,
+                blink_elapsed_since_input: 0.0,
                 default_bg,
                 gamma_exponent: None,
                 row_heights,
@@ -8115,6 +8147,9 @@ fn render_grid_internal(
         cursor_index,
         blink_cursor,
         blink_interval,
+        blink_delay,
+        blink_blinks,
+        blink_elapsed_since_input: 0.0,
         default_bg,
         gamma_exponent,
         row_heights,

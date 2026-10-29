@@ -2043,11 +2043,13 @@ impl Render for EditorView {
                         };
 
                         let blink_visible = if grid.blink_cursor {
-                            let elapsed = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs_f64();
-                            (elapsed / grid.blink_interval.max(0.05)).floor() as u64 % 2 == 0
+                            let elapsed = grid.blink_elapsed_since_input - grid.blink_delay;
+                            let interval = grid.blink_interval.max(0.05);
+                            let completed = grid.blink_blinks > 0
+                                && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
+                            elapsed < 0.0
+                                || completed
+                                || (elapsed / interval).floor() as u64 % 2 == 1
                         } else {
                             true
                         };

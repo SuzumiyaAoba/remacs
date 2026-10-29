@@ -19,7 +19,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender, SyncSender},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use unicode_width::UnicodeWidthChar;
 
@@ -853,6 +853,7 @@ pub(super) struct ChanIo {
     /// the frame content area.
     mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>)>,
     pub(super) scroll_remainder: f32,
+    last_input_at: Instant,
 }
 
 fn echo_char_width(character: char, column: usize) -> usize {
@@ -1318,19 +1319,22 @@ impl KeyIo for ChanIo {
 
     fn poll_input(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
         if let Some(k) = self.pending.pop() {
+            self.last_input_at = Instant::now();
             return Ok(Some(InputEvent::Key(k)));
         }
         if let Some(file) = self.pending_open_files.pop_front() {
+            self.last_input_at = Instant::now();
             return Ok(Some(InputEvent::OpenFiles(vec![file])));
         }
         #[cfg(target_os = "macos")]
         if let Some((name, argument)) = self.pending_native_services.pop_front() {
+            self.last_input_at = Instant::now();
             return Ok(Some(InputEvent::NativeService { name, argument }));
         }
         let Some(event) = self.receive_event(dur)? else {
             return Ok(None);
         };
-        match event {
+        let result = match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
             GuiEvent::FrameDeleteRequest { frame_id } => {
                 self.pending_frame_delete = Some(frame_id);
@@ -1522,7 +1526,13 @@ impl KeyIo for ChanIo {
                 offset,
                 max_offset,
             })),
+        };
+        if let Ok(Some(input)) = &result {
+            if !matches!(input, InputEvent::FrameMoved { .. }) {
+                self.last_input_at = Instant::now();
+            }
         }
+        result
     }
 
     fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
@@ -1850,7 +1860,7 @@ impl KeyIo for ChanIo {
                     .get(&frame_id)
                     .and_then(|grid| grid.input.as_ref());
                 let mouse_position = self.mouse_positions.get(&frame_id).copied();
-                let grid = render_frame_grid_with_mouse_position_cached(
+                let mut grid = render_frame_grid_with_mouse_position_cached(
                     i,
                     frame,
                     width,
@@ -1858,6 +1868,7 @@ impl KeyIo for ChanIo {
                     cached,
                     mouse_position,
                 );
+                grid.blink_elapsed_since_input = self.last_input_at.elapsed().as_secs_f64();
                 if Some(frame_id) == selected_id {
                     selected_grid = Some(grid.clone());
                 }
@@ -1988,7 +1999,7 @@ impl KeyIo for ChanIo {
 
     fn draw_echo_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
         let (cols, rows) = self.size();
-        let grid = if let Some(frame) = i.selected_frame.as_ref() {
+        let mut grid = if let Some(frame) = i.selected_frame.as_ref() {
             let frame_id = frame.borrow().id;
             let cached = self
                 .frame_grids
@@ -2006,6 +2017,7 @@ impl KeyIo for ChanIo {
             let cached = self.last.as_ref().and_then(|grid| grid.input.as_ref());
             render_grid_with_mouse_position_cached(i, cols, rows, cached, self.mouse_position)
         };
+        grid.blink_elapsed_since_input = self.last_input_at.elapsed().as_secs_f64();
         let grid = self.echo_grid(grid, text, false, true, true);
         self.send_grid(grid)
     }
@@ -2331,6 +2343,7 @@ fn start_logic_inner(
                 mouse_absolute_position: None,
                 mouse_frame_position: None,
                 scroll_remainder: 0.0,
+                last_input_at: Instant::now(),
             };
             let term = Rc::new(RefCell::new(io));
             remacs_runtime::frontend::install_minibuf_reader(&term, &mut i);
