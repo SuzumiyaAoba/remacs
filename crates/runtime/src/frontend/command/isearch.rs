@@ -405,6 +405,21 @@ impl Isearch {
                 self.quote_next = true;
                 IsearchAction::Continue
             }
+            c if c == 9
+                || c == 10
+                || c == (CHAR_CTL | 'i' as i128)
+                || c == (CHAR_CTL | 'j' as i128) =>
+            {
+                if let Some(ch) = isearch_quoted_character(c) {
+                    let failure_start = self
+                        .fail_pos
+                        .unwrap_or_else(|| self.query.chars().count());
+                    self.save_history();
+                    self.query.push(ch);
+                    self.search_updated_query(i, failure_start);
+                }
+                IsearchAction::Continue
+            }
             c if c == 25 || c == (CHAR_CTL | 'y' as i128) => {
                 let current_kill = Value::Sym(i.intern("current-kill"));
                 match i.apply(&current_kill, vec![Value::Int(0)]) {
