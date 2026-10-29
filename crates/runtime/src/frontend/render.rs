@@ -732,6 +732,233 @@ fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
         .unwrap_or(Value::Nil)
 }
 
+fn display_row_index_from(
+    text: &crate::buffer::SharedText,
+    begv: usize,
+    zv: usize,
+    from: usize,
+    to: usize,
+    wrap_lines: bool,
+    width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+    max_rows: usize,
+) -> Option<usize> {
+    if to < from {
+        return None;
+    }
+    let from_line = text.line_of_pos(from);
+    let to_line = text.line_of_pos(to);
+    if !wrap_lines || width == 0 {
+        return Some(to_line.saturating_sub(from_line).min(max_rows));
+    }
+
+    let mut row = 0usize;
+    for line_number in from_line..=to_line {
+        let line_start = text.line_start(line_number).max(begv);
+        if line_start > zv {
+            break;
+        }
+        let line_end = text.line_end(line_start).min(zv);
+        let line = text.substring(line_start, line_end);
+        let line_len = line.chars().count();
+        let from_offset = if line_number == from_line {
+            from.saturating_sub(line_start)
+        } else {
+            0
+        };
+        let to_offset = to.saturating_sub(line_start);
+        for range in wrap_ranges(&line, width, tab_width, ctl_arrow) {
+            if line_number == from_line && range.end <= from_offset && range.end < line_len {
+                continue;
+            }
+            if line_number == to_line
+                && to_offset >= range.start
+                && (to_offset < range.end || (to_offset == range.end && range.end == line_len))
+            {
+                return Some(row);
+            }
+            row = row.saturating_add(1);
+            if row >= max_rows {
+                return Some(max_rows);
+            }
+        }
+    }
+    Some(row.saturating_sub(1))
+}
+
+fn display_row_distance_from_start(
+    text: &crate::buffer::SharedText,
+    begv: usize,
+    zv: usize,
+    start: usize,
+    point: usize,
+    wrap_lines: bool,
+    width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+    max_rows: usize,
+) -> isize {
+    let (from, to, sign) = if point >= start {
+        (start, point, 1isize)
+    } else {
+        (point, start, -1isize)
+    };
+    let rows = display_row_index_from(
+        text,
+        begv,
+        zv,
+        from,
+        to,
+        wrap_lines,
+        width,
+        tab_width,
+        ctl_arrow,
+        max_rows,
+    )
+    .unwrap_or(0)
+    .min(isize::MAX as usize) as isize;
+    rows.saturating_mul(sign)
+}
+
+fn display_row_start_before_point(
+    text: &crate::buffer::SharedText,
+    begv: usize,
+    zv: usize,
+    point: usize,
+    rows_before: usize,
+    wrap_lines: bool,
+    width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+) -> usize {
+    if !wrap_lines || width == 0 {
+        let point_line = text.line_of_pos(point);
+        return text.line_start(point_line.saturating_sub(rows_before)).max(begv);
+    }
+
+    let mut line_number = text.line_of_pos(point);
+    let mut remaining = rows_before;
+    loop {
+        let line_start = text.line_start(line_number).max(begv);
+        let line_end = text.line_end(line_start).min(zv);
+        let line = text.substring(line_start, line_end);
+        let line_len = line.chars().count();
+        let point_offset = point.saturating_sub(line_start);
+        let ranges = wrap_ranges(&line, width, tab_width, ctl_arrow);
+        let point_range = ranges
+            .iter()
+            .position(|range| {
+                point_offset >= range.start
+                    && (point_offset < range.end
+                        || (point_offset == range.end && range.end == line_len))
+            })
+            .or_else(|| ranges.iter().rposition(|range| range.start <= point_offset))
+            .unwrap_or(0);
+        for range in ranges[..=point_range].iter().rev() {
+            if remaining == 0 {
+                return line_start.saturating_add(range.start).max(begv);
+            }
+            remaining -= 1;
+        }
+        if line_start <= begv || line_number == 0 {
+            return begv;
+        }
+        line_number -= 1;
+    }
+}
+
+fn effective_scroll_margin(i: &Interp, buffer: usize, text_rows: usize) -> usize {
+    let margin = buffer_setting(i, "scroll-margin", buffer)
+        .int()
+        .unwrap_or(0)
+        .max(0) as usize;
+    if margin == 0 || text_rows == 0 {
+        return 0;
+    }
+    let ratio = match buffer_setting(i, "maximum-scroll-margin", buffer) {
+        Value::Float(ratio) if ratio.is_finite() => (*ratio).clamp(0.0, 0.5),
+        _ => 0.25,
+    };
+    margin
+        .min((text_rows.saturating_sub(1)) / 2)
+        .min((text_rows as f64 * ratio) as usize)
+}
+
+fn automatic_scroll_target_row(
+    point_row: isize,
+    scrolling_down: bool,
+    text_rows: usize,
+    margin: usize,
+    scroll_conservatively: usize,
+    scroll_step: usize,
+    aggressive: Option<f64>,
+) -> usize {
+    if text_rows == 0 {
+        return 0;
+    }
+    let bottom = text_rows.saturating_sub(1).saturating_sub(margin);
+    let center = (text_rows / 2).clamp(margin.min(bottom), bottom);
+    if scrolling_down {
+        if scroll_conservatively > 100 {
+            return bottom;
+        }
+        if scroll_conservatively > 0 {
+            let threshold = bottom as isize;
+            let margin_extra = if margin > 0 { 1 } else { 0 };
+            let amount = point_row
+                .saturating_sub(threshold)
+                .saturating_add(margin_extra)
+                .max(1) as usize;
+            return if amount <= scroll_conservatively {
+                point_row.saturating_sub(amount.min(isize::MAX as usize) as isize)
+                    .clamp(0, bottom as isize) as usize
+            } else {
+                center
+            };
+        }
+        if scroll_step > 0 {
+            let target = point_row.saturating_sub(scroll_step.min(isize::MAX as usize) as isize);
+            return if (margin.min(bottom) as isize..=bottom as isize).contains(&target) {
+                target as usize
+            } else {
+                center
+            };
+        }
+        if let Some(fraction) = aggressive {
+            let offset = (fraction.clamp(0.0, 1.0) * text_rows as f64) as usize;
+            return bottom.saturating_sub(offset).max(margin.min(bottom));
+        }
+    } else {
+        if scroll_conservatively > 100 {
+            return margin.min(bottom);
+        }
+        if scroll_conservatively > 0 {
+            let amount = (margin as isize).saturating_sub(point_row).max(1) as usize;
+            return if amount <= scroll_conservatively {
+                point_row.saturating_add(amount.min(isize::MAX as usize) as isize)
+                    .clamp(margin.min(bottom) as isize, bottom as isize)
+                    as usize
+            } else {
+                center
+            };
+        }
+        if scroll_step > 0 {
+            let target = point_row.saturating_add(scroll_step.min(isize::MAX as usize) as isize);
+            return if (margin.min(bottom) as isize..=bottom as isize).contains(&target) {
+                target as usize
+            } else {
+                center
+            };
+        }
+        if let Some(fraction) = aggressive {
+            let offset = (fraction.clamp(0.0, 1.0) * text_rows as f64) as usize;
+            return margin.saturating_add(offset).clamp(margin.min(bottom), bottom);
+        }
+    }
+    center
+}
+
 fn buffer_fill_column_indicator(
     i: &Interp,
     ctx: &mut FaceCtx,
@@ -5413,11 +5640,9 @@ fn render_grid_internal(
                 pixels: vscroll,
             });
         }
-        // Keep point inside the window: scroll `start' the minimal
-        // amount, or recenter when point is more than a window-height
-        // away, and likewise `hscroll' horizontally (GNU
-        // `redisplay_window' semantics — the window's start/hscroll
-        // are redisplay state, so updating them here is correct).
+        // Keep point in the visible rows using GNU's automatic scroll
+        // settings. `start' and `hscroll' are redisplay state, so updating
+        // them here is correct.
         let (start, hscroll) = match i.buffers.get(buf_id) {
             Some(b) if text_rows > 0 => {
                 let (suspend_hs, suspend_vs, old_pt, min_hs) = {
@@ -5451,25 +5676,89 @@ fn render_grid_internal(
                 let suspend_hs = suspend_hs && pt == old_pt;
                 let suspend_vs = suspend_vs && pt == old_pt;
                 let pt_line = bb.text.line_of_pos(pt);
-                let start_line = bb.text.line_of_pos(start);
+                let margin = effective_scroll_margin(i, buf_id, text_rows);
+                let scroll_conservatively = if minibuffer_window
+                    && buffer_setting(i, "scroll-minibuffer-conservatively", buf_id).truthy()
+                {
+                    101
+                } else {
+                    buffer_setting(i, "scroll-conservatively", buf_id)
+                        .int()
+                        .unwrap_or(0)
+                        .max(0) as usize
+                };
+                let scroll_step = buffer_setting(i, "scroll-step", buf_id)
+                    .int()
+                    .unwrap_or(0)
+                    .max(0) as usize;
+                let row_limit = text_rows
+                    .saturating_add(margin)
+                    .saturating_add(scroll_conservatively.min(100))
+                    .saturating_add(scroll_step.min(10_000))
+                    .saturating_add(2)
+                    .max(1);
+                let point_row = display_row_distance_from_start(
+                    &bb.text,
+                    bb.begv,
+                    bb.zv,
+                    start,
+                    pt,
+                    wrap_lines,
+                    content_width,
+                    tab_width,
+                    ctl_arrow,
+                    row_limit,
+                );
+                let bottom_margin_row = text_rows.saturating_sub(1).saturating_sub(margin);
+                let scroll_direction = if point_row < 0
+                    || (margin > 0 && point_row < margin as isize)
+                {
+                    Some(false)
+                } else if point_row >= text_rows as isize
+                    || (margin > 0 && point_row >= bottom_margin_row as isize)
+                {
+                    Some(true)
+                } else {
+                    None
+                };
                 let mut new_start = if suspend_vs {
                     start
-                } else if pt_line < start_line {
-                    let up = start_line - pt_line;
-                    if up > text_rows {
-                        bb.text.line_start(pt_line.saturating_sub(text_rows / 2))
-                    } else {
-                        bb.text.line_start(pt_line)
-                    }
-                } else if pt_line >= start_line + text_rows {
-                    let down = pt_line - (start_line + text_rows - 1);
-                    if down > text_rows {
-                        bb.text.line_start(pt_line.saturating_sub(text_rows / 2))
-                    } else {
-                        bb.text.line_start(pt_line + 1 - text_rows)
-                    }
                 } else {
-                    start
+                    let target_row = scroll_direction.map(|scrolling_down| {
+                        let aggressive_name = if scrolling_down {
+                            "scroll-up-aggressively"
+                        } else {
+                            "scroll-down-aggressively"
+                        };
+                        let aggressive = match buffer_setting(i, aggressive_name, buf_id) {
+                            Value::Int(value) => Some(value as f64),
+                            Value::Float(value) => Some(*value),
+                            _ => None,
+                        }
+                        .filter(|value| value.is_finite());
+                        automatic_scroll_target_row(
+                            point_row,
+                            scrolling_down,
+                            text_rows,
+                            margin,
+                            scroll_conservatively,
+                            scroll_step,
+                            aggressive,
+                        )
+                    });
+                    target_row.map_or(start, |rows_before| {
+                        display_row_start_before_point(
+                            &bb.text,
+                            bb.begv,
+                            bb.zv,
+                            pt,
+                            rows_before,
+                            wrap_lines,
+                            content_width,
+                            tab_width,
+                            ctl_arrow,
+                        )
+                    })
                 };
                 if wrap_lines && content_width > 0 && !suspend_vs {
                     let new_start_line = bb.text.line_of_pos(new_start);
