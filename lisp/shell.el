@@ -1090,6 +1090,19 @@ solution."
       (setq index (1+ index)))
     pipeline))
 
+;; Remacs: conditional separators make the next command's execution unknown.
+(defun shell-directory-tracker--conditional-separator-p (separator)
+  "Return non-nil if SEPARATOR contains && or ||."
+  (let ((index 0) (length (length separator)) conditional)
+    (while (and (< index (1- length)) (not conditional))
+      (when (or (and (eq (aref separator index) ?&)
+                     (eq (aref separator (1+ index)) ?&))
+                (and (eq (aref separator index) ?|)
+                     (eq (aref separator (1+ index)) ?|)))
+        (setq conditional t))
+      (setq index (1+ index)))
+    conditional))
+
 (defun shell-directory-tracker (str)
   "Tracks cd, pushd and popd commands issued to the shell.
 This function is called on each input passed to the shell.
@@ -1118,7 +1131,7 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 			      (match-end 0)))
 		(case-fold-search)
 		end cmd arg1 cmd-subst-fn separator next-start
-		in-pipeline pipeline-separator)
+		in-pipeline pipeline-separator in-conditional conditional-separator)
 	    (while (string-match shell-command-regexp str start)
 	      (setq end (match-end 0))
 	      (string-match shell-command-separator-regexp str end)
@@ -1126,14 +1139,16 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 		    separator (substring str end next-start)
 		    pipeline-separator
 		    (shell-directory-tracker--pipeline-separator-p separator)
+		    conditional-separator
+		    (shell-directory-tracker--conditional-separator-p separator)
 		    cmd (comint-arguments (substring str start end) 0 0)
 		    arg1 (comint-arguments (substring str start end) 1 1))
 	      (if arg1
 		  (setq arg1 (shell-unquote-argument arg1)))
               (if shell-has-auto-cd
                   (setq cmd-subst-fn (comint-substitute-in-file-name cmd)))
-	      ;; Pipeline stages run in subshells; don't update the parent cwd.
-	      (cond ((or in-pipeline pipeline-separator)
+	      ;; Pipeline stages and conditional commands cannot be tracked safely.
+	      (cond ((or in-pipeline pipeline-separator in-conditional)
 		     nil)
 		    ((string-match (concat "\\`\\(" shell-popd-regexp
 					   "\\)\\($\\|[ \t]\\)")
@@ -1168,6 +1183,7 @@ Environment variables are expanded, see function `substitute-in-file-name'."
                     ((and shell-has-auto-cd (file-directory-p cmd-subst-fn))
 		     (shell-process-cd cmd-subst-fn)))
 	      (setq in-pipeline pipeline-separator
+		    in-conditional conditional-separator
 		    start next-start))))))
 
 (defun shell-unquote-argument (string)
