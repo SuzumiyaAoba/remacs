@@ -162,9 +162,12 @@ and tabs inside it."
 
 (defun mail-unquote-printable-hexdigit (char)
   (setq char (upcase char))
-  (if (>= char ?A)
-      (+ (- char ?A) 10)
-    (- char ?0)))
+  (cond ((and (>= char ?0) (<= char ?9))
+	 (- char ?0))
+	((and (>= char ?A) (<= char ?F))
+	 (+ (- char ?A) 10))
+	(t
+	 (error "Malformed MIME quoted-printable message"))))
 
 ;;;###autoload
 (defun mail-unquote-printable (string &optional wrapper)
