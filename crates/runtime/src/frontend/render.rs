@@ -5739,6 +5739,7 @@ fn render_grid_internal(
         // settings. `start' and `hscroll' are redisplay state, so updating
         // them here is correct.
         let mut point_line_hscroll = None;
+        let mut hide_offscreen_cursor = false;
         let (start, hscroll) = match i.buffers.get(buf_id) {
             Some(b) if text_rows > 0 => {
                 let (suspend_hs, suspend_vs, old_pt, min_hs) = {
@@ -5915,6 +5916,7 @@ fn render_grid_internal(
                     &auto_hscroll_mode,
                     Value::Sym(mode) if i.symbol_name(*mode) == "current-line"
                 );
+                hide_offscreen_cursor = graphical && !wrap_lines && !ahs_on;
                 let new_hscroll = if wrap_lines {
                     0
                 } else if current_line_only {
@@ -6698,10 +6700,15 @@ fn render_grid_internal(
                             .copied()
                             .unwrap_or(rendered.text.len())
                     };
-                    if selected_window {
+                    let point_visible = point_col >= row_hscroll
+                        && point_col.saturating_sub(row_hscroll) < content_width;
+                    let hide_cursor = hide_offscreen_cursor && !point_visible;
+                    if selected_window && !hide_cursor {
                         selected_cursor = Some((y, content_left, col, byte_index));
                     }
-                    if let Some((shape, thickness)) = cursor_style {
+                    if !hide_cursor
+                        && let Some((shape, thickness)) = cursor_style
+                    {
                         let stretch = segment_text.chars().nth(point_index).and_then(|ch| {
                             let ch = ch.unicode().unwrap_or('\u{fffd}');
                             let char_width = if ch == '\t' {
