@@ -4897,9 +4897,9 @@ fn point_property_at_char(
 
 /// GNU's set_point_both applies intangible text and the legacy
 /// point-entered/point-left properties whenever point motion hooks are
-/// enabled. Keep this on the Lisp `goto-char` path so Lisp movement
-/// helpers that deliberately bind `inhibit-point-motion-hooks` to nil
-/// get the same behavior.
+/// enabled. Keep this on primitive point-movement paths so Lisp movement
+/// helpers that deliberately bind `inhibit-point-motion-hooks` to nil get
+/// the same behavior.
 fn goto_char_set_point(
     i: &mut Interp,
     buffer: &Rc<RefCell<Buffer>>,
@@ -5019,20 +5019,21 @@ fn f_goto_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_forward_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = opt_fixnum(i, &arg(&a, 0))?;
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let newp = bb.point() as i128 + n;
-    let tlen = bb.text_len();
+    let (point, begv, tlen) = {
+        let bb = b.borrow();
+        (bb.point(), bb.begv, bb.text_len())
+    };
+    let newp = point as i128 + n;
     if n > 0 && newp > tlen as i128 {
-        bb.set_point(tlen);
+        goto_char_set_point(i, &b, tlen)?;
         return Err(i.signal_data(sym::END_OF_BUFFER, vec![]));
     }
-    if n < 0 && newp < bb.begv as i128 {
-        let bv = bb.begv;
-        bb.set_point(bv);
+    if n < 0 && newp < begv as i128 {
+        goto_char_set_point(i, &b, begv)?;
         return Err(i.signal_data(sym::BEGINNING_OF_BUFFER, vec![]));
     }
-    let np = newp.max(bb.begv as i128) as usize;
-    bb.set_point(np);
+    let np = newp.max(begv as i128) as usize;
+    goto_char_set_point(i, &b, np)?;
     Ok(Value::Nil)
 }
 
