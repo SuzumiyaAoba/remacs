@@ -249,6 +249,69 @@ impl Isearch {
         (format!("{prefix}{}", self.query), failure)
     }
 
+    /// Call a user-supplied `isearch-message-function' with the Lisp-visible
+    /// search state bound for the duration of the callback.
+    pub(super) fn call_message_function(&self, i: &mut Interp) -> bool {
+        let Some(symbol) = i.intern_soft("isearch-message-function") else {
+            return false;
+        };
+        if !i.bound_p(symbol) {
+            return false;
+        }
+        let function = i.symbol_value(symbol);
+        if !function.truthy() {
+            return false;
+        }
+
+        let (match_start, match_end) = self.spans.last().copied().unwrap_or((self.start, self.start));
+        let bindings = [
+            ("isearch-string", Value::string(self.query.clone())),
+            ("isearch-message", Value::string(self.query.clone())),
+            (
+                "isearch-forward",
+                if self.backward { Value::Nil } else { Value::t() },
+            ),
+            (
+                "isearch-regexp",
+                if self.regexp { Value::t() } else { Value::Nil },
+            ),
+            (
+                "isearch-success",
+                if self.failing { Value::Nil } else { Value::t() },
+            ),
+            ("isearch-error", Value::Nil),
+            (
+                "isearch-other-end",
+                Value::Int((if self.backward { match_end } else { match_start }) as i128 + 1),
+            ),
+        ];
+        let mut bound = 0;
+        for (name, value) in bindings {
+            let Some(symbol) = i.intern_soft(name) else {
+                continue;
+            };
+            if !i.bound_p(symbol) {
+                continue;
+            }
+            if let Err(flow) = i.specbind(symbol, value) {
+                let _ = i.unbind(bound);
+                report_flow(i, flow);
+                return true;
+            }
+            bound += 1;
+        }
+        let result = i.apply(&function, Vec::new());
+        let unwind = i.unbind(bound);
+        if let Err(flow) = result {
+            report_flow(i, flow);
+            return true;
+        }
+        if let Err(flow) = unwind {
+            report_flow(i, flow);
+        }
+        true
+    }
+
     /// One `apply' of a Lisp helper; errors are ignored (highlighting
     /// must never break the search itself).
     pub(super) fn call(i: &mut Interp, name: &str, args: Vec<Value>) {
@@ -419,6 +482,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
 ) -> io::Result<()> {
     let mut st = Isearch::new(i, backward, regexp);
     let mut render_needed = true;
+    let mut message_needed = true;
     loop {
         let event_activity = match crate::lisp::eval::threads::yield_now(i).and_then(|ran_thread| {
             crate::lisp::builtins::evalfn::thread_wait_events(i)
@@ -442,20 +506,27 @@ pub(super) fn isearch_loop<T: KeyIo>(
         let render_requested = term.borrow_mut().take_render_request();
         render_needed |= event_activity || window_activity || render_on_idle || render_requested;
         if render_needed {
-            let (label, failure_range) = st.label();
-            let properties = failure_range
-                .map(|(start, end)| {
-                    vec![(
-                        start,
-                        end,
-                        vec![
-                            Value::Sym(i.intern("face")),
-                            Value::Sym(i.intern("isearch-fail")),
-                        ],
-                    )]
-                })
-                .unwrap_or_default();
-            i.set_echo_message_with_properties(EmacsText::from(label.as_str()), properties);
+            let label = if message_needed && !st.call_message_function(i) {
+                let (label, failure_range) = st.label();
+                let properties = failure_range
+                    .map(|(start, end)| {
+                        vec![(
+                            start,
+                            end,
+                            vec![
+                                Value::Sym(i.intern("face")),
+                                Value::Sym(i.intern("isearch-fail")),
+                            ],
+                        )]
+                    })
+                    .unwrap_or_default();
+                i.set_echo_message_with_properties(EmacsText::from(label.as_str()), properties);
+                message_needed = false;
+                label
+            } else {
+                message_needed = false;
+                i.echo_message.to_unicode_lossy()
+            };
             let mut t = term.borrow_mut();
             let _ = t.render(i);
             let _ = t.draw_echo_message_with_state(i, &label);
@@ -468,6 +539,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
             continue;
         };
         let action = st.step(i, key);
+        message_needed = true;
         // Rebuild the isearch/lazy-highlight overlays so the next
         // render paints the matches (GNU: isearch-update →
         // isearch-highlight + lazy-highlight).
