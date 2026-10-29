@@ -369,7 +369,7 @@ impl Interp {
                 // `(car x)' emits Bcar, which never reads
                 // `symbol-function', so advising `car' can't make the
                 // advice machinery's own calls recurse.
-                if self.dumped_call_depth > 0 {
+                if self.current_body_compiled {
                     if let Some(s) = self.byte_op_subr(id) {
                         return self.call_function_len(
                             &Value::Subr(s),
@@ -392,7 +392,7 @@ impl Interp {
                     // against the pre-advice cell.  Strip any advice
                     // trampolines so interpreted nadvice/gv code behaves
                     // like GNU's .elc where `when' is an unadvised `if'.
-                    let fun = if self.dumped_call_depth > 0 {
+                    let fun = if self.current_body_compiled {
                         self.unadvised_base(&fun)
                     } else {
                         fun
