@@ -1565,6 +1565,19 @@ impl Render for EditorView {
                             window,
                             _cx,
                         );
+                        paint_grid_compositions(
+                            &grid,
+                            &lines,
+                            bounds,
+                            cell_width,
+                            line_height,
+                            font_size,
+                            &composition_font,
+                            default_background,
+                            background_alpha,
+                            window,
+                            _cx,
+                        );
                         paint_bottom_dividers(
                             &grid,
                             bounds,
@@ -2449,6 +2462,84 @@ fn paint_vscroll_regions(
                 }
             }
         });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_grid_compositions(
+    grid: &Grid,
+    lines: &[ShapedLine],
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    font_size: Pixels,
+    default_font: &Font,
+    default_background: u32,
+    background_alpha: u8,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for composition in &grid.compositions {
+        let Some(line) = lines.get(composition.row) else {
+            continue;
+        };
+        if composition.components.len() < 2 {
+            continue;
+        }
+        let mut component_font = default_font.clone();
+        if let Some(family) = composition
+            .style
+            .font_family
+            .and_then(|id| grid.font_families.get(id as usize))
+        {
+            component_font.family = family.clone().into();
+        }
+        if let Some(weight) = composition.style.font_weight {
+            component_font.weight = FontWeight(weight as f32);
+        } else if composition.style.bold {
+            component_font = component_font.bold();
+        }
+        if let Some(width) = composition.style.font_width {
+            component_font.stretch = FontStretch::from_percentage(width);
+        }
+        if composition.style.italic {
+            component_font = component_font.italic();
+        }
+        let color = style_colors(composition.style, default_background, background_alpha).0;
+        let x = line.x_for_index(composition.byte_index);
+        let origin = point(
+            bounds.left() + x,
+            bounds.top() + grid_row_top(grid, composition.row, line_height)
+                - px(vscroll_pixels_for_cell(grid, composition.row, composition.column) as f32),
+        );
+        with_vscroll_cell_clip(
+            grid,
+            composition.row,
+            composition.column,
+            bounds,
+            cell_width,
+            line_height,
+            window,
+            |window| {
+                for character in composition.components.iter().skip(1) {
+                    let text = character.to_string();
+                    let component_line = window.text_system().shape_line(
+                        text.clone().into(),
+                        font_size,
+                        &[TextRun {
+                            len: text.len(),
+                            font: component_font.clone(),
+                            color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                        None,
+                    );
+                    let _ = component_line.paint(origin, line_height, window, cx);
+                }
+            },
+        );
     }
 }
 

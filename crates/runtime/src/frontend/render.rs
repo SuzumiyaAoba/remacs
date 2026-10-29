@@ -253,6 +253,17 @@ pub struct GridVScroll {
     pub pixels: usize,
 }
 
+/// A display composition whose additional components are painted together.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridComposition {
+    pub row: usize,
+    pub column: usize,
+    /// UTF-8 byte offset of the base component in `Grid::rows[row]`.
+    pub byte_index: usize,
+    pub components: Vec<char>,
+    pub style: CellStyle,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -382,6 +393,7 @@ pub struct Grid {
     pub bottom_dividers: Vec<GridBottomDivider>,
     pub mode_lines: Vec<GridModeLine>,
     pub vscrolls: Vec<GridVScroll>,
+    pub compositions: Vec<GridComposition>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -478,6 +490,7 @@ impl Grid {
             bottom_dividers: Vec::new(),
             mode_lines: Vec::new(),
             vscrolls: Vec::new(),
+            compositions: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -2145,6 +2158,7 @@ struct RenderedRow {
     visible_columns: usize,
     padding_char_start: usize,
     images: Vec<RenderedImage>,
+    compositions: Vec<RenderedComposition>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -2153,6 +2167,13 @@ struct RenderedImage {
     source: GridImageSource,
     width: Option<usize>,
     height: Option<usize>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderedComposition {
+    column: usize,
+    components: Vec<char>,
+    style: CellStyle,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2166,6 +2187,7 @@ enum Visibility {
 enum DisplayReplacement {
     Text(String),
     GlyphlessText(String, CellStyle),
+    CompositionDefault(usize),
     Image {
         source: GridImageSource,
         width: Option<usize>,
@@ -2543,6 +2565,7 @@ fn render_text_row<F, V, D, B>(
     mut display_at: D,
     mut boundary_strings_at: B,
     include_end_boundary: bool,
+    graphical: bool,
 ) -> RenderedRow
 where
     F: FnMut(usize) -> CellStyle,
@@ -2564,6 +2587,7 @@ where
     let tab_width = tab_width.max(1);
     let mut hidden_run = false;
     let mut images = Vec::new();
+    let mut compositions = Vec::new();
 
     for (index, ch) in chars.iter().enumerate() {
         let mut keep_rendering = true;
@@ -2642,6 +2666,66 @@ where
                     &mut char_attrs,
                     &mut cell_offsets,
                 )
+            }
+            Some(DisplayReplacement::CompositionDefault(source_width)) => {
+                let mut components: Vec<char> = chars
+                    .iter()
+                    .skip(index)
+                    .take(source_width)
+                    .filter_map(|character| character.unicode())
+                    .collect();
+                if components.is_empty() {
+                    components.push(ch.unicode().unwrap_or('\u{fffd}'));
+                }
+                if graphical {
+                    if let Some(base) = components.first().copied() {
+                        let base_column = column;
+                        let keep_rendering = append_rendered_character(
+                            base,
+                            style,
+                            hscroll,
+                            width,
+                            end_column,
+                            tab_width,
+                            &mut column,
+                            &mut visible_columns,
+                            &mut rendered,
+                            &mut cell_attrs,
+                            &mut char_attrs,
+                            &mut cell_offsets,
+                        );
+                        if keep_rendering
+                            && components.len() > 1
+                            && base_column >= hscroll
+                            && base_column < end_column
+                        {
+                            compositions.push(RenderedComposition {
+                                column: base_column.saturating_sub(hscroll),
+                                components,
+                                style,
+                            });
+                        }
+                        keep_rendering
+                    } else {
+                        true
+                    }
+                } else {
+                    let text = components.into_iter().collect::<String>();
+                    append_rendered_text(
+                        &text,
+                        style,
+                        hscroll,
+                        width,
+                        end_column,
+                        tab_width,
+                        &mut column,
+                        &mut visible_columns,
+                        &mut rendered,
+                        &mut cell_attrs,
+                        &mut char_attrs,
+                        &mut cell_offsets,
+                    )
+                }
             }
             Some(DisplayReplacement::Image {
                 source,
@@ -2751,6 +2835,7 @@ where
         visible_columns,
         padding_char_start,
         images,
+        compositions,
     }
 }
 
@@ -2808,6 +2893,9 @@ fn prepend_rendered_prefix(
     row.padding_char_start = row.padding_char_start.saturating_add(prefix_char_count);
     for image in &mut row.images {
         image.column = image.column.saturating_add(prefix_width);
+    }
+    for composition in &mut row.compositions {
+        composition.column = composition.column.saturating_add(prefix_width);
     }
     row
 }
@@ -4139,10 +4227,23 @@ fn composition_display_replacement(value: &Value) -> Option<DisplayReplacement> 
         return None;
     };
     let composition_spec = outer.borrow().car.clone();
-    let Value::Cons(spec) = composition_spec else {
-        return None;
+    let (width, components) = match composition_spec {
+        Value::Int(width) => (usize::try_from(width).ok()?, Value::Nil),
+        Value::Cons(spec) => {
+            let spec = spec.borrow();
+            let Value::Int(width) = &spec.car else {
+                return None;
+            };
+            (usize::try_from(*width).ok()?, spec.cdr.clone())
+        }
+        _ => return None,
     };
-    let components = spec.borrow().cdr.clone();
+    if width == 0 {
+        return None;
+    }
+    if components.is_nil() {
+        return Some(DisplayReplacement::CompositionDefault(width));
+    }
     let mut text = String::new();
     fn append_character(text: &mut String, value: &Value) {
         if let Value::Int(code) = value
@@ -4880,6 +4981,7 @@ fn render_grid_internal(
     let mut default_row_height = 19;
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
+    let mut pending_compositions = Vec::<(usize, usize, Vec<char>, CellStyle)>::new();
     let mut fill_column_indicators = Vec::new();
     let menus = render_menu_bar(i);
     let mut tool_bar_items = Vec::new();
@@ -4924,6 +5026,7 @@ fn render_grid_internal(
                 bottom_dividers,
                 mode_lines,
                 vscrolls,
+                compositions: Vec::new(),
                 attrs,
                 char_attrs,
                 mode_rows,
@@ -5974,6 +6077,7 @@ fn render_grid_internal(
                             .unwrap_or_default()
                     },
                     segment_end == line_len,
+                    graphical,
                 );
                 if prefix_width > 0
                     && let Some(prefix) = line_prefix.as_ref()
@@ -5985,6 +6089,19 @@ fn render_grid_internal(
                         rendered,
                     );
                 }
+                pending_compositions.extend(rendered.compositions.iter().filter_map(
+                    |composition| {
+                        let column = content_left.saturating_add(composition.column);
+                        (column < width).then(|| {
+                            (
+                                y,
+                                column,
+                                composition.components.clone(),
+                                composition.style,
+                            )
+                        })
+                    },
+                ));
                 if let Some(wf) = &wf {
                     for index in 0..segment_len {
                         let Some(text) = help_echo_at(i, wf, segment_pos + index) else {
@@ -6379,7 +6496,20 @@ fn render_grid_internal(
                     || mini_characters
                         .get(range.end)
                         .is_some_and(|character| character.unicode() == Some('\n')),
+                graphical,
             );
+            pending_compositions.extend(rendered.compositions.iter().filter_map(
+                |composition| {
+                    (composition.column < width).then(|| {
+                        (
+                            y,
+                            composition.column,
+                            composition.components.clone(),
+                            composition.style,
+                        )
+                    })
+                },
+            ));
             images.extend(rendered.images.iter().map(|image| GridImage {
                 row: y,
                 column: image.column,
@@ -6421,6 +6551,18 @@ fn render_grid_internal(
     rows = composed_rows;
     attrs = composed_attrs;
     char_attrs = composed_char_attrs;
+    let compositions = pending_compositions
+        .into_iter()
+        .filter_map(|(row, column, components, style)| {
+            Some(GridComposition {
+                row,
+                column,
+                byte_index: *cell_offsets.get(row)?.get(column)?,
+                components,
+                style,
+            })
+        })
+        .collect();
     let cursors = positioned_cursors
         .into_iter()
         .map(|(mut cursor, screen_left)| {
@@ -6463,6 +6605,7 @@ fn render_grid_internal(
         bottom_dividers,
         mode_lines,
         vscrolls,
+        compositions,
         attrs,
         char_attrs,
         mode_rows,
