@@ -322,47 +322,40 @@ fn f_ns_badge(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Err(i.wrong_type_mut("stringp", &a[0]));
         }
     }
-    let Some(o) = objc() else {
-        return Err(i.error("Window system is not in use or not initialized"));
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
+    }
+    let Some(backend) = i.application_visibility_backend.clone() else {
+        return Err(winsys(i));
     };
-    with_pool(o, |o| unsafe {
-        let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
-        let label = match &a[0] {
-            Value::Str(s) => ns_str(o, &(s.borrow()).to_unicode_lossy()),
-            _ => 0,
-        };
-        (o.void1)(dock, sel(o, "setBadgeLabel:"), label);
-    });
+    let badge = match &a[0] {
+        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+    backend
+        .set_dock_badge(badge.as_deref())
+        .map_err(|message| i.error(message))?;
     Ok(Value::Nil)
 }
 
-static ATTENTION_ID: std::sync::Mutex<i64> = std::sync::Mutex::new(-1);
-
 fn f_ns_request_user_attention(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let Some(o) = objc() else {
-        return Err(i.error("Window system is not in use or not initialized"));
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
     };
-    let (is_sym, name) = match &a[0] {
-        Value::Sym(s) => (true, i.symbol_name(*s).to_string()),
-        _ => (false, String::new()),
+    let Some(backend) = i.application_visibility_backend.clone() else {
+        return Err(winsys(i));
     };
-    with_pool(o, |o| unsafe {
-        let app = ns_app(o);
-        let mut guard = ATTENTION_ID.lock().unwrap();
-        if *guard != -1 {
-            (o.void1)(app, sel(o, "cancelUserAttentionRequest:"), *guard as usize);
-            *guard = -1;
-        }
-        if is_sym {
-            let kind: i64 = match name.as_str() {
-                // NSCriticalRequest = 0, NSInformationalRequest = 10.
-                "critical" => 0,
-                "informational" => 10,
-                _ => return,
-            };
-            *guard = (o.int1)(app, sel(o, "requestUserAttention:"), kind as usize);
-        }
-    });
+    let urgency = match &a[0] {
+        Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+            "critical" => Some(crate::frontend::UserAttentionUrgency::Critical),
+            "informational" => Some(crate::frontend::UserAttentionUrgency::Informational),
+            _ => None,
+        },
+        _ => None,
+    };
+    backend
+        .request_user_attention(urgency)
+        .map_err(|message| i.error(message))?;
     Ok(Value::Nil)
 }
 
@@ -435,85 +428,20 @@ fn f_ns_unblock_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     }
 }
 
-fn f_ns_progress_indicator(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let Some(o) = objc() else {
+fn f_ns_progress_indicator(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !ns_window_system_in_use(i) {
+        return Ok(Value::Nil);
+    }
+    let progress = match &a[0] {
+        Value::Float(value) if (0.0..=1.0).contains(&**value) => Some(**value),
+        _ => None,
+    };
+    let Some(backend) = i.application_visibility_backend.clone() else {
         return Ok(Value::Nil);
     };
-    with_pool(o, |o| unsafe {
-        let dock = (o.id0)(ns_app(o), sel(o, "dockTile"));
-        if dock == 0 {
-            return;
-        }
-        let content = (o.id0)(dock, sel(o, "contentView"));
-        let mut indicator = 0usize;
-        if content != 0 {
-            let subs = (o.id0)(content, sel(o, "subviews"));
-            let n = (o.int0)(subs, sel(o, "count"));
-            if n > 0 {
-                let last = (o.id0)(subs, sel(o, "lastObject"));
-                let lcls = (o.id0)(last, sel(o, "class"));
-                let lname = utf8(o, (o.id0)(lcls, sel(o, "description")));
-                if lname == "NSLevelIndicator" {
-                    indicator = last;
-                }
-            }
-        }
-        if indicator == 0 {
-            let mut cv = content;
-            if cv == 0 {
-                let iv = (o.id0)(
-                    (o.id0)(cls(o, "NSImageView"), sel(o, "alloc")),
-                    sel(o, "init"),
-                );
-                let icon = (o.id0)(ns_app(o), sel(o, "applicationIconImage"));
-                (o.void1)(iv, sel(o, "setImage:"), icon);
-                (o.void1)(dock, sel(o, "setContentView:"), iv);
-                cv = iv;
-            }
-            let size = (o.size0)(
-                (o.id0)(ns_app(o), sel(o, "applicationIconImage")),
-                sel(o, "size"),
-            );
-            let li_cls = cls(o, "NSLevelIndicator");
-            let li = (o.rect1)(
-                (o.id0)(li_cls, sel(o, "alloc")),
-                sel(o, "initWithFrame:"),
-                NsRect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: size.width,
-                    h: 0.10 * size.height,
-                },
-            );
-            (o.void1)(li, sel(o, "setWantsLayer:"), 1usize);
-            (o.void1)(li, sel(o, "setEnabled:"), 0usize);
-            // NSLevelIndicatorStyleContinuousCapacity = 1.
-            (o.void1)(li, sel(o, "setLevelIndicatorStyle:"), 1usize);
-            let accent = (o.id0)(cls(o, "NSColor"), sel(o, "controlAccentColor"));
-            (o.void1)(li, sel(o, "setFillColor:"), accent);
-            (o.dbl1)(li, sel(o, "setMinValue:"), 0.0);
-            (o.dbl1)(li, sel(o, "setMaxValue:"), 1.0);
-            (o.void1)(cv, sel(o, "addSubview:"), li);
-            indicator = li;
-        }
-        let hide = match &a[0] {
-            Value::Nil => true,
-            Value::Float(f) => !(0.0..=1.0).contains(&**f),
-            _ => true,
-        };
-        let v = match &a[0] {
-            Value::Float(f) => **f,
-            _ => 0.0,
-        };
-        if hide {
-            (o.dbl1)(indicator, sel(o, "setDoubleValue:"), 0.0);
-            (o.void1)(indicator, sel(o, "setHidden:"), 1usize);
-        } else {
-            (o.dbl1)(indicator, sel(o, "setDoubleValue:"), v);
-            (o.void1)(indicator, sel(o, "setHidden:"), 0usize);
-        }
-        (o.void0)(dock, sel(o, "display"));
-    });
+    backend
+        .set_dock_progress(progress)
+        .map_err(|message| i.error(message))?;
     Ok(Value::Nil)
 }
 

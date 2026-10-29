@@ -12,7 +12,7 @@ use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString, NSStringPboardType};
 #[cfg(target_os = "macos")]
 use cocoa::base::{NO, id, nil};
 #[cfg(target_os = "macos")]
-use cocoa::foundation::{NSArray, NSInteger, NSString};
+use cocoa::foundation::{NSArray, NSInteger, NSPoint, NSRect, NSSize, NSString};
 #[cfg(target_os = "macos")]
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {
@@ -33,8 +33,6 @@ mod view;
 use logic::{ClipboardRequest, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames};
 use view::{EditorView, build_managed_editor_view};
 
-/// Launch the gpui front-end. `files` are visited via `find-file`
-/// once the evaluator boots on the logic thread.
 #[cfg(target_os = "macos")]
 fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String>, String> {
     use std::ffi::CStr;
@@ -95,6 +93,118 @@ fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String
     }
     let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
     Ok(String::from_utf8(bytes.to_vec()).ok())
+}
+
+/// Launch the gpui front-end. `files` are visited via `find-file`
+/// once the evaluator boots on the logic thread.
+#[cfg(target_os = "macos")]
+static DOCK_ATTENTION_REQUEST_ID: Mutex<NSInteger> = Mutex::new(-1);
+
+#[cfg(target_os = "macos")]
+fn set_dock_badge(badge: Option<&str>) -> Result<(), String> {
+    let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
+    let dock: id = unsafe { msg_send![app, dockTile] };
+    if dock == nil {
+        return Ok(());
+    }
+    let badge: id = badge.map_or(nil, |badge| unsafe {
+        msg_send![NSString::alloc(nil).init_str(badge), autorelease]
+    });
+    unsafe {
+        let _: () = msg_send![dock, setBadgeLabel: badge];
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn set_dock_progress(progress: Option<f64>) -> Result<(), String> {
+    let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
+    let dock: id = unsafe { msg_send![app, dockTile] };
+    if dock == nil {
+        return Ok(());
+    }
+    let content: id = unsafe { msg_send![dock, contentView] };
+    let mut indicator: id = nil;
+    if content != nil {
+        let subviews: id = unsafe { msg_send![content, subviews] };
+        let count: usize = unsafe { msg_send![subviews, count] };
+        if count > 0 {
+            let last: id = unsafe { msg_send![subviews, lastObject] };
+            let is_indicator: BOOL =
+                unsafe { msg_send![last, isKindOfClass: class!(NSLevelIndicator)] };
+            if is_indicator == YES {
+                indicator = last;
+            }
+        }
+    }
+    let content: id = if content == nil {
+        let image_view: id = unsafe { msg_send![class!(NSImageView), alloc] };
+        let image_view: id = unsafe { msg_send![image_view, init] };
+        let icon: id = unsafe { msg_send![app, applicationIconImage] };
+        unsafe {
+            let _: () = msg_send![image_view, setImage: icon];
+            let _: () = msg_send![dock, setContentView: image_view];
+            let _: id = msg_send![image_view, autorelease];
+        }
+        image_view
+    } else {
+        content
+    };
+    if indicator == nil {
+        let icon: id = unsafe { msg_send![app, applicationIconImage] };
+        let size: NSSize = unsafe { msg_send![icon, size] };
+        let frame = NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(size.width, 0.10 * size.height),
+        );
+        let allocated: id = unsafe { msg_send![class!(NSLevelIndicator), alloc] };
+        indicator = unsafe { msg_send![allocated, initWithFrame: frame] };
+        unsafe {
+            let _: () = msg_send![indicator, setWantsLayer: YES];
+            let _: () = msg_send![indicator, setEnabled: NO];
+            let _: () = msg_send![indicator, setLevelIndicatorStyle: 1usize];
+            let accent: id = msg_send![class!(NSColor), controlAccentColor];
+            let _: () = msg_send![indicator, setFillColor: accent];
+            let _: () = msg_send![indicator, setMinValue: 0.0_f64];
+            let _: () = msg_send![indicator, setMaxValue: 1.0_f64];
+            let _: () = msg_send![content, addSubview: indicator];
+            let _: id = msg_send![indicator, autorelease];
+        }
+    }
+    let value = progress.filter(|value| value.is_finite() && (0.0..=1.0).contains(value));
+    unsafe {
+        let _: () = msg_send![indicator, setDoubleValue: value.unwrap_or(0.0)];
+        let _: () = msg_send![indicator, setHidden: if value.is_some() { NO } else { YES }];
+        let _: () = msg_send![dock, display];
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn request_dock_user_attention(
+    urgency: Option<remacs_runtime::frontend::UserAttentionUrgency>,
+) -> Result<(), String> {
+    let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
+    if app == nil {
+        return Ok(());
+    }
+    let mut request = DOCK_ATTENTION_REQUEST_ID
+        .lock()
+        .map_err(|_| "Unable to access Dock attention state".to_owned())?;
+    if *request != -1 {
+        unsafe {
+            let _: () = msg_send![app, cancelUserAttentionRequest: *request];
+        }
+        *request = -1;
+    }
+    if let Some(urgency) = urgency {
+        let kind = match urgency {
+            remacs_runtime::frontend::UserAttentionUrgency::Critical => 0,
+            remacs_runtime::frontend::UserAttentionUrgency::Informational => 10,
+        };
+        *request = unsafe { msg_send![app, requestUserAttention: kind] };
+    }
+    Ok(())
 }
 
 pub fn run_gui(files: &[String]) -> io::Result<()> {
@@ -678,6 +788,30 @@ pub fn run_gui_with_dump(
                     } => {
                         let result = cx
                             .update(|_app| perform_ns_service(&service, send.as_deref()))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
+                    }
+                    #[cfg(target_os = "macos")]
+                    GuiRequest::DockBadge { badge, reply } => {
+                        let result = cx
+                            .update(|_app| set_dock_badge(badge.as_deref()))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
+                    }
+                    #[cfg(target_os = "macos")]
+                    GuiRequest::DockProgress { progress, reply } => {
+                        let result = cx
+                            .update(|_app| set_dock_progress(progress))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
+                    }
+                    #[cfg(target_os = "macos")]
+                    GuiRequest::UserAttention { urgency, reply } => {
+                        let result = cx
+                            .update(|_app| request_dock_user_attention(urgency))
                             .map_err(|error| error.to_string())
                             .and_then(|result| result);
                         let _ = reply.send(result);

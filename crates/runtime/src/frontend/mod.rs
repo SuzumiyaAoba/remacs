@@ -108,6 +108,15 @@ pub trait ApplicationVisibilityBackend {
     fn hide(&self) -> Result<(), String>;
     fn activate(&self) -> Result<(), String>;
     fn hide_other_apps(&self) -> Result<(), String>;
+    fn set_dock_badge(&self, badge: Option<&str>) -> Result<(), String>;
+    fn set_dock_progress(&self, progress: Option<f64>) -> Result<(), String>;
+    fn request_user_attention(&self, urgency: Option<UserAttentionUrgency>) -> Result<(), String>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserAttentionUrgency {
+    Informational,
+    Critical,
 }
 
 /// Result of executing an AppleScript from a native GUI front-end.

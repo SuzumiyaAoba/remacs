@@ -260,6 +260,21 @@ pub(super) enum GuiRequest {
         send: Option<String>,
         reply: SyncSender<Result<Option<String>, String>>,
     },
+    #[cfg(target_os = "macos")]
+    DockBadge {
+        badge: Option<String>,
+        reply: SyncSender<Result<(), String>>,
+    },
+    #[cfg(target_os = "macos")]
+    DockProgress {
+        progress: Option<f64>,
+        reply: SyncSender<Result<(), String>>,
+    },
+    #[cfg(target_os = "macos")]
+    UserAttention {
+        urgency: Option<remacs_runtime::frontend::UserAttentionUrgency>,
+        reply: SyncSender<Result<(), String>>,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -553,6 +568,63 @@ impl remacs_runtime::frontend::ApplicationVisibilityBackend
         response
             .recv()
             .map_err(|_| "GUI application service stopped".to_owned())?
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_dock_badge(&self, badge: Option<&str>) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::DockBadge {
+                badge: badge.map(str::to_owned),
+                reply,
+            })
+            .map_err(|_| "GUI Dock service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI Dock service stopped".to_owned())?
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn set_dock_badge(&self, _badge: Option<&str>) -> Result<(), String> {
+        Err("macOS Dock support is unavailable".to_owned())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_dock_progress(&self, progress: Option<f64>) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::DockProgress { progress, reply })
+            .map_err(|_| "GUI Dock service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI Dock service stopped".to_owned())?
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn set_dock_progress(&self, _progress: Option<f64>) -> Result<(), String> {
+        Err("macOS Dock support is unavailable".to_owned())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn request_user_attention(
+        &self,
+        urgency: Option<remacs_runtime::frontend::UserAttentionUrgency>,
+    ) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::UserAttention { urgency, reply })
+            .map_err(|_| "GUI Dock service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI Dock service stopped".to_owned())?
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn request_user_attention(
+        &self,
+        _urgency: Option<remacs_runtime::frontend::UserAttentionUrgency>,
+    ) -> Result<(), String> {
+        Err("macOS Dock support is unavailable".to_owned())
     }
 }
 
