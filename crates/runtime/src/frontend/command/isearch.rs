@@ -39,6 +39,8 @@ pub(super) struct Isearch {
     cx_prefix: bool,
     cx8_prefix: bool,
     cx8_emoji_prefix: bool,
+    prefix_argument: Option<i128>,
+    prefix_digits: bool,
     meta_s_prefix: bool,
     meta_s_h_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -602,6 +604,8 @@ impl Isearch {
             cx_prefix: false,
             cx8_prefix: false,
             cx8_emoji_prefix: false,
+            prefix_argument: None,
+            prefix_digits: false,
             meta_s_prefix: false,
             meta_s_h_prefix: false,
             match_ov: None,
@@ -965,6 +969,54 @@ impl Isearch {
         }
     }
 
+    fn repeat_searches(
+        &mut self,
+        i: &mut Interp,
+        backward: bool,
+        mut from: usize,
+        mut count: usize,
+        failure_start: usize,
+        case_fold_search: bool,
+    ) {
+        if self.query.is_empty() {
+            return;
+        }
+        while count > 0 {
+            match isearch_search(
+                i,
+                &self.query,
+                backward,
+                self.regexp,
+                self.word_search,
+                self.char_fold,
+                self.symbol_search,
+                self.lax_whitespace_enabled(),
+                from,
+                case_fold_search,
+                self.invisible.truthy(),
+            ) {
+                Some((position, beg, end)) => {
+                    self.positions.push(position);
+                    self.spans.push((beg, end));
+                    self.failing = false;
+                    self.fail_pos = None;
+                    self.go_to(i, position);
+                    count -= 1;
+                    from = if backward {
+                        position.saturating_sub(1)
+                    } else {
+                        position.saturating_add(1)
+                    };
+                }
+                None => {
+                    self.failing = true;
+                    self.fail_pos = Some(failure_start);
+                    break;
+                }
+            }
+        }
+    }
+
     fn regexp_for_query(&self, i: &mut Interp) -> Option<String> {
         let (pattern, regexp) = isearch_search_pattern(
             i,
@@ -1254,6 +1306,32 @@ impl Isearch {
             }
             return IsearchAction::ReDispatch(key);
         }
+        let isearch_allow_prefix = i
+            .intern_soft("isearch-allow-prefix")
+            .map(|symbol| !i.bound_p(symbol) || i.symbol_value(symbol).truthy())
+            .unwrap_or(true);
+        if isearch_allow_prefix && (key == 21 || key == (CHAR_CTL | 'u' as i128)) {
+            self.prefix_argument = Some(
+                self.prefix_argument
+                    .map(|argument| argument.saturating_mul(4))
+                    .unwrap_or(4),
+            );
+            self.prefix_digits = false;
+            return IsearchAction::Continue;
+        }
+        if isearch_allow_prefix
+            && let Some(argument) = self.prefix_argument
+            && (48..=57).contains(&key)
+        {
+            let digit = key - 48;
+            self.prefix_argument = Some(if self.prefix_digits {
+                argument.saturating_mul(10).saturating_add(digit)
+            } else {
+                digit
+            });
+            self.prefix_digits = true;
+            return IsearchAction::Continue;
+        }
         match key {
             // C-g: undo a failing search back to the last successful state;
             // abort only when the search is currently successful.
@@ -1310,9 +1388,23 @@ impl Isearch {
                 || c == (CHAR_META | CHAR_CTL | 's' as i128)
                 || c == (CHAR_META | CHAR_CTL | 'r' as i128) =>
             {
-                let back = c == 18
+                let key_back = c == 18
                     || c == (CHAR_META | 18)
                     || c == (CHAR_META | CHAR_CTL | 'r' as i128);
+                let prefix_argument = self.prefix_argument.take().unwrap_or(1);
+                self.prefix_digits = false;
+                if prefix_argument == 0 {
+                    return IsearchAction::Continue;
+                }
+                let back = if prefix_argument < 0 {
+                    !key_back
+                } else {
+                    key_back
+                };
+                let repeat_count = usize::try_from(
+                    prefix_argument.checked_abs().unwrap_or(i128::MAX),
+                )
+                .unwrap_or(usize::MAX);
                 let same_direction = back == self.backward;
                 let repeat_on_direction_change = i
                     .intern_soft("isearch-repeat-on-direction-change")
@@ -1327,11 +1419,30 @@ impl Isearch {
                     self.failing = false;
                     self.fail_pos = None;
                     self.go_to(i, point);
+                    if repeat_count > 1 {
+                        let case_fold_search = self.case_fold_for_search(i);
+                        let from = if back {
+                            point.saturating_sub(1)
+                        } else {
+                            point.saturating_add(1)
+                        };
+                        self.repeat_searches(
+                            i,
+                            back,
+                            from,
+                            repeat_count - 1,
+                            0,
+                            case_fold_search,
+                        );
+                    }
                     return IsearchAction::Continue;
                 }
                 let reused_previous = self.query.is_empty()
                     && same_direction
                     && self.use_previous_search(i);
+                if self.query.is_empty() {
+                    return IsearchAction::Continue;
+                }
                 self.save_history();
                 self.backward = back;
                 let wrap_enabled = i
@@ -1364,31 +1475,14 @@ impl Isearch {
                 };
                 let failure_start = self.fail_pos.unwrap_or(0);
                 let case_fold_search = self.case_fold_for_search(i);
-                match isearch_search(
+                self.repeat_searches(
                     i,
-                    &self.query,
                     back,
-                    self.regexp,
-                    self.word_search,
-                    self.char_fold,
-                    self.symbol_search,
-                    self.lax_whitespace_enabled(),
                     from,
+                    repeat_count,
+                    failure_start,
                     case_fold_search,
-                    self.invisible.truthy(),
-                ) {
-                    Some((p, b, e)) => {
-                        self.positions.push(p);
-                        self.spans.push((b, e));
-                        self.failing = false;
-                        self.fail_pos = None;
-                        self.go_to(i, p);
-                    }
-                    None => {
-                        self.failing = true;
-                        self.fail_pos = Some(failure_start);
-                    }
-                }
+                );
                 IsearchAction::Continue
             }
             // DEL: unwind one step of the search.
