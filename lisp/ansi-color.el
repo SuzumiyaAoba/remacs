@@ -284,7 +284,7 @@ control sequences differently), use `ansi-color-normal-colors-vector'."
    ansi-color-double-underline]
   "Faces used for SGR control sequences determining a face.
 This vector holds the faces used for SGR control sequence parameters 0
-to 7, plus a slot for SGR 21 double underline.")
+to 7, plus a slot for SGR 21 double underline.
 
 Parameter  Description
   0        default
