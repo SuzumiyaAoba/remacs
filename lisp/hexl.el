@@ -851,7 +851,7 @@ to produce the command line options to pass to the hexl command."
               ;; The C filter pads the hex column to 16 bytes.
               (push (unibyte-string ?\s ?\s) hex))
             (when (= (% (1+ index) group-size) 0)
-              (push (unibyte-string ?\s) hex)))
+              (push (unibyte-string ?\s) hex))))
         (push (concat (apply #'concat (nreverse hex))
                       (apply #'concat (nreverse ascii))
                       (unibyte-string ?\n))
