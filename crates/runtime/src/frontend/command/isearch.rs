@@ -674,6 +674,47 @@ impl Isearch {
         }
     }
 
+    fn search_buffer_boundary(&mut self, i: &mut Interp, last: bool) {
+        if self.query.is_empty() {
+            return;
+        }
+        self.save_history();
+        let (begv, end) = i
+            .current_buffer_ref()
+            .map(|buffer| {
+                let buffer = buffer.borrow();
+                (buffer.begv, buffer.text_len())
+            })
+            .unwrap_or((self.start, self.start));
+        let case_fold_search = self.case_fold_for_search(i);
+        let hit = isearch_search(
+            i,
+            &self.query,
+            last,
+            self.regexp,
+            self.word_search,
+            self.char_fold,
+            self.symbol_search,
+            self.lax_whitespace_enabled(),
+            if last { end } else { begv },
+            case_fold_search,
+            self.invisible.truthy(),
+        );
+        match hit {
+            Some((position, beg, end)) => {
+                self.positions.push(position);
+                self.spans.push((beg, end));
+                self.failing = false;
+                self.fail_pos = None;
+                self.go_to(i, position);
+            }
+            None => {
+                self.failing = true;
+                self.fail_pos = Some(0);
+            }
+        }
+    }
+
     fn lax_whitespace_enabled(&self) -> bool {
         if self.regexp {
             self.regexp_lax_whitespace
@@ -800,6 +841,14 @@ impl Isearch {
                 }
                 c if c == ' ' as i128 => {
                     self.toggle_lax_whitespace(i);
+                    return IsearchAction::Continue;
+                }
+                c if c == (CHAR_META | '<' as i128) => {
+                    self.search_buffer_boundary(i, false);
+                    return IsearchAction::Continue;
+                }
+                c if c == (CHAR_META | '>' as i128) => {
+                    self.search_buffer_boundary(i, true);
                     return IsearchAction::Continue;
                 }
                 7 => return self.step(i, key),
