@@ -840,10 +840,34 @@ fn f_remove_variable_watcher(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
     }
     Ok(Value::Nil)
 }
+
+fn check_function_alias_cycle(i: &mut Interp, id: SymId, definition: &Value) -> Result<(), Flow> {
+    let Value::Sym(start) = definition else {
+        return Ok(());
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut cur = *start;
+    loop {
+        if cur == id {
+            let signal = i.q("cyclic-function-indirection");
+            return Err(i.signal_data(signal, vec![Value::Sym(id)]));
+        }
+        if !seen.insert(cur) {
+            break;
+        }
+        match i.symbol_function(cur) {
+            Value::Sym(next) if next != sym::UNBOUND => cur = next,
+            _ => break,
+        }
+    }
+    Ok(())
+}
+
 fn f_fset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     i.check_function_assignment(id, &args[1])?;
     let def = normalize_fn_def(i, args[1].clone());
+    check_function_alias_cycle(i, id, &def)?;
     // GNU's fset writes the cell raw — an advice chain on SYM is
     // discarded entirely (only `defalias' substitutes the base).
     i.advices.retain(|(s, _)| *s != id);
@@ -857,24 +881,7 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     // GNU's `Fdefalias' chases the alias chain before installing: a
     // definition that resolves back to SYMBOL signals
     // `cyclic-function-indirection' with the symbol, at defalias time.
-    if let Value::Sym(start) = &def {
-        let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
-        let mut cur = *start;
-        loop {
-            if cur == id || !seen.insert(cur) {
-                if cur == id {
-                    let sig = i.q("cyclic-function-indirection");
-                    return Err(i.signal_data(sig, vec![Value::Sym(id)]));
-                }
-                break;
-            }
-            match i.symbol_function(cur) {
-                Value::Sym(next) if next == sym::UNBOUND => break,
-                Value::Sym(next) => cur = next,
-                _ => break,
-            }
-        }
-    }
+    check_function_alias_cycle(i, id, &def)?;
     // GNU data.c `defalias' LOADHIST_ATTACHes `(defun . SYM)' when the
     // definition is installed — source `defun'/`defmacro' forms and
     // `.elc' defalias calls alike (an `(autoload ...)' cell counts too).

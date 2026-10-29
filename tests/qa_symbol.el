@@ -261,6 +261,14 @@
 (qa-err-data (autoload nil 123) 'wrong-type-argument '(stringp 123))
 (qa-err-data (autoload 123 123) 'wrong-type-argument '(symbolp 123))
 (qa-err-data (fset 123 nil) 'wrong-type-argument '(symbolp 123))
+;; `fset' must reject a function alias cycle before changing the cell.
+(let ((qasy-fset-cycle-a (make-symbol "qasy-fset-cycle-a"))
+      (qasy-fset-cycle-b (make-symbol "qasy-fset-cycle-b")))
+  (fset qasy-fset-cycle-a qasy-fset-cycle-b)
+  (qa-err-data (fset qasy-fset-cycle-b qasy-fset-cycle-a)
+               'cyclic-function-indirection (list qasy-fset-cycle-b))
+  (qa (symbol-function qasy-fset-cycle-b) nil)
+  (qa (indirect-function qasy-fset-cycle-a) nil))
 ;; Existing defun validation and the shared defalias path stay protected.
 (unwind-protect
     (progn
