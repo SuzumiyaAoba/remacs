@@ -4725,6 +4725,7 @@ dependencies = [
  "remacs-runtime",
  "smol",
  "unicode-width",
+ "xcb",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@ use gpui::*;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 mod accessibility;
@@ -25,6 +25,17 @@ unsafe extern "C" {
 #[link(name = "user32")]
 unsafe extern "system" {
     fn MessageBeep(u_type: u32) -> i32;
+    fn GetWindowLongW(hwnd: *mut std::ffi::c_void, index: i32) -> i32;
+    fn SetWindowLongW(hwnd: *mut std::ffi::c_void, index: i32, value: i32) -> i32;
+    fn SetWindowPos(
+        hwnd: *mut std::ffi::c_void,
+        insert_after: *mut std::ffi::c_void,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        flags: u32,
+    ) -> i32;
 }
 #[cfg(target_os = "macos")]
 use objc::{
@@ -48,6 +59,8 @@ use view::{EditorView, build_managed_editor_view};
 static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
 #[cfg(target_os = "macos")]
 static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
+#[cfg(target_os = "windows")]
+static ORIGINAL_WINDOW_EX_STYLES: OnceLock<Mutex<HashMap<isize, i32>>> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 #[link(name = "objc", kind = "dylib")]
@@ -377,6 +390,7 @@ pub fn run_gui_with_dump(
         .map(|frame| !frame.no_focus_on_map && !frame.no_accept_focus)
         .unwrap_or(true);
     let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
+    let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -443,6 +457,7 @@ pub fn run_gui_with_dump(
             },
             |window, cx| {
                 set_native_no_accept_focus(window, initial_no_accept_focus);
+                update_native_skip_taskbar(window, initial_skip_taskbar);
                 if initial_focus_on_map {
                     cx.activate(false);
                 }
@@ -474,6 +489,7 @@ pub fn run_gui_with_dump(
             let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
+            let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -507,6 +523,10 @@ pub fn run_gui_with_dump(
                             let no_accept_focus = snapshot.no_accept_focus;
                             let focus_on_map = !snapshot.no_focus_on_map && !no_accept_focus;
                             frame_focus_on_map.insert(frame_id, focus_on_map);
+                            let skip_taskbar = snapshot.skip_taskbar;
+                            let skip_taskbar_changed =
+                                frame_skip_taskbar.get(&frame_id) != Some(&skip_taskbar);
+                            frame_skip_taskbar.insert(frame_id, skip_taskbar);
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -540,6 +560,9 @@ pub fn run_gui_with_dump(
                                 let requested_behavior = behavior.clone();
                                 let requested_represented_file = represented_file.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
+                                    if skip_taskbar_changed {
+                                        update_native_skip_taskbar(window, skip_taskbar);
+                                    }
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
                                     let internal_border_changed =
@@ -710,6 +733,7 @@ pub fn run_gui_with_dump(
                             let event_tx = event_tx.clone();
                             let handle = match cx.open_window(options, move |window, app| {
                                 set_native_no_accept_focus(window, no_accept_focus);
+                                update_native_skip_taskbar(window, skip_taskbar);
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
@@ -770,12 +794,14 @@ pub fn run_gui_with_dump(
                         for frame_id in removed {
                             if let Some(handle) = windows.remove(&frame_id) {
                                 let _ = handle.update(cx, |_view, window, _cx| {
+                                    update_native_skip_taskbar(window, false);
                                     window.remove_window();
                                 });
                             }
                             window_modes.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
                             frame_focus_on_map.remove(&frame_id);
+                            frame_skip_taskbar.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -1579,6 +1605,143 @@ fn set_native_no_accept_focus(window: &Window, no_accept_focus: bool) {
 
 #[cfg(not(target_os = "macos"))]
 fn set_native_no_accept_focus(_window: &Window, _no_accept_focus: bool) {}
+
+fn update_native_skip_taskbar(window: &Window, skip_taskbar: bool) {
+    if let Err(error) = set_native_skip_taskbar(window, skip_taskbar) {
+        eprintln!("remacs: failed to set skip-taskbar: {error}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
+    use raw_window_handle::RawWindowHandle;
+
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOOLWINDOW: i32 = 0x0000_0080;
+    const WS_EX_APPWINDOW: i32 = 0x0004_0000;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+        .map_err(|error| error.to_string())?;
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return Ok(());
+    };
+    let hwnd = handle.hwnd.get() as *mut std::ffi::c_void;
+    let hwnd_id = handle.hwnd.get();
+    let current = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
+    let target = {
+        let mut styles = ORIGINAL_WINDOW_EX_STYLES
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+        if skip_taskbar {
+            let original = *styles.entry(hwnd_id).or_insert(current);
+            (original | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW
+        } else {
+            styles.remove(&hwnd_id).unwrap_or(current)
+        }
+    };
+    if target != current {
+        unsafe {
+            SetWindowLongW(hwnd, GWL_EXSTYLE, target);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
+    use raw_window_handle::{
+        HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
+    };
+    use xcb::{Connection, Xid, x};
+
+    let display = window
+        .display_handle()
+        .map_err(|error| error.to_string())?;
+    let RawDisplayHandle::Xcb(display) = display.as_raw() else {
+        // Wayland does not provide a client request for taskbar visibility.
+        return Ok(());
+    };
+    let Some(raw_connection) = display.connection else {
+        return Ok(());
+    };
+    let handle = window
+        .window_handle()
+        .map_err(|error| error.to_string())?;
+    let RawWindowHandle::Xcb(handle) = handle.as_raw() else {
+        return Ok(());
+    };
+    let connection = unsafe {
+        Connection::from_raw_conn_and_extensions_no_drop(
+            raw_connection.as_ptr().cast(),
+            &[],
+            &[],
+        )
+    };
+    let screen_index = usize::try_from(display.screen)
+        .map_err(|_| "invalid X11 screen number".to_owned())?;
+    let root = connection
+        .get_setup()
+        .roots()
+        .nth(screen_index)
+        .ok_or_else(|| "X11 screen is unavailable".to_owned())?
+        .root();
+    let intern_atom = |name: &'static [u8]| -> Result<x::Atom, String> {
+        let cookie = connection.send_request(&x::InternAtom {
+            only_if_exists: false,
+            name,
+        });
+        connection
+            .wait_for_reply(cookie)
+            .map(|reply| reply.atom())
+            .map_err(|error| error.to_string())
+    };
+    let net_wm_state = intern_atom(b"_NET_WM_STATE")?;
+    let skip_taskbar_atom = intern_atom(b"_NET_WM_STATE_SKIP_TASKBAR")?;
+    let skip_pager_atom = intern_atom(b"_NET_WM_STATE_SKIP_PAGER")?;
+    let data = x::ClientMessageData::Data32([
+        if skip_taskbar { 1 } else { 0 },
+        skip_taskbar_atom.resource_id(),
+        skip_pager_atom.resource_id(),
+        1,
+        0,
+    ]);
+    let event = x::ClientMessageEvent::new(
+        x::Window::new(handle.window.get()),
+        net_wm_state,
+        data,
+    );
+    let cookie = connection.send_request_checked(&x::SendEvent {
+        propagate: false,
+        destination: x::SendEventDest::Window(root),
+        event_mask: x::EventMask::SUBSTRUCTURE_REDIRECT | x::EventMask::SUBSTRUCTURE_NOTIFY,
+        event: &event,
+    });
+    connection
+        .check_request(cookie)
+        .map_err(|error| error.to_string())?;
+    connection.flush().map_err(|error| error.to_string())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn set_native_skip_taskbar(_window: &Window, _skip_taskbar: bool) -> Result<(), String> {
+    // macOS has a per-application Dock item rather than a per-window taskbar item.
+    Ok(())
+}
 
 #[cfg(target_os = "macos")]
 fn appkit_native_window(window: &Window) -> Option<id> {
