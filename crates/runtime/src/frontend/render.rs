@@ -3095,6 +3095,11 @@ impl FaceCtx {
                     }
                 }
                 ":family" => mix.font_family = self.font_family_id(v),
+                ":font" => {
+                    if let Value::Str(_) = v {
+                        mix.font_family = self.font_family_id(v);
+                    }
+                }
                 ":weight" => {
                     let weight = font_weight_value(i, v);
                     mix.font_weight = Some(weight);

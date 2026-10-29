@@ -202,7 +202,7 @@ use faces::{
     f_display_color_cells, f_face_attributes_as_vector, f_face_documentation, f_face_font,
     f_face_name, f_font_at, f_font_face_attributes, f_font_has_char_p, f_font_info, f_font_match_p,
     f_font_object_stub, f_font_shape_gstring, f_font_spec, f_glyph_face, f_internal_copy_lisp_face,
-    f_internal_make_lisp_face, f_invert_face, f_query_fontset, f_select_font_err,
+    f_internal_make_lisp_face, f_invert_face, f_query_fontset, f_select_font,
     f_set_alt_font_family_alist, f_set_alt_font_registry_alist, f_set_font_selection_order,
     f_set_frame_font, f_set_fringe_bitmap_face, f_set_lisp_face_attr_resource,
     f_window_font_height, f_window_font_width, f_xw_color_defined_p,
@@ -1551,8 +1551,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "x-select-font",
         0,
         2,
-        f_select_font_err,
-        "Select an X font (no X toolkit)."
+        f_select_font,
+        "Choose a font using the graphical font panel."
     ),
     S!("x-display-backing-store", 0, 1, f_ns_display, ""),
     S!("x-display-color-cells", 0, 1, f_ns_display, ""),

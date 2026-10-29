@@ -129,13 +129,31 @@ pub(super) fn f_window_font_height(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     window_font_metric(i, a, false)
 }
 
-/// `x-select-font' on an NS build: GNU decodes the optional FRAME
-/// with decode_live_frame first (frame-live-p), then the NS font
-/// panel requires a window-system frame, so batch signals
-/// `window-system-frame'.
-pub(super) fn f_select_font_err(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::frame_live(i, &arg(&a, 0))?;
-    Err(i.error("Window system frame should be used"))
+/// `x-select-font' — decode FRAME before requiring the graphical font panel.
+pub(super) fn f_select_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
+    }
+    let Some(backend) = i.font_selection_backend.clone() else {
+        return Err(i.error("Window system frame should be used"));
+    };
+    let current_font = i
+        .q_soft("font")
+        .map(|font| crate::lisp::eval::plist_get(&frame.borrow().params, font))
+        .and_then(|value| match value {
+            Value::Str(name) => {
+                let name = name.borrow().to_unicode_lossy();
+                (name != "tty").then_some(name)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| "Menlo".to_owned());
+    match backend.select_font(frame.borrow().id, &current_font) {
+        Ok(Some(font)) => Ok(Value::string(font)),
+        Ok(None) => Ok(Value::Nil),
+        Err(error) => Err(i.error(format!("Font selection failed: {error}"))),
+    }
 }
 
 /// `face-documentation' — GNU reads the symbol's `face-documentation'
@@ -421,12 +439,73 @@ pub(super) fn f_font_shape_gstring(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     ))
 }
 
-/// `set-frame-font' — GNU's third argument (FRAMES) is a list.
+/// `set-frame-font' — apply the selected font family to the default face.
 pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match arg(&a, 2) {
-        Value::Nil | Value::Cons(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("listp", &other)),
+    let frames = arg(&a, 2);
+    let all_frames = matches!(&frames, Value::Sym(symbol) if i.symbol_name(*symbol) == "t");
+    let mut target_frames = Vec::new();
+    match &frames {
+        Value::Nil => {
+            if let Some(frame) = crate::editor::sel_frame(i) {
+                target_frames.push(frame);
+            }
+        }
+        Value::Sym(_) if all_frames => {
+            target_frames.extend(i.frames.iter().filter(|frame| !frame.borrow().dead).cloned());
+        }
+        Value::Cons(_) => {
+            let values = frames
+                .list_to_vec()
+                .map_err(|_| i.wrong_type_mut("listp", &frames))?;
+            for value in values {
+                target_frames.push(crate::editor::frame_live(i, &value)?);
+            }
+        }
+        other => return Err(i.wrong_type_mut("listp", other)),
     }
+    target_frames.retain(|frame| crate::editor::frame_is_graphical(i, frame));
+
+    let Value::Str(_) = &a[0] else {
+        return Ok(Value::Nil);
+    };
+    if target_frames.is_empty() {
+        return Ok(Value::Nil);
+    }
+
+    let default = Value::Sym(i.intern("default"));
+    let font = a[0].clone();
+    let inhibit_customize = a.get(3).is_some_and(Value::truthy);
+    let face_frame = if !frames.is_nil() && !inhibit_customize {
+        Value::Int(0)
+    } else {
+        Value::Frame(target_frames[0].clone())
+    };
+    let attributes = vec![
+        default,
+        face_frame,
+        Value::Sym(i.intern(":width")),
+        Value::Sym(i.intern("normal")),
+        Value::Sym(i.intern(":weight")),
+        Value::Sym(i.intern("normal")),
+        Value::Sym(i.intern(":slant")),
+        Value::Sym(i.intern("normal")),
+        Value::Sym(i.intern(":family")),
+        font.clone(),
+        Value::Sym(i.intern(":font")),
+        font.clone(),
+    ];
+    crate::editor::f_set_face_attribute(i, attributes.into())?;
+
+    let font_parameter = Value::Sym(i.intern("font"));
+    for frame in target_frames {
+        let params = crate::lisp::eval::plist_put_front(
+            &frame.borrow().params,
+            &font_parameter,
+            font.clone(),
+        );
+        frame.borrow_mut().params = params;
+    }
+    Ok(Value::Nil)
 }
 
 /// `destroy-fringe-bitmap' — the name must be a symbol.

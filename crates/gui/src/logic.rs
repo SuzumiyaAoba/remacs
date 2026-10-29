@@ -213,6 +213,12 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
     },
+    #[cfg(target_os = "macos")]
+    FontSelection {
+        frame_id: usize,
+        current_font: String,
+        reply: SyncSender<Result<Option<String>, String>>,
+    },
     AboutPanel {
         frame_id: usize,
         version: String,
@@ -521,6 +527,28 @@ impl remacs_runtime::frontend::AboutPanelBackend for GuiAboutPanelBackend {
 
 struct GuiColorPanelBackend {
     requests: smol::channel::Sender<GuiRequest>,
+}
+
+#[cfg(target_os = "macos")]
+struct GuiFontSelectionBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+#[cfg(target_os = "macos")]
+impl remacs_runtime::frontend::FontSelectionBackend for GuiFontSelectionBackend {
+    fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FontSelection {
+                frame_id,
+                current_font: current_font.to_owned(),
+                reply,
+            })
+            .map_err(|_| "GUI font panel service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI font panel service stopped".to_owned())?
+    }
 }
 
 impl remacs_runtime::frontend::ColorPanelBackend for GuiColorPanelBackend {
@@ -1951,6 +1979,10 @@ fn start_logic_inner(
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                #[cfg(target_os = "macos")]
+                i.set_font_selection_backend(Some(Rc::new(GuiFontSelectionBackend {
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_application_visibility_backend(Some(Rc::new(

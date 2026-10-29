@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
+use std::sync::OnceLock;
+#[cfg(target_os = "macos")]
 mod accessibility;
 #[cfg(target_os = "macos")]
 mod applescript;
@@ -25,7 +27,13 @@ unsafe extern "system" {
     fn MessageBeep(u_type: u32) -> i32;
 }
 #[cfg(target_os = "macos")]
-use objc::{class, msg_send, runtime::{BOOL, YES}, sel, sel_impl};
+use objc::{
+    class,
+    declare::ClassDecl,
+    msg_send,
+    runtime::{BOOL, Class, Object, Sel, YES},
+    sel, sel_impl,
+};
 mod keys;
 mod logic;
 mod monitor;
@@ -730,6 +738,24 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    #[cfg(target_os = "macos")]
+                    GuiRequest::FontSelection {
+                        frame_id,
+                        current_font,
+                        reply,
+                    } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, move |_view, window, _cx| {
+                                    show_native_font_panel(window, &current_font)
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::AboutPanel {
                         frame_id,
                         version,
@@ -1286,6 +1312,155 @@ fn show_native_color_panel(window: &Window) -> Result<(), String> {
         let _ = window;
         Err("NS color panel is available only on macOS".to_owned())
     }
+}
+
+#[cfg(target_os = "macos")]
+static FONT_PANEL_RESULT: Mutex<Option<Option<String>>> = Mutex::new(None);
+#[cfg(target_os = "macos")]
+static FONT_PANEL_RESPONDER_CLASS: OnceLock<usize> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn font_panel_responder_class() -> &'static Class {
+    // NSFontManager sends changeFont: through the first-responder chain.
+    let class = *FONT_PANEL_RESPONDER_CLASS.get_or_init(|| {
+        let mut declaration = ClassDecl::new("RemacsFontPanelResponder", class!(NSView))
+            .expect("RemacsFontPanelResponder must be registered once");
+        unsafe {
+            declaration.add_method(
+                sel!(acceptsFirstResponder),
+                font_panel_accepts_first_responder as extern "C" fn(&Object, Sel) -> BOOL,
+            );
+            declaration.add_method(
+                sel!(changeFont:),
+                font_panel_change_font as extern "C" fn(&Object, Sel, id),
+            );
+            declaration.add_method(
+                sel!(windowWillClose:),
+                font_panel_window_will_close as extern "C" fn(&Object, Sel, id),
+            );
+        }
+        declaration.register() as *const Class as usize
+    });
+    unsafe { &*(class as *const Class) }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn font_panel_accepts_first_responder(_this: &Object, _cmd: Sel) -> BOOL {
+    YES
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn font_panel_change_font(_this: &Object, _cmd: Sel, sender: id) {
+    use std::ffi::CStr;
+
+    let result = if sender == nil {
+        None
+    } else {
+        unsafe {
+            let selected: id = msg_send![sender, selectedFont];
+            let converted: id = msg_send![sender, convertFont: selected];
+            let family: id = msg_send![converted, familyName];
+            if family == nil {
+                None
+            } else {
+                let bytes = NSString::UTF8String(family);
+                (!bytes.is_null()).then(|| {
+                    CStr::from_ptr(bytes).to_string_lossy().into_owned()
+                })
+            }
+        }
+    };
+    let mut selection = FONT_PANEL_RESULT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if selection.is_none() {
+        *selection = Some(result);
+    }
+    drop(selection);
+    unsafe {
+        let app: id = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, stopModalWithCode: 1_isize];
+    }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn font_panel_window_will_close(_this: &Object, _cmd: Sel, _notification: id) {
+    let mut selection = FONT_PANEL_RESULT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if selection.is_none() {
+        *selection = Some(None);
+    }
+    drop(selection);
+    unsafe {
+        let app: id = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, stopModalWithCode: 0_isize];
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_font_panel(window: &Window, current_font: &str) -> Result<Option<String>, String> {
+    // The modal AppKit loop keeps the native Font panel responsive while the
+    // logic thread waits for x-select-font to return.
+    let native_window =
+        appkit_native_window(window).ok_or_else(|| "native frame window is unavailable".to_owned())?;
+    window.activate_window();
+    let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
+    let manager: id = unsafe { msg_send![class!(NSFontManager), sharedFontManager] };
+    let panel: id = unsafe { msg_send![class!(NSFontPanel), sharedFontPanel] };
+    if manager == nil || panel == nil {
+        return Err("NSFontPanel could not be created".to_owned());
+    }
+
+    let font_name: id = unsafe {
+        msg_send![NSString::alloc(nil).init_str(current_font), autorelease]
+    };
+    let initial_font: id = unsafe {
+        msg_send![class!(NSFont), fontWithName: font_name size: 14.0_f64]
+    };
+    if initial_font != nil {
+        unsafe {
+            let _: () = msg_send![manager, setSelectedFont: initial_font isMultiple: NO];
+        }
+    }
+    unsafe {
+        let _: () = msg_send![manager, setAction: sel!(changeFont:)];
+        let _: () = msg_send![panel, setWorksWhenModal: YES];
+    }
+
+    let responder_class = font_panel_responder_class();
+    let responder: id = unsafe { msg_send![responder_class, alloc] };
+    let responder: id = unsafe {
+        msg_send![responder, initWithFrame: NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(1.0, 1.0),
+        )]
+    };
+    let content: id = unsafe { msg_send![panel, contentView] };
+    let previous_first_responder: id = unsafe { msg_send![panel, firstResponder] };
+    unsafe {
+        let _: () = msg_send![responder, setAlphaValue: 0.0_f64];
+        let _: () = msg_send![content, addSubview: responder];
+        let _: () = msg_send![panel, setDelegate: responder];
+        let _: BOOL = msg_send![panel, makeFirstResponder: responder];
+    }
+    *FONT_PANEL_RESULT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = None;
+    unsafe {
+        let _: () = msg_send![panel, makeKeyAndOrderFront: native_window];
+        let _: NSInteger = msg_send![app, runModalForWindow: panel];
+        let _: () = msg_send![panel, orderOut: nil];
+        let _: () = msg_send![panel, setDelegate: nil];
+        let _: BOOL = msg_send![panel, makeFirstResponder: previous_first_responder];
+        let _: () = msg_send![responder, removeFromSuperview];
+        let _: id = msg_send![responder, autorelease];
+    }
+    Ok(FONT_PANEL_RESULT
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take()
+        .flatten())
 }
 
 fn show_native_character_palette(window: &Window) -> Result<(), String> {

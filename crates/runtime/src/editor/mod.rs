@@ -23157,7 +23157,7 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
     Ok(Value::Sym(face))
 }
 
-fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fset_face_attribute1: with an empty ARGS list it returns
     // before FACE is validated at all — `(set-face-attribute "a")'
     // is nil.  With ARGS present, CHECK_SYMBOL on FACE first, then

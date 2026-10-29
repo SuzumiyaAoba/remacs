@@ -46,6 +46,14 @@ impl Interp {
         self.file_dialog_backend = backend;
     }
 
+    /// Install or remove the host font chooser used by GUI font primitives.
+    pub fn set_font_selection_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::FontSelectionBackend>>,
+    ) {
+        self.font_selection_backend = backend;
+    }
+
     /// Install or remove the host native-window backend.
     pub fn set_frame_window_backend(
         &mut self,

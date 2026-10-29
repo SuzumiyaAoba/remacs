@@ -52,6 +52,13 @@ pub trait FileDialogBackend {
     ) -> Result<Option<String>, String>;
 }
 
+/// Host font chooser used by graphical font-selection primitives. The
+/// implementation may block the logic thread until the user selects or
+/// dismisses the native chooser.
+pub trait FontSelectionBackend {
+    fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String>;
+}
+
 /// Host native window bridge used by GUI frame primitives.
 pub trait FrameWindowBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String>;

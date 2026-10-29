@@ -257,6 +257,8 @@ pub struct Interp {
     pub(crate) dialog_backend: Option<Rc<dyn crate::frontend::DialogBackend>>,
     /// Host file panel bridge, installed by a GUI front-end.
     pub(crate) file_dialog_backend: Option<Rc<dyn crate::frontend::FileDialogBackend>>,
+    /// Host font chooser, installed by a GUI front-end.
+    pub(crate) font_selection_backend: Option<Rc<dyn crate::frontend::FontSelectionBackend>>,
     /// Host native window bridge, installed by a GUI front-end.
     pub(crate) frame_window_backend: Option<Rc<dyn crate::frontend::FrameWindowBackend>>,
     /// Host native color panel bridge, installed by a GUI front-end.
