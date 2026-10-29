@@ -4492,7 +4492,40 @@ pub(crate) fn f_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => (s.borrow().clone(), i.str_props(s).to_vec()),
         other => (i.princ_to_string(other), Vec::new()),
     };
-    i.message_with_properties(&msg, properties);
+
+    // GNU calls `set-message-function' before displaying a Lisp `message'.
+    // The handler can display it elsewhere (for example, as an overlay in
+    // the active minibuffer), replace its text, or suppress the echo-area
+    // display by returning a non-string non-nil value.  Rust-originated
+    // messages keep using `Interp::message' directly.
+    let mut display_message = msg.clone();
+    let mut display_properties = properties;
+    let mut display = true;
+    if !i.boot_loading {
+        let handler = i
+            .q_soft("set-message-function")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol));
+        if let Some(handler) = handler.filter(|value| {
+            crate::lisp::builtins::data::functionp_val(i, value)
+        }) {
+            match i.apply(&handler, vec![v.clone()])? {
+                Value::Nil => {}
+                Value::Str(s) => {
+                    display_message = s.borrow().clone();
+                    display_properties = i.str_props(&s).to_vec();
+                }
+                _ => display = false,
+            }
+        }
+    }
+
+    if display {
+        i.message_with_properties(&display_message, display_properties);
+    } else {
+        // A handled message is still recorded in *Messages*.
+        i.message_log(&msg);
+    }
     Ok(v)
 }
 pub(crate) fn f_ding(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
