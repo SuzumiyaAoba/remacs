@@ -263,17 +263,8 @@ with empty strings removed."
                     'crm--choose-completion-string nil 'local)
           (setq-local completion-list-insert-choice-function
                       (lambda (_start _end choice)
-                        (let* ((beg (save-excursion
-                                      (if (search-backward-regexp crm-separator
-                                                                  (field-beginning)
-                                                                  t)
-                                          (1+ (point))
-                                        (minibuffer-prompt-end))))
-                               (end (save-excursion
-                                      (if (search-forward-regexp crm-separator nil t)
-                                          (1- (point))
-                                        (point-max)))))
-                          (completion--replace beg end choice))))
+                        (let ((bounds (crm--current-element)))
+                          (completion--replace (car bounds) (cdr bounds) choice))))
           (setq-local crm-completion-table table)
           (use-local-map map))
       (setq input (completing-read
