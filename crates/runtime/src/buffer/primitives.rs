@@ -11101,10 +11101,11 @@ pub(crate) fn search_common(
             let e = regs[1].unwrap_or(0);
             let s = regs[0].unwrap_or(0);
             let landing = if backward { s } else { e };
-            cur(i).borrow_mut().set_point(landing + begv);
+            let buffer = cur(i);
             // GNU: `inhibit-changing-match-data' suppresses the store;
             // the search itself still runs (leaving any previous
-            // match data untouched).
+            // match data untouched).  The store precedes point-motion
+            // hooks: those callbacks observe the new match data.
             let inhibit = i
                 .intern_soft("inhibit-changing-match-data")
                 .map(|s| i.symbol_value(s).truthy())
@@ -11117,6 +11118,7 @@ pub(crate) fn search_common(
                     buffer: i.buffers.get(i.current_buffer),
                 });
             }
+            goto_char_set_point(i, &buffer, landing + begv)?;
             Ok(Value::Int(landing as i128 + begv as i128 + 1))
         }
         None => {
@@ -11137,7 +11139,7 @@ pub(crate) fn search_common(
                         // narrowed docstring temp buffers).
                         None => blen,
                     };
-                    buf.borrow_mut().set_point(limit.min(blen));
+                    goto_char_set_point(i, &buf, limit.min(blen))?;
                 }
                 Ok(Value::Nil)
             } else {
