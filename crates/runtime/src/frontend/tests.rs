@@ -62,7 +62,7 @@ fn interp_with_frame(text: &str) -> crate::lisp::Interp {
 #[test]
 fn isearch_extends_match_in_place_and_overlays_paint() {
     let mut i = interp_with_frame("xxx yyy xxx\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     for c in "xxx".chars() {
         st.step(&mut i, c as i128);
     }
@@ -90,7 +90,7 @@ fn isearch_extends_match_in_place_and_overlays_paint() {
 #[test]
 fn regexp_isearch_highlights_capture_groups_and_clears_their_overlays() {
     let mut i = interp_with_frame("foo-42bar\n");
-    let mut st = Isearch::new(&i, false, true);
+    let mut st = Isearch::new(&mut i, false, true);
     for c in "foo-\\([0-9]+\\)\\([a-z]+\\)".chars() {
         st.step(&mut i, c as i128);
     }
@@ -125,6 +125,41 @@ fn regexp_isearch_highlights_capture_groups_and_clears_their_overlays() {
     st.clear(&mut i);
     let overlays = i.eval_str("(overlays-in (point-min) (point-max))").unwrap();
     assert_eq!(i.prin1_to_string(&overlays), "nil");
+}
+
+#[test]
+fn isearch_uses_search_default_mode_for_regexp_and_function_modes() {
+    let mut i = isearch_interp("foo\n");
+
+    i.eval_str("(setq search-default-mode t)").unwrap();
+    let mut st = Isearch::new(&mut i, false, false);
+    assert!(st.regexp);
+    for c in "f.*".chars() {
+        st.step(&mut i, c as i128);
+    }
+    assert!(!st.failing, "regexp default should match foo");
+    assert_eq!(st.spans.last(), Some(&(0, 3)));
+
+    i.current_buffer_ref().unwrap().borrow_mut().set_point(0);
+    i.eval_str(
+        "(setq search-default-mode\
+         (lambda (_string &optional lax) (if lax \"foo\" \"bar\")))",
+    )
+    .unwrap();
+    let mut st = Isearch::new(&mut i, false, false);
+    assert!(!st.regexp);
+    st.step(&mut i, 'x' as i128);
+    assert!(!st.failing, "the regexp function should supply the pattern");
+    assert_eq!(st.spans.last(), Some(&(0, 3)));
+
+    i.current_buffer_ref().unwrap().borrow_mut().set_point(0);
+    i.eval_str("(setq search-default-mode nil)").unwrap();
+    let mut st = Isearch::new(&mut i, false, false);
+    assert!(!st.regexp);
+    for c in "f.*".chars() {
+        st.step(&mut i, c as i128);
+    }
+    assert!(st.failing, "nil default should keep literal search");
 }
 
 /// Interp whose current buffer holds `text`, point at start.
@@ -292,7 +327,7 @@ fn mouse_1_link_click_translates_to_mouse_2_at_the_same_position() {
 #[test]
 fn isearch_chars_move_point_to_match() {
     let mut i = isearch_interp("one two one\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     assert!(matches!(
         st.step(&mut i, 't' as i128),
         IsearchAction::Continue
@@ -314,7 +349,7 @@ fn isearch_chars_move_point_to_match() {
 #[test]
 fn isearch_cs_repeats_and_del_unwinds() {
     let mut i = isearch_interp("aa aa\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     st.step(&mut i, 'a' as i128);
     let first = point(&i);
     st.step(&mut i, 19); // C-s → next match
@@ -328,7 +363,7 @@ fn isearch_cs_repeats_and_del_unwinds() {
 #[test]
 fn isearch_cg_restores_entry() {
     let mut i = isearch_interp("xx yy\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     st.step(&mut i, 'y' as i128);
     assert!(point(&i) > 0);
     assert!(matches!(st.step(&mut i, 7), IsearchAction::Abort));
@@ -338,7 +373,7 @@ fn isearch_cg_restores_entry() {
 #[test]
 fn isearch_ret_sets_mark() {
     let mut i = isearch_interp("xx yy\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     st.step(&mut i, 'y' as i128);
     assert!(matches!(st.step(&mut i, 13), IsearchAction::Done));
     let b = i.current_buffer_ref().unwrap();
@@ -352,7 +387,7 @@ fn isearch_backward_searches_backward() {
     let mut i = isearch_interp("aa bb aa\n");
     // Point at end.
     i.current_buffer_ref().unwrap().borrow_mut().set_point(8);
-    let mut st = Isearch::new(&i, true, false);
+    let mut st = Isearch::new(&mut i, true, false);
     st.step(&mut i, 'a' as i128);
     // Backward match puts point at match start (index 7).
     assert_eq!(point(&i), 7);
@@ -362,7 +397,7 @@ fn isearch_backward_searches_backward() {
 #[test]
 fn isearch_other_key_redispatches() {
     let mut i = isearch_interp("text\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     st.step(&mut i, 'x' as i128);
     match st.step(&mut i, 24) {
         IsearchAction::ReDispatch(k) => assert_eq!(k, 24),
@@ -373,7 +408,7 @@ fn isearch_other_key_redispatches() {
 #[test]
 fn isearch_failing_then_empty_query() {
     let mut i = isearch_interp("abc\n");
-    let mut st = Isearch::new(&i, false, false);
+    let mut st = Isearch::new(&mut i, false, false);
     st.step(&mut i, 'z' as i128);
     st.step(&mut i, 'z' as i128);
     assert!(st.failing);
