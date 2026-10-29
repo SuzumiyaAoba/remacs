@@ -642,6 +642,14 @@ pub(super) fn f_display_pred_false(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     Ok(Value::Nil)
 }
 
+pub(super) fn f_display_selections_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let v = a.get(0).cloned().unwrap_or(Value::Nil);
+    let frame = decode_display(i, &v)?;
+    Ok(Value::from_bool(
+        i.clipboard_backend.is_some() && crate::editor::frame_is_graphical(i, &frame),
+    ))
+}
+
 /// GNU `decode_display' (xfns.c): nil → selected frame, a live frame
 /// → it, a string must name an open display (only ":0"/""-style TTY
 /// names resolve) — anything else signals

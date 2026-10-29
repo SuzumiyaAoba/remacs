@@ -183,6 +183,7 @@ use display::{
     f_current_frame_configuration, f_delete_other_windows_internal, f_delete_windows_on,
     f_display_false, f_display_mm, f_display_monitor_attributes_list, f_display_pixel_height,
     f_display_pixel_width, f_display_planes, f_display_pred_false, f_display_screens,
+    f_display_selections_p,
     f_display_visual_class, f_fit_window_to_buffer, f_frame_configuration_p, f_frame_geometry,
     f_frame_height_val, f_frame_monitor_attributes, f_frame_or_buffer_changed_p,
     f_frame_outer_dim, f_frame_width_val, f_get_display_property, f_get_window_pred,
@@ -1531,7 +1532,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("remove-images", 2, 3, f_remove_images, ""),
     S!("display-popup-menus-p", 0, 1, f_display_popup_menus_p, ""),
     S!("display-screens", 0, 1, f_display_screens, ""),
-    S!("display-selections-p", 0, 1, f_display_pred_false, ""),
+    S!("display-selections-p", 0, 1, f_display_selections_p, ""),
     // ---------- X stubs (no X) ----------
     S!("gui-get-selection", 0, 2, f_gui_get_selection, ""),
     S!("gui-set-selection", 2, 2, f_arg1, ""),
