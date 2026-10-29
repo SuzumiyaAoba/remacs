@@ -640,7 +640,11 @@ is non-nil, it also prints a message describing the number of deletions."
                 (if reverse (forward-line -1))
                 (setq count (1+ count)))
             (if adjacent (setq prev-line line) (puthash line t lines))
-            (forward-line (if reverse -1 1))))))
+            (if reverse
+                (if (<= (line-beginning-position) beg)
+                    (setq first-line t)
+                  (forward-line -1))
+              (forward-line 1)))))
     (set-marker beg nil)
     (set-marker end nil)
     (when interactive
