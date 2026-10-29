@@ -3983,6 +3983,21 @@ instead of `dired-actual-switches'."
     (if found
 	(goto-char found))))
 
+;;Remacs: mirror BSD/GNU `ls -b' escapes when searching for control names.
+(defun dired--escape-ls-b-control-characters (string)
+  (mapconcat
+   (lambda (character)
+     (cond
+      ((eq character ?\a) "\\a")
+      ((eq character ?\b) "\\b")
+      ((eq character ?\f) "\\f")
+      ((eq character ?\v) "\\v")
+      ((or (< character 32) (= character 127))
+       (format "\\%03o" character))
+      (t (char-to-string character))))
+   (string-to-list string)
+   ""))
+
 (defun dired-goto-file-1 (file full-name limit)
   "Advance to the Dired listing labeled by FILE; return its position.
 Return nil if the listing is not found.  If FILE contains
@@ -3995,12 +4010,11 @@ as returned by `dired-get-filename'.  LIMIT is the search limit."
     (setq str (string-replace "\^m" "\\^m"  file))
     (setq str (string-replace "\\" "\\\\" str))
     (and (dired-switches-escape-p dired-actual-switches)
-	 (string-match-p "[ \t\n]" str)
-	 ;; FIXME: to fix this for embedded control characters etc, we
-	 ;; should escape everything that `ls -b' does.
-	 (setq str (string-replace " " "\\ "  str)
-	       str (string-replace "\t" "\\t" str)
-	       str (string-replace "\n" "\\n" str)))
+         (string-match-p "[ \t\n[:cntrl:]]" str)
+         (setq str (string-replace " " "\\ "  str)
+               str (string-replace "\t" "\\t" str)
+               str (string-replace "\n" "\\n" str)
+               str (dired--escape-ls-b-control-characters str)))
     (let ((found nil)
 	  ;; filenames are preceded by SPC, this makes the search faster
 	  ;; (e.g. for the filename "-").
