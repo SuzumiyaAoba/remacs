@@ -1983,7 +1983,10 @@ The user will be asked for a file name."
 ;; Encodes with base64 and adds MIME headers
 (defun gnus-uu-post-encode-mime (path file-name)
   (when (eq 0 (call-process shell-file-name nil t nil shell-command-switch
-			    (format "%s %s -o %s" "mmencode" path file-name)))
+			    (format "%s %s -o %s"
+				    (shell-quote-argument "mmencode")
+				    (shell-quote-argument path)
+				    (shell-quote-argument file-name)))
     (gnus-uu-post-make-mime file-name "base64")
     t))
 
@@ -2010,7 +2013,10 @@ The user will be asked for a file name."
 ;; current buffer.
 (defun gnus-uu-post-encode-file (command path file-name)
   (eq 0 (call-process shell-file-name nil t nil shell-command-switch
-		      (format "%s %s %s" command path file-name))))
+		      (format "%s %s %s"
+			      (shell-quote-argument command)
+			      (shell-quote-argument path)
+			      (shell-quote-argument file-name))))
 
 (defun gnus-uu-post-news-inews ()
   "Posts the composed news article and encoded file.
