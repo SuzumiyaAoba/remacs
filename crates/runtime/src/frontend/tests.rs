@@ -455,6 +455,25 @@ fn isearch_cg_restores_entry() {
 }
 
 #[test]
+fn isearch_cg_after_failed_extension_discards_suffix_before_abort() {
+    let mut i = isearch_interp("foo\n");
+    let mut st = Isearch::new(&mut i, false, false);
+    for c in "foz".chars() {
+        st.step(&mut i, c as i128);
+    }
+    assert!(st.failing);
+
+    assert!(matches!(st.step(&mut i, 7), IsearchAction::Continue));
+    assert_eq!(st.query, "fo");
+    assert!(!st.failing);
+    assert_eq!(point(&i), 2);
+    assert_eq!(st.spans.last(), Some(&(0, 2)));
+
+    assert!(matches!(st.step(&mut i, 7), IsearchAction::Abort));
+    assert_eq!(point(&i), 0);
+}
+
+#[test]
 fn isearch_ret_sets_mark() {
     let mut i = isearch_interp("xx yy\n");
     let mut st = Isearch::new(&mut i, false, false);
