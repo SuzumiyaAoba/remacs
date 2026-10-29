@@ -3639,7 +3639,7 @@ impl FaceCtx {
 
     /// A `face' property value: a symbol/string names a face, a list
     /// whose car is a keyword is an anonymous face plist, any other
-    /// list merges each element in order, and
+    /// list merges elements with the first element having highest priority, and
     /// (foreground-color . C)/(background-color . C) pairs set colors.
     fn face_value(&mut self, i: &Interp, v: &Value, depth: u32) -> StyleMix {
         if depth >= 16 {
@@ -3690,7 +3690,7 @@ impl FaceCtx {
                     self.face_plist(i, v, depth + 1)
                 } else {
                     let mut mix = StyleMix::default();
-                    for it in items {
+                    for it in items.into_iter().rev() {
                         mix.merge(&self.face_value(i, &it, depth + 1));
                     }
                     mix
@@ -5137,7 +5137,7 @@ fn face_value_with_remapping(
             return mix;
         }
         let mut mix = StyleMix::default();
-        for spec in &items {
+        for spec in items.iter().rev() {
             mix.merge(&face_value_with_remapping(
                 i,
                 ctx,
