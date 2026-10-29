@@ -7013,7 +7013,12 @@ fn render_grid_internal(
                 if segment_end == line_len {
                     if let Some(wf) = &wf {
                         let end_pos = line_pos + line_len;
-                        let tail = style_at_pos(i, &mut fctx, wf, end_pos);
+                        let end_face = style_at_pos(i, &mut fctx, wf, end_pos);
+                        let tail = if end_face.extend || line_len == 0 {
+                            end_face
+                        } else {
+                            style_at_pos(i, &mut fctx, wf, end_pos - 1)
+                        };
                         if tail.extend {
                             for cell in rendered.visible_columns..content_width {
                                 let mut t = tail;
