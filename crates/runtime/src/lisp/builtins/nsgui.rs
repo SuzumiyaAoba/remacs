@@ -248,11 +248,10 @@ fn f_ns_font_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     };
     // `$'→`-', `_'→` ', uppercasing the following char.
-    let bytes = fam.as_bytes().to_vec();
     let mut out = String::with_capacity(fam.len());
     let mut upcase_next = false;
-    for (idx, &b) in bytes.iter().enumerate() {
-        let ch = b as char;
+    // Iterate Unicode characters; treating UTF-8 bytes as chars corrupts names.
+    for (idx, ch) in fam.chars().enumerate() {
         if ch == '$' || ch == '_' {
             out.push(if ch == '$' { '-' } else { ' ' });
             upcase_next = true;
