@@ -497,6 +497,22 @@ If called interactively, read the directory names one by one."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; Returns the name of a directory for a file in the cache
+(defun file-cache--directory-member (directory directories)
+  "Return the tail of DIRECTORIES whose head matches DIRECTORY.
+When `file-cache-ignore-case' is non-nil, compare the directory names
+without regard to case."
+  (let ((remaining directories))
+    (while (and remaining
+                (not (if file-cache-ignore-case
+                         (and (stringp directory)
+                              (stringp (car remaining))
+                              (eq t (compare-strings
+                                     directory nil nil
+                                     (car remaining) nil nil t)))
+                       (equal directory (car remaining))))
+      (setq remaining (cdr remaining)))
+    remaining))
+
 (defun file-cache-directory-name  (file)
   (let* ((directory-list (cdr (assoc-string
 			       file file-cache-alist
@@ -516,7 +532,8 @@ If called interactively, read the directory names one by one."
      ;; Multiple elements
      (t
       (let* ((minibuffer-dir (file-name-directory (minibuffer-contents)))
-	     (dir-list       (member minibuffer-dir directory-list)))
+	     (dir-list (file-cache--directory-member
+			minibuffer-dir directory-list)))
 	(setq directory
 	      ;; If the directory is in the list, return the next element
 	      ;; Otherwise, return the first element
