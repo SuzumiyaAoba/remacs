@@ -214,6 +214,21 @@ pub struct GridScrollBar {
     pub max_offset: usize,
 }
 
+/// A bottom divider between a window and the screen area below it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridBottomDivider {
+    /// Row immediately below the divider.
+    pub row_boundary: usize,
+    /// Horizontal position and extent in frame cells.
+    pub left: usize,
+    pub width: usize,
+    /// Divider thickness in pixels.
+    pub thickness: usize,
+    pub style: CellStyle,
+    pub first_pixel_style: CellStyle,
+    pub last_pixel_style: CellStyle,
+}
+
 /// Builder state for CellStyle while face specs merge — each field is
 /// Option so an explicitly-nil attribute clears a lower layer.
 #[derive(Clone, Copy, Default)]
@@ -340,6 +355,7 @@ pub struct Grid {
     pub tooltip: Option<String>,
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
+    pub bottom_dividers: Vec<GridBottomDivider>,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -431,6 +447,7 @@ impl Grid {
             tooltip: None,
             popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
+            bottom_dividers: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -4619,6 +4636,7 @@ fn render_grid_internal(
     let tooltip = i.gui_tip.clone();
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
+    let mut bottom_dividers = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
     let mut positioned_cursors = Vec::new();
@@ -4649,6 +4667,7 @@ fn render_grid_internal(
                 tooltip,
                 popup_menu_items,
                 scroll_bars,
+                bottom_dividers,
                 attrs,
                 char_attrs,
                 mode_rows,
@@ -4682,6 +4701,18 @@ fn render_grid_internal(
     row_heights.fill(frame_char_height);
     default_line_height = frame_char_height;
     default_row_height = frame_char_height;
+    let bottom_divider_width = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "bottom-divider-width", 0)
+    } else {
+        0
+    };
+    let bottom_divider_styles = (bottom_divider_width > 0).then(|| {
+        (
+            fctx.builtin(i, "window-divider", 0).finish(),
+            fctx.builtin(i, "window-divider-first-pixel", 0).finish(),
+            fctx.builtin(i, "window-divider-last-pixel", 0).finish(),
+        )
+    });
     let frame_line_spacing = i
         .q_soft("line-spacing")
         .map(|property| crate::lisp::eval::plist_get(&fb.params, property))
@@ -4854,6 +4885,21 @@ fn render_grid_internal(
             .saturating_sub(raw_window_top)
             .max(2)
             .min(body_height.saturating_sub(raw_window_top));
+        if !minibuffer_window
+            && raw_window_width > 0
+            && raw_window_bottom > 0
+            && let Some((style, first_pixel_style, last_pixel_style)) = bottom_divider_styles
+        {
+            bottom_dividers.push(GridBottomDivider {
+                row_boundary: raw_window_bottom,
+                left: raw_window_left,
+                width: raw_window_width,
+                thickness: bottom_divider_width,
+                style,
+                first_pixel_style,
+                last_pixel_style,
+            });
+        }
         let (
             scroll_width,
             vertical_scroll_side,
@@ -5918,6 +5964,24 @@ fn render_grid_internal(
             mode_rows.push(my);
         }
     }
+    // A divider belongs to the window above it. Reserve its pixels at
+    // that row boundary, counting a shared boundary only once even when
+    // side-by-side windows meet above the same screen area.
+    let mut divider_rows = HashMap::<usize, usize>::new();
+    for divider in &bottom_dividers {
+        if divider.width == 0 || divider.thickness == 0 || divider.row_boundary == 0 {
+            continue;
+        }
+        divider_rows
+            .entry(divider.row_boundary)
+            .and_modify(|thickness| *thickness = (*thickness).max(divider.thickness))
+            .or_insert(divider.thickness);
+    }
+    for (row_boundary, thickness) in divider_rows {
+        if let Some(row_height) = row_heights.get_mut(row_boundary.saturating_sub(1)) {
+            *row_height = row_height.saturating_add(thickness);
+        }
+    }
     // Render visible minibuffer lines at the bottom of the frame. When
     // sourced from the minibuffer buffer, styles and input positions keep
     // offsets relative to the full buffer.
@@ -6074,6 +6138,7 @@ fn render_grid_internal(
         tooltip,
         popup_menu_items,
         scroll_bars,
+        bottom_dividers,
         attrs,
         char_attrs,
         mode_rows,

@@ -300,7 +300,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("window-header-line-height", 0, 1, f_window_header_line_height, ""),
     S!("window-tab-line-height", 0, 1, f_window_tab_line_height, ""),
-    S!("window-bottom-divider-width", 0, 1, f_zero_winlive, ""),
+    S!(
+        "window-bottom-divider-width",
+        0,
+        1,
+        f_window_bottom_divider_width,
+        ""
+    ),
     S!("window-right-divider-width", 0, 1, f_zero_winlive, ""),
     S!("window-divider-width-valid-p", 1, 1, f_false, ""),
     S!(
@@ -451,7 +457,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("frame-right-divider-width", 0, 1, f_zero_framep, ""),
-    S!("frame-bottom-divider-width", 0, 1, f_zero_framep, ""),
+    S!(
+        "frame-bottom-divider-width",
+        0,
+        1,
+        f_frame_bottom_divider_width,
+        ""
+    ),
     S!("frame-scroll-bar-width", 0, 1, f_frame_scroll_bar_width, ""),
     S!("frame-scroll-bar-height", 0, 1, f_frame_scroll_bar_height, ""),
     S!("frame-child-frame-border-width", 0, 1, f_zero_framep, ""),
@@ -4020,11 +4032,41 @@ fn f_frame_internal_border_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     ))
 }
 
+fn f_frame_bottom_divider_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = match arg(&a, 0) {
+        Value::Nil => crate::editor::sel_frame(i),
+        Value::Frame(frame) => Some(frame),
+        other => return Err(i.wrong_type_mut("framep", &other)),
+    };
+    let width = frame
+        .as_ref()
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+        .map(|frame| {
+            crate::editor::frame_parameter_positive_size(i, frame, "bottom-divider-width", 0)
+        })
+        .unwrap_or(0);
+    Ok(Value::Int(width as i128))
+}
+
 /// window-*-height/divider-width getters: decode_live_window —
 /// `window-live-p' on non-windows, 0 on the single batch window.
 fn f_zero_winlive(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _ = win_live(i, &arg(&a, 0))?;
     Ok(Value::Int(0))
+}
+
+fn f_window_bottom_divider_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    if window.borrow().minibuffer {
+        return Ok(Value::Int(0));
+    }
+    let width = crate::editor::frame_of_window(i, &window)
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+        .map(|frame| {
+            crate::editor::frame_parameter_positive_size(i, &frame, "bottom-divider-width", 0)
+        })
+        .unwrap_or(0);
+    Ok(Value::Int(width as i128))
 }
 
 /// `window-old-pixel-width'/`window-old-pixel-height' — GNU's

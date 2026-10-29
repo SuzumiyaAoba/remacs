@@ -331,7 +331,7 @@ pub(super) struct EditorView {
     cell_width: Pixels,
     line_height: Pixels,
     geometry: Option<GuiGeometry>,
-    runtime_frame_size: Option<(usize, usize, usize)>,
+    runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     toolbar_pressed: bool,
@@ -454,10 +454,17 @@ impl EditorView {
     }
 
     pub(super) fn needs_frame_size_update(&mut self, width: usize, height: usize) -> bool {
+        let extra_height = self
+            .grid
+            .row_heights
+            .iter()
+            .map(|row_height| row_height.saturating_sub(self.grid.default_line_height.max(1)))
+            .sum();
         let size = (
             width.max(10),
             height.max(3),
             self.internal_border_width,
+            extra_height,
         );
         let changed = self.runtime_frame_size != Some(size);
         self.runtime_frame_size = Some(size);
@@ -507,20 +514,17 @@ impl EditorView {
         self.line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
         let viewport = window.viewport_size();
         let border = self.internal_border_width as f32 * 2.0;
-        let content_width = (f32::from(viewport.width) - border).max(0.0);
-        let content_height = px((f32::from(viewport.height) - border).max(0.0));
-        let current_width = (content_width / f32::from(self.cell_width)) as usize;
-        let current_height = rows_fitting_viewport(&self.grid, content_height, self.line_height);
-        if (current_width.max(10), current_height.max(3)) == (width, height) {
-            return;
-        }
         let pixel_height = (0..height)
             .map(|row| f32::from(grid_row_height(&self.grid, row, px(self.grid.default_row_height.max(1) as f32))))
             .sum::<f32>();
-        window.resize(size(
-            self.cell_width * width as f32 + px(border),
-            px(pixel_height + border),
-        ));
+        let desired_width = self.cell_width * width as f32 + px(border);
+        let desired_height = px(pixel_height + border);
+        if (f32::from(viewport.width) - f32::from(desired_width)).abs() < 1.0
+            && (f32::from(viewport.height) - f32::from(desired_height)).abs() < 1.0
+        {
+            return;
+        }
+        window.resize(size(desired_width, desired_height));
     }
 
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
@@ -1348,6 +1352,15 @@ impl Render for EditorView {
                                 }
                             }
                         }
+                        paint_bottom_dividers(
+                            &grid,
+                            bounds,
+                            cell_width,
+                            line_height,
+                            default_background,
+                            background_alpha,
+                            window,
+                        );
                         for indicator in &grid.fill_column_indicators {
                             let mut fill_font = composition_font.clone();
                             if let Some(family) = indicator
@@ -2129,6 +2142,58 @@ fn paint_box_run(
 
 fn color_rgb(color: CellColor) -> u32 {
     ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
+}
+
+fn paint_bottom_dividers(
+    grid: &Grid,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    default_background: u32,
+    background_alpha: u8,
+    window: &mut Window,
+) {
+    for divider in &grid.bottom_dividers {
+        if divider.width == 0 || divider.thickness == 0 {
+            continue;
+        }
+        let thickness = px(divider.thickness as f32);
+        let left = bounds.left() + cell_width * divider.left as f32;
+        let width = cell_width * divider.width as f32;
+        let top = bounds.top()
+            + grid_row_top(grid, divider.row_boundary, line_height)
+            - thickness;
+        let paint_line = |offset: usize, height: usize, style, window: &mut Window| {
+            if height == 0 {
+                return;
+            }
+            let color = style_colors(style, default_background, background_alpha).0;
+            window.paint_quad(fill(
+                Bounds {
+                    origin: point(left, top + px(offset as f32)),
+                    size: size(width, px(height as f32)),
+                },
+                color,
+            ));
+        };
+        if divider.thickness < 3 {
+            paint_line(0, divider.thickness, divider.style, window);
+        } else {
+            paint_line(0, 1, divider.first_pixel_style, window);
+            paint_line(
+                1,
+                divider.thickness.saturating_sub(2),
+                divider.style,
+                window,
+            );
+            paint_line(
+                divider.thickness.saturating_sub(1),
+                1,
+                divider.last_pixel_style,
+                window,
+            );
+        }
+    }
 }
 
 fn shade_color(color: u32, factor: f32) -> u32 {

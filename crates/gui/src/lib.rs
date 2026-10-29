@@ -919,9 +919,18 @@ fn frame_window_options(
 ) -> WindowOptions {
     let child = frame.parent_frame.is_some();
     let internal_border = frame.internal_border_width as f32 * 2.0;
+    let extra_row_height = frame
+        .grid
+        .row_heights
+        .iter()
+        .map(|height| height.saturating_sub(frame.grid.default_line_height.max(1)))
+        .sum::<usize>();
     let content_size = size(
         px((frame.width.max(10) as f32 * 8.0).max(80.0) + internal_border),
-        px((frame.height.max(3) as f32 * 19.0).max(57.0) + internal_border),
+        px((frame.height.max(3) as f32 * 19.0)
+            .max(57.0)
+            + extra_row_height as f32
+            + internal_border),
     );
     let base_window = frame
         .parent_frame
