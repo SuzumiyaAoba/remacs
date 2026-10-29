@@ -1697,6 +1697,11 @@ impl Window {
         self.platform_window.resize(size);
     }
 
+    /// Set the native content-size increments used while resizing the window.
+    pub fn set_resize_increments(&self, increments: Size<Pixels>) {
+        self.platform_window.set_resize_increments(increments);
+    }
+
     /// Set the outer position of the window in the platform coordinate space.
     pub fn set_position(&mut self, position: Point<Pixels>, display_id: Option<u32>) {
         self.platform_window.set_position(position, display_id);

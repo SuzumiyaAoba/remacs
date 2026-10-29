@@ -1028,6 +1028,21 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn set_resize_increments(&self, increments: Size<Pixels>) {
+        let this = self.0.as_ref().lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.setContentResizeIncrements_(NSSize {
+                        width: increments.width.0 as f64,
+                        height: increments.height.0 as f64,
+                    });
+                }
+            })
+            .detach();
+    }
+
     fn set_position(&mut self, position: Point<Pixels>, display_id: Option<u32>) {
         let this = self.0.lock();
         let window = this.native_window;

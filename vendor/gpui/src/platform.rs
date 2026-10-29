@@ -470,6 +470,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn resize(&mut self, size: Size<Pixels>);
+    fn set_resize_increments(&self, _increments: Size<Pixels>) {}
     fn set_position(&mut self, _position: Point<Pixels>, _display_id: Option<u32>) {}
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;

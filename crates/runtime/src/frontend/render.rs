@@ -431,6 +431,8 @@ pub struct Grid {
     pub bidi_disabled_ranges: Vec<GridBidiDisabledRange>,
     /// Text ranges whose buffers specify `bidi-paragraph-direction`.
     pub bidi_paragraph_ranges: Vec<GridBidiParagraphRange>,
+    /// Whether the GUI native frame may resize by individual pixels.
+    pub frame_resize_pixelwise: bool,
     /// Cell styles, one entry for each display column in a row.
     pub attrs: Vec<Vec<CellStyle>>,
     /// Character styles, `char_attrs[y][x]` alongside each row's chars.
@@ -534,6 +536,7 @@ impl Grid {
             compositions: Vec::new(),
             bidi_disabled_ranges: Vec::new(),
             bidi_paragraph_ranges: Vec::new(),
+            frame_resize_pixelwise: false,
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
             mode_rows: Vec::new(),
@@ -5820,6 +5823,9 @@ fn render_grid_internal(
     mouse_position: Option<MousePosition>,
 ) -> Grid {
     let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
+    let frame_resize_pixelwise = i
+        .q_soft("frame-resize-pixelwise")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
     let gamma_exponent = frame
         .as_ref()
         .filter(|frame| crate::editor::frame_is_graphical(i, frame))
@@ -5894,6 +5900,7 @@ fn render_grid_internal(
                 cursor_index,
                 bidi_disabled_ranges: Vec::new(),
                 bidi_paragraph_ranges: Vec::new(),
+                frame_resize_pixelwise,
                 blink_cursor,
                 blink_interval,
                 default_bg,
@@ -7724,6 +7731,7 @@ fn render_grid_internal(
         compositions,
         bidi_disabled_ranges,
         bidi_paragraph_ranges,
+        frame_resize_pixelwise,
         attrs,
         char_attrs,
         mode_rows,

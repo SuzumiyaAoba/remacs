@@ -486,6 +486,7 @@ pub(super) struct EditorView {
     input: TextInputState,
     cell_width: Pixels,
     line_height: Pixels,
+    resize_increments: Option<(f32, f32)>,
     geometry: Option<GuiGeometry>,
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
@@ -540,6 +541,7 @@ impl EditorView {
             input: TextInputState::default(),
             cell_width: px(8.0),
             line_height: px(LINE_HEIGHT),
+            resize_increments: None,
             geometry: None,
             runtime_frame_size: None,
             runtime_frame_position: None,
@@ -566,6 +568,7 @@ impl EditorView {
 
     pub(super) fn set_frame_id(&mut self, frame_id: usize) {
         self.tx.set_frame_id(frame_id);
+        self.resize_increments = None;
         self.mouse_face_position.set(None);
         self.geometry = None;
         self.runtime_frame_size = None;
@@ -778,6 +781,21 @@ impl Render for EditorView {
             .map(|s| s.width)
             .unwrap_or(px(8.0));
         self.cell_width = cell_width;
+        let resize_increments = if self.grid.frame_resize_pixelwise {
+            (1.0, 1.0)
+        } else {
+            (
+                f32::from(cell_width).max(1.0),
+                f32::from(line_height).max(1.0),
+            )
+        };
+        if self.resize_increments != Some(resize_increments) {
+            window.set_resize_increments(size(
+                px(resize_increments.0),
+                px(resize_increments.1),
+            ));
+            self.resize_increments = Some(resize_increments);
+        }
 
         // Report grid-size changes to the logic thread.
         let vp = window.viewport_size();
