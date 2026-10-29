@@ -2072,17 +2072,39 @@ fn apply_startup_arguments(
     files: &[String],
     arguments: &[String],
 ) -> remacs_runtime::lisp::EvalResult {
-    let arguments = if arguments.is_empty() {
-        let mut arguments = Vec::new();
-        if !files.is_empty() {
-            arguments.push("--".to_owned());
-            arguments.extend_from_slice(files);
+    let mut startup_arguments = arguments.to_vec();
+    let mut files_to_open = files.to_vec();
+    for argument_file in remacs_cli::arguments(arguments).filter_map(|argument| match argument {
+        remacs_cli::Argument::File(file) => Some(file),
+        remacs_cli::Argument::Option { .. } => None,
+    }) {
+        if let Some(index) = files_to_open
+            .iter()
+            .position(|file| file == argument_file)
+        {
+            files_to_open.remove(index);
         }
-        arguments
-    } else {
-        arguments.to_vec()
-    };
-    remacs_cli::startup::run(i, &arguments);
+    }
+    if !files_to_open.is_empty() {
+        let mut index = 0usize;
+        let mut has_separator = false;
+        while index < startup_arguments.len() {
+            let argument = &startup_arguments[index];
+            if argument == "--" {
+                has_separator = true;
+                break;
+            }
+            index += 1;
+            if remacs_cli::takes_operand(argument) && index < startup_arguments.len() {
+                index += 1;
+            }
+        }
+        if !has_separator {
+            startup_arguments.push("--".to_owned());
+        }
+        startup_arguments.extend(files_to_open);
+    }
+    remacs_cli::startup::run(i, &startup_arguments);
     Ok(remacs_runtime::lisp::Value::Nil)
 }
 
