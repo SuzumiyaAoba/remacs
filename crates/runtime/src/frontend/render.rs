@@ -2774,6 +2774,45 @@ struct RenderedImage {
     width: Option<usize>,
     height: Option<usize>,
     masked: bool,
+    intrinsic_width: Option<usize>,
+    intrinsic_height: Option<usize>,
+}
+
+impl RenderedImage {
+    fn cursor_dimensions(&self) -> (Option<usize>, Option<usize>) {
+        match (
+            self.width,
+            self.height,
+            self.intrinsic_width,
+            self.intrinsic_height,
+        ) {
+            (Some(width), Some(height), _, _) => (Some(width), Some(height)),
+            (Some(width), None, Some(intrinsic_width), Some(intrinsic_height)) => (
+                Some(width),
+                scale_image_dimension(intrinsic_height, width, intrinsic_width),
+            ),
+            (None, Some(height), Some(intrinsic_width), Some(intrinsic_height)) => (
+                scale_image_dimension(intrinsic_width, height, intrinsic_height),
+                Some(height),
+            ),
+            (width, height, intrinsic_width, intrinsic_height) => (
+                width.or(intrinsic_width),
+                height.or(intrinsic_height),
+            ),
+        }
+    }
+}
+
+fn scale_image_dimension(value: usize, scale: usize, basis: usize) -> Option<usize> {
+    if basis == 0 {
+        return None;
+    }
+    usize::try_from(
+        (value as u128)
+            .checked_mul(scale as u128)?
+            .checked_div(basis as u128)?,
+    )
+    .ok()
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -2800,6 +2839,8 @@ enum DisplayReplacement {
         width: Option<usize>,
         height: Option<usize>,
         masked: bool,
+        intrinsic_width: Option<usize>,
+        intrinsic_height: Option<usize>,
     },
     /// Another character in a run already replaced by its first character.
     Hidden,
@@ -3340,6 +3381,8 @@ where
                 width: image_width,
                 height: image_height,
                 masked,
+                intrinsic_width,
+                intrinsic_height,
             }) => {
                 let image_column = column;
                 let visible = image_column >= hscroll && image_column < end_column;
@@ -3350,6 +3393,8 @@ where
                         width: image_width,
                         height: image_height,
                         masked,
+                        intrinsic_width,
+                        intrinsic_height,
                     });
                 }
                 append_rendered_character(
@@ -4884,6 +4929,65 @@ fn image_dimension(value: Value) -> Option<usize> {
     }
 }
 
+fn svg_pixel_dimension(value: &[u8]) -> Option<usize> {
+    let value = std::str::from_utf8(value).ok()?.trim();
+    let numeric_end = value
+        .char_indices()
+        .find(|(_, character)| {
+            !character.is_ascii_digit() && !matches!(character, '.' | '+' | '-' | 'e' | 'E')
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(value.len());
+    let number = value[..numeric_end].parse::<f64>().ok()?;
+    if !number.is_finite() || number <= 0.0 {
+        return None;
+    }
+    let pixels = match value[numeric_end..].trim() {
+        "" | "px" => number,
+        "pt" => number * (96.0 / 72.0),
+        "pc" => number * 16.0,
+        "in" => number * 96.0,
+        "cm" => number * (96.0 / 2.54),
+        "mm" => number * (96.0 / 25.4),
+        _ => return None,
+    };
+    (pixels < usize::MAX as f64).then_some(pixels.round() as usize)
+}
+
+fn svg_intrinsic_dimensions(bytes: &[u8]) -> (Option<usize>, Option<usize>) {
+    use quick_xml::events::Event;
+
+    let Ok(source) = std::str::from_utf8(bytes) else {
+        return (None, None);
+    };
+    let mut reader = quick_xml::Reader::from_str(source);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element))
+                if element
+                    .name()
+                    .as_ref()
+                    .rsplit(|byte| *byte == b':')
+                    .next()
+                    == Some(b"svg".as_slice()) =>
+            {
+                let mut width = None;
+                let mut height = None;
+                for attribute in element.attributes().flatten() {
+                    match attribute.key.as_ref() {
+                        b"width" => width = svg_pixel_dimension(attribute.value.as_ref()),
+                        b"height" => height = svg_pixel_dimension(attribute.value.as_ref()),
+                        _ => {}
+                    }
+                }
+                return (width, height);
+            }
+            Ok(Event::Eof) | Err(_) => return (None, None),
+            _ => {}
+        }
+    }
+}
+
 fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {
     let file = file.to_unicode_lossy();
     let path = std::path::Path::new(&file);
@@ -4939,6 +5043,8 @@ fn image_display_replacement(
             width,
             height,
             masked,
+            intrinsic_width: None,
+            intrinsic_height: None,
         });
     }
 
@@ -4965,6 +5071,11 @@ fn image_display_replacement(
                 .or_else(|| u8::try_from(character.code()).ok())
         })
         .collect::<Option<Vec<_>>>()?;
+    let (intrinsic_width, intrinsic_height) = if format == "svg" {
+        svg_intrinsic_dimensions(&bytes)
+    } else {
+        (None, None)
+    };
     Some(DisplayReplacement::Image {
         source: GridImageSource::Data {
             format,
@@ -4973,6 +5084,8 @@ fn image_display_replacement(
         width,
         height,
         masked,
+        intrinsic_width,
+        intrinsic_height,
     })
 }
 
@@ -7504,9 +7617,10 @@ fn render_grid_internal(
                                 .find(|image| image.column == col)
                         {
                             let large_masked_image = cursor_style.box_size.is_some_and(|size| {
+                                let (width, height) = image.cursor_dimensions();
                                 image.masked
-                                    && (image.width.is_some_and(|width| width > size)
-                                        || image.height.is_some_and(|height| height > size))
+                                    && (width.is_some_and(|width| width > size)
+                                        || height.is_some_and(|height| height > size))
                             });
                             if large_masked_image {
                                 shape = GridCursorShape::Hollow;
