@@ -60,16 +60,19 @@ date has the form (week day year) in which week is in the range 1..52 or
 2 = Tuesday, ..., 0 = Sunday).  For example, `(calendar-iso-from-absolute
 737790)' returns `(53 4 2020)'.  The absolute date is the number of days
 elapsed since the (imaginary) Gregorian date Sunday, December 31, 1 BC."
-  (let* ((approx (calendar-extract-year
-                  (calendar-gregorian-from-absolute (- date 3))))
-         (year (+ approx
-                  (calendar-sum y approx
-                                (>= date (calendar-iso-to-absolute
-                                          (list 1 1 (1+ y))))
-                                1))))
+  (let* ((year (calendar-extract-year
+                (calendar-gregorian-from-absolute (- date 3))))
+         (year-start (calendar-iso-to-absolute (list 1 1 year))))
+    ;; APPROX can lie on either side of the ISO year, especially below year 1.
+    (while (< date year-start)
+      (setq year (1- year)
+            year-start (calendar-iso-to-absolute (list 1 1 year))))
+    (while (>= date (calendar-iso-to-absolute (list 1 1 (1+ year))))
+      (setq year (1+ year)
+            year-start (calendar-iso-to-absolute (list 1 1 year))))
     (list
-     (1+ (/ (- date (calendar-iso-to-absolute (list 1 1 year))) 7))
-     (% date 7)
+     (1+ (/ (- date year-start) 7))
+     (mod date 7)
      year)))
 
 ;;;###cal-autoload
