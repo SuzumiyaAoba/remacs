@@ -1,8 +1,8 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        AppleScriptResult, DragAction, Grid, GridScrollBarOrientation, InputEvent, KeyIo,
-        MouseButton, MouseInput,
+        AppleScriptResult, DragAction, Grid, GridImage, GridImageSource,
+        GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
         MousePosition, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
     },
@@ -32,6 +32,22 @@ fn same_mouse_face_position(left: Option<MousePosition>, right: Option<MousePosi
             left.buffer_id == right.buffer_id && left.buffer_position == right.buffer_position
         }
         _ => false,
+    }
+}
+
+fn estimated_image_cache_bytes(image: &GridImage) -> usize {
+    if let (Some(width), Some(height)) = (image.width, image.height) {
+        let bytes = width.saturating_mul(height).saturating_mul(3);
+        if bytes > 0 {
+            return bytes;
+        }
+    }
+    match &image.source {
+        GridImageSource::Data { bytes, .. } => bytes.len(),
+        GridImageSource::File(path) => std::fs::metadata(path)
+            .ok()
+            .and_then(|metadata| usize::try_from(metadata.len()).ok())
+            .unwrap_or(0),
     }
 }
 
@@ -1932,6 +1948,21 @@ impl KeyIo for ChanIo {
         }
 
         self.latest_snapshots = snapshots.clone();
+        if self.gui_requests.is_some() {
+            let mut sources = Vec::<GridImageSource>::new();
+            let mut image_cache_size = 0usize;
+            for image in self.frame_grids.values().flat_map(|grid| &grid.images) {
+                if sources.contains(&image.source) {
+                    continue;
+                }
+                sources.push(image.source.clone());
+                image_cache_size =
+                    image_cache_size.saturating_add(estimated_image_cache_bytes(image));
+            }
+            i.gui_image_cache_size.set(image_cache_size);
+        } else {
+            i.gui_image_cache_size.set(0);
+        }
         if let Some(updates) = &self.gui_requests {
             updates
                 .send_blocking(GuiRequest::FrameSnapshots(snapshots))

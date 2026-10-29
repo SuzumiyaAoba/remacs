@@ -7561,12 +7561,16 @@ fn render_grid_internal(
                 );
                 images.extend(rendered.images.iter().filter_map(|image| {
                     let column = content_left.saturating_add(image.column);
-                    (column < width).then(|| GridImage {
+                    if column >= width {
+                        return None;
+                    }
+                    let (image_width, image_height) = image.cursor_dimensions();
+                    Some(GridImage {
                         row: y,
                         column,
                         source: image.source.clone(),
-                        width: image.width,
-                        height: image.height,
+                        width: image_width,
+                        height: image_height,
                     })
                 }));
                 // Empty tail of the row: the line-end face extends its
@@ -7932,12 +7936,15 @@ fn render_grid_internal(
                     })
                 },
             ));
-            images.extend(rendered.images.iter().map(|image| GridImage {
-                row: y,
-                column: image.column,
-                source: image.source.clone(),
-                width: image.width,
-                height: image.height,
+            images.extend(rendered.images.iter().map(|image| {
+                let (width, height) = image.cursor_dimensions();
+                GridImage {
+                    row: y,
+                    column: image.column,
+                    source: image.source.clone(),
+                    width,
+                    height,
+                }
             }));
             if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
                 && snapshot.buffer_id == buffer.borrow().id

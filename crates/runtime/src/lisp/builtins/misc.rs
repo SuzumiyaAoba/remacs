@@ -246,7 +246,8 @@ use functions::{
     f_special_variable_p, f_subr_native_elisp_p,
 };
 use images::{
-    f_bitmap_spec_p, f_clear_image_cache, f_image_flush, f_image_metadata, f_image_spec_check,
+    f_bitmap_spec_p, f_clear_image_cache, f_image_cache_size, f_image_flush, f_image_metadata,
+    f_image_spec_check,
     f_image_transforms_p, f_image_type, f_image_type_available_p, f_imagep, f_init_image_library,
     f_lookup_image_map, f_put_image, f_remove_images,
 };
@@ -1943,7 +1944,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("get-display-property", 2, 4, f_get_display_property, ""),
     S!("lookup-image-map", 3, 3, f_lookup_image_map, ""),
     S!("clear-image-cache", 0, 2, f_clear_image_cache, ""),
-    S!("image-cache-size", 0, 0, f_zero, ""),
+    S!("image-cache-size", 0, 0, f_image_cache_size, ""),
     S!("display--line-is-continued-p", 0, 0, f_nil, ""),
     S!("display--update-for-mouse-movement", 3, 3, f_nil, ""),
     S!(

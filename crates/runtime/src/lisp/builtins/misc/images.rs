@@ -343,6 +343,10 @@ pub(super) fn f_clear_image_cache(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     }
 }
 
+pub(super) fn f_image_cache_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    Ok(Value::Int(i.gui_image_cache_size.get() as i128))
+}
+
 pub(super) fn f_bitmap_spec_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU treats a string as a bitmap spec (file name / data form).
     Ok(Value::from_bool(matches!(&a[0], Value::Str(_))))

@@ -10,7 +10,10 @@ use crate::lisp::{
     value::{Argv, Lambda, SymId, Value},
 };
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 /// The interpreter: all global Lisp state. Lives on the eval thread.
 pub struct Interp {
@@ -61,6 +64,8 @@ pub struct Interp {
     pub gui_mouse_frame_position: Option<(usize, i128, i128)>,
     /// The same pointer location in pixels for `mouse-pixel-position'.
     pub gui_mouse_frame_pixel_position: Option<(usize, i128, i128)>,
+    /// Estimated bytes used by currently displayed GUI image assets.
+    pub gui_image_cache_size: Cell<usize>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,
