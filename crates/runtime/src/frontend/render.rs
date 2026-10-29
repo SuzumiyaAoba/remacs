@@ -959,6 +959,71 @@ fn automatic_scroll_target_row(
     center
 }
 
+/// Horizontal scroll distance: absolute columns, a window-width fraction, or
+/// GNU's default recentering behavior.
+#[derive(Clone, Copy)]
+enum HScrollStep {
+    Center,
+    Columns(usize),
+    Fraction(f64),
+}
+
+fn hscroll_step_setting(i: &Interp, buffer: usize) -> HScrollStep {
+    match buffer_setting(i, "hscroll-step", buffer) {
+        Value::Int(step) if (1..=i32::MAX as i128).contains(&step) => {
+            HScrollStep::Columns(step as usize)
+        }
+        Value::Float(step) if step.is_finite() && *step > 0.0 => {
+            HScrollStep::Fraction((*step).clamp(0.0, 1.0))
+        }
+        _ => HScrollStep::Center,
+    }
+}
+
+fn automatic_hscroll_position(
+    column: usize,
+    line_columns: usize,
+    point_at_end_of_line: bool,
+    hscroll: usize,
+    content_width: usize,
+    margin: usize,
+    step: HScrollStep,
+    min_hscroll: usize,
+) -> Option<usize> {
+    // C's hscroll_window_tree scrolls only when point reaches a margin
+    // while text remains in that direction, or when point is off-screen.
+    if content_width == 0 {
+        return None;
+    }
+    let before_window = column < hscroll;
+    let cursor_x = column.saturating_sub(hscroll);
+    let right_boundary = hscroll.saturating_add(content_width);
+    let right_margin_start = content_width.saturating_sub(margin);
+    let scrolling_right = !before_window
+        && (column >= right_boundary
+            || (column < line_columns && cursor_x >= right_margin_start));
+    let scrolling_left = before_window || (hscroll > 0 && cursor_x <= margin);
+    if !scrolling_right && !scrolling_left {
+        return None;
+    }
+
+    let target_x = match (step, scrolling_right) {
+        (HScrollStep::Center, true) if point_at_end_of_line => content_width.saturating_sub(4),
+        (HScrollStep::Center, _) => content_width / 2,
+        (HScrollStep::Columns(columns), true) => {
+            content_width.saturating_sub(columns.saturating_add(margin))
+        }
+        (HScrollStep::Columns(columns), false) => margin.saturating_add(columns),
+        (HScrollStep::Fraction(fraction), true) => {
+            ((content_width as f64 * (1.0 - fraction)) as usize).saturating_sub(margin)
+        }
+        (HScrollStep::Fraction(fraction), false) => {
+            ((content_width as f64 * fraction) as usize).saturating_add(margin)
+        }
+    };
+    Some(column.saturating_sub(target_x).max(min_hscroll))
+}
+
 fn buffer_fill_column_indicator(
     i: &Interp,
     ctx: &mut FaceCtx,
@@ -5818,18 +5883,26 @@ fn render_grid_internal(
                 let new_hscroll = if wrap_lines {
                     0
                 } else if content_width > 0 && ahs_on && !suspend_hs {
-                    let col = display_columns(
-                        &bb.text.substring(bb.text.line_start(pt_line), pt),
-                        tab_width,
-                    );
-                    if col < hscroll {
-                        col
-                    } else if col >= hscroll + content_width {
-                        col + 1 - content_width
-                    } else {
-                        hscroll
-                    }
-                    .max(min_hs)
+                    let line_start = bb.text.line_start(pt_line).max(bb.begv);
+                    let line_end = bb.text.line_end(line_start).min(bb.zv);
+                    let col = display_columns(&bb.text.substring(line_start, pt), tab_width);
+                    let line_columns =
+                        display_columns(&bb.text.substring(line_start, line_end), tab_width);
+                    let margin = buffer_setting(i, "hscroll-margin", buf_id)
+                        .int()
+                        .unwrap_or(0)
+                        .clamp(0, 1_000_000) as usize;
+                    automatic_hscroll_position(
+                        col,
+                        line_columns,
+                        pt >= line_end,
+                        hscroll,
+                        content_width,
+                        margin,
+                        hscroll_step_setting(i, buf_id),
+                        min_hs,
+                    )
+                    .unwrap_or(hscroll)
                 } else {
                     hscroll
                 };
