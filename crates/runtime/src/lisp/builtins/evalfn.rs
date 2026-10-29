@@ -1886,8 +1886,44 @@ fn macroexpand_all_expanded(
                         // `cl-macrolet'-bound call in test position
                         // unexpanded (comp-cstr's `with-comp-cstr-
                         // accessors' inside `cond' broke on this).
+                        // It also removes clauses after an unconditional
+                        // clause. Only literals, t/keywords, and quoted
+                        // non-nil constants are known to always succeed.
+                        let mut kept_end = items.len();
+                        for index in 1..items.len().saturating_sub(1) {
+                            let test = match &items[index] {
+                                Value::Cons(clause) => clause.borrow().car.clone(),
+                                other => other.clone(),
+                            };
+                            let unconditional = match &test {
+                                Value::Cons(form) => {
+                                    let (head, tail) = {
+                                        let form = form.borrow();
+                                        (form.car.clone(), form.cdr.clone())
+                                    };
+                                    if i.sym_is(&head, sym::QUOTE)
+                                        || i.sym_is(&head, sym::FUNCTION)
+                                    {
+                                        matches!(tail, Value::Cons(arg) if arg.borrow().car.truthy())
+                                    } else {
+                                        false
+                                    }
+                                }
+                                Value::Nil => false,
+                                Value::Sym(symbol) => {
+                                    *symbol == sym::T
+                                        || (!i.obarray.symbol(*symbol).uninterned
+                                            && i.symbol_name(*symbol).starts_with(':'))
+                                }
+                                _ => true,
+                            };
+                            if unconditional {
+                                kept_end = index + 1;
+                                break;
+                            }
+                        }
                         let mut out = vec![items[0].clone()];
-                        for clause in &items[1..] {
+                        for clause in &items[1..kept_end] {
                             if let Value::Cons(_) = clause {
                                 let parts = clause.list_to_vec().unwrap_or_default();
                                 let mut nc = Vec::with_capacity(parts.len());
