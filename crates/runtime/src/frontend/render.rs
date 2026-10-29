@@ -54,6 +54,8 @@ impl Default for BoxStyle {
 pub struct CellStyle {
     pub fg: Option<CellColor>,
     pub bg: Option<CellColor>,
+    /// Deferred until the final foreground/background pair is known.
+    pub distant_foreground: Option<CellColor>,
     /// Index into `Grid::font_families` for an explicit face family.
     pub font_family: Option<u16>,
     /// Explicit font weight, in GNU's 100–900 scale.
@@ -270,6 +272,7 @@ pub struct GridComposition {
 struct StyleMix {
     fg: Option<CellColor>,
     bg: Option<CellColor>,
+    distant_foreground: Option<Option<CellColor>>,
     font_family: Option<u16>,
     font_weight: Option<u16>,
     font_width: Option<u8>,
@@ -299,6 +302,7 @@ impl StyleMix {
         m!(
             fg,
             bg,
+            distant_foreground,
             font_family,
             font_weight,
             font_width,
@@ -322,6 +326,7 @@ impl StyleMix {
         CellStyle {
             fg: self.fg,
             bg: self.bg,
+            distant_foreground: self.distant_foreground.flatten(),
             font_family: self.font_family,
             font_weight: self.font_weight,
             font_width: self.font_width,
@@ -346,6 +351,7 @@ impl PartialEq for StyleMix {
     fn eq(&self, o: &Self) -> bool {
         self.fg == o.fg
             && self.bg == o.bg
+            && self.distant_foreground == o.distant_foreground
             && self.font_family == o.font_family
             && self.font_weight == o.font_weight
             && self.font_width == o.font_width
@@ -3590,7 +3596,6 @@ impl FaceCtx {
     /// The attribute keywords of a plist, without :inherit.
     fn attrs(&mut self, i: &Interp, plist: &Value) -> StyleMix {
         let mut mix = StyleMix::default();
-        let mut distant_fg = None;
         let Ok(items) = plist.list_to_vec() else {
             return mix;
         };
@@ -3604,7 +3609,7 @@ impl FaceCtx {
                         mix.fg = Some(c);
                     }
                 }
-                ":distant-foreground" => distant_fg = self.color(v),
+                ":distant-foreground" => mix.distant_foreground = Some(self.color(v)),
                 ":background" => {
                     if let Some(c) = self.color(v) {
                         mix.bg = Some(c);
@@ -3640,12 +3645,6 @@ impl FaceCtx {
                 ":extend" => mix.extend = Some(v.truthy()),
                 _ => {}
             }
-        }
-        // :distant-foreground is only used when it contrasts with the
-        // background; on this coarse model it fills fg when the face
-        // sets no real :foreground (GNU drops it when it blends in).
-        if mix.fg.is_none() {
-            mix.fg = distant_fg;
         }
         mix
     }
@@ -5268,6 +5267,24 @@ fn frame_gamma_exponent(i: &Interp, frame: &crate::editor::FrameRef) -> Option<f
     exponent.is_finite().then_some(exponent)
 }
 
+fn face_near_same_color_threshold(i: &Interp) -> i128 {
+    i.intern_soft("face-near-same-color-threshold")
+        .and_then(|symbol| i.symbol_value(symbol).int())
+        .unwrap_or(30_000)
+}
+
+fn color_distance(first: CellColor, second: CellColor) -> i128 {
+    let channel = |value: u8| i64::from(value) * 257;
+    let red = channel(first.0) - channel(second.0);
+    let green = channel(first.1) - channel(second.1);
+    let blue = channel(first.2) - channel(second.2);
+    let red_mean = (channel(first.0) + channel(second.0)) >> 1;
+    let red_term = ((2 * 65_536 + red_mean) * red * red) >> 16;
+    let blue_term = ((2 * 65_536 + 65_535 - red_mean) * blue * blue) >> 16;
+    let distance = (red_term + 4 * green * green + blue_term) >> 16;
+    i128::from(distance)
+}
+
 fn gamma_correct_color(color: CellColor, exponent: f64) -> CellColor {
     let channel = |value: u8| {
         ((f64::from(value) / 255.0).powf(exponent) * 255.0 + 0.5)
@@ -5285,6 +5302,7 @@ fn gamma_correct_style(style: &mut CellStyle, exponent: f64) {
     };
     correct(&mut style.fg);
     correct(&mut style.bg);
+    correct(&mut style.distant_foreground);
     correct(&mut style.underline_color);
     correct(&mut style.strike_color);
     if let Some(box_style) = &mut style.box_style {
@@ -5292,35 +5310,62 @@ fn gamma_correct_style(style: &mut CellStyle, exponent: f64) {
     }
 }
 
-fn gamma_correct_grid_colors(grid: &mut Grid, exponent: f64) {
-    gamma_correct_style(&mut grid.default_style, exponent);
+fn resolve_grid_style(style: &mut CellStyle, exponent: Option<f64>, threshold: i128) {
+    if let Some(exponent) = exponent {
+        gamma_correct_style(style, exponent);
+    }
+    if let Some(distant_foreground) = style.distant_foreground.take() {
+        let (foreground, background) = if style.inverse {
+            (style.bg, style.fg)
+        } else {
+            (style.fg, style.bg)
+        };
+        if threshold > 0
+            && let (Some(foreground), Some(background)) = (foreground, background)
+            && color_distance(foreground, background) < threshold
+        {
+            if style.inverse {
+                style.bg = Some(distant_foreground);
+            } else {
+                style.fg = Some(distant_foreground);
+            }
+        }
+    }
+}
+
+fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) {
+    resolve_grid_style(&mut grid.default_style, exponent, threshold);
     if let Some(color) = &mut grid.default_bg {
-        *color = gamma_correct_color(*color, exponent);
+        if let Some(exponent) = exponent {
+            *color = gamma_correct_color(*color, exponent);
+        }
     }
     for row in &mut grid.attrs {
         for style in row {
-            gamma_correct_style(style, exponent);
+            resolve_grid_style(style, exponent, threshold);
         }
     }
     for row in &mut grid.char_attrs {
         for style in row {
-            gamma_correct_style(style, exponent);
+            resolve_grid_style(style, exponent, threshold);
         }
     }
     for indicator in &mut grid.fill_column_indicators {
-        gamma_correct_style(&mut indicator.style, exponent);
+        resolve_grid_style(&mut indicator.style, exponent, threshold);
     }
     for divider in &mut grid.bottom_dividers {
-        gamma_correct_style(&mut divider.style, exponent);
-        gamma_correct_style(&mut divider.first_pixel_style, exponent);
-        gamma_correct_style(&mut divider.last_pixel_style, exponent);
+        resolve_grid_style(&mut divider.style, exponent, threshold);
+        resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
+        resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
     }
     for composition in &mut grid.compositions {
-        gamma_correct_style(&mut composition.style, exponent);
+        resolve_grid_style(&mut composition.style, exponent, threshold);
     }
     for cursor in &mut grid.cursors {
         if let Some(color) = &mut cursor.color {
-            *color = gamma_correct_color(*color, exponent);
+            if let Some(exponent) = exponent {
+                *color = gamma_correct_color(*color, exponent);
+            }
         }
     }
 }
@@ -7202,8 +7247,6 @@ fn render_grid_internal(
         pointer_visible: fb.pointer_visible,
         input,
     };
-    if let Some(gamma) = gamma_exponent {
-        gamma_correct_grid_colors(&mut grid, gamma);
-    }
+    resolve_grid_colors(&mut grid, gamma_exponent, face_near_same_color_threshold(i));
     grid
 }
