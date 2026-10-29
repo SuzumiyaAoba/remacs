@@ -243,7 +243,7 @@ must never cause a Lisp error."
 				(if encoded
 				    (rfc2231-decode-encoded-string value signal-error)
 				  value))))
-		      (nreverse cparams))))))))
+		      (nreverse cparams)))))))
 
 (defun rfc2231--valid-percent-escapes-p (string)
   "Return non-nil if every percent sign in STRING starts a hex octet."
