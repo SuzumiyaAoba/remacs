@@ -382,11 +382,11 @@ impl Interp {
                 }
                 if self.is_macro_function(&fun) {
                     let key = Rc::as_ptr(cons) as usize;
-                    // Only dumped/compiled-equivalent bodies have already
-                    // expanded their macros in GNU.  Ordinary interpreted
-                    // functions must re-expand this call site each time;
-                    // macro functions can have observable expansion effects.
-                    let cache_macro = self.dumped_call_depth > 0;
+                    // Only the current compiled-equivalent body has already
+                    // expanded its macros in GNU. `dumped_call_depth' also
+                    // includes compiled ancestors that may call an
+                    // interpreted callback, whose macros must run each time.
+                    let cache_macro = self.current_body_compiled;
                     // Inside dumped-library (compiled-equivalent) lambdas
                     // macro calls were expanded at "compile" time — i.e.
                     // against the pre-advice cell.  Strip any advice
