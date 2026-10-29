@@ -765,7 +765,7 @@ you will get the following structure returned:
       (json-skip-whitespace)
       (unless (eobp)
         ;;Remacs: this whole-string API must reject trailing JSON data.
-        (signal 'json-error (list "Trailing data" (point))))))
+        (signal 'json-error (list "Trailing data" (point)))))))
 
 (defun json-read-file (file)
   "Read the first JSON object contained in FILE and return it."
