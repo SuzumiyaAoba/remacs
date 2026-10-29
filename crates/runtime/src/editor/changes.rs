@@ -165,6 +165,7 @@ fn record(i: &Interp) {
             data.change_frame = Some(id);
             data.change_clock = Some(clock.clone());
             data.change_size = Some(size);
+            data.change_start = Some(data.start);
         }
     }
 }
@@ -208,7 +209,7 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                     continue;
                 }
                 let size = window_size(i, window);
-                let (buffer, old, buffer_change, size_change, selection_change) = {
+                let (buffer, old, buffer_change, size_change, selection_change, scroll_change) = {
                     let data = window.borrow();
                     let same_buffer = matches!(&data.old_buffer, Value::Buffer(b) if b.borrow().id == data.buffer);
                     let buffer_change = !same_buffer || data.change_stamp != stamp;
@@ -219,11 +220,18 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                         buffer_change || data.change_size != Some(size),
                         (selection || frame_selected)
                             && (old_selected == Some(data.id) || selected == data.id),
+                        data.change_start.is_some_and(|start| start != data.start),
                     )
                 };
                 buffers |= buffer_change;
                 sizes |= size_change;
-                changed |= buffer_change || size_change || selection_change || flag;
+                changed |= buffer_change || size_change || selection_change || scroll_change || flag;
+                if scroll_change {
+                    winxtra::f_run_window_scroll_functions(
+                        i,
+                        vec![Value::Window(window.clone())].into(),
+                    )?;
+                }
                 if buffer_change {
                     if let Value::Buffer(old) = old {
                         let old = old.borrow().id;
@@ -237,7 +245,9 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                 if !window.borrow().dead && selection_change {
                     local(i, "window-selection-change-functions", buffer, window)?;
                 }
-                if !window.borrow().dead && (buffer_change || size_change || selection_change) {
+                if !window.borrow().dead
+                    && (buffer_change || size_change || selection_change || scroll_change)
+                {
                     local(i, "window-state-change-functions", buffer, window)?;
                 }
             }

@@ -153,6 +153,8 @@ pub struct Window {
     pub(crate) change_frame: Option<usize>,
     pub(crate) change_clock: Option<Rc<std::cell::Cell<u64>>>,
     pub(crate) change_size: Option<[usize; 5]>,
+    /// Start position published by the previous redisplay change pass.
+    pub(crate) change_start: Option<usize>,
     /// GNU `w->cursor_type': per-window cursor override, t = follow
     /// the buffer's `cursor-type' variable.  Set by
     /// `set-window-cursor-type'.
@@ -304,6 +306,7 @@ impl Window {
                 change_frame: None,
                 change_clock: None,
                 change_size: None,
+                change_start: None,
                 cursor_type: Value::t(),
             },
             crate::lisp::Value::Window,
