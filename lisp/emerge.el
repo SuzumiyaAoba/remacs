@@ -1010,7 +1010,9 @@ This is *not* a user option, since Emerge uses it for its own processing.")
   (emerge-revisions-internal
    file revision-A revision-B startup-hooks
    (if arg
-       (let ((cmd (format "%s %s" emerge-rcs-ci-program file)))
+       (let ((cmd (format "%s %s"
+                          (shell-quote-argument emerge-rcs-ci-program)
+                          (shell-quote-argument file))))
          (cons (lambda () (shell-command cmd))
 	       quit-hooks))
        quit-hooks)))
@@ -1033,7 +1035,9 @@ This is *not* a user option, since Emerge uses it for its own processing.")
   (emerge-revision-with-ancestor-internal
    file revision-A revision-B ancestor startup-hooks
    (if arg
-       (let ((cmd (format "%s %s" emerge-rcs-ci-program file)))
+       (let ((cmd (format "%s %s"
+                          (shell-quote-argument emerge-rcs-ci-program)
+                          (shell-quote-argument file))))
 	 (cons (lambda () (shell-command cmd))
 	       quit-hooks))
      quit-hooks)))
@@ -1049,7 +1053,10 @@ This is *not* a user option, since Emerge uses it for its own processing.")
      buffer-A
      (erase-buffer)
      (shell-command
-      (format "%s -q -p%s %s" emerge-rcs-co-program revision-A file)
+      (format "%s -q %s %s"
+              (shell-quote-argument emerge-rcs-co-program)
+              (shell-quote-argument (concat "-p" revision-A))
+              (shell-quote-argument file))
       t)
      (write-region (point-min) (point-max) emerge-file-A nil 'no-message)
      (set-buffer-modified-p nil))
@@ -1057,7 +1064,10 @@ This is *not* a user option, since Emerge uses it for its own processing.")
      buffer-B
      (erase-buffer)
      (shell-command
-      (format "%s -q -p%s %s" emerge-rcs-co-program revision-B file)
+      (format "%s -q %s %s"
+              (shell-quote-argument emerge-rcs-co-program)
+              (shell-quote-argument (concat "-p" revision-B))
+              (shell-quote-argument file))
       t)
      (write-region (point-min) (point-max) emerge-file-B nil 'no-message)
      (set-buffer-modified-p nil))
@@ -1087,8 +1097,10 @@ This is *not* a user option, since Emerge uses it for its own processing.")
      buffer-A
      (erase-buffer)
      (shell-command
-      (format "%s -q -p%s %s" emerge-rcs-co-program
-	      revision-A file)
+      (format "%s -q %s %s"
+              (shell-quote-argument emerge-rcs-co-program)
+	      (shell-quote-argument (concat "-p" revision-A))
+	      (shell-quote-argument file))
       t)
      (write-region (point-min) (point-max) emerge-file-A nil 'no-message)
      (set-buffer-modified-p nil))
@@ -1096,7 +1108,10 @@ This is *not* a user option, since Emerge uses it for its own processing.")
      buffer-B
      (erase-buffer)
      (shell-command
-      (format "%s -q -p%s %s" emerge-rcs-co-program revision-B file)
+      (format "%s -q %s %s"
+              (shell-quote-argument emerge-rcs-co-program)
+              (shell-quote-argument (concat "-p" revision-B))
+              (shell-quote-argument file))
       t)
      (write-region (point-min) (point-max) emerge-file-B nil 'no-message)
      (set-buffer-modified-p nil))
@@ -1104,7 +1119,10 @@ This is *not* a user option, since Emerge uses it for its own processing.")
      buffer-ancestor
      (erase-buffer)
      (shell-command
-      (format "%s -q -p%s %s" emerge-rcs-co-program ancestor file)
+      (format "%s -q %s %s"
+              (shell-quote-argument emerge-rcs-co-program)
+              (shell-quote-argument (concat "-p" ancestor))
+              (shell-quote-argument file))
       t)
      (write-region (point-min) (point-max) emerge-ancestor nil 'no-message)
      (set-buffer-modified-p nil))
