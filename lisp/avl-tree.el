@@ -689,17 +689,16 @@ a null element stored in the AVL tree.)"
   (null (avl-tree--stack-store avl-tree-stack)))
 
 
-;; remacs does not provide generator.el's CPS iterators, so
-;; `avl-tree-iter' is written out by hand following the same protocol:
-;; the iterator is a function of no arguments that returns successive
-;; elements and signals `iter-end-of-sequence' (with the body's return
-;; value as data) once exhausted.
+;; Keep the iterator protocol compatible with generator.el: an iterator
+;; receives :next and an optional sent value, or :close.  Remacs needs a
+;; fallback `iter-next' when generator.el has not been loaded yet.
 (define-error 'iter-end-of-sequence "Iteration terminated"
   'iter-end-of-sequence)
 
-(defun iter-next (iterator &optional _value)
-  "Return the next element from ITERATOR."
-  (funcall iterator))
+(unless (fboundp 'iter-next)
+  (defun iter-next (iterator &optional yield-result)
+    "Extract a value from ITERATOR, passing YIELD-RESULT to it."
+    (funcall iterator :next yield-result)))
 
 (defun avl-tree-iter (tree &optional reverse)
   "Return an AVL tree iterator object.
@@ -712,10 +711,14 @@ Note that any modification to TREE *immediately* invalidates all
 iterators created from TREE before the modification (in
 particular, calling `iter-next' will give unpredictable results)."
   (let ((stack (avl-tree-stack tree reverse)))
-    (lambda ()
-      (if (avl-tree-stack-empty-p stack)
-          (signal 'iter-end-of-sequence nil)
-        (avl-tree-stack-pop stack)))))
+    (lambda (operation _value)
+      (cond
+       ((eq operation :next)
+        (if (avl-tree-stack-empty-p stack)
+            (signal 'iter-end-of-sequence nil)
+          (avl-tree-stack-pop stack)))
+       ((eq operation :close) nil)
+       (t (error "Unknown iterator operation %S" operation)))))
 
 
 (provide 'avl-tree)
