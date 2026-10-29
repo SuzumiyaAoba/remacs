@@ -775,6 +775,25 @@ impl Isearch {
         }
     }
 
+    fn delete_query_char(&mut self, i: &mut Interp) {
+        if self.query.is_empty() {
+            return;
+        }
+        self.save_history();
+        self.query.pop();
+        let anchor = self
+            .spans
+            .last()
+            .map(|span| if self.backward { span.1 } else { span.0 })
+            .unwrap_or(self.start);
+        self.positions.push(anchor);
+        self.spans.push((anchor, anchor));
+        self.failing = false;
+        self.fail_pos = None;
+        self.go_to(i, anchor);
+        self.search_replaced_query(i);
+    }
+
     fn search_buffer_boundary(&mut self, i: &mut Interp, last: bool) {
         if self.query.is_empty() {
             return;
@@ -1277,6 +1296,12 @@ impl Isearch {
                     }
                     Err(flow) => report_flow(i, flow),
                 }
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | CHAR_CTL | 'd' as i128)
+                || c == (CHAR_META | 4) =>
+            {
+                self.delete_query_char(i);
                 IsearchAction::Continue
             }
             c if c == (CHAR_META | '%' as i128) => IsearchAction::QueryReplace(false),
