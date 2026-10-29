@@ -24454,7 +24454,9 @@ fn f_display_message_or_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         Value::Str(s) => {
             // Batch output does not occupy the interactive echo area.
             if !i.noninteractive {
-                i.echo_message = s.borrow().clone();
+                let text = s.borrow().clone();
+                let properties = i.str_props(s).to_vec();
+                i.set_echo_message_with_properties(text, properties);
             }
             Ok(a[0].clone())
         }

@@ -93,6 +93,7 @@ impl Interp {
             features: feature_syms,
             output: None,
             echo_message: crate::lisp::text::EmacsText::new(),
+            echo_message_props: Vec::new(),
             gui_tip: None,
             gui_popup_menu: None,
             gui_mouse_position: None,

@@ -45,6 +45,8 @@ pub struct Interp {
     pub output: Option<OutputSink>,
     /// Last thing shown in the echo area (tests inspect this).
     pub echo_message: crate::lisp::text::EmacsText,
+    /// Text-property intervals retained for the current echo-area message.
+    pub echo_message_props: Vec<(usize, usize, Vec<Value>)>,
     /// Active graphical tooltip requested by `x-show-tip'.
     pub gui_tip: Option<String>,
     /// Popup menu requested by `x-popup-menu' for the GUI frontend.

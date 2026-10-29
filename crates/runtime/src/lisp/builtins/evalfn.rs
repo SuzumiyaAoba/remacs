@@ -4488,11 +4488,11 @@ pub(crate) fn f_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         _ => {}
     }
     let v = super::strfn::f_format_message(i, args)?;
-    let msg = match &v {
-        Value::Str(s) => s.borrow().clone(),
-        other => i.princ_to_string(other),
+    let (msg, properties) = match &v {
+        Value::Str(s) => (s.borrow().clone(), i.str_props(s).to_vec()),
+        other => (i.princ_to_string(other), Vec::new()),
     };
-    i.message(&msg);
+    i.message_with_properties(&msg, properties);
     Ok(v)
 }
 pub(crate) fn f_ding(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {

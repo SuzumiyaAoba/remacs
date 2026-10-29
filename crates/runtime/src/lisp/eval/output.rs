@@ -208,6 +208,15 @@ impl Interp {
             })
     }
 
+    pub(crate) fn set_echo_message_with_properties(
+        &mut self,
+        message: text::EmacsText,
+        properties: Vec<(usize, usize, Vec<Value>)>,
+    ) {
+        self.echo_message = message;
+        self.echo_message_props = properties;
+    }
+
     /// `message` — show a string in the echo area and log it to
     /// *Messages*.  GNU's `message_dolog' logs in batch too: the
     /// buffer is created on demand (undo disabled), consecutive
@@ -216,6 +225,14 @@ impl Interp {
     /// Insertions bypass read-only/change-hook machinery (GNU's
     /// `insert_1_both' with PREPARE=false).
     pub fn message<T: text::TextSource + ?Sized>(&mut self, s: &T) {
+        self.message_with_properties(s, Vec::new());
+    }
+
+    pub(crate) fn message_with_properties<T: text::TextSource + ?Sized>(
+        &mut self,
+        s: &T,
+        properties: Vec<(usize, usize, Vec<Value>)>,
+    ) {
         s.with_text(|s| {
             // Boot loads construct the dumped image.  Their normal messages
             // are logged and discarded at the end of startup, like GNU's
@@ -234,7 +251,7 @@ impl Interp {
                 let _ = std::io::Write::write_all(&mut stderr, &bytes);
                 let _ = std::io::Write::write_all(&mut stderr, b"\n");
             } else {
-                self.echo_message = s.to_string();
+                self.set_echo_message_with_properties(s.to_string(), properties);
             }
             self.message_log(s);
             // GNU routes `message' to stderr in batch and the echo area

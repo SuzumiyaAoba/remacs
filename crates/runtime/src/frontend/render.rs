@@ -4887,6 +4887,31 @@ fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> 
     style_at_pos_with_named_face(i, ctx, wf, pos, None)
 }
 
+fn echo_message_style(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    properties: &[(usize, usize, Vec<Value>)],
+    position: usize,
+) -> CellStyle {
+    let face = ctx.face;
+    let font_lock_face = ctx.font_lock_face;
+    let mut mix = ctx.builtin(i, "default", 0);
+    for (_, _, plist) in properties
+        .iter()
+        .filter(|(start, end, _)| position >= *start && position < *end)
+    {
+        for pair in plist.chunks_exact(2) {
+            let Some(property) = i.sym_id(&pair[0]) else {
+                continue;
+            };
+            if property == face || property == font_lock_face {
+                mix.merge(&ctx.face_value(i, &pair[1], 0));
+            }
+        }
+    }
+    mix.finish()
+}
+
 fn style_at_pos_with_named_face(
     i: &Interp,
     ctx: &mut FaceCtx,
@@ -6842,7 +6867,14 @@ fn render_grid_internal(
                 |index| {
                     wf.as_ref()
                         .map(|wf| style_at_pos(i, &mut fctx, wf, range.start + index))
-                        .unwrap_or(default_style)
+                        .unwrap_or_else(|| {
+                            echo_message_style(
+                                i,
+                                &mut fctx,
+                                &i.echo_message_props,
+                                range.start + index,
+                            )
+                        })
                 },
                 |_| Visibility::Visible,
                 |index| {
