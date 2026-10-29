@@ -248,6 +248,19 @@ directory."
                                     prompt-path)))))
      ;; If the file name is non-absolute, try and see if it
      ;; seems to be up or down from where we were.
+     ;; Resolve simple dot-relative paths directly against default-directory.
+     ((and (string-match-p "\\`\\(?:\\.\\|\\.\\.\\)\\(?:/.*\\)?\\'" prompt-path)
+           (let* ((new-dir
+                   (funcall dirtrack-directory-function
+                            (expand-file-name prompt-path default-directory)))
+                  (current-dir
+                   (funcall dirtrack-canonicalize-function default-directory)))
+             (and (file-accessible-directory-p new-dir)
+                  (not (string-equal
+                        current-dir
+                        (funcall dirtrack-canonicalize-function new-dir))))))
+      (shell-process-cd prompt-path)
+      (run-hooks 'dirtrack-directory-change-hook))
      ((string-match "\\`\\(.*\\)\\(?:/.*\\)?\n\\(.*/\\)\\1\\(?:/.*\\)?\\'"
                     (setq temp
                           (concat prompt-path "\n" default-directory)))
