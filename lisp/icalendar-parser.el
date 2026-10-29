@@ -1067,7 +1067,7 @@ S should be a match against rx `icalendar-dur-value'."
                (seconds (match-string 19))
                (nseconds (* sign (if seconds (string-to-number seconds) 0))))
           (make-decoded-time :second nseconds :minute nminutes :hour nhours
-                             :day ndays)))))
+                             :day ndays))))))
 
 (defun icalendar-print-dur-value (dur)
   "Serialize an `icalendar-dur-value' to a string."
