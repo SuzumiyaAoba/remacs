@@ -280,7 +280,75 @@ pub(super) fn f_current_bidi_paragraph_direction(
         None | Some(Value::Nil) | Some(Value::Buffer(_)) => {}
         Some(other) => return Err(i.wrong_type_mut("bufferp", other)),
     }
-    Ok(Value::Sym(i.q("left-to-right")))
+    let buffer = match a.first() {
+        Some(Value::Buffer(buffer)) => buffer.clone(),
+        _ => match i.current_buffer_ref() {
+            Some(buffer) => buffer,
+            None => return Ok(Value::Sym(i.q("left-to-right"))),
+        },
+    };
+    let buffer_id = buffer.borrow().id;
+    let configured_direction = crate::frontend::buffer_setting(
+        i,
+        "bidi-paragraph-direction",
+        buffer_id,
+    );
+    if !configured_direction.is_nil() {
+        return Ok(configured_direction);
+    }
+
+    let paragraph_text = {
+        let bb = buffer.borrow();
+        let point = bb.point().clamp(bb.begv, bb.zv);
+        let first_line = bb.text.line_of_pos(bb.begv);
+        let last_line = bb.text.line_of_pos(bb.zv);
+        let mut point_line = bb.text.line_of_pos(point);
+        let line_text = |line: usize| {
+            let start = bb.text.line_start(line).max(bb.begv);
+            let end = bb.text.line_end(start).min(bb.zv);
+            bb.text.substring(start, end).to_unicode_lossy()
+        };
+        let line_is_blank = |line: usize| line_text(line).chars().all(char::is_whitespace);
+        if line_is_blank(point_line) {
+            let mut previous = point_line;
+            while previous > first_line && line_is_blank(previous) {
+                previous -= 1;
+            }
+            if !line_is_blank(previous) {
+                point_line = previous;
+            } else if let Some(next) = (point_line.saturating_add(1)..=last_line)
+                .find(|line| !line_is_blank(*line))
+            {
+                point_line = next;
+            }
+        }
+        let mut start_line = point_line;
+        while start_line > first_line && !line_is_blank(start_line - 1) {
+            start_line -= 1;
+        }
+        let mut end_line = point_line;
+        while end_line < last_line && !line_is_blank(end_line + 1) {
+            end_line += 1;
+        }
+        let mut text = String::new();
+        for line in start_line..=end_line {
+            if line != start_line {
+                text.push(' ');
+            }
+            text.push_str(&line_text(line));
+        }
+        text
+    };
+    let is_rtl = unicode_bidi::BidiInfo::new(&paragraph_text, None)
+        .paragraphs
+        .first()
+        .is_some_and(|paragraph| paragraph.level.is_rtl());
+    let direction = if is_rtl {
+        i.q("right-to-left")
+    } else {
+        i.q("left-to-right")
+    };
+    Ok(Value::Sym(direction))
 }
 
 pub(super) fn f_bidi_string_mark_left_to_right(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
