@@ -77,8 +77,7 @@ pub(super) fn visible_input_position(
     round_up: bool,
 ) -> Option<(usize, usize)> {
     let input = grid.input.as_ref()?;
-    let (byte, _) = offset(&input.text, utf16_offset, round_up);
-    let char_offset = input.text[..byte].chars().count();
+    let char_offset = input.character_index_for_utf16_offset(utf16_offset, round_up);
     input.rows.iter().find_map(|row| {
         let relative = char_offset.checked_sub(row.buffer_start)?;
         row.source_offsets
@@ -119,13 +118,8 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     let buffer_position = input_row
         .buffer_start
         .saturating_add(character)
-        .min(input.text.chars().count());
-    let utf16_offset = input
-        .text
-        .chars()
-        .take(buffer_position)
-        .map(char::len_utf16)
-        .sum();
+        .min(input.character_count());
+    let utf16_offset = input.utf16_offset_for_character(buffer_position)?;
     Some(MousePosition {
         buffer_id: input.buffer_id,
         buffer_position,

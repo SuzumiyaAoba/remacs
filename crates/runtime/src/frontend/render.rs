@@ -528,6 +528,30 @@ pub struct GridInput {
     char_offsets: Arc<[usize]>,
 }
 
+impl GridInput {
+    /// Number of buffer characters represented by `text`.
+    pub fn character_count(&self) -> usize {
+        self.char_offsets.len().saturating_sub(1)
+    }
+
+    /// Return the UTF-16 offset for a buffer character index in constant time.
+    pub fn utf16_offset_for_character(&self, character: usize) -> Option<usize> {
+        self.char_offsets.get(character).copied()
+    }
+
+    /// Map a UTF-16 offset to a character index without rescanning `text`.
+    pub fn character_index_for_utf16_offset(&self, requested: usize, round_up: bool) -> usize {
+        let character = self.char_offsets.partition_point(|offset| *offset < requested);
+        if round_up {
+            character.min(self.character_count())
+        } else if self.char_offsets.get(character) == Some(&requested) {
+            character.min(self.character_count())
+        } else {
+            character.saturating_sub(1).min(self.character_count())
+        }
+    }
+}
+
 /// Cursor shapes that can be requested by text pointer properties.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridPointerShape {
