@@ -1586,7 +1586,7 @@ fn mouse_event_position(event: &Value) -> Option<Value> {
     }
 }
 
-fn mouse_position_value(i: &Interp, position: MousePosition) -> Option<Value> {
+fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value> {
     let frame = i.selected_frame.as_ref()?;
     let (window, selected) = {
         let frame = frame.borrow();

@@ -890,7 +890,7 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-fn file_drag_paths(i: &mut Interp, value: &Value) -> EvalResult<Vec<String>> {
+fn file_drag_paths(i: &mut Interp, value: &Value) -> Result<Vec<String>, Flow> {
     let entries = match value {
         Value::Str(_) => vec![value.clone()],
         Value::Nil => Vec::new(),
