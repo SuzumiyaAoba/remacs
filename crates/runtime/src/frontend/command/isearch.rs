@@ -294,10 +294,24 @@ impl Isearch {
     pub(super) fn step(&mut self, i: &mut Interp, key: i128) -> IsearchAction {
         let cur = self.cur();
         match key {
-            // C-g: abort, restore entry position.
+            // C-g: undo a failing search back to the last successful state;
+            // abort only when the search is currently successful.
             7 => {
-                self.go_to(i, self.start);
-                IsearchAction::Abort
+                if self.failing {
+                    while self.failing && !self.history.is_empty() {
+                        self.restore_history(i);
+                    }
+                    // Every operation that can make the search fail records
+                    // a snapshot first. Keep this fallback defensive in case
+                    // a future state transition violates that invariant.
+                    self.failing = false;
+                    self.fail_pos = None;
+                    self.go_to(i, self.cur());
+                    IsearchAction::Continue
+                } else {
+                    self.go_to(i, self.start);
+                    IsearchAction::Abort
+                }
             }
             // RET: accept; mark goes at the entry position.
             13 => {
