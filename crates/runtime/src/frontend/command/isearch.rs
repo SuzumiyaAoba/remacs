@@ -452,6 +452,29 @@ fn edit_isearch_query(
     }
 }
 
+fn read_nonincremental_search(
+    i: &mut Interp,
+    regexp: bool,
+) -> Result<String, crate::lisp::error::Flow> {
+    let prompt = if regexp { "RE search: " } else { "Search: " };
+    let prompt = i
+        .prin1_to_string(&Value::string(prompt))
+        .to_unicode_lossy();
+    let history = if regexp {
+        "regexp-search-ring"
+    } else {
+        "search-ring"
+    };
+    let source = format!(
+        "(read-from-minibuffer {} \"\" nil nil '{}' nil t)",
+        prompt, history
+    );
+    match i.eval_str(&source)? {
+        Value::Str(text) => Ok(text.borrow().to_unicode_lossy()),
+        other => Err(i.wrong_type_mut("stringp", &other)),
+    }
+}
+
 fn read_isearch_character_by_name(
     i: &mut Interp,
 ) -> Result<String, crate::lisp::error::Flow> {
@@ -1223,6 +1246,26 @@ impl Isearch {
             }
             // RET: accept; mark goes at the entry position.
             13 => {
+                if self.query.is_empty()
+                    && i
+                        .intern_soft("search-nonincremental-instead")
+                        .map(|symbol| i.symbol_value(symbol).truthy())
+                        .unwrap_or(true)
+                {
+                    match read_nonincremental_search(i, self.regexp) {
+                        Ok(query) => {
+                            self.query = query;
+                            self.failing = false;
+                            self.fail_pos = None;
+                            self.search_replaced_query(i);
+                        }
+                        Err(flow) => {
+                            report_flow(i, flow);
+                            self.go_to(i, self.start);
+                            return IsearchAction::Abort;
+                        }
+                    }
+                }
                 if let Some(b) = i.current_buffer_ref() {
                     b.borrow_mut().set_mark(self.start);
                 }
