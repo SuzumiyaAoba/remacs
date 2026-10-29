@@ -1057,6 +1057,25 @@ solution."
       (add-hook 'comint-input-filter-functions #'shell-directory-tracker nil t)
     (remove-hook 'comint-input-filter-functions #'shell-directory-tracker t)))
 
+;; Remacs: skip POSIX cd options before tracking the target directory.
+(defun shell-directory-tracker--cd-directory (command)
+  (let ((index 1) arg arguments options)
+    (while (setq arg (comint-arguments command index index))
+      (push (shell-unquote-argument arg) arguments)
+      (setq index (1+ index)))
+    (setq arguments (nreverse arguments)
+          options t)
+    (while (and arguments options)
+      (let ((arg (pop arguments)))
+        (cond
+         ((string= arg "--")
+          (setq options nil))
+         ((member arg '("-L" "-P")))
+         (t
+          (setq options nil
+                arguments (cons arg arguments))))))
+    (or (car arguments) "")))
+
 (defun shell-directory-tracker (str)
   "Tracks cd, pushd and popd commands issued to the shell.
 This function is called on each input passed to the shell.
@@ -1104,7 +1123,10 @@ Environment variables are expanded, see function `substitute-in-file-name'."
 		    ((string-match (concat "\\`\\(" shell-cd-regexp
 					   "\\)\\($\\|[ \t]\\)")
 				   cmd)
-		     (shell-process-cd (comint-substitute-in-file-name arg1)))
+			 (shell-process-cd
+                  (comint-substitute-in-file-name
+                   (shell-directory-tracker--cd-directory
+                    (substring str start end)))))
 		    ((and shell-chdrive-regexp
 			  (string-match (concat "\\`\\(" shell-chdrive-regexp
 						"\\)\\($\\|[ \t]\\)")
