@@ -966,3 +966,23 @@ fn lookup_routes_to_bindings() {
         _ => panic!("C-x C-c should resolve"),
     }
 }
+
+#[test]
+fn prefix_argument_before_isearch_selects_regexp_mode() {
+    let mut i = interp_with_frame("");
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    let mut modes = Vec::new();
+    {
+        let mut hook = |_: &mut Interp, backward, regexp| {
+            modes.push((backward, regexp));
+            Ok(())
+        };
+        dispatch_key_core(&mut i, 19, &mut keys, &mut arg_mode, Some(&mut hook)).unwrap();
+        dispatch_key_core(&mut i, 21, &mut keys, &mut arg_mode, Some(&mut hook)).unwrap();
+        dispatch_key_core(&mut i, 19, &mut keys, &mut arg_mode, Some(&mut hook)).unwrap();
+        dispatch_key_core(&mut i, 21, &mut keys, &mut arg_mode, Some(&mut hook)).unwrap();
+        dispatch_key_core(&mut i, 18, &mut keys, &mut arg_mode, Some(&mut hook)).unwrap();
+    }
+    assert_eq!(modes, vec![(false, false), (false, true), (true, true)]);
+}

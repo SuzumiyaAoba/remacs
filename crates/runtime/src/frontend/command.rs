@@ -480,6 +480,7 @@ fn dispatch_key_core_inner(
                 let _ = i.set_symbol(this_cmd, cmd.clone());
                 let pa = i.q("prefix-arg");
                 let prefix = i.symbol_value(pa);
+                let has_prefix_arg = !prefix.is_nil();
                 let cpa = i.q("current-prefix-arg");
                 let _ = i.set_symbol(cpa, prefix);
                 // Consume prefix-arg BEFORE executing so commands that
@@ -489,10 +490,10 @@ fn dispatch_key_core_inner(
                 // rather than running once through command_execute.
                 let isearch_cmd = if let Value::Sym(id) = &cmd {
                     match i.symbol_name(*id).as_str() {
-                        "isearch-forward" => Some((false, false)),
-                        "isearch-backward" => Some((true, false)),
-                        "isearch-forward-regexp" => Some((false, true)),
-                        "isearch-backward-regexp" => Some((true, true)),
+                        "isearch-forward" => Some((false, has_prefix_arg)),
+                        "isearch-backward" => Some((true, has_prefix_arg)),
+                        "isearch-forward-regexp" => Some((false, !has_prefix_arg)),
+                        "isearch-backward-regexp" => Some((true, !has_prefix_arg)),
                         _ => None,
                     }
                 } else {
