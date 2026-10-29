@@ -810,7 +810,7 @@ Use variable `browse-url-filename-alist' to map filenames to URLs."
                          (url-hexify-string (car bits)))
                        (mapcar #'url-hexify-string (cdr bits)))
                  "/")))
-      file)))
+      file))))
 
 ;;;###autoload
 (defun browse-url-of-buffer (&optional buffer)
