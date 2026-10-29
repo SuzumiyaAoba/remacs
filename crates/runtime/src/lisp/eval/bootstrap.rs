@@ -100,7 +100,7 @@ impl Interp {
             gui_mouse_absolute_position: None,
             gui_mouse_frame_position: None,
             gui_mouse_frame_pixel_position: None,
-            gui_image_cache_size: std::cell::Cell::new(0),
+            gui_image_cache_size: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             max_lisp_eval_depth: 1600,
             eval_depth: 0,
             explicit_eval_depth: 0,

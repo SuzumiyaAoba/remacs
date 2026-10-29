@@ -191,6 +191,7 @@ pub struct Img {
     source: ImageSource,
     style: ImageStyle,
     image_cache: Option<AnyImageCache>,
+    on_render_image_loaded: Option<Box<dyn Fn(&Arc<RenderImage>) + 'static>>,
 }
 
 /// Create a new image element.
@@ -201,6 +202,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         source: source.into(),
         style: ImageStyle::default(),
         image_cache: None,
+        on_render_image_loaded: None,
     }
 }
 
@@ -229,6 +231,15 @@ impl Img {
             image_cache: Some(image_cache.clone().into()),
             ..self
         }
+    }
+
+    /// Observe the decoded image data when it is available to this element.
+    pub fn on_render_image_loaded(
+        mut self,
+        callback: impl Fn(&Arc<RenderImage>) + 'static,
+    ) -> Self {
+        self.on_render_image_loaded = Some(Box::new(callback));
+        self
     }
 }
 
@@ -310,6 +321,9 @@ impl Element for Img {
                         cx,
                     ) {
                         Some(Ok(data)) => {
+                            if let Some(on_loaded) = &self.on_render_image_loaded {
+                                on_loaded(&data);
+                            }
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
                                 if frame_count > 1 {

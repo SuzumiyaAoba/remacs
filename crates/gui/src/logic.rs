@@ -1,7 +1,7 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        AppleScriptResult, DragAction, Grid, GridImage, GridImageSource,
+        AppleScriptResult, DragAction, Grid, GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
         MousePosition, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
@@ -15,8 +15,8 @@ use std::{
     ops::Range,
     rc::Rc,
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender, SyncSender},
     },
     time::{Duration, Instant},
@@ -32,25 +32,6 @@ fn same_mouse_face_position(left: Option<MousePosition>, right: Option<MousePosi
             left.buffer_id == right.buffer_id && left.buffer_position == right.buffer_position
         }
         _ => false,
-    }
-}
-
-fn estimated_image_cache_bytes(image: &GridImage) -> usize {
-    if image.cache_size_bytes > 0 {
-        return image.cache_size_bytes;
-    }
-    if let (Some(width), Some(height)) = (image.width, image.height) {
-        let bytes = width.saturating_mul(height).saturating_mul(3);
-        if bytes > 0 {
-            return bytes;
-        }
-    }
-    match &image.source {
-        GridImageSource::Data { bytes, .. } => bytes.len(),
-        GridImageSource::File(path) => std::fs::metadata(path)
-            .ok()
-            .and_then(|metadata| usize::try_from(metadata.len()).ok())
-            .unwrap_or(0),
     }
 }
 
@@ -200,6 +181,8 @@ impl FrameEventSender {
 pub(super) struct FrameSnapshot {
     pub frame_id: usize,
     pub primary_frame_id: Option<usize>,
+    pub image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    pub image_cache_size: Arc<AtomicUsize>,
     pub name: String,
     pub parent_frame: Option<usize>,
     pub modifier_mapping: super::keys::ModifierMapping,
@@ -873,6 +856,7 @@ pub(super) struct ChanIo {
     mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>)>,
     pub(super) scroll_remainder: f32,
     last_input_at: Instant,
+    image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
 }
 
 fn echo_char_width(character: char, column: usize) -> usize {
@@ -1914,6 +1898,8 @@ impl KeyIo for ChanIo {
                 snapshots.push(FrameSnapshot {
                     frame_id,
                     primary_frame_id: self.primary_frame_id,
+                    image_cache_entries: self.image_cache_entries.clone(),
+                    image_cache_size: i.gui_image_cache_size.clone(),
                     name,
                     parent_frame,
                     modifier_mapping: super::keys::ModifierMapping::from_interp(i),
@@ -1951,27 +1937,32 @@ impl KeyIo for ChanIo {
         }
 
         self.latest_snapshots = snapshots.clone();
-        if self.gui_requests.is_some() {
-            let mut sources = Vec::<GridImageSource>::new();
-            let mut image_cache_size = 0usize;
-            for image in self.frame_grids.values().flat_map(|grid| &grid.images) {
-                if sources.contains(&image.source) {
-                    continue;
-                }
-                sources.push(image.source.clone());
-                image_cache_size =
-                    image_cache_size.saturating_add(estimated_image_cache_bytes(image));
-            }
-            i.gui_image_cache_size.set(image_cache_size);
-        } else {
-            i.gui_image_cache_size.set(0);
-        }
         if let Some(updates) = &self.gui_requests {
+            let active_sources: std::collections::HashSet<_> = self
+                .frame_grids
+                .values()
+                .flat_map(|grid| grid.images.iter().map(|image| image.source.clone()))
+                .collect();
+            if let Ok(mut entries) = self.image_cache_entries.lock() {
+                entries.retain(|source, _| active_sources.contains(source));
+                for source in active_sources {
+                    entries.entry(source).or_insert(0);
+                }
+                let total = entries
+                    .values()
+                    .fold(0usize, |total, bytes| total.saturating_add(*bytes));
+                i.gui_image_cache_size.store(total, Ordering::Release);
+            }
             updates
                 .send_blocking(GuiRequest::FrameSnapshots(snapshots))
                 .map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "gui window closed")
             })?;
+        } else {
+            if let Ok(mut entries) = self.image_cache_entries.lock() {
+                entries.clear();
+                i.gui_image_cache_size.store(0, Ordering::Release);
+            }
         }
 
         let grid = match selected_grid {
@@ -2378,6 +2369,7 @@ fn start_logic_inner(
                 mouse_frame_position: None,
                 scroll_remainder: 0.0,
                 last_input_at: Instant::now(),
+                image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
             };
             let term = Rc::new(RefCell::new(io));
             remacs_runtime::frontend::install_minibuf_reader(&term, &mut i);

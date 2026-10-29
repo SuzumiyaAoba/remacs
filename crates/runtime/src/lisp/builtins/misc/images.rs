@@ -344,7 +344,9 @@ pub(super) fn f_clear_image_cache(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
 }
 
 pub(super) fn f_image_cache_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::Int(i.gui_image_cache_size.get() as i128))
+    Ok(Value::Int(
+        i.gui_image_cache_size.load(std::sync::atomic::Ordering::Acquire) as i128,
+    ))
 }
 
 pub(super) fn f_bitmap_spec_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

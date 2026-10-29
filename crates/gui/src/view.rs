@@ -16,8 +16,12 @@ use remacs_runtime::frontend::{
     GridScrollBarOrientation, GridStipple, GridTabBarItem, GridToolBarItem, GridVScroll,
     MouseButton as RemacsMouseButton,
 };
-use std::collections::HashSet;
-use std::sync::{OnceLock, mpsc::Sender};
+use std::collections::{HashMap, HashSet};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicUsize, Ordering},
+    mpsc::Sender,
+};
 use std::{cell::Cell, rc::Rc};
 mod input;
 use input::TextInputState;
@@ -538,6 +542,8 @@ struct RunMenuCommand {
 
 pub(super) struct EditorView {
     tx: FrameEventSender,
+    image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    image_cache_size: Arc<AtomicUsize>,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
     modifier_mapping: ModifierMapping,
@@ -593,6 +599,8 @@ impl EditorView {
     ) -> Self {
         EditorView {
             tx: FrameEventSender::new(tx, frame_id),
+            image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
+            image_cache_size: Arc::new(AtomicUsize::new(0)),
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
             modifier_mapping: ModifierMapping::default(),
@@ -639,6 +647,15 @@ impl EditorView {
         self.geometry = None;
         self.runtime_frame_size = None;
         self.runtime_frame_position = None;
+    }
+
+    pub(super) fn set_image_cache_metrics(
+        &mut self,
+        entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+        size: Arc<AtomicUsize>,
+    ) {
+        self.image_cache_entries = entries;
+        self.image_cache_size = size;
     }
 
     pub(super) fn set_modifier_mapping(
@@ -1013,6 +1030,8 @@ impl Render for EditorView {
         };
         let grid = self.grid.clone();
         let images = grid.images.clone();
+        let image_cache_entries = self.image_cache_entries.clone();
+        let image_cache_size = self.image_cache_size.clone();
         let image_vscrolls = grid.vscrolls.clone();
         let help_echoes = grid.help_echoes.clone();
         let help_vscrolls = grid.vscrolls.clone();
@@ -2253,6 +2272,8 @@ impl Render for EditorView {
                             image_default_line_height,
                             border,
                             &image_vscrolls,
+                            image_cache_entries.clone(),
+                            image_cache_size.clone(),
                         )
                     }),
             )
@@ -2344,7 +2365,10 @@ fn grid_image_element(
     default_line_height: usize,
     border: Pixels,
     vscrolls: &[GridVScroll],
+    image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    image_cache_size: Arc<AtomicUsize>,
 ) -> AnyElement {
+    let cache_key = image.source.clone();
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::Data { format, bytes } => {
@@ -2361,6 +2385,20 @@ fn grid_image_element(
             img(std::sync::Arc::new(Image::from_bytes(format, bytes.to_vec())))
         }
     };
+    let source = source.on_render_image_loaded(move |data| {
+        let image_bytes = (0..data.frame_count()).fold(0usize, |total, frame| {
+            total.saturating_add(data.as_bytes(frame).map_or(0, <[u8]>::len))
+        });
+        if let Ok(mut entries) = image_cache_entries.lock()
+            && let Some(cached_bytes) = entries.get_mut(&cache_key)
+        {
+            *cached_bytes = image_bytes;
+            let total = entries
+                .values()
+                .fold(0usize, |total, bytes| total.saturating_add(*bytes));
+            image_cache_size.store(total, Ordering::Release);
+        }
+    });
     let source = match (image.width, image.height) {
         (Some(width), Some(height)) => source.w(px(width as f32)).h(px(height as f32)),
         (Some(width), None) => source.w(px(width as f32)),

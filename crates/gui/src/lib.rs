@@ -584,6 +584,8 @@ pub fn run_gui_with_dump(
                         for snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
                             let grid = snapshot.grid.clone();
+                            let image_cache_entries = snapshot.image_cache_entries.clone();
+                            let image_cache_size = snapshot.image_cache_size.clone();
                             let modifier_mapping = snapshot.modifier_mapping;
                             let alpha_active = snapshot.alpha_active;
                             let alpha_inactive = snapshot.alpha_inactive;
@@ -662,6 +664,10 @@ pub fn run_gui_with_dump(
                                 let requested_behavior = behavior.clone();
                                 let requested_represented_file = represented_file.clone();
                                 let _ = handle.update(cx, move |view, window, cx| {
+                                    view.set_image_cache_metrics(
+                                        image_cache_entries,
+                                        image_cache_size,
+                                    );
                                     if skip_taskbar_changed {
                                         update_native_skip_taskbar(window, skip_taskbar);
                                     }
@@ -766,10 +772,16 @@ pub fn run_gui_with_dump(
                                 let initial_represented_file = represented_file.clone();
                                 let represented_file_for_window = represented_file.clone();
                                 let initial_titlebar_appearance = titlebar_appearance;
+                                let initial_image_cache_entries = image_cache_entries.clone();
+                                let initial_image_cache_size = image_cache_size.clone();
                                 let initial_left = frame_left;
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
+                                    view.set_image_cache_metrics(
+                                        initial_image_cache_entries,
+                                        initial_image_cache_size,
+                                    );
                                     view.grid = grid;
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
@@ -842,6 +854,8 @@ pub fn run_gui_with_dump(
                                 snapshot.ns_transparent_titlebar,
                             );
                             let event_tx = event_tx.clone();
+                            let image_cache_entries = image_cache_entries.clone();
+                            let image_cache_size = image_cache_size.clone();
                             let minimum_size = frame_minimum_size(
                                 snapshot.min_width,
                                 snapshot.min_height,
@@ -881,6 +895,10 @@ pub fn run_gui_with_dump(
                                     view.set_modifier_mapping(modifier_mapping);
                                     view.set_alpha_background(alpha_background);
                                     view.set_appearance(window_appearance);
+                                    view.set_image_cache_metrics(
+                                        image_cache_entries,
+                                        image_cache_size,
+                                    );
                                     view
                                 })
                             }) {

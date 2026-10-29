@@ -130,11 +130,9 @@ pub struct GridImage {
     /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
-    /// Estimated decoded cache bytes, which can use intrinsic dimensions.
-    pub cache_size_bytes: usize,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum GridImageSource {
     File(String),
     Data { format: String, bytes: Arc<[u8]> },
@@ -2832,14 +2830,6 @@ impl RenderedImage {
                 height.or(intrinsic_height),
             ),
         }
-    }
-
-    fn cache_size_bytes(&self) -> usize {
-        let (width, height) = self.cursor_dimensions();
-        width
-            .zip(height)
-            .map(|(width, height)| width.saturating_mul(height).saturating_mul(3))
-            .unwrap_or(0)
     }
 }
 
@@ -7581,7 +7571,6 @@ fn render_grid_internal(
                         source: image.source.clone(),
                         width: image.width,
                         height: image.height,
-                        cache_size_bytes: image.cache_size_bytes(),
                     })
                 }));
                 // Empty tail of the row: the line-end face extends its
@@ -7954,7 +7943,6 @@ fn render_grid_internal(
                     source: image.source.clone(),
                     width: image.width,
                     height: image.height,
-                    cache_size_bytes: image.cache_size_bytes(),
                 }
             }));
             if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
