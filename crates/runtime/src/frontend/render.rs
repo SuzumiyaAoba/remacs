@@ -5086,6 +5086,29 @@ fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> Strin
     }
 }
 
+fn svg_image_stylesheet(i: &Interp, plist: &Value) -> Option<String> {
+    let css = match image_property(i, plist, ":css") {
+        Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+    let foreground = match image_property(i, plist, ":foreground") {
+        Value::Str(foreground) => Some(foreground.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+
+    match (css, foreground) {
+        (Some(mut css), Some(foreground)) => {
+            css.push_str("\nsvg { color: ");
+            css.push_str(&foreground);
+            css.push_str("; }\n");
+            Some(css)
+        }
+        (Some(css), None) => Some(css),
+        (None, Some(foreground)) => Some(format!("svg {{ color: {foreground}; }}")),
+        (None, None) => None,
+    }
+}
+
 fn image_display_replacement(
     i: &Interp,
     value: &Value,
@@ -5124,10 +5147,7 @@ fn image_display_replacement(
             None
         };
         let css = if is_svg {
-            match image_property(i, &plist, ":css") {
-                Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
-                _ => None,
-            }
+            svg_image_stylesheet(i, &plist)
         } else {
             None
         };
@@ -5186,10 +5206,7 @@ fn image_display_replacement(
         None
     };
     let css = if format == "svg" {
-        match image_property(i, &plist, ":css") {
-            Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
-            _ => None,
-        }
+        svg_image_stylesheet(i, &plist)
     } else {
         None
     };
