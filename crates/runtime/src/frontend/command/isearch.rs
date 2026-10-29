@@ -20,12 +20,15 @@ pub(super) struct Isearch {
     pub(super) fail_pos: Option<usize>,
     /// Current value of `isearch-case-fold-search'.
     pub(super) case_fold: Value,
+    /// Current value of `isearch-invisible'.
+    invisible: Value,
     /// Snapshots of query/match state, one per reversible key operation.
     history: Vec<IsearchHistory>,
     pub(super) start: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
     quote_next: bool,
+    meta_s_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
     pub(super) match_ov: Option<Value>,
     /// `lazy-highlight' overlays on the other visible matches.
@@ -40,6 +43,7 @@ struct IsearchHistory {
     fail_pos: Option<usize>,
     case_fold: Value,
     regexp: bool,
+    invisible: Value,
 }
 
 /// Run one search; returns (point, match-beg, match-end) — all
@@ -51,6 +55,7 @@ fn isearch_search(
     regexp: bool,
     from: usize,
     case_fold_search: bool,
+    allow_invisible: bool,
 ) -> Option<(usize, usize, usize)> {
     if query.is_empty() {
         return Some((from, from, from));
@@ -69,26 +74,64 @@ fn isearch_search(
         (true, true) => "re-search-backward",
     };
     // +1 for the point→char offset used by these primitives.
-    let src = format!(
-        "(let ((case-fold-search {})) \
-           (progn (goto-char (min {} (point-max))) \
-           (and ({} \"{}\" nil t) \
-                (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0))))))",
-        if case_fold_search { "t" } else { "nil" },
-        from + 1,
-        fn_name,
-        esc
-    );
-    match i.eval_str(&src) {
-        Ok(v) => {
-            let items = v.list_to_vec().ok()?;
-            let p = items.first()?.int()? as usize;
-            let b = items.get(1)?.int()? as usize;
-            let e = items.get(2)?.int()? as usize;
-            Some((p, b, e))
+    let mut search_from = from;
+    let mut skipped_invisible = false;
+    loop {
+        let src = format!(
+            "(let ((case-fold-search {})) \
+               (progn (goto-char (min {} (point-max))) \
+               (and ({} \"{}\" nil t) \
+                    (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0))))))",
+            if case_fold_search { "t" } else { "nil" },
+            search_from + 1,
+            fn_name,
+            esc
+        );
+        let hit = match i.eval_str(&src) {
+            Ok(v) => v.list_to_vec().ok().and_then(|items| {
+                Some((
+                    items.first()?.int()? as usize,
+                    items.get(1)?.int()? as usize,
+                    items.get(2)?.int()? as usize,
+                ))
+            }),
+            _ => None,
+        };
+        let Some(hit @ (_, beg, end)) = hit else {
+            if skipped_invisible
+                && let Some(buffer) = i.current_buffer_ref()
+            {
+                buffer.borrow_mut().set_point(from);
+            }
+            return None;
+        };
+        if allow_invisible || !isearch_span_invisible(i, beg, end) {
+            return Some(hit);
         }
-        _ => None,
+        skipped_invisible = true;
+        let next = if backward {
+            if beg == end { beg.saturating_sub(1) } else { beg }
+        } else if beg == end {
+            end.saturating_add(1)
+        } else {
+            end
+        };
+        if next == search_from {
+            if let Some(buffer) = i.current_buffer_ref() {
+                buffer.borrow_mut().set_point(from);
+            }
+            return None;
+        }
+        search_from = next;
     }
+}
+
+fn isearch_span_invisible(i: &mut Interp, beg: usize, end: usize) -> bool {
+    let invisible_p = Value::Sym(i.intern("invisible-p"));
+    (beg..end).any(|position| {
+        i.apply(&invisible_p, vec![Value::Int(position as i128 + 1)])
+            .is_ok_and(|value| value.truthy())
+    })
 }
 
 fn isearch_yank_word_or_char(i: &mut Interp, position: usize) -> Option<String> {
@@ -238,6 +281,11 @@ impl Isearch {
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
+        let invisible = i
+            .intern_soft("search-invisible")
+            .filter(|symbol| i.bound_p(*symbol))
+            .map(|symbol| i.symbol_value(symbol))
+            .unwrap_or(Value::Nil);
         Isearch {
             query: String::new(),
             positions: vec![start],
@@ -245,11 +293,13 @@ impl Isearch {
             failing: false,
             fail_pos: None,
             case_fold,
+            invisible,
             history: Vec::new(),
             start,
             backward,
             regexp,
             quote_next: false,
+            meta_s_prefix: false,
             match_ov: None,
             lazy_ovs: Vec::new(),
         }
@@ -274,6 +324,7 @@ impl Isearch {
             fail_pos: self.fail_pos,
             case_fold: self.case_fold.clone(),
             regexp: self.regexp,
+            invisible: self.invisible.clone(),
         });
     }
 
@@ -286,6 +337,7 @@ impl Isearch {
             self.fail_pos = previous.fail_pos;
             self.case_fold = previous.case_fold;
             self.regexp = previous.regexp;
+            self.invisible = previous.invisible;
             self.go_to(i, self.cur());
         }
     }
@@ -396,6 +448,7 @@ impl Isearch {
                     self.regexp,
                     match_start,
                     case_fold_search,
+                    self.invisible.truthy(),
                 ) {
                     Some((_, beg, end)) if beg == match_start && end <= self.start => {
                         Some((beg, beg, end))
@@ -407,6 +460,7 @@ impl Isearch {
                         self.regexp,
                         self.start.min(match_end + 1),
                         case_fold_search,
+                        self.invisible.truthy(),
                     ),
                 }
             } else {
@@ -417,6 +471,7 @@ impl Isearch {
                     self.regexp,
                     match_start,
                     case_fold_search,
+                    self.invisible.truthy(),
                 )
             }
         } else {
@@ -427,6 +482,7 @@ impl Isearch {
                 self.regexp,
                 self.start,
                 case_fold_search,
+                self.invisible.truthy(),
             )
         };
         match hit {
@@ -453,6 +509,7 @@ impl Isearch {
             self.regexp,
             self.cur(),
             case_fold_search,
+            self.invisible.truthy(),
         ) {
             Some((position, beg, end)) => {
                 self.positions.push(position);
@@ -466,6 +523,30 @@ impl Isearch {
                 self.fail_pos = Some(0);
             }
         }
+    }
+
+    fn toggle_regexp(&mut self, i: &mut Interp) {
+        self.save_history();
+        self.regexp = !self.regexp;
+        self.failing = false;
+        self.fail_pos = None;
+        self.search_replaced_query(i);
+    }
+
+    fn toggle_invisible(&mut self, i: &mut Interp) {
+        self.save_history();
+        self.invisible = if self.invisible.truthy() {
+            Value::Nil
+        } else {
+            i.intern_soft("search-invisible")
+                .filter(|symbol| i.bound_p(*symbol))
+                .map(|symbol| i.symbol_value(symbol))
+                .filter(Value::truthy)
+                .unwrap_or_else(|| Value::Sym(i.intern("open")))
+        };
+        self.failing = false;
+        self.fail_pos = None;
+        self.search_replaced_query(i);
     }
 
     /// Handle one key event; updates query/point/failing state.
@@ -482,6 +563,21 @@ impl Isearch {
                 self.search_updated_query(i, failure_start);
             }
             return IsearchAction::Continue;
+        }
+        if self.meta_s_prefix {
+            self.meta_s_prefix = false;
+            match key {
+                c if c == 'i' as i128 => {
+                    self.toggle_invisible(i);
+                    return IsearchAction::Continue;
+                }
+                c if c == 'r' as i128 => {
+                    self.toggle_regexp(i);
+                    return IsearchAction::Continue;
+                }
+                7 => return self.step(i, key),
+                other => return IsearchAction::ReDispatch(other),
+            }
         }
         match key {
             // C-g: undo a failing search back to the last successful state;
@@ -548,7 +644,15 @@ impl Isearch {
                 };
                 let failure_start = self.fail_pos.unwrap_or(0);
                 let case_fold_search = self.case_fold_for_search(i);
-                match isearch_search(i, &self.query, back, self.regexp, from, case_fold_search) {
+                match isearch_search(
+                    i,
+                    &self.query,
+                    back,
+                    self.regexp,
+                    from,
+                    case_fold_search,
+                    self.invisible.truthy(),
+                ) {
                     Some((p, b, e)) => {
                         self.positions.push(p);
                         self.spans.push((b, e));
@@ -675,6 +779,10 @@ impl Isearch {
                 }
                 IsearchAction::Continue
             }
+            c if c == (CHAR_META | 's' as i128) => {
+                self.meta_s_prefix = true;
+                IsearchAction::Continue
+            }
             c if c == 23 || c == (CHAR_CTL | 'w' as i128) => {
                 let anchor = if self.backward {
                     self.spans.last().map(|span| span.1).unwrap_or(cur)
@@ -711,11 +819,7 @@ impl Isearch {
                 IsearchAction::Continue
             }
             c if c == (CHAR_META | 'r' as i128) => {
-                self.save_history();
-                self.regexp = !self.regexp;
-                self.failing = false;
-                self.fail_pos = None;
-                self.search_replaced_query(i);
+                self.toggle_regexp(i);
                 IsearchAction::Continue
             }
             c if c >= 32
@@ -981,7 +1085,15 @@ impl Isearch {
         let winprop = Value::Sym(i.q("window"));
         while count < 200 {
             let Some((_, b, e)) =
-                isearch_search(i, &self.query, false, self.regexp, pos, case_fold_search)
+                isearch_search(
+                    i,
+                    &self.query,
+                    false,
+                    self.regexp,
+                    pos,
+                    case_fold_search,
+                    self.invisible.truthy(),
+                )
             else {
                 break;
             };
