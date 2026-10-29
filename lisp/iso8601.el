@@ -262,7 +262,7 @@ See `decode-time' for the meaning of FORM."
                   (and (zerop minute)
                        (zerop second)
                        (or (null fraction)
-                           (zerop (string-to-number fraction))))))))
+                           (zerop (string-to-number fraction)))))))))
 
 (defun iso8601--zone-in-range-p (string)
   ;;Remacs: require complete numeric offsets within the RFC 3339 field ranges.
