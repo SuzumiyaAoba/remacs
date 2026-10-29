@@ -4904,7 +4904,16 @@ fn goto_char_set_point(
     i: &mut Interp,
     buffer: &Rc<RefCell<Buffer>>,
     requested: usize,
-) -> EvalResult {
+) -> Result<usize, Flow> {
+    goto_char_set_point_with_forward_limit(i, buffer, requested, None)
+}
+
+fn goto_char_set_point_with_forward_limit(
+    i: &mut Interp,
+    buffer: &Rc<RefCell<Buffer>>,
+    requested: usize,
+    forward_limit: Option<usize>,
+) -> Result<usize, Flow> {
     let (old, begv, zv) = {
         let bb = buffer.borrow();
         (bb.point(), bb.begv, bb.text_len())
@@ -4938,14 +4947,22 @@ fn goto_char_set_point(
                     }
                     end += 1;
                 }
-                new = if new > old { end } else { start };
+                new = if new > old {
+                    if forward_limit.is_some_and(|limit| end > limit) {
+                        start
+                    } else {
+                        end
+                    }
+                } else {
+                    start
+                };
             }
         }
     }
 
     buffer.borrow_mut().set_point(new);
     if !hooks_enabled || old == new {
-        return Ok(Value::Nil);
+        return Ok(buffer.borrow().point());
     }
 
     // GNU compares point-left after/before the old position with
@@ -4980,7 +4997,7 @@ fn goto_char_set_point(
     for function in left.into_iter().chain(entered) {
         i.apply(&function, vec![old_position.clone(), new_position.clone()])?;
     }
-    Ok(Value::Nil)
+    Ok(buffer.borrow().point())
 }
 
 fn f_goto_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5112,7 +5129,7 @@ fn f_forward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             point = p;
         }
     }
-    b.borrow_mut().set_point(point);
+    goto_char_set_point(i, &b, point)?;
     Ok(Value::from_bool(ok))
 }
 
@@ -5160,49 +5177,51 @@ fn f_backward_word(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_forward_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = opt_integer(i, &arg(&a, 0))?;
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.zv.max(bb.begv).min(bb.text_len());
-    let mut pt = bb.point();
-    let result: i128;
-    if n == 0 {
-        // GNU quirk: forward-line 0 moves to BOL of the current line.
-        let line = bb.text.line_of_pos(pt);
-        pt = bb.text.line_start(line);
-        result = 0;
-    } else if n > 0 {
-        let mut remaining = n;
-        while remaining > 0 && pt < len {
-            let mut p = pt;
-            let nl = loop {
-                if p >= len {
-                    break None;
-                }
-                if bb.text.char_at(p) == '\n' {
-                    break Some(p);
-                }
-                p += 1;
-            };
-            match nl {
-                Some(nl) => {
-                    pt = nl + 1;
-                    remaining -= 1;
-                }
-                // Reaching eob not preceded by a newline counts as a move.
-                None => {
-                    pt = len;
-                    remaining -= 1;
+    let (target, result) = {
+        let bb = b.borrow();
+        let len = bb.zv.max(bb.begv).min(bb.text_len());
+        let mut pt = bb.point();
+        let result: i128;
+        if n == 0 {
+            // GNU quirk: forward-line 0 moves to BOL of the current line.
+            let line = bb.text.line_of_pos(pt);
+            pt = bb.text.line_start(line);
+            result = 0;
+        } else if n > 0 {
+            let mut remaining = n;
+            while remaining > 0 && pt < len {
+                let mut p = pt;
+                let nl = loop {
+                    if p >= len {
+                        break None;
+                    }
+                    if bb.text.char_at(p) == '\n' {
+                        break Some(p);
+                    }
+                    p += 1;
+                };
+                match nl {
+                    Some(nl) => {
+                        pt = nl + 1;
+                        remaining -= 1;
+                    }
+                    // Reaching eob not preceded by a newline counts as a move.
+                    None => {
+                        pt = len;
+                        remaining -= 1;
+                    }
                 }
             }
+            result = remaining;
+        } else {
+            let cur_line = bb.text.line_of_pos(pt);
+            let moved = cur_line.min((-n) as usize);
+            pt = bb.text.line_start(cur_line - moved);
+            result = n + moved as i128;
         }
-        result = remaining;
-    } else {
-        let cur_line = bb.text.line_of_pos(pt);
-        let moved = cur_line.min((-n) as usize);
-        pt = bb.text.line_start(cur_line - moved);
-        result = n + moved as i128;
-    }
-    let begv = bb.begv;
-    bb.set_point(pt.max(begv).min(len));
+        (pt.max(bb.begv).min(len), result)
+    };
+    goto_char_set_point(i, &b, target)?;
     Ok(Value::Int(result))
 }
 
@@ -5211,11 +5230,13 @@ fn f_beginning_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // N <= 0 moves to the BOL of an earlier line (N=0 → previous line).
     let n = opt_fixnum(i, &arg(&a, 0))?;
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let cur_line = bb.text.line_of_pos(bb.point());
-    let target = (cur_line as i128 + n - 1).max(0) as usize;
-    let p = bb.text.line_start(target).max(bb.begv);
-    bb.set_point(p);
+    let p = {
+        let bb = b.borrow();
+        let cur_line = bb.text.line_of_pos(bb.point());
+        let target = (cur_line as i128 + n - 1).max(0) as usize;
+        bb.text.line_start(target).max(bb.begv)
+    };
+    goto_char_set_point(i, &b, p)?;
     Ok(Value::Nil)
 }
 
@@ -5225,19 +5246,21 @@ fn f_end_of_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // first line's BOL (no end-of-line).
     let n = opt_fixnum(i, &arg(&a, 0))?;
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.zv.max(bb.begv).min(bb.text_len());
-    let cur_line = bb.text.line_of_pos(bb.point());
-    let target = cur_line as i128 + n - 1;
-    let p = if target < 0 {
-        bb.text.line_start(0).max(bb.begv)
-    } else {
-        bb.text
-            .line_end(bb.text.line_start(target as usize))
-            .min(len)
+    let p = {
+        let bb = b.borrow();
+        let len = bb.zv.max(bb.begv).min(bb.text_len());
+        let cur_line = bb.text.line_of_pos(bb.point());
+        let target = cur_line as i128 + n - 1;
+        let p = if target < 0 {
+            bb.text.line_start(0).max(bb.begv)
+        } else {
+            bb.text
+                .line_end(bb.text.line_start(target as usize))
+                .min(len)
+        };
+        p.max(bb.begv).min(len)
     };
-    let begv = bb.begv;
-    bb.set_point(p.max(begv).min(len));
+    goto_char_set_point_with_forward_limit(i, &b, p, Some(p))?;
     Ok(Value::Nil)
 }
 
@@ -5648,7 +5671,7 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let ctl_arrow = i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy();
     let display = i.q("display");
     let b = cur(i);
-    let mut bb = b.borrow_mut();
+    let bb = b.borrow();
     let ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
     let le = bb.text.line_end(bb.point());
     let mut col = 0i128;
@@ -5675,7 +5698,13 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         drop(bb);
         chg_delete(i, at, at + 1)?;
         chg_insert(i, at, &" ".repeat(width))?;
-        cur(i).borrow_mut().set_point(at + offset);
+        let buffer = cur(i);
+        let target = at + offset;
+        let line_end = {
+            let bb = buffer.borrow();
+            bb.text.line_end(target).min(bb.text_len())
+        };
+        goto_char_set_point_with_forward_limit(i, &buffer, target, Some(line_end))?;
         return Ok(Value::Int(goal));
     }
     // GNU lands on the first char boundary where col >= goal (a char is
@@ -5703,10 +5732,17 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let pad = s.chars().count();
         drop(bb);
         chg_insert(i, at, &s)?;
-        cur(i).borrow_mut().set_point(at + pad);
+        let buffer = cur(i);
+        let target = at + pad;
+        let line_end = {
+            let bb = buffer.borrow();
+            bb.text.line_end(target).min(bb.text_len())
+        };
+        goto_char_set_point_with_forward_limit(i, &buffer, target, Some(line_end))?;
         Ok(Value::Int(goal))
     } else {
-        bb.set_point(k);
+        drop(bb);
+        goto_char_set_point_with_forward_limit(i, &b, k, Some(le))?;
         Ok(Value::Int(col))
     }
 }
@@ -7270,23 +7306,26 @@ fn skip_chars(i: &mut Interp, a: crate::lisp::Argv, forward: bool) -> EvalResult
     let set = SkipChars::parse(&spec).map_err(|message| i.error(message))?;
     let context = SkipClassContext::new(i, &set);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let lim = limit
-        .map(|n| (n.clamp(bb.begv as i128 + 1, bb.zv as i128 + 1) - 1) as usize)
-        .unwrap_or(if forward { bb.zv } else { bb.begv });
-    let start = bb.point();
-    let mut p = start;
-    if forward {
-        while p < lim && set.contains(i, &context, bb.text.char_at(p)) {
-            p += 1;
+    let (p, start) = {
+        let bb = b.borrow();
+        let lim = limit
+            .map(|n| (n.clamp(bb.begv as i128 + 1, bb.zv as i128 + 1) - 1) as usize)
+            .unwrap_or(if forward { bb.zv } else { bb.begv });
+        let start = bb.point();
+        let mut p = start;
+        if forward {
+            while p < lim && set.contains(i, &context, bb.text.char_at(p)) {
+                p += 1;
+            }
+        } else {
+            while p > lim && set.contains(i, &context, bb.text.char_at(p - 1)) {
+                p -= 1;
+            }
         }
-    } else {
-        while p > lim && set.contains(i, &context, bb.text.char_at(p - 1)) {
-            p -= 1;
-        }
-    }
-    bb.set_point(p);
-    Ok(Value::Int(p as i128 - start as i128))
+        (p, start)
+    };
+    let final_point = goto_char_set_point(i, &b, p)?;
+    Ok(Value::Int(final_point as i128 - start as i128))
 }
 
 fn f_skip_syntax_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -7301,32 +7340,36 @@ fn f_skip_syntax_forward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .unwrap_or_else(|| cur(i).borrow().zv + 1);
     let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let lim = match a.get(1) {
-        Some(v) if v.truthy() => {
-            pos_idx(bb.text.len(), want_int(i, v)?).clamp(bb.begv, bb.zv.min(bb.text.len()))
+    let (p, start) = {
+        let bb = b.borrow();
+        let lim = match a.get(1) {
+            Some(v) if v.truthy() => {
+                pos_idx(bb.text.len(), want_int(i, v)?)
+                    .clamp(bb.begv, bb.zv.min(bb.text.len()))
+            }
+            _ => bb.zv.min(bb.text.len()),
+        };
+        let neg = spec.starts_with('^');
+        // `-` is an alias for the whitespace class, like in regexps.
+        let codes: Vec<u8> = spec
+            .trim_start_matches('^')
+            .to_external_bytes()
+            .into_iter()
+            .map(|c| if c == b'-' { b' ' } else { c })
+            .collect();
+        let start = bb.point();
+        let mut p = start;
+        while p < lim.min(bb.text.len()) {
+            let hit = codes.contains(&syn.code_at(p, bb.text.char_at(p)));
+            if hit == neg {
+                break;
+            }
+            p += 1;
         }
-        _ => bb.zv.min(bb.text.len()),
+        (p, start)
     };
-    let neg = spec.starts_with('^');
-    // `-` is an alias for the whitespace class, like in regexps.
-    let codes: Vec<u8> = spec
-        .trim_start_matches('^')
-        .to_external_bytes()
-        .into_iter()
-        .map(|c| if c == b'-' { b' ' } else { c })
-        .collect();
-    let mut p = bb.point();
-    while p < lim.min(bb.text.len()) {
-        let hit = codes.contains(&syn.code_at(p, bb.text.char_at(p)));
-        if hit == neg {
-            break;
-        }
-        p += 1;
-    }
-    let moved = p as i128 - bb.point() as i128;
-    bb.set_point(p);
-    Ok(Value::Int(moved))
+    let final_point = goto_char_set_point(i, &b, p)?;
+    Ok(Value::Int(final_point as i128 - start as i128))
 }
 
 fn f_skip_syntax_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -7337,31 +7380,35 @@ fn f_skip_syntax_backward(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let upto = cur(i).borrow().point() + 1;
     let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let lim = match a.get(1) {
-        Some(v) if v.truthy() => {
-            pos_idx(bb.text.len(), want_int(i, v)?).clamp(bb.begv, bb.zv.min(bb.text.len()))
+    let (p, start) = {
+        let bb = b.borrow();
+        let lim = match a.get(1) {
+            Some(v) if v.truthy() => {
+                pos_idx(bb.text.len(), want_int(i, v)?)
+                    .clamp(bb.begv, bb.zv.min(bb.text.len()))
+            }
+            _ => bb.begv.min(bb.text.len()),
+        };
+        let neg = spec.starts_with('^');
+        let codes: Vec<u8> = spec
+            .trim_start_matches('^')
+            .to_external_bytes()
+            .into_iter()
+            .map(|c| if c == b'-' { b' ' } else { c })
+            .collect();
+        let start = bb.point();
+        let mut p = start;
+        while p > lim {
+            let hit = codes.contains(&syn.code_at(p - 1, bb.text.char_at(p - 1)));
+            if hit == neg {
+                break;
+            }
+            p -= 1;
         }
-        _ => bb.begv.min(bb.text.len()),
+        (p, start)
     };
-    let neg = spec.starts_with('^');
-    let codes: Vec<u8> = spec
-        .trim_start_matches('^')
-        .to_external_bytes()
-        .into_iter()
-        .map(|c| if c == b'-' { b' ' } else { c })
-        .collect();
-    let mut p = bb.point();
-    while p > lim {
-        let hit = codes.contains(&syn.code_at(p - 1, bb.text.char_at(p - 1)));
-        if hit == neg {
-            break;
-        }
-        p -= 1;
-    }
-    let moved = p as i128 - bb.point() as i128;
-    bb.set_point(p);
-    Ok(Value::Int(moved))
+    let final_point = goto_char_set_point(i, &b, p)?;
+    Ok(Value::Int(final_point as i128 - start as i128))
 }
 
 /// Build the `scan-error' flow for a failed `scan_lists'.
