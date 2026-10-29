@@ -1990,6 +1990,37 @@ The function `downcase' will barf if passed the name of a `major-mode'
 which is not a string, but instead a symbol or a list."
   (downcase (format-mode-line mode)))
 
+(defun compilation--unquote-shell-double-quoted-path (string)
+  "Unquote STRING and expand its unescaped environment variables."
+  (let ((index 0)
+        (length (length string))
+        segment
+        parts)
+    (while (< index length)
+      (let ((character (aref string index)))
+        (if (and (= character ?\\) (< (1+ index) length))
+            (let ((next (aref string (1+ index))))
+              (setq index (1+ index))
+              (cond
+               ((= next ?$)
+                (push (substitute-env-vars
+                       (apply #'concat (nreverse segment)))
+                      parts)
+                (setq segment nil)
+                (push "$" parts))
+               ((or (= next ?\\) (= next ?\") (= next 96))
+                (push (char-to-string next) segment))
+               ((= next ?\n)
+                nil)
+               (t
+                (push (concat "\\" (char-to-string next)) segment))))
+          (push (char-to-string character) segment))
+        (setq index (1+ index))))
+    (push (substitute-env-vars
+           (apply #'concat (nreverse segment)))
+          parts)
+    (apply #'concat (nreverse parts))))
+
 ;;;###autoload
 (defun compilation-start (command &optional mode name-function highlight-regexp
                                   continue)
@@ -2058,7 +2089,7 @@ Returns the compilation buffer created."
 	;; start-command would do it again through the shell: (cd "..") AND
 	;; sh -c "cd ..; make"
 	(cd (cond
-             ((not (string-match "\\`\\s *cd\\(?:\\s +\\(\\S +?\\|'[^']*'\\|\"\\(?:[^\"`$\\]\\|\\\\.\\)*\"\\)\\)?\\s *[;&\n]"
+             ((not (string-match "\\`\\s *cd\\(?:\\s +\\('[^']*'\\|\"\\(?:[^\"`\\]\\|\\\\.\\)*\"\\|\\S +?\\)\\)?\\s *[;&\n]"
                                  command))
               default-directory)
              ((not (match-end 1)) "~")
@@ -2066,8 +2097,7 @@ Returns the compilation buffer created."
               (substring command (1+ (match-beginning 1))
                          (1- (match-end 1))))
              ((eq (aref command (match-beginning 1)) ?\")
-              (replace-regexp-in-string
-               "\\\\\\(.\\)" "\\1"
+              (compilation--unquote-shell-double-quoted-path
                (substring command (1+ (match-beginning 1))
                           (1- (match-end 1)))))
              ;; Try globbing as well (bug#15417).
