@@ -1030,8 +1030,45 @@ pub(super) fn f_lossage_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     Ok(Value::Int(300))
 }
 
-pub(super) fn f_mouse_position_root(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::cons(Value::Int(0), Value::Int(0)))
+pub(super) fn f_mouse_position_root(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    let Some((frame_id, mut x, mut y)) = i.gui_mouse_frame_position else {
+        return Ok(Value::Nil);
+    };
+    let Some(mut frame) = i
+        .frames
+        .iter()
+        .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+        .cloned()
+    else {
+        return Ok(Value::Nil);
+    };
+    let parent_frame = i.q_soft("parent-frame");
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        let (id, params) = {
+            let frame = frame.borrow();
+            (frame.id, frame.params.clone())
+        };
+        if !visited.insert(id) {
+            break;
+        }
+        x = x.saturating_add(crate::editor::frame_pixel_left(i, &frame));
+        y = y.saturating_add(crate::editor::frame_pixel_top(i, &frame));
+        let Some(parent_frame) = parent_frame else {
+            break;
+        };
+        let Value::Frame(parent) = crate::lisp::eval::plist_get_v(
+            &params,
+            &Value::Sym(parent_frame),
+        ) else {
+            break;
+        };
+        if parent.borrow().dead {
+            break;
+        }
+        frame = parent;
+    }
+    Ok(Value::cons(Value::Int(x), Value::Int(y)))
 }
 
 /// `remember-mouse-glyph` — GNU checks arg 0: nil selects the current
