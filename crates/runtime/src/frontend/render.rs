@@ -942,6 +942,97 @@ pub(crate) fn position_display_cell(
     }
 }
 
+/// Return the buffer position at a display cell relative to a window's
+/// text area. Coordinates are zero-based and account for wrapping, tabs,
+/// wide characters, and horizontal scrolling.
+pub(crate) fn position_at_display_cell(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+    row: usize,
+    column: usize,
+) -> Option<usize> {
+    let (buffer_id, start, height, hscroll) = {
+        let window = window.borrow();
+        (window.buffer, window.start, window.height, window.hscroll)
+    };
+    let width = crate::editor::win_body_width(i, window).max(1);
+    let tab_width = buffer_tab_width(i, buffer_id);
+    let ctl_arrow = buffer_setting(i, "ctl-arrow", buffer_id).truthy();
+    let wrap_lines = !buffer_setting(i, "truncate-lines", buffer_id).truthy();
+    let text_rows = height
+        .saturating_sub(usize::from(!buffer_setting(i, "mode-line-format", buffer_id).is_nil()))
+        .saturating_sub(usize::from(!buffer_setting(i, "header-line-format", buffer_id).is_nil()))
+        .saturating_sub(usize::from(!buffer_setting(i, "tab-line-format", buffer_id).is_nil()))
+        .max(1);
+    if row >= text_rows {
+        return None;
+    }
+    let buffer = i.buffers.get(buffer_id)?;
+    let bb = buffer.borrow();
+    let start = start.max(bb.begv).min(bb.zv);
+    let first_line = bb.text.line_of_pos(start);
+    let last_line = bb.text.line_of_pos(bb.zv);
+    let target_column = column.saturating_add(hscroll);
+    let mut display_row = 0usize;
+    for line_number in first_line..=last_line {
+        let line_start = bb.text.line_start(line_number).max(bb.begv);
+        if line_start > bb.zv {
+            break;
+        }
+        let line_end = bb.text.line_end(line_start).min(bb.zv);
+        let line = bb.text.substring(line_start, line_end);
+        let characters = line.chars().collect::<Vec<_>>();
+        let line_len = characters.len();
+        let from_offset = if line_number == first_line {
+            start.saturating_sub(line_start)
+        } else {
+            0
+        };
+        let ranges = if wrap_lines {
+            wrap_ranges(&line, width, tab_width, ctl_arrow)
+        } else {
+            vec![0..line_len]
+        };
+        for range in ranges {
+            if line_number == first_line && range.end <= from_offset && range.end < line_len {
+                continue;
+            }
+            if display_row == row {
+                let mut display_column = 0usize;
+                for (index, character) in characters
+                    .iter()
+                    .enumerate()
+                    .take(range.end)
+                    .skip(range.start)
+                {
+                    let code = character.code();
+                    let byte8 = character.byte8().is_some();
+                    let character = character.unicode().unwrap_or('\u{fffd}');
+                    let width = if character == '\t' {
+                        tab_width.max(1) - display_column % tab_width.max(1)
+                    } else if byte8 {
+                        4
+                    } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+                        2
+                    } else {
+                        display_char_width(character)
+                    };
+                    if target_column < display_column.saturating_add(width) {
+                        return Some(line_start.saturating_add(index));
+                    }
+                    display_column = display_column.saturating_add(width);
+                }
+                return Some(line_start.saturating_add(range.end));
+            }
+            display_row = display_row.saturating_add(1);
+            if display_row > row {
+                return None;
+            }
+        }
+    }
+    None
+}
+
 /// Approximate the text range that a redisplay pass can request fontification
 /// for in WINDOW. The small overestimate covers line breaks and wide cells.
 pub(crate) fn visible_fontification_range(

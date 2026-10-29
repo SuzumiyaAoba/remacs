@@ -2311,20 +2311,107 @@ fn f_posn_at_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     ]))
 }
 
+fn posn_at_xy_graphical(
+    i: &mut Interp,
+    frame: &FrameRef,
+    window: &WindowRef,
+    x: i128,
+    y: i128,
+    whole: bool,
+) -> EvalResult {
+    let char_width = crate::editor::frame_char_width(i, frame).max(1) as i128;
+    let line_height = crate::editor::frame_char_height(i, frame).max(1) as i128;
+    let outside = || {
+        Value::list(vec![
+            Value::Frame(frame.clone()),
+            Value::Nil,
+            Value::cons(Value::Int(x), Value::Int(y)),
+            Value::Int(0),
+        ])
+    };
+    if x < 0 || y < 0 {
+        return Ok(outside());
+    }
+
+    let mut text_x = x;
+    if whole {
+        let (left_margin, left_fringe_override) = {
+            let window = window.borrow();
+            (
+                window.margins.0,
+                window.fringes.and_then(|fringes| fringes.0),
+            )
+        };
+        let left_fringe = left_fringe_override.unwrap_or_else(|| {
+            crate::editor::frame_parameter_positive_size(i, frame, "left-fringe", 8)
+        }) as i128;
+        let (scroll_width, vertical_side, _, _, _) = window_scroll_bar_settings(i, window);
+        let left_scroll_bar = if vertical_side == Some(true) {
+            scroll_width.unwrap_or(0) as i128
+        } else {
+            0
+        };
+        text_x -= left_scroll_bar + left_fringe + left_margin as i128 * char_width;
+    }
+    if text_x < 0 {
+        return Ok(outside());
+    }
+
+    let column = (text_x / char_width) as usize;
+    let row = (y / line_height) as usize;
+    let width = crate::editor::win_body_width(i, window);
+    if column >= width {
+        return Ok(outside());
+    }
+    let Some(position) = crate::frontend::position_at_display_cell(i, window, row, column) else {
+        return Ok(outside());
+    };
+    let offset_x = text_x - column as i128 * char_width;
+    let offset_y = y - row as i128 * line_height;
+    let position = position as i128 + 1;
+    Ok(Value::list(vec![
+        Value::Window(window.clone()),
+        Value::Int(position),
+        Value::cons(Value::Int(x), Value::Int(y)),
+        Value::Int(0),
+        Value::Nil,
+        Value::Int(position),
+        Value::cons(Value::Int(column as i128), Value::Int(row as i128)),
+        Value::Nil,
+        Value::cons(Value::Int(offset_x), Value::Int(offset_y)),
+        Value::cons(Value::Int(char_width), Value::Int(line_height)),
+    ]))
+}
+
 fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fposn_at_x_y: CHECK_FIXNUM X, CHECK_FIXNUM Y
     // (`fixnump' — floats and markers reject), then the optional FRAME
     // via `frame-live-p'; WHOLE is unused in batch.
     let x = crate::lisp::builtins::want_fixnum(i, &a[0])?;
     let y = crate::lisp::builtins::want_fixnum(i, &a[1])?;
-    let frame = match a.get(2) {
-        None | Some(Value::Nil) => sel_frame(i),
-        Some(v) => Some(crate::editor::frame_live(i, v)?),
+    let (frame, window) = match a.get(2) {
+        None | Some(Value::Nil) => (sel_frame(i), None),
+        Some(Value::Window(window)) => {
+            let window = win_live(i, &Value::Window(window.clone()))?;
+            (crate::editor::frame_of_window(i, &window), Some(window))
+        }
+        Some(v) => (Some(crate::editor::frame_live(i, v)?), None),
     };
     let f = match frame {
         Some(f) => f,
         None => return Ok(Value::Nil),
     };
+    if crate::editor::frame_is_graphical(i, &f) {
+        let window = window.unwrap_or_else(|| f.borrow().selected.clone());
+        return posn_at_xy_graphical(
+            i,
+            &f,
+            &window,
+            x,
+            y,
+            a.get(3).is_some_and(Value::truthy),
+        );
+    }
     // Outside the frame's text area GNU reports the short form
     // `(FRAME nil (X . Y) 0)'.
     let (fw, fh) = {
