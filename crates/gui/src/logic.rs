@@ -861,6 +861,30 @@ fn echo_input_cursor(text: &str, cursor_utf16: usize) -> Option<(usize, usize)> 
     (utf16 == cursor_utf16).then_some((characters, columns))
 }
 
+fn echo_message_end_position(text: &str, width: usize) -> (usize, usize) {
+    if width == 0 {
+        return (0, 0);
+    }
+    let mut column = 0usize;
+    let mut byte_index = 0usize;
+    for character in text.chars() {
+        if character == '\n' {
+            column = 0;
+            byte_index = 0;
+            continue;
+        }
+        let mut char_width = echo_char_width(character, column);
+        if column > 0 && column.saturating_add(char_width) > width {
+            column = 0;
+            byte_index = 0;
+            char_width = echo_char_width(character, column);
+        }
+        byte_index = byte_index.saturating_add(character.len_utf8());
+        column = column.saturating_add(char_width);
+    }
+    (column, byte_index)
+}
+
 fn fit_echo_text_at_cursor(
     text: &str,
     width: usize,
@@ -1883,14 +1907,31 @@ impl KeyIo for ChanIo {
     }
 
     fn draw_echo_message_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
-        let grid = self
+        let mut grid = self
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
         let move_cursor = i
             .intern_soft("cursor-in-echo-area")
             .is_some_and(|symbol| i.symbol_value(symbol).truthy());
-        let grid = self.echo_grid(grid, text, true, false, move_cursor);
+        if move_cursor {
+            let row = grid.rows.len().saturating_sub(1);
+            let width = grid.attrs.get(row).map_or(self.cols, Vec::len);
+            let (column, index) = echo_message_end_position(text, width);
+            let selected_cursor = grid.cursors.iter().find(|cursor| cursor.selected).copied();
+            let column = column.min(width.saturating_sub(1));
+            let index = index.min(grid.rows.get(row).map_or(0, String::len));
+            grid.cursors.retain(|cursor| !cursor.selected);
+            grid.cursor = Some((column, row));
+            grid.cursor_index = Some(index);
+            if let Some(mut cursor) = selected_cursor {
+                cursor.row = row;
+                cursor.column = column;
+                cursor.index = index;
+                cursor.after_index = None;
+                grid.cursors.push(cursor);
+            }
+        }
         self.send_grid(grid)
     }
 

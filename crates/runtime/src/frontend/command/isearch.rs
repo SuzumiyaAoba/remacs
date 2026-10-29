@@ -16,6 +16,8 @@ pub(super) struct Isearch {
     /// Match spans (beg, end) parallel to `positions`.
     pub(super) spans: Vec<(usize, usize)>,
     pub(super) failing: bool,
+    /// Character index in QUERY where the currently failing suffix begins.
+    pub(super) fail_pos: Option<usize>,
     pub(super) start: usize,
     pub(super) backward: bool,
     pub(super) regexp: bool,
@@ -94,6 +96,7 @@ impl Isearch {
             positions: vec![start],
             spans: vec![(start, start)],
             failing: false,
+            fail_pos: None,
             start,
             backward,
             regexp,
@@ -133,14 +136,19 @@ impl Isearch {
             19 | 18 => {
                 let back = key == 18;
                 let from = if back { cur.saturating_sub(1) } else { cur + 1 };
+                let failure_start = self.fail_pos.unwrap_or(0);
                 match isearch_search(i, &self.query, back, self.regexp, from) {
                     Some((p, b, e)) => {
                         self.positions.push(p);
                         self.spans.push((b, e));
                         self.failing = false;
+                        self.fail_pos = None;
                         self.go_to(i, p);
                     }
-                    None => self.failing = true,
+                    None => {
+                        self.failing = true;
+                        self.fail_pos = Some(failure_start);
+                    }
                 }
                 IsearchAction::Continue
             }
@@ -156,9 +164,11 @@ impl Isearch {
                     }
                     self.go_to(i, self.cur());
                     self.failing = false;
+                    self.fail_pos = None;
                 } else if !self.query.is_empty() {
                     self.query.pop();
                     self.failing = false;
+                    self.fail_pos = None;
                 }
                 IsearchAction::Continue
             }
@@ -166,6 +176,9 @@ impl Isearch {
                 && c < 0x110000
                 && c & (CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER) == 0 =>
             {
+                let failure_start = self
+                    .fail_pos
+                    .unwrap_or_else(|| self.query.chars().count());
                 if let Some(ch) = char::from_u32(c as u32) {
                     self.query.push(ch);
                 }
@@ -200,9 +213,13 @@ impl Isearch {
                         self.positions.push(p);
                         self.spans.push((b, e));
                         self.failing = false;
+                        self.fail_pos = None;
                         self.go_to(i, p);
                     }
-                    None => self.failing = true,
+                    None => {
+                        self.failing = true;
+                        self.fail_pos = Some(failure_start);
+                    }
                 }
                 IsearchAction::Continue
             }
@@ -216,11 +233,20 @@ impl Isearch {
     }
 
     /// Echo-area label, e.g. `Failing I-search backward: foo`.
-    pub(super) fn label(&self) -> String {
+    pub(super) fn label(&self) -> (String, Option<(usize, usize)>) {
         let dir = if self.backward { " backward" } else { "" };
         let re = if self.regexp { " regexp" } else { "" };
         let status = if self.failing { "Failing " } else { "" };
-        format!("{}I-search{}{}: {}", status, dir, re, self.query)
+        let prefix = format!("{}I-search{}{}: ", status, dir, re);
+        let prefix_length = prefix.chars().count();
+        let query_length = self.query.chars().count();
+        let failure = self.failing.then(|| {
+            (
+                prefix_length + self.fail_pos.unwrap_or(0).min(query_length),
+                prefix_length + query_length,
+            )
+        });
+        (format!("{prefix}{}", self.query), failure)
     }
 
     /// One `apply' of a Lisp helper; errors are ignored (highlighting
@@ -416,9 +442,23 @@ pub(super) fn isearch_loop<T: KeyIo>(
         let render_requested = term.borrow_mut().take_render_request();
         render_needed |= event_activity || window_activity || render_on_idle || render_requested;
         if render_needed {
+            let (label, failure_range) = st.label();
+            let properties = failure_range
+                .map(|(start, end)| {
+                    vec![(
+                        start,
+                        end,
+                        vec![
+                            Value::Sym(i.intern("face")),
+                            Value::Sym(i.intern("isearch-fail")),
+                        ],
+                    )]
+                })
+                .unwrap_or_default();
+            i.set_echo_message_with_properties(EmacsText::from(label.as_str()), properties);
             let mut t = term.borrow_mut();
             let _ = t.render(i);
-            let _ = t.draw_echo_message_with_state(i, &st.label());
+            let _ = t.draw_echo_message_with_state(i, &label);
             render_needed = false;
         }
         let polled_key = term.borrow_mut().poll_key(Duration::from_millis(50))?;
