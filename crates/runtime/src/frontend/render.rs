@@ -127,8 +127,11 @@ pub struct GridImage {
     pub row: usize,
     pub column: usize,
     pub source: GridImageSource,
+    /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
+    /// Estimated decoded cache bytes, which can use intrinsic dimensions.
+    pub cache_size_bytes: usize,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -2829,6 +2832,14 @@ impl RenderedImage {
                 height.or(intrinsic_height),
             ),
         }
+    }
+
+    fn cache_size_bytes(&self) -> usize {
+        let (width, height) = self.cursor_dimensions();
+        width
+            .zip(height)
+            .map(|(width, height)| width.saturating_mul(height).saturating_mul(3))
+            .unwrap_or(0)
     }
 }
 
@@ -7564,13 +7575,13 @@ fn render_grid_internal(
                     if column >= width {
                         return None;
                     }
-                    let (image_width, image_height) = image.cursor_dimensions();
                     Some(GridImage {
                         row: y,
                         column,
                         source: image.source.clone(),
-                        width: image_width,
-                        height: image_height,
+                        width: image.width,
+                        height: image.height,
+                        cache_size_bytes: image.cache_size_bytes(),
                     })
                 }));
                 // Empty tail of the row: the line-end face extends its
@@ -7937,13 +7948,13 @@ fn render_grid_internal(
                 },
             ));
             images.extend(rendered.images.iter().map(|image| {
-                let (width, height) = image.cursor_dimensions();
                 GridImage {
                     row: y,
                     column: image.column,
                     source: image.source.clone(),
-                    width,
-                    height,
+                    width: image.width,
+                    height: image.height,
+                    cache_size_bytes: image.cache_size_bytes(),
                 }
             }));
             if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())

@@ -36,6 +36,9 @@ fn same_mouse_face_position(left: Option<MousePosition>, right: Option<MousePosi
 }
 
 fn estimated_image_cache_bytes(image: &GridImage) -> usize {
+    if image.cache_size_bytes > 0 {
+        return image.cache_size_bytes;
+    }
     if let (Some(width), Some(height)) = (image.width, image.height) {
         let bytes = width.saturating_mul(height).saturating_mul(3);
         if bytes > 0 {
