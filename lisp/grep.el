@@ -54,8 +54,12 @@ SYMBOL should be one of `grep-command', `grep-template',
 	    (intern (or (file-remote-p default-directory) "localhost")))
 	   (host-defaults (assq host-id grep-host-defaults-alist))
 	   (defaults (assq nil grep-host-defaults-alist)))
-      (setcar (cdr (assq symbol host-defaults)) value)
-      (setcar (cdr (assq symbol defaults)) value)))
+      (let ((host-setting (assq symbol host-defaults))
+	    (default-setting (assq symbol defaults)))
+	(when host-setting
+	  (setcar (cdr host-setting) value))
+	(when default-setting
+	  (setcar (cdr default-setting) value))))
   (set-default symbol value))
 
 ;;;###autoload
