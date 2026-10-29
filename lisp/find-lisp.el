@@ -140,24 +140,25 @@ It is a function which takes two arguments, the directory and its parent."
   (let (results sub-results)
     (dolist (file (directory-files directory nil nil t))
       (let ((fullname (expand-file-name file directory)))
-	(when (file-readable-p (expand-file-name file directory))
-	  ;; If a directory, check it we should descend into it
-	  (and (file-directory-p fullname)
-	       (funcall directory-predicate file directory)
-	       (progn
-		 (setq sub-results
-		       (find-lisp-find-files-internal
-			fullname
-			file-predicate
-			directory-predicate))
-		 (if results
-		     (nconc results sub-results)
-		   (setq results sub-results))))
-	  ;; For all files and directories, call the file predicate
-	  (and (funcall file-predicate file directory)
-	       (if results
-		   (nconc results (list fullname))
-		 (setq results (list fullname)))))))
+	;; Only descend into readable directories; file predicates decide
+	;; whether any entry, including an unreadable file, is included.
+	(and (file-directory-p fullname)
+		(file-readable-p fullname)
+		(funcall directory-predicate file directory)
+		(progn
+			(setq sub-results
+				(find-lisp-find-files-internal
+					fullname
+					file-predicate
+					directory-predicate))
+			(if results
+				(nconc results sub-results)
+				(setq results sub-results))))
+	;; For all files and directories, call the file predicate.
+	(and (funcall file-predicate file directory)
+		(if results
+			(nconc results (list fullname))
+			(setq results (list fullname))))))
     results))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
