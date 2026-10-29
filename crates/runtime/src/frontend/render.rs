@@ -4199,6 +4199,7 @@ fn window_faces(
     // property restricts an overlay to one window — lazy-highlight
     // uses it). Face candidates retain their slot order until point-specific
     // priority/containment ordering is computed below.
+    let font_lock_enabled = buffer_setting(i, "font-lock-mode", bb.id).truthy();
     let overlays: Vec<(crate::buffer::Overlay, Value)> = bb
         .overlays
         .iter()
@@ -4210,7 +4211,17 @@ fn window_faces(
             ov.matches_window(i, win)
         })
         .filter_map(|(_, ov)| {
-            let fv = ov.property(i, &Value::Sym(ctx.face));
+            let face = ov.property(i, &Value::Sym(ctx.face));
+            let font_lock_face = if font_lock_enabled {
+                ov.property(i, &Value::Sym(ctx.font_lock_face))
+            } else {
+                Value::Nil
+            };
+            let fv = if font_lock_face.is_nil() {
+                face
+            } else {
+                font_lock_face
+            };
             if fv.is_nil() {
                 return None;
             }
@@ -4305,7 +4316,6 @@ fn window_faces(
             }
         }
     }
-    let font_lock_enabled = buffer_setting(i, "font-lock-mode", bb.id).truthy();
     let properties = bb.text.props.borrow();
     let prop_faces: Vec<(usize, usize, Value, usize)> = properties
         .iter()
