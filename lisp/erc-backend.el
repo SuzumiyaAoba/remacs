@@ -1549,10 +1549,13 @@ for decoding."
   (let ((args (erc-response.command-args parsed-response))
         (decode-target nil)
         (decoded-args ()))
-    ;; FIXME this should stop after the first match.
-    (dolist (arg args nil)
-      (when (string-match "^[#&].*" arg)
-        (setq decode-target arg)))
+    ;; The first channel-like argument identifies the target; trailing
+    ;; text may itself begin with a channel-looking token.
+    (setq decode-target
+          (catch 'erc-decode-target
+            (dolist (arg args)
+              (when (string-match "^[#&].*" arg)
+                (throw 'erc-decode-target arg)))))
     (when (stringp decode-target)
       ;; FIXME `decode-target' should be passed as TARGET.
       (setq decode-target (erc-decode-string-from-target decode-target nil)))
