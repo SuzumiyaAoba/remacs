@@ -4900,7 +4900,7 @@ fn point_property_at_char(
 /// enabled. Keep this on primitive point-movement paths so Lisp movement
 /// helpers that deliberately bind `inhibit-point-motion-hooks` to nil get
 /// the same behavior.
-fn goto_char_set_point(
+pub(crate) fn goto_char_set_point(
     i: &mut Interp,
     buffer: &Rc<RefCell<Buffer>>,
     requested: usize,
@@ -7593,15 +7593,15 @@ fn f_forward_comment(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let stop1 = cur(i).borrow().zv + 1;
     let syn = crate::editor::Syn::current(i, stop1);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let beg = bb.begv;
-    let stop = bb.zv.min(bb.text_len());
-    let pt = bb.point();
     let (np, ok) = {
+        let bb = b.borrow();
+        let beg = bb.begv;
+        let stop = bb.zv.min(bb.text_len());
+        let pt = bb.point();
         let text = bb.text.as_slice();
         forward_comment_scan(&syn, &text, beg, stop, pt, count)
     };
-    bb.set_point(np);
+    goto_char_set_point(i, &b, np)?;
     Ok(if ok { Value::Sym(sym::T) } else { Value::Nil })
 }
 
@@ -8368,25 +8368,28 @@ fn f_beginning_of_visual_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
     // nil -> 1, and N targets "N - 1 lines forward".
     let n = opt_num_mark(i, &arg(&a, 0))?;
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let cur_line = bb.text.line_of_pos(bb.point());
-    let target = (cur_line as i128 + n - 1).max(0) as usize;
-    let p = bb.text.line_start(target).max(bb.begv);
-    bb.set_point(p);
+    let p = {
+        let bb = b.borrow();
+        let cur_line = bb.text.line_of_pos(bb.point());
+        let target = (cur_line as i128 + n - 1).max(0) as usize;
+        bb.text.line_start(target).max(bb.begv)
+    };
+    goto_char_set_point(i, &b, p)?;
     Ok(Value::Nil)
 }
 
 fn f_end_of_visual_line(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let n = opt_num_mark(i, &arg(&a, 0))?;
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let cur_line = bb.text.line_of_pos(bb.point());
-    let target = (cur_line as i128 + n - 1).max(0) as usize;
-    let p = bb
-        .text
-        .line_end(bb.text.line_start(target))
-        .min(bb.text_len());
-    bb.set_point(p);
+    let p = {
+        let bb = b.borrow();
+        let cur_line = bb.text.line_of_pos(bb.point());
+        let target = (cur_line as i128 + n - 1).max(0) as usize;
+        bb.text
+            .line_end(bb.text.line_start(target))
+            .min(bb.text_len())
+    };
+    goto_char_set_point_with_forward_limit(i, &b, p, Some(p))?;
     Ok(Value::Nil)
 }
 

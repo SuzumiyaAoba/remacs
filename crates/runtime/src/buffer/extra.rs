@@ -3555,36 +3555,39 @@ fn f_vertical_motion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let _ = crate::editor::win_live(i, w)?;
     }
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text_len();
-    let mut p = bb.point();
-    let mut moved = 0i128;
-    if lines == 0 {
-        // Zero lines: GNU still lands on the beginning of the line.
-        p = line_start(&bb.text, p);
-    } else if lines > 0 {
-        for _ in 0..lines {
-            let eol = line_end(&bb.text, p);
-            if eol >= len {
-                p = len;
-                break;
+    let (p, moved) = {
+        let bb = b.borrow();
+        let len = bb.text_len();
+        let mut p = bb.point();
+        let mut moved = 0i128;
+        if lines == 0 {
+            // Zero lines: GNU still lands on the beginning of the line.
+            p = line_start(&bb.text, p);
+        } else if lines > 0 {
+            for _ in 0..lines {
+                let eol = line_end(&bb.text, p);
+                if eol >= len {
+                    p = len;
+                    break;
+                }
+                p = eol + 1;
+                moved += 1;
             }
-            p = eol + 1;
-            moved += 1;
-        }
-    } else {
-        for _ in 0..(-lines) {
-            // Each step lands on the beginning of the previous line.
-            let bol = line_start(&bb.text, p);
-            if bol == 0 {
-                p = 0;
-                break;
+        } else {
+            for _ in 0..(-lines) {
+                // Each step lands on the beginning of the previous line.
+                let bol = line_start(&bb.text, p);
+                if bol == 0 {
+                    p = 0;
+                    break;
+                }
+                p = line_start(&bb.text, bol - 1);
+                moved -= 1;
             }
-            p = line_start(&bb.text, bol - 1);
-            moved -= 1;
         }
-    }
-    bb.set_point(p);
+        (p, moved)
+    };
+    crate::buffer::primitives::goto_char_set_point(i, &b, p)?;
     Ok(Value::Int(moved))
 }
 
@@ -3644,13 +3647,13 @@ fn f_backward_prefix_chars(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult 
     let upto = cur(i).borrow().point() + 1;
     let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let (beg, pt) = (bb.begv, bb.point());
     let p = {
+        let bb = b.borrow();
+        let (beg, pt) = (bb.begv, bb.point());
         let text = bb.text.as_slice();
         crate::buffer::primitives::backward_prefix_chars(&syn, &text, beg, pt)
     };
-    bb.set_point(p);
+    crate::buffer::primitives::goto_char_set_point(i, &b, p)?;
     Ok(Value::Nil)
 }
 
@@ -3671,30 +3674,30 @@ fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         v => return Err(i.wrong_type_mut("fixnump", v)),
     };
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let pt = bb.point() as i128 + 1;
-    let begv = bb.begv as i128 + 1;
-    let zv = bb.zv as i128 + 1;
-    let edge_lo = bb.begv;
-    let edge_hi = bb.zv;
+    let (pt, begv, zv, edge_lo, edge_hi) = {
+        let bb = b.borrow();
+        (
+            bb.point() as i128 + 1,
+            bb.begv as i128 + 1,
+            bb.zv as i128 + 1,
+            bb.begv,
+            bb.zv,
+        )
+    };
     if pt <= begv && dir < 0 {
-        bb.set_point(edge_lo);
-        drop(bb);
+        crate::buffer::primitives::goto_char_set_point(i, &b, edge_lo)?;
         return Err(i.signal_data(crate::lisp::sym::BEGINNING_OF_BUFFER, vec![]));
     }
     if pt >= zv && dir > 0 {
-        bb.set_point(edge_hi);
-        drop(bb);
+        crate::buffer::primitives::goto_char_set_point(i, &b, edge_hi)?;
         return Err(i.signal_data(crate::lisp::sym::END_OF_BUFFER, vec![]));
     }
     if pt == begv && dir > 0 {
         // Only batch-observable non-error step: BEGV + rightward.
-        bb.set_point(pt as usize);
-        drop(bb);
-        return Ok(Value::Int(pt + 1));
+        let final_point = crate::buffer::primitives::goto_char_set_point(i, &b, pt as usize)?;
+        return Ok(Value::Int(final_point as i128 + 1));
     }
     let pos = Value::Int(pt);
-    drop(bb);
     let sym = i.q("args-out-of-range");
     Err(i.signal_data(sym, vec![pos.clone(), pos]))
 }
