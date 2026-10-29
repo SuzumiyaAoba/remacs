@@ -2451,17 +2451,36 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
     // overlay's end, before-string at its start.
     let before_sym = i.q("before-string");
     let after_sym = i.q("after-string");
-    let mut splices: Vec<(usize, usize, EmacsText)> = Vec::new();
+    let mut overlay_strings: Vec<(&crate::buffer::Overlay, Value, Value)> = Vec::new();
     for ov in &bb.overlays {
         if ov.buffer.is_none() {
             continue;
         }
         let bs = crate::lisp::eval::plist_get(&ov.plist, before_sym);
         let as_ = crate::lisp::eval::plist_get(&ov.plist, after_sym);
-        for (v, at_start) in [(bs, true), (as_, false)] {
-            if let Value::Str(s) = &v {
+        if matches!(bs, Value::Str(_)) || matches!(as_, Value::Str(_)) {
+            overlay_strings.push((ov, bs, as_));
+        }
+    }
+
+    let mut overlay_order: Vec<_> = overlay_strings
+        .iter()
+        .enumerate()
+        .map(|(index, (overlay, _, _))| (*overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
+
+    let mut splices: Vec<(usize, usize, EmacsText)> = Vec::new();
+    for (_, index) in overlay_order {
+        let (ov, bs, as_) = &overlay_strings[index];
+        for (value, at_start) in [(bs, true), (as_, false)] {
+            if let Value::Str(string) = value {
                 let pos = if at_start { ov.start } else { ov.end };
-                splices.push((pos, usize::from(!at_start), s.borrow().clone()));
+                splices.push((
+                    pos,
+                    usize::from(!at_start),
+                    string.borrow().clone(),
+                ));
             }
         }
     }
