@@ -520,7 +520,7 @@ Responds to the window width as ls should but may not!"
     (setq files (nreverse files)
 	  colwid (+ 2 colwid)		; 2 character column gap
 	  fmt (format "%%-%ds" colwid)	; print format
-	  ncols (/ (window-width) colwid) ; no of columns
+	  ncols (max 1 (/ (window-width) colwid)) ; no of columns
 	  collen (/ nfiles ncols))	; floor of column length
     (if (> nfiles (* collen ncols)) (setq collen (1+ collen)))
     ;; Output the file names in columns, sorted vertically:
