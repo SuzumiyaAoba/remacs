@@ -4507,6 +4507,77 @@ pub fn render_frame_grid_with_mouse_position_cached(
     )
 }
 
+fn minibuffer_display_rows(
+    characters: &[EmacsChar],
+    width: usize,
+    tab_width: usize,
+    wrap_lines: bool,
+    ctl_arrow: bool,
+) -> Vec<Range<usize>> {
+    let mut rows = Vec::new();
+    let mut line_start = 0;
+    for line_end in 0..=characters.len() {
+        if line_end != characters.len() && characters[line_end].unicode() != Some('\n') {
+            continue;
+        }
+        let line: EmacsText = characters[line_start..line_end].iter().copied().collect();
+        let ranges = if wrap_lines {
+            wrap_ranges(&line, width, tab_width, ctl_arrow)
+        } else {
+            vec![0..line.len()]
+        };
+        rows.extend(
+            ranges
+                .into_iter()
+                .map(|range| line_start + range.start..line_start + range.end),
+        );
+        line_start = line_end.saturating_add(1);
+    }
+    rows
+}
+
+fn minibuffer_display_height(
+    i: &Interp,
+    current_height: usize,
+    requested_rows: usize,
+    frame_height: usize,
+    chrome_rows: usize,
+) -> usize {
+    let available = frame_height.saturating_sub(chrome_rows);
+    if available == 0 {
+        return 0;
+    }
+    let current_height = current_height.max(1).min(available);
+    let resize_mode = i
+        .q_soft("resize-mini-windows")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    if resize_mode.is_nil() {
+        return current_height;
+    }
+
+    let configured_max = i
+        .q_soft("max-mini-window-height")
+        .map(|id| i.symbol_value(id))
+        .map_or(1, |value| match value {
+            Value::Int(lines) => usize::try_from(lines).unwrap_or(1),
+            Value::Float(ratio) if ratio.is_finite() => (ratio.max(0.0) * frame_height as f64)
+                .ceil()
+                .min(usize::MAX as f64)
+                as usize,
+            _ => 1,
+        });
+    let grow_capacity = available.saturating_sub(1).max(1).min(available);
+    let maximum = configured_max.max(1).min(grow_capacity);
+    let requested = requested_rows.max(1).min(maximum);
+    let grow_only = i.q_soft("grow-only");
+    if matches!(resize_mode, Value::Sym(id) if Some(id) == grow_only) {
+        current_height.max(requested).min(available)
+    } else {
+        requested
+    }
+}
+
 fn render_grid_internal(
     i: &Interp,
     width: usize,
@@ -4611,20 +4682,62 @@ fn render_grid_internal(
     } else {
         0
     };
-    let mini_height = 1usize;
+    let mini_buf = fb
+        .minibuffer
+        .as_ref()
+        .and_then(|w| i.buffers.get(w.borrow().buffer));
+    let mini_text = mini_buf
+        .as_ref()
+        .map(|buffer| buffer.borrow().text.text())
+        .unwrap_or_default();
+    let (mini_message, mini_styled) = if mini_text.is_empty() {
+        (i.echo_message.clone(), None)
+    } else {
+        (mini_text, mini_buf.as_ref())
+    };
+    let mini_tab_width = mini_buf
+        .as_ref()
+        .map(|buffer| buffer_tab_width(i, buffer.borrow().id))
+        .unwrap_or(8);
+    let mini_wrap_lines = mini_buf
+        .as_ref()
+        .is_none_or(|buffer| !buffer_setting(i, "truncate-lines", buffer.borrow().id).truthy());
+    let mini_ctl_arrow = mini_buf
+        .as_ref()
+        .is_some_and(|buffer| buffer_setting(i, "ctl-arrow", buffer.borrow().id).truthy());
+    let mini_characters: Vec<_> = mini_message.chars().collect();
+    let mini_rows = minibuffer_display_rows(
+        &mini_characters,
+        width,
+        mini_tab_width,
+        mini_wrap_lines,
+        mini_ctl_arrow,
+    );
     let tool_bar_rows = if graphical {
         crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0)
-            .min(height.saturating_sub(mini_height))
+            .min(height.saturating_sub(1))
     } else {
         0
     };
     let tab_bar_rows = if graphical {
         crate::editor::frame_parameter_positive_size(i, &frame, "tab-bar-lines", 0)
-            .min(height.saturating_sub(mini_height + tool_bar_rows))
+            .min(height.saturating_sub(1 + tool_bar_rows))
     } else {
         0
     };
     let chrome_rows = tool_bar_rows.saturating_add(tab_bar_rows);
+    let current_minibuffer_height = fb
+        .minibuffer
+        .as_ref()
+        .map(|window| window.borrow().height)
+        .unwrap_or(1);
+    let mini_height = minibuffer_display_height(
+        i,
+        current_minibuffer_height,
+        mini_rows.len(),
+        height,
+        chrome_rows,
+    );
     let body_height = height
         .saturating_sub(mini_height)
         .saturating_sub(chrome_rows);
@@ -5757,28 +5870,37 @@ fn render_grid_internal(
             mode_rows.push(my);
         }
     }
-    // Minibuffer / echo area (last row).  The minibuffer's own text
-    // properties apply (minibuffer-prompt's `face' prop colors the
-    // prompt); a plain echo message renders under `default'.
-    let mini_buf = fb
-        .minibuffer
-        .as_ref()
-        .and_then(|w| i.buffers.get(w.borrow().buffer));
-    let mini_text = match &mini_buf {
-        Some(b) => b.borrow().text.text(),
-        None => EmacsText::new(),
-    };
-    let (msg, styled) = if mini_text.is_empty() {
-        (i.echo_message.clone(), None)
+    // Render visible minibuffer lines at the bottom of the frame. When
+    // sourced from the minibuffer buffer, styles and input positions keep
+    // offsets relative to the full buffer.
+    let mini_visible_rows = mini_height.min(mini_rows.len());
+    let mini_point = if mini_styled.is_some() {
+        mini_buf
+            .as_ref()
+            .map(|buffer| buffer.borrow().point())
+            .unwrap_or(mini_characters.len())
     } else {
-        (mini_text, mini_buf.as_ref())
+        mini_characters.len()
     };
-    let tab_width = mini_buf
-        .as_ref()
-        .map(|buffer| buffer_tab_width(i, buffer.borrow().id))
-        .unwrap_or(8);
-    if let Some(y) = rows.len().checked_sub(1) {
-        let wf = styled.map(|b| window_faces(i, &fctx, b, &Value::Nil, mouse_position));
+    let point_row = mini_rows
+        .iter()
+        .position(|range| {
+            (mini_point >= range.start && mini_point < range.end)
+                || (range.start == range.end && mini_point == range.start)
+                || (mini_point == range.end
+                    && (range.end == mini_characters.len()
+                        || mini_characters
+                            .get(range.end)
+                            .is_some_and(|character| character.unicode() == Some('\n'))))
+        })
+        .unwrap_or_else(|| mini_rows.len().saturating_sub(1));
+    let mini_first_row = point_row
+        .saturating_sub(mini_visible_rows.saturating_sub(1))
+        .min(mini_rows.len().saturating_sub(mini_visible_rows));
+    let mini_top = rows.len().saturating_sub(mini_height);
+    if mini_visible_rows > 0 {
+        let wf =
+            mini_styled.map(|buffer| window_faces(i, &fctx, buffer, &Value::Nil, mouse_position));
         if let (Some(position), Some(buffer)) = (mouse_position, mini_buf.as_ref())
             && position.buffer_id == buffer.borrow().id
         {
@@ -5787,48 +5909,62 @@ fn render_grid_internal(
                 wf.as_ref().and_then(|faces| faces.pointer.as_ref()),
             ));
         }
-        let rendered = render_text_row(
-            &msg,
-            0,
-            width,
-            0,
-            tab_width,
-            default_style,
-            |index| {
-                wf.as_ref()
-                    .map(|wf| style_at_pos(i, &mut fctx, wf, index))
-                    .unwrap_or(default_style)
-            },
-            |_| Visibility::Visible,
-            |index| {
-                wf.as_ref()
-                    .and_then(|wf| display_replacement_at(wf, index))
-            },
-            |index| {
-                wf.as_ref()
-                    .map(|wf| overlay_strings_at(wf, index))
-                    .unwrap_or_default()
-            },
-            true,
-        );
-        images.extend(rendered.images.iter().map(|image| GridImage {
-            row: y,
-            column: image.column,
-            source: image.source.clone(),
-            width: image.width,
-            height: image.height,
-        }));
-        if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
-            && snapshot.buffer_id == buffer.borrow().id
+        for (row_index, range) in mini_rows
+            .iter()
+            .enumerate()
+            .skip(mini_first_row)
+            .take(mini_visible_rows)
         {
-            snapshot.rows.push(GridInputRow {
+            let Some(y) = mini_top.checked_add(row_index - mini_first_row) else {
+                continue;
+            };
+            let line: EmacsText = mini_characters[range.clone()].iter().copied().collect();
+            let rendered = render_text_row(
+                &line,
+                0,
+                width,
+                0,
+                mini_tab_width,
+                default_style,
+                |index| {
+                    wf.as_ref()
+                        .map(|wf| style_at_pos(i, &mut fctx, wf, range.start + index))
+                        .unwrap_or(default_style)
+                },
+                |_| Visibility::Visible,
+                |index| {
+                    wf.as_ref()
+                        .and_then(|wf| display_replacement_at(wf, range.start + index))
+                },
+                |index| {
+                    wf.as_ref()
+                        .map(|wf| overlay_strings_at(wf, range.start + index))
+                        .unwrap_or_default()
+                },
+                range.end == mini_characters.len()
+                    || mini_characters
+                        .get(range.end)
+                        .is_some_and(|character| character.unicode() == Some('\n')),
+            );
+            images.extend(rendered.images.iter().map(|image| GridImage {
                 row: y,
-                buffer_start: 0,
-                source_offsets: rendered.source_offsets.clone(),
-            });
-            input_screen_lefts.push((snapshot.rows.len() - 1, 0));
+                column: image.column,
+                source: image.source.clone(),
+                width: image.width,
+                height: image.height,
+            }));
+            if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
+                && snapshot.buffer_id == buffer.borrow().id
+            {
+                snapshot.rows.push(GridInputRow {
+                    row: y,
+                    buffer_start: range.start,
+                    source_offsets: rendered.source_offsets.clone(),
+                });
+                input_screen_lefts.push((snapshot.rows.len() - 1, 0));
+            }
+            place_rendered_row(&mut screen_rows[y], 0, &rendered);
         }
-        place_rendered_row(&mut screen_rows[y], 0, &rendered);
     }
     if graphical
         && let Some((menu, pixel_x, pixel_y)) = &i.gui_popup_menu
