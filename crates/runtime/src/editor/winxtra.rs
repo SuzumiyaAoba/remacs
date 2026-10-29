@@ -3876,16 +3876,17 @@ fn f_tty_set_output_buffer_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     Err(i.error("Attempt to suspend a non-text terminal device"))
 }
 
-/// `make-frame-invisible' — our batch frame is always the sole
-/// visible frame → GNU's error.
+/// `make-frame-invisible' — the sole visible frame can only be hidden
+/// when FORCE is non-nil.
 fn f_make_frame_invisible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    if let Some(v) = a.first() {
-        match v {
-            Value::Nil | Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("frame-live-p", other)),
-        }
+    let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
+    if !arg(&a, 1).truthy() {
+        return Err(i.error("Attempt to make invisible the sole visible or iconified frame"));
     }
-    Err(i.error("Attempt to make invisible the sole visible or iconified frame"))
+    if crate::editor::frame_is_graphical(i, &frame) {
+        crate::editor::set_frame_invisible(i, &frame)?;
+    }
+    Ok(Value::Nil)
 }
 
 /// `reconsider-frame-fonts' — frame check, then GNU's non-wsi error.

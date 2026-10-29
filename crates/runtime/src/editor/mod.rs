@@ -6155,13 +6155,26 @@ pub(crate) fn set_frame_visibility(
     frame: &FrameRef,
     visible: bool,
 ) -> Result<(), Flow> {
-    let visibility_key = Value::Sym(i.intern("visibility"));
-    let known_key = Value::Sym(i.intern("remacs--visibility-known"));
     let value = if visible {
         Value::t()
     } else {
         Value::Sym(i.intern("icon"))
     };
+    set_frame_visibility_value(i, frame, value, visible)
+}
+
+pub(crate) fn set_frame_invisible(i: &mut Interp, frame: &FrameRef) -> Result<(), Flow> {
+    set_frame_visibility_value(i, frame, Value::Nil, false)
+}
+
+fn set_frame_visibility_value(
+    i: &mut Interp,
+    frame: &FrameRef,
+    value: Value,
+    visible: bool,
+) -> Result<(), Flow> {
+    let visibility_key = Value::Sym(i.intern("visibility"));
+    let known_key = Value::Sym(i.intern("remacs--visibility-known"));
     let params = crate::lisp::eval::plist_put_front(
         &frame.borrow().params,
         &visibility_key,
