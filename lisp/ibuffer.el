@@ -1660,26 +1660,34 @@ If point is on a group name, this function operates on that group."
                (get (car form) 'ibuffer-column-summarizer))
       (put (car form) 'ibuffer-column-summary nil))))
 
+;; Remacs: cache keys must not alias mutable format lists or strings.
+(defun ibuffer--copy-format-cache-key (object)
+  (cond ((consp object)
+         (cons (ibuffer--copy-format-cache-key (car object))
+               (ibuffer--copy-format-cache-key (cdr object))))
+        ((stringp object) (copy-sequence object))
+        (t object)))
+
 (defun ibuffer-check-formats ()
   (when (null ibuffer-formats)
     (error "No formats!"))
   (let ((ext-loaded (featurep 'ibuf-ext)))
     (when (or (null ibuffer-compiled-formats)
-	      (null ibuffer-cached-formats)
-	      (not (eq ibuffer-cached-formats ibuffer-formats))
-	      (null ibuffer-cached-eliding-string)
-	      (not (equal ibuffer-cached-eliding-string ibuffer-eliding-string))
-	      (and ext-loaded
-		   (not (eq ibuffer-cached-filter-formats
-			    ibuffer-filter-format-alist))
-		   (and ibuffer-filter-format-alist
-			(null ibuffer-compiled-filter-formats))))
+              (null ibuffer-cached-formats)
+              (not (equal ibuffer-cached-formats ibuffer-formats))
+              (null ibuffer-cached-eliding-string)
+              (not (equal ibuffer-cached-eliding-string ibuffer-eliding-string))
+              (and ext-loaded
+                   (not (equal ibuffer-cached-filter-formats
+                               ibuffer-filter-format-alist))))
       (message "Formats have changed, recompiling...")
       (ibuffer-recompile-formats)
-      (setq ibuffer-cached-formats ibuffer-formats
-	    ibuffer-cached-eliding-string ibuffer-eliding-string)
+      (setq ibuffer-cached-formats
+            (ibuffer--copy-format-cache-key ibuffer-formats)
+            ibuffer-cached-eliding-string ibuffer-eliding-string)
       (when ext-loaded
-	(setq ibuffer-cached-filter-formats ibuffer-filter-format-alist))
+        (setq ibuffer-cached-filter-formats
+              (ibuffer--copy-format-cache-key ibuffer-filter-format-alist)))
       (message "Formats have changed, recompiling...done"))))
 
 (defvar ibuffer-inline-columns nil)
