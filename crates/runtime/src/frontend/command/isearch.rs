@@ -28,6 +28,7 @@ pub(super) struct Isearch {
     pub(super) backward: bool,
     pub(super) regexp: bool,
     word_search: bool,
+    char_fold: bool,
     quote_next: bool,
     meta_s_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -45,6 +46,7 @@ struct IsearchHistory {
     case_fold: Value,
     regexp: bool,
     word_search: bool,
+    char_fold: bool,
     invisible: Value,
 }
 
@@ -56,6 +58,7 @@ fn isearch_search(
     backward: bool,
     regexp: bool,
     word_search: bool,
+    char_fold: bool,
     from: usize,
     case_fold_search: bool,
     allow_invisible: bool,
@@ -63,12 +66,18 @@ fn isearch_search(
     if query.is_empty() {
         return Some((from, from, from));
     }
-    let pattern = if word_search {
+    let pattern = if char_fold {
+        let function = Value::Sym(i.intern("char-fold-to-regexp"));
+        match i.apply(&function, vec![Value::string(query)]) {
+            Ok(Value::Str(pattern)) => pattern.borrow().to_unicode_lossy(),
+            _ => return None,
+        }
+    } else if word_search {
         crate::buffer::primitives::word_search_regexp(i, query, false).to_unicode_lossy()
     } else {
         query.to_owned()
     };
-    let regexp = regexp || word_search;
+    let regexp = regexp || word_search || char_fold;
     let mut esc = String::new();
     for c in pattern.chars() {
         if c == '\\' || c == '"' {
@@ -308,6 +317,7 @@ impl Isearch {
             backward,
             regexp,
             word_search: false,
+            char_fold: false,
             quote_next: false,
             meta_s_prefix: false,
             match_ov: None,
@@ -335,6 +345,7 @@ impl Isearch {
             case_fold: self.case_fold.clone(),
             regexp: self.regexp,
             word_search: self.word_search,
+            char_fold: self.char_fold,
             invisible: self.invisible.clone(),
         });
     }
@@ -349,6 +360,7 @@ impl Isearch {
             self.case_fold = previous.case_fold;
             self.regexp = previous.regexp;
             self.word_search = previous.word_search;
+            self.char_fold = previous.char_fold;
             self.invisible = previous.invisible;
             self.go_to(i, self.cur());
         }
@@ -459,6 +471,7 @@ impl Isearch {
                     false,
                     self.regexp,
                     self.word_search,
+                    self.char_fold,
                     match_start,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -472,6 +485,7 @@ impl Isearch {
                         true,
                         self.regexp,
                         self.word_search,
+                        self.char_fold,
                         self.start.min(match_end + 1),
                         case_fold_search,
                         self.invisible.truthy(),
@@ -484,6 +498,7 @@ impl Isearch {
                     false,
                     self.regexp,
                     self.word_search,
+                    self.char_fold,
                     match_start,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -496,6 +511,7 @@ impl Isearch {
                 self.backward,
                 self.regexp,
                 self.word_search,
+                self.char_fold,
                 self.start,
                 case_fold_search,
                 self.invisible.truthy(),
@@ -524,6 +540,7 @@ impl Isearch {
             self.backward,
             self.regexp,
             self.word_search,
+            self.char_fold,
             self.cur(),
             case_fold_search,
             self.invisible.truthy(),
@@ -546,6 +563,7 @@ impl Isearch {
         self.save_history();
         self.regexp = !self.regexp;
         self.word_search = false;
+        self.char_fold = false;
         self.failing = false;
         self.fail_pos = None;
         self.search_replaced_query(i);
@@ -556,6 +574,19 @@ impl Isearch {
         self.word_search = !self.word_search;
         if self.word_search {
             self.regexp = false;
+        }
+        self.char_fold = false;
+        self.failing = false;
+        self.fail_pos = None;
+        self.search_replaced_query(i);
+    }
+
+    fn toggle_char_fold(&mut self, i: &mut Interp) {
+        self.save_history();
+        self.char_fold = !self.char_fold;
+        if self.char_fold {
+            self.regexp = false;
+            self.word_search = false;
         }
         self.failing = false;
         self.fail_pos = None;
@@ -606,6 +637,10 @@ impl Isearch {
                 }
                 c if c == 'w' as i128 => {
                     self.toggle_word_search(i);
+                    return IsearchAction::Continue;
+                }
+                c if c == '\'' as i128 => {
+                    self.toggle_char_fold(i);
                     return IsearchAction::Continue;
                 }
                 7 => return self.step(i, key),
@@ -683,6 +718,7 @@ impl Isearch {
                     back,
                     self.regexp,
                     self.word_search,
+                    self.char_fold,
                     from,
                     case_fold_search,
                     self.invisible.truthy(),
@@ -1125,6 +1161,7 @@ impl Isearch {
                     false,
                     self.regexp,
                     self.word_search,
+                    self.char_fold,
                     pos,
                     case_fold_search,
                     self.invisible.truthy(),
