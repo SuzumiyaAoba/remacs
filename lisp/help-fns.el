@@ -95,6 +95,20 @@ current help buffer.")
              definition-prefixes))
   help-definition-prefixes)
 
+;; Remacs: keep the cached radix tree in sync with late registrations.
+(defun help--register-definition-prefixes (orig file prefixes)
+  (prog1 (funcall orig file prefixes)
+    (when help-definition-prefixes
+      (dolist (prefix prefixes)
+        (let ((files (radix-tree-lookup help-definition-prefixes prefix)))
+          (unless (member file files)
+            (setq help-definition-prefixes
+                  (radix-tree-insert help-definition-prefixes prefix
+                                     (cons file files))))))))
+
+(advice-add 'register-definition-prefixes :around
+            #'help--register-definition-prefixes)
+
 (defun help--loaded-p (file)
   "Try and figure out if FILE has already been loaded."
   ;; FIXME: this regexp business is not good enough: for file
