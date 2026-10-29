@@ -350,6 +350,7 @@ pub fn run_gui_with_dump(
     // opening the native window. The first frame snapshot corrects this
     // estimate using actual font metrics.
     let initial_window_size = initial_frame_size
+        .filter(|frame| frame.has_size_parameter)
         .map(|frame| {
             size(
                 px(frame.width.max(10) as f32 * 8.0),
@@ -357,6 +358,10 @@ pub fn run_gui_with_dump(
             )
         })
         .unwrap_or(size(px(960.0), px(640.0)));
+    let initial_focus_on_map = initial_frame_size
+        .map(|frame| !frame.no_focus_on_map && !frame.no_accept_focus)
+        .unwrap_or(true);
+    let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -418,11 +423,24 @@ pub fn run_gui_with_dump(
                     initial_window_size,
                     cx,
                 ))),
+                focus: initial_focus_on_map,
                 ..Default::default()
             },
             |window, cx| {
-                cx.activate(false);
-                cx.new(|cx| build_managed_editor_view(window, cx, event_tx.clone(), None, None))
+                if initial_focus_on_map {
+                    cx.activate(false);
+                }
+                cx.new(|cx| {
+                    build_managed_editor_view(
+                        window,
+                        cx,
+                        event_tx.clone(),
+                        None,
+                        None,
+                        initial_focus_on_map,
+                        initial_no_accept_focus,
+                    )
+                })
             },
         ) {
             Ok(window) => window,
@@ -469,6 +487,7 @@ pub fn run_gui_with_dump(
                             let frame_size = (snapshot.width, snapshot.height);
                             let frame_left = snapshot.left;
                             let frame_top = snapshot.top;
+                            let no_accept_focus = snapshot.no_accept_focus;
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -508,6 +527,7 @@ pub fn run_gui_with_dump(
                                         view.set_internal_border_width(internal_border_width);
                                     let alpha_background_changed =
                                         view.set_alpha_background(alpha_background);
+                                    view.set_no_accept_focus(window, no_accept_focus);
                                     if update_appearance {
                                         window.set_window_appearance(ns_appearance);
                                     }
@@ -667,6 +687,8 @@ pub fn run_gui_with_dump(
                                 snapshot.ns_transparent_titlebar,
                             );
                             let event_tx = event_tx.clone();
+                            let no_accept_focus = snapshot.no_accept_focus;
+                            let focus_on_map = !snapshot.no_focus_on_map && !no_accept_focus;
                             let handle = match cx.open_window(options, move |window, app| {
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
@@ -688,6 +710,8 @@ pub fn run_gui_with_dump(
                                         event_tx,
                                         Some(frame_id),
                                         Some(grid),
+                                        focus_on_map,
+                                        no_accept_focus,
                                     );
                                     view.set_modifier_mapping(modifier_mapping);
                                     view.set_alpha_background(alpha_background);

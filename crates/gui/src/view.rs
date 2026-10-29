@@ -443,6 +443,7 @@ pub(super) struct EditorView {
     focus_subscriptions: Vec<Subscription>,
     appearance_subscription: Option<Subscription>,
     mouse_face_position: Rc<Cell<Option<(usize, usize)>>>,
+    no_accept_focus: Rc<Cell<bool>>,
     auto_raise: Rc<Cell<bool>>,
     auto_lower: Rc<Cell<bool>>,
     last_window_active: Option<bool>,
@@ -496,6 +497,7 @@ impl EditorView {
             focus_subscriptions: Vec::new(),
             appearance_subscription: None,
             mouse_face_position: Rc::new(Cell::new(None)),
+            no_accept_focus: Rc::new(Cell::new(false)),
             auto_raise: Rc::new(Cell::new(false)),
             auto_lower: Rc::new(Cell::new(false)),
             last_window_active: None,
@@ -634,6 +636,17 @@ impl EditorView {
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
         self.auto_raise.set(auto_raise);
         self.auto_lower.set(auto_lower);
+    }
+
+    pub(super) fn set_no_accept_focus(&mut self, window: &mut Window, no_accept_focus: bool) {
+        if self.no_accept_focus.replace(no_accept_focus) == no_accept_focus {
+            return;
+        }
+        if no_accept_focus {
+            self.focus.blur(window);
+        } else if window.is_window_active() {
+            self.focus.focus(window);
+        }
     }
 
     pub(super) fn flash_bell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2881,8 +2894,11 @@ pub(super) fn build_managed_editor_view(
     event_tx: Sender<GuiEvent>,
     frame_id: Option<usize>,
     grid: Option<Grid>,
+    focus_on_map: bool,
+    no_accept_focus: bool,
 ) -> EditorView {
     let mut view = EditorView::new_for_frame(event_tx, frame_id, cx);
+    view.no_accept_focus.set(no_accept_focus);
     if let Some(grid) = grid {
         view.grid = grid;
     }
@@ -2900,8 +2916,13 @@ pub(super) fn build_managed_editor_view(
         }
     });
     view.focus_subscriptions.push(subscription);
+    let focus = view.focus.clone();
+    let no_accept_focus = view.no_accept_focus.clone();
     let frame_events = view.tx.clone();
     let subscription = window.on_focus_in(&view.focus, cx, move |window, cx| {
+        if no_accept_focus.get() {
+            focus.blur(window);
+        }
         if let Some(frame_id) = frame_events.frame_id() {
             let visible = cx
                 .window_stack()
@@ -2911,7 +2932,9 @@ pub(super) fn build_managed_editor_view(
         }
     });
     view.focus_subscriptions.push(subscription);
-    view.focus.focus(window);
+    if focus_on_map && !no_accept_focus.get() {
+        view.focus.focus(window);
+    }
     let appearance_view = cx.entity();
     view.appearance_subscription = Some(window.observe_window_appearance(move |window, cx| {
         let appearance = window.appearance();

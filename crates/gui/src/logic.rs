@@ -198,6 +198,8 @@ pub(super) struct FrameSnapshot {
     pub auto_raise: bool,
     pub auto_lower: bool,
     pub z_group: Option<String>,
+    pub no_accept_focus: bool,
+    pub no_focus_on_map: bool,
     pub grid: Grid,
 }
 
@@ -205,6 +207,9 @@ pub(super) struct FrameSnapshot {
 pub(super) struct InitialFrameSize {
     pub width: usize,
     pub height: usize,
+    pub has_size_parameter: bool,
+    pub no_accept_focus: bool,
+    pub no_focus_on_map: bool,
 }
 
 pub(super) enum GuiRequest {
@@ -1811,6 +1816,8 @@ impl KeyIo for ChanIo {
                     auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
                     auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),
                     z_group,
+                    no_accept_focus: frame_parameter_value(i, frame, "no-accept-focus").truthy(),
+                    no_focus_on_map: frame_parameter_value(i, frame, "no-focus-on-map").truthy(),
                     grid,
                 });
             }
@@ -2127,7 +2134,7 @@ fn start_logic_inner(
                     requests: gui_requests_tx.clone(),
                 })));
             }
-            let initial_frame_size = i.selected_frame.as_ref().and_then(|frame| {
+            let initial_frame_size = i.selected_frame.as_ref().map(|frame| {
                 let has_size_parameter = [
                     "initial-frame-alist",
                     "default-frame-alist",
@@ -2140,13 +2147,14 @@ fn start_logic_inner(
                         frame_alist_sets_size(&i, &alist)
                     })
                 });
-                has_size_parameter.then(|| {
-                    let frame = frame.borrow();
-                    InitialFrameSize {
-                        width: frame.width,
-                        height: frame.height,
-                    }
-                })
+                let frame_state = frame.borrow();
+                InitialFrameSize {
+                    width: frame_state.width,
+                    height: frame_state.height,
+                    has_size_parameter,
+                    no_accept_focus: frame_parameter_value(&i, frame, "no-accept-focus").truthy(),
+                    no_focus_on_map: frame_parameter_value(&i, frame, "no-focus-on-map").truthy(),
+                }
             });
             let _ = initial_frame_size_tx.send(initial_frame_size);
             let _ = startup_tx.send(Ok(()));
