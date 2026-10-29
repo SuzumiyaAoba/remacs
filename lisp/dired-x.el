@@ -517,20 +517,26 @@ status message."
   nil
   "A cache of `regexp-opt' applied to `dired-omit-extensions'.
 
-This is a cons whose car is a list of strings and whose cdr is a
-regexp produced by `regexp-opt'.")
+This is a cons whose car is a detached snapshot of the extension list
+and whose cdr is a regexp produced by `regexp-opt'.")
 
 (defun dired-omit-regexp ()
-  (unless (equal dired-omit-extensions (car dired-omit--extension-regexp-cache))
-    (setq dired-omit--extension-regexp-cache
-          (cons dired-omit-extensions (regexp-opt dired-omit-extensions))))
-  (concat (if dired-omit-files (concat "\\(" dired-omit-files "\\)") "")
-          (if (and dired-omit-files dired-omit-extensions) "\\|" "")
-          (if dired-omit-extensions
-              (concat ".";; a non-extension part should exist
-                      (cdr dired-omit--extension-regexp-cache)
-                      "$")
-            "")))
+  (let ((extensions (mapcar (lambda (extension)
+                              (if (stringp extension)
+                                  (copy-sequence extension)
+                                extension))
+                            dired-omit-extensions)))
+    ;; Remacs: keep the mutable list and its strings out of the cache key.
+    (unless (equal extensions (car dired-omit--extension-regexp-cache))
+      (setq dired-omit--extension-regexp-cache
+            (cons extensions (regexp-opt extensions))))
+    (concat (if dired-omit-files (concat "\\(" dired-omit-files "\\)") "")
+            (if (and dired-omit-files extensions) "\\|" "")
+            (if extensions
+                (concat ".";; a non-extension part should exist
+                        (cdr dired-omit--extension-regexp-cache)
+                        "$")
+              ""))))
 
 ;; Returns t if any work was done, nil otherwise.
 (defun dired-mark-unmarked-files (regexp msg &optional unflag-p localp case-fold-p)
