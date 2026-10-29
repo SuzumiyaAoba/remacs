@@ -789,8 +789,9 @@ Use variable `browse-url-filename-alist' to map filenames to URLs."
         (url-encode-url
          (if (string-match-p "\\`file:" file)
              ;; The mapped prefix turns a raw filename into a URI, so
-             ;; percent escapes in the path are literal filename data.
-             (browse-url-url-encode-chars file "%")
+             ;; reserved URL characters and percent escapes are literal
+             ;; filename data until the path has been encoded.
+             (browse-url-url-encode-chars file "[%#?]")
            file))
       (when-let* ((coding (browse-url--file-name-coding-system)))
         (setq file (encode-coding-string file coding)))
