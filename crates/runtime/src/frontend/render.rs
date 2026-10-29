@@ -5738,6 +5738,7 @@ fn render_grid_internal(
         // Keep point in the visible rows using GNU's automatic scroll
         // settings. `start' and `hscroll' are redisplay state, so updating
         // them here is correct.
+        let mut point_line_hscroll = None;
         let (start, hscroll) = match i.buffers.get(buf_id) {
             Some(b) if text_rows > 0 => {
                 let (suspend_hs, suspend_vs, old_pt, min_hs) = {
@@ -5905,13 +5906,52 @@ fn render_grid_internal(
                 // explicit `scroll-left'/`-right'/`set-window-hscroll'.
                 // GNU's min_hscroll floors the automatic value.
                 let ahs_id = i.q_soft("auto-hscroll-mode").unwrap_or(u32::MAX);
-                let ahs_on = i
+                let auto_hscroll_mode = i
                     .buffer_local_toplevel_value(ahs_id, buf_id)
                     .or_else(|| i.default_toplevel_value(ahs_id))
-                    .map(|v| v.truthy())
-                    .unwrap_or(true);
+                    .unwrap_or_else(Value::t);
+                let ahs_on = auto_hscroll_mode.truthy();
+                let current_line_only = matches!(
+                    &auto_hscroll_mode,
+                    Value::Sym(mode) if i.symbol_name(*mode) == "current-line"
+                );
                 let new_hscroll = if wrap_lines {
                     0
+                } else if current_line_only {
+                    // Keep the current line's automatic offset in the
+                    // window state; other lines render at min_hscroll.
+                    let old_point_line = bb.text.line_of_pos(old_pt.clamp(bb.begv, bb.zv));
+                    let base_hscroll = if old_point_line == pt_line {
+                        hscroll.max(min_hs)
+                    } else {
+                        min_hs
+                    };
+                    let line_hscroll = if content_width > 0 && ahs_on && !suspend_hs {
+                        let line_start = bb.text.line_start(pt_line).max(bb.begv);
+                        let line_end = bb.text.line_end(line_start).min(bb.zv);
+                        let col = display_columns(&bb.text.substring(line_start, pt), tab_width);
+                        let line_columns =
+                            display_columns(&bb.text.substring(line_start, line_end), tab_width);
+                        let margin = buffer_setting(i, "hscroll-margin", buf_id)
+                            .int()
+                            .unwrap_or(0)
+                            .clamp(0, 1_000_000) as usize;
+                        automatic_hscroll_position(
+                            col,
+                            line_columns,
+                            pt >= line_end,
+                            base_hscroll,
+                            content_width,
+                            margin,
+                            hscroll_step_setting(i, buf_id),
+                            min_hs,
+                        )
+                        .unwrap_or(base_hscroll)
+                    } else {
+                        base_hscroll
+                    };
+                    point_line_hscroll = Some((pt_line, line_hscroll, min_hs));
+                    line_hscroll
                 } else if content_width > 0 && ahs_on && !suspend_hs {
                     let line_start = bb.text.line_start(pt_line).max(bb.begv);
                     let line_end = bb.text.line_end(line_start).min(bb.zv);
@@ -6356,7 +6396,17 @@ fn render_grid_internal(
                 } else {
                     line_pos + segment_end
                 };
-                let row_hscroll = if wrap_lines { 0 } else { hscroll };
+                let row_hscroll = if wrap_lines {
+                    0
+                } else if let Some((point_line, point_scroll, other_scroll)) = point_line_hscroll {
+                    if line_number.saturating_sub(1) == point_line {
+                        point_scroll
+                    } else {
+                        other_scroll
+                    }
+                } else {
+                    hscroll
+                };
                 if gutter_width > 0 {
                     let number_style = if point_line_number + 1 == line_number {
                         fctx.builtin(i, "line-number-current-line", 0).finish()
