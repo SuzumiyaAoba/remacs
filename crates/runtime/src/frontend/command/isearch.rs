@@ -711,6 +711,36 @@ impl Isearch {
         true
     }
 
+    fn complete_search_ring(&self, i: &mut Interp) -> Result<Option<String>, crate::lisp::error::Flow> {
+        let ring_symbol = i.intern(if self.regexp {
+            "regexp-search-ring"
+        } else {
+            "search-ring"
+        });
+        let ring = i.symbol_value(ring_symbol);
+        let completion_ignore_case = i.intern("completion-ignore-case");
+        let try_completion = Value::Sym(i.intern("try-completion"));
+        let depth = i.specbind_depth();
+        let result = i.specbind(completion_ignore_case, self.case_fold.clone()).and_then(|()| {
+            i.apply(
+                &try_completion,
+                vec![Value::string(self.query.clone()), ring],
+            )
+        });
+        let result = match (result, i.unbind_to(depth)) {
+            (Ok(result), Ok(())) => result,
+            (Err(flow), _) | (Ok(_), Err(flow)) => return Err(flow),
+        };
+        match result {
+            Value::Nil => Ok(None),
+            Value::Sym(symbol) if i.symbol_name(symbol) == "t" => {
+                Ok(Some(self.query.clone()))
+            }
+            Value::Str(text) => Ok(Some(text.borrow().to_unicode_lossy())),
+            other => Err(i.wrong_type_mut("stringp", &other)),
+        }
+    }
+
     fn update_search_ring(&self, i: &mut Interp) {
         if self.query.is_empty() {
             return;
@@ -1475,6 +1505,28 @@ impl Isearch {
                 || c == (CHAR_META | 4) =>
             {
                 self.delete_query_char(i);
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | 9)
+                || c == (CHAR_META | CHAR_CTL | 'i' as i128) =>
+            {
+                self.save_history();
+                match self.complete_search_ring(i) {
+                    Ok(Some(query)) => {
+                        self.query = query;
+                        match edit_isearch_query(i, &self.query, self.regexp) {
+                            Ok(query) => {
+                                self.query = query;
+                                self.failing = false;
+                                self.fail_pos = None;
+                                self.search_replaced_query(i);
+                            }
+                            Err(flow) => report_flow(i, flow),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(flow) => report_flow(i, flow),
+                }
                 IsearchAction::Continue
             }
             c if c == (CHAR_META | '%' as i128) => IsearchAction::QueryReplace(false),
