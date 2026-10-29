@@ -1732,6 +1732,15 @@ pub(super) fn dispatch_text<T: KeyIo>(
             return dispatch_key_pretranslated(term, i, key, keys, arg_mode);
         }
     }
+    if has_input_method
+        && text.chars().all(|character| !character.is_control())
+        && let Some(function) = i
+            .intern_soft("input-method-function")
+            .map(|symbol| i.symbol_value(symbol))
+        && !function.is_nil()
+    {
+        return dispatch_text_through_input_method(i, text, &function, keys, arg_mode);
+    }
 
     // The OS text path bypasses `dispatch_key_core_inner', so record its
     // characters explicitly while a keyboard macro is being defined.
@@ -1793,6 +1802,62 @@ pub(super) fn dispatch_text<T: KeyIo>(
     i.command_key_events.clear();
     i.command_raw_key_events.clear();
     i.command_key_start = 0;
+    Ok(())
+}
+
+fn dispatch_text_through_input_method(
+    i: &mut Interp,
+    text: &str,
+    function: &Value,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    keys.clear();
+    *arg_mode = false;
+    let prefix_arg = i.q("prefix-arg");
+    let prefix = i.symbol_value(prefix_arg);
+    let current_prefix_arg = i.q("current-prefix-arg");
+    let _ = i.set_symbol(current_prefix_arg, prefix);
+    let _ = i.set_symbol(prefix_arg, Value::Nil);
+    i.command_key_events.clear();
+    i.command_raw_key_events.clear();
+    i.command_key_start = 0;
+
+    for character in text.chars() {
+        let result = i.apply(function, vec![Value::Int(character as i128)]);
+        let output = match result {
+            Ok(output) => output,
+            Err(flow) => {
+                report_flow(i, flow);
+                return Ok(());
+            }
+        };
+        let events = match output.list_to_vec() {
+            Ok(events) => events,
+            Err(_) => {
+                let flow = i.wrong_type_mut("listp", &output);
+                report_flow(i, flow);
+                return Ok(());
+            }
+        };
+        for event in events {
+            let codes = match crate::editor::key_seq(i, &Value::vector(vec![event.clone()])) {
+                Ok(codes) => codes,
+                Err(flow) => {
+                    report_flow(i, flow);
+                    return Ok(());
+                }
+            };
+            for code in codes {
+                dispatch_key_core_inner(i, code, keys, arg_mode, None, None, Some(&event))?;
+            }
+        }
+    }
+    if keys.is_empty() {
+        i.command_key_events.clear();
+        i.command_raw_key_events.clear();
+        i.command_key_start = 0;
+    }
     Ok(())
 }
 
