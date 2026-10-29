@@ -138,8 +138,13 @@ members of `visual-wrap--safe-display-specs' (which see)."
        ((< 0 visual-wrap-extra-indent)
         (concat prefix (make-string visual-wrap-extra-indent ?\s)))
        ((< 0 (+ visual-wrap-extra-indent prefix-len))
-        (substring prefix
-                   0 (+ visual-wrap-extra-indent prefix-len)))
+        (let ((target-width (+ visual-wrap-extra-indent prefix-len))
+              (end (length prefix)))
+          ;; Convert the target column width to a character boundary.
+          (while (and (> end 0)
+                      (> (string-width (substring prefix 0 end)) target-width))
+            (setq end (1- end)))
+          (substring prefix 0 end)))
        (t
         "")))))
 
