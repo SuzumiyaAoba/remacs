@@ -4026,11 +4026,14 @@ fn window_faces(
             }
         }
     }
+    let font_lock_enabled = buffer_setting(i, "font-lock-mode", bb.id).truthy();
     let properties = bb.text.props.borrow();
     let prop_faces: Vec<(usize, usize, Value, usize)> = properties
         .iter()
         .enumerate()
-        .filter(|(_, tp)| tp.prop == ctx.face || tp.prop == ctx.font_lock_face)
+        .filter(|(_, tp)| {
+            tp.prop == ctx.face || (font_lock_enabled && tp.prop == ctx.font_lock_face)
+        })
         .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
         .collect();
     let help_echo_props: Vec<(usize, usize, Value, usize)> = help_echo.map_or_else(
