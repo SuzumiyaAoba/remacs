@@ -1273,17 +1273,20 @@ and then show any annotations for this bookmark."
     (funcall display-function buf)
     (when-let* ((win (get-buffer-window buf 0)))
       (set-window-point win point))
-    (when bookmark-fringe-mark
-      (let ((overlays (overlays-in (pos-bol) (1+ (pos-bol))))
-            temp found)
-        (while (and (not found) (setq temp (pop overlays)))
-          (when (eq 'bookmark (overlay-get temp 'category))
-            (setq found t)))
-        (unless found
-          (bookmark--set-fringe-mark))))
-    ;; FIXME: we used to only run bookmark-after-jump-hook in
-    ;; `bookmark-jump' itself, but in none of the other commands.
-    (run-hooks 'bookmark-after-jump-hook)
+    ;; Remacs: display-buffer may leave another buffer selected.
+    (with-current-buffer buf
+      (goto-char point)
+      (when bookmark-fringe-mark
+        (let ((overlays (overlays-in (pos-bol) (1+ (pos-bol))))
+              temp found)
+          (while (and (not found) (setq temp (pop overlays)))
+            (when (eq 'bookmark (overlay-get temp 'category))
+              (setq found t)))
+          (unless found
+            (bookmark--set-fringe-mark))))
+      ;; FIXME: we used to only run bookmark-after-jump-hook in
+      ;; `bookmark-jump' itself, but in none of the other commands.
+      (run-hooks 'bookmark-after-jump-hook))
     (when bookmark-automatically-show-annotations
       ;; if there is an annotation for this bookmark,
       ;; show it in a buffer.
