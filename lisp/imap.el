@@ -2046,7 +2046,7 @@ Return nil if no complete line has arrived."
 			 (forward-char 1)
 			 (setq segment-start (point)))
 		     (setq valid nil)))
-		  (t (forward-char 1)))))
+		  (t (forward-char 1))))))
 	   (when (and valid end)
 	     (goto-char end)
 	     (mapconcat #'identity (nreverse parts) ""))))
