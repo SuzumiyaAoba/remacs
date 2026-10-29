@@ -149,6 +149,45 @@ fn isearch_quoted_character(key: i128) -> Option<char> {
     char::from_u32(code)
 }
 
+fn isearch_input_method_text(
+    i: &mut Interp,
+    key: i128,
+) -> Result<Option<String>, crate::lisp::error::Flow> {
+    let method = i
+        .intern_soft("current-input-method")
+        .filter(|symbol| i.bound_p(*symbol))
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    if !method.truthy() {
+        return Ok(None);
+    }
+
+    // GNU's isearch-x reads through the active input method in a minibuffer.
+    // Use a temporary buffer here so Quail's composition overlays and region
+    // edits cannot touch the buffer being searched.
+    let method = i.prin1_to_string(&method).to_unicode_lossy();
+    let source = format!(
+        "(with-temp-buffer (activate-input-method {}) \
+           (funcall input-method-function {}))",
+        method, key
+    );
+    let result = i.eval_str(&source)?;
+    let events = match result {
+        Value::Nil => Vec::new(),
+        Value::Int(code) => vec![Value::Int(code)],
+        Value::Str(text) => return Ok(Some(text.borrow().to_unicode_lossy())),
+        other => other
+            .list_to_vec()
+            .map_err(|_| i.wrong_type_mut("listp", &other))?,
+    };
+    let text = events
+        .into_iter()
+        .filter_map(|event| event.int())
+        .filter_map(|code| u32::try_from(code).ok().and_then(char::from_u32))
+        .collect();
+    Ok(Some(text))
+}
+
 /// What the isearch driver should do after a key.
 pub(super) enum IsearchAction {
     /// Keep reading keys.
@@ -405,6 +444,13 @@ impl Isearch {
                 self.quote_next = true;
                 IsearchAction::Continue
             }
+            c if c == 28 || c == (CHAR_CTL | '\\' as i128) => {
+                let toggle = Value::Sym(i.intern("toggle-input-method"));
+                if let Err(flow) = i.apply(&toggle, Vec::new()) {
+                    report_flow(i, flow);
+                }
+                IsearchAction::Continue
+            }
             c if c == 9
                 || c == 10
                 || c == (CHAR_CTL | 'i' as i128)
@@ -490,11 +536,21 @@ impl Isearch {
                 let failure_start = self
                     .fail_pos
                     .unwrap_or_else(|| self.query.chars().count());
-                self.save_history();
-                if let Some(ch) = char::from_u32(c as u32) {
-                    self.query.push(ch);
+                let text = match isearch_input_method_text(i, c) {
+                    Ok(Some(text)) => text,
+                    Ok(None) => char::from_u32(c as u32)
+                        .map(|ch| ch.to_string())
+                        .unwrap_or_default(),
+                    Err(flow) => {
+                        report_flow(i, flow);
+                        String::new()
+                    }
+                };
+                if !text.is_empty() {
+                    self.save_history();
+                    self.query.push_str(&text);
+                    self.search_updated_query(i, failure_start);
                 }
-                self.search_updated_query(i, failure_start);
                 IsearchAction::Continue
             }
             other => {
