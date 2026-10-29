@@ -7020,6 +7020,32 @@ fn render_grid_internal(
                         rendered,
                     );
                 }
+                if segment_end == line_len
+                    && !wrap_lines
+                    && display_columns(&line, tab_width)
+                        > row_hscroll.saturating_add(text_width)
+                {
+                    // For a truncated line, the logical row ends beyond the
+                    // last glyph in the display row.  Limit `window-end' to
+                    // the last source character that produced visible text.
+                    let rendered_end = rendered
+                        .source_offsets
+                        .windows(2)
+                        .rposition(|offsets| offsets[1] > offsets[0])
+                        .map_or(0, |index| index + 1);
+                    let visible_prefix = rendered
+                        .source_columns
+                        .iter()
+                        .take(segment_len)
+                        .take_while(|column| {
+                            **column
+                                < row_hscroll
+                                    .saturating_add(prefix_width)
+                                    .saturating_add(text_width)
+                        })
+                        .count();
+                    visible_end = segment_pos + rendered_end.min(visible_prefix);
+                }
                 pending_compositions.extend(rendered.compositions.iter().filter_map(
                     |composition| {
                         let column = content_left.saturating_add(composition.column);
