@@ -36,7 +36,10 @@ impl SvgRenderer {
         Self { asset_source }
     }
 
-    fn options(resources_dir: Option<std::path::PathBuf>) -> usvg::Options<'static> {
+    fn options(
+        resources_dir: Option<std::path::PathBuf>,
+        style_sheet: Option<String>,
+    ) -> usvg::Options<'static> {
         let default_font_resolver = usvg::FontResolver::default_font_selector();
         let font_resolver = Box::new(
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
@@ -48,6 +51,7 @@ impl SvgRenderer {
         );
         usvg::Options {
             resources_dir,
+            style_sheet,
             font_resolver: usvg::FontResolver {
                 select_font: font_resolver,
                 select_fallback: usvg::FontResolver::default_fallback_selector(),
@@ -92,10 +96,20 @@ impl SvgRenderer {
         size: SvgSize,
         base_uri: Option<&Path>,
     ) -> Result<Pixmap, usvg::Error> {
+        self.render_pixmap_with_svg_options(bytes, size, base_uri, None)
+    }
+
+    pub fn render_pixmap_with_svg_options(
+        &self,
+        bytes: &[u8],
+        size: SvgSize,
+        base_uri: Option<&Path>,
+        css: Option<&str>,
+    ) -> Result<Pixmap, usvg::Error> {
         let resources_dir = base_uri
             .and_then(Path::parent)
             .map(Path::to_path_buf);
-        let options = Self::options(resources_dir);
+        let options = Self::options(resources_dir, css.map(str::to_owned));
         let tree = usvg::Tree::from_data(bytes, &options)?;
         let svg_size = tree.size();
         let scale = match size {

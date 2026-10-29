@@ -135,6 +135,11 @@ pub struct GridImage {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum GridImageSource {
     File(String),
+    FileWithSvgOptions {
+        path: String,
+        base_uri: Option<String>,
+        css: Option<String>,
+    },
     Data {
         format: String,
         bytes: Arc<[u8]>,
@@ -143,6 +148,12 @@ pub enum GridImageSource {
         format: String,
         bytes: Arc<[u8]>,
         base_uri: String,
+    },
+    DataWithSvgOptions {
+        format: String,
+        bytes: Arc<[u8]>,
+        base_uri: Option<String>,
+        css: Option<String>,
     },
 }
 
@@ -5096,12 +5107,41 @@ fn image_display_replacement(
     let masked = !image_property(i, &plist, ":mask").is_nil();
     let file = image_property(i, &plist, ":file");
     if let Value::Str(file) = file {
+        let path = image_file_for_buffer(i, buffer_id, &file.borrow());
+        let declared_svg =
+            matches!(image_property(i, &plist, ":type"), Value::Sym(id) if i.symbol_name(id) == "svg");
+        let is_svg = declared_svg || path.to_ascii_lowercase().ends_with(".svg");
+        let base_uri = if is_svg {
+            match image_property(i, &plist, ":base-uri") {
+                Value::Str(base_uri) => Some(image_file_for_buffer(
+                    i,
+                    buffer_id,
+                    &base_uri.borrow(),
+                )),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let css = if is_svg {
+            match image_property(i, &plist, ":css") {
+                Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let source = if base_uri.is_some() || css.is_some() {
+            GridImageSource::FileWithSvgOptions {
+                path,
+                base_uri,
+                css,
+            }
+        } else {
+            GridImageSource::File(path)
+        };
         return Some(DisplayReplacement::Image {
-            source: GridImageSource::File(image_file_for_buffer(
-                i,
-                buffer_id,
-                &file.borrow(),
-            )),
+            source,
             width,
             height,
             masked,
@@ -5145,19 +5185,35 @@ fn image_display_replacement(
     } else {
         None
     };
+    let css = if format == "svg" {
+        match image_property(i, &plist, ":css") {
+            Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
+            _ => None,
+        }
+    } else {
+        None
+    };
     let (intrinsic_width, intrinsic_height) = if format == "svg" {
         svg_intrinsic_dimensions(&bytes)
     } else {
         (None, None)
     };
     let bytes = Arc::<[u8]>::from(bytes);
-    let source = match base_uri {
-        Some(base_uri) => GridImageSource::DataWithBaseUri {
+    let source = if css.is_some() {
+        GridImageSource::DataWithSvgOptions {
             format,
             bytes,
             base_uri,
-        },
-        None => GridImageSource::Data { format, bytes },
+            css,
+        }
+    } else if let Some(base_uri) = base_uri {
+        GridImageSource::DataWithBaseUri {
+            format,
+            bytes,
+            base_uri,
+        }
+    } else {
+        GridImageSource::Data { format, bytes }
     };
     Some(DisplayReplacement::Image {
         source,

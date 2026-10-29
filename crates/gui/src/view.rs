@@ -2371,8 +2371,17 @@ fn grid_image_element(
     let cache_key = image.source.clone();
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
+        GridImageSource::FileWithSvgOptions {
+            path,
+            base_uri,
+            css,
+        } => img(ImageSource::ResourceWithSvgOptions {
+            resource: std::path::PathBuf::from(path).into(),
+            base_uri: base_uri.map(std::path::PathBuf::from),
+            css,
+        }),
         GridImageSource::Data { format, bytes } => {
-            let Some(source) = grid_data_image(format, bytes, None) else {
+            let Some(source) = grid_data_image(format, bytes, None, None) else {
                 return div().into_any_element();
             };
             source
@@ -2382,7 +2391,18 @@ fn grid_image_element(
             bytes,
             base_uri,
         } => {
-            let Some(source) = grid_data_image(format, bytes, Some(base_uri)) else {
+            let Some(source) = grid_data_image(format, bytes, Some(base_uri), None) else {
+                return div().into_any_element();
+            };
+            source
+        }
+        GridImageSource::DataWithSvgOptions {
+            format,
+            bytes,
+            base_uri,
+            css,
+        } => {
+            let Some(source) = grid_data_image(format, bytes, base_uri, css) else {
                 return div().into_any_element();
             };
             source
@@ -2457,7 +2477,12 @@ fn grid_image_element(
     }
 }
 
-fn grid_data_image(format: String, bytes: Arc<[u8]>, base_uri: Option<String>) -> Option<Img> {
+fn grid_data_image(
+    format: String,
+    bytes: Arc<[u8]>,
+    base_uri: Option<String>,
+    css: Option<String>,
+) -> Option<Img> {
     let format = match format.as_str() {
         "png" => ImageFormat::Png,
         "jpeg" | "jpg" => ImageFormat::Jpeg,
@@ -2468,12 +2493,17 @@ fn grid_data_image(format: String, bytes: Arc<[u8]>, base_uri: Option<String>) -
         "tiff" | "tif" => ImageFormat::Tiff,
         _ => return None,
     };
-    match base_uri {
-        Some(base_uri) => Some(img(ImageSource::ImageWithBaseUri {
+    match (base_uri, css) {
+        (Some(base_uri), None) => Some(img(ImageSource::ImageWithBaseUri {
             image: Arc::new(Image::from_bytes(format, bytes.to_vec())),
             base_uri: std::path::PathBuf::from(base_uri),
         })),
-        None => Some(img(Arc::new(Image::from_bytes(format, bytes.to_vec())))),
+        (base_uri, Some(css)) => Some(img(ImageSource::ImageWithSvgOptions {
+            image: Arc::new(Image::from_bytes(format, bytes.to_vec())),
+            base_uri: base_uri.map(std::path::PathBuf::from),
+            css: Some(css),
+        })),
+        (None, None) => Some(img(Arc::new(Image::from_bytes(format, bytes.to_vec())))),
     }
 }
 

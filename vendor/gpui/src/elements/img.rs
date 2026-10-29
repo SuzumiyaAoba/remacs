@@ -41,6 +41,15 @@ pub type ImgResourceLoader = AssetLogger<ImageAssetLoader>;
 pub enum ImageSource {
     /// The image content will be loaded from some resource location
     Resource(Resource),
+    /// A resource decoded with SVG base URI and CSS options.
+    ResourceWithSvgOptions {
+        /// The resource to load.
+        resource: Resource,
+        /// The filename used to resolve relative SVG references.
+        base_uri: Option<PathBuf>,
+        /// CSS to apply while parsing the SVG.
+        css: Option<String>,
+    },
     /// Cached image data
     Render(Arc<RenderImage>),
     /// Cached image data
@@ -51,6 +60,15 @@ pub enum ImageSource {
         image: Arc<Image>,
         /// The filename used to resolve relative SVG references.
         base_uri: PathBuf,
+    },
+    /// Cached image data with SVG base URI and CSS options.
+    ImageWithSvgOptions {
+        /// The image data to decode.
+        image: Arc<Image>,
+        /// The filename used to resolve relative SVG references.
+        base_uri: Option<PathBuf>,
+        /// CSS to apply while parsing the SVG.
+        css: Option<String>,
     },
     /// A custom loading function to use
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
@@ -547,12 +565,28 @@ impl ImageSource {
                     window.use_asset::<ImgResourceLoader>(resource, cx)
                 }
             }
+            ImageSource::ResourceWithSvgOptions {
+                resource,
+                base_uri,
+                css,
+            } => {
+                let source = (resource.clone(), base_uri.clone(), css.clone());
+                window.use_asset::<AssetLogger<ImageAssetLoaderWithSvgOptions>>(&source, cx)
+            }
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
             ImageSource::ImageWithBaseUri { image, base_uri } => {
-                let source = (image.clone(), base_uri.clone());
-                window.use_asset::<AssetLogger<ImageDecoderWithBaseUri>>(&source, cx)
+                let source = (image.clone(), Some(base_uri.clone()), None);
+                window.use_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
+            }
+            ImageSource::ImageWithSvgOptions {
+                image,
+                base_uri,
+                css,
+            } => {
+                let source = (image.clone(), base_uri.clone(), css.clone());
+                window.use_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
             }
         }
     }
@@ -571,12 +605,28 @@ impl ImageSource {
                     window.get_asset::<ImgResourceLoader>(resource, cx)
                 }
             }
+            ImageSource::ResourceWithSvgOptions {
+                resource,
+                base_uri,
+                css,
+            } => {
+                let source = (resource.clone(), base_uri.clone(), css.clone());
+                window.get_asset::<AssetLogger<ImageAssetLoaderWithSvgOptions>>(&source, cx)
+            }
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.get_asset::<AssetLogger<ImageDecoder>>(data, cx),
             ImageSource::ImageWithBaseUri { image, base_uri } => {
-                let source = (image.clone(), base_uri.clone());
-                window.get_asset::<AssetLogger<ImageDecoderWithBaseUri>>(&source, cx)
+                let source = (image.clone(), Some(base_uri.clone()), None);
+                window.get_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
+            }
+            ImageSource::ImageWithSvgOptions {
+                image,
+                base_uri,
+                css,
+            } => {
+                let source = (image.clone(), base_uri.clone(), css.clone());
+                window.get_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
             }
         }
     }
@@ -587,11 +637,27 @@ impl ImageSource {
             ImageSource::Resource(resource) => {
                 cx.remove_asset::<ImgResourceLoader>(resource);
             }
+            ImageSource::ResourceWithSvgOptions {
+                resource,
+                base_uri,
+                css,
+            } => {
+                let source = (resource.clone(), base_uri.clone(), css.clone());
+                cx.remove_asset::<AssetLogger<ImageAssetLoaderWithSvgOptions>>(&source);
+            }
             ImageSource::Custom(_) | ImageSource::Render(_) => {}
             ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
             ImageSource::ImageWithBaseUri { image, base_uri } => {
-                let source = (image.clone(), base_uri.clone());
-                cx.remove_asset::<AssetLogger<ImageDecoderWithBaseUri>>(&source);
+                let source = (image.clone(), Some(base_uri.clone()), None);
+                cx.remove_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source);
+            }
+            ImageSource::ImageWithSvgOptions {
+                image,
+                base_uri,
+                css,
+            } => {
+                let source = (image.clone(), base_uri.clone(), css.clone());
+                cx.remove_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source);
             }
         }
     }
@@ -614,20 +680,20 @@ impl Asset for ImageDecoder {
 }
 
 #[derive(Clone)]
-enum ImageDecoderWithBaseUri {}
+enum ImageDecoderWithSvgOptions {}
 
-impl Asset for ImageDecoderWithBaseUri {
-    type Source = (Arc<Image>, PathBuf);
+impl Asset for ImageDecoderWithSvgOptions {
+    type Source = (Arc<Image>, Option<PathBuf>, Option<String>);
     type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
-        (image, base_uri): Self::Source,
+        (image, base_uri, css): Self::Source,
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let renderer = cx.svg_renderer();
         async move {
             image
-                .to_image_data_with_base_uri(renderer, Some(&base_uri))
+                .to_image_data_with_svg_options(renderer, base_uri.as_deref(), css.as_deref())
                 .map_err(Into::into)
         }
     }
@@ -761,6 +827,78 @@ impl Asset for ImageAssetLoader {
             };
 
             Ok(Arc::new(data))
+        }
+    }
+}
+
+/// An SVG resource loader that applies descriptor-specific URI and CSS options.
+#[derive(Clone)]
+pub enum ImageAssetLoaderWithSvgOptions {}
+
+impl Asset for ImageAssetLoaderWithSvgOptions {
+    type Source = (Resource, Option<PathBuf>, Option<String>);
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        (source, base_uri, css): Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+        let svg_renderer = cx.svg_renderer();
+        let asset_source = cx.asset_source().clone();
+        let base_uri = base_uri.or_else(|| match &source {
+            Resource::Path(path) => Some(path.to_path_buf()),
+            Resource::Uri(_) | Resource::Embedded(_) => None,
+        });
+        async move {
+            let bytes = match source {
+                Resource::Path(path) => fs::read(path.as_ref())?,
+                Resource::Uri(uri) => {
+                    let mut response = client
+                        .get(uri.as_ref(), ().into(), true)
+                        .await
+                        .with_context(|| format!("loading image asset from {uri:?}"))?;
+                    let mut body = Vec::new();
+                    response.body_mut().read_to_end(&mut body).await?;
+                    if !response.status().is_success() {
+                        let mut body = String::from_utf8_lossy(&body).into_owned();
+                        let first_line = body.lines().next().unwrap_or("").trim_end();
+                        body.truncate(first_line.len());
+                        return Err(ImageCacheError::BadStatus {
+                            uri,
+                            status: response.status(),
+                            body,
+                        });
+                    }
+                    body
+                }
+                Resource::Embedded(path) => {
+                    let data = asset_source.load(&path).ok().flatten();
+                    if let Some(data) = data {
+                        data.to_vec()
+                    } else {
+                        return Err(ImageCacheError::Asset(
+                            format!("Embedded resource not found: {}", path).into(),
+                        ));
+                    }
+                }
+            };
+
+            let pixmap = svg_renderer.render_pixmap_with_svg_options(
+                &bytes,
+                SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR),
+                base_uri.as_deref(),
+                css.as_deref(),
+            )?;
+            let mut buffer =
+                ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
+            for pixel in buffer.chunks_exact_mut(4) {
+                swap_rgba_pa_to_bgra(pixel);
+            }
+
+            let mut image = RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1));
+            image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
+            Ok(Arc::new(image))
         }
     }
 }

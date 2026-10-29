@@ -1789,6 +1789,16 @@ impl Image {
         svg_renderer: SvgRenderer,
         base_uri: Option<&Path>,
     ) -> Result<Arc<RenderImage>> {
+        self.to_image_data_with_svg_options(svg_renderer, base_uri, None)
+    }
+
+    /// Convert the image to decoded data using SVG base URI and CSS options.
+    pub fn to_image_data_with_svg_options(
+        &self,
+        svg_renderer: SvgRenderer,
+        base_uri: Option<&Path>,
+        css: Option<&str>,
+    ) -> Result<Arc<RenderImage>> {
         fn frames_for_image(
             bytes: &[u8],
             format: image::ImageFormat,
@@ -1825,10 +1835,11 @@ impl Image {
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Svg => {
-                let pixmap = svg_renderer.render_pixmap_with_base_uri(
+                let pixmap = svg_renderer.render_pixmap_with_svg_options(
                     &self.bytes,
                     SvgSize::ScaleFactor(1.0),
                     base_uri,
+                    css,
                 )?;
 
                 let buffer =
