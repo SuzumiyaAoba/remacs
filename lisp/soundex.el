@@ -56,7 +56,9 @@ and Searching\", Addison-Wesley (1973), pp. 391-392."
 	    key (concat key (if (or (null code) (string= code prev-code))
 				()
 			      code))
-	    prev-code code))
+	    prev-code (if (memq (aref word (1- index)) '(?H ?W))
+			  prev-code
+			code)))
     ;; return a key that is 4 chars long and padded by "0"s if needed
     (if (> 4 (length key))
 	(substring (concat key "000") 0 4)
