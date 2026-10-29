@@ -31,6 +31,7 @@
 (require 'message)
 (require 'gnus-msg)
 (require 'mm-decode)
+(require 'rfc2231)
 (require 'yenc)
 
 (defgroup gnus-extract nil
@@ -1993,9 +1994,9 @@ The user will be asked for a file name."
 ;; Adds MIME headers.
 (defun gnus-uu-post-make-mime (file-name encoding)
   (goto-char (point-min))
-  (insert (format "Content-Type: %s; name=\"%s\"\n"
+  (insert (format "Content-Type: %s; %s\n"
 		  (gnus-uu-choose-action file-name gnus-uu-ext-to-mime-list)
-		  file-name))
+		  (rfc2231-encode-string "name" file-name)))
   (insert (format "Content-Transfer-Encoding: %s\n\n" encoding))
   ;; FIXME: Shouldn't we set-buffer before saving the restriction?  --Stef
   (save-restriction
