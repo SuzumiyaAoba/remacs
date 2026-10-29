@@ -3443,8 +3443,12 @@ fn paint_bottom_dividers(
             continue;
         }
         let thickness = px(divider.thickness as f32);
-        let left = bounds.left() + cell_width * divider.left as f32;
-        let width = cell_width * divider.width as f32;
+        let left = bounds.left()
+            + cell_width * divider.left as f32
+            + px(divider.x_offset as f32);
+        let width = (cell_width * divider.width as f32
+            + px(divider.width_adjustment as f32))
+        .max(px(0.0));
         let top = bounds.top()
             + grid_row_top(grid, divider.row_boundary, line_height)
             - thickness;

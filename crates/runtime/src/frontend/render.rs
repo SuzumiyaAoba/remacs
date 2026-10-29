@@ -251,6 +251,10 @@ pub struct GridBottomDivider {
     /// Horizontal position and extent in frame cells.
     pub left: usize,
     pub width: usize,
+    /// Pixelwise offset from the cell-aligned left edge.
+    pub x_offset: i128,
+    /// Pixelwise adjustment to the cell-aligned width.
+    pub width_adjustment: i128,
     /// Divider thickness in pixels.
     pub thickness: usize,
     pub style: CellStyle,
@@ -6692,10 +6696,16 @@ fn render_grid_internal(
             && raw_window_bottom > 0
             && let Some((style, first_pixel_style, last_pixel_style)) = bottom_divider_styles
         {
+            let (x_offset, _) =
+                crate::editor::winxtra::pixelwise_window_origin_offset(w);
+            let width_adjustment =
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, true);
             bottom_dividers.push(GridBottomDivider {
                 row_boundary: raw_window_bottom,
                 left: raw_window_left,
                 width: raw_window_width,
+                x_offset,
+                width_adjustment,
                 thickness: bottom_divider_width,
                 style,
                 first_pixel_style,
