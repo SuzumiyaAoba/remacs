@@ -1546,7 +1546,8 @@ If point is on a group name, this function operates on that group."
 					       'min)
 					    strlen)
 					align)))))
-	     (when (or (not (integerp max)) (> max 0))
+	     ;; Remacs: zero is a valid maximum; -1 means no upper bound.
+	     (when (or (not (integerp max)) (>= max 0))
 	       (setq max-used t)
                (cl-pushnew 'str vars-used)
 	       ;; Generate code to limit the string to a maximum size.
