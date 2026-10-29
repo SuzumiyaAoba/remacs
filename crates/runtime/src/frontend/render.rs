@@ -3276,6 +3276,10 @@ struct FaceCtx {
     /// fallback for the default face, so an explicit default-face foreground
     /// still takes precedence.
     frame_default_foreground: Option<CellColor>,
+    /// Background from this frame's `background-color' parameter. It is a
+    /// fallback for the default face, so an explicit default-face background
+    /// still takes precedence.
+    frame_default_background: Option<CellColor>,
 }
 
 impl FaceCtx {
@@ -3354,15 +3358,28 @@ impl FaceCtx {
             stipple_ids: HashMap::new(),
             cache: HashMap::new(),
             frame_default_foreground: None,
+            frame_default_background: None,
         };
-        ctx.frame_default_foreground = frame.and_then(|frame| {
-            let parameter = i.intern_soft("foreground-color")?;
-            let value = crate::lisp::eval::plist_get_v(
-                &frame.borrow().params,
-                &Value::Sym(parameter),
-            );
-            ctx.color(&value)
-        });
+        if let Some(frame) = frame {
+            ctx.frame_default_foreground = i
+                .intern_soft("foreground-color")
+                .and_then(|parameter| {
+                    let value = crate::lisp::eval::plist_get_v(
+                        &frame.borrow().params,
+                        &Value::Sym(parameter),
+                    );
+                    ctx.color(&value)
+                });
+            ctx.frame_default_background = i
+                .intern_soft("background-color")
+                .and_then(|parameter| {
+                    let value = crate::lisp::eval::plist_get_v(
+                        &frame.borrow().params,
+                        &Value::Sym(parameter),
+                    );
+                    ctx.color(&value)
+                });
+        }
         ctx
     }
 
@@ -3538,8 +3555,13 @@ impl FaceCtx {
         if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
             mix.merge(&self.face_plist(i, plist, depth));
         }
-        if i.symbol_name(*name) == "default" && mix.fg.is_none() {
-            mix.fg = self.frame_default_foreground;
+        if i.symbol_name(*name) == "default" {
+            if mix.fg.is_none() {
+                mix.fg = self.frame_default_foreground;
+            }
+            if mix.bg.is_none() {
+                mix.bg = self.frame_default_background;
+            }
         }
         self.cache.insert(*name, mix);
         mix
