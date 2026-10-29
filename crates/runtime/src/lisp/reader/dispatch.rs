@@ -419,7 +419,15 @@ impl Reader<'_> {
                             Ok(placeholder)
                         } else {
                             let mut seen = HashSet::default();
-                            patch_in(&obj, &placeholder, &obj, &mut seen);
+                            let mut changed = HashSet::default();
+                            patch_in(
+                                self.interp,
+                                &obj,
+                                &placeholder,
+                                &obj,
+                                &mut seen,
+                                &mut changed,
+                            )?;
                             self.labels.insert(n, obj.clone());
                             Ok(obj)
                         }
