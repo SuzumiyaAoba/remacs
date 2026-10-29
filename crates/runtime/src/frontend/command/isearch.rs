@@ -33,6 +33,7 @@ pub(super) struct Isearch {
     lax_whitespace: bool,
     regexp_lax_whitespace: bool,
     quote_next: bool,
+    yank_until_char: bool,
     meta_s_prefix: bool,
     meta_s_h_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -321,6 +322,21 @@ fn isearch_yank_line(i: &mut Interp, position: usize) -> Option<String> {
     Some(text.borrow().to_unicode_lossy())
 }
 
+fn isearch_yank_until_char(i: &mut Interp, position: usize, delimiter: char) -> Option<String> {
+    let source = format!(
+        "(save-excursion (goto-char (min {} (point-max))) \
+           (let ((start (point)) \
+                 (end (search-forward (char-to-string {}) nil t))) \
+             (when end (buffer-substring-no-properties start (1- end)))))",
+        position.saturating_add(1),
+        delimiter as u32
+    );
+    let Value::Str(text) = i.eval_str(&source).ok()? else {
+        return None;
+    };
+    Some(text.borrow().to_unicode_lossy())
+}
+
 fn prepare_isearch_yanked_text(
     i: &mut Interp,
     text: &str,
@@ -491,6 +507,7 @@ impl Isearch {
             lax_whitespace,
             regexp_lax_whitespace,
             quote_next: false,
+            yank_until_char: false,
             meta_s_prefix: false,
             meta_s_h_prefix: false,
             match_ov: None,
@@ -910,6 +927,39 @@ impl Isearch {
             }
             return IsearchAction::Continue;
         }
+        if self.yank_until_char {
+            self.yank_until_char = false;
+            let Some(delimiter) = isearch_quoted_character(key) else {
+                return IsearchAction::ReDispatch(key);
+            };
+            let anchor = if self.backward {
+                self.spans.last().map(|span| span.1).unwrap_or(cur)
+            } else {
+                cur
+            };
+            match isearch_yank_until_char(i, anchor, delimiter) {
+                Some(text) if !text.is_empty() => {
+                    let failure_start = self
+                        .fail_pos
+                        .unwrap_or_else(|| self.query.chars().count());
+                    self.save_history();
+                    let text = prepare_isearch_yanked_text(
+                        i,
+                        &text,
+                        &self.case_fold,
+                        self.regexp,
+                    );
+                    self.query.push_str(&text);
+                    self.search_updated_query(i, failure_start);
+                }
+                None => {
+                    let message = format!("`{delimiter}' not found");
+                    i.set_echo_message_with_properties(EmacsText::from(message.as_str()), Vec::new());
+                }
+                _ => {}
+            }
+            return IsearchAction::Continue;
+        }
         if self.meta_s_prefix {
             self.meta_s_prefix = false;
             match key {
@@ -1157,6 +1207,12 @@ impl Isearch {
                 }
                 IsearchAction::Continue
             }
+            c if c == (CHAR_META | CHAR_CTL | 'z' as i128)
+                || c == (CHAR_META | 26) =>
+            {
+                self.yank_until_char = true;
+                IsearchAction::Continue
+            }
             c if c == (CHAR_META | CHAR_CTL | 'y' as i128)
                 || c == (CHAR_META | 25) =>
             {
@@ -1346,6 +1402,9 @@ impl Isearch {
 
     /// Echo-area label, e.g. `Failing I-search backward: foo`.
     pub(super) fn label(&self) -> (String, Option<(usize, usize)>) {
+        if self.yank_until_char {
+            return ("Yank until character: ".to_owned(), None);
+        }
         let dir = if self.backward { " backward" } else { "" };
         let re = if self.regexp { " regexp" } else { "" };
         let status = if self.failing { "Failing " } else { "" };
