@@ -35,6 +35,7 @@ pub(super) struct Isearch {
     regexp_lax_whitespace: bool,
     quote_next: bool,
     yank_until_char: bool,
+    help_prefix: bool,
     meta_s_prefix: bool,
     meta_s_h_prefix: bool,
     /// The `isearch' overlay on the current match (handle or None).
@@ -514,6 +515,7 @@ impl Isearch {
             regexp_lax_whitespace,
             quote_next: false,
             yank_until_char: false,
+            help_prefix: false,
             meta_s_prefix: false,
             meta_s_h_prefix: false,
             match_ov: None,
@@ -989,6 +991,17 @@ impl Isearch {
             }
             return IsearchAction::Continue;
         }
+        if self.help_prefix {
+            self.help_prefix = false;
+            if key == 8 || key == (CHAR_CTL | 'h' as i128) {
+                let help = Value::Sym(i.intern("isearch-help-for-help"));
+                if let Err(flow) = self.with_lisp_state(i, |i| i.apply(&help, Vec::new())) {
+                    report_flow(i, flow);
+                }
+                return IsearchAction::Continue;
+            }
+            return IsearchAction::ReDispatch(key);
+        }
         if self.meta_s_prefix {
             self.meta_s_prefix = false;
             match key {
@@ -1184,6 +1197,10 @@ impl Isearch {
             // DEL: unwind one step of the search.
             127 => {
                 self.restore_history(i);
+                IsearchAction::Continue
+            }
+            c if c == 8 || c == (CHAR_CTL | 'h' as i128) => {
+                self.help_prefix = true;
                 IsearchAction::Continue
             }
             c if c == 17 || c == (CHAR_CTL | 'q' as i128) => {
@@ -1469,6 +1486,9 @@ impl Isearch {
 
     /// Echo-area label, e.g. `Failing I-search backward: foo`.
     pub(super) fn label(&self) -> (String, Option<(usize, usize)>) {
+        if self.help_prefix {
+            return ("I-search help: ".to_owned(), None);
+        }
         if self.yank_until_char {
             return ("Yank until character: ".to_owned(), None);
         }
