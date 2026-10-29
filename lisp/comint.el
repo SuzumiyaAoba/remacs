@@ -3849,7 +3849,7 @@ and does not normally need to be invoked by the end user or programmer."
                       (let ((inhibit-read-only subvert-readonly))
                         (delete-region
                          (+ start-position (- delete-start offset))
-                         (+ start-position (- delete-end offset)))))))))))))
+                         (+ start-position (- delete-end offset)))))))))))))))
 
 (defun comint-redirect-cleanup ()
   "End a Comint redirection.  See `comint-redirect-send-command'."
@@ -4005,7 +4005,7 @@ This function does not need to be invoked by the end user."
     ;; Echo input?
     (if comint-redirect-echo-input
         filtered-input-string
-      "")))
+      ""))))
 
 ;;;###autoload
 (defun comint-redirect-send-command (command output-buffer echo &optional no-display)
