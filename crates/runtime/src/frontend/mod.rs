@@ -171,6 +171,8 @@ pub enum InputEvent {
     },
     MouseDown(MouseInput),
     Mouse(MouseInput),
+    /// Pointer movement while a mouse button is held.
+    MouseMovement { position: Option<MousePosition> },
     /// A wheel/trackpad event, with line count normalized by the front-end.
     MouseWheel {
         up: bool,

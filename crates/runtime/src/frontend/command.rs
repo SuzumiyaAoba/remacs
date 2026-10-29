@@ -251,8 +251,11 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
-            InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse),
+            InputEvent::MouseDown(mouse) => {
+                dispatch_mouse_down(i, mouse, &mut keys, &mut arg_mode)?
+            }
             InputEvent::Mouse(mouse) => dispatch_mouse(&term, i, mouse, &mut keys, &mut arg_mode)?,
+            InputEvent::MouseMovement { .. } => {}
             InputEvent::MouseWheel {
                 up,
                 modifiers,
@@ -800,6 +803,13 @@ fn dispatch_ns_service(
     dispatch_frontend_command(i, "ns-spi-service-call", keys, arg_mode);
 }
 
+fn mouse_movement_event(i: &mut Interp, position: Option<MousePosition>) -> Value {
+    let position = position
+        .and_then(|position| mouse_position_value(i, position))
+        .unwrap_or(Value::Nil);
+    Value::list(vec![Value::Sym(i.intern("mouse-movement")), position])
+}
+
 fn dispatch_frontend_command_with_args(
     i: &mut Interp,
     command: &str,
@@ -953,7 +963,12 @@ fn dispatch_mouse_wheel<T: KeyIo>(
     dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
 }
 
-fn dispatch_mouse_down(i: &mut Interp, mouse: MouseInput) {
+fn dispatch_mouse_down(
+    i: &mut Interp,
+    mouse: MouseInput,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
     let number = match mouse.button {
         MouseButton::Left => 1,
         MouseButton::Middle => 2,
@@ -971,7 +986,7 @@ fn dispatch_mouse_down(i: &mut Interp, mouse: MouseInput) {
         Value::Int(mouse.click_count.max(1) as i128),
     ]);
     let last_input = i.q("last-input-event");
-    i.store_internal_value(last_input, event);
+    i.store_internal_value(last_input, event.clone());
 
     if mouse.button == MouseButton::Left {
         let helper = i.intern("mouse--down-1-maybe-follows-link");
@@ -981,6 +996,12 @@ fn dispatch_mouse_down(i: &mut Interp, mouse: MouseInput) {
             report_flow(i, flow);
         }
     }
+    let key = crate::editor::event_code_for(&name);
+    let sequence = Value::vector(vec![Value::Int(key)]);
+    if !matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None) {
+        dispatch_key_core_inner(i, key, keys, arg_mode, None, None, Some(&event))?;
+    }
+    Ok(())
 }
 
 fn dispatch_scroll_bar(
@@ -1556,15 +1577,7 @@ fn minibuf_loop<T: KeyIo>(
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
-        let polled = {
-            let mut t = term.borrow_mut();
-            if single {
-                t.poll_key(Duration::from_millis(50))
-                    .map(|key| key.map(InputEvent::Key))
-            } else {
-                t.poll_input(Duration::from_millis(50))
-            }
-        };
+        let polled = term.borrow_mut().poll_input(Duration::from_millis(50));
         apply_frame_selection(term, i);
         sync_mouse_absolute_pixel_position(term, i);
         if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved() {
@@ -1577,6 +1590,22 @@ fn minibuf_loop<T: KeyIo>(
         };
         match input {
             InputEvent::Key(code) if single => return Ok(MinibufInput::Key(code)),
+            InputEvent::Text(text) if single => {
+                let mut chars = text.chars();
+                let first = chars.next().map(|character| character as i128).unwrap_or(0);
+                for character in chars.rev() {
+                    term.borrow_mut().unread(character as i128);
+                }
+                return Ok(MinibufInput::Key(first));
+            }
+            InputEvent::MouseMovement { position } if single => {
+                return Ok(MinibufInput::Event(mouse_movement_event(i, position)));
+            }
+            InputEvent::Mouse(mouse) if single => {
+                if let Some((_, event)) = mouse_event(i, mouse) {
+                    return Ok(MinibufInput::Event(event));
+                }
+            }
             InputEvent::Key(code) => {
                 if let Err(e) = dispatch_key(term, i, code, &mut keys, &mut arg_mode) {
                     return Err(i.error(format!("minibuffer input: {e}")));
@@ -1616,7 +1645,12 @@ fn minibuf_loop<T: KeyIo>(
             InputEvent::ReplaceText { range, text } => {
                 dispatch_text_range(i, &range, &text, &mut keys, &mut arg_mode)
             }
-            InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse),
+            InputEvent::MouseDown(mouse) => {
+                if let Err(error) = dispatch_mouse_down(i, mouse, &mut keys, &mut arg_mode) {
+                    return Err(i.error(format!("minibuffer input: {error}")));
+                }
+            }
+            InputEvent::MouseMovement { .. } => {}
             InputEvent::Mouse(mouse) if !single => {
                 if let Err(e) = dispatch_mouse(term, i, mouse, &mut keys, &mut arg_mode) {
                     return Err(i.error(format!("minibuffer input: {e}")));

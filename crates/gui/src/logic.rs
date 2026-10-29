@@ -71,6 +71,7 @@ pub(super) enum GuiEvent {
         /// Native pixel coordinates in the frontend's global desktop space.
         absolute_position: Option<(i128, i128)>,
     },
+    MouseDragMove { position: Option<MousePosition> },
     MouseDown {
         button: MouseButton,
         click_count: usize,
@@ -163,6 +164,13 @@ impl FrameEventSender {
             position,
             absolute_position,
         })
+    }
+
+    pub(super) fn send_mouse_drag_move(
+        &self,
+        position: Option<MousePosition>,
+    ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.send(GuiEvent::MouseDragMove { position })
     }
 }
 
@@ -1332,6 +1340,9 @@ impl KeyIo for ChanIo {
                 self.update_mouse_face_position(frame_id, position);
                 Ok(None)
             }
+            GuiEvent::MouseDragMove { position } => {
+                Ok(Some(InputEvent::MouseMovement { position }))
+            }
             GuiEvent::MouseDown {
                 button,
                 click_count,
@@ -1419,6 +1430,7 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::ColorDrop { .. } => Ok(None),
+            GuiEvent::MouseDragMove { .. } => Ok(None),
             #[cfg(target_os = "macos")]
             GuiEvent::NativeService { name, argument } => {
                 self.pending_native_services.push_back((name, argument));

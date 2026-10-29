@@ -667,6 +667,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
             GuiEvent::ColorDrop { .. } => None,
+            GuiEvent::MouseDragMove { .. } => None,
             #[cfg(target_os = "macos")]
             GuiEvent::NativeService { .. } => None,
             GuiEvent::FrameDeleteRequest { .. } | GuiEvent::PowerOff => None,
@@ -693,6 +694,9 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
             GuiEvent::ColorDrop { .. } => None,
+            GuiEvent::MouseDragMove { .. } => None,
+            #[cfg(target_os = "macos")]
+            GuiEvent::NativeService { .. } => None,
             GuiEvent::FrameDeleteRequest { .. } | GuiEvent::PowerOff => None,
             GuiEvent::Key(code) => Some(code),
             GuiEvent::CommandArgs { .. } => None,

@@ -1933,7 +1933,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_read_variable,
         "Read a variable name."
     ),
-    S!("read-key", 0, 2, f_read_char, "Read one key event."),
+    S!("read-key", 0, 2, f_read_event, "Read one key event."),
     S!("read-coding-system", 1, 2, f_read_coding_system, ""),
     S!("read-color", 0, 6, f_read_color, "Read a color name."),
     S!("read-passwd", 1, 3, f_read_passwd, "Read a password."),
@@ -11127,6 +11127,9 @@ fn read_keyboard_event(i: &mut Interp, prompt: &str, deadline: EventDeadline) ->
         match i.minibuf_input(prompt, true)? {
             crate::lisp::eval::MinibufInput::Key(k) => {
                 let event = keyboard_event_value(i, k);
+                return Ok(record_keyboard_event(i, event));
+            }
+            crate::lisp::eval::MinibufInput::Event(event) => {
                 return Ok(record_keyboard_event(i, event));
             }
             crate::lisp::eval::MinibufInput::Call(_) => {

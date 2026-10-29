@@ -393,6 +393,7 @@ impl Interp {
                 MinibufInput::Key(k) => Ok(crate::lisp::value::lisp_char(k as u32)
                     .map(|c| c.to_string())
                     .unwrap_or_default()),
+                MinibufInput::Event(_) => Ok(crate::lisp::text::EmacsText::new()),
                 // Handled in the input phase (applied before unwinding);
                 // unreachable here.
                 MinibufInput::Call(_) => Ok(crate::lisp::text::EmacsText::new()),
@@ -678,6 +679,8 @@ pub enum MinibufInput {
     Text(crate::lisp::text::EmacsText),
     /// A single raw key event code (modifier bits included).
     Key(i128),
+    /// A non-character event read through `read-event'.
+    Event(Value),
     /// A function thrown through the `exit' catch (GNU calls it
     /// after `recursive_edit_1' unwinds — `minibuffer-quit-recursive-
     /// edit' uses this to signal `minibuffer-quit' post-cleanup).

@@ -977,24 +977,26 @@ impl Render for EditorView {
                     if !event.dragging() {
                         return;
                     }
-                    let Some(drag) = this.scroll_bar_drag else {
+                    if let Some(drag) = this.scroll_bar_drag {
+                        let Some(point) = point else {
+                            return;
+                        };
+                        if let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
+                            bar.window_id == drag.window_id
+                                && bar.orientation == drag.orientation
+                        }) {
+                            send_scroll_bar_event(
+                                &scroll_bar_tx,
+                                bar,
+                                point,
+                                drag.pointer_offset,
+                            );
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        }
                         return;
-                    };
-                    let Some(point) = point else {
-                        return;
-                    };
-                    if let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
-                        bar.window_id == drag.window_id && bar.orientation == drag.orientation
-                    }) {
-                        send_scroll_bar_event(
-                            &scroll_bar_tx,
-                            bar,
-                            point,
-                            drag.pointer_offset,
-                        );
-                        window.prevent_default();
-                        cx.stop_propagation();
                     }
+                    let _ = this.tx.send_mouse_drag_move(position);
                 },
             ))
             .on_mouse_up(
