@@ -5418,7 +5418,7 @@ fn f_recenter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 line.saturating_sub(row)
             }
             Some(k) => line.saturating_sub(k as usize),
-            None => line.saturating_sub(height / 2),
+            None => line.saturating_sub(text_rows / 2),
         };
         drop(bb);
         w.borrow_mut().start = {
