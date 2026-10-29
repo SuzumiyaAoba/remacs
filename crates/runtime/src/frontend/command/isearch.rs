@@ -58,22 +58,15 @@ struct IsearchHistory {
 
 /// Run one search; returns (point, match-beg, match-end) — all
 /// 0-based — or None when the query doesn't match from `from`.
-fn isearch_search(
+fn isearch_search_pattern(
     i: &mut Interp,
     query: &str,
-    backward: bool,
     regexp: bool,
     word_search: bool,
     char_fold: bool,
     symbol_search: bool,
     lax_whitespace: bool,
-    from: usize,
-    case_fold_search: bool,
-    allow_invisible: bool,
-) -> Option<(usize, usize, usize)> {
-    if query.is_empty() {
-        return Some((from, from, from));
-    }
+) -> Option<(String, bool)> {
     let (mut pattern, mut regexp) = if char_fold {
         let function = Value::Sym(i.intern("char-fold-to-regexp"));
         match i.apply(&function, vec![Value::string(query)]) {
@@ -99,6 +92,34 @@ fn isearch_search(
         pattern = lax_pattern;
         regexp = true;
     }
+    Some((pattern, regexp))
+}
+
+fn isearch_search(
+    i: &mut Interp,
+    query: &str,
+    backward: bool,
+    regexp: bool,
+    word_search: bool,
+    char_fold: bool,
+    symbol_search: bool,
+    lax_whitespace: bool,
+    from: usize,
+    case_fold_search: bool,
+    allow_invisible: bool,
+) -> Option<(usize, usize, usize)> {
+    if query.is_empty() {
+        return Some((from, from, from));
+    }
+    let (pattern, regexp) = isearch_search_pattern(
+        i,
+        query,
+        regexp,
+        word_search,
+        char_fold,
+        symbol_search,
+        lax_whitespace,
+    )?;
     let mut esc = String::new();
     for c in pattern.chars() {
         if c == '\\' || c == '"' {
@@ -370,6 +391,8 @@ pub(super) enum IsearchAction {
     Abort,
     /// Exit, keeping point and pushing the mark at entry (RET).
     Done,
+    /// Run `occur' using the current I-search string, then exit the loop.
+    Occur(String),
     /// Exit and re-dispatch this key as a command.
     ReDispatch(i128),
 }
@@ -842,6 +865,37 @@ impl Isearch {
                 c if c == ' ' as i128 => {
                     self.toggle_lax_whitespace(i);
                     return IsearchAction::Continue;
+                }
+                c if c == 'o' as i128 => {
+                    let Some((pattern, regexp)) = isearch_search_pattern(
+                        i,
+                        &self.query,
+                        self.regexp,
+                        self.word_search,
+                        self.char_fold,
+                        self.symbol_search,
+                        self.lax_whitespace_enabled(),
+                    ) else {
+                        return IsearchAction::Continue;
+                    };
+                    let pattern = if regexp {
+                        pattern
+                    } else {
+                        let quote = Value::Sym(i.intern("regexp-quote"));
+                        match i.apply(&quote, vec![Value::string(pattern)]) {
+                            Ok(Value::Str(pattern)) => pattern.borrow().to_unicode_lossy(),
+                            Ok(other) => {
+                                let flow = i.wrong_type_mut("stringp", &other);
+                                report_flow(i, flow);
+                                return IsearchAction::Continue;
+                            }
+                            Err(flow) => {
+                                report_flow(i, flow);
+                                return IsearchAction::Continue;
+                            }
+                        }
+                    };
+                    return IsearchAction::Occur(pattern);
                 }
                 c if c == (CHAR_META | '<' as i128) => {
                     self.search_buffer_boundary(i, false);
@@ -1528,6 +1582,34 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     if i.command_execute(&cmd).is_ok() {
                         post_command_undo_boundary(i);
                     }
+                }
+                return Ok(());
+            }
+            IsearchAction::Occur(pattern) => {
+                if !st.failing {
+                    st.update_search_ring(i);
+                }
+                st.clear(i);
+                let mode_symbol = i.intern("isearch-mode");
+                let _ = i.set_symbol(mode_symbol, Value::Nil);
+                st.run_end_hook(i, false);
+
+                let depth = i.specbind_depth();
+                let case_fold_search = i.intern("case-fold-search");
+                let search_upper_case = i.intern("search-upper-case");
+                let occur = Value::Sym(i.intern("occur"));
+                let result = i
+                    .specbind(case_fold_search, st.case_fold.clone())
+                    .and_then(|()| i.specbind(search_upper_case, Value::Nil))
+                    .and_then(|()| {
+                        i.apply(&occur, vec![Value::string(pattern), Value::Nil])
+                            .map(|_| ())
+                    });
+                if let Err(flow) = match (result, i.unbind_to(depth)) {
+                    (Ok(()), Ok(())) => Ok(()),
+                    (Err(flow), _) | (Ok(()), Err(flow)) => Err(flow),
+                } {
+                    report_flow(i, flow);
                 }
                 return Ok(());
             }
