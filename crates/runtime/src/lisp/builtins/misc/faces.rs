@@ -723,24 +723,46 @@ pub(super) fn color_hex_value(text: &crate::lisp::text::EmacsStr) -> Option<i64>
     })
 }
 
+fn parse_rgb_spec_16(text: &crate::lisp::text::EmacsStr) -> Option<(i64, i64, i64)> {
+    let parse_component = |component: &crate::lisp::text::EmacsStr| {
+        let digits = component.len();
+        if !(1..=4).contains(&digits) {
+            return None;
+        }
+        let value = color_hex_value(component)?;
+        let maximum = (1i64 << (digits * 4)) - 1;
+        Some(value * 65_535 / maximum)
+    };
+    let (red, green, blue) = if let Some(hex) = text.strip_prefix('#') {
+        if ![3, 6, 9, 12].contains(&hex.len()) {
+            return None;
+        }
+        let digits = hex.len() / 3;
+        (
+            parse_component(&hex[0..digits])?,
+            parse_component(&hex[digits..2 * digits])?,
+            parse_component(&hex[2 * digits..3 * digits])?,
+        )
+    } else if let Some(rgb) = text.strip_prefix("rgb:") {
+        let mut components = rgb.split('/');
+        let red = parse_component(components.next()?)?;
+        let green = parse_component(components.next()?)?;
+        let blue = parse_component(components.next()?)?;
+        if components.next().is_some() {
+            return None;
+        }
+        (red, green, blue)
+    } else {
+        return None;
+    };
+    Some((red, green, blue))
+}
+
 pub(crate) fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
     if let Value::Str(s) = v {
         let t = s.borrow().clone();
-        let h = t.trim_start_matches('#');
-        if t.starts_with('#') && h.len() == 6 {
-            let r = color_hex_value(&h[0..2])? * 257;
-            let g = color_hex_value(&h[2..4])? * 257;
-            let b = color_hex_value(&h[4..6])? * 257;
-            return Some((r, g, b));
-        }
-        if t.starts_with('#') && h.len() == 3 {
-            let mut it = h.chars().filter_map(|c| c.to_digit(16));
-            let (r, g, b) = (it.next()?, it.next()?, it.next()?);
-            return Some((
-                (r * 65535 / 15) as i64,
-                (g * 65535 / 15) as i64,
-                (b * 65535 / 15) as i64,
-            ));
+        if let Some(rgb) = parse_rgb_spec_16(&t) {
+            return Some(rgb);
         }
         // Standard color names (tty-color-standard-values).
         // tty-defined colors: like tty_defined_color, a leading NUL

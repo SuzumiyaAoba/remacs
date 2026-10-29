@@ -3393,32 +3393,20 @@ impl FaceCtx {
         ctx
     }
 
-    /// GNU `tty_color_standard_values' + `tty-color-canonicalize':
-    /// `#rgb'/`#rrggbb' parse directly, else the canonicalized name is
-    /// looked up in the color-name alist.
+    /// Parse standard RGB specifications directly, then fall back to the
+    /// canonicalized color-name alist.
     fn color(&self, v: &Value) -> Option<CellColor> {
+        if let Some((red, green, blue)) = crate::lisp::builtins::misc::parse_color_16(v) {
+            return Some(CellColor(
+                (red / 256) as u8,
+                (green / 256) as u8,
+                (blue / 256) as u8,
+            ));
+        }
         let Value::Str(s) = v else {
             return None;
         };
         let t = s.borrow();
-        if let Some(hex) = t.strip_prefix('#') {
-            let parse = |h: &EmacsStr| {
-                h.chars().try_fold(0u8, |value, c| c.to_digit(16).map(|digit| value * 16 + digit as u8))
-            };
-            return match hex.len() {
-                6 => Some(CellColor(
-                    parse(&hex[0..2])?,
-                    parse(&hex[2..4])?,
-                    parse(&hex[4..6])?,
-                )),
-                3 => {
-                    let mut it = hex.chars().filter_map(|c| c.to_digit(16).map(|d| d as u8));
-                    let (r, g, b) = (it.next()?, it.next()?, it.next()?);
-                    Some(CellColor(r * 17, g * 17, b * 17))
-                }
-                _ => None,
-            };
-        }
         let canon = t.to_lowercase().replace(' ', "");
         self.colors.get(&canon).map(|&(r, g, b)| CellColor(r, g, b))
     }
