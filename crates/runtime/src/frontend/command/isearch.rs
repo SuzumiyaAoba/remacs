@@ -44,6 +44,8 @@ pub(super) struct Isearch {
     cx_prefix: bool,
     cx8_prefix: bool,
     cx8_emoji_prefix: bool,
+    /// Whether the previous isearch command yanked from the kill ring.
+    kill_yank_active: bool,
     prefix_argument: Option<i128>,
     prefix_digits: bool,
     meta_s_prefix: bool,
@@ -109,6 +111,7 @@ struct IsearchHistory {
     invisible: Value,
     backward: bool,
     search_origin: usize,
+    kill_yank_active: bool,
 }
 
 /// Run one search; returns the point, match span, and 0-based spans for
@@ -445,6 +448,22 @@ fn prepare_isearch_yanked_text(
     }
 }
 
+fn isearch_current_kill(i: &mut Interp, rotation: i128) -> Option<String> {
+    let current_kill = Value::Sym(i.intern("current-kill"));
+    match i.apply(&current_kill, vec![Value::Int(rotation)]) {
+        Ok(Value::Str(text)) => Some(text.borrow().to_unicode_lossy()),
+        Ok(other) => {
+            let flow = i.wrong_type_mut("stringp", &other);
+            report_flow(i, flow);
+            None
+        }
+        Err(flow) => {
+            report_flow(i, flow);
+            None
+        }
+    }
+}
+
 fn isearch_quoted_character(key: i128) -> Option<char> {
     let mut code = u32::try_from(key).ok()?;
     if key & CHAR_CTL != 0 {
@@ -707,6 +726,7 @@ impl Isearch {
             cx_prefix: false,
             cx8_prefix: false,
             cx8_emoji_prefix: false,
+            kill_yank_active: false,
             prefix_argument: None,
             prefix_digits: false,
             meta_s_prefix: false,
@@ -753,6 +773,7 @@ impl Isearch {
             invisible: self.invisible.clone(),
             backward: self.backward,
             search_origin: self.search_origin,
+            kill_yank_active: self.kill_yank_active,
         });
     }
 
@@ -776,6 +797,7 @@ impl Isearch {
             self.invisible = previous.invisible;
             self.backward = previous.backward;
             self.search_origin = previous.search_origin;
+            self.kill_yank_active = previous.kill_yank_active;
             self.go_to(i, self.cur());
         }
     }
@@ -1274,6 +1296,11 @@ impl Isearch {
 
     /// Handle one key event; updates query/point/failing state.
     pub(super) fn step(&mut self, i: &mut Interp, key: i128) -> IsearchAction {
+        let is_yank_pop = key == (CHAR_META | 'y' as i128);
+        let is_yank_kill = key == 25 || key == (CHAR_CTL | 'y' as i128);
+        if !is_yank_pop && !is_yank_kill {
+            self.kill_yank_active = false;
+        }
         let cur = self.cur();
         if self.quote_next {
             self.quote_next = false;
@@ -1738,30 +1765,46 @@ impl Isearch {
                 IsearchAction::Continue
             }
             c if c == 25 || c == (CHAR_CTL | 'y' as i128) => {
-                let current_kill = Value::Sym(i.intern("current-kill"));
-                match i.apply(&current_kill, vec![Value::Int(0)]) {
-                    Ok(Value::Str(text)) => {
-                        let text = text.borrow().to_unicode_lossy();
-                        if !text.is_empty() {
-                            let failure_start = self
-                                .fail_pos
-                                .unwrap_or_else(|| self.query.chars().count());
-                            self.save_history();
-                            let text = prepare_isearch_yanked_text(
-                                i,
-                                &text,
-                                &self.case_fold,
-                                self.regexp,
-                            );
-                            self.query.push_str(&text);
-                            self.search_updated_query(i, failure_start);
-                        }
-                    }
-                    Ok(other) => {
-                        let flow = i.wrong_type_mut("stringp", &other);
-                        report_flow(i, flow);
-                    }
-                    Err(flow) => report_flow(i, flow),
+                if let Some(text) = isearch_current_kill(i, 0)
+                    && !text.is_empty()
+                {
+                    let failure_start = self
+                        .fail_pos
+                        .unwrap_or_else(|| self.query.chars().count());
+                    self.save_history();
+                    let text = prepare_isearch_yanked_text(
+                        i,
+                        &text,
+                        &self.case_fold,
+                        self.regexp,
+                    );
+                    self.query.push_str(&text);
+                    self.kill_yank_active = true;
+                    self.search_updated_query(i, failure_start);
+                }
+                IsearchAction::Continue
+            }
+            c if c == (CHAR_META | 'y' as i128) => {
+                let replace_yank = self.kill_yank_active;
+                if replace_yank {
+                    self.restore_history(i);
+                }
+                if let Some(text) = isearch_current_kill(i, if replace_yank { 1 } else { 0 })
+                    && !text.is_empty()
+                {
+                    let failure_start = self
+                        .fail_pos
+                        .unwrap_or_else(|| self.query.chars().count());
+                    self.save_history();
+                    let text = prepare_isearch_yanked_text(
+                        i,
+                        &text,
+                        &self.case_fold,
+                        self.regexp,
+                    );
+                    self.query.push_str(&text);
+                    self.kill_yank_active = true;
+                    self.search_updated_query(i, failure_start);
                 }
                 IsearchAction::Continue
             }
