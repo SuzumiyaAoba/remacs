@@ -3,9 +3,11 @@ use super::{
     ChanIo, EditorView, GuiEvent, build_editor_view, command_keystroke, keystroke_to_code,
     start_logic,
 };
-use gpui::{EntityInputHandler, Keystroke, Modifiers};
+use gpui::{EntityInputHandler, Keystroke, Modifiers, point, px};
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
-use remacs_runtime::frontend::{Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
+use remacs_runtime::frontend::{
+    Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, render_grid_with_input_cached,
+};
 use remacs_runtime::lisp::Interp;
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
@@ -726,6 +728,40 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             127
         ]
     );
+}
+
+#[test]
+fn input_character_index_maps_visible_text_and_rejects_outside_points() {
+    let mut interp = Interp::new();
+    let buffer = interp.create_buffer("input-hit-test");
+    interp.set_current_buffer(buffer);
+    interp
+        .buffers
+        .get(buffer)
+        .unwrap()
+        .borrow_mut()
+        .insert("A日B\n");
+    let grid = render_grid_with_input_cached(&interp, 80, 24, None);
+    assert!(grid.input.is_some());
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|window, cx| {
+        let mut view = EditorView::new(tx, cx);
+        view.grid = grid;
+        view
+    });
+    let (inside, following, outside) = handle
+        .update(&mut app, |view, window, cx| {
+            let inside = view.character_index_for_point(point(px(4.0), px(10.0)), window, cx);
+            let following = view.character_index_for_point(point(px(26.0), px(10.0)), window, cx);
+            let outside = view.character_index_for_point(point(px(200.0), px(10.0)), window, cx);
+            (inside, following, outside)
+        })
+        .unwrap();
+    assert_eq!(inside, Some(0));
+    assert_eq!(following, Some(2));
+    assert_eq!(outside, None);
 }
 
 #[test]

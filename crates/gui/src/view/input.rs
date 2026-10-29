@@ -191,8 +191,10 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
     let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(window, line).closest_index_for_x(point.x);
+    let source_start = input_row.source_offsets.first()?;
     let source_end = input_row.source_offsets.last()?;
-    (byte <= *source_end)
+    (*source_start..=*source_end)
+        .contains(&byte)
         .then(|| mouse_position_for_point_with_cell_width(grid, point, cell_width, window))
         .flatten()
 }
@@ -705,7 +707,12 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        mouse_position_for_point_with_cell_width(&self.grid, point, self.cell_width, window)
+        let point = super::frame_content_point(
+            point,
+            window.viewport_size(),
+            px(self.internal_border_width as f32),
+        )?;
+        mouse_position_for_text_point_with_cell_width(&self.grid, point, self.cell_width, window)
             .map(|position| position.utf16_offset)
     }
 }
