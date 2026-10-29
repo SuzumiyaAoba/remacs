@@ -395,7 +395,7 @@ pub(super) enum IsearchAction {
     /// Run `occur' using the current I-search string, then exit the loop.
     Occur(String),
     /// Highlight all matches for the current I-search string and exit.
-    Highlight(String),
+    Highlight(String, bool),
     /// Exit and re-dispatch this key as a command.
     ReDispatch(i128),
 }
@@ -916,7 +916,16 @@ impl Isearch {
             if key == 'r' as i128 {
                 return self
                     .regexp_for_query(i)
-                    .map_or(IsearchAction::Continue, IsearchAction::Highlight);
+                    .map_or(IsearchAction::Continue, |pattern| {
+                        IsearchAction::Highlight(pattern, false)
+                    });
+            }
+            if key == 'l' as i128 {
+                return self
+                    .regexp_for_query(i)
+                    .map_or(IsearchAction::Continue, |pattern| {
+                        IsearchAction::Highlight(pattern, true)
+                    });
             }
             return IsearchAction::ReDispatch(key);
         }
@@ -1488,7 +1497,7 @@ impl Isearch {
 /// Incremental search loop (C-s / C-r). Reads keys directly until the
 /// search exits via RET, C-g, or a non-search key (which is then
 /// re-dispatched as a command, like Emacs).
-fn run_isearch_highlight(i: &mut Interp, pattern: String, case_fold: Value) {
+fn run_isearch_highlight(i: &mut Interp, pattern: String, case_fold: Value, lines: bool) {
     let depth = i.specbind_depth();
     let result = (|| {
         let case_fold_search = i.intern("case-fold-search");
@@ -1500,8 +1509,12 @@ fn run_isearch_highlight(i: &mut Interp, pattern: String, case_fold: Value) {
         i.apply(&require, vec![hi_lock])?;
         let read_face = Value::Sym(i.intern("hi-lock-read-face-name"));
         let face = i.apply(&read_face, Vec::new())?;
-        let highlight = Value::Sym(i.intern("highlight-regexp"));
-        i.apply(&highlight, vec![Value::string(pattern), face, Value::Nil])?;
+        let highlight = Value::Sym(i.intern(if lines {
+            "highlight-lines-matching-regexp"
+        } else {
+            "highlight-regexp"
+        }));
+        i.apply(&highlight, vec![Value::string(pattern), face])?;
         Ok(())
     })();
     match (result, i.unbind_to(depth)) {
@@ -1646,7 +1659,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 }
                 return Ok(());
             }
-            IsearchAction::Highlight(pattern) => {
+            IsearchAction::Highlight(pattern, lines) => {
                 if !st.failing {
                     st.update_search_ring(i);
                 }
@@ -1654,7 +1667,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 let mode_symbol = i.intern("isearch-mode");
                 let _ = i.set_symbol(mode_symbol, Value::Nil);
                 st.run_end_hook(i, false);
-                run_isearch_highlight(i, pattern, st.case_fold.clone());
+                run_isearch_highlight(i, pattern, st.case_fold.clone(), lines);
                 return Ok(());
             }
         }
