@@ -182,7 +182,14 @@ pub enum InputEvent {
     /// Pointer movement while a mouse button is held.
     MouseMovement { position: Option<MousePosition> },
     /// Pointer movement outside a drag, including movement over blank areas.
-    MouseMoved { frame_id: Option<usize> },
+    MouseMoved {
+        frame_id: Option<usize>,
+        /// Frame-relative character-cell coordinates for `mouse-position`.
+        frame_position: Option<(i128, i128)>,
+        /// Frame-relative pixel coordinates for `mouse-pixel-position`.
+        frame_pixel_position: Option<(i128, i128)>,
+        position: Option<MousePosition>,
+    },
     /// A wheel/trackpad event, with line count normalized by the front-end.
     MouseWheel {
         up: bool,

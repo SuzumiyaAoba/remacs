@@ -98,6 +98,8 @@ impl Interp {
             gui_popup_menu: None,
             gui_mouse_position: None,
             gui_mouse_absolute_position: None,
+            gui_mouse_frame_position: None,
+            gui_mouse_frame_pixel_position: None,
             max_lisp_eval_depth: 1600,
             eval_depth: 0,
             explicit_eval_depth: 0,

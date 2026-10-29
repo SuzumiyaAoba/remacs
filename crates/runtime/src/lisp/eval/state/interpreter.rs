@@ -56,6 +56,11 @@ pub struct Interp {
     /// Last native pointer position in display-relative pixels reported by
     /// the GUI frontend.
     pub gui_mouse_absolute_position: Option<(i128, i128)>,
+    /// Last GUI pointer position in frame-relative character cells, with its
+    /// frame id. Used by `mouse-position' after pointer-movement events.
+    pub gui_mouse_frame_position: Option<(usize, i128, i128)>,
+    /// The same pointer location in pixels for `mouse-pixel-position'.
+    pub gui_mouse_frame_pixel_position: Option<(usize, i128, i128)>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,

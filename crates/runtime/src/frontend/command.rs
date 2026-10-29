@@ -287,7 +287,20 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             InputEvent::MouseMovement { position } => {
                 dispatch_mouse_movement(i, position, &mut keys, &mut arg_mode)?;
             }
-            InputEvent::MouseMoved { frame_id } => reveal_pointer_after_mouse_move(i, frame_id),
+            InputEvent::MouseMoved {
+                frame_id,
+                frame_position,
+                frame_pixel_position,
+                position,
+            } => dispatch_gui_mouse_move(
+                i,
+                frame_id,
+                frame_position,
+                frame_pixel_position,
+                position,
+                &mut keys,
+                &mut arg_mode,
+            )?,
             InputEvent::MouseWheel {
                 up,
                 modifiers,
@@ -961,6 +974,126 @@ fn dispatch_mouse_movement(
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
     dispatch_key_core_inner(i, key, keys, arg_mode, None, None, Some(&event))
+}
+
+fn remember_gui_mouse_position(
+    i: &mut Interp,
+    frame_id: Option<usize>,
+    frame_position: Option<(i128, i128)>,
+    frame_pixel_position: Option<(i128, i128)>,
+) -> Option<usize> {
+    let frame_id = frame_id.or_else(|| {
+        i.selected_frame
+            .as_ref()
+            .map(|frame| frame.borrow().id)
+    });
+    i.gui_mouse_frame_position = frame_id
+        .zip(frame_position)
+        .map(|(frame_id, (x, y))| (frame_id, x, y));
+    i.gui_mouse_frame_pixel_position = frame_id
+        .zip(frame_pixel_position)
+        .map(|(frame_id, (x, y))| (frame_id, x, y));
+    frame_id
+}
+
+fn dispatch_gui_window_autoselect(
+    i: &mut Interp,
+    frame_id: Option<usize>,
+    frame_position: Option<(i128, i128)>,
+    frame_pixel_position: Option<(i128, i128)>,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let Some(mouse_autoselect_window) = i.q_soft("mouse-autoselect-window") else {
+        return Ok(());
+    };
+    if !i.symbol_value(mouse_autoselect_window).truthy() {
+        return Ok(());
+    }
+    let (Some(frame_id), Some((x, y))) = (frame_id, frame_position) else {
+        return Ok(());
+    };
+    let Some(frame) = i
+        .frames
+        .iter()
+        .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let window_at = Value::Sym(i.q("window-at"));
+    let Ok(Value::Window(window)) = i.apply(
+        &window_at,
+        vec![Value::Int(x), Value::Int(y), Value::Frame(frame.clone())],
+    ) else {
+        return Ok(());
+    };
+    if crate::editor::sel_window(i)
+        .is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, &window))
+    {
+        return Ok(());
+    }
+
+    let point = window.borrow().point.saturating_add(1) as i128;
+    let (pixel_x, pixel_y) = frame_pixel_position.unwrap_or((x, y));
+    let position = Value::list(vec![
+        Value::Window(window),
+        Value::Int(point),
+        Value::cons(Value::Int(pixel_x), Value::Int(pixel_y)),
+        Value::Int(0),
+    ]);
+    let event = Value::list(vec![Value::Sym(i.q("select-window")), position]);
+    crate::editor::record_recent_input_event(i, event.clone());
+    dispatch_key_core_inner(
+        i,
+        crate::editor::event_code_for("select-window"),
+        keys,
+        arg_mode,
+        None,
+        None,
+        Some(&event),
+    )
+}
+
+fn mouse_movement_tracking_enabled(i: &Interp) -> bool {
+    ["track-mouse", "mouse-autoselect-window"]
+        .into_iter()
+        .any(|name| {
+            i.q_soft(name)
+                .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+        })
+}
+
+fn dispatch_gui_mouse_move(
+    i: &mut Interp,
+    frame_id: Option<usize>,
+    frame_position: Option<(i128, i128)>,
+    frame_pixel_position: Option<(i128, i128)>,
+    position: Option<MousePosition>,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    reveal_pointer_after_mouse_move(i, frame_id);
+    let frame_id = remember_gui_mouse_position(
+        i,
+        frame_id,
+        frame_position,
+        frame_pixel_position,
+    );
+
+    // Lisp consumers such as mouse tracking modes observe ordinary pointer
+    // motion through the same event used for a drag.
+    if mouse_movement_tracking_enabled(i) {
+        dispatch_mouse_movement(i, position, keys, arg_mode)?;
+    }
+    dispatch_gui_window_autoselect(
+        i,
+        frame_id,
+        frame_position,
+        frame_pixel_position,
+        keys,
+        arg_mode,
+    )
 }
 
 fn dispatch_frontend_command_with_args(
@@ -2060,9 +2193,51 @@ fn minibuf_loop<T: KeyIo>(
                 }
                 return Ok(MinibufInput::Key(first));
             }
-            InputEvent::MouseMoved { frame_id } => {
+            InputEvent::MouseMoved {
+                frame_id,
+                frame_position,
+                frame_pixel_position,
+                position,
+            } => {
                 reveal_pointer_after_mouse_move(i, frame_id);
-                render_needed = true;
+                let frame_id = remember_gui_mouse_position(
+                    i,
+                    frame_id,
+                    frame_position,
+                    frame_pixel_position,
+                );
+                if single {
+                    if let Err(error) = dispatch_gui_window_autoselect(
+                        i,
+                        frame_id,
+                        frame_position,
+                        frame_pixel_position,
+                        &mut keys,
+                        &mut arg_mode,
+                    ) {
+                        return Err(i.error(format!("minibuffer input: {error}")));
+                    }
+                    if mouse_movement_tracking_enabled(i) {
+                        return Ok(MinibufInput::Event(mouse_movement_event(i, position)));
+                    }
+                } else {
+                    if mouse_movement_tracking_enabled(i)
+                        && let Err(error) =
+                            dispatch_mouse_movement(i, position, &mut keys, &mut arg_mode)
+                    {
+                        return Err(i.error(format!("minibuffer input: {error}")));
+                    }
+                    if let Err(error) = dispatch_gui_window_autoselect(
+                        i,
+                        frame_id,
+                        frame_position,
+                        frame_pixel_position,
+                        &mut keys,
+                        &mut arg_mode,
+                    ) {
+                        return Err(i.error(format!("minibuffer input: {error}")));
+                    }
+                }
             }
             InputEvent::MouseMovement { position } if single => {
                 return Ok(MinibufInput::Event(mouse_movement_event(i, position)));

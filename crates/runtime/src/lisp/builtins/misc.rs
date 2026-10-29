@@ -233,7 +233,8 @@ use crypto::f_secure_hash_algorithms;
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use events::decode_popup_position;
 use events::{
-    f_current_input_mode, f_display_popup_menus_p, f_lossage_size, f_mouse_position,
+    f_current_input_mode, f_display_popup_menus_p, f_lossage_size, f_mouse_pixel_position,
+    f_mouse_position,
     f_mouse_position_root, f_popup_menu, f_remember_mouse_glyph, f_tooltip_mode, popup_car_safe,
     popup_fcar, popup_fcdr,
 };
@@ -1145,7 +1146,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("mouse-position", 0, 0, f_mouse_position, ""),
-    S!("mouse-pixel-position", 0, 0, f_mouse_position, ""),
+    S!("mouse-pixel-position", 0, 0, f_mouse_pixel_position, ""),
     S!("set-mouse-position", 3, 3, f_set_mouse_position, ""),
     S!(
         "set-mouse-pixel-position",

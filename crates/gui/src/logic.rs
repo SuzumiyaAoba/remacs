@@ -847,6 +847,9 @@ pub(super) struct ChanIo {
     mouse_position: Option<MousePosition>,
     /// Last native pointer location in the frontend's global desktop space.
     mouse_absolute_position: Option<(i128, i128)>,
+    /// Last frame-local mouse position, including transitions into and out of
+    /// the frame content area.
+    mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>)>,
     pub(super) scroll_remainder: f32,
 }
 
@@ -1416,15 +1419,41 @@ impl KeyIo for ChanIo {
                 position,
                 absolute_position,
             } => {
-                let moved = absolute_position
-                    .is_some_and(|position| self.mouse_absolute_position != Some(position));
+                let geometry = match frame_id {
+                    Some(id) => self.frame_geometries.get(&id),
+                    None => self.geometry.as_ref(),
+                };
+                let frame_pixel_position = absolute_position.and_then(|(x, y)| {
+                    let geometry = geometry?;
+                    Some((x - geometry.frame_left, y - geometry.frame_top))
+                });
+                let frame_position = frame_pixel_position.and_then(|(x, y)| {
+                    let geometry = geometry?;
+                    let char_width = geometry.char_width.max(1);
+                    let char_height = geometry.char_height.max(1);
+                    Some((
+                        x.div_euclid(char_width),
+                        y.div_euclid(char_height),
+                    ))
+                });
+                let frame_position_changed =
+                    self.mouse_frame_position != Some((frame_id, frame_position));
+                self.mouse_frame_position = Some((frame_id, frame_position));
+                let moved = frame_position_changed
+                    || absolute_position
+                        .is_some_and(|position| self.mouse_absolute_position != Some(position));
                 if let Some(position) = absolute_position {
                     self.mouse_absolute_position = Some(position);
                 }
                 self.update_mouse_face_position(frame_id, position);
                 if moved {
                     self.render_requested = true;
-                    Ok(Some(InputEvent::MouseMoved { frame_id }))
+                    Ok(Some(InputEvent::MouseMoved {
+                        frame_id,
+                        frame_position,
+                        frame_pixel_position,
+                        position,
+                    }))
                 } else {
                     Ok(None)
                 }
@@ -1585,6 +1614,7 @@ impl KeyIo for ChanIo {
                 frame_id,
                 position,
                 absolute_position,
+                ..
             } => {
                 if let Some(position) = absolute_position {
                     self.mouse_absolute_position = Some(position);
@@ -2270,6 +2300,7 @@ fn start_logic_inner(
                 mouse_positions: HashMap::new(),
                 mouse_position: None,
                 mouse_absolute_position: None,
+                mouse_frame_position: None,
                 scroll_remainder: 0.0,
             };
             let _ = remacs_runtime::frontend::run_editor_with(io, &mut i);

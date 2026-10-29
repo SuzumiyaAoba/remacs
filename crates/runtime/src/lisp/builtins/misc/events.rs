@@ -945,12 +945,38 @@ pub(super) fn f_tooltip_mode(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
 }
 
 pub(super) fn f_mouse_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let fr = match sel_frame(i) {
-        Some(f) => Value::Frame(f),
-        None => Value::Nil,
-    };
-    // Emacs: (FRAME nil) on a tty with no mouse.
-    Ok(Value::list(vec![fr, Value::Nil]))
+    if let Some((frame_id, x, y)) = i.gui_mouse_frame_position
+        && let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+            .cloned()
+    {
+        return Ok(Value::cons(
+            Value::Frame(frame),
+            Value::cons(Value::Int(x), Value::Int(y)),
+        ));
+    }
+    // Emacs: (FRAME nil) on a tty with no mouse position.
+    let frame = sel_frame(i).map(Value::Frame).unwrap_or(Value::Nil);
+    Ok(Value::list(vec![frame, Value::Nil]))
+}
+
+pub(super) fn f_mouse_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    if let Some((frame_id, x, y)) = i.gui_mouse_frame_pixel_position
+        && let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+            .cloned()
+    {
+        return Ok(Value::cons(
+            Value::Frame(frame),
+            Value::cons(Value::Int(x), Value::Int(y)),
+        ));
+    }
+    let frame = sel_frame(i).map(Value::Frame).unwrap_or(Value::Nil);
+    Ok(Value::list(vec![frame, Value::Nil]))
 }
 
 /// `display-popup-menus-p' — GNU Fdisplay_popup_menus_p: decode_frame
