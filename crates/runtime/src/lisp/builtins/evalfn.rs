@@ -1014,42 +1014,12 @@ fn unfold_funcall_lambda(
     Ok(Some(Value::list(out)))
 }
 
-/// Recursively expand macros throughout a form.
+/// Recursively expand macros throughout a form, visiting each occurrence.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
-    // Memoize on the input cons's identity: `pcase' and other big
-    // macros duplicate shared subforms across their expansion, so
-    // recursing on each copy re-expands the same cons exponentially.
-    // Entries validate against `macro_gen' so definition/property
-    // changes re-expand once.  Expansion depends on
-    // `macroexpand-all-environment'.  Eager load expansion must visit
-    // each occurrence even when source forms share conses: user macros
-    // and compiler macros may have observable expansion-time effects.
-    let env_nil = i.macroexp_call_depth == 0 && {
-        let env_id = i.q("macroexpand-all-environment");
-        i.symbol_value(env_id).is_nil()
-    };
-    let cons_key = match form {
-        Value::Cons(c) if env_nil => Some(std::rc::Rc::as_ptr(c) as usize),
-        _ => None,
-    };
-    if let Some(k) = cons_key {
-        let mut cache = i.macroexpand_all_cache.borrow_mut();
-        if cache.0 != i.macro_gen {
-            cache.0 = i.macro_gen;
-            cache.1.clear();
-        }
-        if let Some(hit) = cache.1.get(&k) {
-            return Ok(hit.1.clone());
-        }
-    }
-    let out = macroexpand_all_inner(i, form)?;
-    if let Some(k) = cons_key {
-        i.macroexpand_all_cache
-            .borrow_mut()
-            .1
-            .insert(k, (form.clone(), out.clone()));
-    }
-    Ok(out)
+    // The same cons can occur multiple times in a form.  A macro's
+    // expansion may have observable effects, so identity-based caching
+    // would skip calls for later occurrences.
+    macroexpand_all_inner(i, form)
 }
 
 /// Look up SYM_ID in ENV's `(:cl-symbol-macros . BINDINGS)' entry.

@@ -336,7 +336,6 @@ pub fn collect_interp(i: &mut super::Interp) -> bool {
     let start = std::time::Instant::now();
     // Memoized expansions are implementation caches, not Lisp roots.
     i.macro_cache.clear();
-    i.macroexpand_all_cache.borrow_mut().1.clear();
     prune_side_tables(i);
     weak::sweep(i);
     // A dead string's property values can own another string with its

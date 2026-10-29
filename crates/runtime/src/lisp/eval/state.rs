@@ -135,7 +135,6 @@ impl Interp {
         self.expand_unadvised_depth = 0;
         self.macro_cache.clear();
         self.macro_gen = self.macro_gen.wrapping_add(1);
-        *self.macroexpand_all_cache.borrow_mut() = (self.macro_gen, HashMap::default());
         self.overlay_handles.clear();
         self.overlay_cleanup_at = 0;
         self.frame_state_seen = None;

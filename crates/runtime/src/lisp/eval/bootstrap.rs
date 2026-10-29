@@ -149,7 +149,6 @@ impl Interp {
             loading_compiled_library: false,
             macro_cache: HashMap::default(),
             macro_gen: 0,
-            macroexpand_all_cache: std::cell::RefCell::new((0, HashMap::default())),
             stderr_need_newline: false,
             out_last_char: None,
             tz_rule: None,

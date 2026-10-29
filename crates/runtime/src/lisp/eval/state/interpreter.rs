@@ -213,15 +213,6 @@ pub struct Interp {
     /// Cheap coarse invalidation: entries only re-expand once per
     /// generation.
     pub macro_gen: u64,
-    /// Memoized `macroexpand_all' results keyed by input-cons identity.
-    /// `pcase' duplicates subforms into its expansion, so eager
-    /// `macroexpand-all' on a large file re-expands shared structure
-    /// exponentially; caching each cons's expansion collapses that.
-    /// Cleared when `macro_gen' bumps (any definition/property change).
-    /// Each entry stores the input form so its `Rc' keeps the cons —
-    /// and its address — alive, preventing a recycled cons pointer
-    /// from matching a stale entry.
-    pub macroexpand_all_cache: std::cell::RefCell<(u64, HashMap<usize, (Value, Value)>)>,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
