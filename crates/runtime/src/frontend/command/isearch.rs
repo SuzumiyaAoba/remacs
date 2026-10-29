@@ -15,6 +15,8 @@ pub(super) struct Isearch {
     pub(super) positions: Vec<usize>,
     /// Match spans (beg, end) parallel to `positions`.
     pub(super) spans: Vec<(usize, usize)>,
+    /// Last successful regexp match-data, including group 0, 0-based.
+    match_groups: Vec<Option<(usize, usize)>>,
     pub(super) failing: bool,
     /// Character index in QUERY where the currently failing suffix begins.
     pub(super) fail_pos: Option<usize>,
@@ -47,12 +49,15 @@ pub(super) struct Isearch {
     pub(super) match_ov: Option<Value>,
     /// `lazy-highlight' overlays on the other visible matches.
     pub(super) lazy_ovs: Vec<Value>,
+    /// Per-capture overlays on the current regexp match.
+    submatch_ovs: Vec<Value>,
 }
 
 struct IsearchHistory {
     query_len: usize,
     positions_len: usize,
     spans_len: usize,
+    match_groups: Vec<Option<(usize, usize)>>,
     failing: bool,
     fail_pos: Option<usize>,
     case_fold: Value,
@@ -67,8 +72,8 @@ struct IsearchHistory {
     search_origin: usize,
 }
 
-/// Run one search; returns (point, match-beg, match-end) — all
-/// 0-based — or None when the query doesn't match from `from`.
+/// Run one search; returns the point, match span, and 0-based spans for
+/// the full match and each capture group, or None when it doesn't match.
 fn isearch_search_pattern(
     i: &mut Interp,
     query: &str,
@@ -118,9 +123,9 @@ fn isearch_search(
     from: usize,
     case_fold_search: bool,
     allow_invisible: bool,
-) -> Option<(usize, usize, usize)> {
+) -> Option<(usize, usize, usize, Vec<Option<(usize, usize)>>)> {
     if query.is_empty() {
-        return Some((from, from, from));
+        return Some((from, from, from, vec![Some((from, from))]));
     }
     let (pattern, regexp) = isearch_search_pattern(
         i,
@@ -152,7 +157,8 @@ fn isearch_search(
             "(let ((case-fold-search {})) \
                (progn (goto-char (min {} (point-max))) \
                (and ({} \"{}\" nil t) \
-                    (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0))))))",
+                    (list (1- (point)) (1- (match-beginning 0)) (1- (match-end 0)) \
+                          (match-data t)))))",
             if case_fold_search { "t" } else { "nil" },
             search_from + 1,
             fn_name,
@@ -160,15 +166,25 @@ fn isearch_search(
         );
         let hit = match i.eval_str(&src) {
             Ok(v) => v.list_to_vec().ok().and_then(|items| {
-                Some((
-                    items.first()?.int()? as usize,
-                    items.get(1)?.int()? as usize,
-                    items.get(2)?.int()? as usize,
-                ))
+                let position = items.first()?.int()? as usize;
+                let beg = items.get(1)?.int()? as usize;
+                let end = items.get(2)?.int()? as usize;
+                let data = items.get(3)?.list_to_vec().ok()?;
+                let groups = data
+                    .chunks_exact(2)
+                    .map(|pair| match (pair[0].int(), pair[1].int()) {
+                        (Some(beg), Some(end)) => Some((
+                            (beg as usize).saturating_sub(1),
+                            (end as usize).saturating_sub(1),
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                Some((position, beg, end, groups))
             }),
             _ => None,
         };
-        let Some(hit @ (_, beg, end)) = hit else {
+        let Some(hit @ (_, beg, end, _)) = hit else {
             if skipped_invisible
                 && let Some(buffer) = i.current_buffer_ref()
             {
@@ -584,6 +600,7 @@ impl Isearch {
             query: String::new(),
             positions: vec![start],
             spans: vec![(start, start)],
+            match_groups: Vec::new(),
             failing: false,
             fail_pos: None,
             case_fold,
@@ -610,6 +627,7 @@ impl Isearch {
             meta_s_h_prefix: false,
             match_ov: None,
             lazy_ovs: Vec::new(),
+            submatch_ovs: Vec::new(),
         }
     }
 
@@ -628,6 +646,7 @@ impl Isearch {
             query_len: self.query.len(),
             positions_len: self.positions.len(),
             spans_len: self.spans.len(),
+            match_groups: self.match_groups.clone(),
             failing: self.failing,
             fail_pos: self.fail_pos,
             case_fold: self.case_fold.clone(),
@@ -648,6 +667,7 @@ impl Isearch {
             self.query.truncate(previous.query_len);
             self.positions.truncate(previous.positions_len);
             self.spans.truncate(previous.spans_len);
+            self.match_groups = previous.match_groups;
             self.failing = previous.failing;
             self.fail_pos = previous.fail_pos;
             self.case_fold = previous.case_fold;
@@ -806,8 +826,10 @@ impl Isearch {
                     case_fold_search,
                     self.invisible.truthy(),
                 ) {
-                    Some((_, beg, end)) if beg == match_start && end <= self.search_origin => {
-                        Some((beg, beg, end))
+                    Some((_, beg, end, groups))
+                        if beg == match_start && end <= self.search_origin =>
+                    {
+                        Some((beg, beg, end, groups))
                     }
                     _ => isearch_search(
                         i,
@@ -854,9 +876,10 @@ impl Isearch {
             )
         };
         match hit {
-            Some((position, beg, end)) => {
+            Some((position, beg, end, groups)) => {
                 self.positions.push(position);
                 self.spans.push((beg, end));
+                self.match_groups = groups;
                 self.failing = false;
                 self.fail_pos = None;
                 self.go_to(i, position);
@@ -883,9 +906,10 @@ impl Isearch {
             case_fold_search,
             self.invisible.truthy(),
         ) {
-            Some((position, beg, end)) => {
+            Some((position, beg, end, groups)) => {
                 self.positions.push(position);
                 self.spans.push((beg, end));
+                self.match_groups = groups;
                 self.failing = false;
                 self.fail_pos = None;
                 self.go_to(i, position);
@@ -955,9 +979,10 @@ impl Isearch {
             self.invisible.truthy(),
         );
         match hit {
-            Some((position, beg, end)) => {
+            Some((position, beg, end, groups)) => {
                 self.positions.push(position);
                 self.spans.push((beg, end));
+                self.match_groups = groups;
                 self.failing = false;
                 self.fail_pos = None;
                 self.go_to(i, position);
@@ -995,9 +1020,10 @@ impl Isearch {
                 case_fold_search,
                 self.invisible.truthy(),
             ) {
-                Some((position, beg, end)) => {
+                Some((position, beg, end, groups)) => {
                     self.positions.push(position);
                     self.spans.push((beg, end));
+                    self.match_groups = groups;
                     self.failing = false;
                     self.fail_pos = None;
                     self.go_to(i, position);
@@ -1965,6 +1991,9 @@ impl Isearch {
         for ov in self.lazy_ovs.drain(..) {
             Self::call(i, "delete-overlay", vec![ov]);
         }
+        for ov in self.submatch_ovs.drain(..) {
+            Self::call(i, "delete-overlay", vec![ov]);
+        }
     }
 
     /// Rebuild the highlight overlays after each key like GNU's
@@ -1983,6 +2012,9 @@ impl Isearch {
             .map(|b| b.borrow().point())
             .unwrap_or(self.cur());
         for ov in self.lazy_ovs.drain(..) {
+            Self::call(i, "delete-overlay", vec![ov]);
+        }
+        for ov in self.submatch_ovs.drain(..) {
             Self::call(i, "delete-overlay", vec![ov]);
         }
         let span = *self.spans.last().unwrap_or(&(self.start, self.start));
@@ -2035,6 +2067,62 @@ impl Isearch {
             }
             (None, false) => {}
         }
+
+        // GNU's `isearch-highlight' overlays each captured subexpression
+        // above the whole-match overlay.  Match positions are kept in the
+        // search state because the lazy-highlight scan below performs more
+        // regexp searches and overwrites Lisp's live match-data.
+        let submatches_on = i
+            .intern_soft("search-highlight-submatches")
+            .map(|s| i.symbol_value(s).truthy())
+            .unwrap_or(true);
+        let groups_match_span = self
+            .match_groups
+            .first()
+            .copied()
+            .flatten()
+            .is_some_and(|group_zero| group_zero == span);
+        if self.regexp && submatches_on && groups_match_span {
+            let facep = Value::Sym(i.intern("facep"));
+            let mut group = 0usize;
+            for (beg, end) in self.match_groups.iter().skip(1).flatten() {
+                group += 1;
+                let face_name = format!("isearch-group-{group}");
+                let face = i.intern_soft(&face_name).filter(|face| {
+                    i.apply(&facep, vec![Value::Sym(*face)])
+                        .is_ok_and(|value| value.truthy())
+                });
+                let face = match face {
+                    Some(face) => face,
+                    None => {
+                        // Like GNU, recycle the known group faces when a
+                        // higher-numbered face has not been defined.
+                        group = 1;
+                        i.intern("isearch-group-1")
+                    }
+                };
+                let make_overlay = Value::Sym(i.q("make-overlay"));
+                let Ok(ov) = i.apply(
+                    &make_overlay,
+                    vec![Value::Int(*beg as i128 + 1), Value::Int(*end as i128 + 1)],
+                ) else {
+                    continue;
+                };
+                let face_property = Value::Sym(i.q("face"));
+                let priority = Value::Sym(i.q("priority"));
+                Self::call(
+                    i,
+                    "overlay-put",
+                    vec![ov.clone(), face_property, Value::Sym(face)],
+                );
+                Self::call(
+                    i,
+                    "overlay-put",
+                    vec![ov.clone(), priority, Value::Int(1002)],
+                );
+                self.submatch_ovs.push(ov);
+            }
+        }
         if !active || self.failing || !lazy_on {
             return;
         }
@@ -2065,20 +2153,19 @@ impl Isearch {
         let lazy = Value::Sym(i.q("lazy-highlight"));
         let winprop = Value::Sym(i.q("window"));
         while count < 200 {
-            let Some((_, b, e)) =
-                isearch_search(
-                    i,
-                    &self.query,
-                    false,
-                    self.regexp,
-                    self.word_search,
-                    self.char_fold,
-                    self.symbol_search,
-                    self.lax_whitespace_enabled(),
-                    pos,
-                    case_fold_search,
-                    self.invisible.truthy(),
-                )
+            let Some((_, b, e, _)) = isearch_search(
+                i,
+                &self.query,
+                false,
+                self.regexp,
+                self.word_search,
+                self.char_fold,
+                self.symbol_search,
+                self.lax_whitespace_enabled(),
+                pos,
+                case_fold_search,
+                self.invisible.truthy(),
+            )
             else {
                 break;
             };
@@ -2255,6 +2342,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     st.search_origin = point;
                     st.positions = vec![point];
                     st.spans = vec![(point, point)];
+                    st.match_groups.clear();
                 }
                 st.failing = false;
                 st.fail_pos = None;

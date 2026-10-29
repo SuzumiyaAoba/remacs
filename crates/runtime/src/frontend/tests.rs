@@ -87,6 +87,46 @@ fn isearch_extends_match_in_place_and_overlays_paint() {
     assert!(!grid.attrs[0][4].inverse && !grid.attrs[0][4].underline);
 }
 
+#[test]
+fn regexp_isearch_highlights_capture_groups_and_clears_their_overlays() {
+    let mut i = interp_with_frame("foo-42bar\n");
+    let mut st = Isearch::new(&i, false, true);
+    for c in "foo-\\([0-9]+\\)\\([a-z]+\\)".chars() {
+        st.step(&mut i, c as i128);
+    }
+    assert!(!st.failing, "regexp should match: {}", st.query);
+    assert_eq!(st.spans.last(), Some(&(0, 9)));
+
+    st.refresh_overlays(&mut i);
+    let overlay_faces = i
+        .eval_str(
+            "(mapcar (lambda (ov)\
+               (list (overlay-start ov) (overlay-end ov)\
+                     (overlay-get ov 'face) (overlay-get ov 'priority)))\
+             (overlays-in (point-min) (point-max)))",
+        )
+        .unwrap();
+    assert_eq!(
+        i.prin1_to_string(&overlay_faces),
+        "((1 10 isearch 1001) (5 7 isearch-group-1 1002) (7 10 isearch-group-2 1002))"
+    );
+
+    i.eval_str("(setq search-highlight-submatches nil)")
+        .unwrap();
+    st.refresh_overlays(&mut i);
+    let overlay_faces = i
+        .eval_str(
+            "(mapcar (lambda (ov) (overlay-get ov 'face))\
+             (overlays-in (point-min) (point-max)))",
+        )
+        .unwrap();
+    assert_eq!(i.prin1_to_string(&overlay_faces), "(isearch)");
+
+    st.clear(&mut i);
+    let overlays = i.eval_str("(overlays-in (point-min) (point-max))").unwrap();
+    assert_eq!(i.prin1_to_string(&overlays), "nil");
+}
+
 /// Interp whose current buffer holds `text`, point at start.
 fn isearch_interp(text: &str) -> crate::lisp::Interp {
     let mut i = crate::lisp::Interp::new();
