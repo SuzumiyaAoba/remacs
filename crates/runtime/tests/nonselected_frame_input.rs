@@ -41,4 +41,6 @@ fn nonselected_frame_grid_maps_input_to_its_selected_window() {
     assert_eq!(input.text.as_ref(), "target buffer\n");
     assert_eq!(input.cursor, 7);
     assert!(!input.rows.is_empty());
+    assert_eq!(input.rows[0].buffer_start, 0);
+    assert_eq!(input.rows[0].source_offsets.first(), Some(&0));
 }
