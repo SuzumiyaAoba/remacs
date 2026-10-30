@@ -1539,8 +1539,11 @@ impl PlatformWindow for MacWindow {
         &self,
         text: String,
         operation: ExternalDragOperation,
+        follow_tooltip: bool,
+        tooltip: Option<String>,
         completion: Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>,
     ) -> std::result::Result<(), String> {
+        let tooltip = follow_tooltip.then_some(tooltip).flatten();
         let (view, event) = {
             let mut state = self.0.lock();
             if state.drag_completion.is_some() {
@@ -1564,14 +1567,26 @@ impl PlatformWindow for MacWindow {
         let session: id = unsafe {
             let pasteboard_item: id = msg_send![class!(NSPasteboardItem), new];
             let text = ns_string(&text);
-            let _: BOOL = msg_send![pasteboard_item, setString: text forType: NSPasteboardTypeString];
+            let _: BOOL =
+                msg_send![pasteboard_item, setString: text forType: NSPasteboardTypeString];
             let dragging_item: id = msg_send![class!(NSDraggingItem), alloc];
             let dragging_item: id =
                 msg_send![dragging_item, initWithPasteboardWriter: pasteboard_item];
             let items: id = msg_send![class!(NSMutableArray), array];
             let _: () = msg_send![items, addObject: dragging_item];
-            let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
-            let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: nil];
+            let (frame, contents) = tooltip.as_deref().map_or_else(
+                || {
+                    (
+                        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
+                        nil,
+                    )
+                },
+                |tooltip| tooltip_drag_image(tooltip),
+            );
+            let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: contents];
+            if !contents.is_null() {
+                let _: () = msg_send![contents, release];
+            }
             let session: id =
                 msg_send![view, beginDraggingSessionWithItems: items event: event source: view];
             let _: () = msg_send![dragging_item, release];
@@ -1600,8 +1615,11 @@ impl PlatformWindow for MacWindow {
         &self,
         paths: Vec<String>,
         operation: ExternalDragOperation,
+        follow_tooltip: bool,
+        tooltip: Option<String>,
         completion: Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>,
     ) -> std::result::Result<(), String> {
+        let tooltip = follow_tooltip.then_some(tooltip).flatten();
         if paths.is_empty() {
             return Err("No files were supplied for dragging".to_owned());
         }
@@ -1651,8 +1669,19 @@ impl PlatformWindow for MacWindow {
                 msg_send![dragging_item, initWithPasteboardWriter: pasteboard_item];
             let items: id = msg_send![class!(NSMutableArray), array];
             let _: () = msg_send![items, addObject: dragging_item];
-            let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
-            let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: nil];
+            let (frame, contents) = tooltip.as_deref().map_or_else(
+                || {
+                    (
+                        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
+                        nil,
+                    )
+                },
+                |tooltip| tooltip_drag_image(tooltip),
+            );
+            let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: contents];
+            if !contents.is_null() {
+                let _: () = msg_send![contents, release];
+            }
             let session: id =
                 msg_send![view, beginDraggingSessionWithItems: items event: event source: view];
             let _: () = msg_send![dragging_item, release];
@@ -2954,6 +2983,38 @@ fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -
 fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {
     let drag_location: NSPoint = unsafe { msg_send![dragging_info, draggingLocation] };
     convert_mouse_position(drag_location, window_state.lock().content_size().height)
+}
+
+unsafe fn tooltip_drag_image(text: &str) -> (NSRect, id) {
+    unsafe {
+        let text = ns_string(text);
+        let font: id = msg_send![class!(NSFont), systemFontOfSize: 12.0];
+        let foreground: id = msg_send![class!(NSColor), whiteColor];
+        let keys = [ns_string("NSFont"), ns_string("NSColor")];
+        let values = [font, foreground];
+        let attributes: id = msg_send![class!(NSDictionary),
+            dictionaryWithObjects: values.as_ptr()
+            forKeys: keys.as_ptr()
+            count: 2
+        ];
+        let text_size: NSSize = msg_send![text, sizeWithAttributes: attributes];
+        let size = NSSize::new(text_size.width + 18.0, text_size.height + 12.0);
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), size);
+        let image: id = msg_send![class!(NSImage), alloc];
+        let image: id = msg_send![image, initWithSize: size];
+        let _: () = msg_send![image, lockFocus];
+        let background: id = msg_send![class!(NSColor),
+            colorWithCalibratedRed: 0.18
+            green: 0.20
+            blue: 0.22
+            alpha: 0.96
+        ];
+        let _: () = msg_send![background, set];
+        let _: () = msg_send![class!(NSBezierPath), fillRect: frame];
+        let _: () = msg_send![text, drawAtPoint: NSPoint::new(9.0, 6.0) withAttributes: attributes];
+        let _: () = msg_send![image, unlockFocus];
+        (frame, image)
+    }
 }
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>

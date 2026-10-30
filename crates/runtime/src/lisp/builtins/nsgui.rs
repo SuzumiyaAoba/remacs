@@ -955,12 +955,33 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         Some(value) => return Err(i.wrong_type_mut("symbolp", value)),
     };
-    let result = if files.is_empty() {
-        backend.begin_text_drag(frame.borrow().id, text.as_deref().unwrap(), action)
+    let follow_tooltip = a.get(5).is_some_and(|value| !value.is_nil());
+    let tooltip = if follow_tooltip {
+        i.gui_tip.clone()
     } else {
-        backend.begin_file_drag(frame.borrow().id, &files, action)
+        None
+    };
+    let result = if files.is_empty() {
+        backend.begin_text_drag(
+            frame.borrow().id,
+            text.as_deref().unwrap(),
+            action,
+            follow_tooltip,
+            tooltip.as_deref(),
+        )
+    } else {
+        backend.begin_file_drag(
+            frame.borrow().id,
+            &files,
+            action,
+            follow_tooltip,
+            tooltip.as_deref(),
+        )
     }
     .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
+    if follow_tooltip {
+        i.gui_tip = None;
+    }
     let result = match result {
         None => Value::Nil,
         Some(crate::frontend::DragAction::Copy) => Value::Sym(i.intern("XdndActionCopy")),

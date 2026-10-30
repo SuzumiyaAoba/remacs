@@ -164,6 +164,8 @@ pub trait DragBackend {
         frame_id: usize,
         text: &str,
         action: DragAction,
+        follow_tooltip: bool,
+        tooltip: Option<&str>,
     ) -> Result<Option<DragAction>, String>;
 
     /// Begin dragging file paths from FRAME and wait for the destination's action.
@@ -172,6 +174,8 @@ pub trait DragBackend {
         frame_id: usize,
         paths: &[String],
         action: DragAction,
+        follow_tooltip: bool,
+        tooltip: Option<&str>,
     ) -> Result<Option<DragAction>, String>;
 }
 

@@ -357,6 +357,8 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         text: String,
         action: DragAction,
+        follow_tooltip: bool,
+        tooltip: Option<String>,
         started: SyncSender<Result<(), String>>,
         completed: SyncSender<Option<DragAction>>,
     },
@@ -364,8 +366,13 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         paths: Vec<String>,
         action: DragAction,
+        follow_tooltip: bool,
+        tooltip: Option<String>,
         started: SyncSender<Result<(), String>>,
         completed: SyncSender<Option<DragAction>>,
+    },
+    EndDrag {
+        frame_id: usize,
     },
     #[cfg(target_os = "macos")]
     AppleScript {
@@ -486,6 +493,8 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         frame_id: usize,
         text: &str,
         action: DragAction,
+        follow_tooltip: bool,
+        tooltip: Option<&str>,
     ) -> Result<Option<DragAction>, String> {
         let (started, start_response) = mpsc::sync_channel(1);
         let (completed, completion_response) = mpsc::sync_channel(1);
@@ -494,6 +503,8 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
                 frame_id,
                 text: text.to_owned(),
                 action,
+                follow_tooltip,
+                tooltip: tooltip.map(str::to_owned),
                 started,
                 completed,
             })
@@ -501,9 +512,15 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         start_response
             .recv()
             .map_err(|_| "GUI drag service stopped".to_owned())??;
-        completion_response
+        let result = completion_response
             .recv()
-            .map_err(|_| "GUI drag service stopped".to_owned())
+            .map_err(|_| "GUI drag service stopped".to_owned());
+        if follow_tooltip {
+            let _ = self
+                .requests
+                .send_blocking(GuiRequest::EndDrag { frame_id });
+        }
+        result
     }
 
     fn begin_file_drag(
@@ -511,6 +528,8 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         frame_id: usize,
         paths: &[String],
         action: DragAction,
+        follow_tooltip: bool,
+        tooltip: Option<&str>,
     ) -> Result<Option<DragAction>, String> {
         let (started, start_response) = mpsc::sync_channel(1);
         let (completed, completion_response) = mpsc::sync_channel(1);
@@ -519,6 +538,8 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
                 frame_id,
                 paths: paths.to_vec(),
                 action,
+                follow_tooltip,
+                tooltip: tooltip.map(str::to_owned),
                 started,
                 completed,
             })
@@ -526,9 +547,15 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         start_response
             .recv()
             .map_err(|_| "GUI drag service stopped".to_owned())??;
-        completion_response
+        let result = completion_response
             .recv()
-            .map_err(|_| "GUI drag service stopped".to_owned())
+            .map_err(|_| "GUI drag service stopped".to_owned());
+        if follow_tooltip {
+            let _ = self
+                .requests
+                .send_blocking(GuiRequest::EndDrag { frame_id });
+        }
+        result
     }
 }
 

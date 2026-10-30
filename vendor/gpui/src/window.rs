@@ -1742,10 +1742,17 @@ impl Window {
         &self,
         text: String,
         operation: ExternalDragOperation,
+        follow_tooltip: bool,
+        tooltip: Option<String>,
         completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
     ) -> std::result::Result<(), String> {
-        self.platform_window
-            .begin_text_drag_session(text, operation, Box::new(completion))
+        self.platform_window.begin_text_drag_session(
+            text,
+            operation,
+            follow_tooltip,
+            tooltip,
+            Box::new(completion),
+        )
     }
 
     /// Begin dragging files from this window to the operating system.
@@ -1756,10 +1763,17 @@ impl Window {
         &self,
         paths: Vec<String>,
         operation: ExternalDragOperation,
+        follow_tooltip: bool,
+        tooltip: Option<String>,
         completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
     ) -> std::result::Result<(), String> {
-        self.platform_window
-            .begin_file_drag_session(paths, operation, Box::new(completion))
+        self.platform_window.begin_file_drag_session(
+            paths,
+            operation,
+            follow_tooltip,
+            tooltip,
+            Box::new(completion),
+        )
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {

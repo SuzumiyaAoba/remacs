@@ -589,6 +589,7 @@ pub(super) struct EditorView {
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
+    follow_tooltip_drag: bool,
     mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
     toolbar_pressed: bool,
     bell_flash: bool,
@@ -655,6 +656,7 @@ impl EditorView {
             runtime_frame_size: None,
             runtime_frame_position: None,
             scroll_bar_drag: None,
+            follow_tooltip_drag: false,
             mouse_down_position: None,
             toolbar_pressed: false,
             bell_flash: false,
@@ -677,11 +679,16 @@ impl EditorView {
 
     pub(super) fn set_frame_id(&mut self, frame_id: usize) {
         self.tx.set_frame_id(frame_id);
+        self.follow_tooltip_drag = false;
         self.resize_increments = None;
         self.mouse_face_position.set(None);
         self.geometry = None;
         self.runtime_frame_size = None;
         self.runtime_frame_position = None;
+    }
+
+    pub(super) fn set_follow_tooltip_drag(&mut self, follow: bool) {
+        self.follow_tooltip_drag = follow;
     }
 
     pub(super) fn set_image_cache_metrics(
@@ -851,6 +858,9 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.grid.tooltip.is_none() {
+            self.follow_tooltip_drag = false;
+        }
         let active = window.is_window_active();
         if !active {
             self.physical_modifier_state
@@ -1082,7 +1092,9 @@ impl Render for EditorView {
         let help_default_line_height = grid.default_line_height;
         let image_row_heights = grid.row_heights.clone();
         let image_default_line_height = grid.default_line_height;
-        let explicit_tooltip = grid.tooltip.clone();
+        let explicit_tooltip = (!self.follow_tooltip_drag)
+            .then(|| grid.tooltip.clone())
+            .flatten();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
         let scroll_grid = grid.clone();

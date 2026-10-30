@@ -510,6 +510,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         &self,
         _text: String,
         _operation: crate::ExternalDragOperation,
+        _follow_tooltip: bool,
+        _tooltip: Option<String>,
         _completion: Box<dyn FnOnce(Option<crate::ExternalDragOperation>) + Send>,
     ) -> std::result::Result<(), String> {
         Err("External text dragging is not supported on this platform".to_owned())
@@ -518,6 +520,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         &self,
         _paths: Vec<String>,
         _operation: crate::ExternalDragOperation,
+        _follow_tooltip: bool,
+        _tooltip: Option<String>,
         _completion: Box<dyn FnOnce(Option<crate::ExternalDragOperation>) + Send>,
     ) -> std::result::Result<(), String> {
         Err("External file dragging is not supported on this platform".to_owned())
