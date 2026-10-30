@@ -80,4 +80,25 @@
         (list printed (eq copy (get-text-property 0 'loop copy)))))
     '("#1=#(\"x\" 0 1 (loop #1#))" t))
 
+;; Circle preprocessing counts charset properties even when printing hides
+;; them, matching GNU's unused definition label.
+(qa (let ((string (copy-sequence "x")))
+      (put-text-property 0 1 'charset string string)
+      (let ((print-circle t) (print-charset-text-property nil))
+        (prin1-to-string string)))
+    "#1=\"x\"")
+
+;; A property may point through another container before returning to its
+;; string; reader fixups must descend through that value graph.
+(qa (let* ((string (copy-sequence "x"))
+           (vector (vector nil)))
+      (put-text-property 0 1 'loop vector string)
+      (aset vector 0 string)
+      (let* ((printed (let ((print-circle t)) (prin1-to-string string)))
+             (copy (let ((read-circle t))
+                     (car (read-from-string printed))))
+             (property (get-text-property 0 'loop copy)))
+        (list printed (eq copy (aref property 0)))))
+    '("#1=#(\"x\" 0 1 (loop [#1#]))" t))
+
 (princ (qa--done)) (terpri)

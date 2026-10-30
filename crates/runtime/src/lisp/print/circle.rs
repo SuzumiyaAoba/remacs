@@ -144,10 +144,11 @@ pub(super) fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
             }
             Value::Str(s) => {
                 // String properties are part of the printed object graph:
-                // `prin1' emits them after the string contents.  Walk the
-                // visible plist values in the same order so a property that
-                // points back to its string receives a #N= label.
-                for (_, _, plist) in super::printable_string_props(i, s).iter().rev() {
+                // GNU's pre-scan counts their values even when a charset
+                // property is later hidden by the printer.  Walk the raw
+                // plists in print order so a property that points back to
+                // its string receives a #N= label.
+                for (_, _, plist) in i.str_props(s).iter().rev() {
                     stack.extend(plist.iter().rev().cloned());
                 }
             }
