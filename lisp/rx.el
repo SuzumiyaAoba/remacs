@@ -365,12 +365,24 @@ name-normalized character classes."
                     (or a-cl b-cl))))
     (cons (rx--interval-set-union (car a) (car b)) classes)))
 
+(defun rx--contains-char-classes-p (form)
+  "Whether normalized FORM contains a named character class."
+  (cond
+   ((and (consp form) (eq (car form) 'rx--char-alt))
+    (not (null (cddr form))))
+   ((consp form)
+    (or (rx--contains-char-classes-p (car form))
+        (rx--contains-char-classes-p (cdr form))))
+   (t nil)))
+
 (defun rx--intersection-intervals (forms)
   "Intersection of the normalized FORMS, as an interval set."
   (rx--foldl #'rx--interval-set-intersection '((0 . #x3fffff))
              (mapcar (lambda (x)
                        (let ((char (rx--reduce-to-char-alt x)))
-                         (if (and char (null (cdr char)))
+                         (if (and char
+                                  (null (cdr char))
+                                  (not (rx--contains-char-classes-p x)))
                              (car char)
                            (error "Cannot be used in rx intersection: %S"
                                   (rx--human-readable x)))))
@@ -449,6 +461,24 @@ FORM must be normalized (from `rx--normalize-char-pattern')."
    ((eq form 'unmatchable)
     '(nil))
    ))
+
+(defun rx--reduce-to-char-alt-with-classes (form)
+  "Reduce normalized character alternatives while retaining named classes.
+Unlike `rx--reduce-to-char-alt', do not require every class to be
+convertible to an explicit interval set."
+  (cond
+   ((and (consp form) (eq (car form) 'rx--char-alt))
+    (cdr form))
+   ((and (consp form) (eq (car form) 'or))
+    (let ((acc '(nil))
+          (valid t))
+      (dolist (branch (cdr form))
+        (let ((char (rx--reduce-to-char-alt-with-classes branch)))
+          (if char
+              (setq acc (rx--char-alt-union acc char))
+            (setq valid nil))))
+      (and valid acc)))
+   (t (rx--reduce-to-char-alt form))))
 
 (defun rx--optimize-or-args (args)
   "Optimize `or' arguments.  Return a new rx form.
@@ -754,7 +784,8 @@ If NEGATED, negate the sense (thus making it positive)."
        (rx--translate-category (not negated) args))
       ('word-boundary                     ; legacy syntax
        (rx--translate-symbol (if negated 'word-boundary 'not-word-boundary)))
-      (_ (let ((char (rx--reduce-to-char-alt arg)))
+      (_ (let ((char (or (rx--reduce-to-char-alt-with-classes arg)
+                         (rx--reduce-to-char-alt arg))))
            (if char
                (rx--generate-alt (not negated) (car char) (cdr char))
              (error "Illegal argument to rx `not': %S"
