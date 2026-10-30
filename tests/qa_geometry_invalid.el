@@ -10,4 +10,13 @@
 (qa (x-parse-geometry "80x24+999999999999999999999-999999999999999999999")
     '((height . 24) (width . 80) (top . -2147483648) (left . 2147483647)))
 
+;; Issue #3157: geometry sizes are unsigned ints, not signed ints.  GNU's
+;; XParseGeometry clips larger values to UINT_MAX.
+(qa (x-parse-geometry "2147483648x24")
+    '((height . 24) (width . 2147483648)))
+(qa (x-parse-geometry "4294967295x2147483648")
+    '((height . 2147483648) (width . 4294967295)))
+(qa (x-parse-geometry "4294967296x999999999999999999999999999999999999")
+    '((height . 4294967295) (width . 4294967295)))
+
 (princ (qa--done))

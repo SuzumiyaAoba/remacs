@@ -232,6 +232,23 @@ pub(super) fn f_message_box(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     crate::lisp::builtins::evalfn::f_message(i, a)
 }
 
+fn parse_geometry_size(text: &crate::lisp::text::EmacsStr) -> Option<u32> {
+    if text.is_empty() {
+        return None;
+    }
+    let mut size = 0u32;
+    for c in text.chars() {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        // GNU parses through strtoul and clips the result to UINT_MAX.
+        size = size
+            .saturating_mul(10)
+            .saturating_add(c.code() - b'0' as u32);
+    }
+    Some(size)
+}
+
 pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU returns an alist ((height . H) (width . W) (top . Y) (left . X)).
     let s = match &a[0] {
@@ -248,10 +265,10 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     let (size, pos) = s.split_at(split_at);
     let mut it = size.split('x');
     if let Some(t) = it.next() {
-        w = t.parse().ok();
+        w = parse_geometry_size(t);
     }
     if let Some(t) = it.next() {
-        h = t.parse().ok();
+        h = parse_geometry_size(t);
     }
     let Some([parsed_left, parsed_top]) = geometry_offsets(pos) else {
         return Ok(Value::Nil);
@@ -259,11 +276,16 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     let left = parsed_left;
     let top = parsed_top;
     let mut items: Vec<Value> = Vec::new();
-    for (name, v) in [("height", h), ("width", w), ("top", top), ("left", left)] {
+    for (name, v) in [
+        ("height", h.map(i128::from)),
+        ("width", w.map(i128::from)),
+        ("top", top.map(i128::from)),
+        ("left", left.map(i128::from)),
+    ] {
         if let Some(n) = v {
             items.push(Value::cons(
                 Value::Sym(i.intern(name)),
-                Value::Int(n as i128),
+                Value::Int(n),
             ));
         }
     }
