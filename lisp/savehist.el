@@ -43,7 +43,7 @@ minibuffer histories, such as `compile-command' or `kill-ring'.
 NOTE: If this variable is not nil, then Emacs will not try to handle
 gracefully concurrent modifications to the `savehist-file', e.g. by other
 Emacs sessions or other tools like file-synchronization systems."
-  :type '(repeat variable))
+  :type '(repeat (choice variable (cons variable natnum))))
 
 (defcustom savehist-ignored-variables nil ;; '(command-history)
   "List of additional variables not to save."
