@@ -442,9 +442,11 @@ prefix argument or setting `ping-program-options'."
    (list (let ((default (ffap-machine-at-point)))
            (read-string (format-prompt "Ping host" default) nil nil default))
          (when current-prefix-arg
-           (split-string
-            (read-string (format-prompt "Ping options" ping-program-options)
-                         nil nil ping-program-options)))))
+           (let ((default-options (mapconcat #'identity
+                                             ping-program-options " ")))
+             (split-string
+              (read-string (format-prompt "Ping options" default-options)
+                           nil nil default-options)))))
   (let ((full-command
 	 (if (or (equal flags (list "")) (not flags))
 	     (append ping-program-options (list host))
