@@ -591,15 +591,16 @@ The following %-sequences are provided:
 	(energy-full 0.0)
 	(energy-now 0.0)
 	(power-now 0.0)
-        (voltage-now 10.8) ; Arbitrary default, in case the info is missing.
+        (capacity-now 0.0) ; Charge-equivalent capacity in microamp-hours.
         charging-state charging-states temperature hours percentage-now)
     ;; SysFS provides information about each battery present in the
     ;; system in a separate subdirectory.  We are going to merge the
     ;; available information together.
     (with-temp-buffer
       (dolist (dir (battery--find-linux-sysfs-batteries))
-        (ignore-errors
-          (insert-file-contents (expand-file-name "uevent" dir) nil nil nil t))
+	(let ((voltage-now 10.8)) ; Arbitrary default, in case the info is missing.
+	  (ignore-errors
+	    (insert-file-contents (expand-file-name "uevent" dir) nil nil nil t))
 	(goto-char (point-min))
 	(when (re-search-forward
 	       "POWER_SUPPLY_VOLTAGE_NOW=\\([0-9]*\\)$" nil t)
@@ -634,7 +635,8 @@ The following %-sequences are provided:
                    (incf energy-full (* (string-to-number full-string)
                                         voltage-now))
                    (incf energy-now  (* (string-to-number now-string)
-                                        voltage-now)))
+                                        voltage-now))
+                   (incf capacity-now (string-to-number now-string)))
                   ((and (goto-char (point-min))
 			(re-search-forward
 			 "POWER_SUPPLY_ENERGY_FULL=\\([0-9]*\\)$" nil t)
@@ -643,20 +645,22 @@ The following %-sequences are provided:
 			 "POWER_SUPPLY_ENERGY_NOW=\\([0-9]*\\)$" nil t)
 			(setq now-string (match-string 1)))
                    (incf energy-full (string-to-number full-string))
-                   (incf energy-now  (string-to-number now-string)))))
+                   (incf energy-now  (string-to-number now-string))
+                   (incf capacity-now
+                         (/ (string-to-number now-string) voltage-now))))
 	  (setq charging-state (battery--combine-linux-statuses charging-states))
 	  (unless (zerop power-now)
 	    (let ((remaining (if (string= charging-state "Discharging")
 				 energy-now
 			       (- energy-full energy-now))))
-	      (setq hours (/ remaining power-now)))))))
+	      (setq hours (/ remaining power-now))))))))
     ;; A zero ENERGY-NOW is a real empty-battery reading, not missing data.
     (when (and (> energy-full 0) (>= energy-now 0))
       (setq percentage-now (/ (* 100 energy-now) energy-full)))
     ;; Sysfs reports charge and energy in micro-units; the %-sequence
     ;; documents milliamp-hours or milliwatt-hours.
     (list (cons ?c (if (or (> energy-full 0) (> energy-now 0))
-                       (number-to-string (/ (/ energy-now voltage-now) 1000))
+                       (number-to-string (/ capacity-now 1000))
                      "N/A"))
 	  (cons ?r (if (> power-now 0.0)
 		       (format "%.1f" (/ power-now 1000000.0))
