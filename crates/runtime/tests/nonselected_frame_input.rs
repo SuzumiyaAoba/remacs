@@ -140,7 +140,7 @@ fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window() {
 }
 
 #[test]
-fn drop_in_nonselected_split_inserts_into_the_target_window() {
+fn split_window_drops_use_the_target_buffer_and_window() {
     let mut interp = Interp::new();
     let left_buffer = interp.create_buffer("left-frame-buffer");
     interp
@@ -188,7 +188,14 @@ fn drop_in_nonselected_split_inserts_into_the_target_window() {
         frame.windows.push(right_window.clone());
     }
     interp
-        .eval_str("(global-set-key [f12] (lambda () (interactive) (kill-emacs)))")
+        .eval_str(
+            "(global-set-key [f12] (lambda () (interactive) (setq qa-split-drop-color-changed (equal (face-attribute 'qa-split-drop-face :foreground nil) \"#ff0000\")) (kill-emacs)))",
+        )
+        .unwrap();
+    interp
+        .eval_str(
+            "(progn (make-face 'qa-split-drop-face) (with-current-buffer \"right-frame-buffer\" (put-text-property 1 2 'face 'qa-split-drop-face)))",
+        )
         .unwrap();
 
     let drop_position = MousePosition {
@@ -205,6 +212,22 @@ fn drop_in_nonselected_split_inserts_into_the_target_window() {
     };
     let frontend = DropFrontend {
         events: VecDeque::from([
+            InputEvent::ColorDrop {
+                position: Some(MousePosition {
+                    buffer_id: right_buffer,
+                    buffer_position: 0,
+                    utf16_offset: 0,
+                    x: 4,
+                    y: 10,
+                    row: 0,
+                    column: 0,
+                    window_id: Some(right_window.borrow().id),
+                    area: None,
+                    mode_line_buffer_name: false,
+                }),
+                color: "ff0000".to_owned(),
+                background: false,
+            },
             InputEvent::Drop {
                 position: Some(drop_position),
                 urls: vec!["DROPPED".to_owned()],
@@ -233,4 +256,7 @@ fn drop_in_nonselected_split_inserts_into_the_target_window() {
         .to_string();
     assert_eq!(left_text, "left side\n");
     assert_eq!(right_text, "target DROPPEDbuffer\n");
+    let face_changed_symbol = interp.intern("qa-split-drop-color-changed");
+    let face_changed = interp.symbol_value(face_changed_symbol);
+    assert_eq!(interp.prin1_to_string(&face_changed), "t");
 }
