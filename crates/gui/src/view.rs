@@ -1090,6 +1090,7 @@ impl Render for EditorView {
         let marked = self.input.marked.clone();
         let marked_selection = self.input.selection_byte_range();
         let marked_cursor = self.input.selection_byte_end();
+        let marked_replacement = self.input.replacement_range.clone();
         let marked_origin = self
             .input
             .replacement_range
@@ -2053,6 +2054,27 @@ impl Render for EditorView {
                                     &composition_runs,
                                     None,
                                 );
+                                let replacement_end_x = marked_replacement
+                                    .as_ref()
+                                    .and_then(|range| {
+                                        input::visible_input_position(
+                                            &grid,
+                                            range.end,
+                                            true,
+                                        )
+                                    })
+                                    .filter(|(end_row, _)| *end_row == row)
+                                    .and_then(|(_, end_index)| {
+                                        lines.get(row).map(|base_line| {
+                                            grid_line_x(&grid, row, base_line, end_index)
+                                        })
+                                    });
+                                let can_shift_suffix =
+                                    marked_replacement.is_none() || replacement_end_x.is_some();
+                                let replaced_delta =
+                                    replacement_end_x.map_or(px(0.0), |end_x| end_x - x);
+                                let replaced_width =
+                                    px(f32::from(replaced_delta).abs());
                                 let column = (f32::from(x) / f32::from(cell_width)) as usize;
                                 with_vscroll_cell_clip(
                                     &grid,
@@ -2066,11 +2088,44 @@ impl Render for EditorView {
                                         window.paint_quad(fill(
                                             Bounds {
                                                 origin,
-                                                size: size(line.width.max(cell_width), line_height),
+                                                size: size(
+                                                    line.width.max(replaced_width).max(cell_width),
+                                                    line_height,
+                                                ),
                                             },
                                             default_background_fill,
                                         ));
                                         let _ = line.paint(origin, line_height, window, _cx);
+                                        if can_shift_suffix {
+                                            if let Some(base_line) = lines.get(row) {
+                                                let suffix_left = origin.x + line.width;
+                                                let suffix_width = (bounds.left()
+                                                    + bounds.size.width
+                                                    - suffix_left)
+                                                    .max(px(0.0));
+                                                if suffix_width > px(0.0) {
+                                                    let clip = Bounds {
+                                                        origin: point(suffix_left, origin.y),
+                                                        size: size(suffix_width, line_height),
+                                                    };
+                                                    let shifted_origin = point(
+                                                        bounds.left() + line.width - replaced_delta,
+                                                        origin.y,
+                                                    );
+                                                    window.with_content_mask(
+                                                        Some(ContentMask { bounds: clip }),
+                                                        |window| {
+                                                            let _ = base_line.paint(
+                                                                shifted_origin,
+                                                                line_height,
+                                                                window,
+                                                                _cx,
+                                                            );
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                        }
                                     },
                                 );
                                 (row, x + line.x_for_index(marked_cursor))
