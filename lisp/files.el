@@ -1002,9 +1002,16 @@ The path separator is colon in GNU and GNU-like systems."
 		      (apply-partially #'locate-file-completion-table
 				       cd-path nil))
           (setq-local minibuffer-completion-predicate
-		      (lambda (dir)
-			(locate-file dir cd-path nil
-				     (lambda (f) (and (file-directory-p f) 'dir-ok))))))
+              (lambda (dir)
+                (and
+                 ;; A bare name from an earlier file must not be accepted just
+                 ;; because a later CDPATH entry contains a directory of the same
+                 ;; name.  Keep the slash-suffixed directory candidate instead.
+                 (or (directory-name-p dir)
+                     (let ((first (locate-file dir cd-path nil)))
+                       (and first (file-directory-p first))))
+                 (locate-file dir cd-path nil
+                              (lambda (f) (and (file-directory-p f) 'dir-ok))))))
       (unless cd-path
         (setq cd-path (or (parse-colon-path (getenv "CDPATH"))
                           (list "./"))))
