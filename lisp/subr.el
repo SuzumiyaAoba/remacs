@@ -6205,9 +6205,11 @@ and replace a sub-expression, e.g.
   ;; might be reasonable to do so for long enough STRING.]
   (let ((l (length string))
 	(start (or start 0))
+	(first-search t)
 	matches str mb me)
     (save-match-data
-      (while (and (< start l) (string-match regexp string start))
+      (while (and (or (< start l) (and first-search (= start l)))
+		  (string-match regexp string start))
 	(setq mb (match-beginning 0)
 	      me (match-end 0))
 	;; If we matched the empty string, make sure we advance by one char
@@ -6224,7 +6226,8 @@ and replace a sub-expression, e.g.
 				   fixedcase literal str subexp)
 		    (cons (substring string start mb) ; unmatched prefix
 			  matches)))
-	(setq start me))
+	(setq start me
+	      first-search nil))
       ;; Reconstruct a string from the pieces.
       (setq matches (cons (substring string start l) matches)) ; leftover
       (apply #'concat (nreverse matches)))))
