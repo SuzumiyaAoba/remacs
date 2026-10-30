@@ -314,6 +314,9 @@ in certain major modes."
 (defvar which-function-imenu-failed nil
   "Locally t in a buffer if `imenu--make-index-alist' found nothing there.")
 
+(defvar-local which-function-imenu-failed-tick nil
+  "Buffer modification tick at which `which-function' found no Imenu index.")
+
 (defvar which-func-functions nil
   "List of functions for `which-function' to call with no arguments.
 It calls them sequentially, and if any returns non-nil,
@@ -334,6 +337,12 @@ If no function name is found, return nil."
     ;; If `add-log-current-defun' ran and gave nil, accept that.
     (when (and (null name)
                (null add-log-current-defun-function))
+      ;; An empty index may become available after the buffer changes.
+      (when (and which-function-imenu-failed
+                 (not (equal (buffer-chars-modified-tick)
+                             which-function-imenu-failed-tick)))
+        (setq-local which-function-imenu-failed nil
+                    which-function-imenu-failed-tick nil))
       (when (and (null name)
 	         (boundp 'imenu--index-alist)
                  (or (null imenu--index-alist)
@@ -342,7 +351,9 @@ If no function name is found, return nil."
 	         (null which-function-imenu-failed))
         (ignore-errors (imenu--make-index-alist t))
         (unless imenu--index-alist
-          (setq-local which-function-imenu-failed t)))
+          (setq-local which-function-imenu-failed t
+                      which-function-imenu-failed-tick
+                      (buffer-chars-modified-tick))))
       ;; If we have an index alist, use it.
       (when (and (null name)
 	         (boundp 'imenu--index-alist) imenu--index-alist)
