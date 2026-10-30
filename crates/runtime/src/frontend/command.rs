@@ -2289,7 +2289,7 @@ fn minibuf_loop<T: KeyIo>(
         };
         match input {
             InputEvent::Key(code) if single => return Ok(MinibufInput::Key(code)),
-            InputEvent::Text(text) if single => {
+            InputEvent::Text(text) | InputEvent::ReplaceText { text, .. } if single => {
                 let mut chars = text.chars();
                 let first = chars.next().map(|character| character as i128).unwrap_or(0);
                 for character in chars.rev() {
