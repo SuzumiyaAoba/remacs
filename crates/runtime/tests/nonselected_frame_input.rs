@@ -12,6 +12,14 @@ struct DropFrontend {
     events: VecDeque<InputEvent>,
 }
 
+struct TempFile(std::path::PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 impl KeyIo for DropFrontend {
     fn poll_key(&mut self, _dur: Duration) -> io::Result<Option<i128>> {
         Ok(None)
@@ -141,6 +149,17 @@ fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window() {
 
 #[test]
 fn split_window_drops_use_the_target_buffer_and_window() {
+    let file_path = std::env::temp_dir().join(format!(
+        "remacs-split-drop-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&file_path, "file contents\n").unwrap();
+    let _temp_file = TempFile(file_path.clone());
+
     let mut interp = Interp::new();
     let left_buffer = interp.create_buffer("left-frame-buffer");
     interp
@@ -233,6 +252,11 @@ fn split_window_drops_use_the_target_buffer_and_window() {
                 urls: vec!["DROPPED".to_owned()],
                 action: "copy".to_owned(),
             },
+            InputEvent::Drop {
+                position: Some(drop_position),
+                urls: vec![format!("file://{}", file_path.display())],
+                action: "copy".to_owned(),
+            },
             InputEvent::Key(remacs_runtime::editor::event_code_for("f12")),
         ]),
     };
@@ -254,8 +278,13 @@ fn split_window_drops_use_the_target_buffer_and_window() {
         .text
         .text()
         .to_string();
+    let displayed_buffer_id = right_window.borrow().buffer;
+    let displayed_buffer_ref = interp.buffers.get(displayed_buffer_id).unwrap();
+    let displayed_buffer = displayed_buffer_ref.borrow();
     assert_eq!(left_text, "left side\n");
     assert_eq!(right_text, "target DROPPEDbuffer\n");
+    assert_eq!(format!("{}", displayed_buffer.text.text()), "file contents\n");
+    assert!(displayed_buffer.file_name.is_some());
     let face_changed_symbol = interp.intern("qa-split-drop-color-changed");
     let face_changed = interp.symbol_value(face_changed_symbol);
     assert_eq!(interp.prin1_to_string(&face_changed), "t");
