@@ -2311,7 +2311,7 @@ fn start_logic_inner(
                 },
             };
             i.set_quit_request(Some(logic_quit_request.clone()));
-            if enable_gui_selections && cfg!(target_os = "macos") {
+            if enable_gui_selections {
                 i.set_clipboard_backend(Some(Rc::new(GuiClipboardBackend {
                     requests: clipboard_tx,
                     ready: clipboard_ready,

@@ -360,6 +360,26 @@ the symbols `PRIMARY', `SECONDARY', or `CLIPBOARD'.
 \(Those are literal upper-case symbol names, since that's what X expects.)"
   nil)
 
+;; GPUI's clipboard bridge uses the same low-level selection primitives as
+;; the NS frontend, backed by `ClipboardBackend' on every GUI platform.
+(cl-defmethod gui-backend-get-selection (selection-symbol target-type
+                                         &context (window-system gpui))
+  (ns-get-selection selection-symbol target-type))
+
+(cl-defmethod gui-backend-set-selection (selection value
+                                         &context (window-system gpui))
+  (if value
+      (ns-own-selection-internal selection value)
+    (ns-disown-selection-internal selection)))
+
+(cl-defmethod gui-backend-selection-owner-p (selection
+                                             &context (window-system gpui))
+  (ns-selection-owner-p selection))
+
+(cl-defmethod gui-backend-selection-exists-p (selection
+                                              &context (window-system gpui))
+  (ns-selection-exists-p selection))
+
 (defun gui-get-selection (&optional type data-type)
   "Return the value of an X Windows selection.
 The argument TYPE (default `PRIMARY') says which selection,
