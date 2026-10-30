@@ -431,12 +431,19 @@ column.  Negate the predicate that would be returned if
           (lambda (a b) (funcall sorter b a))
         sorter))))
 
+(defun tabulated-list--column-desc-label (desc)
+  "Return the text used to measure or display column descriptor DESC."
+  (cond ((stringp desc) desc)
+        ((eq (car-safe desc) 'image) " ")
+        (t (car desc))))
+
 (defsubst tabulated-list--col-local-max-widths (col)
    "Return maximum entry widths at column COL around current row.
 Check the current row, the previous one and the next row."
   (apply #'max (mapcar (lambda (x)
                          (let ((nt (elt x col)))
-                           (string-width (if (stringp nt) nt (car nt)))))
+                           (string-width
+                            (tabulated-list--column-desc-label nt))))
                        tabulated-list--near-rows)))
 
 (defun tabulated-list-print (&optional remember-pos update)
@@ -593,9 +600,7 @@ Return the column number after insertion."
 	 (props     (nthcdr 3 format))
 	 (pad-right (or (plist-get props :pad-right) 1))
          (right-align (plist-get props :right-align))
-         (label (cond ((stringp col-desc) col-desc)
-                      ((eq (car col-desc) 'image) " ")
-                      (t (car col-desc))))
+         (label (tabulated-list--column-desc-label col-desc))
          (label-width (string-width label))
 	 (help-echo (concat (car format) ": " label))
 	 (opoint (point))
@@ -789,9 +794,8 @@ Interactively, N is the prefix numeric argument, and defaults to
                                   (cadr (aref tabulated-list-format
                                               col-nb)))
                             (let ((desc (aref entry col-nb)))
-                              (string-width (if (stringp desc)
-                                                desc
-                                              (car desc)))))
+                              (string-width
+                               (tabulated-list--column-desc-label desc))))
                        (or (plist-get (nthcdr 3 (aref tabulated-list-format
                                                       col-nb))
                                       :pad-right)
