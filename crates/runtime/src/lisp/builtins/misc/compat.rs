@@ -257,18 +257,19 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     };
     let mut w = None;
     let mut h = None;
-    // The first sign starts the position part; sizes are digits and 'x'.
+    // The first sign starts the position part; sizes are digits separated
+    // by either case of `x'.  XParseGeometry also ignores a leading `='.
     let split_at = s
         .chars()
         .position(|c| c == '+' || c == '-')
         .unwrap_or(s.len());
     let (size, pos) = s.split_at(split_at);
-    let mut it = size.split('x');
-    if let Some(t) = it.next() {
-        w = parse_geometry_size(t);
-    }
-    if let Some(t) = it.next() {
-        h = parse_geometry_size(t);
+    let size = size.strip_prefix("=").unwrap_or(size);
+    if let Some((width, height)) = size.split_once('x').or_else(|| size.split_once('X')) {
+        w = parse_geometry_size(width);
+        h = parse_geometry_size(height);
+    } else {
+        w = parse_geometry_size(size);
     }
     let Some([parsed_left, parsed_top]) = geometry_offsets(pos) else {
         return Ok(Value::Nil);

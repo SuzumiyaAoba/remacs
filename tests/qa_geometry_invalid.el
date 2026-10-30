@@ -19,4 +19,13 @@
 (qa (x-parse-geometry "4294967296x999999999999999999999999999999999999")
     '((height . 4294967295) (width . 4294967295)))
 
+;; Issue #3145: the standard geometry spelling permits an optional `='
+;; and upper-case `X' between width and height.
+(qa (x-parse-geometry "=80x24+10+20")
+    '((height . 24) (width . 80) (top . 20) (left . 10)))
+(qa (x-parse-geometry "80X24+10+20")
+    '((height . 24) (width . 80) (top . 20) (left . 10)))
+(qa (x-parse-geometry "=80X24+10+20")
+    '((height . 24) (width . 80) (top . 20) (left . 10)))
+
 (princ (qa--done))
