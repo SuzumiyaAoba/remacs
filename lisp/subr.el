@@ -5011,6 +5011,7 @@ doesn't exist in the region.
 If START is nil, use the current point.  If END is nil, use `point-max'.
 
 Comparisons and replacements are done with fixed case.
+Zero-length matches are rejected.
 
 REPLACEMENT can use the following special elements:
 
@@ -5034,6 +5035,8 @@ REPLACEMENT can use the following special elements:
       (let ((matches 0)
             (case-fold-search nil))
           (while (re-search-forward regexp nil t)
+          (when (= (match-beginning 0) (match-end 0))
+            (error "Zero-length match in replace-regexp-in-region"))
           (replace-match replacement t)
           (setq matches (1+ matches)))
         (and (not (zerop matches))
