@@ -499,11 +499,22 @@ candidates or if there are multiple matching completions and
          (sort-fn (or (completion-metadata-get md 'cycle-sort-function)
                       (completion-metadata-get md 'display-sort-function)
                       completion-preview-sort-function))
-         (all (let ((completion-lazy-hilit t)
-                    ;; FIXME: This does not override styles prescribed
-                    ;; by the completion category via
-                    ;; e.g. `completion-category-defaults'.
-                    (completion-styles completion-preview-completion-styles))
+         (all (let* ((completion-lazy-hilit t)
+                     (category (completion-metadata-get md 'category))
+                     ;; Make the preview styles take precedence over styles
+                     ;; prescribed by the completion category.
+                     (completion-category-overrides
+                      (if category
+                          (cons (cons category
+                                      (cons (cons 'styles
+                                                  completion-preview-completion-styles)
+                                            (cdr (assq category
+                                                       completion-category-overrides))))
+                                (assq-delete-all
+                                 category
+                                 (copy-sequence completion-category-overrides)))
+                        completion-category-overrides))
+                     (completion-styles completion-preview-completion-styles))
                 (completion-all-completions string table pred
                                             (- (point) beg) md)))
          (last (last all))
