@@ -918,13 +918,11 @@ server named by `whois-server-name' is used."
 
 (defun whois-get-tld (host)
   "Return the top level domain of `host', or nil if it isn't a domain name."
-  (let ((i (1- (length host)))
-	(max-len (- (length host) 5)))
+  (let ((i (1- (length host))))
     (while (and (>= i 0)
-                (not (or (= i max-len)
-                         (char-equal (aref host i) ?.))))
+                (not (char-equal (aref host i) ?.)))
       (setq i (1- i)))
-    (if (or (< i 0) (= i max-len))
+    (if (< i 0)
 	nil
       (substring host (1+ i)))))
 
