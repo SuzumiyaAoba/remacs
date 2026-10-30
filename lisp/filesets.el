@@ -1046,7 +1046,10 @@ Return full path if FULL-FLAG is non-nil."
 		    (string-match-p pattern this))
 	    (filesets-message 5 "Filesets: matched dir %S with pattern %S"
 			      this pattern)
-	    (push this dirs)))
+	    (push (if full-flag
+		      (concat (file-name-as-directory dir) this)
+		    this)
+		  dirs)))
 	 (t
 	  (when (or (not pattern)
 		    (string-match-p pattern this))
