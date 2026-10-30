@@ -483,6 +483,18 @@ in Lisp code."
      nslookup-program
      options)))
 
+(defun nslookup--ipv4-address-p (address)
+  "Return non-nil if ADDRESS is a dotted-quad IPv4 address."
+  (and (stringp address)
+       (let ((octets (split-string address "\\.")))
+         (and (= (length octets) 4)
+              (cl-every
+               (lambda (octet)
+                 (and (<= 1 (length octet) 3)
+                      (string-match-p "\\`[0-9]+\\'" octet)
+                      (<= (string-to-number octet) 255)))
+               octets))))
+
 ;;;###autoload
 (defun nslookup-host-ipv4 (host &optional name-server format)
   "Return the IPv4 address for HOST (name or IP address).
@@ -493,19 +505,24 @@ If FORMAT is `string', returns the IP address as a
 string (default).  If FORMAT is `vector', returns a 4-integer
 vector of octets.
 
+Return nil if HOST is neither an IPv4 literal nor resolves to an IPv4 address.
+
 This command uses `nslookup-program' to look up DNS records."
   (let* ((args `(,nslookup-program "-type=A" ,host ,name-server))
          (output (shell-command-to-string
                   (string-join (cl-remove nil args) " ")))
-         (ip (or (and (string-match
-                       "Name:.*\nAddress: *\\(\\([0-9]\\{1,3\\}\\.?\\)\\{4\\}\\)"
-                       output)
-                      (match-string 1 output))
-                 host)))
+         (parsed-ip (and (string-match
+                          "Name:.*\nAddress: *\\(\\([0-9]\\{1,3\\}\\.?\\)\\{4\\}\\)"
+                          output)
+                         (match-string 1 output)))
+         (ip (or (and (nslookup--ipv4-address-p parsed-ip) parsed-ip)
+                 (and (nslookup--ipv4-address-p host) host))))
     (cond ((memq format '(string nil))
            ip)
           ((eq format 'vector)
-           (apply #'vector (mapcar #'string-to-number (split-string ip "\\."))))
+           (and ip
+                (apply #'vector
+                       (mapcar #'string-to-number (split-string ip "\\.")))))
           (t (error "Invalid format: %s" format)))))
 
 (defun nslookup--ipv6-expand (ipv6-vector)
