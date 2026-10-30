@@ -992,14 +992,18 @@ defined in `filesets-ingroup-patterns'."
   :type 'natnum)
 
 
+(defun filesets--directory-name-p (name)
+  "Return non-nil if NAME has the platform's directory-name suffix."
+  (equal name (file-name-as-directory name)))
+
 (defun filesets-filter-dir-names (lst &optional negative)
   "Remove non-directory names from a list of strings.
 If NEGATIVE is non-nil, remove all directory names."
   (seq-filter (lambda (x)
                 (and (not (string-match-p "^\\.+/$" x))
                      (if negative
-                         (not (string-match-p "[:/\\]$" x))
-                       (string-match-p "[:/\\]$" x))))
+                         (not (filesets--directory-name-p x))
+                       (filesets--directory-name-p x))))
               lst))
 
 (defun filesets-conditional-sort (lst &optional access-fn)
@@ -1036,7 +1040,7 @@ Return full path if FULL-FLAG is non-nil."
 	(cond
 	 ((string-match-p "^\\.+/$" this)
 	  nil)
-	 ((string-match-p "[:/\\]$" this)
+	 ((file-directory-p (expand-file-name this dir))
 	  (when (or (not match-dirs-flag)
 		    (not pattern)
 		    (string-match-p pattern this))
