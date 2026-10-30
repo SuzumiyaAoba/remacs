@@ -549,22 +549,26 @@ If FORMAT is `string', returns the IP address as a
 string (default).  If FORMAT is `vector', returns a 8-integer
 vector of hextets.
 
+If no record is found and HOST is not an IPv6 literal, return nil.
+
 This command uses `nslookup-program' to look up DNS records."
   (let* ((args `(,nslookup-program "-type=AAAA" ,host ,name-server))
          (output (shell-command-to-string
                   (string-join (cl-remove nil args) " ")))
          (ip-regex "\\([0-9a-fA-F:.]+\\)")
-         (ip (or (and (string-match
-                       (if (eq system-type 'windows-nt)
-                           (concat "Name:.*\nAddress: *" ip-regex)
-                         (concat "has AAAA address " ip-regex))
-                       output)
-                      (match-string 1 output))
-                 host)))
+         (parsed-ip (and (string-match
+                          (if (eq system-type 'windows-nt)
+                              (concat "Name:.*\nAddress: *" ip-regex)
+                            (concat "has AAAA address " ip-regex))
+                          output)
+                         (match-string 1 output)))
+         (ip (or parsed-ip
+                 (and (stringp host) (string-match-p ":" host) host))))
     (cond ((memq format '(string nil))
            ip)
           ((eq format 'vector)
-           (let* ((compression (string-match "::" ip))
+           (and ip
+                (let* ((compression (string-match "::" ip))
                   (left (if compression (substring ip 0 compression) ip))
                   (right (and compression (substring ip (+ compression 2))))
                   (left-parts (if (equal left "") nil
@@ -611,7 +615,7 @@ This command uses `nslookup-program' to look up DNS records."
                           (error "Invalid IPv6 address: %s" ip))
                         (string-to-number part 16)))
                     hextet-parts)))
-             (nslookup--ipv6-expand (vconcat values))))
+                  (nslookup--ipv6-expand (vconcat values)))))
           (t (error "Invalid format: %s" format)))))
 
 ;;;###autoload
