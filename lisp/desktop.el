@@ -893,12 +893,22 @@ buffer, which is (in order):
                 desktop-var-serdes-funs)))))
 
 ;; ----------------------------------------------------------------------------
+(defvar desktop--v2s-active nil
+  "Containers currently being traversed by `desktop--v2s'.")
+
 (defun desktop--v2s (value)
   "Convert VALUE to a pair (QUOTE . SEXP); (eval SEXP) gives VALUE.
 SEXP is an sexp that when evaluated yields VALUE.
 QUOTE may be `may' (value may be quoted),
 `must' (value must be quoted), or nil (value must not be quoted)."
-  (cond
+  (let ((container (or (consp value) (vectorp value) (recordp value)
+                       (stringp value))))
+    (if (and container (memq value desktop--v2s-active))
+        (cons 'may "Unprintable entity")
+      (let ((desktop--v2s-active
+             (if container (cons value desktop--v2s-active)
+               desktop--v2s-active)))
+        (cond
     ((or (numberp value) (null value) (eq t value) (keywordp value))
      (cons 'may value))
     ((stringp value)
@@ -935,25 +945,32 @@ QUOTE may be `may' (value may be quoted),
 	 (cons 'may (apply #'record (mapcar #'cdr pass1))))))
     ((consp value)
      (let ((p value)
-	   newlist
-	   use-list*)
-       (while (consp p)
-	 (let ((q.sexp (desktop--v2s (car p))))
+           (seen (make-hash-table :test #'eq))
+           newlist
+           use-list*
+           circular)
+       (while (and (consp p) (not (gethash p seen)))
+         (puthash p t seen)
+         (let ((q.sexp (desktop--v2s (car p))))
            (push q.sexp newlist))
-	 (setq p (cdr p)))
-       (when p
-         (let ((last (desktop--v2s p)))
+         (setq p (cdr p)))
+       (when (consp p)
+         (setq circular t))
+       (when (or p circular)
+         (let ((last (if circular
+                         (cons 'may "Unprintable entity")
+                       (desktop--v2s p))))
            (setq use-list* t)
            (push last newlist)))
        (if (assq nil newlist)
-	   (cons nil
-		 `(,(if use-list* 'desktop-list* 'list)
+           (cons nil
+                 `(,(if use-list* 'desktop-list* 'list)
                    ,@(mapcar (lambda (el)
                                (if (eq (car el) 'must)
                                    `',(cdr el) (cdr el)))
                              (nreverse newlist))))
-	 (cons 'must
-	       `(,@(mapcar #'cdr
+         (cons 'must
+               `(,@(mapcar #'cdr
                            (nreverse (if use-list* (cdr newlist) newlist)))
                  . ,(if use-list* (cdar newlist)))))))
     ((subrp value)
@@ -968,8 +985,8 @@ QUOTE may be `may' (value may be quoted),
                           (lambda ()
                             (set-marker mk ,pos (get-buffer ,buf))))
                 mk))))
-    (t                                  ; Save as text.
-     (cons 'may "Unprintable entity"))))
+          (t                                  ; Save as text.
+           (cons 'may "Unprintable entity")))))))
 
 ;; ----------------------------------------------------------------------------
 (defun desktop-value-to-string (value)
