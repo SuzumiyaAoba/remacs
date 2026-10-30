@@ -4978,7 +4978,8 @@ doesn't exist in the region.
 
 If START is nil, use the current point.  If END is nil, use `point-max'.
 
-Comparisons and replacements are done with fixed case."
+Comparisons and replacements are done with fixed case.
+STRING must not be empty."
   (if start
       (when (< start (point-min))
         (error "Start before start of buffer"))
@@ -4987,6 +4988,8 @@ Comparisons and replacements are done with fixed case."
       (when (> end (point-max))
         (error "End after end of buffer"))
     (setq end (point-max)))
+  (when (equal string "")
+    (signal 'wrong-length-argument '(0)))
   (save-excursion
     (goto-char start)
     (save-restriction
