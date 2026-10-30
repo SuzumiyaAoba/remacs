@@ -171,6 +171,31 @@ pub(super) fn grid_row_height(grid: &Grid, row: usize, fallback: Pixels) -> Pixe
     )
 }
 
+fn uniform_row_font_size(grid: &Grid, row: usize, text: &str, fallback: Pixels) -> Pixels {
+    let Some(styles) = grid
+        .char_attrs
+        .get(row)
+        .filter(|styles| !styles.is_empty())
+        .or_else(|| grid.attrs.get(row))
+    else {
+        return fallback;
+    };
+    let mut height = None;
+    for (index, character) in text.chars().enumerate() {
+        if character.is_whitespace() {
+            continue;
+        }
+        let Some(font_height) = styles.get(index).and_then(|style| style.font_height) else {
+            return fallback;
+        };
+        if height.is_some_and(|height| height != font_height) {
+            return fallback;
+        }
+        height = Some(font_height);
+    }
+    height.map_or(fallback, |height| px(height as f32 / 10.0))
+}
+
 fn adjusted_row_height(height: usize, default_line_height: usize, fallback: Pixels) -> Pixels {
     let adjustment = height as i128 - default_line_height.max(1) as i128;
     (fallback + px(adjustment as f32)).max(px(1.0))
@@ -1606,6 +1631,8 @@ impl Render for EditorView {
                                     .get(y)
                                     .filter(|cells| !cells.is_empty())
                                     .or_else(|| grid.attrs.get(y));
+                                let row_font_size =
+                                    uniform_row_font_size(&grid, y, row, font_size);
                                 let bidi_disabled_ranges = grid
                                     .bidi_disabled_ranges
                                     .iter()
@@ -1767,7 +1794,7 @@ impl Render for EditorView {
                                 }
                                 window.text_system().shape_line(
                                     shaping_text.into(),
-                                    font_size,
+                                    row_font_size,
                                     &runs,
                                     None,
                                 )
@@ -2975,6 +3002,7 @@ fn paint_grid_row(
 ) {
     let row_top = grid_row_top(grid, row, line_height);
     let row_height = grid_row_height(grid, row, line_height);
+    let paint_line_height = line_height.max(line.ascent + line.descent);
     let origin = point(bounds.left(), bounds.top() + row_top);
     paint_stipple_backgrounds(
         grid,
@@ -2994,7 +3022,7 @@ fn paint_grid_row(
         origin,
         row_height,
         cell_width,
-        line_height,
+        paint_line_height,
         default_background,
         background_alpha,
         window,
@@ -3006,7 +3034,7 @@ fn paint_grid_row(
         line,
         bounds,
         row_top,
-        line_height,
+        paint_line_height,
         default_background,
         grid.gamma_exponent,
         window,
@@ -3019,7 +3047,7 @@ fn paint_grid_row(
         .or_else(|| grid.attrs.get(row));
     if let Some(styles) = styles {
         let overline_y = origin.y
-            + (line_height - line.ascent - line.descent) / 2.0
+            + (paint_line_height - line.ascent - line.descent) / 2.0
             + px(1.0);
         for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
             let Some(style) = styles.get(index).copied() else {

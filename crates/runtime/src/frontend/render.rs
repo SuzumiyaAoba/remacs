@@ -8241,6 +8241,45 @@ fn render_grid_internal(
     }
     let (composed_rows, composed_attrs, composed_char_attrs, cell_offsets) =
         compose_screen_rows(&screen_rows, width, default_style);
+    if graphical {
+        let default_font_height = default_style
+            .font_height
+            .map(usize::from)
+            .unwrap_or(140)
+            .max(1);
+        for (row, (text, styles)) in composed_rows
+            .iter()
+            .zip(&composed_char_attrs)
+            .enumerate()
+        {
+            let mut font_height = None;
+            let mut uniform = true;
+            for (column, character) in text.chars().enumerate() {
+                if character.is_whitespace() {
+                    continue;
+                }
+                let Some(height) = styles.get(column).and_then(|style| style.font_height) else {
+                    uniform = false;
+                    break;
+                };
+                if font_height.is_some_and(|current| current != height) {
+                    uniform = false;
+                    break;
+                }
+                font_height = Some(height);
+            }
+            if uniform
+                && let Some(font_height) = font_height
+                && let Some(row_height) = row_heights.get_mut(row)
+            {
+                let scaled_height = frame_char_height
+                    .saturating_mul(usize::from(font_height))
+                    .div_ceil(default_font_height)
+                    .max(1);
+                *row_height = (*row_height).max(scaled_height);
+            }
+        }
+    }
     rows = composed_rows;
     attrs = composed_attrs;
     char_attrs = composed_char_attrs;
