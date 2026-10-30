@@ -869,7 +869,7 @@ impl Render for EditorView {
         if let Some(frame_id) = self.tx.frame_id() {
             if self.last_window_active != Some(active) {
                 if active && self.auto_raise.get() {
-                    crate::raise_frame_window(window);
+                    window.activate_window();
                 } else if !active && self.auto_lower.get() {
                     crate::lower_frame_window(window);
                 }

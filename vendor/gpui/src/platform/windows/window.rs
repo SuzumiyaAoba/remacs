@@ -773,6 +773,31 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn raise_without_focus(&self) {
+        let hwnd = self.0.hwnd;
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    if IsIconic(hwnd).as_bool() {
+                        ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE).ok().log_err();
+                    }
+                    SetWindowPos(
+                        hwnd,
+                        Some(HWND_TOP),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    )
+                    .context("unable to raise window without activating it")
+                    .log_err();
+                }
+            })
+            .detach();
+    }
+
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }

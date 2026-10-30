@@ -1639,7 +1639,7 @@ fn register_power_off_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
 }
 
 fn raise_frame_window(window: &Window) {
-    window.activate_window();
+    window.raise_window();
 }
 
 fn lower_frame_window(window: &Window) {

@@ -488,6 +488,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
+    /// Raise the window in the stacking order without requesting input focus.
+    /// Platforms that cannot separate the two operations may activate it.
+    fn raise_without_focus(&self) {
+        self.activate();
+    }
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
