@@ -33,6 +33,15 @@
 (dolist (text '("80x24x10+1+2" "garbage+1+2" "80x+1+2" "x+1+2"))
   (qa (x-parse-geometry text) nil))
 
+;; Issue #3156: macOS's Nextstep spelling is four space-separated fields.
+(when (eq system-type 'darwin)
+  (qa (x-parse-geometry "100 200 24 80")
+      '((top . 100) (left . 200) (height . 24) (width . 80)))
+  (qa (x-parse-geometry "100 200")
+      '((top . 100) (left . 200)))
+  (qa (x-parse-geometry "100 200 24")
+      '((top . 100) (left . 200) (height . 24))))
+
 ;; Issue #3147: a negative zero offset retains its right/bottom origin.
 (qa (x-parse-geometry "-0-0") '((top - 0) (left - 0)))
 (qa (x-parse-geometry "-0+0") '((top . 0) (left - 0)))

@@ -249,12 +249,50 @@ fn parse_geometry_size(text: &crate::lisp::text::EmacsStr) -> Option<u32> {
     Some(size)
 }
 
+#[cfg(target_os = "macos")]
+fn parse_nextstep_geometry(i: &mut Interp, text: &crate::lisp::text::EmacsStr) -> Value {
+    let chars: Vec<_> = text.chars().collect();
+    let Some(mut at) = chars.iter().position(|c| c.is_ascii_digit()) else {
+        return Value::Nil;
+    };
+    let mut values = Vec::new();
+    while values.len() < 4 {
+        let start = at;
+        while at < chars.len() && chars[at].is_ascii_digit() {
+            at += 1;
+        }
+        let digits: Vec<u8> = chars[start..at].iter().map(|c| c.code() as u8).collect();
+        let Some(number) = num_bigint::BigInt::parse_bytes(&digits, 10) else {
+            break;
+        };
+        values.push(Value::from_bigint(number));
+        if at + 1 >= chars.len()
+            || chars[at].code() != b' ' as u32
+            || !chars[at + 1].is_ascii_digit()
+        {
+            break;
+        }
+        at += 1;
+    }
+    Value::list(
+        ["top", "left", "height", "width"]
+            .into_iter()
+            .zip(values)
+            .map(|(name, value)| Value::cons(Value::Sym(i.intern(name)), value))
+            .collect(),
+    )
+}
+
 pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU returns an alist ((height . H) (width . W) (top . Y) (left . X)).
     let s = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    #[cfg(target_os = "macos")]
+    if s.chars().any(|c| c == ' ') {
+        return Ok(parse_nextstep_geometry(i, s.as_str()));
+    }
     let mut w = None;
     let mut h = None;
     // The first sign starts the position part; sizes are digits separated
