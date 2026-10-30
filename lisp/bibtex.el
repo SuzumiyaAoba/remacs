@@ -1926,7 +1926,7 @@ BibTeX field as necessary."
      st)
     (modify-syntax-entry ?\{ "(}" st)
     (modify-syntax-entry ?\} "){" st)
-    (modify-syntax-entry ?\\ "." st)
+    (modify-syntax-entry ?\\ "\\" st)
     (modify-syntax-entry ?\" "." st)
     st)
   "Syntax-table to parse matched braces.")

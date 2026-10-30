@@ -81,6 +81,7 @@ qa!(qa_buffer2, "qa_buffer2.el");
 qa!(qa_buffer_transfer, "qa_buffer_transfer.el");
 qa!(qa_append_to_buffer, "qa_append_to_buffer.el");
 qa!(qa_bufferfile, "qa_bufferfile.el");
+qa!(qa_bibtex_escaped_braces, "qa_bibtex_escaped_braces.el");
 qa!(qa_buffmenu, "qa_buffmenu.el");
 qa!(qa_display_fallback, "qa_display_fallback.el");
 qa!(qa_case, "qa_case.el");
