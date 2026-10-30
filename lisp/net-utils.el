@@ -920,9 +920,11 @@ server named by `whois-server-name' is used."
   "Return the top level domain of `host', or nil if it isn't a domain name."
   (let ((i (1- (length host)))
 	(max-len (- (length host) 5)))
-    (while (not (or (= i max-len) (char-equal (aref host i) ?.)))
+    (while (and (>= i 0)
+                (not (or (= i max-len)
+                         (char-equal (aref host i) ?.))))
       (setq i (1- i)))
-    (if (= i max-len)
+    (if (or (< i 0) (= i max-len))
 	nil
       (substring host (1+ i)))))
 
