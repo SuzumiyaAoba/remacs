@@ -1427,7 +1427,9 @@ pub(super) fn f_frame_outer_dim(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
 }
 
 /// Parse coordinate fields with guaranteed progress, rejecting malformed tails.
-pub(super) fn geometry_offsets(pos: &crate::lisp::text::EmacsStr) -> Option<[Option<i32>; 2]> {
+pub(super) fn geometry_offsets(
+    pos: &crate::lisp::text::EmacsStr,
+) -> Option<[Option<(i32, bool)>; 2]> {
     let chars: Vec<_> = pos.chars().collect();
     let mut result = [None, None];
     let mut at = 0;
@@ -1456,11 +1458,14 @@ pub(super) fn geometry_offsets(pos: &crate::lisp::text::EmacsStr) -> Option<[Opt
         if at == start {
             return None;
         }
-        result[field] = Some(if negative {
+        let value = if negative {
             -(magnitude as i64) as i32
         } else {
             magnitude as i32
-        });
+        };
+        // XParseGeometry carries the X/Y negative flags separately from
+        // their numeric offsets, so `-0' differs from `+0'.
+        result[field] = Some((value, negative && magnitude == 0));
         field += 1;
     }
     Some(result)

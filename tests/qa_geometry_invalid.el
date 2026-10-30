@@ -33,4 +33,9 @@
 (dolist (text '("80x24x10+1+2" "garbage+1+2" "80x+1+2" "x+1+2"))
   (qa (x-parse-geometry text) nil))
 
+;; Issue #3147: a negative zero offset retains its right/bottom origin.
+(qa (x-parse-geometry "-0-0") '((top - 0) (left - 0)))
+(qa (x-parse-geometry "-0+0") '((top . 0) (left - 0)))
+(qa (x-parse-geometry "+0-0") '((top - 0) (left . 0)))
+
 (princ (qa--done))

@@ -290,17 +290,22 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     let left = parsed_left;
     let top = parsed_top;
     let mut items: Vec<Value> = Vec::new();
-    for (name, v) in [
-        ("height", h.map(i128::from)),
-        ("width", w.map(i128::from)),
-        ("top", top.map(i128::from)),
-        ("left", left.map(i128::from)),
-    ] {
+    for (name, v) in [("height", h), ("width", w)] {
         if let Some(n) = v {
             items.push(Value::cons(
                 Value::Sym(i.intern(name)),
-                Value::Int(n),
+                Value::Int(i128::from(n)),
             ));
+        }
+    }
+    for (name, v) in [("top", top), ("left", left)] {
+        if let Some((n, negative_zero)) = v {
+            let value = if negative_zero {
+                Value::list(vec![Value::Sym(i.intern("-")), Value::Int(0)])
+            } else {
+                Value::Int(i128::from(n))
+            };
+            items.push(Value::cons(Value::Sym(i.intern(name)), value));
         }
     }
     Ok(Value::list(items))
