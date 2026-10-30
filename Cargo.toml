@@ -64,3 +64,20 @@ serde_json.workspace = true
 # Keep interpreter startup practical in development and tests.
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
+
+# Optimize the workspace's own code for practical startup in development, but
+# keep third-party dependencies cheap to compile and link.  `gpui` is outside
+# this workspace, so it uses this override as well.
+[profile.dev.package."*"]
+opt-level = 0
+debug = false
+
+# Restore full symbols and optimized dependencies when debugging into libraries.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.debugging.package."*"]
+opt-level = 1
+debug = true

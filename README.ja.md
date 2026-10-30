@@ -83,8 +83,13 @@ GNU CLI 互換のオプション処理には `remacs-cli` を使います。
 
 ```sh
 cargo build            # デバッグ
+cargo build --profile debugging # 依存ライブラリも含む完全なデバッグ情報
 cargo build --release  # 最適化
 ```
+
+通常の開発ビルドは行番号のデバッグ情報を残し、外部依存を未最適化で
+コンパイルします。変数情報を含む完全なデバッグ情報が必要な場合は
+`debugging` profile を指定してください。
 
 Rust 2024 edition。crates 以外のビルド時依存はありません。
 任意ライブラリ（`libgnutls`、`liblcms2`、`libdbus-1`）は実行時に

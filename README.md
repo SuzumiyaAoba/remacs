@@ -75,8 +75,13 @@ See [architecture and dependency boundaries](docs/architecture.md).
 
 ```sh
 cargo build            # debug
+cargo build --profile debugging # full debug info, including dependencies
 cargo build --release  # optimized
 ```
+
+The default development build keeps line-table debug info and compiles
+third-party dependencies without optimization. Use the `debugging` profile
+when you need full debug info, including variables in dependencies.
 
 Rust 2024 edition. No external build-time dependencies beyond crates;
 optional libraries (`libgnutls`, `liblcms2`, `libdbus-1`) are dlopen'd
