@@ -644,7 +644,7 @@ is non-nil, it also prints a message describing the number of deletions."
                 (if (<= (line-beginning-position) beg)
                     (setq first-line t)
                   (forward-line -1))
-              (forward-line 1)))))
+              (forward-line 1))))))
     (set-marker beg nil)
     (set-marker end nil)
     (when interactive
