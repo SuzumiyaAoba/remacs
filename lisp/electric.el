@@ -246,6 +246,27 @@ mode set `electric-indent-inhibit', but this can be used as a workaround.")
                  electric-indent-functions-without-reindent)
            electric-indent-inhibit)))
 
+(defvar-local electric-indent--region-to-indent nil
+  "Markers for a region that an electric pair is about to wrap.")
+
+(defun electric-indent--clear-region-to-indent ()
+  (when (consp electric-indent--region-to-indent)
+    (set-marker (car electric-indent--region-to-indent) nil)
+    (set-marker (cdr electric-indent--region-to-indent) nil))
+  (setq electric-indent--region-to-indent nil))
+
+(defun electric-indent--remember-pair-region ()
+  ;; Run before `electric-pair-will-use-region' in
+  ;; `self-insert-uses-region-functions' so its markers track the wrapping.
+  (electric-indent--clear-region-to-indent)
+  (when (and electric-indent-mode
+             (fboundp 'electric-pair-will-use-region)
+             (electric-pair-will-use-region))
+    (setq electric-indent--region-to-indent
+          (cons (copy-marker (region-beginning))
+                (copy-marker (region-end) t))))
+  nil)
+
 (defun electric-indent--yank-advice (fn &rest r)
   (let ((p (point))
         (end (line-beginning-position)))
@@ -296,63 +317,74 @@ mode set `electric-indent-inhibit', but this can be used as a workaround.")
 This indents if the hook `electric-indent-functions' returns non-nil,
 or if a member of `electric-indent-chars' was typed; but not in a string
 or comment."
-  ;; FIXME: This reindents the current line, but what we really want instead is
-  ;; to reindent the whole affected text.  That's the current line for simple
-  ;; cases, but not all cases.  We do take care of the newline case in an
-  ;; ad-hoc fashion, but there are still missing cases such as the case of
-  ;; electric-pair-mode wrapping a region with a pair of parens.
-  ;; There might be a way to get it working by analyzing buffer-undo-list, but
-  ;; it looks challenging.
-  (let (pos)
-    (when (and
-           electric-indent-mode
-           ;; Don't reindent while inserting spaces at beginning of line.
-           (or (not (memq last-command-event '(?\s ?\t)))
-               (save-excursion (skip-chars-backward " \t") (not (bolp))))
-           (setq pos (electric--after-char-pos))
-           (save-excursion
-             (goto-char pos)
-             (let ((act (or (run-hook-with-args-until-success
-                             'electric-indent-functions
-                             last-command-event)
-                            (memq last-command-event electric-indent-chars))))
-               (not (memq act '(nil no-indent))))))
-      ;; If we error during indent, silently give up since this is an
-      ;; automatic action that the user didn't explicitly request.
-      ;; But we don't want to suppress errors from elsewhere in *this*
-      ;; function, hence the `condition-case' and `throw' (Bug#18764).
-      (catch 'indent-error
-        ;; For newline, we want to reindent both lines and basically
-        ;; behave like reindent-then-newline-and-indent (whose code we
-        ;; hence copied).
-        (let ((at-newline (<= pos (line-beginning-position))))
-          (when at-newline
-            (let ((before (copy-marker (1- pos) t)))
-              (save-excursion
+  ;; This reindents the current line for simple cases and handles newlines
+  ;; specially.  When `electric-pair-mode' wraps a region, use the saved
+  ;; region markers to reindent all affected lines.
+  (let ((region electric-indent--region-to-indent)
+        pos)
+    (setq electric-indent--region-to-indent nil)
+    (unwind-protect
+        (when (and electric-indent-mode
+                   (or region
+                       (and
+                        ;; Don't reindent while inserting spaces at beginning of line.
+                        (or (not (memq last-command-event '(?\s ?\t)))
+                            (save-excursion (skip-chars-backward " \t") (not (bolp))))
+                        (setq pos (electric--after-char-pos))
+                        (save-excursion
+                          (goto-char pos)
+                          (let ((act (or (run-hook-with-args-until-success
+                                          'electric-indent-functions
+                                          last-command-event)
+                                         (memq last-command-event electric-indent-chars))))
+                            (not (memq act '(nil no-indent))))))))
+          ;; If we error during indent, silently give up since this is an
+          ;; automatic action that the user didn't explicitly request.
+          ;; But we don't want to suppress errors from elsewhere in *this*
+          ;; function, hence the `condition-case' and `throw' (Bug#18764).
+          (catch 'indent-error
+            (if region
                 (when (electric-indent-can-reindent-p)
-                  ;; Don't reindent the previous line if the
-                  ;; indentation function is not a real one.
-                  (goto-char before)
+                  (let ((start (marker-position (car region)))
+                        (end (marker-position (cdr region))))
+                    (when (and start end)
+                      (condition-case-unless-debug ()
+                          (indent-region start end)
+                        (error (throw 'indent-error nil)))))
+              ;; For newline, we want to reindent both lines and basically
+              ;; behave like reindent-then-newline-and-indent (whose code we
+              ;; hence copied).
+              (let ((at-newline (<= pos (line-beginning-position))))
+                (when at-newline
+                  (let ((before (copy-marker (1- pos) t)))
+                    (save-excursion
+                      (when (electric-indent-can-reindent-p)
+                        ;; Don't reindent the previous line if the
+                        ;; indentation function is not a real one.
+                        (goto-char before)
+                        (condition-case-unless-debug ()
+                            (indent-according-to-mode)
+                          (error (throw 'indent-error nil))))
+                      (unless (eq electric-indent-inhibit 'electric-layout-mode)
+                        ;; Unless we're operating under
+                        ;; `electric-layout-mode' (Bug#35254), the goal here
+                        ;; will be to remove the trailing whitespace after
+                        ;; reindentation of the previous line because that
+                        ;; may have (re)introduced it.
+                        (goto-char before)
+                        ;; We were at EOL in marker `before' before the call
+                        ;; to `indent-according-to-mode' but after we may
+                        ;; not be (Bug#15767).
+                        (when (and (eolp))
+                          (delete-horizontal-space t))))))
+                (unless (and electric-indent-inhibit
+                             (not at-newline))
                   (condition-case-unless-debug ()
                       (indent-according-to-mode)
-                    (error (throw 'indent-error nil))))
-                (unless (eq electric-indent-inhibit 'electric-layout-mode)
-                  ;; Unless we're operating under
-                  ;; `electric-layout-mode' (Bug#35254), the goal here
-                  ;; will be to remove the trailing whitespace after
-                  ;; reindentation of the previous line because that
-                  ;; may have (re)introduced it.
-                  (goto-char before)
-                  ;; We were at EOL in marker `before' before the call
-                  ;; to `indent-according-to-mode' but after we may
-                  ;; not be (Bug#15767).
-                  (when (and (eolp))
-                    (delete-horizontal-space t))))))
-          (unless (and electric-indent-inhibit
-                       (not at-newline))
-            (condition-case-unless-debug ()
-                (indent-according-to-mode)
-              (error (throw 'indent-error nil)))))))))
+                    (error (throw 'indent-error nil)))))))
+      (when region
+        (set-marker (car region) nil)
+        (set-marker (cdr region) nil)))))))
 
 (defun electric-indent-just-newline (arg)
   "Insert just a newline, without any auto-indentation."
@@ -397,11 +429,17 @@ use `electric-indent-local-mode'."
   (if (not electric-indent-mode)
       (unless (electric-indent--any-mode-enabled-p)
         (remove-hook 'post-self-insert-hook
-                     #'electric-indent-post-self-insert-function))
+                     #'electric-indent-post-self-insert-function)
+        (remove-hook 'self-insert-uses-region-functions
+                     #'electric-indent--remember-pair-region)
+        (electric-indent--clear-region-to-indent))
 
     (add-hook 'post-self-insert-hook
               #'electric-indent-post-self-insert-function
-              60))
+              60)
+    (add-hook 'self-insert-uses-region-functions
+              #'electric-indent--remember-pair-region
+              -100))
 
   ;; Toggle the reindentation on actions
   (electric-indent--activate-indent-actions
