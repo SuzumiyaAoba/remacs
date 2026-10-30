@@ -390,8 +390,8 @@ Also store it in `eldoc-last-message' and return that value."
 ;; request for documentation.
 (defvar eldoc--last-request-state nil
   "Tuple containing information about last ElDoc request.")
-(defvar eldoc--request-id 0
-  "Identifier of the most recently started ElDoc request.")
+(defvar-local eldoc--request-id 0
+  "Identifier of the most recently started ElDoc request in this buffer.")
 (defun eldoc--request-state ()
   "Compute information to store in `eldoc--last-request-state'."
   (list (current-buffer) (buffer-modified-tick) (point)))
@@ -922,17 +922,16 @@ the docstrings eventually produced, using
                   docs-registered)))
          (display-doc
            ()
-           (when (and (buffer-live-p orig-buffer)
-                      (= request-id eldoc--request-id)
-                      (with-current-buffer orig-buffer
-                        (equal request-state (eldoc--request-state))))
+           (when (buffer-live-p orig-buffer)
              (with-current-buffer orig-buffer
-               (run-hook-with-args
-                'eldoc-display-functions (mapcar #'cdr
-                                                 (setq docs-registered
-                                                       (sort docs-registered
-                                                             (lambda (a b) (< (car a) (car b))))))
-                interactive))))
+               (when (and (= request-id eldoc--request-id)
+                          (equal request-state (eldoc--request-state)))
+                 (run-hook-with-args
+                  'eldoc-display-functions (mapcar #'cdr
+                                                   (setq docs-registered
+                                                         (sort docs-registered
+                                                               (lambda (a b) (< (car a) (car b))))))
+                  interactive)))))
          (make-callback
           (method origin)
           (let ((pos (prog1 howmany (cl-incf howmany))))
