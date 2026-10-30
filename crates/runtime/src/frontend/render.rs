@@ -4656,8 +4656,9 @@ fn window_faces(
                 .collect()
         },
     );
-    let display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
-        i.q_soft("display").map_or_else(Vec::new, |display| {
+    let display_property = i.q_soft("display");
+    let mut display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
+        display_property.map_or_else(Vec::new, |display| {
             properties
                 .iter()
                 .enumerate()
@@ -4672,6 +4673,38 @@ fn window_faces(
                 })
                 .collect()
         });
+    if let Some(display_property) = display_property {
+        let overlay_display: Vec<_> = bb
+            .overlays
+            .iter()
+            .filter(|overlay| {
+                overlay.buffer == Some(bb.id)
+                    && overlay.start < overlay.end
+                    && overlay.matches_window(i, win)
+            })
+            .filter_map(|overlay| {
+                let value = overlay.property(i, &Value::Sym(display_property));
+                let replacement = display_value_replacement(i, &value, bb.id)?;
+                Some((overlay.clone(), replacement))
+            })
+            .collect();
+        let mut order: Vec<_> = overlay_display
+            .iter()
+            .enumerate()
+            .map(|(index, (overlay, _))| (overlay, index))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        let property_count = properties.len();
+        for (priority, (_, index)) in order.into_iter().enumerate() {
+            let (overlay, replacement) = &overlay_display[index];
+            display_props.push((
+                overlay.start,
+                overlay.end,
+                Some(replacement.clone()),
+                property_count + priority,
+            ));
+        }
+    }
     let composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
         i.q_soft("composition").map_or_else(Vec::new, |composition| {
             properties
