@@ -779,7 +779,8 @@ Interactively, N is the prefix numeric argument, and defaults to
         (total-width 0)
         (found nil)
         col-width)
-    (while (and (not found)
+    (while (and entry
+                (not found)
                 (< col-nb nb-cols))
       (if (>= start
               (setq total-width
