@@ -202,12 +202,17 @@ The default value is `clean-buffer-list'."
 
 (defun midnight-next ()
   "Return the number of whole or partial seconds till the next midnight."
-  (pcase-let ((`(,sec ,min ,hrs) (decode-time nil nil 'integer)))
-    (- (* 24 60 60) (* 60 60 hrs) (* 60 min) sec)))
-
-(defun midnight--next-midnight-time ()
-  "Return the time value for the next local midnight."
   (let* ((decoded (decode-time nil nil 'integer))
+         (now (encode-time (nth 0 decoded) (nth 1 decoded) (nth 2 decoded)
+                           (nth 3 decoded) (nth 4 decoded) (nth 5 decoded)
+                           (nth 8 decoded))))
+    (time-convert
+     (time-subtract (midnight--next-midnight-time decoded) now)
+     'integer)))
+
+(defun midnight--next-midnight-time (&optional decoded)
+  "Return the time value for the next local midnight."
+  (let* ((decoded (or decoded (decode-time nil nil 'integer)))
          (day (nth 3 decoded))
          (month (nth 4 decoded))
          (year (nth 5 decoded)))
