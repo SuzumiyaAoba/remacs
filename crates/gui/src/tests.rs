@@ -284,7 +284,7 @@ fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
             pending_power_off: false,
             geometry_symbols: None,
             mouse_down: None,
-            scroll_remainder: 0.0,
+            scroll_remainders: Default::default(),
         },
         etx,
         grx,

@@ -917,7 +917,8 @@ pub(super) struct ChanIo {
     /// Last frame-local mouse position, including transitions into and out of
     /// the frame content area.
     mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>)>,
-    pub(super) scroll_remainder: f32,
+    /// Fractional smooth-scroll rows kept separately for each frame.
+    pub(super) scroll_remainders: HashMap<Option<usize>, f32>,
     last_input_at: Instant,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
 }
@@ -1408,6 +1409,7 @@ impl KeyIo for ChanIo {
         let result = match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
             GuiEvent::FrameDeleteRequest { frame_id } => {
+                self.scroll_remainders.remove(&Some(frame_id));
                 self.pending_frame_delete = Some(frame_id);
                 self.render_requested = true;
                 Ok(None)
@@ -1573,9 +1575,11 @@ impl KeyIo for ChanIo {
                 if !delta_lines.is_finite() {
                     return Ok(None);
                 }
-                let total_lines = self.scroll_remainder + delta_lines;
+                let frame_id = self.active_frame_id.or(self.primary_frame_id);
+                let remainder = self.scroll_remainders.entry(frame_id).or_default();
+                let total_lines = *remainder + delta_lines;
                 let whole_lines = total_lines.trunc();
-                self.scroll_remainder = total_lines - whole_lines;
+                *remainder = total_lines - whole_lines;
                 if whole_lines == 0.0 {
                     Ok(None)
                 } else {
@@ -2434,7 +2438,7 @@ fn start_logic_inner(
                 mouse_position: None,
                 mouse_absolute_position: None,
                 mouse_frame_position: None,
-                scroll_remainder: 0.0,
+                scroll_remainders: HashMap::new(),
                 last_input_at: Instant::now(),
                 image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
             };
