@@ -1432,7 +1432,12 @@ itself be a list, depending on the values allowed by KEYWORD."
 (defun icalendar-read-rrule-value (s)
   "Read a recurrence rule value from string S.
 S should be a match against rx `icalendar-recur'."
-  (icalendar-read-list-with #'icalendar-read-rrule-part s (rx icalendar-rrule-part) ";"))
+  (let ((parts
+         (icalendar-read-list-with
+          #'icalendar-read-rrule-part s (rx icalendar-rrule-part) ";")))
+    (unless (eq 'FREQ (car-safe (car-safe parts)))
+      (icalendar-signal-parse-error "FREQ must be the first RRULE part"))
+    parts))
 
 (defun icalendar-print-rrule-value (val)
   "Serialize a recurrence rule value VAL to a string."
@@ -1486,7 +1491,8 @@ DAYNO must be in [0..6] and OFFSET in [-53..53], excluding 0."
                 (push key seen)
                 t)))
           vals))
-       ;; FREQ is always required:
+       ;; FREQ is always required and must be the first rule part.
+       (eq 'FREQ (car-safe (car-safe vals)))
        (assq 'FREQ vals)
        ;; COUNT and UNTIL are mutually exclusive if present:
        (not (and (assq 'COUNT vals) (assq 'UNTIL vals)))
