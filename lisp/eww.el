@@ -1846,11 +1846,12 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
         form)
     (setq form (list :eww-form eww-form
                      :value value
+                     :width width
                      :type type
                      :name (dom-attr dom 'name)))
     (insert value)
-    (when (< (length value) width)
-      (insert (make-string (- width (length value)) ? )))
+    (when (< (string-width value) width)
+      (insert (make-string (- width (string-width value)) ? )))
     (put-text-property start (point) 'face 'eww-form-text)
     (put-text-property start (point) 'inhibit-read-only t)
     (put-text-property start (point) 'local-map eww-text-map)
@@ -1875,6 +1876,55 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
      ;; Disregard our own changes.
      (track-changes-fetch tracker-id #'ignore))))
 
+(defun eww--fit-text-input-width (pos width properties)
+  "Keep the text field containing POS padded to WIDTH display columns."
+  (let ((field-start (copy-marker
+                      (save-excursion
+                        (goto-char pos)
+                        (eww-beginning-of-field))))
+        (field-end (copy-marker
+                    (save-excursion
+                      (goto-char pos)
+                      (1+ (eww-end-of-field)))
+                    t)))
+    (unwind-protect
+        (save-excursion
+          (goto-char field-start)
+          (while (< (point) (marker-position field-end))
+            (let* ((line-start (point))
+                   (field-end-position (marker-position field-end))
+                   (line-end (min (line-end-position) field-end-position))
+                   (next-line
+                    (copy-marker
+                     (if (and (< line-end field-end-position)
+                              (eq (char-after line-end) ?\n))
+                         (1+ line-end)
+                       field-end-position)
+                     t))
+                   (line-width
+                    (string-width
+                     (buffer-substring-no-properties line-start line-end))))
+              (cond
+               ((> line-width width)
+                (let ((trim-end line-end))
+                  (while (and (> line-width width)
+                              (> trim-end line-start)
+                              (eq (char-before trim-end) ? ))
+                    (setq trim-end (1- trim-end)
+                          line-width (1- line-width)))
+                  (when (< trim-end line-end)
+                    (delete-region trim-end line-end))))
+               ((< line-width width)
+                (let ((insert-at line-end)
+                      (padding (make-string (- width line-width) ? )))
+                  (goto-char line-end)
+                  (insert padding)
+                  (set-text-properties insert-at (point) properties))))
+              (goto-char next-line)
+              (set-marker next-line nil))))
+      (set-marker field-start nil)
+      (set-marker field-end nil))))
+
 (defun eww--process-text-input (beg end replace-length)
   (when-let* ((_ (integerp replace-length))
               (pos end)
@@ -1885,46 +1935,13 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
     (let* ((properties (text-properties-at pos))
            (buffer-undo-list t)
 	   (inhibit-read-only t)
-	   (length (- end beg replace-length))
+	   (width (plist-get form :width))
 	   (type (plist-get form :type)))
-      (when (member type eww-text-input-types)
+      (when (and (member type eww-text-input-types) (numberp width))
 	;; Make sure the new text has the right properties, which also
 	;; integrates the new text into the "current field".
 	(set-text-properties beg end properties)
-	;; FIXME: This tries to preserve the "length" of the input field,
-        ;; but we should try to preserve the *width* instead.
-        ;; FIXME: Maybe instead of inserting/deleting spaces, we should
-        ;; have a single stretch-space character at the end.
-	(cond
-	 ((> length 0)
-	  ;; Delete some space at the end.
-	  (save-excursion
-	    (goto-char
-	     (if (equal type "textarea")
-		 (1- (line-end-position))
-	       (eww-end-of-field)))
-	    (while (and (> length 0)
-			(eq (char-after (1- (point))) ? ))
-	      (delete-region (1- (point)) (point))
-              (decf length))))
-	 ((< length 0)
-	  ;; Add padding.
-	  (save-excursion
-	    (goto-char pos)
-	    (let* ((field-length (- (eww-end-of-field)
-                                    (eww-beginning-of-field)))
-                   (ideal-length (cdr (assq :length form))))
-              ;; FIXME: This test isn't right for multiline fields.
-              (when (or (null ideal-length) (> ideal-length field-length))
-	        (goto-char
-		 (if (equal type "textarea")
-		     (1- (line-end-position))
-		   (1+ (eww-end-of-field))))
-		(let ((start (point)))
-	          (insert (make-string (min (abs length)
-	                                    (- ideal-length field-length))
-	                               ? ))
-	          (set-text-properties start (point) properties)))))))
+	(eww--fit-text-input-width pos width properties))
 	(let ((value (buffer-substring-no-properties
 		      (eww-beginning-of-field)
 		      (eww-end-of-field))))
@@ -1937,7 +1954,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
 	    (let ((start (eww-beginning-of-field)))
 	      (put-text-property
                start (+ start (length value))
-               'display (make-string (length value) ?*)))))))))
+               'display (make-string (length value) ?*))))))))
 
 (defun eww-tag-textarea (dom)
   (let ((value (or (dom-inner-text dom) ""))
@@ -1955,7 +1972,10 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
     (goto-char start)
     (while (< (point) end)
       (end-of-line)
-      (let ((pad (- width (- (point) (line-beginning-position)))))
+      (let ((pad (- width
+                    (string-width
+                     (buffer-substring-no-properties
+                      (line-beginning-position) (point))))))
 	(when (> pad 0)
 	  (insert (make-string pad ? ))))
       (add-face-text-property (line-beginning-position)
@@ -1966,6 +1986,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
       (forward-line 1))
     (setq form (list :eww-form eww-form
 		     :value value
+		     :width width
 		     :type "textarea"
 		     :name (dom-attr dom 'name)))
     (put-text-property start (point) 'eww-form form)
