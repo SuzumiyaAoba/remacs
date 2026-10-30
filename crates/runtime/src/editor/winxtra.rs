@@ -2142,7 +2142,7 @@ fn f_window_list1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (window-list-1 WINDOW MINIBUF ALL-FRAMES): GNU
     // decode_live_window's WINDOW before building the cyclic list.
     let _ = win_live(i, &arg(&a, 0))?;
-    f_window_list(i, vec![Value::Nil, arg(&a, 1)].into())
+    f_window_list(i, vec![Value::Nil, arg(&a, 1), arg(&a, 0)].into())
 }
 
 /// Candidate windows for `get-lru-window'/`get-mru-window'/
