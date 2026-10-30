@@ -853,7 +853,8 @@ and `network-connection-service-alist', which see."
 	 (regexps finger-X.500-host-regexps)
 	 ) ;; found
     (when regexps
-      (while (not (string-match (car regexps) host))
+      (while (and regexps
+                  (not (string-match (car regexps) host)))
 	(setq regexps (cdr regexps)))
       (when regexps
 	(setq user-and-host user)))
