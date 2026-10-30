@@ -1170,12 +1170,12 @@ fn frame_scroll_bar_dimensions(i: &Interp, frame: &FrameRef) -> (usize, usize) {
 }
 
 fn f_frame_scroll_bar_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let frame = frame_live(i, &arg(&a, 0))?;
+    let frame = frame_any(i, &arg(&a, 0))?;
     Ok(Value::Int(frame_scroll_bar_dimensions(i, &frame).0 as i128))
 }
 
 fn f_frame_scroll_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let frame = frame_live(i, &arg(&a, 0))?;
+    let frame = frame_any(i, &arg(&a, 0))?;
     Ok(Value::Int(frame_scroll_bar_dimensions(i, &frame).1 as i128))
 }
 

@@ -343,6 +343,7 @@ qa!(qa_logb, "qa_logb.el");
 qa!(qa_locvar, "qa_locvar.el");
 qa!(qa_variable_protection, "qa_variable_protection.el");
 qa!(qa_frame_parameters, "qa_frame_parameters.el");
+qa!(qa_frame_scroll_bar_type, "qa_frame_scroll_bar_type.el");
 qa!(qa_frame_buffer_changes, "qa_frame_buffer_changes.el");
 qa!(qa_feature_capabilities, "qa_feature_capabilities.el");
 qa!(qa_macro, "qa_macro.el");
