@@ -70,4 +70,14 @@
 (qa (let ((print-circle nil)) (prin1-to-string (qa94-read "#1=(1 . #1#)")))
     "(1 . #0)")
 
+;; A string's text-property values are part of the object graph printed
+;; by `print-circle'; self-references must survive a read/print round trip.
+(qa (let ((string (copy-sequence "x")))
+      (put-text-property 0 1 'loop string string)
+      (let* ((printed (let ((print-circle t)) (prin1-to-string string)))
+             (copy (let ((read-circle t))
+                     (car (read-from-string printed)))))
+        (list printed (eq copy (get-text-property 0 'loop copy)))))
+    '("#1=#(\"x\" 0 1 (loop #1#))" t))
+
 (princ (qa--done)) (terpri)

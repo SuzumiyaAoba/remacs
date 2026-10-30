@@ -6,16 +6,16 @@ use std::rc::Rc;
 use super::Interp;
 use super::print_text::PrintText;
 use super::text::{EmacsChar, EmacsText, TextSource};
-use super::value::Value;
+use super::value::{StrRef, Value};
 
 mod circle;
 mod lists;
 mod numbers;
 mod objects;
 mod render;
-use render::PrintMode;
 pub use circle::f_print_preprocess;
 pub use numbers::format_float;
+use render::PrintMode;
 
 /// Escape a character inside a printed string. Emacs escapes only
 /// `"` and `\` — newlines print literally unless `print-escape-newlines`
@@ -60,6 +60,82 @@ fn push_sym_name<T: TextSource + ?Sized>(name: &T, out: &mut PrintText) {
             out.push(c);
         }
     });
+}
+
+/// Text-property intervals that `prin1' will include for STRING.
+/// `print-circle' preprocessing and rendering must walk the same object
+/// graph, or references hidden from the printed text can steal labels.
+pub(super) fn printable_string_props(
+    i: &Interp,
+    string: &StrRef,
+) -> Vec<(usize, usize, Vec<Value>)> {
+    let pct = i.print_var("print-charset-text-property");
+    let charset_id = i.q_soft("charset");
+    // nil → hide all charset props; `default' → only map-based charsets;
+    // anything else → show all.
+    let show_all = charset_id.is_none()
+        || (!pct.is_nil() && !matches!(pct, Value::Sym(id) if i.symbol_name(id) == "default"));
+    let visible = |plist: &Vec<Value>| -> Vec<Value> {
+        if show_all {
+            return plist.clone();
+        }
+        let hide_all = pct.is_nil();
+        const MAP_CHARSETS: &[&str] = &[
+            "iso-8859-1",
+            "iso-8859-2",
+            "iso-8859-3",
+            "iso-8859-4",
+            "iso-8859-5",
+            "iso-8859-6",
+            "iso-8859-7",
+            "iso-8859-8",
+            "iso-8859-9",
+            "iso-8859-10",
+            "iso-8859-11",
+            "iso-8859-13",
+            "iso-8859-14",
+            "iso-8859-15",
+            "iso-8859-16",
+            "koi8",
+            "koi8-r",
+            "windows-1251",
+            "windows-1252",
+            "mac-roman",
+            "big5",
+            "chinese-gb2312",
+        ];
+        let cid = charset_id.unwrap();
+        let has_non_ascii = string.borrow().chars().any(|c| c.code() >= 0x80);
+        let mut result = Vec::new();
+        let mut k = 0;
+        while k + 1 < plist.len() {
+            let hide = if i.sym_id(&plist[k]) == Some(cid) {
+                if hide_all {
+                    true
+                } else {
+                    let name = match &plist[k + 1] {
+                        Value::Sym(id) => i.symbol_name(*id),
+                        _ => String::new(),
+                    };
+                    !has_non_ascii || !MAP_CHARSETS.contains(&name.as_str())
+                }
+            } else {
+                false
+            };
+            if !hide {
+                result.push(plist[k].clone());
+                result.push(plist[k + 1].clone());
+            }
+            k += 2;
+        }
+        result
+    };
+
+    i.str_props(string)
+        .iter()
+        .map(|(start, end, plist)| (*start, *end, visible(plist)))
+        .filter(|(_, _, plist)| !plist.is_empty())
+        .collect()
 }
 
 impl Interp {
@@ -115,78 +191,8 @@ impl Interp {
                 let mb = self.print_escape_multibyte();
                 let cc = self.print_var("print-escape-control-characters").truthy();
                 // GNU prints #("..." s e (plist) ...) when the string
-                // carries non-empty text-property intervals.  The
-                // `charset' prop is hidden unless
-                // `print-charset-text-property' is t (or `default',
-                // which shows only map-based charsets).
-                let pct = self.print_var("print-charset-text-property");
-                let charset_id = self.q_soft("charset");
-                // nil → hide all charset props; `default' → only
-                // map-based charsets; anything else → show all.
-                let show_all = charset_id.is_none()
-                    || (!pct.is_nil()
-                        && !matches!(pct, Value::Sym(s) if self.symbol_name(s) == "default"));
-                let visible = |pl: &Vec<Value>| -> Vec<Value> {
-                    if show_all {
-                        return pl.clone();
-                    }
-                    let hide_all = pct.is_nil();
-                    const MAP_CHARSETS: &[&str] = &[
-                        "iso-8859-1",
-                        "iso-8859-2",
-                        "iso-8859-3",
-                        "iso-8859-4",
-                        "iso-8859-5",
-                        "iso-8859-6",
-                        "iso-8859-7",
-                        "iso-8859-8",
-                        "iso-8859-9",
-                        "iso-8859-10",
-                        "iso-8859-11",
-                        "iso-8859-13",
-                        "iso-8859-14",
-                        "iso-8859-15",
-                        "iso-8859-16",
-                        "koi8",
-                        "koi8-r",
-                        "windows-1251",
-                        "windows-1252",
-                        "mac-roman",
-                        "big5",
-                        "chinese-gb2312",
-                    ];
-                    let cid = charset_id.unwrap();
-                    let has_non_ascii = s.borrow().chars().any(|c| c.code() >= 0x80);
-                    let mut out: Vec<Value> = Vec::new();
-                    let mut k = 0;
-                    while k + 1 < pl.len() {
-                        let hide = if self.sym_id(&pl[k]) == Some(cid) {
-                            if hide_all {
-                                true
-                            } else {
-                                let name = match &pl[k + 1] {
-                                    Value::Sym(id) => self.symbol_name(*id),
-                                    _ => String::new(),
-                                };
-                                !has_non_ascii || !MAP_CHARSETS.contains(&name.as_str())
-                            }
-                        } else {
-                            false
-                        };
-                        if !hide {
-                            out.push(pl[k].clone());
-                            out.push(pl[k + 1].clone());
-                        }
-                        k += 2;
-                    }
-                    out
-                };
-                let ivs = self.str_props(s);
-                let printed: Vec<(usize, usize, Vec<Value>)> = ivs
-                    .iter()
-                    .map(|(a, b, pl)| (*a, *b, visible(pl)))
-                    .filter(|(_, _, pl)| !pl.is_empty())
-                    .collect();
+                // carries non-empty text-property intervals.
+                let printed = printable_string_props(self, s);
                 if !printed.is_empty() {
                     out.push_str("#(");
                 }

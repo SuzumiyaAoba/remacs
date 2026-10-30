@@ -40,6 +40,31 @@ pub(super) fn patch_in(
             }
             Ok(did_change)
         }
+        Value::Str(string) => {
+            let ptr = Rc::as_ptr(string) as usize;
+            if !seen.insert(ptr) {
+                return Ok(changed.contains(&ptr));
+            }
+            // String text properties live in Interp's side table rather
+            // than in the String value.  They are still part of the object
+            // graph: a `#N#' in a printed property plist can refer back to
+            // the string currently being patched.
+            let mut properties = interp.str_props(string).to_vec();
+            let mut did_change = false;
+            for (_, _, plist) in &mut properties {
+                for item in plist {
+                    let (patched, item_changed) =
+                        patch_value(interp, item.clone(), placeholder, target, seen, changed)?;
+                    *item = patched;
+                    did_change |= item_changed;
+                }
+            }
+            if did_change {
+                interp.set_str_props(string, properties);
+                changed.insert(ptr);
+            }
+            Ok(did_change)
+        }
         Value::Vec(vec) | Value::Record(vec) => {
             let ptr = Rc::as_ptr(vec) as usize;
             if !seen.insert(ptr) {

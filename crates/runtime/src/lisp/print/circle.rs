@@ -142,6 +142,15 @@ pub(super) fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
                 stack.push(cdr);
                 stack.push(car);
             }
+            Value::Str(s) => {
+                // String properties are part of the printed object graph:
+                // `prin1' emits them after the string contents.  Walk the
+                // visible plist values in the same order so a property that
+                // points back to its string receives a #N= label.
+                for (_, _, plist) in super::printable_string_props(i, s).iter().rev() {
+                    stack.extend(plist.iter().rev().cloned());
+                }
+            }
             Value::Vec(r) | Value::Record(r) => {
                 stack.extend(r.borrow().iter().rev().cloned());
             }
