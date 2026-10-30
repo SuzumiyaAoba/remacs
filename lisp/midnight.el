@@ -92,7 +92,10 @@ it takes a single argument (a buffer name) and should return non-nil
 if the buffer should be killed by `clean-buffer-list'."
   :type '(repeat
           (choice (regexp :tag "Regexp matching Buffer Name")
-                  (function :tag "Predicate function"))))
+                  (function :tag "Predicate function")
+                  (cons :tag "Regexp with per-entry delay"
+                        (regexp :tag "Regexp matching Buffer Name")
+                        (natnum :tag "Delay in seconds")))))
 
 (defcustom clean-buffer-list-kill-buffer-names
     '("*Help*" "*Apropos*" "*Buffer List*" "*Compile-Log*" "*info*"
@@ -106,7 +109,11 @@ the number of seconds to use instead of `clean-buffer-list-delay-special'.
 See also `clean-buffer-list-kill-regexps',
 `clean-buffer-list-kill-never-regexps' and
 `clean-buffer-list-kill-never-buffer-names'."
-  :type '(repeat (string :tag "Buffer Name")))
+  :type '(repeat
+          (choice (string :tag "Buffer Name")
+                  (cons :tag "Buffer Name with per-entry delay"
+                        (string :tag "Buffer Name")
+                        (natnum :tag "Delay in seconds")))))
 
 (defcustom clean-buffer-list-kill-never-buffer-names
     '("*scratch*" "*Messages*")
