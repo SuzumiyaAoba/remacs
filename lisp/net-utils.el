@@ -934,10 +934,10 @@ If `whois-guess-server' is non-nil, then try to deduce the correct server
 from SEARCH-STRING.  With argument, prompt for whois server.
 The port is deduced from `network-connection-service-alist'."
   (interactive "P\nsWhois: ")
-  (let* ((whois-apropos-host (if whois-guess-server
-				 (rassoc (whois-get-tld search-string)
-					 whois-server-tld)
-			       nil))
+  (let* ((tld (and whois-guess-server (whois-get-tld search-string)))
+         (whois-apropos-host
+          (and tld
+               (rassoc (downcase tld) whois-server-tld)))
 	 (server-name (if whois-apropos-host
 			  (car whois-apropos-host)
 			whois-server-name))
