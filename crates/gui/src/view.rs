@@ -3665,7 +3665,10 @@ pub(super) fn build_managed_editor_view(
         view.grid = grid;
     }
     let close_events = view.tx.clone();
-    window.on_window_should_close(cx, move |_window, _cx| {
+    window.on_window_should_close(cx, move |_window, cx| {
+        if cx.windows().len() <= 1 {
+            return false;
+        }
         close_events
             .frame_id()
             .is_some_and(|frame_id| close_events.send_delete_request(frame_id).is_err())
