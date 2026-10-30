@@ -635,8 +635,30 @@ impl Grid {
     }
 }
 
-fn input_snapshot(i: &Interp, cached: Option<&GridInput>) -> Option<GridInput> {
-    let buffer = i.current_buffer_ref()?;
+fn input_snapshot(
+    i: &Interp,
+    frame: Option<&crate::editor::FrameRef>,
+    cached: Option<&GridInput>,
+) -> Option<GridInput> {
+    let selected_frame = frame.is_none_or(|frame| {
+        i.selected_frame
+            .as_ref()
+            .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, frame))
+    });
+    let (frame_buffer, frame_point) = frame.map_or((i.current_buffer, None), |frame| {
+        let frame = frame.borrow();
+        let window = frame.selected.borrow();
+        (window.buffer, Some(window.point))
+    });
+    // Preserve the current-buffer snapshot for the selected frame (including
+    // minibuffer input). Other frames need their own selected window's buffer
+    // and point so their native views can hit-test mouse input.
+    let buffer_id = if selected_frame {
+        i.current_buffer
+    } else {
+        frame_buffer
+    };
+    let buffer = i.buffers.get(buffer_id)?.clone();
     let bb = buffer.borrow();
     let mod_tick = bb.text.mod_tick.get();
     let (text, char_offsets) = match cached {
@@ -658,7 +680,12 @@ fn input_snapshot(i: &Interp, cached: Option<&GridInput>) -> Option<GridInput> {
             (Arc::<str>::from(text), Arc::<[usize]>::from(char_offsets))
         }
     };
-    let point = bb.point().min(char_offsets.len().saturating_sub(1));
+    let point = if selected_frame {
+        bb.point()
+    } else {
+        frame_point.unwrap_or_else(|| bb.point())
+    }
+    .min(char_offsets.len().saturating_sub(1));
     let cursor = char_offsets.get(point).copied().unwrap_or(0);
     let mark_active = i
         .q_soft("mark-active")
@@ -6219,11 +6246,7 @@ pub fn render_frame_grid_with_input_cached(
     height: usize,
     cached: Option<&GridInput>,
 ) -> Grid {
-    let include_input = i
-        .selected_frame
-        .as_ref()
-        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, frame));
-    render_grid_internal(i, width, height, include_input, cached, Some(frame), None)
+    render_grid_internal(i, width, height, true, cached, Some(frame), None)
 }
 
 /// Render FRAME with mouse-face highlighting at MOUSE_POSITION without
@@ -6236,15 +6259,11 @@ pub fn render_frame_grid_with_mouse_position_cached(
     cached: Option<&GridInput>,
     mouse_position: Option<MousePosition>,
 ) -> Grid {
-    let include_input = i
-        .selected_frame
-        .as_ref()
-        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, frame));
     render_grid_internal(
         i,
         width,
         height,
-        include_input,
+        true,
         cached,
         Some(frame),
         mouse_position,
@@ -6495,7 +6514,7 @@ fn render_grid_internal(
     let mut hover_cursor = None;
     let (blink_cursor, blink_interval, blink_delay, blink_blinks) = blink_cursor_settings(i);
     let mut input = if include_input {
-        input_snapshot(i, cached_input)
+        input_snapshot(i, frame.as_ref(), cached_input)
     } else {
         None
     };
