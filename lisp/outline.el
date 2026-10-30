@@ -980,7 +980,8 @@ With ARG, repeats or can move backward if negative.
 A heading line is one that starts with a `*' (or that
 `outline-regexp' matches)."
   (interactive "p")
-  (goto-char (if (< arg 0) (pos-bol) (pos-eol)))
+  (cond ((< arg 0) (goto-char (pos-bol)))
+        ((> arg 0) (goto-char (pos-eol))))
   (let ((regexp (unless outline-search-function
                   (concat "^\\(?:" outline-regexp "\\)")))
         found-heading-p)
