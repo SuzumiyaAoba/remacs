@@ -2,7 +2,7 @@ use remacs_runtime::{
     editor::{Frame, Window},
     frontend::{
         InputEvent, KeyIo, MousePosition, render_frame_grid_with_input_cached,
-        render_grid_with_input_cached, run_editor_with,
+        MouseButton, MouseInput, render_grid_with_input_cached, run_editor_with,
     },
     lisp::Interp,
 };
@@ -145,6 +145,96 @@ fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window() {
     assert_eq!(position.buffer_position, 5);
     assert_eq!(position.utf16_offset, 5);
     assert_eq!(position.window_id, Some(right_window.borrow().id));
+}
+
+#[test]
+fn same_buffer_hit_test_identifies_the_selected_split_window() {
+    let mut interp = Interp::new();
+    let buffer = interp.create_buffer("shared-split-buffer");
+    interp
+        .buffers
+        .get(buffer)
+        .unwrap()
+        .borrow_mut()
+        .insert("shared buffer text\n");
+    let minibuffer = interp.create_buffer(" *Minibuf-0*");
+    let frame = Frame::new_tty(buffer, minibuffer, 80, 25);
+    let left_window = frame.borrow().selected.clone();
+    left_window.borrow_mut().width = 40;
+    let right_window = Window::new(buffer);
+    {
+        let mut right = right_window.borrow_mut();
+        right.left = 40;
+        right.top = 0;
+        right.width = 40;
+        right.height = 24;
+    }
+    let root = Window::new(buffer);
+    {
+        let mut root = root.borrow_mut();
+        root.horiz = Some(true);
+        root.width = 80;
+        root.height = 24;
+        root.children = vec![left_window.clone(), right_window.clone()];
+    }
+    left_window.borrow_mut().parent = Some(std::rc::Rc::downgrade(&root));
+    right_window.borrow_mut().parent = Some(std::rc::Rc::downgrade(&root));
+    {
+        let mut frame = frame.borrow_mut();
+        frame.root = Some(root);
+        frame.windows.push(right_window.clone());
+        frame.selected = right_window.clone();
+    }
+    interp.selected_frame = Some(frame.clone());
+    interp.frames.push(frame);
+    interp.set_current_buffer(buffer);
+
+    let grid = render_grid_with_input_cached(&interp, 80, 24, None);
+    let position = grid
+        .input
+        .as_ref()
+        .unwrap()
+        .hit_test_position(0, 45, 45)
+        .expect("pointer over the selected right split should map to its window");
+    assert_eq!(position.buffer_id, buffer);
+    assert_eq!(position.window_id, None);
+
+    interp
+        .eval_str(
+            "(global-set-key [mouse-1] (lambda (event) (interactive \"e\") (setq qa-same-buffer-posn-window (eq (posn-window (event-start event)) (selected-window)))))",
+        )
+        .unwrap();
+    interp
+        .eval_str("(global-set-key [f12] (lambda () (interactive) (kill-emacs)))")
+        .unwrap();
+    let mouse_position = MousePosition {
+        buffer_id: position.buffer_id,
+        buffer_position: position.buffer_position,
+        utf16_offset: position.utf16_offset,
+        x: 364,
+        y: 10,
+        row: 0,
+        column: position.column,
+        window_id: position.window_id,
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let frontend = DropFrontend {
+        events: VecDeque::from([
+            InputEvent::Mouse(MouseInput {
+                button: MouseButton::Left,
+                click_count: 1,
+                modifiers: 0,
+                start: mouse_position,
+                end: mouse_position,
+            }),
+            InputEvent::Key(remacs_runtime::editor::event_code_for("f12")),
+        ]),
+    };
+    run_editor_with(frontend, &mut interp).unwrap();
+    let same_window_symbol = interp.intern("qa-same-buffer-posn-window");
+    let same_window = interp.symbol_value(same_window_symbol);
+    assert_eq!(interp.prin1_to_string(&same_window), "t");
 }
 
 #[test]

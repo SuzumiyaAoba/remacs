@@ -291,7 +291,8 @@ pub struct MousePosition {
     /// Display row and character column.
     pub row: usize,
     pub column: usize,
-    /// Target window for non-buffer areas such as mode lines.
+    /// Target window for nonselected buffer rows or non-buffer areas such as
+    /// mode lines.
     pub window_id: Option<usize>,
     /// Window area under the pointer; nil denotes buffer text.
     pub area: Option<MouseArea>,

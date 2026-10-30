@@ -1625,9 +1625,10 @@ fn mouse_event_position(event: &Value) -> Option<Value> {
 
 fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value> {
     let frame = i.selected_frame.as_ref()?;
-    let (window, selected) = {
+    let window = {
         let frame = frame.borrow();
-        let window = position
+        let selected = frame.selected.clone();
+        position
             .window_id
             .and_then(|window_id| {
                 frame
@@ -1637,19 +1638,20 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                     .cloned()
             })
             .or_else(|| {
+                // Prefer the selected window when several windows show the
+                // same buffer and the front-end did not supply a window id.
+                let same_buffer = selected.borrow().buffer == position.buffer_id;
+                same_buffer.then(|| selected.clone())
+            })
+            .or_else(|| {
                 frame
                     .windows
                     .iter()
                     .find(|window| window.borrow().buffer == position.buffer_id)
                     .cloned()
-            });
-        (window, frame.selected.clone())
+            })
     };
-    let window = window.or_else(|| {
-        let selected_window = selected;
-        let selected = selected_window.borrow();
-        (selected.buffer == position.buffer_id).then(|| selected_window.clone())
-    })?;
+    let window = window?;
     let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
     if let Some(crate::frontend::MouseArea::ModeLine) = position.area {
         let buffer_id = window.borrow().buffer;
