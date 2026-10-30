@@ -2291,11 +2291,13 @@ fn minibuf_loop<T: KeyIo>(
             InputEvent::Key(code) if single => return Ok(MinibufInput::Key(code)),
             InputEvent::Text(text) | InputEvent::ReplaceText { text, .. } if single => {
                 let mut chars = text.chars();
-                let first = chars.next().map(|character| character as i128).unwrap_or(0);
+                let Some(first) = chars.next() else {
+                    continue;
+                };
                 for character in chars.rev() {
                     term.borrow_mut().unread(character as i128);
                 }
-                return Ok(MinibufInput::Key(first));
+                return Ok(MinibufInput::Key(first as i128));
             }
             InputEvent::MouseMoved {
                 frame_id,

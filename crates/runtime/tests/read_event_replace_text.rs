@@ -35,7 +35,7 @@ impl KeyIo for InputFrontend {
 }
 
 #[test]
-fn read_event_and_read_char_treat_replace_text_as_input_not_editing() {
+fn read_event_and_read_char_skip_empty_replace_text() {
     let mut interp = Interp::new();
     interp
         .eval_str(
@@ -50,7 +50,9 @@ fn read_event_and_read_char_treat_replace_text_as_input_not_editing() {
     let frontend = InputFrontend {
         events: VecDeque::from([
             InputEvent::Key(remacs_runtime::editor::event_code_for("f8")),
+            replace(""),
             replace("x"),
+            replace(""),
             replace("y"),
             InputEvent::Key(remacs_runtime::editor::event_code_for("f12")),
             InputEvent::Key(remacs_runtime::editor::event_code_for("f12")),
