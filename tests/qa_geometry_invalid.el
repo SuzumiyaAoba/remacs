@@ -28,4 +28,9 @@
 (qa (x-parse-geometry "=80X24+10+20")
     '((height . 24) (width . 80) (top . 20) (left . 10)))
 
+;; Issue #3155: a malformed size invalidates the whole geometry instead of
+;; leaving a partial result containing only its valid offsets.
+(dolist (text '("80x24x10+1+2" "garbage+1+2" "80x+1+2" "x+1+2"))
+  (qa (x-parse-geometry text) nil))
+
 (princ (qa--done))

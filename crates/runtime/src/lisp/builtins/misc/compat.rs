@@ -265,11 +265,24 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
         .unwrap_or(s.len());
     let (size, pos) = s.split_at(split_at);
     let size = size.strip_prefix("=").unwrap_or(size);
-    if let Some((width, height)) = size.split_once('x').or_else(|| size.split_once('X')) {
-        w = parse_geometry_size(width);
-        h = parse_geometry_size(height);
-    } else {
-        w = parse_geometry_size(size);
+    if !size.is_empty() {
+        if let Some((width, height)) = size.split_once('x').or_else(|| size.split_once('X')) {
+            if !width.is_empty() {
+                let Some(width) = parse_geometry_size(width) else {
+                    return Ok(Value::Nil);
+                };
+                w = Some(width);
+            }
+            let Some(height) = parse_geometry_size(height) else {
+                return Ok(Value::Nil);
+            };
+            h = Some(height);
+        } else {
+            let Some(width) = parse_geometry_size(size) else {
+                return Ok(Value::Nil);
+            };
+            w = Some(width);
+        }
     }
     let Some([parsed_left, parsed_top]) = geometry_offsets(pos) else {
         return Ok(Value::Nil);
