@@ -17,11 +17,9 @@
   (qa (length string) 256))
 (qa (vconcat (string-as-unibyte "éあ")) [195 169 227 129 130])
 (qa (vconcat (make-string 3 255 nil)) [255 255 255])
-;; Pre-existing producer bug: propertize drops its source encoding flag.
-(qa-xf (aref (propertize (unibyte-string 128 255) 'face 'bold) 0) 128
-       "propertize loses unibyte metadata before vconcat")
-(qa-xf (vconcat (propertize (unibyte-string 128 255) 'face 'bold)) [128 255]
-       "propertize loses unibyte metadata before vconcat")
+;; `propertize' preserves the source's explicit unibyte representation.
+(qa (aref (propertize (unibyte-string 128 255) 'face 'bold) 0) 128)
+(qa (vconcat (propertize (unibyte-string 128 255) 'face 'bold)) [128 255])
 
 ;; A multibyte string's actual eight-bit characters must stay in their
 ;; character-code domain; Unicode characters must not be truncated to bytes.
