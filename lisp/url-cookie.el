@@ -188,7 +188,9 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
                         'url-cookie-secure-storage))
            (storage (symbol-value storage-var))
            (other-storage (symbol-value other-var))
-           (other-domain (assoc domain other-storage))
+           (other-domain (if (stringp domain)
+                             (assoc-string domain other-storage t)
+                           (assoc domain other-storage)))
 	   tmp found-domain)
       ;; Secure is not part of the replacement key.  Remove a matching cookie
       ;; from the other store before adding or updating this one.
@@ -202,7 +204,9 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
         (unless (cdr other-domain)
           (set other-var (delq other-domain other-storage))))
       ;; First, look for a matching domain.
-      (if (setq found-domain (assoc domain storage))
+      (if (setq found-domain (if (stringp domain)
+                                 (assoc-string domain storage t)
+                               (assoc domain storage)))
           ;; Need to either stick the new cookie in existing domain storage
           ;; or possibly replace an existing cookie if the names match.
           (unless (dolist (cur (setq storage (cdr found-domain)) tmp)
