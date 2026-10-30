@@ -1908,7 +1908,11 @@ fn fit_mode_line_field(field: &str, width: usize, left_align: bool) -> String {
     }
 }
 
-fn format_mode_line_string(value: &str, context: &ModeLineContext) -> String {
+fn format_mode_line_string(
+    value: &str,
+    context: &ModeLineContext,
+    fill_remaining: &mut bool,
+) -> String {
     let characters: Vec<_> = value.chars().collect();
     let mut output = String::new();
     let mut index = 0usize;
@@ -1927,6 +1931,10 @@ fn format_mode_line_string(value: &str, context: &ModeLineContext) -> String {
             output.push('%');
             index += 1;
             continue;
+        }
+        if characters[index] == '-' && index + 1 == characters.len() {
+            *fill_remaining = true;
+            break;
         }
         let left_align = characters[index] == '-';
         if left_align {
@@ -2075,6 +2083,7 @@ fn format_mode_line_minor_modes(
     buffer_id: usize,
     context: &ModeLineContext,
     depth: usize,
+    fill_remaining: &mut bool,
 ) -> String {
     let Some(alist) = mode_line_variable(i, buffer_id, "minor-mode-alist") else {
         return String::new();
@@ -2084,6 +2093,9 @@ fn format_mode_line_minor_modes(
     };
     let mut output = String::new();
     for entry in entries {
+        if *fill_remaining {
+            break;
+        }
         let Ok(parts) = entry.list_to_vec() else {
             continue;
         };
@@ -2095,12 +2107,16 @@ fn format_mode_line_minor_modes(
             .truthy();
         if active {
             for value in parts.iter().skip(1) {
+                if *fill_remaining {
+                    break;
+                }
                 output.push_str(&format_mode_line_value(
                     i,
                     buffer_id,
                     value,
                     context,
                     depth + 1,
+                    fill_remaining,
                 ));
             }
         }
@@ -2114,20 +2130,31 @@ fn format_mode_line_value(
     value: &Value,
     context: &ModeLineContext,
     depth: usize,
+    fill_remaining: &mut bool,
 ) -> String {
-    if depth > 32 {
+    if depth > 32 || *fill_remaining {
         return String::new();
     }
     match value {
         Value::Nil => String::new(),
         Value::Str(string) => {
-            format_mode_line_string(&string.borrow().to_unicode_lossy(), context)
+            format_mode_line_string(
+                &string.borrow().to_unicode_lossy(),
+                context,
+                fill_remaining,
+            )
         }
         Value::Int(number) => number.to_string(),
         Value::Float(number) => number.to_string(),
         Value::Sym(symbol) => {
             if i.symbol_name(*symbol) == "mode-line-minor-modes" {
-                return format_mode_line_minor_modes(i, buffer_id, context, depth + 1);
+                return format_mode_line_minor_modes(
+                    i,
+                    buffer_id,
+                    context,
+                    depth + 1,
+                    fill_remaining,
+                );
             }
             let Some(value) = mode_line_variable(i, buffer_id, &i.symbol_name(*symbol)) else {
                 return String::new();
@@ -2135,7 +2162,7 @@ fn format_mode_line_value(
             if matches!(value, Value::Sym(id) if id == *symbol) {
                 return String::new();
             }
-            format_mode_line_value(i, buffer_id, &value, context, depth + 1)
+            format_mode_line_value(i, buffer_id, &value, context, depth + 1, fill_remaining)
         }
         Value::Cons(_) => {
             let Ok(elements) = value.list_to_vec() else {
@@ -2149,7 +2176,14 @@ fn format_mode_line_value(
                     ":eval" => return String::new(),
                     ":propertize" => {
                         return elements.get(1).map_or_else(String::new, |body| {
-                            format_mode_line_value(i, buffer_id, body, context, depth + 1)
+                            format_mode_line_value(
+                                i,
+                                buffer_id,
+                                body,
+                                context,
+                                depth + 1,
+                                fill_remaining,
+                            )
                         });
                     }
                     _ => {}
@@ -2166,20 +2200,24 @@ fn format_mode_line_value(
                                 &elements[1],
                                 context,
                                 depth + 1,
+                                fill_remaining,
                             );
                         }
-                        return elements[1..]
-                            .iter()
-                            .map(|element| {
-                                format_mode_line_value(
-                                    i,
-                                    buffer_id,
-                                    element,
-                                    context,
-                                    depth + 1,
-                                )
-                            })
-                            .collect();
+                        let mut output = String::new();
+                        for element in &elements[1..] {
+                            if *fill_remaining {
+                                break;
+                            }
+                            output.push_str(&format_mode_line_value(
+                                i,
+                                buffer_id,
+                                element,
+                                context,
+                                depth + 1,
+                                fill_remaining,
+                            ));
+                        }
+                        return output;
                     }
                     if elements.len() >= 3 {
                         return format_mode_line_value(
@@ -2188,6 +2226,7 @@ fn format_mode_line_value(
                             elements.last().unwrap_or(&Value::Nil),
                             context,
                             depth + 1,
+                            fill_remaining,
                         );
                     }
                     return String::new();
@@ -2198,18 +2237,39 @@ fn format_mode_line_value(
             } else {
                 0
             };
-            elements[start..]
-                .iter()
-                .map(|element| {
-                    format_mode_line_value(i, buffer_id, element, context, depth + 1)
-                })
-                .collect()
+            let mut output = String::new();
+            for element in &elements[start..] {
+                if *fill_remaining {
+                    break;
+                }
+                output.push_str(&format_mode_line_value(
+                    i,
+                    buffer_id,
+                    element,
+                    context,
+                    depth + 1,
+                    fill_remaining,
+                ));
+            }
+            output
         }
-        Value::Vec(vector) => vector
-            .borrow()
-            .iter()
-            .map(|element| format_mode_line_value(i, buffer_id, element, context, depth + 1))
-            .collect(),
+        Value::Vec(vector) => {
+            let mut output = String::new();
+            for element in vector.borrow().iter() {
+                if *fill_remaining {
+                    break;
+                }
+                output.push_str(&format_mode_line_value(
+                    i,
+                    buffer_id,
+                    element,
+                    context,
+                    depth + 1,
+                    fill_remaining,
+                ));
+            }
+            output
+        }
         _ => String::new(),
     }
 }
@@ -3103,7 +3163,12 @@ fn place_formatted_window_row(
     let Some(screen_row) = screen.get_mut(row) else {
         return;
     };
-    let text = format_mode_line_value(i, buffer_id, format, context, 0);
+    let mut fill_remaining = false;
+    let mut text = format_mode_line_value(i, buffer_id, format, context, 0, &mut fill_remaining);
+    if fill_remaining {
+        let occupied = fit_text_to_cells_with_tab_width(&text, width, tab_width).1;
+        text.push_str(&"-".repeat(width.saturating_sub(occupied)));
+    }
     let row_text = fit_text_to_cells_with_tab_width(&text, width, tab_width).0;
     let mut style = faces.builtin(i, face_name, 0).finish();
     if style == CellStyle::default()
