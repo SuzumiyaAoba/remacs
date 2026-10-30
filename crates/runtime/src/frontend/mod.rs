@@ -158,20 +158,12 @@ pub enum DragAction {
 
 /// Host operating-system bridge for outgoing GUI drags.
 pub trait DragBackend {
-    /// Begin dragging TEXT from FRAME and wait for the destination's action.
-    fn begin_text_drag(
+    /// Begin dragging the supplied TEXT and file PATHS from FRAME, then wait
+    /// for the destination's action.
+    fn begin_drag(
         &self,
         frame_id: usize,
-        text: &str,
-        action: DragAction,
-        follow_tooltip: bool,
-        tooltip: Option<&str>,
-    ) -> Result<Option<DragAction>, String>;
-
-    /// Begin dragging file paths from FRAME and wait for the destination's action.
-    fn begin_file_drag(
-        &self,
-        frame_id: usize,
+        text: Option<&str>,
         paths: &[String],
         action: DragAction,
         follow_tooltip: bool,

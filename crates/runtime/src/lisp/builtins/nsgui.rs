@@ -961,24 +961,16 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         None
     };
-    let result = if files.is_empty() {
-        backend.begin_text_drag(
+    let result = backend
+        .begin_drag(
             frame.borrow().id,
-            text.as_deref().unwrap(),
-            action,
-            follow_tooltip,
-            tooltip.as_deref(),
-        )
-    } else {
-        backend.begin_file_drag(
-            frame.borrow().id,
+            text.as_deref(),
             &files,
             action,
             follow_tooltip,
             tooltip.as_deref(),
         )
-    }
-    .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
+        .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
     if follow_tooltip {
         i.gui_tip = None;
     }

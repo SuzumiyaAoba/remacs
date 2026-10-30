@@ -353,17 +353,9 @@ pub(super) enum GuiRequest {
         directory_only: bool,
         reply: SyncSender<Result<Option<String>, String>>,
     },
-    BeginTextDrag {
+    BeginDrag {
         frame_id: usize,
-        text: String,
-        action: DragAction,
-        follow_tooltip: bool,
-        tooltip: Option<String>,
-        started: SyncSender<Result<(), String>>,
-        completed: SyncSender<Option<DragAction>>,
-    },
-    BeginFileDrag {
-        frame_id: usize,
+        text: Option<String>,
         paths: Vec<String>,
         action: DragAction,
         follow_tooltip: bool,
@@ -488,44 +480,10 @@ struct GuiDragBackend {
 }
 
 impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
-    fn begin_text_drag(
+    fn begin_drag(
         &self,
         frame_id: usize,
-        text: &str,
-        action: DragAction,
-        follow_tooltip: bool,
-        tooltip: Option<&str>,
-    ) -> Result<Option<DragAction>, String> {
-        let (started, start_response) = mpsc::sync_channel(1);
-        let (completed, completion_response) = mpsc::sync_channel(1);
-        self.requests
-            .send_blocking(GuiRequest::BeginTextDrag {
-                frame_id,
-                text: text.to_owned(),
-                action,
-                follow_tooltip,
-                tooltip: tooltip.map(str::to_owned),
-                started,
-                completed,
-            })
-            .map_err(|_| "GUI drag service is unavailable".to_owned())?;
-        start_response
-            .recv()
-            .map_err(|_| "GUI drag service stopped".to_owned())??;
-        let result = completion_response
-            .recv()
-            .map_err(|_| "GUI drag service stopped".to_owned());
-        if follow_tooltip {
-            let _ = self
-                .requests
-                .send_blocking(GuiRequest::EndDrag { frame_id });
-        }
-        result
-    }
-
-    fn begin_file_drag(
-        &self,
-        frame_id: usize,
+        text: Option<&str>,
         paths: &[String],
         action: DragAction,
         follow_tooltip: bool,
@@ -534,8 +492,9 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         let (started, start_response) = mpsc::sync_channel(1);
         let (completed, completion_response) = mpsc::sync_channel(1);
         self.requests
-            .send_blocking(GuiRequest::BeginFileDrag {
+            .send_blocking(GuiRequest::BeginDrag {
                 frame_id,
+                text: text.map(str::to_owned),
                 paths: paths.to_vec(),
                 action,
                 follow_tooltip,

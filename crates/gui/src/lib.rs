@@ -1221,74 +1221,9 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
-                    GuiRequest::BeginTextDrag {
+                    GuiRequest::BeginDrag {
                         frame_id,
                         text,
-                        action,
-                        follow_tooltip,
-                        tooltip,
-                        started,
-                        completed,
-                    } => {
-                        let operation = match action {
-                            remacs_runtime::frontend::DragAction::Copy => {
-                                ExternalDragOperation::Copy
-                            }
-                            remacs_runtime::frontend::DragAction::Move => {
-                                ExternalDragOperation::Move
-                            }
-                            remacs_runtime::frontend::DragAction::Link => {
-                                ExternalDragOperation::Link
-                            }
-                            remacs_runtime::frontend::DragAction::Private => {
-                                ExternalDragOperation::Generic
-                            }
-                        };
-                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
-                            handle
-                                .update(cx, move |view, window, cx| {
-                                    view.set_follow_tooltip_drag(follow_tooltip);
-                                    cx.notify();
-                                    let result = window.begin_text_drag_session(
-                                        text,
-                                        operation,
-                                        follow_tooltip,
-                                        tooltip,
-                                        move |operation| {
-                                            let operation = operation.map(|operation| {
-                                                match operation {
-                                                    ExternalDragOperation::Copy => {
-                                                        remacs_runtime::frontend::DragAction::Copy
-                                                    }
-                                                    ExternalDragOperation::Move => {
-                                                        remacs_runtime::frontend::DragAction::Move
-                                                    }
-                                                    ExternalDragOperation::Link => {
-                                                        remacs_runtime::frontend::DragAction::Link
-                                                    }
-                                                    ExternalDragOperation::Generic => {
-                                                        remacs_runtime::frontend::DragAction::Private
-                                                    }
-                                                }
-                                            });
-                                            let _ = completed.send(operation);
-                                        },
-                                    );
-                                    if result.is_err() && follow_tooltip {
-                                        view.set_follow_tooltip_drag(false);
-                                        cx.notify();
-                                    }
-                                    result
-                                })
-                                .map_err(|error| error.to_string())
-                                .and_then(|result| result)
-                        } else {
-                            Err(format!("GUI frame {frame_id} is not open"))
-                        };
-                        let _ = started.send(result);
-                    }
-                    GuiRequest::BeginFileDrag {
-                        frame_id,
                         paths,
                         action,
                         follow_tooltip,
@@ -1315,7 +1250,8 @@ pub fn run_gui_with_dump(
                                 .update(cx, move |view, window, cx| {
                                     view.set_follow_tooltip_drag(follow_tooltip);
                                     cx.notify();
-                                    let result = window.begin_file_drag_session(
+                                    let result = window.begin_drag_session(
+                                        text,
                                         paths,
                                         operation,
                                         follow_tooltip,

@@ -1734,40 +1734,21 @@ impl Window {
             .set_titlebar_appearance(decorated, transparent);
     }
 
-    /// Begin dragging text from this window to the operating system.
+    /// Begin dragging text and/or file paths from this window to the operating system.
     ///
-    /// The completion callback receives the operation accepted by the drop
-    /// target, or `None` if the drag was cancelled.
-    pub fn begin_text_drag_session(
+    /// The completion callback receives the operation accepted by the drop target,
+    /// or `None` if the drag was cancelled.
+    pub fn begin_drag_session(
         &self,
-        text: String,
-        operation: ExternalDragOperation,
-        follow_tooltip: bool,
-        tooltip: Option<String>,
-        completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
-    ) -> std::result::Result<(), String> {
-        self.platform_window.begin_text_drag_session(
-            text,
-            operation,
-            follow_tooltip,
-            tooltip,
-            Box::new(completion),
-        )
-    }
-
-    /// Begin dragging files from this window to the operating system.
-    ///
-    /// The completion callback receives the operation accepted by the drop
-    /// target, or `None` if the drag was cancelled.
-    pub fn begin_file_drag_session(
-        &self,
+        text: Option<String>,
         paths: Vec<String>,
         operation: ExternalDragOperation,
         follow_tooltip: bool,
         tooltip: Option<String>,
         completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
     ) -> std::result::Result<(), String> {
-        self.platform_window.begin_file_drag_session(
+        self.platform_window.begin_drag_session(
+            text,
             paths,
             operation,
             follow_tooltip,
