@@ -34,4 +34,34 @@
                         (get-text-property 0 'x (car kill-ring)) (cdr kill-ring)))) '(t t 1 ("b")))
 (qa (qa130-ring (let ((s (copy-sequence "a")))
                   (kill-new s t) (eq (car kill-ring) s))) t)
+
+;; `kill-append' replaces with a fresh concatenation.  Appending to a
+;; shared empty string must not change the empty string object itself.
+(qa (qa130-ring
+      (let* ((empty (make-string 0 ?A))
+             (ring (list empty)))
+        (setq kill-ring ring kill-ring-yank-pointer ring)
+        (kill-append "Alpha be" nil)
+        (list (length empty) (eq empty (car kill-ring))
+              (car kill-ring) (eq ring kill-ring))))
+    '(0 nil "Alpha be" t))
+
+;; Prepending and appending follow kill-append's argument order.
+(qa (qa130-ring
+      (kill-new "middle")
+      (kill-append "-end" nil)
+      (kill-append "pre-" t)
+      (car kill-ring))
+    "pre-middle-end")
+
+;; Preserve an existing yank-handler entry and add the merged string ahead
+;; of it, as kill-new does when REPLACE is nil.
+(qa (qa130-ring
+      (let* ((old (propertize "old" 'yank-handler t))
+             (ring (list old)))
+        (setq kill-ring ring kill-ring-yank-pointer ring)
+        (kill-append "new" nil)
+        (list (car kill-ring) (eq (cadr kill-ring) old)
+              (eq kill-ring ring))))
+    '("oldnew" t nil))
 (princ (qa--done))

@@ -11555,40 +11555,40 @@ fn f_kill_new(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_kill_append(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU's kill-append is Lisp: it feeds `(concat cur STRING)' to
-    // kill-new — so STRING is any sequence (sequencep), not just strings.
-    let mut s = EmacsText::new();
-    crate::lisp::builtins::strfn::concat_seq(i, &a[0], &mut s)?;
-    // BEFORE-P non-nil prepends to the newest entry.
-    let before = !arg(&a, 1).is_nil();
     let kr = i.q("kill-ring");
-    let cur = i.symbol_value(kr);
-    let mut items = cur.list_to_vec().unwrap_or_default();
-    if let Some(Value::Str(top)) = items.first_mut() {
-        let mut t = top.borrow_mut();
-        if before {
-            let mut joined = s.clone();
-            joined.push_str(&*t);
-            *t = joined.into();
-        } else {
-            t.push_str(&s);
-        }
+    let car = Value::Sym(i.q("car"));
+    let cur = i.apply(&car, vec![i.symbol_value(kr)])?;
+
+    // GNU's kill-append is Lisp: build the new value with concat and pass it
+    // through kill-new.  Besides preserving REPLACE and yank-handler rules,
+    // this must leave CUR alone: the shared empty string can be the ring head.
+    let concat = Value::Sym(i.q("concat"));
+    let joined = if arg(&a, 1).truthy() {
+        i.apply(&concat, vec![a[0].clone(), cur.clone()])?
     } else {
-        items.insert(0, Value::string(s));
-    }
-    i.obarray.symbol_mut(kr).value = Value::list(items);
-    // GNU's kill-append delegates to kill-new, so the merged string
-    // also goes through `interprogram-cut-function'.
-    if let Some(icf_id) = i.q_soft("interprogram-cut-function") {
-        let icf = i.symbol_value(icf_id);
-        if icf.truthy() {
-            let items = i.symbol_value(kr).list_to_vec().unwrap_or_default();
-            if let Some(top) = items.into_iter().next() {
-                i.apply(&icf, vec![top])?;
-            }
-        }
-    }
-    Ok(Value::Nil)
+        i.apply(&concat, vec![cur.clone(), a[0].clone()])?
+    };
+
+    let length = Value::Sym(i.q("length"));
+    let len = i.apply(&length, vec![cur.clone()])?;
+    let equal = Value::Sym(i.q("="));
+    let replace = if i
+        .apply(&equal, vec![len, Value::Int(0)])?
+        .truthy()
+    {
+        true
+    } else {
+        let get_text_property = Value::Sym(i.q("get-text-property"));
+        let yank_handler = Value::Sym(i.q("yank-handler"));
+        i.apply(
+            &get_text_property,
+            vec![Value::Int(0), yank_handler, cur],
+        )?
+        .is_nil()
+    };
+
+    let kill_new = Value::Sym(i.q("kill-new"));
+    i.apply(&kill_new, vec![joined, Value::from_bool(replace)])
 }
 
 fn f_current_kill(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
