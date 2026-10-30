@@ -354,13 +354,14 @@ car is the string."
 		 prompt
 		 alist
 		 nil
-		 t)))
-    (if (erc-member-ignore-case entry (symbol-value list))
-	;; plain string
-	(set list (delete entry (symbol-value list)))
-      ;; cons cell
-      (set list (delete (assoc entry (symbol-value list))
-			(symbol-value list))))))
+		 t))
+         (entries (symbol-value list))
+         (assoc-entry (assoc entry entries)))
+    (if assoc-entry
+	;; cons cell
+	(set list (delete assoc-entry entries))
+      ;; plain string
+	(set list (delete entry entries)))))
 
 ;;;###autoload
 (defun erc-add-pal (&optional arg)
