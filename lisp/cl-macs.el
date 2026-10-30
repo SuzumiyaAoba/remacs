@@ -2909,8 +2909,37 @@ Each PLACE may be a symbol, or any generalized variable allowed by `setf'.
                              binds))
               body-form))))
     (let* ((binding (car bindings))
-           (place (car binding)))
+           (place (car binding))
+           ;; A `gethash' place normally loses the distinction between an
+           ;; absent key and a key whose value is nil.  Give the getter a
+           ;; private default so the cleanup setter can remove a key that
+           ;; was absent before the temporary binding.
+           (missing (and (eq (car-safe place) 'gethash)
+                         (consp (cdr place))
+                         (consp (cddr place))
+                         (null (cddddr place))
+                         (make-symbol "cl--letf--missing")))
+           (place
+            (if missing
+                (list 'gethash (cadr place) (caddr place)
+                      (if (consp (cdddr place))
+                          `(progn ,(nth 3 place) ',missing)
+                        `',missing))
+              place)))
       (gv-letplace (getter setter) place
+        (when missing
+          ;; `gv--defsetter' has already bound the key and table to private
+          ;; temporaries.  Reuse those expressions in the cleanup form so a
+          ;; side-effecting key or table expression still runs only once.
+          (let* ((puthash-form (funcall setter nil))
+                 (key (nth 1 puthash-form))
+                 (table (nth 3 puthash-form))
+                 (ordinary-setter setter))
+            (setq setter
+                  (lambda (value)
+                    `(if (eq ,value ',missing)
+                         (remhash ,key ,table)
+                       ,(funcall ordinary-setter value))))))
         (macroexp-let2 nil vnew (cadr binding)
           (if (and (symbolp place)
                    ;; `place' could be some symbol-macro.
