@@ -107,28 +107,18 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         })
         .map_or(0, |scroll| scroll.pixels);
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
-    let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
-    let (character, _) = input_row
-        .source_offsets
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, source_offset)| source_offset.abs_diff(byte))?;
-    let buffer_position = input_row
-        .buffer_start
-        .saturating_add(character)
-        .min(input.character_count());
-    let utf16_offset = input.utf16_offset_for_character(buffer_position)?;
+    let mapped = input.hit_test_position(row, column, byte)?;
     Some(MousePosition {
-        buffer_id: input.buffer_id,
-        buffer_position,
-        utf16_offset,
+        buffer_id: mapped.buffer_id,
+        buffer_position: mapped.buffer_position,
+        utf16_offset: mapped.utf16_offset,
         x: f32::from(point.x).round() as i128,
         y: f32::from(point.y).round() as i128,
         row,
-        column: character,
-        window_id: None,
+        column: mapped.column,
+        window_id: mapped.window_id,
         area: None,
         mode_line_buffer_name: false,
     })
@@ -182,12 +172,10 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         })
         .map_or(0, |scroll| scroll.pixels);
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
-    let input_row = input.rows.iter().find(|input_row| input_row.row == row)?;
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
-    let source_start = input_row.source_offsets.first()?;
-    let source_end = input_row.source_offsets.last()?;
-    (*source_start..=*source_end)
+    let (source_start, source_end) = input.hit_test_source_range(row, column)?;
+    (source_start..=source_end)
         .contains(&byte)
         .then(|| mouse_position_for_point_with_cell_width(grid, point, cell_width, window))
         .flatten()

@@ -538,6 +538,28 @@ pub struct GridInputRow {
     pub source_offsets: Vec<usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridInputPosition {
+    pub buffer_id: usize,
+    pub buffer_position: usize,
+    pub utf16_offset: usize,
+    pub column: usize,
+    pub window_id: Option<usize>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct GridInputHitTestRow {
+    row: usize,
+    buffer_id: usize,
+    buffer_start: usize,
+    source_offsets: Vec<usize>,
+    char_offsets: Arc<[usize]>,
+    window_id: Option<usize>,
+    left: usize,
+    right: usize,
+    screen_left: usize,
+}
+
 #[derive(Clone, PartialEq)]
 pub struct GridInput {
     pub buffer_id: usize,
@@ -549,6 +571,8 @@ pub struct GridInput {
     pub rows: Vec<GridInputRow>,
     mod_tick: u64,
     char_offsets: Arc<[usize]>,
+    hit_test_rows: Vec<GridInputHitTestRow>,
+    hit_test_char_offsets: HashMap<usize, (u64, Arc<[usize]>)>,
 }
 
 impl GridInput {
@@ -572,6 +596,98 @@ impl GridInput {
         } else {
             character.saturating_sub(1).min(self.character_count())
         }
+    }
+
+    /// Return the UTF-8 source-byte range covered by the hit-test row at a
+    /// grid row and column. Used to reject pointer positions on rendered
+    /// decorations instead of buffer text.
+    pub fn hit_test_source_range(&self, row: usize, column: usize) -> Option<(usize, usize)> {
+        let row = self.hit_test_rows.iter().find(|candidate| {
+            candidate.row == row && column >= candidate.left && column < candidate.right
+        })?;
+        let start = *row.source_offsets.iter().min()?;
+        let end = *row.source_offsets.iter().max()?;
+        Some((start, end))
+    }
+
+    /// Map a rendered text byte back to its buffer and window position.
+    pub fn hit_test_position(
+        &self,
+        row: usize,
+        column: usize,
+        source_byte: usize,
+    ) -> Option<GridInputPosition> {
+        let row = self.hit_test_rows.iter().find(|candidate| {
+            candidate.row == row && column >= candidate.left && column < candidate.right
+        })?;
+        let character = row
+            .source_offsets
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, source_offset)| source_offset.abs_diff(source_byte))?
+            .0;
+        let buffer_position = row.buffer_start.saturating_add(character);
+        let utf16_offset = row.char_offsets.get(buffer_position).copied()?;
+        Some(GridInputPosition {
+            buffer_id: row.buffer_id,
+            buffer_position,
+            utf16_offset,
+            column: character,
+            window_id: row.window_id,
+        })
+    }
+
+    fn add_hit_test_row(
+        &mut self,
+        i: &Interp,
+        row: usize,
+        buffer_id: usize,
+        buffer_start: usize,
+        source_offsets: Vec<usize>,
+        window_id: Option<usize>,
+        left: usize,
+        right: usize,
+        screen_left: usize,
+    ) {
+        let char_offsets = if buffer_id == self.buffer_id {
+            self.char_offsets.clone()
+        } else {
+            let Some(buffer) = i.buffers.get(buffer_id) else {
+                return;
+            };
+            let mod_tick = buffer.borrow().text.mod_tick.get();
+            if let Some((cached_tick, offsets)) = self.hit_test_char_offsets.get(&buffer_id)
+                && *cached_tick == mod_tick
+            {
+                offsets.clone()
+            } else {
+                let bb = buffer.borrow();
+                let source = bb.text.text();
+                let mut offsets = Vec::with_capacity(source.chars().count() + 1);
+                let mut utf16_offset = 0usize;
+                for character in source.chars() {
+                    offsets.push(utf16_offset);
+                    let character = character.unicode().unwrap_or('\u{fffd}');
+                    utf16_offset += character.len_utf16();
+                }
+                offsets.push(utf16_offset);
+                let offsets: Arc<[usize]> = Arc::from(offsets);
+                self.hit_test_char_offsets
+                    .insert(buffer_id, (mod_tick, offsets.clone()));
+                offsets
+            }
+        };
+        self.hit_test_rows.push(GridInputHitTestRow {
+            row,
+            buffer_id,
+            buffer_start,
+            source_offsets,
+            char_offsets,
+            window_id,
+            left,
+            right,
+            screen_left,
+        });
     }
 }
 
@@ -714,6 +830,10 @@ fn input_snapshot(
     } else {
         None
     };
+    let mut hit_test_char_offsets = cached
+        .map(|snapshot| snapshot.hit_test_char_offsets.clone())
+        .unwrap_or_default();
+    hit_test_char_offsets.insert(bb.id, (mod_tick, char_offsets.clone()));
     Some(GridInput {
         buffer_id: bb.id,
         text,
@@ -722,6 +842,8 @@ fn input_snapshot(
         rows: Vec::new(),
         mod_tick,
         char_offsets,
+        hit_test_rows: Vec::new(),
+        hit_test_char_offsets,
     })
 }
 
@@ -8049,6 +8171,19 @@ fn render_grid_internal(
                         ));
                     }
                 }
+                if let Some(snapshot) = input.as_mut() {
+                    snapshot.add_hit_test_row(
+                        i,
+                        y,
+                        buf_id,
+                        segment_pos,
+                        rendered.source_offsets.clone(),
+                        (!selected_window).then_some(window_id),
+                        content_left,
+                        content_left.saturating_add(content_width),
+                        content_left,
+                    );
+                }
                 if selected_window
                     && input
                         .as_ref()
@@ -8299,15 +8434,27 @@ fn render_grid_internal(
                     height: image.height,
                 }
             }));
-            if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref())
-                && snapshot.buffer_id == buffer.borrow().id
-            {
-                snapshot.rows.push(GridInputRow {
-                    row: y,
-                    buffer_start: range.start,
-                    source_offsets: rendered.source_offsets.clone(),
-                });
-                input_screen_lefts.push((snapshot.rows.len() - 1, 0));
+            if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref()) {
+                let buffer_id = buffer.borrow().id;
+                snapshot.add_hit_test_row(
+                    i,
+                    y,
+                    buffer_id,
+                    range.start,
+                    rendered.source_offsets.clone(),
+                    None,
+                    0,
+                    width,
+                    0,
+                );
+                if snapshot.buffer_id == buffer_id {
+                    snapshot.rows.push(GridInputRow {
+                        row: y,
+                        buffer_start: range.start,
+                        source_offsets: rendered.source_offsets.clone(),
+                    });
+                    input_screen_lefts.push((snapshot.rows.len() - 1, 0));
+                }
             }
             place_rendered_row(&mut screen_rows[y], 0, &rendered);
         }
@@ -8513,6 +8660,23 @@ fn render_grid_internal(
                 *offset += base;
             }
         }
+        for row in &mut input.hit_test_rows {
+            let base = cell_offsets[row.row][row.screen_left.min(width)];
+            for offset in &mut row.source_offsets {
+                *offset += base;
+            }
+        }
+        let active_buffer = input.buffer_id;
+        let visible_buffers = input
+            .hit_test_rows
+            .iter()
+            .map(|row| row.buffer_id)
+            .collect::<HashSet<_>>();
+        input
+            .hit_test_char_offsets
+            .retain(|buffer_id, _| {
+                *buffer_id == active_buffer || visible_buffers.contains(buffer_id)
+            });
     }
     let mut grid = Grid {
         title,

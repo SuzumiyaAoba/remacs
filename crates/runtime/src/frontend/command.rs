@@ -1404,7 +1404,17 @@ fn dispatch_drop(
     let Some(frame) = i.selected_frame.clone() else {
         return Ok(());
     };
-    let window = frame.borrow().selected.clone();
+    let window = position
+        .and_then(|position| position.window_id)
+        .and_then(|window_id| {
+            frame
+                .borrow()
+                .windows
+                .iter()
+                .find(|window| window.borrow().id == window_id)
+                .cloned()
+        })
+        .unwrap_or_else(|| frame.borrow().selected.clone());
     let buffer_id = window.borrow().buffer;
     if let Some(position) = position.filter(|position| position.buffer_id == buffer_id)
         && let Some(buffer) = i.buffers.get(buffer_id)

@@ -414,7 +414,8 @@ pub use command::{
 };
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
-    GridCursorShape, GridHelpEcho, GridImage, GridImageSource, GridInput, GridInputRow,
+    GridCursorShape, GridHelpEcho, GridImage, GridImageSource, GridInput, GridInputPosition,
+    GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
     GridModeLine, GridVScroll,
