@@ -204,6 +204,7 @@ fn modifier_context(ks: &Keystroke) -> ModifierContext {
                 | "right"
                 | "home"
                 | "end"
+                | "help"
                 | "delete"
                 | "insert"
                 | "undo"
@@ -355,8 +356,8 @@ pub(super) fn keystroke_to_code_with_mapping(
         "space" => 32,
         "pageup" => named("prior"),
         "pagedown" => named("next"),
-        "up" | "down" | "left" | "right" | "home" | "end" | "delete" | "insert" | "undo"
-        | "redo" => named(ks.key.as_str()),
+        "up" | "down" | "left" | "right" | "home" | "end" | "help" | "delete"
+        | "insert" | "undo" | "redo" => named(ks.key.as_str()),
         s if s.starts_with("kp-") => named(s),
         s if s.len() > 1 && s.starts_with('f') && s[1..].parse::<u32>().is_ok() => named(s),
         s if s.chars().count() == 1 => {

@@ -230,6 +230,16 @@ fn keystroke_modified_named_and_unknown() {
 }
 
 #[test]
+fn help_keysym_reaches_the_named_help_binding() {
+    let help = ks("help", None, false, false, false, false);
+    assert!(command_keystroke(&help));
+    assert_eq!(
+        keystroke_to_code(&help),
+        Some(remacs_runtime::editor::event_code_for("help"))
+    );
+}
+
+#[test]
 fn modified_named_keys_follow_gui_command_bindings() {
     let mut i = Interp::new();
     i.eval_str("(progn (insert \"alpha\\nbeta\") (goto-char (point-max)))")
