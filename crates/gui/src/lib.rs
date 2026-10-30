@@ -1092,10 +1092,20 @@ pub fn run_gui_with_dump(
                         current_font,
                         reply,
                     } => {
-                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                        let activate_frame = windows.contains_key(&frame_id);
+                        let handle = windows
+                            .get(&frame_id)
+                            .copied()
+                            .or_else(|| windows.values().next().copied())
+                            .or(primary_window);
+                        let result = if let Some(handle) = handle {
                             handle
                                 .update(cx, move |_view, window, _cx| {
-                                    show_native_font_panel(window, &current_font)
+                                    show_native_font_panel(
+                                        window,
+                                        &current_font,
+                                        activate_frame,
+                                    )
                                 })
                                 .map_err(|error| error.to_string())
                                 .and_then(|result| result)
@@ -2390,12 +2400,18 @@ extern "C" fn font_panel_window_will_close(_this: &Object, _cmd: Sel, _notificat
 }
 
 #[cfg(target_os = "macos")]
-fn show_native_font_panel(window: &Window, current_font: &str) -> Result<Option<String>, String> {
+fn show_native_font_panel(
+    window: &Window,
+    current_font: &str,
+    activate_frame: bool,
+) -> Result<Option<String>, String> {
     // The modal AppKit loop keeps the native Font panel responsive while the
     // logic thread waits for x-select-font to return.
     let native_window =
         appkit_native_window(window).ok_or_else(|| "native frame window is unavailable".to_owned())?;
-    window.activate_window();
+    if activate_frame {
+        window.activate_window();
+    }
     let app: id = unsafe { msg_send![class!(NSApplication), sharedApplication] };
     let manager: id = unsafe { msg_send![class!(NSFontManager), sharedFontManager] };
     let panel: id = unsafe { msg_send![class!(NSFontPanel), sharedFontPanel] };
