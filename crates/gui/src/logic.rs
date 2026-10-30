@@ -1794,6 +1794,8 @@ impl KeyIo for ChanIo {
         self.frame_geometries
             .retain(|id, _| live_ids.contains(id));
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
+        self.scroll_remainders
+            .retain(|frame_id, _| frame_id.is_none_or(|id| live_ids.contains(&id)));
         let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
         let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
         let mut selected_grid = None;
