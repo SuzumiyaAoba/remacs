@@ -376,6 +376,25 @@ name-normalized character classes."
                                   (rx--human-readable x)))))
                      forms)))
 
+(defun rx--char-classes-to-intervals (classes)
+  "Return a simple interval set for supported named character CLASSES."
+  (let ((intervals nil)
+        (valid t))
+    (dolist (class classes)
+      (let ((class-intervals
+             (pcase class
+               ('digit (list (cons ?0 ?9)))
+               ('xdigit (list (cons ?0 ?9) (cons ?A ?F) (cons ?a ?f)))
+               ('cntrl (list (cons 0 31)))
+               ('ascii (list (cons 0 127)))
+               ;; Raw eight-bit characters occupy #x3fff80 and above.
+               ('nonascii (list (cons 128 #x3fff7f))))))
+        (if class-intervals
+            (setq intervals
+                  (rx--interval-set-union intervals class-intervals))
+          (setq valid nil))))
+    (and valid intervals)))
+
 (defun rx--reduce-to-char-alt (form)
   "Transform FORM into (INTERVALS . CLASSES) or nil if not possible.
 Process `or', `intersection' and `not'.
@@ -388,9 +407,17 @@ FORM must be normalized (from `rx--normalize-char-pattern')."
    ((consp form)
     (let ((head (car form)))
       (cond
-       ;; FIXME: Transform `digit', `xdigit', `cntrl', `ascii', `nonascii'
-       ;; to ranges? That would allow them to be negated and intersected.
-       ((eq head 'rx--char-alt) (cdr form))
+       ((eq head 'rx--char-alt)
+        (let* ((char-alt (cdr form))
+               (intervals (car char-alt))
+               (classes (cdr char-alt)))
+          (if (null classes)
+              char-alt
+            (let ((class-intervals
+                   (rx--char-classes-to-intervals classes)))
+              (and class-intervals
+                   (cons (rx--interval-set-union intervals class-intervals)
+                         nil))))))
        ((eq head 'not)
         (unless (= (length form) 2)
           (error "rx `not' form takes exactly one argument"))
