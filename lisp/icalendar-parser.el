@@ -1477,6 +1477,15 @@ DAYNO must be in [0..6] and OFFSET in [-53..53], excluding 0."
 (defun icalendar-rrule-value-p (vals)
   "Return non-nil if VALS is an iCalendar recurrence rule value."
   (and (listp vals)
+       ;; RFC 5545 section 3.3.10: each rule part is allowed only once.
+       (let ((seen nil))
+         (seq-every-p
+          (lambda (part)
+            (let ((key (car-safe part)))
+              (unless (memq key seen)
+                (push key seen)
+                t)))
+          vals))
        ;; FREQ is always required:
        (assq 'FREQ vals)
        ;; COUNT and UNTIL are mutually exclusive if present:
