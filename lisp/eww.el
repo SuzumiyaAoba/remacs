@@ -2334,8 +2334,28 @@ external browser."
     (browse-url-with-browser-kind 'external url)))
 
 (defun eww-remove-tracking (url)
-  "Remove the commong utm_ tracking cookies from URLs."
-  (replace-regexp-in-string ".utm_.*" "" url))
+  "Remove utm_ tracking parameters from the query of URL."
+  (save-match-data
+    (let ((query-start (string-search "?" url))
+          (fragment-start (string-search "#" url)))
+      (if (and query-start
+               (or (not fragment-start) (< query-start fragment-start)))
+          (let* ((end (or fragment-start (length url)))
+                 (fields (split-string (substring url (1+ query-start) end) "&" nil))
+                 (kept
+                  (cl-remove-if
+                   (lambda (field)
+                     (string-prefix-p
+                      "utm_"
+                      (url-unhex-string (substring field 0 (string-search "=" field)))
+                      t))
+                   fields)))
+            (if (= (length fields) (length kept))
+                url
+              (concat (substring url 0 query-start)
+                      (when kept (concat "?" (mapconcat #'identity kept "&")))
+                      (substring url end))))
+        url))))
 
 (defun eww--transform-url (url)
   "Apply `eww-url-transformers'."
