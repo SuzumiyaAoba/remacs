@@ -1,0 +1,60 @@
+;;; -*- lexical-binding: t -*-
+(require 'wdired)
+
+(qa (wdired-perms-to-number "----------") #o0000)
+(qa (wdired-perms-to-number "-rw-r--r--") #o0644)
+(qa (wdired-perms-to-number "drwxr-xr-x") #o0755)
+(qa (wdired-perms-to-number "-rwxrwxrwx") #o0777)
+(qa (wdired-perms-to-number "-rwsr-sr-t") #o7755)
+(qa (wdired-perms-to-number "-rwSr-Sr-T") #o7644)
+(qa (wdired-perms-to-number "---S--S--T") #o7000)
+(qa (wdired-perms-to-number "------l---") #o2000)
+(qa-err (wdired-perms-to-number "--------q-") 'user-error)
+(qa-err (wdired-perms-to-number "") 'user-error)
+(qa-err (wdired-perms-to-number "---------") 'user-error)
+(qa-err (wdired-perms-to-number "-----------") 'user-error)
+
+(defun qa-wdired--rejected-positions (character positions)
+  (let (accepted)
+    (dolist (position positions)
+      (let ((perms (copy-sequence "----------")))
+        (aset perms (1+ position) character)
+        (condition-case nil
+            (progn (wdired-perms-to-number perms) (push position accepted))
+          (user-error nil))))
+    (nreverse accepted)))
+(qa (qa-wdired--rejected-positions ?q '(0 1 2 3 4 5 6 7 8)) nil)
+(qa (qa-wdired--rejected-positions ?r '(1 2 4 5 7 8)) nil)
+(qa (qa-wdired--rejected-positions ?w '(0 2 3 5 6 8)) nil)
+(qa (qa-wdired--rejected-positions ?x '(0 1 3 4 6 7)) nil)
+(qa (qa-wdired--rejected-positions ?s '(0 1 3 4 6 7 8)) nil)
+(qa (qa-wdired--rejected-positions ?t '(0 1 2 3 4 5 6 7)) nil)
+(qa (qa-wdired--rejected-positions ?l '(0 1 2 3 4 6 7 8)) nil)
+
+;; The actual permission-change loop must reject the entry before chmod.
+(defun qa-wdired--apply-perms (perms)
+  (let ((old-set (symbol-function 'set-file-modes))
+        (old-name (symbol-function 'wdired-get-filename))
+        (old-log (symbol-function 'dired-log))
+        called)
+    (unwind-protect
+        (progn
+          (fset 'set-file-modes (lambda (&rest args) (push args called)))
+          (fset 'wdired-get-filename (lambda (&rest _args) "qa-permissions-file"))
+          (fset 'dired-log (lambda (&rest _args) nil))
+          (with-temp-buffer
+            (insert " " perms " filename\n")
+            (put-text-property 2 3 'old-perm "----------")
+            (put-text-property 12 13 'end-perm t)
+            (let ((wdired-allow-to-change-permissions 'advanced))
+              (list (wdired-do-perm-changes) (nreverse called)))))
+      (fset 'set-file-modes old-set)
+      (fset 'wdired-get-filename old-name)
+      (fset 'dired-log old-log))))
+
+(qa (qa-wdired--apply-perms "--------q-") '((t . 1) nil))
+(qa (qa-wdired--apply-perms "-rwx-----q") '((t . 1) nil))
+(qa (qa-wdired--apply-perms "-rw-r--r--")
+    '((t . 0) (("qa-permissions-file" #o644 nofollow))))
+
+(princ (qa--done))

@@ -1024,6 +1024,15 @@ Like original function but it skips read-only words."
 ;; Allowed chars for #o2000 bit are Ssl in position 6
 ;; Allowed chars for #o1000 bit are Tt  in position 9
 (defun wdired-perms-to-number (perms)
+  "Convert the ten-character permission field PERMS to a numeric mode.
+The leading file-type character is ignored.  Invalid permission
+characters or lengths signal a user error."
+  ;; Remacs: reject malformed edits before they can grant permission bits.
+  (unless (= (length perms) 10)
+    (user-error "Invalid permission string: %S" perms))
+  (dotimes (position 9)
+    (unless (wdired-perm-allowed-in-pos (elt perms (1+ position)) position)
+      (user-error "Invalid permission string: %S" perms)))
   (let ((nperm #o0777))
     (if (= (elt perms 1) ?-) (setq nperm (- nperm #o400)))
     (if (= (elt perms 2) ?-) (setq nperm (- nperm #o200)))
