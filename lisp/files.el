@@ -7856,6 +7856,8 @@ position is not a literal closing bracket."
         (len (length wildcard))
         end)
     (unless no-first-close
+      (when (and (< i len) (eq (aref wildcard i) ?!))
+        (setq i (1+ i)))
       (when (and (< i len) (eq (aref wildcard i) ?\]))
         (setq i (1+ i))))
     (while (and (< i len) (not end))
