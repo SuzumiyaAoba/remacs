@@ -677,6 +677,8 @@ See also `dabbrev-abbrev-char-regexp' and \\[dabbrev-completion]."
 				    nil t)
 		(forward-char 1)
 	      (user-error "No possible abbreviation preceding point"))))
+      ;; Remacs: exclude separators skipped above from the abbreviation.
+      (setq end (point))
       ;; Now find the beginning of that one.
       (dabbrev--goto-start-of-abbrev)
       (buffer-substring-no-properties (point) end))))
