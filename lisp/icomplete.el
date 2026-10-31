@@ -404,33 +404,33 @@ require user confirmation."
   (let ((end (icomplete--field-end)))
     (if (< (point) end)
         (call-interactively 'kill-line)
-      (let* ((all (completion-all-sorted-completions))
-             (thing (car all))
-             (cat (icomplete--category))
-             (action
-              (cl-case cat
-                (buffer
-                 (lambda ()
-                   (when (yes-or-no-p (concat "Kill buffer " thing "? "))
-                     (kill-buffer thing))))
-                ((project-file file)
-                 (lambda ()
-                   (let* ((dir (file-name-directory (icomplete--field-string)))
-                          (path (expand-file-name thing dir)))
-                     (when (yes-or-no-p (concat "Delete file " path "? "))
-                       (delete-file path) t))))
-                (t
-                 (error "Sorry, don't know how to kill things for `%s'" cat)))))
-        (when (let (;; Allow `yes-or-no-p' to work and don't let it
-                    ;; `icomplete-exhibit' anything.
-                    (enable-recursive-minibuffers t)
-                    (icomplete-mode nil))
-                (funcall action))
-          (completion--cache-all-sorted-completions
-           (icomplete--field-beg)
-           (icomplete--field-end)
-           (cdr all)))
-        (message nil)))))
+      (when-let* ((all (completion-all-sorted-completions))
+                  (thing (car all)))
+        (let* ((cat (icomplete--category))
+               (action
+                (cl-case cat
+                  (buffer
+                   (lambda ()
+                     (when (yes-or-no-p (concat "Kill buffer " thing "? "))
+                       (kill-buffer thing))))
+                  ((project-file file)
+                   (lambda ()
+                     (let* ((dir (file-name-directory (icomplete--field-string)))
+                            (path (expand-file-name thing dir)))
+                       (when (yes-or-no-p (concat "Delete file " path "? "))
+                         (delete-file path) t))))
+                  (t
+                   (error "Sorry, don't know how to kill things for `%s'" cat)))))
+          (when (let (;; Allow `yes-or-no-p' to work and don't let it
+                      ;; `icomplete-exhibit' anything.
+                      (enable-recursive-minibuffers t)
+                      (icomplete-mode nil))
+                  (funcall action))
+            (completion--cache-all-sorted-completions
+             (icomplete--field-beg)
+             (icomplete--field-end)
+             (cdr all)))
+          (message nil))))))
 
 (defun icomplete-fido-delete-char ()
   "Delete char or maybe call `dired', like `ido-mode'."
