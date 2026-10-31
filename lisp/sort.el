@@ -85,7 +85,9 @@ should return non-nil if the first key should sort before the
 second key.  If PREDICATE is nil, comparison is done with `<' if
 the keys are numbers, with `compare-buffer-substrings' if the
 keys are cons cells (the car and cdr of each cons cell are taken
-as start and end positions), and with `string<' otherwise."
+as start and end positions), and with `string<' otherwise.
+For string or symbol keys, non-nil `sort-fold-case' uses
+case-insensitive `compare-strings' instead."
   ;; Heuristically try to avoid messages if sorting a small amount of text.
   (let ((messages (> (- (point-max) (point-min)) 50000)))
     (save-excursion
@@ -109,8 +111,20 @@ as start and end positions), and with `string<' otherwise."
 			       (> 0 (compare-buffer-substrings
 				     nil (car (car a)) (cdr (car a))
 				     nil (car (car b)) (cdr (car b))))))
+			    ;; Remacs: `string<' is case-sensitive regardless of
+			    ;; `case-fold-search'.  Use `compare-strings' for
+			    ;; string-valued keys when sorting should fold case.
 			    (t
-			     (lambda (a b) (string< (car a) (car b)))))))
+			     (lambda (a b)
+			       (let ((key1 (car a))
+			             (key2 (car b)))
+			         (if case-fold-search
+			             (let* ((str1 (if (symbolp key1) (symbol-name key1) key1))
+			                    (str2 (if (symbolp key2) (symbol-name key2) key2))
+			                    (comparison
+			                     (compare-strings str1 nil nil str2 nil nil t)))
+			               (and (numberp comparison) (< comparison 0)))
+			           (string< key1 key2))))))))
 	  (if reverse (setq sort-lists (nreverse sort-lists)))
 	  (if messages (message "Reordering buffer..."))
           (with-buffer-unmodified-if-unchanged
