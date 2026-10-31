@@ -593,14 +593,56 @@ pub(super) fn popup_fcdr(i: &mut Interp, v: &Value) -> Result<Value, Flow> {
     }
 }
 
-/// menu.c x_popup_menu_1 position decode.  Errors match GNU's
-/// `wrong-type-argument' outcomes for every malformed shape.
-pub(crate) fn decode_popup_position(i: &mut Interp, pos: &Value) -> Result<(), Flow> {
+fn current_popup_position(i: &Interp) -> Option<crate::frontend::PopupMenuPosition> {
+    use crate::editor::{frame_char_height, frame_char_width};
+    use crate::frontend::{PopupMenuAnchor, PopupMenuPosition};
+    let live_frame = |frame_id| {
+        i.frames.iter().find(|frame| {
+            let frame = frame.borrow();
+            frame.id == frame_id && !frame.dead
+        })
+    };
+    if let Some((frame_id, x, y)) = i.gui_mouse_frame_pixel_position
+        && live_frame(frame_id).is_some()
+    {
+        return Some(PopupMenuPosition {
+            frame_id,
+            anchor: PopupMenuAnchor::Frame,
+            x,
+            y,
+        });
+    }
+    if let Some((frame_id, x, y)) = i.gui_mouse_frame_position
+        && let Some(frame) = live_frame(frame_id)
+    {
+        return Some(PopupMenuPosition {
+            frame_id,
+            anchor: PopupMenuAnchor::Frame,
+            x: x.saturating_mul(frame_char_width(i, frame) as i128),
+            y: y.saturating_mul(frame_char_height(i, frame) as i128),
+        });
+    }
+    sel_frame(i)
+        .filter(|frame| !frame.borrow().dead)
+        .map(|frame| PopupMenuPosition {
+            frame_id: frame.borrow().id,
+            anchor: PopupMenuAnchor::Frame,
+            x: 0,
+            y: 0,
+        })
+}
+
+/// menu.c x_popup_menu_1 position decode. Retain the frame, window, and
+/// coordinate origin so rendering can resolve the actual GUI layout.
+pub(crate) fn decode_popup_position(
+    i: &mut Interp,
+    pos: &Value,
+) -> Result<Option<crate::frontend::PopupMenuPosition>, Flow> {
     if matches!(pos, Value::Nil) {
-        return Ok(()); // obsolete precalculate call
+        return Ok(None); // obsolete precalculate call
     }
     if matches!(pos, Value::Sym(s) if *s == sym::T) {
-        return Ok(()); // current mouse position
+        return Ok(current_popup_position(i));
     }
     let Value::Cons(pc) = pos else {
         return Err(i.wrong_type_mut("listp", pos));
@@ -611,14 +653,14 @@ pub(crate) fn decode_popup_position(i: &mut Interp, pos: &Value) -> Result<(), F
     };
     if matches!(&pcar, Value::Sym(s) if matches!(&*i.symbol_name(*s), "menu-bar" | "tab-bar" | "tool-bar"))
     {
-        return Ok(());
+        return Ok(current_popup_position(i));
     }
     if let Value::Cons(c2) = &pcdr {
         if matches!(&c2.borrow().car, Value::Sym(s) if &*i.symbol_name(*s) == "tab-bar") {
-            return Ok(());
+            return Ok(current_popup_position(i));
         }
     }
-    let (window, x, y);
+    let (window, x, y, text_area);
     if let Value::Cons(xyc) = &pcar {
         // ((X Y) WINDOW): window = Fcar(Fcdr pos) — Fcar on an
         // atomic tail signals listp on the tail.
@@ -626,31 +668,59 @@ pub(crate) fn decode_popup_position(i: &mut Interp, pos: &Value) -> Result<(), F
         x = xyc.borrow().car.clone();
         // y = Fcar(XCDR(xy)): raw cdr then Fcar — atom → listp.
         y = popup_fcar(i, &xyc.borrow().cdr)?;
+        text_area = false;
     } else {
         // EVENT: tem = CAR_SAFE(CDR_SAFE pos) = cadr (atomic cdr
         // → nil); then Fcar/Fcdr chains signal listp on atoms.
         let tem = popup_car_safe(&pcdr);
         window = popup_fcar(i, &tem)?;
         let t1 = popup_fcdr(i, &tem)?;
-        let _tem2 = popup_fcar(i, &t1)?;
+        let tem2 = popup_fcar(i, &t1)?;
+        text_area = matches!(tem2, Value::Int(_));
         let t2 = popup_fcdr(i, &t1)?;
         let tem3 = popup_fcar(i, &t2)?;
         x = popup_fcar(i, &tem3)?;
         y = popup_fcdr(i, &tem3)?;
     }
     if matches!(x, Value::Nil) && matches!(y, Value::Nil) {
-        return Ok(()); // get_current_pos_p
+        return Ok(current_popup_position(i)); // get_current_pos_p
     }
-    match window {
-        Value::Frame(_) | Value::Window(_) => {}
-        w => return Err(i.wrong_type_mut("windowp", &w)),
+    match &window {
+        Value::Frame(_) => {}
+        Value::Window(_) => {
+            crate::editor::win_live_req(i, &window)?;
+        }
+        w => return Err(i.wrong_type_mut("windowp", w)),
     }
     for v in [&x, &y] {
         if !matches!(v, Value::Int(_)) {
             return Err(i.wrong_type_mut("integerp", v));
         }
     }
-    Ok(())
+    let Value::Int(x) = x else { unreachable!() };
+    let Value::Int(y) = y else { unreachable!() };
+    use crate::frontend::PopupMenuAnchor;
+    let (frame, anchor) = match &window {
+        Value::Frame(frame) => (frame.clone(), PopupMenuAnchor::Frame),
+        Value::Window(window) => {
+            let frame =
+                crate::editor::frame_of_window(i, window).ok_or_else(|| i.error("No frame"))?;
+            let id = window.borrow().id;
+            let anchor = if text_area {
+                PopupMenuAnchor::TextArea(id)
+            } else {
+                PopupMenuAnchor::Window(id)
+            };
+            (frame, anchor)
+        }
+        _ => unreachable!(),
+    };
+    Ok(Some(crate::frontend::PopupMenuPosition {
+        frame_id: frame.borrow().id,
+        anchor,
+        x,
+        y,
+    }))
 }
 
 /// `popup-menu' — GNU's Lisp def (menu-bar.el): MENU resolves via
@@ -899,9 +969,11 @@ pub(super) fn f_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         break 'norm Some(pos.clone()); // (t position)
     };
-    if let Some(p) = decoded {
-        decode_popup_position(i, &p)?;
-    }
+    let position = if let Some(p) = decoded {
+        decode_popup_position(i, &p)?
+    } else {
+        current_popup_position(i)
+    };
     match &a[0] {
         Value::Nil => return Ok(Value::Nil),
         menu if crate::editor::is_keymap(i, menu) => {}
@@ -915,13 +987,12 @@ pub(super) fn f_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         _ => return Ok(Value::Nil),
     }
-    if i
-        .selected_frame
-        .as_ref()
-        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame))
+    if let Some(position) = position
+        && i.frames.iter().any(|frame| {
+            frame.borrow().id == position.frame_id && crate::editor::frame_is_graphical(i, frame)
+        })
     {
-        let (x, y) = i.gui_mouse_position.unwrap_or((0, 0));
-        i.gui_popup_menu = Some((a[0].clone(), x, y));
+        i.gui_popup_menu = Some((a[0].clone(), position));
     }
     Ok(Value::Nil)
 }

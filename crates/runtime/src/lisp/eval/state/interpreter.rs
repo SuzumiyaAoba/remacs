@@ -54,7 +54,7 @@ pub struct Interp {
     /// Active graphical tooltip requested by `x-show-tip'.
     pub gui_tip: Option<String>,
     /// Popup menu requested by `x-popup-menu' for the GUI frontend.
-    pub gui_popup_menu: Option<(Value, i128, i128)>,
+    pub gui_popup_menu: Option<(Value, crate::frontend::PopupMenuPosition)>,
     /// Last pointer position in window-relative pixels during mouse dispatch.
     pub gui_mouse_position: Option<(i128, i128)>,
     /// Last native pointer position in display-relative pixels reported by

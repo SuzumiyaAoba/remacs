@@ -51,6 +51,23 @@ pub enum DialogItem {
     Separator,
 }
 
+/// Layout origin used by a popup menu's pixel coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PopupMenuAnchor {
+    Frame,
+    Window(usize),
+    TextArea(usize),
+}
+
+/// A popup menu's target frame, layout origin, and pixel offsets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PopupMenuPosition {
+    pub frame_id: usize,
+    pub anchor: PopupMenuAnchor,
+    pub x: i128,
+    pub y: i128,
+}
+
 /// Host dialog backend used by interactive graphical front-ends. The logic
 /// thread blocks until the UI returns the selected button index.
 pub trait DialogBackend {

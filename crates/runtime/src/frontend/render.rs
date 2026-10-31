@@ -7281,6 +7281,13 @@ fn render_grid_internal(
     let body_height = height
         .saturating_sub(mini_height)
         .saturating_sub(chrome_rows);
+    let mut popup_pixel_position = i
+        .gui_popup_menu
+        .as_ref()
+        .filter(|(_, position)| {
+            position.frame_id == fb.id && position.anchor == super::PopupMenuAnchor::Frame
+        })
+        .map(|(_, position)| (position.x, position.y));
     let (root_left, root_top, root_width, root_height) = fb
         .root
         .as_ref()
@@ -7592,6 +7599,30 @@ fn render_grid_internal(
         let text_rows = window_height
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
         let content_top = window_top + top_rows;
+        if let Some((_, position)) = &i.gui_popup_menu
+            && position.frame_id == fb.id
+        {
+            let origin = match position.anchor {
+                super::PopupMenuAnchor::Window(id) if id == window_id => {
+                    Some((raw_window_left, raw_window_top))
+                }
+                super::PopupMenuAnchor::TextArea(id) if id == window_id => {
+                    Some((content_left_with_margin, content_top))
+                }
+                _ => None,
+            };
+            if let Some((left, top)) = origin {
+                let (x_offset, y_offset) = crate::editor::winxtra::pixelwise_window_origin_offset(w);
+                popup_pixel_position = Some((
+                    (left.saturating_mul(frame_char_width) as i128)
+                        .saturating_add(x_offset)
+                        .saturating_add(position.x),
+                    (top.saturating_mul(frame_char_height) as i128)
+                        .saturating_add(y_offset)
+                        .saturating_add(position.y),
+                ));
+            }
+        }
         if graphical && vscroll > 0 && text_rows > 0 && window_width > 0 {
             vscrolls.push(crate::frontend::GridVScroll {
                 window_id,
@@ -8965,6 +8996,18 @@ fn render_grid_internal(
         .saturating_sub(mini_visible_rows.saturating_sub(1))
         .min(mini_rows.len().saturating_sub(mini_visible_rows));
     let mini_top = rows.len().saturating_sub(mini_height);
+    if let Some((_, position)) = &i.gui_popup_menu
+        && position.frame_id == fb.id
+        && let Some(minibuffer) = &fb.minibuffer
+        && matches!(position.anchor,
+            super::PopupMenuAnchor::Window(id) | super::PopupMenuAnchor::TextArea(id)
+                if id == minibuffer.borrow().id)
+    {
+        popup_pixel_position = Some((
+            position.x,
+            (mini_top.saturating_mul(frame_char_height) as i128).saturating_add(position.y),
+        ));
+    }
     if mini_visible_rows > 0 {
         let wf =
             mini_styled.map(|buffer| window_faces(i, &mut fctx, buffer, &Value::Nil, mouse_position));
@@ -9076,14 +9119,15 @@ fn render_grid_internal(
         }
     }
     if graphical
-        && let Some((menu, pixel_x, pixel_y)) = &i.gui_popup_menu
+        && let Some((menu, _)) = &i.gui_popup_menu
+        && let Some(pixel_position) = popup_pixel_position
     {
         popup_menu_items = render_popup_menu(
             i,
             menu,
-            (*pixel_x, *pixel_y),
+            pixel_position,
             width,
-            body_height,
+            height.saturating_sub(mini_height),
             frame_char_width,
             frame_char_height,
             default_style,

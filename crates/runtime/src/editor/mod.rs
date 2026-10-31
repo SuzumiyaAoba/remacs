@@ -7521,18 +7521,18 @@ fn f_x_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if matches!(a[0], Value::Nil) {
         return Ok(Value::Nil); // obsolete precalculate call
     }
-    crate::lisp::builtins::misc::decode_popup_position(i, &a[0])?;
+    let position = crate::lisp::builtins::misc::decode_popup_position(i, &a[0])?;
     check_popup_menu(i, &a[1], true)?;
-    if i
-        .selected_frame
-        .as_ref()
-        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame))
+    if let Some(position) = position
+        && i.frames.iter().any(|frame| {
+            frame.borrow().id == position.frame_id && crate::editor::frame_is_graphical(i, frame)
+        })
     {
-        let (x, y) = i.gui_mouse_position.unwrap_or((0, 0));
-        i.gui_popup_menu = Some((a[1].clone(), x, y));
+        i.gui_popup_menu = Some((a[1].clone(), position));
     }
     Ok(Value::Nil)
 }
+
 /// `x-popup-dialog' — GNU menu.c Fx_popup_dialog: POSITION decodes a
 /// window via the posn structure, THEN the contents list is checked.
 /// t follows the documented mouse-frame contract, rather than GNU 31.1's
