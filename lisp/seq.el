@@ -511,11 +511,12 @@ This does not modify SEQUENCE."
 
 (cl-defgeneric seq-contains (sequence elt &optional testfn)
   "Return the first element in SEQUENCE that is \"equal\" to ELT.
-\"Equality\" is defined by the function TESTFN, which defaults to `equal'."
+\"Equality\" is defined by the function TESTFN, which defaults to `equal'.
+TESTFN receives the sequence element first and ELT second."
   (declare (obsolete seq-contains-p "27.1"))
   (catch 'seq--break
     (seq-doseq (e sequence)
-      (when (funcall (or testfn #'equal) elt e)
+      (when (funcall (or testfn #'equal) e elt)
         (throw 'seq--break e)))
     nil))
 

@@ -41090,12 +41090,15 @@ This does not modify SEQUENCE."
 
 (defun seq-contains (sequence elt &optional testfn)
   "Return the first element in SEQUENCE that is \"equal\" to ELT.
-\"Equality\" is defined by the function TESTFN, which defaults to `equal'."
+\"Equality\" is defined by the function TESTFN, which defaults to `equal'.
+TESTFN receives the sequence element first and ELT second."
   (declare (obsolete seq-contains-p "27.1"))
-  (seq-some (lambda (e)
-              (when (funcall (or testfn #'equal) elt e)
-                e))
-            sequence))
+  (catch 'seq--break
+    (seq-do (lambda (e)
+              (when (funcall (or testfn #'equal) e elt)
+                (throw 'seq--break e)))
+            sequence)
+    nil))
 
 (defun seq-set-equal-p (sequence1 sequence2 &optional testfn)
   "Return non-nil if SEQUENCE1 and SEQUENCE2 contain the same elements.
