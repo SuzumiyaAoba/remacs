@@ -104,14 +104,17 @@ DIR is the directory containing FILE."
        (string-match find-lisp-regexp file)))
 
 (defun find-lisp-file-predicate-is-directory  (file dir)
-  "True if FILE is a directory.
+  "True if FILE is a non-symlink directory.
 Argument DIR is the directory containing FILE."
   (and find-lisp-debug
        (find-lisp-debug-message
 	(format "Processing file %s in %s" file dir)))
-  (and (file-directory-p (expand-file-name file dir))
-       (not (or (string= file ".")
-		(string= file "..")))))
+  (let ((fullname (expand-file-name file dir)))
+    (and (file-directory-p fullname)
+         ;; Like find's default -P behavior, do not report symlinks as dirs.
+         (not (file-symlink-p fullname))
+         (not (or (string= file ".")
+		  (string= file ".."))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Find functions
