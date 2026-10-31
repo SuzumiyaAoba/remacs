@@ -721,9 +721,15 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_visible(&self, visible: bool) {
         unsafe {
-            ShowWindowAsync(self.0.hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE })
-                .ok()
-                .log_err();
+            let command = if !visible {
+                SW_HIDE
+            } else if IsIconic(self.0.hwnd).as_bool() {
+                SW_SHOWNOACTIVATE
+            } else {
+                // Preserve an already maximized window's current state.
+                SW_SHOWNA
+            };
+            ShowWindowAsync(self.0.hwnd, command).ok().log_err();
         }
     }
 
