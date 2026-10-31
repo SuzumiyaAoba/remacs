@@ -59,7 +59,7 @@ SYMBOL should be one of `grep-command', `grep-template',
 	(when host-setting
 	  (setcar (cdr host-setting) value))
 	(when default-setting
-	  (setcar (cdr default-setting) value))))
+	  (setcar (cdr default-setting) value)))))
   (set-default symbol value))
 
 ;;;###autoload

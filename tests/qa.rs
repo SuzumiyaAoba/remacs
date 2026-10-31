@@ -200,6 +200,7 @@ qa!(qa_tab_indent, "qa_tab_indent.el");
 qa!(qa_format, "qa_format.el");
 qa!(qa_format_conversions, "qa_format_conversions.el");
 qa!(qa_globdir, "qa_globdir.el");
+qa!(qa_grep_load, "qa_grep_load.el");
 qa!(qa_gv, "qa_gv.el");
 qa!(qa_hash, "qa_hash.el");
 qa!(qa_weak_hash, "qa_weak_hash.el");
