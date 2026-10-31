@@ -364,6 +364,22 @@ pub enum MouseButton {
     Left,
     Middle,
     Right,
+    /// GUI back navigation button, delivered as mouse-4.
+    Back,
+    /// GUI forward navigation button, delivered as mouse-5.
+    Forward,
+}
+
+impl MouseButton {
+    fn number(self) -> u8 {
+        match self {
+            Self::Left => 1,
+            Self::Middle => 2,
+            Self::Right => 3,
+            Self::Back => 4,
+            Self::Forward => 5,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

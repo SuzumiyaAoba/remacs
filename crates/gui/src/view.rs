@@ -26,6 +26,8 @@ use std::sync::{
 use std::{cell::Cell, rc::Rc};
 mod input;
 mod fringe;
+#[cfg(test)]
+mod mouse_tests;
 // The test platform uses window activation for cursor ownership on macOS.
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
@@ -1195,18 +1197,9 @@ impl Render for EditorView {
         let left_mouse_up_tx = self.tx.clone();
         let left_mouse_up_grid = mouse_grid.clone();
         let left_mouse_up_modifiers = physical_modifier_state.clone();
-        let middle_mouse_down_tx = self.tx.clone();
-        let middle_mouse_down_grid = mouse_grid.clone();
-        let middle_mouse_down_modifiers = physical_modifier_state.clone();
-        let middle_mouse_up_tx = self.tx.clone();
-        let middle_mouse_up_grid = mouse_grid;
-        let middle_mouse_up_modifiers = physical_modifier_state.clone();
-        let right_mouse_down_tx = self.tx.clone();
-        let right_mouse_down_grid = scroll_grid.clone();
-        let right_mouse_down_modifiers = physical_modifier_state.clone();
-        let right_mouse_up_tx = self.tx.clone();
-        let right_mouse_up_grid = scroll_grid.clone();
-        let right_mouse_up_modifiers = physical_modifier_state.clone();
+        let extra_mouse_tx = self.tx.clone();
+        let extra_mouse_grid = mouse_grid;
+        let extra_mouse_modifiers = physical_modifier_state.clone();
         let scroll_modifiers = physical_modifier_state.clone();
         let entity = cx.entity();
         let focus = self.focus.clone();
@@ -1542,121 +1535,73 @@ impl Render for EditorView {
                     }
                 }),
             )
-            .on_mouse_down(MouseButton::Middle, move |event, window, _cx| {
-                let point = frame_content_point(event.position, window.viewport_size(), border);
-                if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point_with_cell_width(
-                        &middle_mouse_down_grid,
-                        point,
-                        cell_width,
-                        window,
-                    )
-                    .or_else(|| {
-                        input::mode_line_mouse_position(
-                            &middle_mouse_down_grid,
-                            point,
-                            cell_width,
-                        )
-                    })
-                }) {
-                    let _ = middle_mouse_down_tx.send(GuiEvent::MouseDown {
-                        button: RemacsMouseButton::Middle,
-                        click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(
-                            &event.modifiers,
-                            modifier_mapping,
-                            middle_mouse_down_modifiers.get(),
-                        ),
-                        position,
+            .map(|mut element| {
+                for (button, remacs_button) in [
+                    (MouseButton::Middle, RemacsMouseButton::Middle),
+                    (MouseButton::Right, RemacsMouseButton::Right),
+                    (
+                        MouseButton::Navigate(NavigationDirection::Back),
+                        RemacsMouseButton::Back,
+                    ),
+                    (
+                        MouseButton::Navigate(NavigationDirection::Forward),
+                        RemacsMouseButton::Forward,
+                    ),
+                ] {
+                    let down_tx = extra_mouse_tx.clone();
+                    let down_grid = extra_mouse_grid.clone();
+                    let down_modifiers = extra_mouse_modifiers.clone();
+                    element = element.on_mouse_down(button, move |event, window, _cx| {
+                        let point =
+                            frame_content_point(event.position, window.viewport_size(), border);
+                        if let Some(position) = point.and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &down_grid, point, cell_width, window,
+                            )
+                            .or_else(|| {
+                                input::mode_line_mouse_position(&down_grid, point, cell_width)
+                            })
+                        }) {
+                            let _ = down_tx.send(GuiEvent::MouseDown {
+                                button: remacs_button,
+                                click_count: event.click_count,
+                                modifiers: mouse_modifier_bits(
+                                    &event.modifiers,
+                                    modifier_mapping,
+                                    down_modifiers.get(),
+                                ),
+                                position,
+                            });
+                        }
+                    });
+                    let up_tx = extra_mouse_tx.clone();
+                    let up_grid = extra_mouse_grid.clone();
+                    let up_modifiers = extra_mouse_modifiers.clone();
+                    element = element.on_mouse_up(button, move |event, window, _cx| {
+                        let point =
+                            frame_content_point(event.position, window.viewport_size(), border);
+                        if let Some(position) = point.and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &up_grid, point, cell_width, window,
+                            )
+                            .or_else(|| {
+                                input::mode_line_mouse_position(&up_grid, point, cell_width)
+                            })
+                        }) {
+                            let _ = up_tx.send(GuiEvent::MouseUp {
+                                button: remacs_button,
+                                click_count: event.click_count,
+                                modifiers: mouse_modifier_bits(
+                                    &event.modifiers,
+                                    modifier_mapping,
+                                    up_modifiers.get(),
+                                ),
+                                position,
+                            });
+                        }
                     });
                 }
-            })
-            .on_mouse_up(MouseButton::Middle, move |event, window, _cx| {
-                let point = frame_content_point(event.position, window.viewport_size(), border);
-                if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point_with_cell_width(
-                        &middle_mouse_up_grid,
-                        point,
-                        cell_width,
-                        window,
-                    )
-                    .or_else(|| {
-                        input::mode_line_mouse_position(
-                            &middle_mouse_up_grid,
-                            point,
-                            cell_width,
-                        )
-                    })
-                }) {
-                    let _ = middle_mouse_up_tx.send(GuiEvent::MouseUp {
-                        button: RemacsMouseButton::Middle,
-                        click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(
-                            &event.modifiers,
-                            modifier_mapping,
-                            middle_mouse_up_modifiers.get(),
-                        ),
-                        position,
-                    });
-                }
-            })
-            .on_mouse_down(MouseButton::Right, move |event, window, _cx| {
-                let point = frame_content_point(event.position, window.viewport_size(), border);
-                if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point_with_cell_width(
-                        &right_mouse_down_grid,
-                        point,
-                        cell_width,
-                        window,
-                    )
-                    .or_else(|| {
-                        input::mode_line_mouse_position(
-                            &right_mouse_down_grid,
-                            point,
-                            cell_width,
-                        )
-                    })
-                }) {
-                    let _ = right_mouse_down_tx.send(GuiEvent::MouseDown {
-                        button: RemacsMouseButton::Right,
-                        click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(
-                            &event.modifiers,
-                            modifier_mapping,
-                            right_mouse_down_modifiers.get(),
-                        ),
-                        position,
-                    });
-                }
-            })
-            .on_mouse_up(MouseButton::Right, move |event, window, _cx| {
-                let point = frame_content_point(event.position, window.viewport_size(), border);
-                if let Some(position) = point.and_then(|point| {
-                    input::mouse_position_for_point_with_cell_width(
-                        &right_mouse_up_grid,
-                        point,
-                        cell_width,
-                        window,
-                    )
-                    .or_else(|| {
-                        input::mode_line_mouse_position(
-                            &right_mouse_up_grid,
-                            point,
-                            cell_width,
-                        )
-                    })
-                }) {
-                    let _ = right_mouse_up_tx.send(GuiEvent::MouseUp {
-                        button: RemacsMouseButton::Right,
-                        click_count: event.click_count,
-                        modifiers: mouse_modifier_bits(
-                            &event.modifiers,
-                            modifier_mapping,
-                            right_mouse_up_modifiers.get(),
-                        ),
-                        position,
-                    });
-                }
+                element
             })
             .on_scroll_wheel(move |event, window, cx| {
                 let point = frame_content_point(event.position, window.viewport_size(), border);

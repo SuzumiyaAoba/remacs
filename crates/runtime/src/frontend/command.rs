@@ -1391,11 +1391,7 @@ fn dispatch_mouse_down(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
-    let number = match mouse.button {
-        MouseButton::Left => 1,
-        MouseButton::Middle => 2,
-        MouseButton::Right => 3,
-    };
+    let number = mouse.button.number();
     let base = match mouse.click_count {
         2 => format!("double-down-mouse-{number}"),
         3 => format!("triple-down-mouse-{number}"),
@@ -1600,22 +1596,19 @@ fn mouse_input_dragged(mouse: MouseInput) -> bool {
 
 fn mouse_event(i: &mut Interp, mouse: MouseInput) -> Option<(i128, Value)> {
     let drag = mouse_input_dragged(mouse);
-    let base = match (mouse.button, drag) {
-        (MouseButton::Left, false) => "mouse-1",
-        (MouseButton::Middle, false) => "mouse-2",
-        (MouseButton::Right, false) => "mouse-3",
-        (MouseButton::Left, true) => "drag-mouse-1",
-        (MouseButton::Middle, true) => "drag-mouse-2",
-        (MouseButton::Right, true) => "drag-mouse-3",
-    };
+    let base = format!(
+        "{}mouse-{}",
+        if drag { "drag-" } else { "" },
+        mouse.button.number()
+    );
     let base = if !drag {
         match mouse.click_count {
             2 => format!("double-{base}"),
             3 => format!("triple-{base}"),
-            _ => base.to_string(),
+            _ => base,
         }
     } else {
-        base.to_string()
+        base
     };
     let name = mouse_event_name(&base, mouse.modifiers);
     let event_symbol = Value::Sym(i.intern(&name));

@@ -887,6 +887,72 @@ fn chanio_mouse_click_keeps_down_position_and_modifiers() {
 }
 
 #[test]
+fn chanio_navigation_buttons_keep_down_data_on_release() {
+    let (mut io, tx, _grids) = chan_pair();
+    let start = MousePosition {
+        buffer_id: 7,
+        buffer_position: 4,
+        utf16_offset: 4,
+        x: 31,
+        y: 12,
+        row: 0,
+        column: 4,
+        window_id: Some(17),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let end = MousePosition {
+        buffer_position: 9,
+        utf16_offset: 9,
+        x: 58,
+        column: 9,
+        ..start
+    };
+    for button in [MouseButton::Back, MouseButton::Forward] {
+        tx.send(GuiEvent::MouseDown {
+            button,
+            click_count: 2,
+            modifiers: CHAR_CTL | CHAR_SHIFT,
+            position: start,
+        })
+        .unwrap();
+        let Some(InputEvent::MouseDown(actual)) = io.poll_input(Duration::ZERO).unwrap() else {
+            panic!("navigation down event");
+        };
+        assert_eq!(
+            actual,
+            MouseInput {
+                button,
+                click_count: 2,
+                modifiers: CHAR_CTL | CHAR_SHIFT,
+                start,
+                end: start,
+            }
+        );
+        tx.send(GuiEvent::MouseUp {
+            button,
+            click_count: 1,
+            modifiers: 0,
+            position: end,
+        })
+        .unwrap();
+        let Some(InputEvent::Mouse(actual)) = io.poll_input(Duration::ZERO).unwrap() else {
+            panic!("navigation release event");
+        };
+        assert_eq!(
+            actual,
+            MouseInput {
+                button,
+                click_count: 2,
+                modifiers: CHAR_CTL | CHAR_SHIFT,
+                start,
+                end,
+            }
+        );
+    }
+}
+
+#[test]
 fn chanio_render_and_draw_echo() {
     let (mut io, _tx, grx) = chan_pair();
     let mut i = Interp::new();
