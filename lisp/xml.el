@@ -430,7 +430,7 @@ Both features can be combined by providing a cons cell
 		    (if (cdr result)	; possible leading comment
 			(push (cdr result) xml)))
 		   (t
-		    (push result xml))))
+		    (push result xml)))))
 	    (progn
 	      (unless (string-match-p
 		       "\\`[ \t\n\r]*\\'"
@@ -576,11 +576,11 @@ Return one of:
       (when (and (string-equal (downcase target) "xml")
                  (not (and (= start (point-min))
                            (string= target "xml")
-                           (looking-at-p "[ \t\n\r]+version[ \t\n\r]*=")))
+                           (looking-at-p "[ \t\n\r]+version[ \t\n\r]*="))))
         (error "XML: (Not Well-Formed) Reserved processing instruction target `%s'"
                target))
       (unless (search-forward "?>" nil t)
-        (error "XML: (Not Well-Formed) Unterminated processing instruction"))))
+        (error "XML: (Not Well-Formed) Unterminated processing instruction")))))
 
 (defun xml-parse-tag-1 (&optional parse-dtd parse-ns)
   "Like `xml-parse-tag', but possibly modify the buffer while working."
@@ -650,7 +650,7 @@ Return one of:
 		  (xml--validate-namespace-binding prefix (cdr attr))
 		  (setq namespace-scope
 			(xml--namespace-add-binding
-			 namespace-scope prefix (cdr attr))))))))
+			 namespace-scope prefix (cdr attr)))))))))
 	(when (and (consp namespace-scope)
 		   (string-match "\\`xmlns:" node-name))
 	  (error "XML: (Not Well-Formed) The `xmlns' prefix is reserved for attributes"))
@@ -747,7 +747,7 @@ Return one of:
                   (setq seen
                         (xml--check-entity-recursion
                          reference (cons name stack) seen)))
-                (setq start next))))
+                (setq start next)))))
         seen))))
 
 (defun xml-parse-string ()
