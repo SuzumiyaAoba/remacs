@@ -286,7 +286,7 @@ pub struct GridBottomDivider {
     pub last_pixel_style: CellStyle,
 }
 
-/// A window's mode-line hit area, with the displayed buffer-name extent.
+/// A window's mode-line hit area and buffer-identification local-map extent.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridModeLine {
     pub window_id: usize,
@@ -1967,6 +1967,8 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
 struct ModeLineProperties {
     help: Vec<Option<String>>,
     fill_help: Option<Option<String>>,
+    identification: Vec<bool>,
+    fill_identification: bool,
 }
 
 #[derive(Default)]
@@ -2298,6 +2300,7 @@ fn readable_mode_line_size(size: usize) -> String {
 
 fn format_mode_line_string(
     i: &Interp,
+    buffer_id: usize,
     value: &crate::lisp::value::StrRef,
     context: &ModeLineContext,
     fill_remaining: &mut bool,
@@ -2429,20 +2432,41 @@ fn format_mode_line_string(
         output.push_str(&field);
     }
     if let Some(properties) = context.properties.borrow_mut().as_mut() {
-        let help_at = |position| {
-            let property = i.q_soft("help-echo")?;
+        let properties_at = |position| {
             let plist = Value::list(crate::buffer::primitives::str_plist_at(
                 i.str_props(value),
                 position,
             ));
-            help_echo_text(crate::lisp::eval::plist_get(&plist, property))
+            let help = i.q_soft("help-echo").and_then(|property| {
+                help_echo_text(crate::lisp::eval::plist_get(&plist, property))
+            });
+            let identification = i.q_soft("local-map").is_some_and(|property| {
+                mode_line_identification_map(
+                    i,
+                    buffer_id,
+                    &crate::lisp::eval::plist_get(&plist, property),
+                )
+            });
+            (help, identification)
         };
-        properties.help.extend(sources.into_iter().map(help_at));
+        for source in sources {
+            let (help, identification) = properties_at(source);
+            properties.help.push(help);
+            properties.identification.push(identification);
+        }
         if let Some(source) = fill_source {
-            properties.fill_help = Some(help_at(source));
+            let (help, identification) = properties_at(source);
+            properties.fill_help = Some(help);
+            properties.fill_identification = identification;
         }
     }
     output
+}
+
+fn mode_line_identification_map(i: &Interp, buffer_id: usize, map: &Value) -> bool {
+    map.truthy()
+        && mode_line_variable(i, buffer_id, "mode-line-buffer-identification-keymap")
+            .is_some_and(|identification| crate::lisp::eq_values(map, &identification))
 }
 
 fn help_echo_text(value: Value) -> Option<String> {
@@ -2514,7 +2538,9 @@ pub(super) fn format_mode_line_value(
     }
     match value {
         Value::Nil => String::new(),
-        Value::Str(string) => format_mode_line_string(i, string, context, fill_remaining),
+        Value::Str(string) => {
+            format_mode_line_string(i, buffer_id, string, context, fill_remaining)
+        }
         Value::Int(_) | Value::Float(_) => {
             let output = match value {
                 Value::Int(number) => number.to_string(),
@@ -2525,6 +2551,9 @@ pub(super) fn format_mode_line_value(
                 properties
                     .help
                     .extend(std::iter::repeat_n(None, output.chars().count()));
+                properties
+                    .identification
+                    .extend(std::iter::repeat_n(false, output.chars().count()));
             }
             output
         }
@@ -2569,17 +2598,33 @@ pub(super) fn format_mode_line_value(
                             )
                         });
                         if let Some(start) = start
-                            && let Some(property) = i.q_soft("help-echo")
-                            && let Some(pair) =
-                                elements.get(2..).unwrap_or_default().chunks_exact(2).find(
-                                    |pair| matches!(pair[0], Value::Sym(id) if id == property),
-                                )
                             && let Some(properties) = context.properties.borrow_mut().as_mut()
                         {
-                            let help = help_echo_text(pair[1].clone());
-                            properties.help[start..].fill(help.clone());
-                            if properties.fill_help.is_some() {
-                                properties.fill_help = Some(help);
+                            let property = |name| {
+                                let property = i.q_soft(name)?;
+                                elements
+                                    .get(2..)
+                                    .unwrap_or_default()
+                                    .chunks_exact(2)
+                                    .find(
+                                        |pair| matches!(pair[0], Value::Sym(id) if id == property),
+                                    )
+                                    .map(|pair| &pair[1])
+                            };
+                            if let Some(value) = property("help-echo") {
+                                let help = help_echo_text(value.clone());
+                                properties.help[start..].fill(help.clone());
+                                if properties.fill_help.is_some() {
+                                    properties.fill_help = Some(help);
+                                }
+                            }
+                            if let Some(value) = property("local-map") {
+                                let identification =
+                                    mode_line_identification_map(i, buffer_id, value);
+                                properties.identification[start..].fill(identification);
+                                if *fill_remaining {
+                                    properties.fill_identification = identification;
+                                }
                             }
                         }
                         return output;
@@ -3549,51 +3594,6 @@ fn place_text_row(
     }
 }
 
-fn screen_row_find_text_range(
-    screen_row: &[ScreenCell],
-    left: usize,
-    width: usize,
-    text: &str,
-) -> Option<(usize, usize)> {
-    let characters: Vec<char> = text.chars().collect();
-    if characters.is_empty() {
-        return None;
-    }
-    let right = left.saturating_add(width).min(screen_row.len());
-    for start in left..right {
-        if screen_row[start].continuation || screen_row[start].chars.is_empty() {
-            continue;
-        }
-        let mut column = start;
-        let mut index = 0;
-        while index < characters.len() && column < right {
-            let cell = &screen_row[column];
-            if cell.continuation {
-                column += 1;
-                continue;
-            }
-            if cell.chars.is_empty() {
-                break;
-            }
-            for (character, _) in &cell.chars {
-                if characters.get(index) != Some(character) {
-                    index = usize::MAX;
-                    break;
-                }
-                index += 1;
-            }
-            if index == usize::MAX {
-                break;
-            }
-            column += display_char_width(cell.chars[0].0).max(1);
-        }
-        if index == characters.len() {
-            return Some((start, column));
-        }
-    }
-    None
-}
-
 fn place_fringe_glyph(
     screen: &mut [Vec<ScreenCell>],
     row: usize,
@@ -3634,10 +3634,8 @@ fn place_formatted_window_row(
     context: &ModeLineContext,
     face_name: &str,
     help_echoes: &mut Vec<GridHelpEcho>,
-) {
-    let Some(screen_row) = screen.get_mut(row) else {
-        return;
-    };
+) -> Option<(usize, usize)> {
+    let screen_row = screen.get_mut(row)?;
     *context.properties.borrow_mut() = Some(ModeLineProperties::default());
     let mut fill_remaining = false;
     let mut text = format_mode_line_value(i, buffer_id, format, context, 0, &mut fill_remaining);
@@ -3649,11 +3647,19 @@ fn place_formatted_window_row(
         properties
             .help
             .extend(std::iter::repeat_n(properties.fill_help.flatten(), count));
+        properties
+            .identification
+            .extend(std::iter::repeat_n(properties.fill_identification, count));
     }
     // Use the same column conversion and clipping as the visible row. In
     // particular, tabs cover several cells and a clipped wide glyph covers none.
     let mut column = 0usize;
-    for (character, help) in text.chars().zip(properties.help) {
+    let mut buffer_name_range = None;
+    for ((character, help), identification) in text
+        .chars()
+        .zip(properties.help)
+        .zip(properties.identification)
+    {
         let character = match character {
             '\n' | '\r' => ' ',
             other => other,
@@ -3666,6 +3672,15 @@ fn place_formatted_window_row(
         };
         if column.saturating_add(cells) > width {
             break;
+        }
+        if cells > 0 && identification {
+            let start = left.saturating_add(column);
+            let end = start.saturating_add(cells);
+            match &mut buffer_name_range {
+                None => buffer_name_range = Some((start, end)),
+                Some((_, right)) if *right == start => *right = end,
+                _ => {}
+            }
         }
         if cells > 0
             && let Some(text) = help
@@ -3695,6 +3710,7 @@ fn place_formatted_window_row(
     let cell_styles = vec![style; width];
     let character_styles = row_text.chars().map(|_| style).collect::<Vec<_>>();
     place_text_row(screen_row, left, &row_text, &cell_styles, &character_styles);
+    buffer_name_range
 }
 
 fn compose_screen_rows(
@@ -8911,7 +8927,7 @@ fn render_grid_internal(
         let mode_context = mode_line_context(i, buf_id, mode_point, start, visible_end, tab_width);
         let mut auxiliary_row = window_top;
         if tab_line_enabled && auxiliary_row < content_top {
-            place_formatted_window_row(
+            let _ = place_formatted_window_row(
                 i,
                 &mut fctx,
                 &mut screen_rows,
@@ -8928,7 +8944,7 @@ fn render_grid_internal(
             auxiliary_row += 1;
         }
         if header_line_enabled && auxiliary_row < content_top {
-            place_formatted_window_row(
+            let _ = place_formatted_window_row(
                 i,
                 &mut fctx,
                 &mut screen_rows,
@@ -8956,7 +8972,7 @@ fn render_grid_internal(
             } else {
                 "mode-line-inactive"
             };
-            place_formatted_window_row(
+            let buffer_name_range = place_formatted_window_row(
                 i,
                 &mut fctx,
                 &mut screen_rows,
@@ -8970,14 +8986,6 @@ fn render_grid_internal(
                 ml_name,
                 &mut help_echoes,
             );
-            let buffer_name_range = screen_rows.get(my).and_then(|row| {
-                screen_row_find_text_range(
-                    row,
-                    window_left,
-                    window_width,
-                    &mode_context.buffer_name,
-                )
-            });
             mode_lines.push(crate::frontend::GridModeLine {
                 window_id,
                 buffer_id: buf_id,
