@@ -415,7 +415,8 @@ require user confirmation."
                        (kill-buffer thing))))
                   ((project-file file)
                    (lambda ()
-                     (let* ((dir (file-name-directory (icomplete--field-string)))
+                     (let* ((dir (file-name-directory
+                                  (substitute-env-vars (icomplete--field-string))))
                             (path (expand-file-name thing dir)))
                        (when (yes-or-no-p (concat "Delete file " path "? "))
                          (delete-file path) t))))
