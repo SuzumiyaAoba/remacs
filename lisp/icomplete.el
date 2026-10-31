@@ -1069,7 +1069,7 @@ away from the bottom.  Counts wrapped lines as real lines."
                         suffix)
                 lines-aux)))
       (setq lines (nreverse lines-aux)
-            nsections (and (> nsec 0) nsec)))
+            nsections nsec))
     ;; Kick out some lines from the beginning due to extra sections.
     ;; This hopes to keep the selected entry more or less in the
     ;; middle of the dropdown-like widget when `icomplete-scroll' is
