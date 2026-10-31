@@ -48,6 +48,7 @@ macro_rules! qa {
 qa!(qa_abbrev, "qa_abbrev.el");
 qa!(qa_abbrev2, "qa_abbrev2.el");
 qa!(qa_dabbrev_punctuation, "qa_dabbrev_punctuation.el");
+qa!(qa_dirtrack_load, "qa_dirtrack_load.el");
 qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
 qa!(qa_ansi_color_load, "qa_ansi_color_load.el");

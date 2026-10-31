@@ -265,7 +265,7 @@ directory."
                     (setq temp
                           (concat prompt-path "\n" default-directory)))
       (shell-process-cd (concat (match-string 2 temp) prompt-path))
-      (run-hooks 'dirtrack-directory-change-hook))))
+      (run-hooks 'dirtrack-directory-change-hook)))))
 
 ;;;###autoload
 (defun dirtrack (input)
@@ -302,7 +302,7 @@ from `default-directory'."
 	                search-start (if (= match-start match-end)
 	                                 (1+ match-end)
 	                               match-end))))
-	      (setq dirtrack--pending-input (substring prompt-input consumed)))))
+	      (setq dirtrack--pending-input (substring prompt-input consumed))))))
   input)
 
 (provide 'dirtrack)
