@@ -300,45 +300,50 @@ this rationalization.  DIRNAME is untransformed; this function applies
                                               nil)))
 	  items)
       (dolist (buffer (buffer-list))
-	(when (and (not (and uniquify-ignore-buffers-re
-			     (string-match uniquify-ignore-buffers-re
-					   (buffer-name buffer))))
-		   ;; Only try to rename buffers we actually manage.
-		   (setq items (buffer-local-value 'uniquify-managed buffer))
-		   (equal base (uniquify-item-base (car items)))
-		   ;; Don't re-add stuff we already have.  Actually this
-		   ;; whole `and' test should only match at most once.
-		   (not (memq (car items) fix-list)))
-	  (unless (cdr items)
-	    ;; If there was no conflict, the buffer-name is equal to the
-	    ;; base-name and we may have missed a rename-buffer because
-	    ;; of code like in set-visited-file-name:
-	    ;; (or (string= new-name (buffer-name)) (rename-buffer new-name t))
-	    ;; So we need to refresh the dirname of the uniquify-item.
-	    (setf (uniquify-item-dirname (car items))
-		  (uniquify-buffer-file-name
-		   (uniquify-item-buffer (car items))))
-	    ;; This shouldn't happen, but maybe there's no dirname any more.
-	    (unless (uniquify-item-dirname (car items))
-	      (with-current-buffer (uniquify-item-buffer (car items))
-		(setq uniquify-managed nil))
-	      (setq items nil)))
-          ;; In case we missed some calls to kill-buffer, there may be dead
-          ;; buffers in uniquify-managed, so filter them out.
-          (setq items
-                (delq nil (mapcar
-                           (lambda (item)
-                             (if (buffer-live-p (uniquify-item-buffer item))
-                                 item))
-                           items)))
-          ;; Other buffer's `uniquify-managed' lists may share
-          ;; elements.  Ensure that we don't add these elements more
-          ;; than once to this buffer's `uniquify-managed' list.
+        (setq items (buffer-local-value 'uniquify-managed buffer))
+        ;; Filter dead-buffer entries before inspecting the first item.
+        (when items
+          (let ((live-items
+                 (delq nil (mapcar
+                            (lambda (item)
+                              (and (buffer-live-p (uniquify-item-buffer item))
+                                   item))
+                            items))))
+            (unless (= (length items) (length live-items))
+              (with-current-buffer buffer
+                (setq uniquify-managed live-items)))
+            (setq items live-items)))
+        (when (and (not (and uniquify-ignore-buffers-re
+                             (string-match uniquify-ignore-buffers-re
+                                           (buffer-name buffer))))
+                   ;; Only try to rename buffers we actually manage.
+                   items
+                   (equal base (uniquify-item-base (car items)))
+                   ;; Don't re-add stuff we already have.  Actually this
+                   ;; whole `and' test should only match at most once.
+                   (not (memq (car items) fix-list)))
+          (unless (cdr items)
+            ;; If there was no conflict, the buffer-name is equal to the
+            ;; base-name and we may have missed a rename-buffer because
+            ;; of code like in set-visited-file-name:
+            ;; (or (string= new-name (buffer-name)) (rename-buffer new-name t))
+            ;; So we need to refresh the dirname of the uniquify-item.
+            (setf (uniquify-item-dirname (car items))
+                  (uniquify-buffer-file-name
+                   (uniquify-item-buffer (car items))))
+            ;; This shouldn't happen, but maybe there's no dirname any more.
+            (unless (uniquify-item-dirname (car items))
+              (with-current-buffer (uniquify-item-buffer (car items))
+                (setq uniquify-managed nil))
+              (setq items nil)))
+          ;; Other buffer's `uniquify-managed' lists may share elements.
+          ;; Ensure that we don't add these elements more than once to this
+          ;; buffer's `uniquify-managed' list.
           (let ((new-items nil))
             (dolist (item items)
               (unless (memq item fix-list)
                 (push item new-items)))
-	    (setq fix-list (append fix-list new-items)))))
+            (setq fix-list (append fix-list new-items)))))
       ;; selects buffers whose names may need changing, and others that
       ;; may conflict, then bring conflicting names together
       (uniquify-rationalize fix-list))))
