@@ -291,6 +291,18 @@ a Lisp timestamp when successful.
 If FORM is nil, preserve fractional seconds in DATE-STRING.  Otherwise,
 see `decode-time' for the meaning of FORM."
   (when-let* ((time (parse-time-string date-string (or form t))))
+    ;; Fill an omitted ISO time with midnight, preserving any parsed zone.
+    (when (and (numberp (nth 3 time))
+               (numberp (nth 4 time))
+               (numberp (nth 5 time))
+               (null (nth 0 time))
+               (null (nth 1 time))
+               (null (nth 2 time))
+               (save-match-data (iso8601-valid-p date-string)))
+      (setq time (copy-sequence time))
+      (setf (nth 0 time) 0
+            (nth 1 time) 0
+            (nth 2 time) 0))
     (encode-time time)))
 
 (provide 'parse-time)
