@@ -446,7 +446,7 @@ prefix argument or setting `ping-program-options'."
                                              ping-program-options " ")))
              (split-string
               (read-string (format-prompt "Ping options" default-options)
-                           nil nil default-options)))))
+                           nil nil default-options))))))
   (let ((full-command
 	 (if (or (equal flags (list "")) (not flags))
 	     (append ping-program-options (list host))
@@ -495,7 +495,7 @@ in Lisp code."
                  (and (<= 1 (length octet) 3)
                       (string-match-p "\\`[0-9]+\\'" octet)
                       (<= (string-to-number octet) 255)))
-               octets))))
+               octets)))))
 
 ;;;###autoload
 (defun nslookup-host-ipv4 (host &optional name-server format)
