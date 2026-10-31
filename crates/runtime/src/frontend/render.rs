@@ -7176,6 +7176,11 @@ fn render_grid_internal(
             continue;
         }
         let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
+        // Untagged legacy input refers to this frame's selected window.
+        let mouse_position = mouse_position.filter(|position| {
+            position.buffer_id == buf_id
+                && position.window_id.map_or(selected_window, |id| id == window_id)
+        });
         let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
         let bidi_display_reordering =
             buffer_setting(i, "bidi-display-reordering", buf_id).truthy();
@@ -8258,7 +8263,7 @@ fn render_grid_internal(
                         buf_id,
                         segment_pos,
                         rendered.source_offsets.clone(),
-                        (!selected_window).then_some(window_id),
+                        Some(window_id),
                         content_left,
                         content_left.saturating_add(content_width),
                         content_left,

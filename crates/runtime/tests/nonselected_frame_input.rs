@@ -197,7 +197,7 @@ fn same_buffer_hit_test_identifies_the_selected_split_window() {
         .hit_test_position(0, 45, 45)
         .expect("pointer over the selected right split should map to its window");
     assert_eq!(position.buffer_id, buffer);
-    assert_eq!(position.window_id, None);
+    assert_eq!(position.window_id, Some(right_window.borrow().id));
 
     interp
         .eval_str(
