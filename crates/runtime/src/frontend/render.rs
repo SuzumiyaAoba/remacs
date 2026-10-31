@@ -1903,7 +1903,8 @@ struct ModeLineContext {
     column: usize,
     line_count: usize,
     buffer_size: usize,
-    point_offset: usize,
+    window_start_offset: usize,
+    window_end_offset: usize,
     narrowed: bool,
 }
 
@@ -1917,6 +1918,8 @@ fn mode_line_context(
     i: &Interp,
     buffer_id: usize,
     point: usize,
+    window_start: usize,
+    window_end: usize,
     tab_width: usize,
 ) -> ModeLineContext {
     let Some(buffer) = i.buffers.get(buffer_id) else {
@@ -1930,7 +1933,8 @@ fn mode_line_context(
             column: 0,
             line_count: 0,
             buffer_size: 0,
-            point_offset: 0,
+            window_start_offset: 0,
+            window_end_offset: 0,
             narrowed: false,
         };
     };
@@ -1962,9 +1966,39 @@ fn mode_line_context(
         ),
         line_count: last_line.saturating_sub(first_line).saturating_add(1),
         buffer_size: buffer.zv.saturating_sub(buffer.begv),
-        point_offset: point.saturating_sub(buffer.begv),
+        window_start_offset: window_start.clamp(buffer.begv, buffer.zv) - buffer.begv,
+        window_end_offset: window_end.clamp(buffer.begv, buffer.zv) - buffer.begv,
         narrowed: buffer.begv > 0 || buffer.zv < buffer.text_len(),
     }
+}
+
+fn mode_line_position(context: &ModeLineContext, specifier: char) -> String {
+    if context.window_end_offset >= context.buffer_size {
+        return if context.window_start_offset == 0 {
+            "All"
+        } else {
+            "Bottom"
+        }
+        .to_owned();
+    }
+    if specifier == 'p' && context.window_start_offset == 0 {
+        return "Top".to_owned();
+    }
+    let offset = if specifier == 'P' {
+        context.window_end_offset
+    } else {
+        context.window_start_offset
+    };
+    // GNU percent99 rounds upward and reserves 100% for the end labels.
+    let percentage = ((offset as u128 * 100 + context.buffer_size as u128 - 1)
+        / context.buffer_size as u128)
+        .min(99);
+    let prefix = if specifier == 'P' && context.window_start_offset == 0 {
+        "Top"
+    } else {
+        ""
+    };
+    format!("{prefix}{percentage:2}%")
 }
 
 fn frame_fringe_pixels(i: &Interp, parameters: &Value, name: &str) -> usize {
@@ -2125,19 +2159,7 @@ fn format_mode_line_string(
             'C' => context.column.saturating_add(1).to_string(),
             'L' => context.line_count.to_string(),
             'I' => context.buffer_size.to_string(),
-            'p' | 'P' => {
-                if context.buffer_size == 0 {
-                    "All".to_owned()
-                } else if context.point_offset == 0 {
-                    "Top".to_owned()
-                } else if context.point_offset >= context.buffer_size {
-                    "Bot".to_owned()
-                } else {
-                    let percentage = context.point_offset.saturating_mul(100)
-                        / context.buffer_size.max(1);
-                    format!("{percentage:2}%")
-                }
-            }
+            'p' | 'P' => mode_line_position(context, specifier),
             'n' => {
                 if context.narrowed {
                     " Narrow".to_owned()
@@ -7581,64 +7603,6 @@ fn render_grid_internal(
                 wf.as_ref().and_then(|faces| faces.pointer.as_ref()),
             ));
         }
-        let mode_point = i.buffers.get(buf_id).map_or(0, |buffer| {
-            let bb = buffer.borrow();
-            (if selected_window {
-                bb.point()
-            } else {
-                w.borrow().point
-            })
-            .clamp(bb.begv, bb.zv)
-        });
-        let mode_context = mode_line_context(i, buf_id, mode_point, tab_width);
-        let mut auxiliary_row = window_top;
-        if tab_line_enabled && auxiliary_row < content_top {
-            place_formatted_window_row(
-                i,
-                &mut fctx,
-                &mut screen_rows,
-                auxiliary_row,
-                window_left,
-                window_width,
-                tab_width,
-                buf_id,
-                &tab_line_format,
-                &mode_context,
-                "tab-line",
-            );
-            if let Some(text) = mode_line_help_echo(i, buf_id, &tab_line_format, 0) {
-                push_help_echo(&mut help_echoes, GridHelpEcho {
-                    row: auxiliary_row,
-                    left: window_left,
-                    width: window_width,
-                    text,
-                });
-            }
-            auxiliary_row += 1;
-        }
-        if header_line_enabled && auxiliary_row < content_top {
-            place_formatted_window_row(
-                i,
-                &mut fctx,
-                &mut screen_rows,
-                auxiliary_row,
-                window_left,
-                window_width,
-                tab_width,
-                buf_id,
-                &header_line_format,
-                &mode_context,
-                "header-line",
-            );
-            if let Some(text) = mode_line_help_echo(i, buf_id, &header_line_format, 0) {
-                push_help_echo(&mut help_echoes, GridHelpEcho {
-                    row: auxiliary_row,
-                    left: window_left,
-                    width: window_width,
-                    text,
-                });
-            }
-        }
         let mut visible_end = start;
         let mut screen_row = content_top;
         let selective_display = buffer_setting(i, "selective-display", buf_id);
@@ -7806,7 +7770,7 @@ fn render_grid_internal(
                     (point >= segment_start
                         && (point < segment_end
                             || (point == segment_end && segment_end == line_len)))
-                        .then_some(point - segment_start)
+                        .then(|| point - segment_start)
                 });
                 let y = screen_row;
                 let newline_spacing = if graphical
@@ -8344,6 +8308,64 @@ fn render_grid_internal(
             .map(|b| b.borrow().text.mod_tick.get())
             .unwrap_or(0);
         w.borrow_mut().redisplay_end = Some((buf_id, tick, start, visible_end));
+        let mode_point = i.buffers.get(buf_id).map_or(0, |buffer| {
+            let bb = buffer.borrow();
+            (if selected_window {
+                bb.point()
+            } else {
+                w.borrow().point
+            })
+            .clamp(bb.begv, bb.zv)
+        });
+        let mode_context = mode_line_context(i, buf_id, mode_point, start, visible_end, tab_width);
+        let mut auxiliary_row = window_top;
+        if tab_line_enabled && auxiliary_row < content_top {
+            place_formatted_window_row(
+                i,
+                &mut fctx,
+                &mut screen_rows,
+                auxiliary_row,
+                window_left,
+                window_width,
+                tab_width,
+                buf_id,
+                &tab_line_format,
+                &mode_context,
+                "tab-line",
+            );
+            if let Some(text) = mode_line_help_echo(i, buf_id, &tab_line_format, 0) {
+                push_help_echo(&mut help_echoes, GridHelpEcho {
+                    row: auxiliary_row,
+                    left: window_left,
+                    width: window_width,
+                    text,
+                });
+            }
+            auxiliary_row += 1;
+        }
+        if header_line_enabled && auxiliary_row < content_top {
+            place_formatted_window_row(
+                i,
+                &mut fctx,
+                &mut screen_rows,
+                auxiliary_row,
+                window_left,
+                window_width,
+                tab_width,
+                buf_id,
+                &header_line_format,
+                &mode_context,
+                "header-line",
+            );
+            if let Some(text) = mode_line_help_echo(i, buf_id, &header_line_format, 0) {
+                push_help_echo(&mut help_echoes, GridHelpEcho {
+                    row: auxiliary_row,
+                    left: window_left,
+                    width: window_width,
+                    text,
+                });
+            }
+        }
         // Mode line.
         let my = window_top + text_rows;
         if mode_line_enabled && my < body_height {
