@@ -7641,9 +7641,9 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let selected = backend
             .choose(frame_id, &title, detail.as_deref(), &buttons)
             .map_err(|error| i.error(format!("Dialog failed: {error}")))?;
-        return Ok(selected
-            .and_then(|index| values.get(index).cloned())
-            .unwrap_or(Value::Nil));
+        // A dismissed dialog is distinct from selecting a button whose value is nil.
+        let selected = selected.ok_or(Flow::Quit)?;
+        return Ok(values.get(selected).cloned().unwrap_or(Value::Nil));
     }
     Ok(Value::Nil)
 }
