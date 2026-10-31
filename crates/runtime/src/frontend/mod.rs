@@ -70,6 +70,11 @@ pub enum FrameVisibility {
 
 /// Host native window bridge used by GUI frame primitives.
 pub trait FrameWindowBackend {
+    /// Make FRAME available to a synchronous native operation. A GUI can
+    /// publish its current frame state and wait until the window is created.
+    fn prepare_frame(&self, _interp: &Interp, _frame_id: usize) -> Result<(), String> {
+        Ok(())
+    }
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String>;
     fn set_visibility(&self, frame_id: usize, visibility: FrameVisibility) -> Result<(), String> {
         self.set_visible(frame_id, visibility == FrameVisibility::Visible)

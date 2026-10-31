@@ -13,7 +13,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     ops::Range,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -22,6 +22,9 @@ use std::{
     time::{Duration, Instant},
 };
 use unicode_width::UnicodeWidthChar;
+
+#[cfg(all(test, target_os = "macos"))]
+mod frame_ready_tests;
 
 pub(super) const COLOR_DROP_PREFIX: &str = "\u{1f}remacs-color-drop:";
 
@@ -235,6 +238,76 @@ pub(super) struct FrameSnapshot {
     pub grid: Grid,
 }
 
+fn frame_snapshot(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+    width: usize,
+    height: usize,
+    primary_frame_id: Option<usize>,
+    image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    grid: Grid,
+) -> FrameSnapshot {
+    let frame_id = frame.borrow().id;
+    let parent_frame = match frame_parameter_value(i, frame, "parent-frame") {
+        Value::Frame(parent) if !parent.borrow().dead => Some(parent.borrow().id),
+        _ => None,
+    };
+    let name = frame.borrow().name.borrow().to_string();
+    let int_param = |name: &str| frame_parameter_value(i, frame, name).int();
+    let internal_border_width = int_param("internal-border-width")
+        .and_then(|width| usize::try_from(width).ok())
+        .unwrap_or(0);
+    let (alpha_active, alpha_inactive) = frame_alpha(i, frame);
+    let alpha_background = frame_alpha_background(i, frame);
+    let fullscreen = match frame_parameter_value(i, frame, "fullscreen") {
+        Value::Sym(symbol) => Some(i.symbol_name(symbol)),
+        _ => None,
+    };
+    let z_group = match frame_parameter_value(i, frame, "z-group") {
+        Value::Sym(symbol) => Some(i.symbol_name(symbol)),
+        _ => None,
+    };
+    FrameSnapshot {
+        frame_id,
+        primary_frame_id,
+        image_cache_entries,
+        image_cache_size: i.gui_image_cache_size.clone(),
+        name,
+        parent_frame,
+        visibility: remacs_runtime::editor::frame_visibility(i, frame),
+        modifier_mapping: super::keys::ModifierMapping::from_interp(i),
+        alpha_active,
+        alpha_inactive,
+        alpha_background,
+        width,
+        height,
+        internal_border_width,
+        left: int_param("left"),
+        top: int_param("top"),
+        undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
+        ns_transparent_titlebar: frame_parameter_value(
+            i,
+            frame,
+            "ns-transparent-titlebar",
+        )
+        .truthy(),
+        ns_appearance: frame_ns_appearance(i, frame),
+        represented_file: frame_proxy_file(i, frame),
+        fullscreen,
+        auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
+        auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),
+        z_group,
+        no_accept_focus: frame_parameter_value(i, frame, "no-accept-focus").truthy(),
+        no_focus_on_map: frame_parameter_value(i, frame, "no-focus-on-map").truthy(),
+        skip_taskbar: frame_parameter_value(i, frame, "skip-taskbar").truthy(),
+        sticky: frame_parameter_value(i, frame, "sticky").truthy(),
+        shaded: frame_parameter_value(i, frame, "shaded").truthy(),
+        min_width: frame_minimum(i, frame, "min-width"),
+        min_height: frame_minimum(i, frame, "min-height"),
+        grid,
+    }
+}
+
 #[derive(Default)]
 struct FrameSnapshotMailboxState {
     latest: Option<Vec<FrameSnapshot>>,
@@ -305,6 +378,10 @@ pub(super) struct InitialFrameSize {
 
 pub(super) enum GuiRequest {
     FrameSnapshots(Arc<FrameSnapshotMailbox>),
+    FrameReady {
+        frame_id: usize,
+        reply: SyncSender<Result<bool, String>>,
+    },
     FrameVisibility { frame_id: usize, visibility: FrameVisibility },
     FrameOrder { frame_id: usize, raise: bool },
     WarpPointer {
@@ -547,9 +624,34 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
 
 struct GuiFrameVisibilityBackend {
     requests: smol::channel::Sender<GuiRequest>,
+    frontend: Weak<RefCell<ChanIo>>,
+    frame_snapshot_mailbox: Arc<FrameSnapshotMailbox>,
+    primary_frame_id: Option<usize>,
+    image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
 }
 
 impl GuiFrameVisibilityBackend {
+    fn new(requests: smol::channel::Sender<GuiRequest>, frontend: &Rc<RefCell<ChanIo>>) -> Self {
+        let io = frontend.borrow();
+        Self {
+            requests,
+            frontend: Rc::downgrade(frontend),
+            frame_snapshot_mailbox: io.frame_snapshot_mailbox.clone(),
+            primary_frame_id: io.primary_frame_id,
+            image_cache_entries: io.image_cache_entries.clone(),
+        }
+    }
+
+    fn native_frame_ready(&self, frame_id: usize) -> Result<bool, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FrameReady { frame_id, reply })
+            .map_err(|_| "GUI window service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI window service stopped".to_owned())?
+    }
+
     fn warp_pointer(
         &self,
         frame_id: usize,
@@ -574,6 +676,54 @@ impl GuiFrameVisibilityBackend {
 }
 
 impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend {
+    fn prepare_frame(&self, i: &Interp, frame_id: usize) -> Result<(), String> {
+        if self.native_frame_ready(frame_id)? {
+            return Ok(());
+        }
+        let mut rendered = false;
+        if let Some(frontend) = self.frontend.upgrade() {
+            if let Ok(mut io) = frontend.try_borrow_mut() {
+                io.render(i).map_err(|error| error.to_string())?;
+                rendered = true;
+            }
+        }
+        if !rendered {
+            // Pre-redisplay Lisp callbacks may already hold ChanIo's borrow.
+            // Publish the same native frame state without borrowing it again;
+            // the caller's render will refresh its caches after the callback.
+            let mut snapshots = Vec::new();
+            for frame in &i.frames {
+                if frame.borrow().dead || !frame_system_is_graphical(i, frame) {
+                    continue;
+                }
+                let (width, height) = {
+                    let frame = frame.borrow();
+                    (frame.width, frame.height)
+                };
+                let grid = render_frame_grid_with_mouse_position_cached(
+                    i, frame, width, height, None, None,
+                );
+                snapshots.push(frame_snapshot(
+                    i,
+                    frame,
+                    width,
+                    height,
+                    self.primary_frame_id,
+                    self.image_cache_entries.clone(),
+                    grid,
+                ));
+            }
+            self.frame_snapshot_mailbox
+                .publish(&self.requests, snapshots)
+                .map_err(|error| error.to_string())?;
+        }
+        if self.native_frame_ready(frame_id)? {
+            Ok(())
+        } else {
+            Err(format!("GUI frame {frame_id} is not open"))
+        }
+    }
+
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String> {
         self.set_visibility(
             frame_id,
@@ -2026,64 +2176,15 @@ impl KeyIo for ChanIo {
                     selected_grid = Some(grid.clone());
                 }
                 self.frame_grids.insert(frame_id, grid.clone());
-                let parent_frame = match frame_parameter_value(i, frame, "parent-frame") {
-                    Value::Frame(parent) if !parent.borrow().dead => Some(parent.borrow().id),
-                    _ => None,
-                };
-                let name = frame.borrow().name.borrow().to_string();
-                let int_param = |name: &str| frame_parameter_value(i, frame, name).int();
-                let internal_border_width = int_param("internal-border-width")
-                    .and_then(|width| usize::try_from(width).ok())
-                    .unwrap_or(0);
-                let (alpha_active, alpha_inactive) = frame_alpha(i, frame);
-                let alpha_background = frame_alpha_background(i, frame);
-                let fullscreen = match frame_parameter_value(i, frame, "fullscreen") {
-                    Value::Sym(symbol) => Some(i.symbol_name(symbol)),
-                    _ => None,
-                };
-                let z_group = match frame_parameter_value(i, frame, "z-group") {
-                    Value::Sym(symbol) => Some(i.symbol_name(symbol)),
-                    _ => None,
-                };
-                snapshots.push(FrameSnapshot {
-                    frame_id,
-                    primary_frame_id: self.primary_frame_id,
-                    image_cache_entries: self.image_cache_entries.clone(),
-                    image_cache_size: i.gui_image_cache_size.clone(),
-                    name,
-                    parent_frame,
-                    visibility: remacs_runtime::editor::frame_visibility(i, frame),
-                    modifier_mapping: super::keys::ModifierMapping::from_interp(i),
-                    alpha_active,
-                    alpha_inactive,
-                    alpha_background,
+                snapshots.push(frame_snapshot(
+                    i,
+                    frame,
                     width,
                     height,
-                    internal_border_width,
-                    left: int_param("left"),
-                    top: int_param("top"),
-                    undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
-                    ns_transparent_titlebar: frame_parameter_value(
-                        i,
-                        frame,
-                        "ns-transparent-titlebar",
-                    )
-                    .truthy(),
-                    ns_appearance: frame_ns_appearance(i, frame),
-                    represented_file: frame_proxy_file(i, frame),
-                    fullscreen,
-                    auto_raise: frame_parameter_value(i, frame, "auto-raise").truthy(),
-                    auto_lower: frame_parameter_value(i, frame, "auto-lower").truthy(),
-                    z_group,
-                    no_accept_focus: frame_parameter_value(i, frame, "no-accept-focus").truthy(),
-                    no_focus_on_map: frame_parameter_value(i, frame, "no-focus-on-map").truthy(),
-                    skip_taskbar: frame_parameter_value(i, frame, "skip-taskbar").truthy(),
-                    sticky: frame_parameter_value(i, frame, "sticky").truthy(),
-                    shaded: frame_parameter_value(i, frame, "shaded").truthy(),
-                    min_width: frame_minimum(i, frame, "min-width"),
-                    min_height: frame_minimum(i, frame, "min-height"),
+                    self.primary_frame_id,
+                    self.image_cache_entries.clone(),
                     grid,
-                });
+                ));
             }
         }
 
@@ -2408,9 +2509,6 @@ fn start_logic_inner(
                 i.set_file_dialog_backend(Some(Rc::new(GuiFileDialogBackend {
                     requests: gui_requests_tx.clone(),
                 })));
-                i.set_frame_window_backend(Some(Rc::new(GuiFrameVisibilityBackend {
-                    requests: gui_requests_tx.clone(),
-                })));
                 i.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {
                     requests: gui_requests_tx.clone(),
                 })));
@@ -2488,7 +2586,7 @@ fn start_logic_inner(
                 quit_request: Some(logic_quit_request.clone()),
                 grids: grid_tx,
                 legacy_grid_output,
-                gui_requests: enable_gui_requests.then_some(gui_requests_tx),
+                gui_requests: enable_gui_requests.then_some(gui_requests_tx.clone()),
                 pending: Vec::new(),
                 pending_open_files: VecDeque::new(),
                 #[cfg(target_os = "macos")]
@@ -2527,6 +2625,14 @@ fn start_logic_inner(
                 image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
             };
             let term = Rc::new(RefCell::new(io));
+            if enable_gui_requests {
+                i.set_frame_window_backend(Some(Rc::new(GuiFrameVisibilityBackend::new(
+                    gui_requests_tx,
+                    &term,
+                ))));
+            } else {
+                drop(gui_requests_tx);
+            }
             remacs_runtime::frontend::install_minibuf_reader(&term, &mut i);
             if enable_gui_requests {
                 // For a dump-backed GUI, release the caller after the dump

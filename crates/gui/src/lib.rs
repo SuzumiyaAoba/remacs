@@ -916,6 +916,9 @@ pub fn run_gui_with_dump(
                             }
                         }
                     }
+                    GuiRequest::FrameReady { frame_id, reply } => {
+                        let _ = reply.send(Ok(windows.contains_key(&frame_id)));
+                    }
                     GuiRequest::Prompt {
                         frame_id,
                         message,

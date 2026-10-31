@@ -499,14 +499,22 @@ pub(crate) fn warp_mouse_absolute(
         .frame_window_backend
         .clone()
         .ok_or_else(|| i.error("GUI pointer backend is unavailable"))?;
+    let frame_id = frame.borrow().id;
     backend
-        .warp_pointer_absolute(frame.borrow().id, x, y)
+        .prepare_frame(i, frame_id)
+        .map_err(|message| i.error(message))?;
+    backend
+        .warp_pointer_absolute(frame_id, x, y)
         .map_err(|message| i.error(message))?;
     i.gui_mouse_absolute_position = Some((x, y));
     Ok(())
 }
 
-fn warp_mouse_in_frame(i: &mut Interp, frame: &FrameRef, x: i128, y: i128) -> EvalResult {
+fn warp_mouse_in_frame(
+    i: &mut Interp,
+    frame: &FrameRef,
+    coordinates: impl FnOnce(&Interp, &FrameRef) -> (i128, i128),
+) -> EvalResult {
     if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
         return Ok(Value::Nil);
     }
@@ -514,8 +522,13 @@ fn warp_mouse_in_frame(i: &mut Interp, frame: &FrameRef, x: i128, y: i128) -> Ev
         .frame_window_backend
         .clone()
         .ok_or_else(|| i.error("GUI pointer backend is unavailable"))?;
+    let frame_id = frame.borrow().id;
     backend
-        .warp_pointer_in_frame(frame.borrow().id, x, y)
+        .prepare_frame(i, frame_id)
+        .map_err(|message| i.error(message))?;
+    let (x, y) = coordinates(i, frame);
+    backend
+        .warp_pointer_in_frame(frame_id, x, y)
         .map_err(|message| i.error(message))?;
     Ok(Value::Nil)
 }
@@ -524,27 +537,29 @@ pub(super) fn f_set_mouse_position(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
     let x = mouse_coordinate(i, &a[1])?;
     let y = mouse_coordinate(i, &a[2])?;
-    let char_width = crate::editor::frame_char_width(i, &frame) as i128;
-    let char_height = crate::editor::frame_char_height(i, &frame) as i128;
-    let border = crate::editor::frame_internal_border_width(i, &frame) as i128;
-    let top_margin = frame.borrow().text_margin as i128;
-    let pixel_x = border
-        .saturating_add(x.saturating_mul(char_width))
-        .saturating_add(char_width / 2)
-        .clamp(0, crate::editor::frame_pixel_width(i, &frame) as i128);
-    let pixel_y = border
-        .saturating_add(top_margin.saturating_mul(char_height))
-        .saturating_add(y.saturating_mul(char_height))
-        .saturating_add(char_height / 2)
-        .clamp(0, crate::editor::frame_pixel_height(i, &frame) as i128);
-    warp_mouse_in_frame(i, &frame, pixel_x, pixel_y)
+    warp_mouse_in_frame(i, &frame, |i, frame| {
+        let char_width = crate::editor::frame_char_width(i, frame) as i128;
+        let char_height = crate::editor::frame_char_height(i, frame) as i128;
+        let border = crate::editor::frame_internal_border_width(i, frame) as i128;
+        let top_margin = frame.borrow().text_margin as i128;
+        let pixel_x = border
+            .saturating_add(x.saturating_mul(char_width))
+            .saturating_add(char_width / 2)
+            .clamp(0, crate::editor::frame_pixel_width(i, frame) as i128);
+        let pixel_y = border
+            .saturating_add(top_margin.saturating_mul(char_height))
+            .saturating_add(y.saturating_mul(char_height))
+            .saturating_add(char_height / 2)
+            .clamp(0, crate::editor::frame_pixel_height(i, frame) as i128);
+        (pixel_x, pixel_y)
+    })
 }
 
 pub(super) fn f_set_mouse_pixel_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
     let x = mouse_coordinate(i, &a[1])?;
     let y = mouse_coordinate(i, &a[2])?;
-    warp_mouse_in_frame(i, &frame, x, y)
+    warp_mouse_in_frame(i, &frame, |_, _| (x, y))
 }
 
 pub(super) fn f_set_mouse_absolute_pixel_position(
