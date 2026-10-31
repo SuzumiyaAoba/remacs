@@ -598,6 +598,26 @@ fn insert_delete_keysyms_reach_default_gui_bindings() {
     }
 }
 
+#[test]
+fn sun_again_keysym_uses_the_xkb_redo_binding() {
+    let key = ks("redo", None, false, false, false, false);
+    assert!(command_keystroke(&key));
+    let code = keystroke_to_code(&key).unwrap();
+    assert_eq!(code, remacs_runtime::editor::event_code_for("redo"));
+    let mut i = Interp::new();
+    let binding = i.eval_str("(lookup-key global-map [redo])").unwrap();
+    assert_eq!(i.prin1_to_string(&binding), "repeat-complex-command");
+    i.eval_str("(global-set-key [redo] (lambda () (interactive) (insert \"again received\")))")
+        .unwrap();
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    remacs_runtime::frontend::dispatch_key_core(&mut i, code, &mut keys, &mut arg_mode, None)
+        .unwrap();
+    let text = i.eval_str("(buffer-string)").unwrap();
+    assert_eq!(i.princ_to_string(&text), "again received");
+    assert!(keys.is_empty());
+}
+
 fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
     let (etx, erx) = mpsc::channel();
     let (gtx, grx) = smol::channel::bounded(1);

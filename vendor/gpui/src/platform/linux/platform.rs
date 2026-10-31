@@ -826,6 +826,8 @@ impl crate::Keystroke {
             Keysym::Return => "enter".to_owned(),
             Keysym::Linefeed => "linefeed".to_owned(),
             Keysym::Execute => "execute".to_owned(),
+            // SunAgain aliases Redo (0xff66); GNU uses the redo event too.
+            Keysym::Redo => "redo".to_owned(),
             Keysym::InsertLine => "insertline".to_owned(),
             Keysym::DeleteLine => "deleteline".to_owned(),
             Keysym::InsertChar => "insertchar".to_owned(),
@@ -1058,6 +1060,7 @@ mod tests {
             ("InsertChar", "insertchar", None),
             ("DeleteChar", "deletechar", None),
             ("Execute", "execute", None),
+            ("SunAgain", "redo", None),
             ("Return", "enter", None),
             ("Tab", "tab", None),
             ("j", "j", Some("j")),
