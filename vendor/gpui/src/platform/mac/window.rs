@@ -2139,7 +2139,6 @@ fn remap_control_click(event: &mut PlatformInput, control_click: &mut bool) {
             if *control_click {
                 event.button = MouseButton::Right;
                 event.modifiers.control = false;
-                event.click_count = 1;
             }
         }
         PlatformInput::MouseMove(event)
@@ -2152,7 +2151,6 @@ fn remap_control_click(event: &mut PlatformInput, control_click: &mut bool) {
             if mem::take(control_click) {
                 event.button = MouseButton::Right;
                 event.modifiers.control = false;
-                event.click_count = 1;
             }
         }
         _ => {}
@@ -3214,6 +3212,39 @@ mod control_click_tests {
         remap_control_click(&mut release, &mut active);
         assert_button(&release, MouseButton::Right, false);
         assert!(!active);
+    }
+
+    #[test]
+    fn control_click_preserves_native_click_counts() {
+        for control_at_release in [true, false] {
+            let mut active = false;
+            for click_count in 1..=4 {
+                let mut press = down(true);
+                let PlatformInput::MouseDown(event) = &mut press else {
+                    unreachable!()
+                };
+                event.click_count = click_count;
+                remap_control_click(&mut press, &mut active);
+                assert_button(&press, MouseButton::Right, false);
+                let PlatformInput::MouseDown(event) = press else {
+                    unreachable!()
+                };
+                assert_eq!(event.click_count, click_count, "mouse down count");
+
+                let mut release = up(control_at_release);
+                let PlatformInput::MouseUp(event) = &mut release else {
+                    unreachable!()
+                };
+                event.click_count = click_count;
+                remap_control_click(&mut release, &mut active);
+                assert_button(&release, MouseButton::Right, false);
+                let PlatformInput::MouseUp(event) = release else {
+                    unreachable!()
+                };
+                assert_eq!(event.click_count, click_count, "mouse up count");
+                assert!(!active);
+            }
+        }
     }
 
     #[test]
