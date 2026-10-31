@@ -674,7 +674,11 @@ An obsolete but still supported calling form is:
                   (and (boundp sym)
                        ;; load-file-name
                        (equal (symbol-value sym) expansion)
-                       (equal (symbol-function sym) hook)))
+                       (equal (symbol-function sym) hook)
+                       (equal (abbrev-get sym :case-fixed)
+                              (plist-get props :case-fixed))
+                       (equal (abbrev-get sym :enable-function)
+                              (plist-get props :enable-function))))
         (setq abbrevs-changed t))
       (set sym expansion)
       (fset sym hook)
