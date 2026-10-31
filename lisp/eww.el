@@ -2283,10 +2283,11 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
     (dolist (elem form)
       (when (and (consp elem)
 		 (eq (car elem) 'hidden))
-	(push (cons (plist-get (cdr elem) :dom)
-                    (cons (plist-get (cdr elem) :name)
-                          (or (plist-get (cdr elem) :value) "")))
-	      values)))
+        (when-let* ((name (plist-get (cdr elem) :name))
+                    ((not (equal name ""))))
+          (push (cons (plist-get (cdr elem) :dom)
+                      (cons name (or (plist-get (cdr elem) :value) "")))
+                values))))
     ;;Remacs: hidden controls have no buffer position.  Use the DOM order
     ;; for all entries, including those mixed with visible controls.
     (setq values (nreverse values))
