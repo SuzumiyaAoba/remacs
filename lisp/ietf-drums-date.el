@@ -96,7 +96,7 @@ treat them as whitespace (per RFC822)."
       (skip-ignored)		;; Skip leading whitespace.
       (while (and (< index end)
                   (not (and comment-eof
-                            (eq (aref string index) ?\()))))
+                            (eq (aref string index) ?\())))
         (if (and comment-eof (eq (aref string index) ?,))
             (progn
               (push (aref string index) list)
@@ -120,7 +120,7 @@ treat them as whitespace (per RFC822)."
                         (not (or (ietf-drums-date--ignore-char-p
                                   char comment-eof)
                                  (eq char ?,)
-                                 (eq char ?\\())))
+                                 (eq char ?\())))
               (unless (<= ?0 char ?9)
                 (setq all-digits nil))
               (when (and (eq char ?\\)
@@ -183,7 +183,7 @@ DST is returned as -1)."
                         (when (and range
                                    (not (and (<= (car range) value)
                                              (or (null (cadr range))
-                                                 (<= value (cadr range)))))
+                                                 (<= value (cadr range))))))
                           (signal 'date-parse-error
                                   (list "Slot out of range"
                                         (nth slot ietf-drums-date--slot-names)
@@ -298,7 +298,7 @@ DST is returned as -1)."
                    (* 60
                       (+ minutes
                          (* 60 (cl-parse-integer zone :start 1 :end 3)))
-                      (if (= (aref zone 0) ?-) -1 1))))))
+                      (if (= (aref zone 0) ?-) -1 1)))))
               ((and (not no-822)
                     (stringp zone)
                     (string-match-p "\\`[a-z]+\\'" zone))
@@ -330,7 +330,7 @@ DST is returned as -1)."
             (signal 'date-parse-error
                     (list "Weekday does not match date"
                           given-weekday actual-weekday)))))
-    time))
+      time)))
 
 (provide 'ietf-drums-date)
 
