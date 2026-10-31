@@ -539,17 +539,22 @@ if that doesn't produce a completion match."
   "An enhanced `icomplete-mode' that emulates `ido-mode'.
 
 This global minor mode makes minibuffer completion behave
-more like `ido-mode' than regular `icomplete-mode'."
+more like `ido-mode' than regular `icomplete-mode'.
+
+Disabling this mode keeps any enabled `icomplete-mode' active,
+using the ordinary Icomplete setup."
   :global t
   (remove-hook 'minibuffer-setup-hook #'icomplete-minibuffer-setup)
   (remove-hook 'minibuffer-setup-hook #'icomplete--fido-mode-setup)
   (remove-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup)
   (when fido-mode
     (icomplete-mode -1)
-    (setq icomplete-mode t)
+    (setq icomplete-mode t))
+  (when icomplete-mode
     (when icomplete-in-buffer
       (add-hook 'completion-in-region-mode-hook #'icomplete--in-region-setup))
-    (add-hook 'minibuffer-setup-hook #'icomplete-minibuffer-setup)
+    (add-hook 'minibuffer-setup-hook #'icomplete-minibuffer-setup))
+  (when fido-mode
     (add-hook 'minibuffer-setup-hook #'icomplete--fido-mode-setup)))
 
 ;;;_ > icomplete-mode (&optional prefix)
