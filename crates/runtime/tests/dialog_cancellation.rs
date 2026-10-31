@@ -102,3 +102,54 @@ fn dialog_dismissal_quits_but_a_selected_nil_is_a_value() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn explicit_cancel_button_returns_its_lisp_value() {
+    struct Cancel;
+    impl DialogBackend for Cancel {
+        fn choose(
+            &self,
+            _frame_id: usize,
+            message: &str,
+            detail: Option<&str>,
+            buttons: &[String],
+        ) -> Result<Option<usize>, String> {
+            assert_eq!(message, "Question");
+            assert_eq!(detail, None);
+            assert_eq!(buttons, ["Yes", "Cancel"]);
+            // The native Cancel role returns the original button index.
+            Ok(Some(1))
+        }
+    }
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = Interp::new();
+            eval(&mut interp, "(set-frame-parameter nil 'window-system 'ns)");
+            interp.set_dialog_backend(Some(Rc::new(Cancel)));
+            let canceled = eval(
+                &mut interp,
+                r#"(x-popup-dialog t '("Question" ("Yes" . yes) ("Cancel" . canceled)))"#,
+            );
+            assert_eq!(interp.prin1_to_string(&canceled), "canceled");
+
+            let same_value = eval(
+                &mut interp,
+                r#"(progn
+                  (setq qa-cancel-value (list 'original 'cancel-value))
+                  (eq qa-cancel-value
+                      (x-popup-dialog t (list "Question" '("Yes" . yes)
+                                             (cons "Cancel" qa-cancel-value)))))"#,
+            );
+            assert_eq!(interp.prin1_to_string(&same_value), "t");
+
+            let selected_nil = eval(
+                &mut interp,
+                r#"(x-popup-dialog t '("Question" ("Yes" . yes) ("Cancel")))"#,
+            );
+            assert!(matches!(selected_nil, Value::Nil));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
