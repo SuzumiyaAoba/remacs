@@ -1090,6 +1090,82 @@ solution."
                 arguments (cons arg arguments))))))
     (car arguments)))
 
+;; Remacs: mask command separators inside quotes and subshells while scanning.
+(defun shell-directory-tracker--mask-nested-separators (command)
+  "Return a same-length copy of COMMAND with nested separators masked.
+This lets the directory tracker split only commands in the parent shell."
+  (let ((copy (copy-sequence command))
+        (index 0)
+        (limit (length command))
+        (contexts (list (vector nil 0 nil nil)))
+        context quote-char depth subshell escaped char next)
+    (while (< index limit)
+      (setq context (car contexts)
+            quote-char (aref context 0)
+            depth (aref context 1)
+            subshell (aref context 2)
+            escaped (aref context 3)
+            char (aref command index)
+            next (and (< (1+ index) limit)
+                      (aref command (1+ index))))
+      (cond
+       (escaped
+        (when (memq char '(?\; ?& ?| ?\n))
+          (aset copy index 32))
+        (aset context 3 nil))
+       ((and quote-char (= quote-char 39))
+        (when (eq char ?')
+          (aset context 0 nil))
+        (when (memq char '(?\; ?& ?| ?\n))
+          (aset copy index 32)))
+       ((and quote-char (= quote-char 34))
+        (cond
+         ((eq char ?\\)
+          (when (and next (memq next '(?$ 96 ?\" ?\\ ?\n)))
+            (aset context 3 t)))
+         ((eq char ?\")
+          (aset context 0 nil))
+         ((and (eq char ?$) (eq next 40))
+          (push (vector nil 1 t nil) contexts)
+          (setq index (1+ index)))
+         ((eq char 96)
+          (push (vector 96 0 nil nil) contexts))
+         ((memq char '(?\; ?& ?| ?\n))
+          (aset copy index 32))))
+       ((and quote-char (= quote-char 96))
+        (cond
+         ((eq char ?\\)
+          (aset context 3 t))
+         ((eq char 96)
+          (pop contexts))
+         ((memq char '(?\; ?& ?| ?\n))
+          (aset copy index 32))))
+       (t
+        (cond
+         ((eq char ?\\)
+          (aset context 3 t))
+         ((eq char ?')
+          (aset context 0 39))
+         ((eq char ?\")
+          (aset context 0 34))
+         ((eq char 96)
+          (push (vector 96 0 nil nil) contexts))
+         ((and (eq char ?$) (eq next 40))
+          (push (vector nil 1 t nil) contexts)
+          (setq index (1+ index)))
+         ((eq char 40)
+          (aset context 1 (1+ depth)))
+         ((eq char 41)
+          (when (> depth 0)
+            (setq depth (1- depth))
+            (aset context 1 depth)
+            (when (and (zerop depth) subshell)
+              (pop contexts))))
+         ((and (> depth 0) (memq char '(?\; ?& ?| ?\n)))
+          (aset copy index 32)))))
+      (setq index (1+ index)))
+    copy))
+
 ;; Remacs: distinguish a pipeline bar from the shell's || operator.
 (defun shell-directory-tracker--pipeline-separator-p (separator)
   "Return non-nil if SEPARATOR contains a single pipeline bar."
@@ -1139,18 +1215,20 @@ Environment variables are expanded, see function `substitute-in-file-name'."
       ;; This fails so often that it seems better to just ignore errors (?).
       ;; Eg even: foo=/tmp; cd $foo is beyond us (bug#17159).
       (ignore-errors
-        (let ((start (progn (string-match
-			       (concat "^" shell-command-separator-regexp)
-			       str) ; skip whitespace
-			      (match-end 0)))
-		(case-fold-search)
+        (let* ((tracking-str
+		 (shell-directory-tracker--mask-nested-separators str))
+	       (start (progn (string-match
+			      (concat "^" shell-command-separator-regexp)
+			      tracking-str)
+			     (match-end 0)))
+	       (case-fold-search)
 		end cmd arg1 cmd-subst-fn separator next-start
 		in-pipeline pipeline-separator in-conditional conditional-separator)
-	    (while (string-match shell-command-regexp str start)
+	    (while (string-match shell-command-regexp tracking-str start)
 	      (setq end (match-end 0))
-	      (string-match shell-command-separator-regexp str end)
+	      (string-match shell-command-separator-regexp tracking-str end)
 	      (setq next-start (match-end 0)
-		    separator (substring str end next-start)
+		    separator (substring tracking-str end next-start)
 		    pipeline-separator
 		    (shell-directory-tracker--pipeline-separator-p separator)
 		    conditional-separator
