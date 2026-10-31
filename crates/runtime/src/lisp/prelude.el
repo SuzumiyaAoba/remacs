@@ -9820,42 +9820,33 @@ limit the string to."
              (too-long (1+ nglyphs))
              (stop (max (/ nglyphs 2) 1))
              (gap stop)
-             candidate encoded found candidate-stop)
-        ;; We're returning the end of the string.
-        (when end
-          (setq glyphs (nreverse glyphs)))
+             candidate encoded found)
         (while (and (not found)
                     (< stop too-long))
           (setq encoded
-                (encode-coding-string (string-join (seq-take glyphs stop))
-                                      coding-system))
+                ;;Remacs: Measure each suffix in its original order, since
+                ;; stateful encodings can change size when glyphs are reversed.
+                (encode-coding-string
+                 (string-join (if end
+                                  (nthcdr (- nglyphs stop) glyphs)
+                                (seq-take glyphs stop)))
+                 coding-system))
           (cond
            ((= (length encoded) length)
-            (setq found encoded
-                  candidate-stop stop))
+            (setq found encoded))
            ;; Too long; try shortening.
            ((> (length encoded) length)
             (setq too-long stop
                   stop (max (- stop gap) 1)))
            ;; Too short; try lengthening.
            (t
-            (setq candidate encoded
-                  candidate-stop stop)
+            (setq candidate encoded)
             (setq stop
                   (if (>= stop nglyphs)
                       too-long
                     (min (+ stop gap) nglyphs)))))
           (setq gap (max (/ gap 2) 1)))
-        (cond
-         ((not (or found candidate))
-          "")
-         ;; We're returning the end, so redo the encoding.
-         (end
-          (encode-coding-string
-           (string-join (nreverse (seq-take glyphs candidate-stop)))
-           coding-system))
-         (t
-          (or found candidate))))
+        (or found candidate ""))
     ;; Char-based version.
     (cond
      ((<= (length string) length) string)
