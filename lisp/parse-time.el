@@ -97,6 +97,32 @@ letters, digits, plus or minus signs or colons."
 			      ("est" ,(* -5 3600)) ("edt" ,(* -4 3600) t))
   "(zoneinfo seconds-off daylight-savings-time-p)")
 
+(defun parse-time--strip-comments (string)
+  "Return STRING with parenthesized comments replaced by spaces."
+  (let ((result (copy-sequence string))
+        (depth 0)
+        (escaped nil)
+        (index 0))
+    (while (< index (length string))
+      (let ((char (aref string index)))
+        (cond
+         (escaped
+          (aset result index 32)
+          (setq escaped nil))
+         ((and (> depth 0) (= char ?\\))
+          (aset result index 32)
+          (setq escaped t))
+         ((= char ?\()
+          (setq depth (1+ depth))
+          (aset result index 32))
+         ((and (> depth 0) (= char ?\)))
+          (setq depth (1- depth))
+          (aset result index 32))
+         ((> depth 0)
+          (aset result index 32))))
+      (setq index (1+ index)))
+    result))
+
 (defvar parse-time-rules
   `(((6) parse-time-weekdays)
     ((3) (1 31))
@@ -170,44 +196,56 @@ See `decode-time' for the meaning of FORM."
   (condition-case ()
       (iso8601-parse string form)
     (wrong-type-argument
-     (let ((time (list nil nil nil nil nil nil nil -1 nil))
-	   (temp (parse-time-tokenize (downcase string))))
-       (while temp
-	 (let ((parse-time-elt (pop temp))
-	       (rules parse-time-rules)
-	       (exit nil))
-	   (while (and rules (not exit))
-	     (let* ((rule (pop rules))
-		    (slots (pop rule))
-		    (predicate (pop rule))
-		    (parse-time-val))
-	       (when (and (not (nth (car slots) time)) ;not already set
-			  (setq parse-time-val
-				(cond ((and (consp predicate)
-					    (not (functionp predicate)))
-				       (and (numberp parse-time-elt)
-					    (<= (car predicate) parse-time-elt)
-					    (or (not (cdr predicate))
-						(<= parse-time-elt
-						    (cadr predicate)))
-					    parse-time-elt))
-				      ((symbolp predicate)
-				       (cdr (assoc parse-time-elt
-						   (symbol-value predicate))))
-				      ((funcall predicate)))))
-		 (setq exit t)
-		 (while slots
-		   (let ((new-val (if rule
-				      (let ((this (pop rule)))
-					(if (vectorp this)
-					    (cl-parse-integer
-					     parse-time-elt
-					     :start (aref this 0)
-					     :end (aref this 1))
-					  (funcall this)))
-				    parse-time-val)))
-		     (setf (nth (pop slots) time) new-val))))))))
-       time))))
+    (let* ((time (list nil nil nil nil nil nil nil -1 nil))
+           (temp (parse-time-tokenize
+                  (downcase (parse-time--strip-comments string))))
+           ;; RFC 5322 4.3 treats unknown obsolete alphabetic zones as -0000.
+           (unknown-zone nil))
+      (while temp
+        (let ((parse-time-elt (pop temp))
+              (rules parse-time-rules)
+              (exit nil))
+          (while (and rules (not exit))
+            (let* ((rule (pop rules))
+                   (slots (pop rule))
+                   (predicate (pop rule))
+                   (parse-time-val))
+              (when (and (not (nth (car slots) time)) ;not already set
+                         (setq parse-time-val
+                               (cond ((and (consp predicate)
+                                           (not (functionp predicate)))
+                                      (and (numberp parse-time-elt)
+                                           (<= (car predicate) parse-time-elt)
+                                           (or (not (cdr predicate))
+                                               (<= parse-time-elt
+                                                   (cadr predicate)))
+                                           parse-time-elt))
+                                     ((symbolp predicate)
+                                      (cdr (assoc parse-time-elt
+                                                  (symbol-value predicate))))
+                                     ((funcall predicate))))
+                (setq exit t)
+                (while slots
+                  (let ((new-val (if rule
+                                     (let ((this (pop rule)))
+                                       (if (vectorp this)
+                                           (cl-parse-integer
+                                            parse-time-elt
+                                            :start (aref this 0)
+                                            :end (aref this 1))
+                                         (funcall this)))
+                                   parse-time-val)))
+                    (setf (nth (pop slots) time) new-val)))))))
+          ;; Only unmatched tokens can be obsolete timezone abbreviations.
+          (when (and (not exit)
+                     (stringp parse-time-elt)
+                     (string-match-p "\\`[a-z]+\\'" parse-time-elt)
+                     (let ((length (length parse-time-elt)))
+                       (or (= length 1) (<= 3 length 5))))
+            (setq unknown-zone t))))
+      (when (and unknown-zone (not (nth 8 time)))
+        (setf (nth 8 time) 0))
+      time))))
 
 (defun parse-iso8601-time-string (date-string &optional form)
   "Parse an ISO 8601 time string, such as \"2020-01-15T16:12:21-08:00\".
