@@ -167,7 +167,7 @@ COND-FN takes one argument: the current element."
 
 (defun filesets-which-command-p (cmd)
   "Call \"which CMD\" and return non-nil if the command was found."
-  (when (string-match-p (format "\\(/[^/]+\\)?/%s" cmd)
+  (when (string-match-p (format "\\(/[^/]+\\)?/%s" (regexp-quote cmd))
 			(filesets-which-command cmd))
     cmd))
 
