@@ -9,6 +9,14 @@
 - Read `docs/architecture.md` and run `python3 tools/check_architecture.py` when changing dependencies.
 - Source-tree paths use build-time `REMACS_SOURCE_ROOT`, not a member's `CARGO_MANIFEST_DIR`.
 
+## テスト・検証の選び方
+
+- 通常の開発では、変更した挙動を直接確認できる最小の回帰テストと、影響するパッケージのチェックを選ぶ。
+- `cargo test --workspace`、全 target のビルド、各パッケージの総当たりビルドは既定の検証に含めない。
+- 変更が複数クレートの契約や起動経路に及ぶ場合、対象テストで広い問題が見つかった場合、またはユーザーが全体検証を依頼した場合は、必要な範囲まで検証を広げる。
+- 依存関係を変更した場合は `docs/architecture.md` を確認し、`python3 tools/check_architecture.py` と影響するパッケージの検証を行う。
+- 実行したテストとチェック、および実行していない広域検証を報告する。
+
 # Remacs GNU library port notes
 
 ## Layout
@@ -1707,7 +1715,8 @@ qa-xf back to qa and watch it go XPASS→pass):
   eval of `syntax-propertize-function' — now released before the
   call (and likewise in `f_syntax_after').
 
-Total: ~5000 GNU-verified checks; run all: `cargo test --test qa`.
+Total: ~5000 GNU-verified checks. The full ledger is available with
+`cargo test --test qa` when a full parity sweep is requested or warranted.
 
 
 ## Differential sweep (`tools/difftest.py` + `tests/diff/`)
