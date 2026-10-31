@@ -1376,7 +1376,9 @@ pub struct PathPromptOptions {
     pub directories: bool,
     /// Should the prompt allow multiple files to be selected?
     pub multiple: bool,
-    /// The prompt to show to a user when selecting a path
+    /// The title of the file selection dialog.
+    pub title: Option<SharedString>,
+    /// The label of the dialog's confirmation button.
     pub prompt: Option<SharedString>,
     /// The directory to show when the prompt opens.
     pub directory: Option<PathBuf>,

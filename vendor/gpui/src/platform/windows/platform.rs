@@ -936,6 +936,9 @@ fn file_open_dialog(
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
 
+        if let Some(title) = options.title {
+            folder_dialog.SetTitle(&HSTRING::from(title.as_str()))?;
+        }
         if let Some(prompt) = options.prompt {
             let prompt: &str = &prompt;
             folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;

@@ -49,6 +49,7 @@ use objc::{
     },
     sel, sel_impl,
 };
+mod file_dialog;
 mod keys;
 mod logic;
 mod monitor;
@@ -1146,14 +1147,12 @@ pub fn run_gui_with_dump(
                         reply,
                     } => {
                         let _ = must_match;
-                        let options = PathPromptOptions {
-                            files: !directory_only,
-                            directories: directory_only,
-                            multiple: false,
-                            prompt: Some(prompt.into()),
-                            directory: directory.map(std::path::PathBuf::from),
+                        let options = file_dialog::path_prompt_options(
+                            prompt,
+                            directory,
                             initial,
-                        };
+                            directory_only,
+                        );
                         let result = match cx.update(|app| app.prompt_for_paths(options)) {
                             Ok(response) => match response.await {
                                 Ok(Ok(Some(paths))) => Ok(paths

@@ -784,6 +784,9 @@ impl Platform for MacPlatform {
                     });
                     let block = block.copy();
 
+                    if let Some(title) = options.title {
+                        let _: () = msg_send![panel, setTitle: ns_string(&title)];
+                    }
                     if let Some(prompt) = options.prompt {
                         let _: () = msg_send![panel, setPrompt: ns_string(&prompt)];
                     }

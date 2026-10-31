@@ -303,11 +303,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn(async move {
-                let title = if options.directories {
-                    "Open Folder"
-                } else {
-                    "Open File"
-                };
+                let title = options
+                    .title
+                    .as_ref()
+                    .map(crate::SharedString::as_str)
+                    .unwrap_or(if options.directories {
+                        "Open Folder"
+                    } else {
+                        "Open File"
+                    });
 
                 let mut request_builder =
                     ashpd::desktop::file_chooser::OpenFileRequest::default()
