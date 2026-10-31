@@ -442,19 +442,30 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
       (and (url-domsuf-cookie-allowed-p domain)
 	   (url-cookie--domain-match-p host domain t))))))
 
+(defun url-cookie--last-attribute (name attributes &optional predicate)
+  ;;Remacs: RFC 6265's storage model uses the last accepted attribute.
+  "Return the last NAME entry in ATTRIBUTES whose value passes PREDICATE.
+Compare names without regard to case.  With nil PREDICATE, accept any value."
+  (let ((name (downcase name))
+        result)
+    (dolist (attribute attributes result)
+      (when (and (string= name (downcase (car attribute)))
+                 (or (null predicate) (funcall predicate (cdr attribute))))
+        (setq result attribute)))))
+
 (defun url-cookie-handle-set-cookie (str)
   (setq url-cookies-changed-since-last-save t)
   (let* ((args (url-parse-args str t))
+	 (attributes (cdr args))
 	 (case-fold-search t)
-	 (secure (and (assoc-string "secure" args t) t))
+	 (secure (and (url-cookie--last-attribute "secure" attributes) t))
 	 (domain-attribute
-	  (let* ((attribute (assoc-string "domain" args t))
-		 (value (cdr-safe attribute)))
-	    ;;Remacs: RFC 6265 ignores empty and trailing-dot Domain attributes,
-	    ;; leaving the cookie host-only.
-	    (and attribute (stringp value) (> (length value) 0)
-		 (not (eq ?. (aref value (1- (length value)))))
-		 attribute)))
+	  (url-cookie--last-attribute
+	   "domain" attributes
+	   (lambda (value)
+	     ;;Remacs: ignore empty and trailing-dot Domain attributes.
+	     (and (stringp value) (> (length value) 0)
+		  (not (eq ?. (aref value (1- (length value)))))))))
 	 (domain (if domain-attribute
 		      (cdr-safe domain-attribute)
 		    (url-host url-current-object)))
@@ -467,8 +478,14 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	 (current-url (url-view-url t))
 	 (trusted url-cookie-trusted-urls)
 	 (untrusted url-cookie-untrusted-urls)
-	 (max-age (cdr-safe (assoc-string "max-age" args t)))
-	 (path-attribute (cdr-safe (assoc-string "path" args t)))
+	 (max-age
+	  (cdr-safe
+	   (url-cookie--last-attribute
+	    "max-age" attributes
+	    (lambda (value)
+	      (and (stringp value) (string-match-p "\\`-?[0-9]+\\'" value))))))
+	 (path-attribute
+	  (cdr-safe (url-cookie--last-attribute "path" attributes)))
 	 (localpart
 	  (if (and (stringp path-attribute)
 		   (> (length path-attribute) 0)
@@ -477,7 +494,7 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	    (url-cookie--default-path
 	     (car (url-path-and-query url-current-object)))))
 	 (expires nil))
-    (if (and max-age (string-match "\\`-?[0-9]+\\'" max-age))
+    (if max-age
 	(setq expires
               (if (<= (string-to-number max-age) 0)
 		  ;;Remacs: keep non-positive ages expired even when their resulting time
@@ -490,7 +507,14 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 		  (format-time-string "%a %b %d %H:%M:%S %Y GMT"
 				      (time-add nil (string-to-number max-age))
 				      t))))
-      (setq expires (cdr-safe (assoc-string "expires" args t))))
+      (setq expires
+            (cdr-safe
+             (url-cookie--last-attribute
+              "expires" attributes
+              (lambda (value)
+                (and (stringp value)
+                     (ignore-errors
+                       (url-cookie--expires-date-to-time value))))))))
     (while (consp trusted)
       (if (string-match (car trusted) current-url)
 	  (setq trusted (- (match-end 0) (match-beginning 0)))
