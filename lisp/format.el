@@ -494,7 +494,8 @@ ALIST is a list of (FROM . TO) pairs, which should be proper arguments to
 Optional second arg REVERSE, if non-nil, means the pairs are (TO . FROM),
 so that you can use the same list in both directions if it contains only
 literal strings.
-Optional args BEG and END specify a region of the buffer on which to operate."
+Optional args BEG and END specify a region of the buffer on which to operate.
+Properties on TO override properties inherited from the replaced text."
   (save-excursion
     (save-restriction
       (or beg (setq beg (point-min)))
@@ -507,9 +508,16 @@ Optional args BEG and END specify a region of the buffer on which to operate."
 	  (goto-char beg)
 	  (while (search-forward from nil t)
 	    (goto-char (match-beginning 0))
-	    (insert to)
-	    (set-text-properties (- (point) (length to)) (point)
-				 (text-properties-at (point)))
+	    (let ((start (point))
+		  (pos 0))
+	      (insert to)
+	      (set-text-properties start (point) (text-properties-at (point)))
+	      ;; ;Remacs: Keep TO's own properties over the inherited defaults.
+	      (while (< pos (length to))
+		(let ((next (next-property-change pos to (length to))))
+		  (add-text-properties (+ start pos) (+ start next)
+				       (text-properties-at pos to))
+		  (setq pos next))))
 	    (delete-region (point) (+ (point) (- (match-end 0)
 						 (match-beginning 0)))))
 	  (setq alist (cdr alist)))))))
