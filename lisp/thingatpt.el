@@ -798,18 +798,61 @@ See RFC 4122 for the description of the format.")
   "Return the sentence at point.  See `thing-at-point'."
   (thing-at-point 'sentence no-properties))
 
+(defun thing-at-point--only-reader-trivia-p (string start)
+  "Return non-nil if STRING from START contains only reader layout/comments."
+  (let ((position start)
+        (end (length string)))
+    (catch 'not-reader-trivia
+      (while (< position end)
+        (let ((char (aref string position)))
+          (cond
+           ;; Match read0/read_symbol layout: ASCII controls through space
+           ;; and NBSP, rather than all Unicode whitespace.
+           ((or (<= char 32) (= char #xa0))
+            (setq position (1+ position)))
+           ((= char ?\;)
+            (while (and (< position end)
+                        (/= (aref string position) ?\n))
+              (setq position (1+ position))))
+           ;; For string sources #@ skips lazy documentation through
+           ;; the next unit separator (or EOF), matching the reader.
+           ((and (= char ?#)
+                 (< (1+ position) end)
+                 (= (aref string (1+ position)) ?@))
+            (let ((digits-start (+ position 2)))
+              (setq position digits-start)
+              (while (and (< position end)
+                          (<= ?0 (aref string position) ?9))
+                (setq position (1+ position)))
+              (while (and (< position end)
+                          (/= (aref string position) 31))
+                (setq position (1+ position)))
+              (when (< position end)
+                (setq position (1+ position)))))
+           ((and (= char ?#)
+                 (< (1+ position) end)
+                 (= (aref string (1+ position)) ?!))
+            (while (and (< position end)
+                        (/= (aref string position) ?\n))
+              (setq position (1+ position))))
+           ;; Other dispatch syntax (e.g. #1=) is reader input, not trivia.
+           (t (throw 'not-reader-trivia nil)))))
+      t)))
+
 (defun thing-at-point--read-from-whole-string (str)
   "Read a Lisp expression from STR.
 Signal an error if the entire string was not used."
   (let* ((read-data (read-from-string str))
-	 (more-left
-	  (condition-case nil
-	      ;; The call to `ignore' suppresses a compiler warning.
-	      (progn (ignore (read-from-string (substring str (cdr read-data))))
-		     t)
-	    (end-of-file nil))))
+         (more-left
+          (condition-case err
+              ;; The call to `ignore' suppresses a compiler warning.
+              (progn (ignore (read-from-string (substring str (cdr read-data))))
+                     t)
+            (end-of-file
+             (unless (thing-at-point--only-reader-trivia-p str (cdr read-data))
+               (signal (car err) (cdr err)))))))
     (if more-left
-	(error "Can't read whole string")
+        (error "Can't read whole string")
       (car read-data))))
 
 (define-obsolete-function-alias 'read-from-whole-string
