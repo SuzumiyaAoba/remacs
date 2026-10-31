@@ -93,8 +93,12 @@ element should come before the second.  The arguments are cons cells;
                  (function :tag "Another function")))
 
 (defcustom imenu-max-items 25
-  "Maximum number of elements in a mouse menu for Imenu."
-  :type 'natnum)
+  "Maximum number of elements in a mouse menu for Imenu.
+This must be a positive integer."
+  ;; Remacs: zero cannot bound a nonempty menu.
+  :type '(restricted-sexp :tag "Positive integer" :value 25
+          :match-alternatives
+          ((lambda (value) (and (integerp value) (> value 0))))))
 
 (defcustom imenu-space-replacement "."
   "The replacement string for spaces in index names.
@@ -360,7 +364,11 @@ If REVERSE is non-nil then the beginning is 100 and the end is 0."
 (defun imenu--split (list n)
   "Split LIST into sublists of max length N.
 Example (imenu--split \\='(1 2 3 4 5 6 7 8) 3) => ((1 2 3) (4 5 6) (7 8))
+N must be a positive integer.
 The returned list DOES NOT share structure with LIST."
+  ;; Remacs: reject invalid limits even for an empty list.
+  (unless (and (integerp n) (> n 0))
+    (user-error "Imenu chunk size must be a positive integer: %S" n))
   (let ((remain list)
 	(result '())
 	(sublist '())
@@ -385,6 +393,9 @@ In any case, add TITLE to the front of the alist.
 If IMENU--RESCAN-ITEM is present in MENULIST, it is moved to the
 beginning of the returned alist.
 The returned alist DOES NOT share structure with MENULIST."
+  ;; Remacs: validate before sorting or restructuring the caller's menu.
+  (unless (and (integerp imenu-max-items) (> imenu-max-items 0))
+    (user-error "imenu-max-items must be a positive integer: %S" imenu-max-items))
   (let ((menulist (copy-sequence menulist))
         keep-at-top)
     (if (memq imenu--rescan-item menulist)

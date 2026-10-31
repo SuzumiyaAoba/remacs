@@ -1,0 +1,58 @@
+;;; -*- lexical-binding: t -*-
+(require 'imenu)
+(require 'wid-edit)
+
+(qa (imenu--split '(a b c d e) 2) '((a b) (c d) (e)))
+(qa (imenu--split '(a b c) 1) '((a) (b) (c)))
+(qa (imenu--split '(a b c) 3) '((a b c)))
+(qa (imenu--split '(a b c) 10) '((a b c)))
+(qa (imenu--split nil 2) nil)
+(qa-err (imenu--split '(a b c) 0) 'user-error)
+(qa-err (imenu--split nil 0) 'user-error)
+(qa-err (imenu--split '(a b c) -1) 'user-error)
+(qa-err (imenu--split '(a b c) 1.5) 'user-error)
+(qa-err (imenu--split '(a b c) "2") 'user-error)
+
+(qa (let* ((input (list 'a 'b 'c))
+           (parts (imenu--split input 2)))
+      (setcar (car parts) 'changed)
+      (list input parts))
+    '((a b c) ((changed b) (c))))
+
+(qa (let ((imenu-max-items 2) (imenu-sort-function nil)
+          (imenu-submenus-on-top nil))
+      (imenu--split-menu '(("a" . 1) ("b" . 2) ("c" . 3)) "Menu"))
+    '("Menu" ("From: a" ("a" . 1) ("b" . 2)) ("From: c" ("c" . 3))))
+(qa (let ((imenu-max-items 1) (imenu-sort-function nil)
+          (imenu-submenus-on-top nil))
+      (imenu--split-menu '(("a" . 1) ("b" . 2)) "Menu"))
+    '("Menu" ("From: a" ("a" . 1)) ("From: b" ("b" . 2))))
+(qa (let ((imenu-max-items 2) (imenu-sort-function nil)
+          (imenu-submenus-on-top nil))
+      (imenu--split-menu '(("a" . 1) ("b" . 2)) "Menu"))
+    '("Menu" ("a" . 1) ("b" . 2)))
+(qa-err (let ((imenu-max-items 0))
+          (imenu--split-menu '(("a" . 1) ("b" . 2)) "Menu"))
+        'user-error)
+(qa-err (let ((imenu-max-items 0)) (imenu--split-menu nil "Menu"))
+        'user-error)
+
+(defun qa-imenu--invalid-limit-sorts ()
+  (let ((calls 0) (imenu-max-items 0))
+    (let ((imenu-sort-function (lambda (_a _b) (setq calls (1+ calls)))))
+      (condition-case nil
+          (imenu--split-menu '(("a" . 1) ("b" . 2)) "Menu")
+        (user-error nil)))
+    calls))
+
+(qa (qa-imenu--invalid-limit-sorts) 0)
+
+(defun qa-imenu--max-items-valid-p (value)
+  (and (widget-apply (widget-convert (get 'imenu-max-items 'custom-type))
+                     :match value)
+       t))
+
+(qa (mapcar #'qa-imenu--max-items-valid-p '(0 -1 1 25 1.0 "2" nil))
+    '(nil nil t t nil nil nil))
+
+(princ (qa--done))
