@@ -1749,7 +1749,11 @@ just re-display the HTML already fetched."
 
 (defun eww-tag-form (dom)
   (let ((eww-form (list (cons :method (dom-attr dom 'method))
-			(cons :action (dom-attr dom 'action))))
+			(cons :action (dom-attr dom 'action))
+                        (cons :controls
+                              (dom-search dom (lambda (node)
+                                                (memq (dom-tag node)
+                                                      '(input button select textarea)))))))
 	(start (point)))
     (insert "\n")
     (shr-ensure-paragraph)
@@ -1773,7 +1777,7 @@ just re-display the HTML already fetched."
       (insert "Submit"))
     (add-face-text-property start (point) 'eww-form-submit)
     (put-text-property start (point) 'eww-form
-		       (list :eww-form eww-form
+		       (list :eww-form eww-form :dom dom
 			     :value value
 			     :type "submit"
 			     :name (dom-attr dom 'name)))
@@ -1792,7 +1796,7 @@ just re-display the HTML already fetched."
       (insert eww-form-checkbox-symbol))
     (add-face-text-property start (point) 'eww-form-checkbox)
     (put-text-property start (point) 'eww-form
-		       (list :eww-form eww-form
+		       (list :eww-form eww-form :dom dom
 			     :value (dom-attr dom 'value)
 			     :type (downcase (dom-attr dom 'type))
 			     :checked (dom-attr dom 'checked)
@@ -1813,7 +1817,7 @@ just re-display the HTML already fetched."
     (add-face-text-property start (point) 'eww-form-file)
     (insert value)
     (put-text-property start (point) 'eww-form
-		       (list :eww-form eww-form
+		       (list :eww-form eww-form :dom dom
 			     :value (dom-attr dom 'value)
 			     :type (downcase (dom-attr dom 'type))
 			     :name (dom-attr dom 'name)))
@@ -1851,7 +1855,7 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
                                'read-only
                              'inhibit-read-only))
         form)
-    (setq form (list :eww-form eww-form
+    (setq form (list :eww-form eww-form :dom dom
                      :value value
                      :width width
                      :type type
@@ -2020,7 +2024,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
       (put-text-property (line-beginning-position) (point)
 			 'local-map eww-textarea-map)
       (forward-line 1))
-    (setq form (list :eww-form eww-form
+    (setq form (list :eww-form eww-form :dom dom
 		     :value value
 		     :width width
 		     :type "textarea"
@@ -2042,19 +2046,18 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
      ((equal type "submit")
       (eww-form-submit dom))
      ((equal type "hidden")
-      (let ((form eww-form)
-	    (name (dom-attr dom 'name)))
-	;; Don't add <input type=hidden> elements repeatedly.
+      (let ((form eww-form))
+	;;Remacs: table layout can render one control repeatedly.
 	(while (and form
 		    (or (not (consp (car form)))
 			(not (eq (caar form) 'hidden))
-			(not (equal (plist-get (cdr (car form)) :name)
-				    name))))
+			(not (eq (plist-get (cdr (car form)) :dom) dom))))
 	  (setq form (cdr form)))
 	(unless form
 	  (nconc eww-form (list
 			   (list 'hidden
-				 :name name
+                                 :dom dom
+				 :name (dom-attr dom 'name)
 				 :value (or (dom-attr dom 'value) "")))))))
      (t
       (eww-form-text dom)))
@@ -2067,7 +2070,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
 (defun eww-tag-select (dom)
   (shr-ensure-paragraph)
   (let ((menu (list :name (dom-attr dom 'name)
-		    :eww-form eww-form))
+		    :eww-form eww-form :dom dom))
 	(options nil)
 	(start (point))
 	(max 0))
@@ -2242,22 +2245,24 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
 	  (cond
 	   ((member (plist-get input :type) '("checkbox" "radio"))
 	    (when (plist-get input :checked)
-              (push (cons name (or (plist-get input :value) "on"))
+              (push (cons (plist-get input :dom)
+                          (cons name (or (plist-get input :value) "on")))
 		    values)))
 	   ((equal (plist-get input :type) "file")
             (when-let* ((file (plist-get input :filename)))
-              (push (list "file"
-                          (cons "filedata"
-                                (with-temp-buffer
-                                  (insert-file-contents file)
-                                  (buffer-string)))
-                          (cons "name" name)
-                          ;; RFC 2183 declares that recipients should
-                          ;; only respect the basename of the filename
-                          ;; parameter, and the leading directories
-                          ;; might divulge private information, so we
-                          ;; only send the basename in our request.
-                          (cons "filename" (file-name-nondirectory file)))
+              (push (cons (plist-get input :dom)
+                          (list "file"
+                                (cons "filedata"
+                                      (with-temp-buffer
+                                        (insert-file-contents file)
+                                        (buffer-string)))
+                                (cons "name" name)
+                                ;; RFC 2183 declares that recipients should
+                                ;; only respect the basename of the filename
+                                ;; parameter, and the leading directories
+                                ;; might divulge private information, so we
+                                ;; only send the basename in our request.
+                                (cons "filename" (file-name-nondirectory file))))
                     values)))
 	   ((equal (plist-get input :type) "submit")
 	    ;; We want the values from buttons if we hit a button if
@@ -2268,17 +2273,34 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
 			   (null next-submit)
 			   (> input-start (point))))
 	      (setq next-submit t)
-	      (push (cons name (plist-get input :value))
+	      (push (cons (plist-get input :dom)
+                          (cons name (plist-get input :value)))
 		    values)))
 	   (t
-	    (push (cons name (eww-input-value input))
+	    (push (cons (plist-get input :dom)
+                        (cons name (eww-input-value input)))
 		  values))))))
     (dolist (elem form)
       (when (and (consp elem)
 		 (eq (car elem) 'hidden))
-	(push (cons (plist-get (cdr elem) :name)
-		    (or (plist-get (cdr elem) :value) ""))
+	(push (cons (plist-get (cdr elem) :dom)
+                    (cons (plist-get (cdr elem) :name)
+                          (or (plist-get (cdr elem) :value) "")))
 	      values)))
+    ;;Remacs: hidden controls have no buffer position.  Use the DOM order
+    ;; for all entries, including those mixed with visible controls.
+    (setq values (nreverse values))
+    (when-let* ((controls (cdr (assq :controls form))))
+      (let ((order (make-hash-table :test #'eq))
+            (index 0))
+        (dolist (control controls)
+          (puthash control index order)
+          (setq index (1+ index)))
+        (setq values
+              (sort values (lambda (a b)
+                             (< (gethash (car a) order index)
+                                (gethash (car b) order index)))))))
+    (setq values (mapcar #'cdr values))
     (if (and (stringp (cdr (assq :method form)))
 	     (equal (downcase (cdr (assq :method form))) "post"))
 	(let ((mtype))
