@@ -30,11 +30,12 @@
          (veclen (length vec))
          (hd (car ring))
          (ln (cadr ring)))
-    (setq ln (min veclen (1+ ln))
-          hd (ring-minus1 hd veclen))
-    (aset vec hd item)
-    (setcar ring hd)
-    (setcar (cdr ring) ln)))
+    (when (> veclen 0)
+      (setq ln (min veclen (1+ ln))
+            hd (ring-minus1 hd veclen))
+      (aset vec hd item)
+      (setcar ring hd)
+      (setcar (cdr ring) ln))))
 
 (defun ring-plus1 (index veclen)
   "Return INDEX+1, with wraparound."
