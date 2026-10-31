@@ -549,7 +549,10 @@ only present in the returned alist."
       (with-current-buffer buf
         (setq uniquify--stateless-curname (buffer-name buf))
         (puthash (buffer-name buf) buf buffer-names)
-        (when uniquify-managed
+        (when (and uniquify-managed
+                   (not (and uniquify-ignore-buffers-re
+                             (string-match uniquify-ignore-buffers-re
+                                           (buffer-name buf)))))
           (let ((base (uniquify-item-base (car uniquify-managed))))
             (push
              (uniquify-make-item base (uniquify-buffer-file-name buf) buf nil)
