@@ -1011,12 +1011,14 @@ pub fn run_gui_with_dump(
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             handle
                                 .update(cx, |_view, window, _cx| {
-                                    show_native_color_panel(window)
+                                    show_native_color_panel(Some(window))
                                 })
                                 .map_err(|error| error.to_string())
                                 .and_then(|result| result)
                         } else {
-                            Err(format!("GUI frame {frame_id} is not open"))
+                            // The shared panel can open while a new frame is
+                            // still waiting for its first native snapshot.
+                            show_native_color_panel(None)
                         };
                         let _ = reply.send(result);
                     }
@@ -2040,12 +2042,14 @@ fn appkit_native_window(window: &Window) -> Option<id> {
     }
 }
 
-fn show_native_color_panel(window: &Window) -> Result<(), String> {
+fn show_native_color_panel(window: Option<&Window>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        appkit_native_window(window)
-            .ok_or_else(|| "native frame window is unavailable".to_owned())?;
-        window.activate_window();
+        if let Some(window) = window {
+            appkit_native_window(window)
+                .ok_or_else(|| "native frame window is unavailable".to_owned())?;
+            window.activate_window();
+        }
         unsafe {
             let panel: id = msg_send![class!(NSColorPanel), sharedColorPanel];
             if panel.is_null() {
