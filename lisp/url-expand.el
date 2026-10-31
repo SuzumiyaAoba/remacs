@@ -93,7 +93,9 @@ path components followed by `..' are removed, along with the `..' itself."
 
   (cond
    ((= (length url) 0)			; nil or empty string
-    (url-recreate-url default))
+    (let ((base (copy-sequence default)))
+      (setf (url-target base) nil)
+      (url-recreate-url base)))
    ((string-match url-nonrelative-link url) ; Fully-qualified URL
     (let* ((urlobj (url-generic-parse-url url))
            (path-query (url-path-and-query urlobj))
