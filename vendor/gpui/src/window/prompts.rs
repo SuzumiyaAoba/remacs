@@ -4,8 +4,8 @@ use futures::channel::oneshot;
 
 use crate::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ParentElement, PromptButton, PromptLevel, Render,
-    StatefulInteractiveElement, Styled, div, opaque_grey, white,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, PromptButton, PromptLevel,
+    Render, StatefulInteractiveElement, Styled, div, opaque_grey, white,
 };
 
 use super::Window;
@@ -79,11 +79,15 @@ pub fn fallback_prompt_renderer(
     window: &mut Window,
     cx: &mut App,
 ) -> RenderablePromptHandle {
+    let previous_focus = window.focused(cx);
     let renderer = cx.new(|cx| FallbackPromptRenderer {
         _level: level,
         message: message.to_string(),
         detail: detail.map(ToString::to_string),
         actions: actions.to_vec(),
+        action_focus: actions.iter().map(|_| cx.focus_handle()).collect(),
+        selected: 0,
+        previous_focus,
         focus: cx.focus_handle(),
     });
 
@@ -96,14 +100,73 @@ pub struct FallbackPromptRenderer {
     message: String,
     detail: Option<String>,
     actions: Vec<PromptButton>,
+    action_focus: Vec<FocusHandle>,
+    selected: usize,
+    previous_focus: Option<FocusHandle>,
     focus: FocusHandle,
 }
 
+impl FallbackPromptRenderer {
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        window.prevent_default();
+        let key = &event.keystroke;
+        if key.modifiers.control
+            || key.modifiers.alt
+            || key.modifiers.platform
+            || key.modifiers.function
+        {
+            return;
+        }
+        if let Some(selected) = self
+            .action_focus
+            .iter()
+            .position(|focus| focus.is_focused(window))
+        {
+            self.selected = selected;
+        }
+        match key.key.as_str() {
+            "tab" if !self.actions.is_empty() => {
+                self.selected = if key.modifiers.shift {
+                    if self.selected == 0 {
+                        self.actions.len() - 1
+                    } else {
+                        self.selected - 1
+                    }
+                } else {
+                    (self.selected + 1) % self.actions.len()
+                };
+                window.focus(&self.action_focus[self.selected]);
+                cx.notify();
+            }
+            "enter" | "space" if !self.actions.is_empty() => {
+                cx.emit(PromptResponse(self.selected));
+            }
+            "escape" => {
+                if let Some(index) = self.actions.iter().position(PromptButton::is_cancel) {
+                    cx.emit(PromptResponse(index));
+                } else {
+                    // Dropping the prompt closes the response channel without
+                    // fabricating a selected button.
+                    window.prompt.take();
+                    if let Some(focus) = &self.previous_focus {
+                        window.focus(focus);
+                    } else {
+                        window.blur();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prompt = div()
             .cursor_default()
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key_down))
             .w_72()
             .bg(white())
             .rounded_lg()
@@ -133,13 +196,18 @@ impl Render for FallbackPromptRenderer {
                     .flex_row()
                     .justify_around()
                     .border_1()
-                    .border_color(opaque_grey(0.2, 0.5))
+                    .border_color(if self.action_focus[ix].is_focused(window) {
+                        opaque_grey(0.1, 1.0)
+                    } else {
+                        opaque_grey(0.2, 0.5)
+                    })
                     .mt_1()
                     .rounded_xs()
                     .cursor_pointer()
                     .text_sm()
                     .child(action.label().clone())
                     .id(ix)
+                    .track_focus(&self.action_focus[ix])
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptResponse(ix));
                     }))
@@ -180,7 +248,7 @@ impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
 impl Focusable for FallbackPromptRenderer {
     fn focus_handle(&self, _: &crate::App) -> FocusHandle {
-        self.focus.clone()
+        self.action_focus.first().unwrap_or(&self.focus).clone()
     }
 }
 
