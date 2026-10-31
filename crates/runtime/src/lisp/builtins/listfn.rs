@@ -903,7 +903,7 @@ fn assoc_impl(
     }
 }
 
-fn f_assq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_assq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     assoc_impl(
         i,
         &args[0],

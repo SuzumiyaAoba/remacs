@@ -5485,37 +5485,26 @@ fn f_pos_eol(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_line_beginning_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU Fline_beginning_position: N is CHECK_NUMBER
-    // (integerp — markers NOT coerced), unlike `beginning-of-line'.
-    let n = match a.get(0) {
-        Some(v) if v.truthy() => match v {
-            Value::Int(n) => *n,
-            _ => return Err(i.wrong_type_mut("integerp", v)),
-        },
-        _ => 1,
-    };
-    let saved = cur(i).borrow().point();
-    let r = f_beginning_of_line(i, vec![Value::Int(n)].into());
-    let p = cur(i).borrow().point();
-    cur(i).borrow_mut().set_point(saved);
-    r?;
-    Ok(Value::Int(p as i128 + 1))
+    // GNU editfns.c: query the physical BOL, then constrain it without
+    // moving point. A non-default line count escapes the starting edge.
+    let count = line_count_arg(i, a.clone(), false)?;
+    let position = f_pos_bol(i, a)?;
+    let point = Value::Int(cur(i).borrow().point() as i128 + 1);
+    super::extra::f_constrain_to_field(
+        i,
+        vec![position, point, Value::from_bool(count != 0), Value::t(), Value::Nil].into(),
+    )
 }
 
 fn f_line_end_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let n = match a.get(0) {
-        Some(v) if v.truthy() => match v {
-            Value::Int(n) => *n,
-            _ => return Err(i.wrong_type_mut("integerp", v)),
-        },
-        _ => 1,
-    };
-    let saved = cur(i).borrow().point();
-    let r = f_end_of_line(i, vec![Value::Int(n)].into());
-    let p = cur(i).borrow().point();
-    cur(i).borrow_mut().set_point(saved);
-    r?;
-    Ok(Value::Int(p as i128 + 1))
+    // Unlike end-of-line movement, this is a pure positional query.
+    // GNU constrains only when the field edge is on the target line.
+    let position = f_pos_eol(i, a)?;
+    let point = Value::Int(cur(i).borrow().point() as i128 + 1);
+    super::extra::f_constrain_to_field(
+        i,
+        vec![position, point, Value::Nil, Value::t(), Value::Nil].into(),
+    )
 }
 
 fn f_line_number_at_pos(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -13760,7 +13749,18 @@ pub(crate) fn f_get_pos_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
             return Ok(v);
         }
     }
-    if pos > 0 {
+    // GNU text_property_stickiness applies the default alist before
+    // consulting the previous character's explicit rear-nonsticky value.
+    let defaults = i
+        .intern_soft("text-property-default-nonsticky")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    let entry = crate::lisp::builtins::listfn::f_assq(
+        i,
+        vec![Value::Sym(prop), defaults].into(),
+    )?;
+    let default_nonsticky = matches!(entry, Value::Cons(ref cell) if cell.borrow().cdr.truthy());
+    if pos > b.borrow().begv && !default_nonsticky {
         let bb = b.borrow();
         if !rear_nonsticky_covers_bb(i, &bb, pos - 1, prop) {
             let v = prop_at_bb(i, &bb, pos - 1, prop);

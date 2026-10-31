@@ -869,7 +869,8 @@ This replaces the region with the preprocessed HTML."
       ;; about changes performed afterwards.
       (setq eww--change-tracker-id (track-changes-register
                                     #'eww--track-changes :nobefore t))
-      (eww-size-text-inputs))))
+      (eww-size-text-inputs)
+      (eww--remember-form-defaults))))
 
 (defun eww-display-html (charset url &optional document point buffer)
   (let ((source (buffer-substring (point) (point-max))))
@@ -1604,6 +1605,7 @@ instead of `browse-url-new-window-flag'."
 	  (eww-reload))
       (erase-buffer)
       (insert text)
+      (eww--restore-form-reset-ranges (plist-get elem :form-reset-positions))
       (goto-char (plist-get elem :point))
       ;; Make buffer listings more informative.
       (setq list-buffers-directory (plist-get elem :url))
@@ -1678,11 +1680,18 @@ just re-display the HTML already fetched."
 ;; Form support.
 
 (defvar eww-form nil)
+(defvar-local eww--form-reset-ranges nil
+  "Markers for each displayed form-control fragment in this buffer.")
 
 (defvar-keymap eww-submit-map
   "RET" #'eww-submit
   "C-c C-c" #'eww-submit
   "<mouse-2>" #'eww-submit)
+
+(defvar-keymap eww-button-map
+  "RET" #'eww-activate-form-button
+  "C-c C-c" #'eww-activate-form-button
+  "<mouse-2>" #'eww-activate-form-button)
 
 (defvar-keymap eww-submit-file
   "RET" #'eww-select-file
@@ -1830,25 +1839,30 @@ just re-display the HTML already fetched."
 			 'eww-form eww-form))))
 
 (defun eww-form-submit (dom)
-  (let ((start (point))
-	(value (dom-attr dom 'value)))
-    (if (null value)
+  (let* ((start (point))
+         (value (dom-attr dom 'value))
+         (raw-type (downcase (or (dom-attr dom 'type) "submit")))
+         (type (if (member raw-type '("reset" "button")) raw-type "submit")))
+    (if (or (eq (dom-tag dom) 'button) (null value))
         (shr-generic dom)
       (insert value))
     ;; If the contents of the <button>...</button> turns out to be
     ;; empty, or the value was blank, default to this:
     (when (= (point) start)
-      (insert "Submit"))
+      (insert (cond ((equal type "reset") "Reset")
+                    ((equal type "button") "Button")
+                    (t "Submit"))))
     (add-face-text-property start (point) 'eww-form-submit)
     (put-text-property start (point) 'eww-form
 		       (list :eww-form eww-form :dom dom
 			     :value value
-			     :type "submit"
+			     :type type
                              :formaction (dom-attr dom 'formaction)
                              :formmethod (dom-attr dom 'formmethod)
                              :formenctype (dom-attr dom 'formenctype)
 			     :name (dom-attr dom 'name)))
-    (put-text-property start (point) 'keymap eww-submit-map)
+    (put-text-property start (point) 'keymap
+                       (if (equal type "submit") eww-submit-map eww-button-map))
     ;; Pretend to touch-screen.el that this is a button.
     (put-text-property start (point) 'button t)
     (insert " ")
@@ -1895,6 +1909,161 @@ just re-display the HTML already fetched."
     (put-text-property start (point) 'button t)
     (insert " ")
     (eww--mark-disabled start (point) dom)))
+
+(defun eww-activate-form-button (&optional event)
+  "Activate the button under point or mouse EVENT according to its type."
+  (interactive (list last-nonmenu-event) eww-mode)
+  (when (and event (setq event (event-start event)))
+    (goto-char (posn-point event)))
+  (let* ((field (get-text-property (point) 'eww-form))
+         (form (plist-get field :eww-form)))
+    (when (eww--field-disabled-p field)
+      (user-error "This form control is disabled"))
+    (when form
+      (pcase (plist-get field :type)
+        ("reset" (eww--reset-form form))
+        ("submit" (eww-submit))))))
+
+(defun eww--reset-form (form)
+  "Restore FORM's initial display and values without navigation."
+  (let ((buffer (current-buffer))
+        (tracking eww--change-tracker-id))
+    (when tracking
+      (eww--track-changes tracking)
+      (track-changes-unregister tracking)
+      (setq eww--change-tracker-id nil))
+    (unwind-protect
+        (eww--reset-form-controls form)
+      (when (and tracking (buffer-live-p buffer))
+        (with-current-buffer buffer
+          (setq eww--change-tracker-id
+                (track-changes-register #'eww--track-changes :nobefore t)))))))
+
+(defun eww--form-default-state (field)
+  "Copy FIELD's initial state without retaining its owner or DOM."
+  (let (state)
+    (while (keywordp (car field))
+      (let ((key (pop field)) (value (pop field)))
+        (unless (memq key '(:eww-form :dom))
+          (push key state)
+          (push (copy-tree value) state))))
+    (append (nreverse state) (copy-tree field))))
+
+(defun eww--restore-form-reset-ranges (positions)
+  "Create live reset markers from saved numeric POSITIONS."
+  (when eww--form-reset-ranges
+    (maphash (lambda (_ ranges)
+               (dolist (range ranges)
+                 (set-marker (nth 0 range) nil)
+                 (set-marker (nth 1 range) nil)))
+             eww--form-reset-ranges))
+  (setq eww--form-reset-ranges (make-hash-table :test #'eq))
+  (dolist (entry positions)
+    (puthash (car entry)
+             (mapcar (lambda (range)
+                       (list (copy-marker (nth 0 range))
+                             (copy-marker (nth 1 range) t) (nth 2 range)))
+                     (cdr entry))
+             eww--form-reset-ranges)))
+
+(defun eww--form-reset-positions ()
+  "Return reset-marker positions without storing live markers in history."
+  (let (positions)
+    (when eww--form-reset-ranges
+      (maphash (lambda (dom ranges)
+                 (push (cons dom
+                             (mapcar (lambda (range)
+                                       (list (marker-position (nth 0 range))
+                                             (marker-position (nth 1 range)) (nth 2 range)))
+                                     ranges)) positions))
+               eww--form-reset-ranges))
+    positions))
+
+(defun eww--remember-form-defaults ()
+  "Save initial control states and final display fragments after rendering."
+  (eww--restore-form-reset-ranges nil)
+  (let ((forms (make-hash-table :test #'eq))
+        (position (point-min)) (index 0))
+    (while (< position (point-max))
+      (let* ((field (get-text-property position 'eww-form))
+             (form (and (keywordp (car field)) (plist-get field :eww-form)))
+             (end (next-single-property-change position 'eww-form nil (point-max))))
+        (when form
+          (let ((defaults (or (gethash form forms)
+                              (let ((table (make-hash-table :test #'eq)))
+                                (puthash form table forms)
+                                (if (assq :initial-controls form)
+                                    (setcdr (assq :initial-controls form) table)
+                                  (nconc form (list (cons :initial-controls table))))
+                                table))))
+            (when (member (plist-get field :type)
+                          (append eww-text-input-types '("checkbox" "radio" "select" "file")))
+              (let* ((dom (plist-get field :dom))
+                     (record (or (gethash dom defaults)
+                                 (puthash dom (vector (eww--form-default-state field) nil) defaults)))
+                     (text (buffer-substring position end))
+                     (has-field (not (null (get-text-property 0 'field text)))))
+                ;; Templates must not retain mutable control/owner objects.
+                (remove-text-properties 0 (length text) '(eww-form nil field nil) text)
+                (when (equal (plist-get field :type) "password")
+                  (let ((pos 0))
+                    (while (< pos (length text))
+                      (let ((next (next-single-property-change pos 'eww-padding text (length text))))
+                        (unless (get-text-property pos 'eww-padding text)
+                          (put-text-property pos next 'display (make-string (- next pos) ?*) text))
+                        (setq pos next)))))
+                (aset record 1 (cons (cons text has-field) (aref record 1)))
+                (puthash dom (cons (list (copy-marker position) (copy-marker end t) index)
+                                   (gethash dom eww--form-reset-ranges)) eww--form-reset-ranges)
+                (setq index (1+ index))))))
+        (setq position end)))
+    (maphash (lambda (_ table)
+               (maphash (lambda (_ record) (aset record 1 (nreverse (aref record 1)))) table)) forms)
+    (maphash (lambda (dom ranges) (puthash dom (nreverse ranges) eww--form-reset-ranges))
+             eww--form-reset-ranges)))
+
+(defun eww--reset-form-controls (form)
+  "Restore FORM's initial state and display, including fragmented controls."
+  (let ((defaults (cdr (assq :initial-controls form))) jobs)
+    (unless (and defaults eww--form-reset-ranges)
+      (user-error "Reload the page to reset this form"))
+    (save-restriction
+      (widen)
+      (maphash
+       (lambda (dom record)
+         (let ((field (append (list :eww-form form :dom dom) (copy-tree (aref record 0))))
+               (ranges (gethash dom eww--form-reset-ranges))
+               (parts (aref record 1)))
+           (unless (= (length ranges) (length parts))
+             (user-error "Reload the page to reset this form"))
+           (while parts
+             (let ((part (pop parts)) (range (pop ranges)))
+               (unless (and (eq (marker-buffer (nth 0 range)) (current-buffer))
+                            (eq (marker-buffer (nth 1 range)) (current-buffer)))
+                 (user-error "Reload the page to reset this form"))
+               (push (list (marker-position (nth 0 range)) (marker-position (nth 1 range))
+                           field (car part) (cdr part) range (nth 2 range)) jobs))))) defaults)
+      (setq jobs (sort jobs (lambda (a b) (if (= (car a) (car b))
+                                              (> (nth 6 a) (nth 6 b)) (> (car a) (car b))))))
+      (let ((inhibit-read-only t))
+        (unwind-protect
+            (save-excursion
+              (dolist (job jobs)
+                (pcase-let ((`(,start ,end ,field ,text ,has-field ,range ,_) job))
+                  (goto-char start)
+                  (delete-region start end)
+                  (insert text)
+                  (put-text-property start (point) 'eww-form field)
+                  (when has-field (put-text-property start (point) 'field field))
+                  (set-marker (nth 0 range) start)
+                  (set-marker (nth 1 range) (point))
+                  ;; Later jobs can insert at this same collapsed boundary.
+                  (set-marker-insertion-type (nth 0 range) t))))
+          (dolist (job jobs) (set-marker-insertion-type (nth 0 (nth 5 job)) nil)))))
+    (dolist (entry form)
+      (when (and (consp entry) (eq (car entry) 'hidden))
+        (when-let* ((dom (plist-get (cdr entry) :dom)))
+          (plist-put (cdr entry) :value (or (dom-attr dom 'value) "")))))))
 
 (defun eww-select-file (&optional event)
   "Change the value of the upload file menu under point.
@@ -2115,7 +2284,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
       (eww-form-checkbox dom))
      ((equal type "file")
       (eww-form-file dom))
-     ((equal type "submit")
+     ((member type '("submit" "reset" "button"))
       (eww-form-submit dom))
      ((equal type "hidden")
       (let ((form eww-form))
@@ -2332,17 +2501,18 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
           (forward-char 1))))))
 
 (defun eww-inputs (form)
+  "Return FORM's logical controls once, even when tables split their text."
   (let ((start (point-min))
-	(inputs nil))
-    (while (and start
-		(< start (point-max)))
-      (when (or (get-text-property start 'eww-form)
-		(setq start (next-single-property-change start 'eww-form)))
-	(when (eq (plist-get (get-text-property start 'eww-form) :eww-form)
-		  form)
-	  (push (cons start (get-text-property start 'eww-form))
-		inputs))
-	(setq start (next-single-property-change start 'eww-form))))
+        (seen (make-hash-table :test #'eq))
+        inputs)
+    (while (and start (< start (point-max)))
+      (let ((input (get-text-property start 'eww-form)))
+        (when (and (keywordp (car input)) (eq (plist-get input :eww-form) form))
+          (let ((identity (or (plist-get input :dom) input)))
+            (unless (gethash identity seen)
+              (puthash identity t seen)
+              (push (cons start input) inputs)))))
+      (setq start (next-single-property-change start 'eww-form)))
     (nreverse inputs)))
 
 (defun eww-size-text-inputs ()
@@ -2406,6 +2576,8 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
                       (downcase enctype) "application/x-www-form-urlencoded"))
     (when (or (null action) (equal action ""))
       (setq action (plist-get eww-data :url)))
+    (when (member (plist-get this-input :type) '("button" "reset"))
+      (user-error "This button does not submit the form"))
     (when (and (equal (plist-get this-input :type) "submit")
                (eww--field-disabled-p this-input))
       (user-error "This form control is disabled"))
@@ -2443,6 +2615,7 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
                                       (cons "filename" (if file (file-name-nondirectory file) "")))
                               (cons name (if file (file-name-nondirectory file) ""))))
                       values)))
+             ((member (plist-get input :type) '("button" "reset")) nil)
              ((equal (plist-get input :type) "submit")
               (when (eq input submitter)
                 (push (cons (plist-get input :dom)
@@ -2958,6 +3131,7 @@ page's entry in `eww-history' and return nil.  Otherwise, add a new
 entry to `eww-history' and return t."
   (plist-put eww-data :point (point))
   (plist-put eww-data :text (buffer-string))
+  (plist-put eww-data :form-reset-positions (eww--form-reset-positions))
   (if (zerop eww-history-position)
       (let ((history-delete-duplicates nil))
         (add-to-history 'eww-history eww-data eww-history-limit t)

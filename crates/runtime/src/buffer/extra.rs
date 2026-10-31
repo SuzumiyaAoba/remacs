@@ -3191,7 +3191,7 @@ fn f_delete_field(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_constrain_to_field(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_constrain_to_field(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fconstrain_to_field (editfns.c): clamp NEW-POS into the
     // field OLD-POS lives in; nil NEW-POS means point (and moves it).
     let move_pt = a[0].is_nil();
