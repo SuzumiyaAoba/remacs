@@ -116,7 +116,7 @@ as a PDF file."
   :version "28.1")
 
 (defface ansi-color-double-underline
-  '((t :underline (:style double)))
+  '((t :underline (:style double-line)))
   "Face used to render doubly underlined text."
   :group 'ansi-colors
   :version "31.1")
