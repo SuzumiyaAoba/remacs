@@ -825,6 +825,7 @@ impl crate::Keystroke {
         let key = match key_sym {
             Keysym::Return => "enter".to_owned(),
             Keysym::Linefeed => "linefeed".to_owned(),
+            Keysym::Execute => "execute".to_owned(),
             Keysym::InsertLine => "insertline".to_owned(),
             Keysym::DeleteLine => "deleteline".to_owned(),
             Keysym::InsertChar => "insertchar".to_owned(),
@@ -1056,6 +1057,7 @@ mod tests {
             ("DeleteLine", "deleteline", None),
             ("InsertChar", "insertchar", None),
             ("DeleteChar", "deletechar", None),
+            ("Execute", "execute", None),
             ("Return", "enter", None),
             ("Tab", "tab", None),
             ("j", "j", Some("j")),
