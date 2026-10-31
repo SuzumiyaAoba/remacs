@@ -438,7 +438,8 @@ require user confirmation."
   (let ((end (icomplete--field-end)))
     (if (or (< (point) end) (not (eq (icomplete--category) 'file)))
         (call-interactively 'delete-char)
-      (dired (file-name-directory (icomplete--field-string)))
+      (dired (file-name-directory
+              (substitute-env-vars (icomplete--field-string))))
       (exit-minibuffer))))
 
 (defun icomplete-fido-ret ()
