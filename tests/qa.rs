@@ -56,6 +56,7 @@ qa!(qa_pcomplete_load, "qa_pcomplete_load.el");
 qa!(qa_imenu_item_length, "qa_imenu_item_length.el");
 qa!(qa_imenu_space_replacement, "qa_imenu_space_replacement.el");
 qa!(qa_imenu_completion_collisions, "qa_imenu_completion_collisions.el");
+qa!(qa_imenu_list_positions, "qa_imenu_list_positions.el");
 qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
 qa!(qa_ansi_color_load, "qa_ansi_color_load.el");

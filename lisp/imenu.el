@@ -264,7 +264,9 @@ The function in this variable is called when selecting a normal index-item.")
   (and (consp item)
        (consp (cdr item))
        (listp (cadr item))
-       (not (functionp (cadr item)))))
+       (not (functionp (cadr item)))
+       ;; Remacs: a special item's position can itself be a list.
+       (not (and (consp (cddr item)) (functionp (caddr item))))))
 
 (defmacro imenu-progress-message (_prevpos &optional _relpos _reverse)
   "This macro is obsolete and does nothing."
