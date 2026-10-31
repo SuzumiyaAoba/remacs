@@ -29,8 +29,8 @@ fn savehist_saves_a_relative_basename_in_default_directory() {
     ));
     fs::create_dir(&directory).unwrap();
     let _temp_directory = TempDirectory(directory.clone());
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/savehist.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/savehist.el")
         .canonicalize()
         .unwrap();
     let code = format!(

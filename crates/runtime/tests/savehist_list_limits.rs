@@ -19,8 +19,8 @@ fn lisp_string(value: &str) -> String {
 
 #[test]
 fn savehist_list_limits_are_exact_and_do_not_mutate_values() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/savehist.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/savehist.el")
         .canonicalize()
         .unwrap();
     let directory = std::env::temp_dir().join(format!(

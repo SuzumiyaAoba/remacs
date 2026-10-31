@@ -30,8 +30,8 @@ fn find_lisp_dired_passes_supported_switches_as_option_letters() {
     fs::create_dir_all(directory.join("subdir")).unwrap();
     let _temp_directory = TempDirectory(directory.clone());
 
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/find-lisp.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/find-lisp.el")
         .canonicalize()
         .unwrap();
     let code = format!(

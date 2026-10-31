@@ -43,8 +43,8 @@ fn eval(interp: &mut Interp, source: &str) {
 }
 
 fn load_source_abbrev(interp: &mut Interp) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/abbrev.el")
+    let path = Path::new(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/abbrev.el")
         .canonicalize()
         .unwrap();
     let path = interp.prin1_to_string(&Value::string(path.to_string_lossy().into_owned()));

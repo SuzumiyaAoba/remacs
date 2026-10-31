@@ -33,8 +33,8 @@ fn find_lisp_size_switch_uses_ceiling_kibibytes() {
         fs::write(directory.join(name), vec![b'x'; size]).unwrap();
     }
 
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/find-lisp.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/find-lisp.el")
         .canonicalize()
         .unwrap();
     let paths = ["empty", "exact", "over"]

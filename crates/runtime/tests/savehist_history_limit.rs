@@ -29,8 +29,8 @@ fn savehist_applies_additional_limit_once_to_a_minibuffer_history() {
     ));
     fs::create_dir(&directory).unwrap();
     let _temp_directory = TempDirectory(directory.clone());
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/savehist.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/savehist.el")
         .canonicalize()
         .unwrap();
     let file = directory.join("history");

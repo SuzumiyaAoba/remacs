@@ -19,8 +19,8 @@ fn lisp_string(value: &str) -> String {
 
 #[test]
 fn selected_minibuffer_histories_save_when_global_history_saving_is_disabled() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/savehist.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/savehist.el")
         .canonicalize()
         .unwrap();
     let directory = std::env::temp_dir().join(format!(

@@ -19,8 +19,8 @@ fn lisp_string(value: &str) -> String {
 
 #[test]
 fn ignored_variables_are_excluded_from_all_additional_entry_forms() {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lisp/savehist.el")
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .join("lisp/savehist.el")
         .canonicalize()
         .unwrap();
     let directory = std::env::temp_dir().join(format!(
