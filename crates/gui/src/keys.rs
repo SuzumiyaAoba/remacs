@@ -325,10 +325,27 @@ pub(super) fn keystroke_to_code_with_mapping(
     mapping: ModifierMapping,
     physical: PhysicalModifierState,
 ) -> Option<i128> {
-    let (mut mods, _) = modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
+    let (mut mods, has_unmapped) =
+        modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
     let named = |name: &str| remacs_runtime::editor::event_code_for(name);
     if let Some(name) = function_key_name(&ks.key) {
         return Some(named(name) | mods);
+    }
+    if mods == CHAR_SHIFT
+        && !has_unmapped
+        && !is_named_key(ks)
+        && ks.key != "space"
+        && let Some(text) = ks.key_char.as_deref()
+        && !text.is_empty()
+        && (!ks.key.is_ascii() || !text.is_ascii())
+        && !text.chars().any(char::is_control)
+    {
+        // Windows keeps Shift on alphabet keys while reporting the translated
+        // text separately. A Unicode letter must use that text, just as an
+        // ASCII shifted letter does. Multi-character text has no key code.
+        let mut chars = text.chars();
+        let character = chars.next()?;
+        return chars.next().is_none().then_some(character as i128);
     }
     let base = match ks.key.as_str() {
         // Keep special ASCII keys as named events so they remain distinct
@@ -360,10 +377,7 @@ pub(super) fn keystroke_to_code_with_mapping(
             };
             if c.is_ascii_uppercase() && ks.modifiers.shift {
                 mods &= !CHAR_SHIFT;
-            } else if c.is_ascii_lowercase()
-                && ks.modifiers.shift
-                && mods & CHAR_CTL == 0
-            {
+            } else if c.is_ascii_lowercase() && ks.modifiers.shift && mods & CHAR_CTL == 0 {
                 c = c.to_ascii_uppercase();
                 mods &= !CHAR_SHIFT;
             }
@@ -431,4 +445,78 @@ pub(super) fn unicode_key_text(ks: &Keystroke) -> Option<&str> {
     let mut chars = text.chars();
     let first = chars.next()?;
     (!first.is_ascii() && chars.all(|ch| !ch.is_ascii())).then_some(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shifted(key: &str, text: &str) -> Keystroke {
+        Keystroke {
+            modifiers: Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+            key: key.to_owned(),
+            key_char: Some(text.to_owned()),
+        }
+    }
+
+    #[test]
+    fn shifted_unicode_text_uses_the_os_character() {
+        for (key, text) in [
+            ("ф", "Ф"),
+            ("Ф", "Ф"),
+            ("я", "Я"),
+            ("λ", "Λ"),
+            ("é", "É"),
+            ("ı", "I"),
+            ("i", "İ"),
+        ] {
+            let event = shifted(key, text);
+            assert!(!command_keystroke(&event), "{key} -> {text}");
+            assert_eq!(
+                keystroke_to_code(&event),
+                text.chars().next().map(|character| character as i128)
+            );
+            assert!(pass_text_to_os(
+                &event,
+                ModifierMapping::default(),
+                PhysicalModifierState::default()
+            ));
+            if !text.is_ascii() {
+                assert_eq!(unicode_key_text(&event), Some(text));
+            }
+        }
+    }
+
+    #[test]
+    fn shifted_unicode_sequences_stay_on_the_text_input_path() {
+        for (key, text) in [("ΐ", "Ι\u{308}\u{301}"), ("日本", "日本"), ("ß", "SS")] {
+            let event = shifted(key, text);
+            assert!(!command_keystroke(&event));
+            assert_eq!(keystroke_to_code(&event), None);
+        }
+    }
+
+    #[test]
+    fn shifted_unicode_shortcuts_and_explicit_shift_events_keep_their_modifiers() {
+        let mut event = shifted("ф", "Ф");
+        event.modifiers.control = true;
+        assert!(command_keystroke(&event));
+        assert_eq!(
+            keystroke_to_code(&event),
+            Some('ф' as i128 | CHAR_CTL | CHAR_SHIFT)
+        );
+        event.modifiers.control = false;
+        event.modifiers.alt = true;
+        assert!(command_keystroke(&event));
+        assert!(keystroke_to_code(&event).is_some_and(|code| code & CHAR_SHIFT != 0));
+        let mut explicit = shifted("ф", "Ф");
+        explicit.key_char = None;
+        assert!(command_keystroke(&explicit));
+        assert_eq!(keystroke_to_code(&explicit), Some('ф' as i128 | CHAR_SHIFT));
+        assert!(command_keystroke(&shifted("space", " ")));
+        assert!(command_keystroke(&shifted("1", "!")));
+    }
 }
