@@ -3349,6 +3349,120 @@ enum DisplayReplacement {
     Hidden,
 }
 
+/// A display row can reuse a source character while continuing the string
+/// which replaces it. Overrides contain only the fragments for this row.
+struct DisplayRowPlan {
+    range: Range<usize>,
+    replacements: HashMap<usize, DisplayReplacement>,
+    boundaries: HashMap<usize, Vec<String>>,
+    include_end_boundary: bool,
+    hard_break: bool,
+    repeated_start: bool,
+    continued: bool,
+}
+
+impl DisplayRowPlan {
+    fn new(range: Range<usize>, line_len: usize) -> Self {
+        Self {
+            include_end_boundary: range.end == line_len,
+            range,
+            replacements: HashMap::new(),
+            boundaries: HashMap::new(),
+            hard_break: false,
+            repeated_start: false,
+            continued: false,
+        }
+    }
+}
+
+fn display_row_plans(
+    i: &Interp,
+    faces: Option<&WindowFaces>,
+    line_pos: usize,
+    range: Range<usize>,
+    line_len: usize,
+    max_rows: usize,
+) -> Vec<DisplayRowPlan> {
+    if max_rows == 0 {
+        return Vec::new();
+    }
+    let Some(faces) = faces else {
+        return vec![DisplayRowPlan::new(range, line_len)];
+    };
+    let first = line_pos + range.start;
+    let end = line_pos + range.end;
+    let has_newline = faces.display_props.iter().any(|(start, stop, replacement, _)| {
+        *start < end && *stop > first
+            && matches!(replacement, Some(DisplayReplacement::Text(text)) if text.contains('\n'))
+    }) || faces.overlay_strings.iter().any(|(position, strings)| {
+        *position >= first && (*position < end || (*position == end && range.end == line_len))
+            && strings.iter().any(|text| text.contains('\n'))
+    });
+    if !has_newline {
+        return vec![DisplayRowPlan::new(range, line_len)];
+    }
+    let source_end = range.end;
+    let mut current = DisplayRowPlan::new(range.clone(), line_len);
+    let mut rows = Vec::new();
+    for index in range.start..=source_end {
+        let at_end = index == source_end;
+        if at_end && source_end != line_len {
+            break;
+        }
+        let position = line_pos + index;
+        let strings = overlay_strings_at(faces, position);
+        if strings.iter().any(|text| text.contains('\n')) {
+            let text = strings.concat();
+            let mut parts = text.split('\n').peekable();
+            while let Some(part) = parts.next() {
+                current.boundaries.insert(index, vec![part.to_owned()]);
+                if parts.peek().is_some() {
+                    current.range.end = index;
+                    current.include_end_boundary = true;
+                    current.hard_break = true;
+                    rows.push(current);
+                    if rows.len() == max_rows {
+                        return rows;
+                    }
+                    current = DisplayRowPlan::new(index..source_end, line_len);
+                    current.continued = true;
+                }
+            }
+        }
+        if at_end {
+            break;
+        }
+        if visibility_at_pos(i, faces, position) != Visibility::Visible {
+            continue;
+        }
+        if let Some(DisplayReplacement::Text(text)) = display_replacement_at(faces, position)
+            && text.contains('\n')
+        {
+            let mut parts = text.split('\n').peekable();
+            while let Some(part) = parts.next() {
+                current
+                    .replacements
+                    .insert(index, DisplayReplacement::Text(part.to_owned()));
+                if parts.peek().is_some() {
+                    current.range.end = index + 1;
+                    current.include_end_boundary = false;
+                    current.hard_break = true;
+                    rows.push(current);
+                    if rows.len() == max_rows {
+                        return rows;
+                    }
+                    current = DisplayRowPlan::new(index..source_end, line_len);
+                    current.boundaries.insert(index, Vec::new());
+                    current.repeated_start = true;
+                    current.continued = true;
+                }
+            }
+        }
+    }
+    rows.push(current);
+    rows
+}
+
 #[derive(Clone)]
 struct ScreenCell {
     chars: Vec<(char, CellStyle)>,
@@ -8036,9 +8150,32 @@ fn render_grid_internal(
             } else {
                 vec![0..line_len]
             };
-            for range in ranges {
+            let max_rows = body_height
+                .min(window_top + text_rows)
+                .saturating_sub(screen_row);
+            let mut plans = Vec::new();
+            for mut range in ranges {
+                if range.end < start_offset || (range.end == start_offset && range.end < line_len) {
+                    continue;
+                }
+                if plans.len() == max_rows {
+                    break;
+                }
+                range.start = range.start.max(start_offset);
+                plans.extend(display_row_plans(
+                    i,
+                    wf.as_ref(),
+                    line_pos,
+                    range,
+                    line_len,
+                    max_rows - plans.len(),
+                ));
+            }
+            for plan in plans {
+                let range = &plan.range;
                 if range.end < start_offset
-                    || (range.end == start_offset && range.end < line_len)
+                    || (range.end == start_offset && range.end < line_len
+                        && !(range.is_empty() && plan.include_end_boundary))
                 {
                     continue;
                 }
@@ -8048,7 +8185,7 @@ fn render_grid_internal(
                 let segment_start = range.start.max(start_offset);
                 let segment_end = range.end;
                 let segment_len = segment_end.saturating_sub(segment_start);
-                let prefix_width = if segment_start == 0 {
+                let prefix_width = if segment_start == 0 && !plan.continued {
                     line_prefix_width
                 } else {
                     0
@@ -8063,12 +8200,14 @@ fn render_grid_internal(
                 let segment_pos = line_pos + segment_start;
                 let point_index = point_index.and_then(|point| {
                     (point >= segment_start
+                        && !(plan.repeated_start && point == range.start)
                         && (point < segment_end
-                            || (point == segment_end && segment_end == line_len)))
+                            || (point == segment_end && segment_end == line_len && !plan.hard_break)))
                         .then(|| point - segment_start)
                 });
                 let y = screen_row;
                 let newline_spacing = if graphical
+                    && !plan.hard_break
                     && segment_end == line_len
                     && row_end > line_pos.saturating_add(line_len)
                 {
@@ -8087,6 +8226,7 @@ fn render_grid_internal(
                     default_line_spacing
                 };
                 let explicit_line_height = if graphical
+                    && !plan.hard_break
                     && segment_end == line_len
                     && row_end > line_pos.saturating_add(line_len)
                 {
@@ -8114,7 +8254,7 @@ fn render_grid_internal(
                     // reserve enough height for the tallest row at this y.
                     *row_height = (*row_height).max(display_row_height);
                 }
-                visible_end = if segment_end == line_len {
+                visible_end = if segment_end == line_len && !plan.hard_break {
                     row_end
                 } else {
                     line_pos + segment_end
@@ -8136,7 +8276,8 @@ fn render_grid_internal(
                     } else {
                         fctx.builtin(i, "line-number", 0).finish()
                     };
-                    let show_number = segment_start == 0 || (row == 0 && start_offset > 0);
+                    let show_number = (segment_start == 0 || (row == 0 && start_offset > 0))
+                        && !plan.continued;
                     let number = if show_number {
                         let absolute = (line_number as i128).saturating_add(line_number_offset);
                         let value = if matches!(line_number_mode, Value::Sym(symbol) if i.symbol_name(symbol) == "relative")
@@ -8205,8 +8346,9 @@ fn render_grid_internal(
                             .unwrap_or(Visibility::Visible)
                     },
                     |index| {
-                        wf.as_ref()
-                            .and_then(|wf| display_replacement_at(wf, segment_pos + index))
+                        plan.replacements.get(&(segment_start + index)).cloned()
+                            .or_else(|| wf.as_ref()
+                                .and_then(|wf| display_replacement_at(wf, segment_pos + index)))
                             .or_else(|| {
                                 let wf = wf.as_ref()?;
                                 let character = *segment_chars.get(index)?;
@@ -8237,11 +8379,12 @@ fn render_grid_internal(
                             })
                     },
                     |index| {
-                        wf.as_ref()
-                            .map(|wf| overlay_strings_at(wf, segment_pos + index))
-                            .unwrap_or_default()
+                        plan.boundaries.get(&(segment_start + index)).cloned()
+                            .unwrap_or_else(|| wf.as_ref()
+                                .map(|wf| overlay_strings_at(wf, segment_pos + index))
+                                .unwrap_or_default())
                     },
-                    segment_end == line_len,
+                    plan.include_end_boundary,
                     graphical,
                 );
                 if prefix_width > 0
@@ -8357,7 +8500,9 @@ fn render_grid_internal(
                     right_indicator = "›".to_owned();
                 }
                 let overlay_arrow = overlay_arrows.iter().find(|(position, _)| {
-                    *position >= segment_pos
+                    !(plan.repeated_start && *position == segment_pos)
+                        && !(plan.hard_break && *position == segment_pos + segment_len)
+                        && *position >= segment_pos
                         && (*position < segment_pos.saturating_add(segment_len)
                             || (*position == segment_pos.saturating_add(segment_len)
                                 && segment_end == line_len))
