@@ -2363,44 +2363,17 @@ fn format_mode_line_value(
                     let condition = mode_line_variable(i, buffer_id, &i.symbol_name(*head))
                         .unwrap_or(Value::Nil)
                         .truthy();
-                    if condition {
-                        if elements.len() == 2 {
-                            return format_mode_line_value(
-                                i,
-                                buffer_id,
-                                &elements[1],
-                                context,
-                                depth + 1,
-                                fill_remaining,
-                            );
-                        }
-                        let mut output = String::new();
-                        for element in &elements[1..] {
-                            if *fill_remaining {
-                                break;
-                            }
-                            output.push_str(&format_mode_line_value(
-                                i,
-                                buffer_id,
-                                element,
-                                context,
-                                depth + 1,
-                                fill_remaining,
-                            ));
-                        }
-                        return output;
-                    }
-                    if elements.len() >= 3 {
-                        return format_mode_line_value(
+                    let branch = elements.get(if condition { 1 } else { 2 });
+                    return branch.map_or_else(String::new, |body| {
+                        format_mode_line_value(
                             i,
                             buffer_id,
-                            elements.last().unwrap_or(&Value::Nil),
+                            body,
                             context,
                             depth + 1,
                             fill_remaining,
-                        );
-                    }
-                    return String::new();
+                        )
+                    });
                 }
             }
             let start = if matches!(elements[0], Value::Int(_)) {
