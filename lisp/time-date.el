@@ -426,7 +426,11 @@ right of \"%x\", trailing zero units are not output."
                          (if (string-equal (match-string 3 string) spec)
                              ""         ; lower-case, no unit-name
                            (format " %s%s" name
-                                   (if (= num 1) "" "s"))))
+                                   (if (= (if (= unit 1)
+                                              (+ num fraction)
+                                            num)
+                                          1)
+                                       "" "s"))))
                  t t string)))))))
     (let ((pre string))
       (when (and chop-trailing trailing-zeropos)
