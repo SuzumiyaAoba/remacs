@@ -73,7 +73,8 @@
 (defconst iso8601--outdated-reduced-precision-date-match
   "---?\\([0-9][0-9]\\)")
 (defconst iso8601--week-date-match
-  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)-?W\\([0-9][0-9]\\)-?\\([0-9]\\)?")
+  ;;Remacs: keep extended and basic separators consistent, including week-only dates.
+  "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)\\(-W\\([0-9][0-9]\\)\\(-\\([0-9]\\)\\)?\\|W\\([0-9][0-9]\\)\\([0-9]\\)?\\)")
 (defconst iso8601--ordinal-date-match
   "\\([+-]?[0-9][0-9][0-9][0-9][0-9]*\\)-?\\([0-9][0-9][0-9]\\)")
 (defconst iso8601--date-match
@@ -199,9 +200,10 @@ See `decode-time' for the meaning of FORM."
    ;; Week dates: YYYY-Www-D
    ((iso8601--match iso8601--week-date-match string)
     (let* ((year (iso8601--parse-year-string (match-string 1 string) string))
-           (week (string-to-number (match-string 2 string)))
-           (day-of-week (and (match-string 3 string)
-                             (string-to-number (match-string 3 string))))
+           (week (string-to-number (or (match-string 3 string)
+                                      (match-string 6 string))))
+           (day-string (or (match-string 5 string) (match-string 7 string)))
+           (day-of-week (and day-string (string-to-number day-string)))
            (jan-start (decoded-time-weekday
                        (decode-time
                         (iso8601--encode-time
@@ -391,8 +393,9 @@ Return the number of minutes."
                     ((iso8601--match iso8601--week-date-match date)
                      (let* ((year-string (match-string 1 date))
                             (year (string-to-number year-string))
-                            (week (string-to-number (match-string 2 date)))
-                            (day (match-string 3 date)))
+                            (week (string-to-number (or (match-string 3 date)
+                                                       (match-string 6 date))))
+                            (day (or (match-string 5 date) (match-string 7 date))))
                        (and (iso8601--valid-year-string-p year-string)
                             (<= 1 week (iso8601--weeks-in-year year))
                             (or (null day)
