@@ -524,6 +524,19 @@ fn modified_named_keys_follow_gui_command_bindings() {
 }
 
 #[test]
+fn execute_keysym_reaches_the_named_execute_binding() {
+    use remacs_runtime::editor::event_code_for;
+    let key = ks("execute", None, false, false, false, false);
+    assert!(command_keystroke(&key));
+    assert_eq!(keystroke_to_code(&key), Some(event_code_for("execute")));
+    let modified = ks("execute", None, true, true, true, false);
+    assert_eq!(
+        keystroke_to_code(&modified),
+        Some(event_code_for("execute") | CHAR_CTL | CHAR_META | CHAR_SHIFT)
+    );
+}
+
+#[test]
 fn insert_delete_keysyms_reach_default_gui_bindings() {
     use remacs_runtime::editor::event_code_for;
     let cases = [

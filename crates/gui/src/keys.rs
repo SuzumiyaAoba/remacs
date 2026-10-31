@@ -201,7 +201,7 @@ fn function_key_name(key: &str) -> Option<&str> {
         "pagedown" => Some("next"),
         "up" | "down" | "left" | "right" | "home" | "end" | "begin" | "help" | "break"
         | "delete" | "insert" | "undo" | "redo" | "insertline" | "deleteline" | "insertchar"
-        | "deletechar" => Some(key),
+        | "deletechar" | "execute" => Some(key),
         key if key.starts_with("kp-") => Some(key),
         key if key.starts_with('f') && key[1..].parse::<u32>().is_ok() => Some(key),
         _ => None,
