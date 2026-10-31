@@ -94,6 +94,31 @@ fn initial_frame_visibility_is_preserved_in_snapshots() {
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].visibility, expected);
     }
+
+    // #3333: a request can precede creation of the additional native window.
+    // Its first snapshot must still retain the visibility set in that call.
+    let states = interp
+        .eval_str(
+            "(let ((hidden (make-frame '((window-system . ns) (name . \"qa3333-hidden\"))))
+               (visible (make-frame '((window-system . ns) (name . \"qa3333-visible\")))))
+           (make-frame-invisible hidden t)
+           (list (frame-visible-p hidden) (frame-visible-p visible)))",
+        )
+        .unwrap();
+    assert_eq!(interp.prin1_to_string(&states), "(nil t)");
+    io.render(&interp).unwrap();
+    let GuiRequest::FrameSnapshots(mailbox) = received.try_recv().unwrap() else {
+        panic!("expected the new frames' first snapshot");
+    };
+    let snapshots = mailbox.take_latest().unwrap();
+    assert_eq!(snapshots.len(), 3);
+    for (name, visibility) in [
+        ("qa3333-hidden", FrameVisibility::Hidden),
+        ("qa3333-visible", FrameVisibility::Visible),
+    ] {
+        let frame = snapshots.iter().find(|frame| frame.name == name).unwrap();
+        assert_eq!(frame.visibility, visibility);
+    }
 }
 
 #[test]
