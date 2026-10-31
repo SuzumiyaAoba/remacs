@@ -2077,11 +2077,19 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
 
 (defun eww-tag-select (dom)
   (shr-ensure-paragraph)
-  (let ((menu (list :name (dom-attr dom 'name)
-		    :eww-form eww-form :dom dom :type "select"))
-	(options nil)
-	(start (point))
-	(max 0))
+  (let* ((multiple (not (null (dom-attr dom 'multiple))))
+         (menu (list :name (dom-attr dom 'name)
+                     :eww-form eww-form :dom dom :type "select"
+                     :multiple multiple
+                     :disabled (and multiple (not (null (dom-attr dom 'disabled))))))
+	 (options nil)
+         (disabled-options nil)
+	 (start (point))
+	 (max 0))
+    (when multiple
+      (dolist (group (dom-by-tag dom 'optgroup))
+        (when (dom-attr group 'disabled)
+          (setq disabled-options (nconc disabled-options (dom-by-tag group 'option))))))
     (dolist (elem (dom-by-tag dom 'option))
       (let ((display (dom-inner-text elem))
             (value (or (dom-attr elem 'value)
@@ -2089,20 +2097,31 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
                         (replace-regexp-in-string
                          "[ \t\n\r\f]+" " " (eww--option-text elem))
                         " +" " +"))))
-        (when (dom-attr elem 'selected)
+        (when (and (not multiple) (dom-attr elem 'selected))
 	  (nconc menu (list :value value)))
         (setq max (max max 1 (string-width display)))
 	(push (list 'item
 		    :value value
-		    :display display)
+		    :display display
+                    :selected (not (null (dom-attr elem 'selected)))
+                    :disabled (and multiple
+                                   (not (null (or (dom-attr elem 'disabled)
+                                                  (memq elem disabled-options))))))
 	      options)))
     (when options
       (setq options (nreverse options))
-      ;; If we have no selected values, default to the first value.
-      (unless (plist-get menu :value)
-	(nconc menu (list :value (nth 2 (car options)))))
+      (if multiple
+          (nconc menu (list :value nil))
+        ;; A single select defaults to the first value.
+        (unless (plist-get menu :value)
+	  (nconc menu (list :value (nth 2 (car options))))))
       (nconc menu options)
+      (when multiple
+        (plist-put menu :value
+                   (mapcar (lambda (item) (plist-get item :value))
+                           (eww--selected-items menu))))
       (let ((selected (eww-select-display menu)))
+        (setq max (max max (string-width selected)))
 	(insert selected
                 (make-string (- max (string-width selected)) ? )))
       (put-text-property start (point) 'eww-form menu)
@@ -2111,19 +2130,22 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
       ;; Pretend to touch-screen.el that this is a button.
       (put-text-property start (point) 'button t)
       (unless (= start (point))
-       (put-text-property start (1+ start) 'help-echo "select field")
-       (put-text-property start (1+ start) 'shr-tab-stop t))
+	(put-text-property start (1+ start) 'help-echo "select field")
+	(put-text-property start (1+ start) 'shr-tab-stop t))
       (shr-ensure-paragraph))))
 
 (defun eww-select-display (select)
-  (let ((value (plist-get select :value))
-	display)
-    (dolist (elem select)
-      (when (and (consp elem)
-		 (eq (car elem) 'item)
-		 (equal value (plist-get (cdr elem) :value)))
-	(setq display (plist-get (cdr elem) :display))))
-    display))
+  (if (plist-get select :multiple)
+      (mapconcat (lambda (item) (plist-get item :display))
+                 (eww--selected-items select) ", ")
+    (let ((value (plist-get select :value))
+	  display)
+      (dolist (elem select)
+	(when (and (consp elem)
+		   (eq (car elem) 'item)
+		   (equal value (plist-get (cdr elem) :value)))
+	  (setq display (plist-get (cdr elem) :display))))
+      display)))
 
 (defun eww--form-items (form)
   (cl-loop for elem in form
@@ -2131,26 +2153,50 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
                      (eq (car elem) 'item))
            collect (cdr elem)))
 
+(defun eww--selected-items (select &optional enabled-only)
+  "Return selected option items from SELECT in document order."
+  (unless (and enabled-only (plist-get select :disabled))
+    (cl-remove-if-not
+     (lambda (item)
+       (and (plist-get item :selected)
+            (or (not enabled-only) (not (plist-get item :disabled)))))
+     (eww--form-items select))))
+
 (defun eww-change-select (event)
   "Change the value of the select drop-down menu under point."
   (interactive
    (list last-nonmenu-event)
    eww-mode)
   (mouse-set-point event)
-  (let ((input (get-text-property (point) 'eww-form)))
-    (popup-menu
-     (cons
-      "Change Value"
-      (mapcar
-       (lambda (elem)
-         (vector (plist-get elem :display)
-                 (lambda ()
-                   (interactive)
-                   (plist-put input :value (plist-get elem :value))
-                   (goto-char (eww-update-field (plist-get elem :display))))
-                 t))
-       (eww--form-items input)))
-     event)))
+  (let* ((input (get-text-property (point) 'eww-form))
+         (multiple (plist-get input :multiple)))
+    (unless (plist-get input :disabled)
+      (popup-menu
+       (cons
+	(if multiple "Change Values" "Change Value")
+	(mapcar
+	 (lambda (elem)
+           (vector (if multiple
+                       (concat (if (plist-get elem :selected)
+                                   eww-form-checkbox-selected-symbol
+				 eww-form-checkbox-symbol)
+                               " " (plist-get elem :display))
+                     (plist-get elem :display))
+                   (lambda ()
+                     (interactive)
+                     (unless (and multiple (plist-get elem :disabled))
+                       (if multiple
+                           (progn
+                             (plist-put elem :selected (not (plist-get elem :selected)))
+                             (plist-put input :value
+					(mapcar (lambda (item) (plist-get item :value))
+						(eww--selected-items input)))
+                             (goto-char (eww-update-field (eww-select-display input))))
+			 (plist-put input :value (plist-get elem :value))
+			 (goto-char (eww-update-field (plist-get elem :display))))))
+                   (or (not multiple) (not (plist-get elem :disabled)))))
+	 (eww--form-items input)))
+       event))))
 
 (defun eww-update-field (string &optional offset)
   (unless offset
@@ -2261,6 +2307,12 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
               (push (cons (plist-get input :dom)
                           (cons name (or (plist-get input :value) "on")))
 		    values)))
+           ((and (equal (plist-get input :type) "select")
+                 (plist-get input :multiple))
+            (dolist (option (eww--selected-items input t))
+              (push (cons (plist-get input :dom)
+                          (cons name (plist-get option :value)))
+                    values)))
 	   ((equal (plist-get input :type) "file")
             (when-let* ((file (plist-get input :filename)))
               (push (cons (plist-get input :dom)
