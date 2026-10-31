@@ -927,7 +927,7 @@ pub fn run_gui_with_dump(
                         buttons,
                         reply,
                     } => {
-                        let buttons: Vec<_> = buttons.into_iter().map(PromptButton::new).collect();
+                        let buttons = dialog_prompt_buttons(buttons);
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             match handle.update(cx, |_view, window, cx| {
                                 window.prompt(
@@ -1253,6 +1253,23 @@ pub fn run_gui_with_dump(
         Some(message) => Err(io::Error::new(io::ErrorKind::Other, message)),
         None => Ok(()),
     }
+}
+
+fn dialog_prompt_buttons(labels: Vec<String>) -> Vec<PromptButton> {
+    // Native Cancel has one reserved ID.  Later duplicate labels must retain
+    // distinct custom IDs so clicking them still returns their own index.
+    let mut has_cancel = false;
+    labels
+        .into_iter()
+        .map(|label| {
+            if !has_cancel && label.eq_ignore_ascii_case("cancel") {
+                has_cancel = true;
+                PromptButton::cancel(label)
+            } else {
+                PromptButton::new(label)
+            }
+        })
+        .collect()
 }
 
 fn frame_minimum_size(

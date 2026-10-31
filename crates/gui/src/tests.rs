@@ -17,6 +17,45 @@ fn monitor_bounds(x: f32, y: f32, width: f32, height: f32) -> gpui::Bounds<gpui:
 }
 
 #[test]
+fn dialog_cancel_button_retains_its_native_role_and_label() {
+    for label in ["Cancel", "cancel", "CANCEL", "CaNcEl"] {
+        let button = super::dialog_prompt_buttons(vec![label.into()])
+            .pop()
+            .unwrap();
+        assert!(matches!(button, gpui::PromptButton::Cancel(_)));
+        assert_eq!(button.label().as_str(), label);
+    }
+}
+
+#[test]
+fn dialog_other_button_labels_keep_their_roles_and_order() {
+    let labels = ["Continue", "Cancel task", "OK", "Cancel", "キャンセル"];
+    let buttons =
+        super::dialog_prompt_buttons(labels.iter().map(|label| (*label).into()).collect());
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|button| button.label().as_str())
+            .collect::<Vec<_>>(),
+        labels
+    );
+    assert!(matches!(buttons[3], gpui::PromptButton::Cancel(_)));
+    for index in [0, 1, 2, 4] {
+        assert!(matches!(buttons[index], gpui::PromptButton::Other(_)));
+    }
+}
+
+#[test]
+fn dialog_duplicate_cancel_labels_keep_distinct_native_roles() {
+    let buttons =
+        super::dialog_prompt_buttons(vec!["Yes".into(), "Cancel".into(), "Cancel".into()]);
+    assert!(matches!(buttons[0], gpui::PromptButton::Other(_)));
+    assert!(matches!(buttons[1], gpui::PromptButton::Cancel(_)));
+    assert!(matches!(buttons[2], gpui::PromptButton::Other(_)));
+    assert_eq!(buttons[2].label().as_str(), "Cancel");
+}
+
+#[test]
 fn frame_visibility_applies_hide_iconify_and_show_to_window() {
     use remacs_runtime::frontend::FrameVisibility;
 
