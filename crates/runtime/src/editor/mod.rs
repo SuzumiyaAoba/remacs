@@ -7623,6 +7623,8 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             continue;
         }
         let Value::Cons(item) = item else {
+            // GNU list_of_items uses non-string atoms as group boundaries.
+            dialog_items.push(DialogItem::Separator);
             continue;
         };
         let (label, value) = {

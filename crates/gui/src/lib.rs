@@ -970,7 +970,7 @@ pub fn run_gui_with_dump(
                     } => {
                         let buttons = dialog_prompt_items(&items);
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
-                            match handle.update(cx, |_view, window, cx| {
+                            match (*handle).update(cx, |_view, window, cx| {
                                 window.prompt(
                                     dialog_prompt_level(header),
                                     &message,

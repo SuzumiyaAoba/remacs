@@ -114,6 +114,86 @@ pub struct FallbackPromptRenderer {
 }
 
 impl FallbackPromptRenderer {
+    fn action_rows(&self) -> (bool, Vec<[Option<usize>; 2]>) {
+        let split = self
+            .actions
+            .iter()
+            .position(PromptButton::is_separator)
+            .or_else(|| {
+                self.level
+                    .dialog_title()
+                    .map(|_| self.actions.len().div_ceil(2))
+            });
+        let indices = self
+            .actions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, action)| (!action.is_separator()).then_some(index));
+        if let Some(split) = split {
+            let (left, right): (Vec<usize>, Vec<usize>) = indices.partition(|index| *index < split);
+            let rows = (0..left.len().max(right.len()))
+                .map(|row| [left.get(row).copied(), right.get(row).copied()])
+                .collect();
+            (true, rows)
+        } else {
+            (false, indices.map(|index| [Some(index), None]).collect())
+        }
+    }
+
+    fn scroll_index_for_action(&self, index: usize) -> Option<usize> {
+        self.action_rows()
+            .1
+            .iter()
+            .position(|row| row.contains(&Some(index)))
+            .map(|row| row + 1 + usize::from(self.detail.is_some()))
+    }
+
+    fn scroll_to_action(&self, index: usize) {
+        if let Some(row) = self.scroll_index_for_action(index) {
+            self.scroll.scroll_to_item(row);
+        }
+    }
+
+    fn render_action(
+        &self,
+        index: usize,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> crate::AnyElement {
+        let action = &self.actions[index];
+        let row = div()
+            .w_full()
+            .flex()
+            .flex_shrink_0()
+            .flex_row()
+            .justify_around()
+            .text_sm()
+            .child(action.label().clone());
+        if !action.is_selectable() {
+            let text = row.justify_start().cursor_default();
+            #[cfg(any(test, feature = "test-support"))]
+            let text = text.debug_selector(|| "fallback-prompt-text".to_string());
+            return text.into_any_element();
+        }
+        let button = row
+            .border_1()
+            .border_color(if self.action_focus[index].is_focused(window) {
+                opaque_grey(0.1, 1.0)
+            } else {
+                opaque_grey(0.2, 0.5)
+            })
+            .rounded_xs()
+            .cursor_pointer()
+            .id(index)
+            .track_focus(&self.action_focus[index])
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(PromptResponse(index));
+            }));
+        #[cfg(any(test, feature = "test-support"))]
+        let button = button.debug_selector(move || format!("fallback-prompt-action-{index}"));
+        button.into_any_element()
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         window.prevent_default();
@@ -149,8 +229,7 @@ impl FallbackPromptRenderer {
                     }
                 }
                 window.focus(&self.action_focus[self.selected]);
-                self.scroll
-                    .scroll_to_item(self.selected + 1 + usize::from(self.detail.is_some()));
+                self.scroll_to_action(self.selected);
                 cx.notify();
             }
             "enter" | "space"
@@ -190,10 +269,10 @@ impl Render for FallbackPromptRenderer {
             self.last_focused = focused;
             if let Some(index) = focused {
                 // Follow any focus change while allowing independent wheel scrolling.
-                self.scroll
-                    .scroll_to_item(index + 1 + usize::from(self.detail.is_some()));
+                self.scroll_to_action(index);
             }
         }
+        let (grouped, rows) = self.action_rows();
         let content = div()
             .id("gpui-fallback-prompt-content")
             .track_focus(&self.focus)
@@ -225,35 +304,30 @@ impl Render for FallbackPromptRenderer {
                     .mb_2()
                     .child(div().child(detail))
             }))
-            .children(self.actions.iter().enumerate().map(|(ix, action)| {
+            .children(rows.into_iter().map(|[left, right]| {
                 let row = div()
+                    .w_full()
                     .flex()
                     .flex_shrink_0()
                     .flex_row()
-                    .justify_around()
-                    .mt_1()
-                    .text_sm()
-                    .child(action.label().clone());
-                if !action.is_selectable() {
-                    let text = row.w_full().justify_start().cursor_default();
-                    #[cfg(any(test, feature = "test-support"))]
-                    let text = text.debug_selector(|| "fallback-prompt-text".to_string());
-                    return text.into_any_element();
+                    .gap_2()
+                    .mt_1();
+                if grouped {
+                    row.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .children(left.map(|index| self.render_action(index, window, cx))),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .children(right.map(|index| self.render_action(index, window, cx))),
+                    )
+                } else {
+                    row.children(left.map(|index| self.render_action(index, window, cx)))
                 }
-                row.border_1()
-                    .border_color(if self.action_focus[ix].is_focused(window) {
-                        opaque_grey(0.1, 1.0)
-                    } else {
-                        opaque_grey(0.2, 0.5)
-                    })
-                    .rounded_xs()
-                    .cursor_pointer()
-                    .id(ix)
-                    .track_focus(&self.action_focus[ix])
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.emit(PromptResponse(ix));
-                    }))
-                    .into_any_element()
             }));
 
         let prompt = div()
@@ -400,14 +474,26 @@ mod scroll_tests {
         Entity<FallbackPromptRenderer>,
         oneshot::Receiver<usize>,
     ) {
+        let actions: Vec<_> = (0..count)
+            .map(|index| PromptButton::new(format!("Option {index}")))
+            .collect();
+        prompt_actions(actions, detail, level)
+    }
+
+    fn prompt_actions(
+        actions: Vec<PromptButton>,
+        detail: bool,
+        level: PromptLevel,
+    ) -> (
+        VisualTestContext,
+        Entity<FallbackPromptRenderer>,
+        oneshot::Receiver<usize>,
+    ) {
         let mut app = TestAppContext::single();
         app.update(|app| app.set_prompt_builder(fallback_prompt_renderer));
         let window = app.add_window(|_, _| Empty);
         let mut cx = VisualTestContext::from_window(*window, &app);
         cx.simulate_resize(size(px(400.0), px(300.0)));
-        let actions: Vec<_> = (0..count)
-            .map(|index| PromptButton::new(format!("Option {index}")))
-            .collect();
         let response = cx.update(|window, app| {
             window.prompt(
                 level,
@@ -522,9 +608,132 @@ mod scroll_tests {
             assert!(heading.bottom() <= scroll.bounds().top());
             cx.simulate_keystrokes("shift-tab");
             assert_eq!(cx.debug_bounds("fallback-dialog-title"), Some(heading));
-            visible_child(&scroll, 51);
+            let row = cx.update(|_, app| renderer.read(app).scroll_index_for_action(49).unwrap());
+            visible_child(&scroll, row);
             cx.simulate_keystrokes("enter");
             assert_eq!(response.try_recv().unwrap(), Some(49));
+        }
+    }
+
+    #[test]
+    fn group_boundary_places_buttons_on_opposite_sides_and_preserves_mouse_result() {
+        let (mut cx, _, mut response) = prompt_actions(
+            vec![
+                PromptButton::new("Save"),
+                PromptButton::separator(),
+                PromptButton::new("Discard"),
+                PromptButton::cancel("Cancel"),
+            ],
+            false,
+            PromptLevel::Question,
+        );
+        let left = cx.debug_bounds("fallback-prompt-action-0").unwrap();
+        let right = cx.debug_bounds("fallback-prompt-action-2").unwrap();
+        let cancel = cx.debug_bounds("fallback-prompt-action-3").unwrap();
+        assert!(left.right() < right.left());
+        assert_eq!(left.top(), right.top());
+        assert_eq!(right.left(), cancel.left());
+        assert!(right.bottom() <= cancel.top());
+        cx.simulate_click(cancel.center(), Modifiers::default());
+        assert_eq!(response.try_recv().unwrap(), Some(3));
+    }
+
+    #[test]
+    fn default_groups_use_the_larger_left_half_and_repeated_boundaries_keep_the_first_split() {
+        let (mut cx, _, _) = prompt_actions(
+            vec![
+                PromptButton::new("A"),
+                PromptButton::new("B"),
+                PromptButton::new("C"),
+            ],
+            false,
+            PromptLevel::Information,
+        );
+        let a = cx.debug_bounds("fallback-prompt-action-0").unwrap();
+        let b = cx.debug_bounds("fallback-prompt-action-1").unwrap();
+        let c = cx.debug_bounds("fallback-prompt-action-2").unwrap();
+        assert_eq!(a.left(), b.left());
+        assert!(a.right() < c.left());
+        assert_eq!(a.top(), c.top());
+        let (mut cx, _, _) = prompt_actions(
+            vec![
+                PromptButton::new("A"),
+                PromptButton::separator(),
+                PromptButton::new("B"),
+                PromptButton::separator(),
+                PromptButton::new("C"),
+            ],
+            false,
+            PromptLevel::Info,
+        );
+        let a = cx.debug_bounds("fallback-prompt-action-0").unwrap();
+        let b = cx.debug_bounds("fallback-prompt-action-2").unwrap();
+        let c = cx.debug_bounds("fallback-prompt-action-4").unwrap();
+        assert!(a.right() < b.left());
+        assert_eq!(b.left(), c.left());
+    }
+
+    #[test]
+    fn empty_left_or_right_groups_retain_the_requested_side() {
+        for (actions, index, right) in [
+            (
+                vec![
+                    PromptButton::separator(),
+                    PromptButton::new("A"),
+                    PromptButton::new("B"),
+                ],
+                1,
+                true,
+            ),
+            (
+                vec![
+                    PromptButton::new("A"),
+                    PromptButton::new("B"),
+                    PromptButton::separator(),
+                ],
+                0,
+                false,
+            ),
+        ] {
+            let (mut cx, renderer, _) = prompt_actions(actions, false, PromptLevel::Question);
+            let bounds = if index == 1 {
+                cx.debug_bounds("fallback-prompt-action-1").unwrap()
+            } else {
+                cx.debug_bounds("fallback-prompt-action-0").unwrap()
+            };
+            let viewport = scroll(&mut cx, &renderer).bounds();
+            assert_eq!(bounds.center().x > viewport.center().x, right);
+        }
+    }
+
+    #[test]
+    fn long_groups_scroll_the_focused_or_clicked_button_into_view() {
+        for keyboard in [true, false] {
+            let mut actions: Vec<_> = (0..50)
+                .map(|index| PromptButton::new(format!("Option {index}")))
+                .collect();
+            actions.insert(5, PromptButton::separator());
+            let (mut cx, renderer, mut response) =
+                prompt_actions(actions, true, PromptLevel::Question);
+            let viewport = scroll(&mut cx, &renderer);
+            if keyboard {
+                cx.simulate_keystrokes("shift-tab");
+            } else {
+                cx.simulate_event(ScrollWheelEvent {
+                    position: viewport.bounds().center(),
+                    delta: ScrollDelta::Pixels(point(px(0.0), px(-100000.0))),
+                    ..Default::default()
+                });
+            }
+            let last = cx.debug_bounds("fallback-prompt-action-50").unwrap();
+            assert!(last.top() >= viewport.bounds().top());
+            assert!(last.bottom() <= viewport.bounds().bottom());
+            if keyboard {
+                cx.simulate_keystrokes("enter");
+            } else {
+                cx.simulate_click(last.center(), Modifiers::default());
+            }
+            assert_eq!(response.try_recv().unwrap(), Some(50));
         }
     }
 }

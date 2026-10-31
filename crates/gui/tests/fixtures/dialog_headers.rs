@@ -84,7 +84,7 @@ fn main() {
                 (true, "Information", None, 0),
                 (false, "Question", Some("Select an operation:"), 1),
             ] {
-                let response = cx.update(|app| window.update(app, |_, window, app| {
+                let response = cx.update(|app| app.update_window(*window, |_, window, app| {
                     let mut buttons = dialogs::dialog_prompt_buttons(vec!["OK".into()]);
                     if let Some(text) = text { buttons.insert(0, gpui::PromptButton::text(text)); }
                     window.prompt(dialogs::dialog_prompt_level(Some(header)), "Header body", None, &buttons, app)
@@ -127,6 +127,33 @@ fn main() {
                 };
                 if !passed { std::process::exit(1); }
             }
+            // A native button array cannot express an arbitrary left/right
+            // boundary.  The public prompt API must use the shared view.
+            let grouped = cx.update(|app| app.update_window(*window, |_, window, app| {
+                let buttons = vec![gpui::PromptButton::new("Save"),gpui::PromptButton::separator(),
+                                   gpui::PromptButton::new("Discard"),gpui::PromptButton::cancel("Cancel")];
+                window.prompt(dialogs::dialog_prompt_level(Some(false)),"Grouped choices",None,&buttons,app)
+            }).unwrap()).unwrap();
+            Timer::after(Duration::from_millis(200)).await;
+            let no_sheet = cx.update(|app| unsafe {
+                let native_app:id=msg_send![class!(NSApplication),sharedApplication];
+                let windows:id=msg_send![native_app,windows];
+                let mut found=false;
+                for index in 0..windows.count() {
+                    let window=windows.objectAtIndex(index);
+                    let visible:BOOL=msg_send![window,isVisible];
+                    let sheet:BOOL=msg_send![window,isSheet];
+                    found |= visible!=NO && sheet!=NO;
+                }
+                app.update_window(*window,|_,window,app| {
+                    window.dispatch_keystroke(gpui::Keystroke::parse("shift-tab").unwrap(),app);
+                    window.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(),app);
+                }).unwrap();
+                !found
+            }).unwrap();
+            let grouped_result=grouped.await;
+            println!("grouped prompt no_native_sheet={no_sheet} result={grouped_result:?}");
+            if !no_sheet || !matches!(grouped_result,Ok(3)) {std::process::exit(1);}
             cx.update(|app| app.quit()).unwrap();
         }).detach();
     });

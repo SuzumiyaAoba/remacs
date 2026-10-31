@@ -706,7 +706,9 @@ impl PlatformWindow for WindowsWindow {
                             // the first few low integer values are reserved for known buttons
                             // so for simplicity we just go backwards from -1
                             PromptButton::Other(_) => -(index as i32) - 1,
-                            PromptButton::Text(_) => unreachable!("text is not a native button"),
+                            PromptButton::Text(_) | PromptButton::Separator(_) => {
+                                unreachable!("nonselectable item is not a native button")
+                            }
                         };
                         button_id_map.push((button_id, index));
                         buttons.push(TASKDIALOG_BUTTON {

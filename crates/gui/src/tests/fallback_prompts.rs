@@ -214,3 +214,18 @@ fn fallback_text_only_prompt_allows_dismissal() {
     assert_eq!(response.get(), Some(Err(())));
     restored(&mut app, window, &focus);
 }
+
+#[test]
+fn fallback_group_boundary_is_skipped_by_keyboard_and_escape() {
+    for (keys, selected) in [("tab enter", 2), ("shift-tab space", 3), ("escape", 3)] {
+        let (mut app, window, response, focus) = prompt_buttons(vec![
+            gpui::PromptButton::new("Save"),
+            gpui::PromptButton::separator(),
+            gpui::PromptButton::new("Discard"),
+            gpui::PromptButton::cancel("Cancel"),
+        ]);
+        app.simulate_keystrokes(*window, keys);
+        assert_eq!(response.get(), Some(Ok(selected)));
+        restored(&mut app, window, &focus);
+    }
+}

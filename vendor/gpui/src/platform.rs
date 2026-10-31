@@ -1426,6 +1426,8 @@ pub enum PromptButton {
     Other(SharedString),
     /// Nonselectable text displayed alongside the choices.
     Text(SharedString),
+    /// Boundary between the left and right dialog groups.
+    Separator(SharedString),
 }
 
 impl PromptButton {
@@ -1449,8 +1451,17 @@ impl PromptButton {
         PromptButton::Text(label.into())
     }
 
+    /// Separate the left and right dialog groups.
+    pub fn separator() -> Self {
+        Self::Separator("".into())
+    }
+
+    pub(crate) fn is_separator(&self) -> bool {
+        matches!(self, Self::Separator(_))
+    }
+
     pub(crate) fn is_selectable(&self) -> bool {
-        !matches!(self, Self::Text(_))
+        !matches!(self, Self::Text(_) | Self::Separator(_))
     }
 
     #[allow(dead_code)]
@@ -1465,6 +1476,7 @@ impl PromptButton {
             PromptButton::Cancel(label) => label,
             PromptButton::Other(label) => label,
             PromptButton::Text(label) => label,
+            PromptButton::Separator(label) => label,
         }
     }
 }
@@ -1485,6 +1497,9 @@ pub(crate) fn native_prompt_detail(
     answers: &[PromptButton],
     detail: Option<&str>,
 ) -> Option<Option<String>> {
+    if answers.iter().any(PromptButton::is_separator) {
+        return None;
+    }
     let prefix = answers
         .iter()
         .take_while(|item| !item.is_selectable())
@@ -1556,6 +1571,16 @@ mod prompt_text_tests {
             native_prompt_detail(&[PromptButton::text("Only text")], None),
             None
         );
+    }
+
+    #[test]
+    fn explicit_groups_use_the_renderer_that_supports_their_layout() {
+        let items = [
+            PromptButton::new("Left"),
+            PromptButton::separator(),
+            PromptButton::new("Right"),
+        ];
+        assert_eq!(native_prompt_detail(&items, None), None);
     }
 }
 

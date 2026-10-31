@@ -6,7 +6,7 @@ pub(crate) fn dialog_prompt_items(items: &[DialogItem]) -> Vec<PromptButton> {
         .iter()
         .filter_map(|item| match item {
             DialogItem::Button(label) => Some(label.clone()),
-            DialogItem::Text(_) => None,
+            DialogItem::Text(_) | DialogItem::Separator => None,
         })
         .collect();
     let mut buttons = super::dialogs::dialog_prompt_buttons(labels).into_iter();
@@ -15,6 +15,7 @@ pub(crate) fn dialog_prompt_items(items: &[DialogItem]) -> Vec<PromptButton> {
         .map(|item| match item {
             DialogItem::Button(_) => buttons.next().expect("selectable item"),
             DialogItem::Text(text) => PromptButton::text(text.clone()),
+            DialogItem::Separator => PromptButton::separator(),
         })
         .collect()
 }
@@ -60,6 +61,25 @@ mod tests {
                 .map(|index| dialog_button_index(&items, index))
                 .collect::<Vec<_>>(),
             [None, Some(0), None, Some(1), None]
+        );
+    }
+
+    #[test]
+    fn group_boundaries_are_nonselectable_and_do_not_shift_button_values() {
+        let items = [
+            DialogItem::Button("Save".into()),
+            DialogItem::Separator,
+            DialogItem::Button("Discard".into()),
+            DialogItem::Button("Cancel".into()),
+        ];
+        let prompt = dialog_prompt_items(&items);
+        assert!(matches!(prompt[1], PromptButton::Separator(_)));
+        assert!(matches!(prompt[3], PromptButton::Cancel(_)));
+        assert_eq!(
+            (0..=4)
+                .map(|index| dialog_button_index(&items, index))
+                .collect::<Vec<_>>(),
+            [Some(0), None, Some(1), Some(2), None]
         );
     }
 }

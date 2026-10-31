@@ -47,6 +47,8 @@ pub trait AboutPanelBackend {
 pub enum DialogItem {
     Button(String),
     Text(String),
+    /// Boundary between the left and right dialog groups.
+    Separator,
 }
 
 /// Host dialog backend used by interactive graphical front-ends. The logic
@@ -87,7 +89,7 @@ pub trait DialogBackend {
             .iter()
             .filter_map(|item| match item {
                 DialogItem::Button(label) => Some(label.clone()),
-                DialogItem::Text(_) => None,
+                DialogItem::Text(_) | DialogItem::Separator => None,
             })
             .collect();
         if buttons.is_empty() {

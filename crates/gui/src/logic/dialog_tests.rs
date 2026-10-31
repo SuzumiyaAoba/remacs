@@ -71,3 +71,29 @@ fn dialog_text_items_keep_order_and_only_buttons_have_return_indices() {
         worker.join().unwrap();
     }
 }
+
+#[test]
+fn dialog_group_boundary_crosses_transport_without_consuming_a_value() {
+    let items = vec![
+        DialogItem::Button("Save".into()),
+        DialogItem::Separator,
+        DialogItem::Button("Cancel".into()),
+    ];
+    let (requests, incoming) = smol::channel::unbounded();
+    let expected = items.clone();
+    let worker = std::thread::spawn(move || {
+        let GuiRequest::Prompt { items, reply, .. } = incoming.recv_blocking().unwrap() else {
+            panic!("expected prompt");
+        };
+        assert_eq!(items, expected);
+        reply.send(Ok(Some(2))).unwrap();
+    });
+    let backend = GuiDialogBackend { requests };
+    assert_eq!(
+        backend
+            .choose_with_items(7, "Body", None, &items, false)
+            .unwrap(),
+        Some(1)
+    );
+    worker.join().unwrap();
+}
