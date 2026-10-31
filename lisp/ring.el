@@ -80,11 +80,13 @@ If the ring is full, dump the oldest item to make room."
          (veclen (length vec))
          (hd (car ring))
          (ln (cadr ring)))
-    (prog1
-        (aset vec (mod (+ hd ln) veclen) item)
-      (if (= ln veclen)
-          (setcar ring (ring-plus1 hd veclen))
-        (setcar (cdr ring) (1+ ln))))))
+    (if (zerop veclen)
+        item
+      (prog1
+          (aset vec (mod (+ hd ln) veclen) item)
+        (if (= ln veclen)
+            (setcar ring (ring-plus1 hd veclen))
+          (setcar (cdr ring) (1+ ln)))))))
 
 (defun ring-remove (ring &optional index)
   "Remove an item from the RING.  Return the removed item.
