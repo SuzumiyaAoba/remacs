@@ -494,7 +494,7 @@ fn f_error_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn f_eval(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_eval(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (eval FORM &optional LEXICAL) — GNU binds
     // `internal-interpreter-environment' to LEXICAL when nil (dynamic)
     // or a cons (an actual env), else to `(t)' (fresh lexical env).
