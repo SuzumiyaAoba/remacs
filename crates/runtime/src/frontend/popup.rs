@@ -57,16 +57,9 @@ fn keymap_entries(
     }
     let mut entries = Vec::new();
     for (key, binding) in crate::editor::keymap_own_bindings(i, keymap) {
-        let has_label = match &binding {
-            Value::Cons(cell) => {
-                let head = cell.borrow().car.clone();
-                matches!(head, Value::Str(_))
-                    || matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "menu-item")
-            }
-            Value::Str(label) => label.borrow().to_unicode_lossy() == "--",
-            _ => false,
-        };
-        if !has_label {
+        // Retain Remacs's fallback key labels for bare bindings. An absent
+        // binding is omitted; an explicitly labelled nil binding remains text.
+        if binding.is_nil() {
             continue;
         }
         let (label, definition, separator) = menu_label_and_definition(i, &key, &binding);
