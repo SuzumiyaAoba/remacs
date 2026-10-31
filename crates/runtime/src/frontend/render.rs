@@ -3117,7 +3117,23 @@ fn render_popup_menu(
     } else if let Value::Cons(cell) = menu {
         let first = cell.borrow().car.clone();
         if crate::editor::is_keymap(i, &first) {
-            menu_items(i, &first, 0)
+            let mut panes = Vec::new();
+            for keymap in menu.list_to_vec().unwrap_or_default() {
+                let items = menu_items(i, &keymap, 0);
+                if items.is_empty() {
+                    continue;
+                }
+                if !panes.is_empty() {
+                    panes.push(GridMenuItem {
+                        label: String::new(),
+                        command: None,
+                        items: Vec::new(),
+                        separator: true,
+                    });
+                }
+                panes.extend(items);
+            }
+            panes
         } else {
             return Vec::new();
         }
