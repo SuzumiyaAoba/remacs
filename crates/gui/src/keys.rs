@@ -323,6 +323,7 @@ fn is_named_key(ks: &Keystroke) -> bool {
                 | "right"
                 | "home"
                 | "end"
+                | "help"
                 | "delete"
                 | "insert"
                 | "undo"
