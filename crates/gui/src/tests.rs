@@ -644,6 +644,33 @@ fn sun_again_keysym_uses_the_xkb_redo_binding() {
     assert!(keys.is_empty());
 }
 
+#[test]
+fn scroll_lock_keysym_toggles_the_default_mode_binding() {
+    use remacs_runtime::editor::event_code_for;
+    for name in ["scroll_lock", "Scroll_Lock"] {
+        let key = ks(name, None, false, false, false, false);
+        assert!(command_keystroke(&key));
+        assert_eq!(keystroke_to_code(&key), Some(event_code_for("Scroll_Lock")));
+        let modified = ks(name, None, true, false, true, false);
+        assert_eq!(
+            keystroke_to_code(&modified),
+            Some(event_code_for("Scroll_Lock") | CHAR_CTL | CHAR_SHIFT)
+        );
+    }
+    let mut i = Interp::new();
+    let binding = i.eval_str("(lookup-key global-map [Scroll_Lock])").unwrap();
+    assert_eq!(i.prin1_to_string(&binding), "scroll-lock-mode");
+    let code = keystroke_to_code(&ks("scroll_lock", None, false, false, false, false)).unwrap();
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    for enabled in [true, false] {
+        remacs_runtime::frontend::dispatch_key_core(&mut i, code, &mut keys, &mut arg_mode, None)
+            .unwrap();
+        assert_eq!(i.eval_str("scroll-lock-mode").unwrap().truthy(), enabled);
+        assert!(keys.is_empty());
+    }
+}
+
 fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
     let (etx, erx) = mpsc::channel();
     let (gtx, grx) = smol::channel::bounded(1);
