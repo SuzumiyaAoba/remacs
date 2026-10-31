@@ -603,13 +603,14 @@ If no record is found and HOST is not an IPv6 literal, return nil.
 
 This command uses `nslookup-program' to look up DNS records."
   (let* ((output (nslookup--query "AAAA" host name-server))
-         (ip-regex "\\([0-9a-fA-F:.]+\\)")
+         (ip-regex "\\([^ \t\r\n]+\\)")
          (parsed-ip (and (string-match
                           (if (eq system-type 'windows-nt)
                               (concat "Name:.*\nAddress: *" ip-regex)
                             (concat "has AAAA address " ip-regex))
                           output)
-                         (match-string 1 output)))
+                         (let ((address (match-string 1 output)))
+                           (and (nslookup--ipv6-address-p address) address))))
          (ip (or parsed-ip
                  (and (nslookup--ipv6-address-p host) host))))
     (cond ((memq format '(string nil))
