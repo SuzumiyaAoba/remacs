@@ -439,6 +439,8 @@ fn mouse_1_link_click_translates_to_mouse_2_at_the_same_position() {
     )
     .unwrap();
     let position = mouse_position(&i, 2);
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
     dispatch_mouse_down(
         &mut i,
         MouseInput {
@@ -448,7 +450,10 @@ fn mouse_1_link_click_translates_to_mouse_2_at_the_same_position() {
             start: position,
             end: position,
         },
-    );
+        &mut keys,
+        &mut arg_mode,
+    )
+    .unwrap();
     dispatch_test_mouse(
         &mut i,
         MouseInput {
@@ -482,7 +487,7 @@ fn isearch_chars_move_point_to_match() {
     // "two" ends at index 7.
     assert_eq!(point(&i), 7);
     assert!(!st.failing);
-    assert!(st.label().contains("I-search: two"));
+    assert!(st.label().0.contains("I-search: two"));
 }
 
 #[test]
@@ -792,7 +797,7 @@ fn isearch_backward_searches_backward() {
     st.step(&mut i, 'a' as i128);
     // Backward match puts point at match start (index 7).
     assert_eq!(point(&i), 7);
-    assert!(st.label().contains("backward"));
+    assert!(st.label().0.contains("backward"));
 }
 
 #[test]
@@ -834,7 +839,7 @@ fn isearch_failing_then_empty_query() {
     st.step(&mut i, 'z' as i128);
     st.step(&mut i, 'z' as i128);
     assert!(st.failing);
-    assert!(st.label().starts_with("Failing"));
+    assert!(st.label().0.starts_with("Failing"));
     st.step(&mut i, 127); // DEL pops one char
     st.step(&mut i, 127);
     assert_eq!(st.query, "");
