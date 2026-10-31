@@ -966,10 +966,11 @@ Like original function but it skips read-only words."
 	    (end (match-end 0)))
 	(if (eq wdired-allow-to-change-permissions 'advanced)
 	    (progn
-	      (put-text-property begin end 'read-only nil)
+	      ;; Remacs: file type is not a permission bit and cannot be edited.
+	      (put-text-property (1+ begin) end 'read-only nil)
 	      ;; make first permission bit writable
 	      (put-text-property
-	       (1- begin) begin 'rear-nonsticky '(read-only)))
+	       begin (1+ begin) 'rear-nonsticky '(read-only)))
 	  ;; avoid that keymap applies to text following permissions
 	  (add-text-properties
 	   (1+ begin) end

@@ -51,6 +51,7 @@ qa!(qa_dabbrev_punctuation, "qa_dabbrev_punctuation.el");
 qa!(qa_dirtrack_load, "qa_dirtrack_load.el");
 qa!(qa_dirtrack_pending, "qa_dirtrack_pending.el");
 qa!(qa_wdired_permissions, "qa_wdired_permissions.el");
+qa!(qa_wdired_type_boundary, "qa_wdired_type_boundary.el");
 qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
 qa!(qa_ansi_color_load, "qa_ansi_color_load.el");
