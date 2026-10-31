@@ -966,7 +966,10 @@ Includes expansions from parent abbrev tables."
                  (when (and (stringp value)
                             (or (null enable-function)
                                 (funcall enable-function)))
-                   (push (cons value (symbol-name e)) expansions))))
+                   (push (list value (symbol-name e)
+                               (or (abbrev-table-get table :case-fixed)
+                                   (abbrev-get e :case-fixed)))
+                         expansions))))
              table))))
       expansions))
 
@@ -993,10 +996,9 @@ Expansion is a string of one or more words."
 A significant saving, here, means the difference in length between
 the abbrev and its expansion is not below the threshold specified
 by the value of `abbrev-suggest-hint-threshold'.
-EXPANSION is a cons cell where the car is the expansion and the cdr is
-the abbrev."
-    (>= (- (length (car expansion))
-	   (length (cdr expansion)))
+EXPANSION contains the expansion and abbrev name as its first two elements."
+    (>= (- (length (nth 0 expansion))
+	   (length (nth 1 expansion)))
 	abbrev-suggest-hint-threshold))
 
 (defvar abbrev--suggest-saved-recommendations nil
@@ -1006,23 +1008,22 @@ The user can show this list by calling
 
 (defun abbrev--suggest-inform-user (expansion)
     "Display a message to the user about the existing abbrev.
-EXPANSION is a cons cell where the `car' is the expansion and the
-`cdr' is the abbrev."
+EXPANSION contains the expansion and abbrev name as its first two elements."
     (run-with-idle-timer
      1 nil
      (lambda ()
        (message "You can write `%s' using the abbrev `%s'."
-                                   (car expansion) (cdr expansion))))
-    (push expansion abbrev--suggest-saved-recommendations))
+                (nth 0 expansion) (nth 1 expansion))))
+    (push (cons (nth 0 expansion) (nth 1 expansion))
+          abbrev--suggest-saved-recommendations))
 
 (defun abbrev--suggest-shortest-abbrev (new current)
     "Return the shortest of the two abbrevs given by NEW and CURRENT.
-NEW and CURRENT are cons cells where the `car' is the expansion
-and the `cdr' is the abbrev."
+NEW and CURRENT contain the expansion and abbrev name in their first two elements."
     (if (not current)
 	new
-      (if (< (length (cdr new))
-	     (length (cdr current)))
+      (if (< (length (nth 1 new))
+	     (length (nth 1 current)))
 	  new
 	current)))
 
@@ -1032,13 +1033,13 @@ Uses `abbrev-suggest-hint-threshold' to find out if the user should be
 informed about the existing abbrev."
     (let (words abbrev-found word-count)
       (dolist (expansion (abbrev--suggest-get-active-abbrev-expansions))
-	(setq word-count (abbrev--suggest-count-words (car expansion))
+	(setq word-count (abbrev--suggest-count-words (nth 0 expansion))
 	      words (abbrev--suggest-get-previous-words word-count))
 	(when (and (> word-count 0)
 		   (eq t (compare-strings
 			  (abbrev--suggest-normalize-whitespace
-			   (car expansion))
-			  nil nil words nil nil t))
+			   (nth 0 expansion))
+			  nil nil words nil nil (not (nth 2 expansion))))
 		   (abbrev--suggest-above-threshold expansion))
 	  (setq abbrev-found (abbrev--suggest-shortest-abbrev
 			      expansion abbrev-found))))
