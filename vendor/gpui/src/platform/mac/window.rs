@@ -2,7 +2,7 @@ use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalDragOperation, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     SharedString, Size, SystemWindowTab, TextDropEvent, Timer, WindowAppearance,
     WindowBackgroundAppearance,
@@ -444,6 +444,8 @@ struct MacWindowState {
     drag_completion: Option<Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>>,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
+    // Keep the physical left-button gesture's mapping until its release.
+    control_click: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
@@ -755,6 +757,7 @@ impl MacWindow {
                 drag_operation: None,
                 drag_completion: None,
                 first_mouse: false,
+                control_click: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
@@ -2129,6 +2132,33 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     }
 }
 
+fn remap_control_click(event: &mut PlatformInput, control_click: &mut bool) {
+    match event {
+        PlatformInput::MouseDown(event) if event.button == MouseButton::Left => {
+            *control_click = event.modifiers.control;
+            if *control_click {
+                event.button = MouseButton::Right;
+                event.modifiers.control = false;
+                event.click_count = 1;
+            }
+        }
+        PlatformInput::MouseMove(event)
+            if event.pressed_button == Some(MouseButton::Left) && *control_click =>
+        {
+            event.pressed_button = Some(MouseButton::Right);
+            event.modifiers.control = false;
+        }
+        PlatformInput::MouseUp(event) if event.button == MouseButton::Left => {
+            if mem::take(control_click) {
+                event.button = MouseButton::Right;
+                event.modifiers.control = false;
+                event.click_count = 1;
+            }
+        }
+        _ => {}
+    }
+}
+
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
@@ -2137,63 +2167,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
-        match &mut event {
-            PlatformInput::MouseDown(
-                event @ MouseDownEvent {
-                    button: MouseButton::Left,
-                    modifiers: Modifiers { control: true, .. },
-                    ..
-                },
-            ) => {
-                // On mac, a ctrl-left click should be handled as a right click.
-                *event = MouseDownEvent {
-                    button: MouseButton::Right,
-                    modifiers: Modifiers {
-                        control: false,
-                        ..event.modifiers
-                    },
-                    click_count: 1,
-                    ..*event
-                };
-            }
-
-            // Handles focusing click.
-            PlatformInput::MouseDown(
-                event @ MouseDownEvent {
-                    button: MouseButton::Left,
-                    ..
-                },
-            ) if (lock.first_mouse) => {
-                *event = MouseDownEvent {
-                    first_mouse: true,
-                    ..*event
-                };
-                lock.first_mouse = false;
-            }
-
-            // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
-            // the ctrl-left_up to avoid having a mismatch in button down/up events if the
-            // user is still holding ctrl when releasing the left mouse button
-            PlatformInput::MouseUp(
-                event @ MouseUpEvent {
-                    button: MouseButton::Left,
-                    modifiers: Modifiers { control: true, .. },
-                    ..
-                },
-            ) => {
-                *event = MouseUpEvent {
-                    button: MouseButton::Right,
-                    modifiers: Modifiers {
-                        control: false,
-                        ..event.modifiers
-                    },
-                    click_count: 1,
-                    ..*event
-                };
-            }
-
-            _ => {}
-        };
+        remap_control_click(&mut event, &mut lock.control_click);
+        if let PlatformInput::MouseDown(event) = &mut event
+            && event.button == MouseButton::Left
+            && lock.first_mouse
+        {
+            event.first_mouse = true;
+            lock.first_mouse = false;
+        }
 
         match &event {
             PlatformInput::MouseDown(_) => {
@@ -3156,5 +3137,153 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             callback();
             window_state.lock().toggle_tab_bar_callback = Some(callback);
         }
+    }
+}
+
+#[cfg(test)]
+mod control_click_tests {
+    use super::*;
+    use crate::MouseDownEvent;
+
+    fn down(control: bool) -> PlatformInput {
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position: point(px(12.0), px(7.0)),
+            modifiers: Modifiers {
+                control,
+                shift: true,
+                ..Modifiers::default()
+            },
+            click_count: 1,
+            first_mouse: false,
+        })
+    }
+
+    fn up(control: bool) -> PlatformInput {
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: point(px(12.0), px(7.0)),
+            modifiers: Modifiers {
+                control,
+                shift: true,
+                ..Modifiers::default()
+            },
+            click_count: 1,
+        })
+    }
+
+    fn assert_button(event: &PlatformInput, button: MouseButton, control: bool) {
+        let (actual, modifiers, position) = match event {
+            PlatformInput::MouseDown(event) => (event.button, event.modifiers, event.position),
+            PlatformInput::MouseUp(event) => (event.button, event.modifiers, event.position),
+            _ => panic!("expected a button event"),
+        };
+        assert_eq!(actual, button);
+        assert_eq!(modifiers.control, control);
+        assert!(modifiers.shift);
+        assert_eq!(position, point(px(12.0), px(7.0)));
+    }
+
+    #[test]
+    fn control_click_release_after_control_key() {
+        let mut active = false;
+        let mut press = down(true);
+        remap_control_click(&mut press, &mut active);
+        assert_button(&press, MouseButton::Right, false);
+        let mut release = up(false);
+        remap_control_click(&mut release, &mut active);
+        assert_button(&release, MouseButton::Right, false);
+        assert!(!active);
+
+        // The next ordinary gesture must remain a left click.
+        let mut press = down(false);
+        remap_control_click(&mut press, &mut active);
+        assert_button(&press, MouseButton::Left, false);
+        let mut release = up(false);
+        remap_control_click(&mut release, &mut active);
+        assert_button(&release, MouseButton::Left, false);
+    }
+
+    #[test]
+    fn control_click_held_through_release() {
+        let mut active = false;
+        let mut press = down(true);
+        remap_control_click(&mut press, &mut active);
+        assert_button(&press, MouseButton::Right, false);
+        let mut release = up(true);
+        remap_control_click(&mut release, &mut active);
+        assert_button(&release, MouseButton::Right, false);
+        assert!(!active);
+    }
+
+    #[test]
+    fn control_click_pressed_after_left_down_stays_left() {
+        let mut active = false;
+        let mut press = down(false);
+        remap_control_click(&mut press, &mut active);
+        assert_button(&press, MouseButton::Left, false);
+        let mut release = up(true);
+        remap_control_click(&mut release, &mut active);
+        assert_button(&release, MouseButton::Left, true);
+        assert!(!active);
+    }
+
+    #[test]
+    fn control_click_drag_keeps_the_pressed_button() {
+        let mut active = false;
+        let mut press = down(true);
+        remap_control_click(&mut press, &mut active);
+        for control in [true, false] {
+            let mut motion = PlatformInput::MouseMove(MouseMoveEvent {
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers {
+                    control,
+                    alt: true,
+                    ..Modifiers::default()
+                },
+                position: point(px(18.0), px(9.0)),
+            });
+            remap_control_click(&mut motion, &mut active);
+            let PlatformInput::MouseMove(motion) = motion else {
+                unreachable!()
+            };
+            assert_eq!(motion.pressed_button, Some(MouseButton::Right));
+            assert!(!motion.modifiers.control);
+            assert!(motion.modifiers.alt);
+            assert_eq!(motion.position, point(px(18.0), px(9.0)));
+        }
+        let mut release = up(false);
+        remap_control_click(&mut release, &mut active);
+        assert_button(&release, MouseButton::Right, false);
+    }
+
+    #[test]
+    fn control_click_preserves_other_buttons_and_window_state() {
+        let mut active = false;
+        let mut other_window = false;
+        let mut press = down(true);
+        remap_control_click(&mut press, &mut active);
+        for button in [MouseButton::Right, MouseButton::Middle] {
+            let mut motion = PlatformInput::MouseMove(MouseMoveEvent {
+                pressed_button: Some(button),
+                modifiers: Modifiers {
+                    control: true,
+                    ..Modifiers::default()
+                },
+                ..MouseMoveEvent::default()
+            });
+            remap_control_click(&mut motion, &mut active);
+            let PlatformInput::MouseMove(motion) = motion else {
+                unreachable!()
+            };
+            assert_eq!(motion.pressed_button, Some(button));
+            assert!(motion.modifiers.control);
+        }
+        let mut release = up(false);
+        remap_control_click(&mut release, &mut other_window);
+        assert_button(&release, MouseButton::Left, false);
+        let mut release = up(false);
+        remap_control_click(&mut release, &mut active);
+        assert_button(&release, MouseButton::Right, false);
     }
 }
