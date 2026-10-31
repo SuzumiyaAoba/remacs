@@ -7847,6 +7847,174 @@ FILENAME should lack slashes.
 See also `make-auto-save-file-name'."
   (string-match "\\`#.*#\\'" filename))
 
+(defun wildcard--class-end (wildcard start)
+  "Return the position of the closing bracket in WILDCARD, or nil.
+START is the first position inside a bracket expression.  Backslash
+quotes the following character.  POSIX bracket subexpressions do not
+end the surrounding expression."
+  (let ((i start)
+        (len (length wildcard))
+        end)
+
+    (while (and (< i len) (not end))
+      (let ((ch (aref wildcard i)))
+        (cond
+         ((eq ch ?\\)
+          (setq i (min len (+ i 2))))
+         ((and (eq ch ?\[)
+               (< (1+ i) len)
+               (memq (aref wildcard (1+ i)) '(?: ?. ?=)))
+          (let* ((delimiter (aref wildcard (1+ i)))
+                 (subend (string-search
+                          (concat (char-to-string delimiter) "]")
+                          wildcard (+ i 2))))
+            (setq i (if subend (+ subend 2) (+ i 2)))))
+         ((eq ch ?\])
+          (setq end i))
+         (t
+          (setq i (1+ i))))))
+    end))
+
+(defun wildcard--class-tokens (wildcard start end)
+  "Parse WILDCARD bracket contents from START up to END."
+  (let ((i start) tokens)
+    (while (and end (< i end))
+      (let ((ch (aref wildcard i)))
+        (cond
+         ((eq ch ?\\)
+          (if (< (1+ i) end)
+              (setq tokens (cons (list 'char (aref wildcard (1+ i)) t) tokens)
+                    i (+ i 2))
+            (setq tokens (cons (list 'char ch t) tokens)
+                  i (1+ i))))
+         ((and (eq ch ?\[)
+               (< (1+ i) end)
+               (memq (aref wildcard (1+ i)) '(?: ?. ?=)))
+          (let* ((delimiter (aref wildcard (1+ i)))
+                 (subend (string-search
+                          (concat (char-to-string delimiter) "]")
+                          wildcard (+ i 2))))
+            (if (and subend (< subend end))
+                (setq tokens
+                      (cons (list 'raw (substring wildcard i (+ subend 2)))
+                            tokens)
+                      i (+ subend 2))
+              (setq tokens (cons (list 'char ch nil) tokens)
+                    i (1+ i)))))
+         (t
+          (setq tokens (cons (list 'char ch nil) tokens)
+                i (1+ i))))))
+    (nreverse tokens)))
+
+(defun wildcard--class-content (wildcard start end prefix-close prefix-member)
+  "Translate WILDCARD bracket contents from START up to END."
+  (let ((tokens (wildcard--class-tokens wildcard start end))
+        members
+        (close-member prefix-close)
+        close-range-end literal-hyphen empty-range)
+    (while tokens
+      (let* ((token (car tokens))
+             (second (cadr tokens))
+             (third (caddr tokens))
+             (prefix-range
+              (and prefix-close
+                   (eq (car token) 'char)
+                   second
+                   (eq (car second) 'char)
+                   (eq (cadr token) ?-)
+                   (not (nth 2 token))))
+             (range
+              (and (eq (car token) 'char)
+                   second third
+                   (eq (car second) 'char)
+                   (eq (cadr second) ?-)
+                   (not (nth 2 second))
+                   (eq (car third) 'char))))
+        (cond
+         (prefix-range
+          (let ((to (cadr second)))
+            (cond
+             ((< to ?\])
+              (setq empty-range t))
+             ((eq to ?\])
+              (setq close-member t))
+             (t
+              (setq close-member t
+                    close-range-end (max (or close-range-end to) to))))
+            (setq tokens (cddr tokens))))
+         (range
+          (let ((from (cadr token))
+                (to (cadr third)))
+            (cond
+             ((> from to)
+              (setq empty-range t))
+             ((eq from ?\])
+              (if (eq to ?\])
+                  (setq close-member t)
+                (setq close-member t
+                      close-range-end (max (or close-range-end to) to))))
+             ((eq to ?\])
+              (if (> from ?\])
+                  (setq empty-range t)
+                (progn
+                  (setq close-member t)
+                  (let ((member from))
+                    (while (< member ?\])
+                      (if (eq member ?-)
+                          (setq literal-hyphen t)
+                        (push (list 'char member t) members))
+                      (setq member (1+ member)))))))
+             (t
+              (push (list 'range from to) members)))
+            (setq tokens (cdddr tokens))))
+         (t
+          (let ((kind (car token))
+                (char (cadr token)))
+            (cond
+             ((eq kind 'raw)
+              (push token members))
+             ((eq char ?\])
+              (setq close-member t))
+             ((eq char ?-)
+              (setq literal-hyphen t))
+             (t
+              (push token members)))
+            (setq tokens (cdr tokens)))))))
+    (let ((body (concat (if (and close-member (not prefix-close)) "]" "")
+                        (if close-range-end
+                            (concat "-" (char-to-string close-range-end))
+                          "")))
+          (first (not (or prefix-member close-member close-range-end))))
+      (dolist (token (nreverse members))
+        (pcase (car token)
+          ('raw
+           (setq body (concat body (cadr token))
+                 first nil))
+          ('range
+           (let ((from (cadr token))
+                 (to (caddr token)))
+             (when (and first (eq from ?^))
+               (setq body (concat body "\000")))
+             (setq body (concat body (char-to-string from) "-"
+                                (char-to-string to))
+                   first nil)))
+          ('char
+           (let ((char (cadr token)))
+             (when (and first (eq char ?^))
+               (setq body (concat body "\000")))
+             (setq body (concat body (char-to-string char))
+                   first nil)))))
+      (when literal-hyphen
+        (setq body (concat body "-")))
+      (if (and empty-range
+               (null members)
+               (not close-member)
+               (not close-range-end)
+               (not literal-hyphen)
+               (not prefix-member))
+          'wildcard--empty-class
+        body))))
+
 (defun wildcard-to-regexp (wildcard)
   "Given a shell file name pattern WILDCARD, return an equivalent regexp.
 The generated regexp will match a file name only if the file name
@@ -7869,48 +8037,56 @@ by `sh' are supported."
 			    (< (1+ i) len)
 			    (eq (aref wildcard (1+ i)) ?\]))
 		       "\\[")
-		      ((eq ch ?\[)	; [...] maps to regexp char class
-		       (progn
-			 (setq i (1+ i))
-			 (concat
-			  (cond
-			   ((eq (aref wildcard i) ?!) ; [!...] -> [^...]
-			    (progn
-			      (setq i (1+ i))
-			      (if (eq (aref wildcard i) ?\])
-				  (progn
-				    (setq i (1+ i))
-				    "[^]")
-				"[^")))
-			   ((eq (aref wildcard i) ?^)
-			    ;; Found "[^".  Insert a `\0' character
-			    ;; (which cannot happen in a filename)
-			    ;; into the character class, so that `^'
-			    ;; is not the first character after `[',
-			    ;; and thus non-special in a regexp.
-			    (progn
-			      (setq i (1+ i))
-			      "[\000^"))
-			   ((eq (aref wildcard i) ?\])
-			    ;; I don't think `]' can appear in a
-			    ;; character class in a wildcard, but
-			    ;; let's be general here.
-			    (progn
-			      (setq i (1+ i))
-			      "[]"))
-			   (t "["))
-			  (prog1	; copy everything up to next `]'.
-			      (substring wildcard
-					 i
-					 (setq j (string-search
-						  "]" wildcard i)))
-			    (setq i (if j (1- j) (1- len)))))))
+
+		      ((eq ch ?\[)
+  (let ((prefix "[")
+        negative prefix-member prefix-close)
+    (setq i (1+ i))
+    (cond
+     ((eq (aref wildcard i) ?!)
+      (setq i (1+ i)
+            prefix "[^"
+            negative t)
+      (when (and (< i len) (eq (aref wildcard i) ?\]))
+        (setq i (1+ i)
+              prefix "[^]"
+              prefix-member t
+              prefix-close t)))
+     ((eq (aref wildcard i) ?^)
+      (setq i (1+ i)
+            prefix "[\000^"
+            prefix-member t))
+     ((eq (aref wildcard i) ?\])
+      (setq i (1+ i)
+            prefix "[]"
+            prefix-member t
+            prefix-close t)))
+    (setq j (wildcard--class-end wildcard i))
+    (let ((content
+           (wildcard--class-content wildcard i j prefix-close prefix-member)))
+      (if (eq content 'wildcard--empty-class)
+          (cond
+           (prefix-member
+            (setq i (if j (1- j) (1- len)))
+            prefix)
+           (negative
+            (setq i (if j (1- j) (1- len)))
+            (concat prefix "\000"))
+           (t
+            (setq i (or j (1- len)))
+            "\\b\\B"))
+        (prog1 (concat prefix content)
+          (setq i (if j (1- j) (1- len))))))))
 		      ((eq ch ?.)  "\\.")
 		      ((eq ch ?*)  "[^\000]*")
 		      ((eq ch ?+)  "\\+")
 		      ((eq ch ?^)  "\\^")
 		      ((eq ch ?$)  "\\$")
-		      ((eq ch ?\\) "\\\\") ; probably cannot happen...
+		      ((eq ch ?\\)
+		       (if (< (1+ i) len)
+		           (prog1 (regexp-quote (char-to-string (aref wildcard (1+ i))))
+		             (setq i (1+ i)))
+		         (regexp-quote "\\")))
 		      ((eq ch ??)  "[^\000]")
 		      (t (char-to-string ch)))))
 	    (setq i (1+ i)))))
