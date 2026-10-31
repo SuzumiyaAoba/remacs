@@ -524,7 +524,7 @@ Return t if there is work to do, nil otherwise."
 			   (equal (car entry) (car parent-entry)))
 		  (setq found t)))
 	      (unless found
-		(setq xmltok-dtd (append xmltok-dtd (list parent-entry)))))))
+		(setq xmltok-dtd (append xmltok-dtd (list parent-entry))))))))
       (unless (equal rng-dtd xmltok-dtd)
 	(rng-clear-conditional-region))
       (setq rng-dtd xmltok-dtd))
