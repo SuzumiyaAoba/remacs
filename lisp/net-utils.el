@@ -597,14 +597,7 @@ This command uses `nslookup-program' to look up DNS records."
                   (hextet-parts
                    (if ipv4-tail
                        (progn
-                         (unless
-                             (and (= (length ipv4-octets) 4)
-                                  (cl-every
-                                   (lambda (octet)
-                                     (and (<= 1 (length octet) 3)
-                                          (string-match-p "^[0-9]+$" octet)
-                                          (<= (string-to-number octet) 255)))
-                                   ipv4-octets))
+                         (unless (nslookup--ipv4-address-p (car (last text-parts)))
                            (error "Invalid IPv4 address: %s" ip))
                          (let ((octets (mapcar #'string-to-number ipv4-octets)))
                            (append
