@@ -492,21 +492,36 @@ obeys predicates."
         (and (not strict) pred1
              (complete-with-action action table string pred2))))))
 
+(defun completion--table-in-turn-boundaries (tables string pred suffix)
+  "Return boundaries from the first of TABLES with matching candidates."
+  (or (seq-some
+       (lambda (table)
+         (when (all-completions string table pred)
+           (cons 'boundaries (completion-boundaries string table pred suffix))))
+       tables)
+      ;; With no candidates, retain the normal boundary fallback.  File-name
+      ;; completion still needs the directory boundary of a nonexistent name.
+      (seq-some (lambda (table)
+                  (complete-with-action (cons 'boundaries suffix) table string pred))
+                tables)))
+
 (defun completion-table-in-turn (&rest tables)
   "Create a completion table that tries each table in TABLES in turn."
-  ;; FIXME: the boundaries may come from TABLE1 even when the completion list
-  ;; is returned by TABLE2 (because TABLE1 returned an empty list).
-  ;; Same potential problem if any of the tables use quoting.
+  ;; Tables that produce candidates together still need compatible quoting.
   (lambda (string pred action)
-    (seq-some (lambda (table)
-                (complete-with-action action table string pred))
-              tables)))
+    (if (eq (car-safe action) 'boundaries)
+        (completion--table-in-turn-boundaries tables string pred (cdr action))
+      (seq-some (lambda (table)
+                  (complete-with-action action table string pred))
+                tables))))
 
 (defun completion-table-merge (&rest tables)
   "Create a completion table that collects completions from all TABLES."
   ;; FIXME: same caveats as in `completion-table-in-turn'.
   (lambda (string pred action)
     (cond
+     ((eq (car-safe action) 'boundaries)
+      (completion--table-in-turn-boundaries tables string pred (cdr action)))
      ((null action)
       (let ((retvals (mapcar (lambda (table)
                                (try-completion string table pred))
