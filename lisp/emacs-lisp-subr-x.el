@@ -216,7 +216,10 @@ than this function."
              (too-long (1+ nglyphs))
              (stop (max (/ nglyphs 2) 1))
              (gap stop)
-             candidate encoded found)
+             (encoded-empty (encode-coding-string "" coding-system))
+             (candidate (and (<= (length encoded-empty) length)
+                             encoded-empty))
+             encoded found)
         (while (and (not found)
                     (< stop too-long))
           (setq encoded

@@ -25,13 +25,14 @@ const CASES: &str = r#"
         (dotimes (limit (+ 2 (length (encode-coding-string text coding))))
           (dolist (end '(nil t))
             (let ((expected ""))
-              (dotimes (index count)
-                (let* ((size (1+ index))
+              (dotimes (size (1+ count))
+                (let* ((selected
+                        (if (zerop size)
+                            nil
+                          (if end (last glyphs size)
+                            (cl-subseq glyphs 0 size))))
                        (candidate (encode-coding-string
-                                   (string-join
-                                    (if end (last glyphs size)
-                                      (cl-subseq glyphs 0 size)))
-                                   coding)))
+                                   (string-join selected) coding)))
                   (when (<= (length candidate) limit)
                     (setq expected candidate))))
               (let ((actual (string-limit text limit end coding)))
