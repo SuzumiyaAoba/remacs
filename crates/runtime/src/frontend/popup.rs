@@ -82,26 +82,20 @@ fn eval_property(i: &mut Interp, form: &Value) -> EvalResult {
     result
 }
 
-/// Check :visible in source order and retain the final :enable form.
-fn menu_conditions(i: &mut Interp, binding: &Value) -> Result<Option<Value>, Flow> {
-    let menu_item = i.q("menu-item");
-    let Value::Cons(cell) = binding else {
-        return Ok(Some(Value::t()));
-    };
-    if !matches!(cell.borrow().car, Value::Sym(symbol) if symbol == menu_item) {
-        return Ok(Some(Value::t()));
-    }
-    let mut properties = binding.clone();
-    for _ in 0..3 {
-        properties = match properties {
-            Value::Cons(cell) => cell.borrow().cdr.clone(),
-            _ => return Ok(Some(Value::t())),
-        };
-    }
+struct MenuProperties {
+    enable: Value,
+    /// Retain the value cell, since a dynamic name can replace its function.
+    filter: Option<Value>,
+}
+
+/// Check :visible in source order and retain the final enable/filter fields.
+fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuProperties>, Flow> {
     let enable = i.q(":enable");
     let visible = i.q(":visible");
+    let filter = i.q(":filter");
     let force = i.q("enable-disabled-menus-and-buttons");
     let mut enable_form = Value::t();
+    let mut filter_cell = None;
     let cache_tail = if let Value::Cons(cell) = &properties {
         let cell = cell.borrow();
         matches!(cell.car, Value::Cons(_)).then(|| cell.cdr.clone())
@@ -137,12 +131,71 @@ fn menu_conditions(i: &mut Interp, binding: &Value) -> Result<Option<Value>, Flo
             && eval_property(i, &form)?.is_nil()
         {
             return Ok(None);
+        } else if matches!(property, Value::Sym(symbol) if symbol == filter) {
+            filter_cell = Some(Value::Cons(value.clone()));
         }
         // Visibility callbacks may alter later property cells, as in GNU's
         // live plist walk. Retaining visited cells prevents address reuse.
         properties = value.borrow().cdr.clone();
     }
-    Ok(Some(enable_form))
+    Ok(Some(MenuProperties {
+        enable: enable_form,
+        filter: filter_cell,
+    }))
+}
+
+fn keymap_item(
+    i: &mut Interp,
+    key: &Value,
+    binding: &Value,
+) -> Result<Option<(String, Value, bool, bool)>, Flow> {
+    let menu_item = i.q("menu-item");
+    if let Value::Cons(head) = binding {
+        let (tag, tail) = {
+            let head = head.borrow();
+            (head.car.clone(), head.cdr.clone())
+        };
+        if matches!(tag, Value::Sym(symbol) if symbol == menu_item) {
+            let Value::Cons(name_cell) = tail else {
+                return Ok(None);
+            };
+            let (name, tail) = {
+                let cell = name_cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            let (mut definition, tail) = match tail {
+                Value::Cons(cell) => {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                }
+                Value::Nil => (Value::Nil, Value::Nil),
+                _ => return Ok(None),
+            };
+            let Some(properties) = menu_properties(i, tail)? else {
+                return Ok(None);
+            };
+            let name = if matches!(name, Value::Str(_)) {
+                name
+            } else {
+                eval_property(i, &name)?
+            };
+            let Value::Str(name) = name else {
+                return Ok(None);
+            };
+            if let Some(Value::Cons(filter)) = properties.filter {
+                let function = filter.borrow().car.clone();
+                let quoted = Value::list(vec![Value::Sym(sym::QUOTE), definition]);
+                definition = eval_property(i, &Value::list(vec![function, quoted]))?;
+            }
+            let enabled = matches!(properties.enable, Value::Sym(symbol) if symbol == sym::T)
+                || eval_property(i, &properties.enable)?.truthy();
+            let label = name.borrow().to_unicode_lossy();
+            let separator = label == "--" || label.contains("separator");
+            return Ok(Some((label, definition, separator, enabled)));
+        }
+    }
+    let (label, definition, separator) = menu_label_and_definition(i, key, binding);
+    Ok(Some((label, definition, separator, true)))
 }
 
 fn keymap_entries(
@@ -161,12 +214,9 @@ fn keymap_entries(
         if binding.is_nil() {
             continue;
         }
-        let Some(enable_form) = menu_conditions(i, &binding)? else {
+        let Some((label, definition, separator, enabled)) = keymap_item(i, &key, &binding)? else {
             continue;
         };
-        let (label, definition, separator) = menu_label_and_definition(i, &key, &binding);
-        let enabled = matches!(enable_form, Value::Sym(symbol) if symbol == sym::T)
-            || eval_property(i, &enable_form)?.truthy();
         if separator {
             entries.push(PopupMenuEntry::separator());
             continue;
@@ -179,7 +229,8 @@ fn keymap_entries(
             other => other,
         };
         keys.push(event);
-        if let Some(submenu) = menu_keymap_from_definition(i, &definition, depth + 1) {
+        let resolved = crate::editor::keymap_def(i, definition.clone())?;
+        if let Some(submenu) = menu_keymap_from_definition(i, &resolved, depth + 1) {
             if !enabled {
                 entries.push(PopupMenuEntry::text(label, depth));
                 continue;
