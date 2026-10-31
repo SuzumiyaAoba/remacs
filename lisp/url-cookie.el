@@ -478,10 +478,18 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 	     (car (url-path-and-query url-current-object)))))
 	 (expires nil))
     (if (and max-age (string-match "\\`-?[0-9]+\\'" max-age))
-	(setq expires (ignore-errors
-                        (format-time-string "%a %b %d %H:%M:%S %Y GMT"
-					    (time-add nil (read max-age))
-					    t)))
+	(setq expires
+              (if (<= (string-to-number max-age) 0)
+		  ;;Remacs: keep non-positive ages expired even when their resulting time
+		  ;; cannot be represented by `format-time-string'.  Nil means a
+		  ;; session cookie to `url-cookie-expired-p'.
+		  (format-time-string "%a, %d %b %Y %H:%M:%S GMT"
+				      (time-add nil -1)
+				      t)
+		(ignore-errors
+		  (format-time-string "%a %b %d %H:%M:%S %Y GMT"
+				      (time-add nil (string-to-number max-age))
+				      t))))
       (setq expires (cdr-safe (assoc-string "expires" args t))))
     (while (consp trusted)
       (if (string-match (car trusted) current-url)
