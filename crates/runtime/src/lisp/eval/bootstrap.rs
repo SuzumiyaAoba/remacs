@@ -1478,6 +1478,10 @@ command-line arguments.\" \
         // is pre-registered, so `(require 'ucs-normalize)' inside
         // ns-win would skip it — load explicitly like ns-win.
         let _ = boot_lib(interp, "ucs-normalize");
+        // The folded select definitions only contain the default generic
+        // methods. Load the actual source for GPUI's selection methods before
+        // ns-win adds its NS methods; the pre-registered feature skips require.
+        let _ = boot_lib(interp, "select");
         let _ = boot_lib(interp, "ns-win");
         let _ = boot_lib(interp, "common-win");
         let _ = boot_lib(interp, "fontset");

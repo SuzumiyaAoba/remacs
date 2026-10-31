@@ -17,6 +17,19 @@ use crate::lisp::Interp;
 pub trait ClipboardBackend {
     fn read_text(&self) -> Result<Option<String>, String>;
     fn write_text(&self, text: String) -> Result<(), String>;
+
+    /// Whether the host has a PRIMARY selection separate from its clipboard.
+    fn supports_primary_selection(&self) -> bool {
+        false
+    }
+
+    fn read_primary_text(&self) -> Result<Option<String>, String> {
+        Err("PRIMARY selection is unavailable".to_owned())
+    }
+
+    fn write_primary_text(&self, _text: String) -> Result<(), String> {
+        Err("PRIMARY selection is unavailable".to_owned())
+    }
 }
 
 /// Host bell used by graphical front-ends for audible and visible feedback.

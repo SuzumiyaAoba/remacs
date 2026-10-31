@@ -706,16 +706,53 @@ fn require_selection_backend(
         .ok_or_else(|| winsys(i))
 }
 
+enum HostSelection {
+    Clipboard,
+    Primary,
+}
+
+impl HostSelection {
+    fn for_symbol(
+        i: &mut Interp,
+        backend: &dyn crate::frontend::ClipboardBackend,
+        selection: SymId,
+    ) -> Option<Self> {
+        if selection == i.q("CLIPBOARD") {
+            Some(Self::Clipboard)
+        } else if selection == i.q("PRIMARY") && backend.supports_primary_selection() {
+            Some(Self::Primary)
+        } else {
+            None
+        }
+    }
+
+    fn read(&self, backend: &dyn crate::frontend::ClipboardBackend) -> Result<Option<String>, String> {
+        match self {
+            Self::Clipboard => backend.read_text(),
+            Self::Primary => backend.read_primary_text(),
+        }
+    }
+
+    fn write(
+        &self,
+        backend: &dyn crate::frontend::ClipboardBackend,
+        text: String,
+    ) -> Result<(), String> {
+        match self {
+            Self::Clipboard => backend.write_text(text),
+            Self::Primary => backend.write_primary_text(text),
+        }
+    }
+}
+
 fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let selection = selection_symbol(i, &a[0])?;
-    let clipboard = i.q("CLIPBOARD");
     let value = a[1].clone();
     let backend = require_selection_backend(i)?;
-    if selection == clipboard
+    if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection)
         && let Some(text) = selection_data_text(&value)
     {
-        backend
-            .write_text(text)
+        host.write(backend.as_ref(), text)
             .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
     }
     i.nsgui_selections.insert(selection, value.clone());
@@ -724,20 +761,18 @@ fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 
 fn f_ns_disown_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let selection = selection_symbol(i, &a[0])?;
-    let clipboard = i.q("CLIPBOARD");
     let backend = require_selection_backend(i)?;
-    if selection == clipboard
+    if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection)
         && let Some(owned_text) = i
             .nsgui_selections
             .get(&selection)
             .and_then(selection_data_text)
     {
-        let current = backend
-            .read_text()
+        let current = host
+            .read(backend.as_ref())
             .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
         if current.as_deref() == Some(owned_text.as_str()) {
-            backend
-                .write_text(String::new())
+            host.write(backend.as_ref(), String::new())
                 .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
         }
     }
@@ -752,7 +787,6 @@ fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
     let backend = require_selection_backend(i)?;
-    let clipboard = i.q("CLIPBOARD");
     let target_name = i.symbol_name(target);
     if target_name == "TIMESTAMP" {
         return Ok(Value::Nil);
@@ -764,9 +798,9 @@ fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !matches!(target_name.as_str(), "STRING" | "TEXT" | "UTF8_STRING") {
         return Ok(Value::Nil);
     }
-    if selection == clipboard {
-        let text = backend
-            .read_text()
+    if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
+        let text = host
+            .read(backend.as_ref())
             .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
         return Ok(text.map(Value::string).unwrap_or(Value::Nil));
     }
@@ -779,13 +813,11 @@ fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
-    let clipboard = i.q("CLIPBOARD");
     let Some(backend) = i.clipboard_backend.clone() else {
         return Ok(Value::Nil);
     };
-    let exists = if selection == clipboard {
-        backend
-            .read_text()
+    let exists = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
+        host.read(backend.as_ref())
             .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
             .is_some()
     } else {
@@ -796,16 +828,15 @@ fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
-    let clipboard = i.q("CLIPBOARD");
     let backend = require_selection_backend(i)?;
-    let owns = if selection == clipboard {
+    let owns = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
         let selected = i
             .nsgui_selections
             .get(&selection)
             .and_then(selection_data_text);
         match selected {
-            Some(selected) => backend
-                .read_text()
+            Some(selected) => host
+                .read(backend.as_ref())
                 .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
                 .is_some_and(|current| current == selected),
             None => false,

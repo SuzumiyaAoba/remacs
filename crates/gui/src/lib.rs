@@ -54,10 +54,47 @@ mod keys;
 mod logic;
 mod monitor;
 mod view;
-use logic::{ClipboardRequest, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames};
+use logic::{
+    ClipboardRequest, ClipboardTarget, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames,
+};
 use view::{EditorView, build_managed_editor_view};
 
 const MIN_FRAME_COLUMNS: usize = 10;
+
+fn read_host_selection(app: &App, target: ClipboardTarget) -> Result<Option<String>, String> {
+    let item = match target {
+        ClipboardTarget::Clipboard => app.read_from_clipboard(),
+        ClipboardTarget::Primary => {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            {
+                app.read_from_primary()
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            {
+                return Err("PRIMARY selection is unavailable".to_owned());
+            }
+        }
+    };
+    Ok(item.and_then(|item| item.text()))
+}
+
+fn write_host_selection(app: &App, target: ClipboardTarget, text: String) -> Result<(), String> {
+    let item = ClipboardItem::new_string(text);
+    match target {
+        ClipboardTarget::Clipboard => app.write_to_clipboard(item),
+        ClipboardTarget::Primary => {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            {
+                app.write_to_primary(item);
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            {
+                return Err("PRIMARY selection is unavailable".to_owned());
+            }
+        }
+    }
+    Ok(())
+}
 
 #[cfg(target_os = "macos")]
 static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
@@ -437,21 +474,18 @@ pub fn run_gui_with_dump(
                     ClipboardRequest::Ready(ready) => {
                         ready.store(true, std::sync::atomic::Ordering::Release);
                     }
-                    ClipboardRequest::Read(reply) => {
+                    ClipboardRequest::Read(target, reply) => {
                         let result = cx
-                            .update(|app| {
-                                app.read_from_clipboard()
-                                    .and_then(|item| item.text())
-                            })
-                            .map_err(|error| error.to_string());
+                            .update(|app| read_host_selection(app, target))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
                         let _ = reply.send(result);
                     }
-                    ClipboardRequest::Write(text, reply) => {
+                    ClipboardRequest::Write(target, text, reply) => {
                         let result = cx
-                            .update(|app| {
-                                app.write_to_clipboard(ClipboardItem::new_string(text));
-                            })
-                            .map_err(|error| error.to_string());
+                            .update(|app| write_host_selection(app, target, text))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
                         if let Some(reply) = reply {
                             let _ = reply.send(result);
                         }

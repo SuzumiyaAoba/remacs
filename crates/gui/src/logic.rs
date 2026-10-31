@@ -25,6 +25,8 @@ use unicode_width::UnicodeWidthChar;
 
 #[cfg(all(test, target_os = "macos"))]
 mod frame_ready_tests;
+#[cfg(test)]
+mod clipboard_tests;
 
 pub(super) const COLOR_DROP_PREFIX: &str = "\u{1f}remacs-color-drop:";
 
@@ -515,10 +517,16 @@ pub(super) struct GeometrySymbols {
     pub frames: remacs_runtime::lisp::value::SymId,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClipboardTarget {
+    Clipboard,
+    Primary,
+}
+
 pub(super) enum ClipboardRequest {
     Ready(Arc<AtomicBool>),
-    Read(SyncSender<Result<Option<String>, String>>),
-    Write(String, Option<SyncSender<Result<(), String>>>),
+    Read(ClipboardTarget, SyncSender<Result<Option<String>, String>>),
+    Write(ClipboardTarget, String, Option<SyncSender<Result<(), String>>>),
 }
 
 struct GuiDialogBackend {
@@ -1002,25 +1010,25 @@ struct GuiClipboardBackend {
     ready: Arc<AtomicBool>,
 }
 
-impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
-    fn read_text(&self) -> Result<Option<String>, String> {
+impl GuiClipboardBackend {
+    fn read(&self, target: ClipboardTarget) -> Result<Option<String>, String> {
         if !self.ready.load(Ordering::Acquire) {
             return Ok(None);
         }
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
-            .send_blocking(ClipboardRequest::Read(reply))
+            .send_blocking(ClipboardRequest::Read(target, reply))
             .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
         response
             .recv()
             .map_err(|_| "GUI clipboard service stopped".to_owned())?
     }
 
-    fn write_text(&self, text: String) -> Result<(), String> {
+    fn write(&self, target: ClipboardTarget, text: String) -> Result<(), String> {
         let ready = self.ready.load(Ordering::Acquire);
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
-            .send_blocking(ClipboardRequest::Write(text, ready.then_some(reply)))
+            .send_blocking(ClipboardRequest::Write(target, text, ready.then_some(reply)))
             .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
         if !ready {
             return Ok(());
@@ -1028,6 +1036,28 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
         response
             .recv()
             .map_err(|_| "GUI clipboard service stopped".to_owned())?
+    }
+}
+
+impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
+    fn read_text(&self) -> Result<Option<String>, String> {
+        self.read(ClipboardTarget::Clipboard)
+    }
+
+    fn write_text(&self, text: String) -> Result<(), String> {
+        self.write(ClipboardTarget::Clipboard, text)
+    }
+
+    fn supports_primary_selection(&self) -> bool {
+        cfg!(any(target_os = "linux", target_os = "freebsd"))
+    }
+
+    fn read_primary_text(&self) -> Result<Option<String>, String> {
+        self.read(ClipboardTarget::Primary)
+    }
+
+    fn write_primary_text(&self, text: String) -> Result<(), String> {
+        self.write(ClipboardTarget::Primary, text)
     }
 }
 
