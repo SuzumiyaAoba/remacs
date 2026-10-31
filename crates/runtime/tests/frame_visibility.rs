@@ -116,4 +116,15 @@ fn parameter_setters_send_distinct_native_visibility_requests() {
             FrameVisibility::Hidden
         ],
     );
+
+    let frame = interp.selected_frame.clone().unwrap();
+    for (setting, expected) in [
+        ("nil", FrameVisibility::Hidden),
+        ("'icon", FrameVisibility::Iconified),
+        ("t", FrameVisibility::Visible),
+        ("(make-symbol \"icon\")", FrameVisibility::Visible),
+    ] {
+        interp.eval_str(&format!("(set-frame-parameter nil 'visibility {setting})")).unwrap();
+        assert_eq!(remacs_runtime::editor::frame_visibility(&interp, &frame), expected);
+    }
 }

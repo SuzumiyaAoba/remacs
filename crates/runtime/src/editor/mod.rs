@@ -6277,6 +6277,20 @@ fn set_frame_visibility_value(
     Ok(())
 }
 
+/// Visibility sent to a native frontend. Frames without a known visibility
+/// retain the initial visible state, just like `frame-visible-p'.
+pub fn frame_visibility(i: &Interp, frame: &FrameRef) -> crate::frontend::FrameVisibility {
+    use crate::frontend::FrameVisibility;
+    if !frame_parameter_value(i, frame, "remacs--visibility-known").truthy() {
+        return FrameVisibility::Visible;
+    }
+    match frame_parameter_value(i, frame, "visibility") {
+        Value::Nil => FrameVisibility::Hidden,
+        Value::Sym(symbol) if Some(symbol) == i.intern_soft("icon") => FrameVisibility::Iconified,
+        _ => FrameVisibility::Visible,
+    }
+}
+
 fn f_frame_visible_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match &a[0] {
         Value::Frame(f) if !f.borrow().dead => {

@@ -1,5 +1,6 @@
 //! GPUI frontend. The evaluator lives on a separate logic thread.
 use gpui::*;
+use remacs_runtime::frontend::FrameVisibility;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -579,6 +580,7 @@ pub fn run_gui_with_dump(
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
             let mut window_represented_files = HashMap::<usize, Option<String>>::new();
             let mut native_visibility = HashMap::<usize, bool>::new();
+            let mut window_visibilities = HashMap::<usize, FrameVisibility>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
                 match request {
@@ -590,6 +592,10 @@ pub fn run_gui_with_dump(
                             snapshots.iter().map(|snapshot| snapshot.frame_id).collect();
                         for snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
+                            let visibility = snapshot.visibility;
+                            let update_visibility =
+                                window_visibilities.get(&frame_id) != Some(&visibility);
+                            window_visibilities.insert(frame_id, visibility);
                             let grid = snapshot.grid.clone();
                             let image_cache_entries = snapshot.image_cache_entries.clone();
                             let image_cache_size = snapshot.image_cache_size.clone();
@@ -756,6 +762,9 @@ pub fn run_gui_with_dump(
                                             requested_behavior.3,
                                         );
                                     }
+                                    if update_visibility {
+                                        apply_frame_visibility(window, visibility, focus_on_map);
+                                    }
                                 });
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
@@ -763,7 +772,9 @@ pub fn run_gui_with_dump(
                                 window_titlebars.insert(frame_id, titlebar_appearance);
                                 window_appearances.insert(frame_id, ns_appearance);
                                 window_represented_files.insert(frame_id, represented_file);
-                                native_visibility.entry(frame_id).or_insert(true);
+                                if update_visibility {
+                                    native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
+                                }
                                 continue;
                             }
                             if let Some(handle) = primary_window.take() {
@@ -834,6 +845,7 @@ pub fn run_gui_with_dump(
                                         initial_behavior.2.as_deref(),
                                         initial_behavior.3,
                                     );
+                                    apply_initial_frame_visibility(window, visibility, focus_on_map);
                                 });
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
@@ -842,7 +854,7 @@ pub fn run_gui_with_dump(
                                 window_appearances.insert(frame_id, initial_ns_appearance);
                                 window_represented_files
                                     .insert(frame_id, initial_represented_file);
-                                native_visibility.insert(frame_id, true);
+                                native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
                                 windows.insert(frame_id, handle);
                                 continue;
                             }
@@ -898,7 +910,7 @@ pub fn run_gui_with_dump(
                                         quit_request,
                                         Some(frame_id),
                                         Some(grid),
-                                        focus_on_map,
+                                        focus_on_map && visibility == FrameVisibility::Visible,
                                         no_accept_focus,
                                     );
                                     view.set_modifier_mapping(modifier_mapping);
@@ -930,8 +942,9 @@ pub fn run_gui_with_dump(
                                     behavior.2.as_deref(),
                                     behavior.3,
                                 );
+                                apply_initial_frame_visibility(window, visibility, focus_on_map);
                             });
-                            native_visibility.insert(frame_id, true);
+                            native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
                             windows.insert(frame_id, handle);
                         }
                         let removed: Vec<_> = windows
@@ -959,6 +972,7 @@ pub fn run_gui_with_dump(
                             window_appearances.remove(&frame_id);
                             window_represented_files.remove(&frame_id);
                             native_visibility.remove(&frame_id);
+                            window_visibilities.remove(&frame_id);
                         }
                         if let Some(stack) = cx.update(|app| app.window_stack()).ok().flatten() {
                             for (frame_id, handle) in &windows {
@@ -1007,7 +1021,8 @@ pub fn run_gui_with_dump(
                         let _ = reply.send(result);
                     }
                     GuiRequest::FrameVisibility { frame_id, visibility } => {
-                        let visible = visibility == remacs_runtime::frontend::FrameVisibility::Visible;
+                        window_visibilities.insert(frame_id, visibility);
+                        let visible = visibility == FrameVisibility::Visible;
                         native_visibility.insert(frame_id, visible);
                         let focus_on_map = frame_focus_on_map
                             .get(&frame_id)
@@ -1482,6 +1497,7 @@ fn frame_window_options(
             })
         },
         focus: false,
+        show: frame.visibility == FrameVisibility::Visible,
         is_movable: !child,
         is_resizable: !child,
         is_minimizable: !child,
@@ -1639,14 +1655,23 @@ fn native_frame_visible(window: &Window) -> Option<bool> {
 
 fn apply_frame_visibility(
     window: &Window,
-    visibility: remacs_runtime::frontend::FrameVisibility,
+    visibility: FrameVisibility,
     focus_on_map: bool,
 ) {
-    use remacs_runtime::frontend::FrameVisibility;
     match visibility {
         FrameVisibility::Hidden => window.set_visible(false),
         FrameVisibility::Iconified => window.minimize_window(),
         FrameVisibility::Visible => show_frame_window(window, focus_on_map),
+    }
+}
+
+fn apply_initial_frame_visibility(
+    window: &Window,
+    visibility: FrameVisibility,
+    focus_on_map: bool,
+) {
+    if visibility != FrameVisibility::Visible || !window.is_visible() {
+        apply_frame_visibility(window, visibility, focus_on_map);
     }
 }
 

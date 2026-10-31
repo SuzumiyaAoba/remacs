@@ -42,6 +42,61 @@ fn frame_visibility_applies_hide_iconify_and_show_to_window() {
 }
 
 #[test]
+fn initial_frame_visibility_applies_to_existing_primary_window() {
+    use remacs_runtime::frontend::FrameVisibility;
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle.update(&mut app, |_, window, _| {
+        assert!(window.is_visible());
+        // An early visibility request may have arrived before a frame ID was
+        // bound to this initial native window. The first snapshot must apply it.
+        super::apply_initial_frame_visibility(window, FrameVisibility::Hidden, false);
+        assert!(!window.is_visible());
+        super::apply_initial_frame_visibility(window, FrameVisibility::Iconified, false);
+        assert!(!window.is_visible());
+        super::apply_initial_frame_visibility(window, FrameVisibility::Visible, false);
+        assert!(window.is_visible());
+    }).unwrap();
+}
+
+#[test]
+fn initial_frame_visibility_is_preserved_in_snapshots() {
+    use super::logic::GuiRequest;
+    use remacs_runtime::frontend::FrameVisibility;
+
+    let mut interp = Interp::new();
+    interp.eval_str("(set-frame-parameter nil 'window-system 'ns)").unwrap();
+    let (mut io, _tx, _grx) = chan_pair();
+    let (requests, received) = smol::channel::unbounded();
+    io.gui_requests = Some(requests);
+    io.legacy_grid_output = false;
+    for (setting, expected) in [
+        (None, FrameVisibility::Visible),
+        (Some("nil"), FrameVisibility::Hidden),
+        (Some("'icon"), FrameVisibility::Iconified),
+        (Some("t"), FrameVisibility::Visible),
+    ] {
+        if let Some(setting) = setting {
+            // This is the parameter application performed after an init file.
+            // Init-file discovery is deliberately outside this transport test.
+            interp.eval_str(&format!(
+                "(let ((initial-frame-alist (list (cons 'visibility {setting}))))
+                   (modify-frame-parameters nil initial-frame-alist))"
+            )).unwrap();
+        }
+        io.render(&interp).unwrap();
+        let GuiRequest::FrameSnapshots(mailbox) = received.try_recv().unwrap() else {
+            panic!("expected a frame snapshot");
+        };
+        let snapshots = mailbox.take_latest().unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].visibility, expected);
+    }
+}
+
+#[test]
 fn frame_display_selection_uses_requested_secondary_monitor() {
     let displays = [
         (1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0)),
