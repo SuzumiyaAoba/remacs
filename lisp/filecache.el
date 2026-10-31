@@ -421,7 +421,7 @@ or the optional REGEXP argument."
 		       (string-match file-cache-buffer-default-regexp file))
 		   (not filtered)
 		   (not (file-directory-p file)))
-	  (file-cache-add-file file)))))
+	  (file-cache-add-file file))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions to delete from the cache
@@ -509,7 +509,7 @@ without regard to case."
                               (eq t (compare-strings
                                      directory nil nil
                                      (car remaining) nil nil t)))
-                       (equal directory (car remaining))))
+                       (equal directory (car remaining)))))
       (setq remaining (cdr remaining)))
     remaining))
 
