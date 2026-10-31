@@ -26,6 +26,9 @@ use std::sync::{
 use std::{cell::Cell, rc::Rc};
 mod input;
 mod fringe;
+// The test platform uses window activation for cursor ownership on macOS.
+#[cfg(all(test, target_os = "macos"))]
+mod pointer_tests;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
@@ -1168,6 +1171,10 @@ impl Render for EditorView {
         let help_vscrolls = grid.vscrolls.clone();
         let help_row_heights = grid.row_heights.clone();
         let help_default_line_height = grid.default_line_height;
+        let pointer_regions = grid.pointer_regions.clone();
+        let pointer_row_heights = grid.row_heights.clone();
+        let pointer_default_line_height = grid.default_line_height;
+        let pointer_visible = grid.pointer_visible;
         let image_row_heights = grid.row_heights.clone();
         let image_default_line_height = grid.default_line_height;
         let explicit_tooltip = (!self.follow_tooltip_drag)
@@ -2460,6 +2467,31 @@ impl Render for EditorView {
                 )
                 .size_full(),
             )
+            .children(pointer_regions.into_iter().map(|region| {
+                let top = row_top_from_heights(
+                    &pointer_row_heights,
+                    pointer_default_line_height,
+                    region.row,
+                    line_height,
+                );
+                let height = row_height_from_heights(
+                    &pointer_row_heights,
+                    pointer_default_line_height,
+                    region.row,
+                    line_height,
+                );
+                div()
+                    .absolute()
+                    .left(border + cell_width * region.left as f32)
+                    .top(border + top)
+                    .w(cell_width * region.width as f32)
+                    .h(height)
+                    .cursor(if pointer_visible {
+                        gpui_cursor_style(Some(region.shape))
+                    } else {
+                        CursorStyle::None
+                    })
+            }))
             .children(
                 images
                     .into_iter()

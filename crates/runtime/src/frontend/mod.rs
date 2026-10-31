@@ -532,6 +532,7 @@ pub use render::{
     GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
+    GridPointerRegion,
     GridModeLine, GridVScroll,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, render_frame_grid_with_input_cached,

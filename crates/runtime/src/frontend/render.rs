@@ -511,6 +511,8 @@ pub struct Grid {
     pub tool_bar_items: Vec<GridToolBarItem>,
     pub tab_bar_items: Vec<GridTabBarItem>,
     pub help_echoes: Vec<GridHelpEcho>,
+    /// Pointer overrides for formatted mode/header/tab-line cells.
+    pub pointer_regions: Vec<GridPointerRegion>,
     pub tooltip: Option<String>,
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
@@ -748,6 +750,29 @@ pub enum GridPointerShape {
     ResizeVertical,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridPointerRegion {
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+    pub shape: GridPointerShape,
+}
+
+fn push_pointer_region(regions: &mut Vec<GridPointerRegion>, next: GridPointerRegion) {
+    if next.width == 0 {
+        return;
+    }
+    if let Some(previous) = regions.last_mut()
+        && previous.row == next.row
+        && previous.shape == next.shape
+        && previous.left.saturating_add(previous.width) == next.left
+    {
+        previous.width = previous.width.saturating_add(next.width);
+    } else {
+        regions.push(next);
+    }
+}
+
 impl Grid {
     /// An all-default grid of WIDTH × HEIGHT cells.
     pub fn blank(width: usize, height: usize) -> Grid {
@@ -765,6 +790,7 @@ impl Grid {
             tool_bar_items: Vec::new(),
             tab_bar_items: Vec::new(),
             help_echoes: Vec::new(),
+            pointer_regions: Vec::new(),
             tooltip: None,
             popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
@@ -1963,12 +1989,17 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
     format_frame_title_value(i, &format, &context, 0)
 }
 
+#[derive(Clone, Default)]
+struct ModeLineCharacterProperties {
+    help: Option<String>,
+    identification: bool,
+    pointer: Option<GridPointerShape>,
+}
+
 #[derive(Default)]
 struct ModeLineProperties {
-    help: Vec<Option<String>>,
-    fill_help: Option<Option<String>>,
-    identification: Vec<bool>,
-    fill_identification: bool,
+    characters: Vec<ModeLineCharacterProperties>,
+    fill: Option<ModeLineCharacterProperties>,
 }
 
 #[derive(Default)]
@@ -2447,20 +2478,27 @@ fn format_mode_line_string(
                     &crate::lisp::eval::plist_get(&plist, property),
                 )
             });
-            (help, identification)
+            let pointer = i.q_soft("pointer").and_then(|property| {
+                mode_line_pointer_shape(i, &crate::lisp::eval::plist_get(&plist, property))
+            });
+            ModeLineCharacterProperties {
+                help,
+                identification,
+                pointer,
+            }
         };
-        for source in sources {
-            let (help, identification) = properties_at(source);
-            properties.help.push(help);
-            properties.identification.push(identification);
-        }
+        properties
+            .characters
+            .extend(sources.into_iter().map(properties_at));
         if let Some(source) = fill_source {
-            let (help, identification) = properties_at(source);
-            properties.fill_help = Some(help);
-            properties.fill_identification = identification;
+            properties.fill = Some(properties_at(source));
         }
     }
     output
+}
+
+fn mode_line_pointer_shape(i: &Interp, value: &Value) -> Option<GridPointerShape> {
+    value.truthy().then(|| grid_pointer_shape(i, Some(value)))
 }
 
 fn mode_line_identification_map(i: &Interp, buffer_id: usize, map: &Value) -> bool {
@@ -2548,12 +2586,10 @@ pub(super) fn format_mode_line_value(
                 _ => unreachable!(),
             };
             if let Some(properties) = context.properties.borrow_mut().as_mut() {
-                properties
-                    .help
-                    .extend(std::iter::repeat_n(None, output.chars().count()));
-                properties
-                    .identification
-                    .extend(std::iter::repeat_n(false, output.chars().count()));
+                properties.characters.extend(std::iter::repeat_n(
+                    ModeLineCharacterProperties::default(),
+                    output.chars().count(),
+                ));
             }
             output
         }
@@ -2586,7 +2622,11 @@ pub(super) fn format_mode_line_value(
                 match i.symbol_name(*head).as_str() {
                     ":eval" => return String::new(),
                     ":propertize" => {
-                        let start = context.properties.borrow().as_ref().map(|p| p.help.len());
+                        let start = context
+                            .properties
+                            .borrow()
+                            .as_ref()
+                            .map(|p| p.characters.len());
                         let output = elements.get(1).map_or_else(String::new, |body| {
                             format_mode_line_value(
                                 i,
@@ -2611,19 +2651,24 @@ pub(super) fn format_mode_line_value(
                                     )
                                     .map(|pair| &pair[1])
                             };
-                            if let Some(value) = property("help-echo") {
-                                let help = help_echo_text(value.clone());
-                                properties.help[start..].fill(help.clone());
-                                if properties.fill_help.is_some() {
-                                    properties.fill_help = Some(help);
+                            let help =
+                                property("help-echo").map(|value| help_echo_text(value.clone()));
+                            let identification = property("local-map")
+                                .map(|value| mode_line_identification_map(i, buffer_id, value));
+                            let pointer =
+                                property("pointer").map(|value| mode_line_pointer_shape(i, value));
+                            for character in properties.characters[start..]
+                                .iter_mut()
+                                .chain(properties.fill.iter_mut())
+                            {
+                                if let Some(help) = &help {
+                                    character.help = help.clone();
                                 }
-                            }
-                            if let Some(value) = property("local-map") {
-                                let identification =
-                                    mode_line_identification_map(i, buffer_id, value);
-                                properties.identification[start..].fill(identification);
-                                if *fill_remaining {
-                                    properties.fill_identification = identification;
+                                if let Some(identification) = identification {
+                                    character.identification = identification;
+                                }
+                                if let Some(pointer) = pointer {
+                                    character.pointer = pointer;
                                 }
                             }
                         }
@@ -3634,6 +3679,7 @@ fn place_formatted_window_row(
     context: &ModeLineContext,
     face_name: &str,
     help_echoes: &mut Vec<GridHelpEcho>,
+    pointer_regions: &mut Vec<GridPointerRegion>,
 ) -> Option<(usize, usize)> {
     let screen_row = screen.get_mut(row)?;
     *context.properties.borrow_mut() = Some(ModeLineProperties::default());
@@ -3644,22 +3690,16 @@ fn place_formatted_window_row(
         let occupied = fit_text_to_cells_with_tab_width(&text, width, tab_width).1;
         let count = width.saturating_sub(occupied);
         text.push_str(&"-".repeat(count));
-        properties
-            .help
-            .extend(std::iter::repeat_n(properties.fill_help.flatten(), count));
-        properties
-            .identification
-            .extend(std::iter::repeat_n(properties.fill_identification, count));
+        properties.characters.extend(std::iter::repeat_n(
+            properties.fill.unwrap_or_default(),
+            count,
+        ));
     }
     // Use the same column conversion and clipping as the visible row. In
     // particular, tabs cover several cells and a clipped wide glyph covers none.
     let mut column = 0usize;
     let mut buffer_name_range = None;
-    for ((character, help), identification) in text
-        .chars()
-        .zip(properties.help)
-        .zip(properties.identification)
-    {
+    for (character, properties) in text.chars().zip(properties.characters) {
         let character = match character {
             '\n' | '\r' => ' ',
             other => other,
@@ -3673,7 +3713,16 @@ fn place_formatted_window_row(
         if column.saturating_add(cells) > width {
             break;
         }
-        if cells > 0 && identification {
+        push_pointer_region(
+            pointer_regions,
+            GridPointerRegion {
+                row,
+                left: left.saturating_add(column),
+                width: cells,
+                shape: properties.pointer.unwrap_or(GridPointerShape::Arrow),
+            },
+        );
+        if cells > 0 && properties.identification {
             let start = left.saturating_add(column);
             let end = start.saturating_add(cells);
             match &mut buffer_name_range {
@@ -3683,7 +3732,7 @@ fn place_formatted_window_row(
             }
         }
         if cells > 0
-            && let Some(text) = help
+            && let Some(text) = properties.help
         {
             push_help_echo(
                 help_echoes,
@@ -3697,6 +3746,15 @@ fn place_formatted_window_row(
         }
         column += cells;
     }
+    push_pointer_region(
+        pointer_regions,
+        GridPointerRegion {
+            row,
+            left: left.saturating_add(column),
+            width: width.saturating_sub(column),
+            shape: GridPointerShape::Arrow,
+        },
+    );
     let row_text = fit_text_to_cells_with_tab_width(&text, width, tab_width).0;
     let mut style = faces.builtin(i, face_name, 0).finish();
     if style == CellStyle::default()
@@ -7177,6 +7235,7 @@ fn render_grid_internal(
     let mut tool_bar_items = Vec::new();
     let mut tab_bar_items = Vec::new();
     let mut help_echoes = Vec::new();
+    let mut pointer_regions = Vec::new();
     let tooltip = i.gui_tip.clone();
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
@@ -7212,6 +7271,7 @@ fn render_grid_internal(
                 tool_bar_items,
                 tab_bar_items,
                 help_echoes,
+                pointer_regions,
                 tooltip,
                 popup_menu_items,
                 scroll_bars,
@@ -8940,6 +9000,7 @@ fn render_grid_internal(
                 &mode_context,
                 "tab-line",
                 &mut help_echoes,
+                &mut pointer_regions,
             );
             auxiliary_row += 1;
         }
@@ -8957,6 +9018,7 @@ fn render_grid_internal(
                 &mode_context,
                 "header-line",
                 &mut help_echoes,
+                &mut pointer_regions,
             );
         }
         // Mode line.
@@ -8985,6 +9047,7 @@ fn render_grid_internal(
                 &mode_context,
                 ml_name,
                 &mut help_echoes,
+                &mut pointer_regions,
             );
             mode_lines.push(crate::frontend::GridModeLine {
                 window_id,
@@ -9385,6 +9448,7 @@ fn render_grid_internal(
         tool_bar_items,
         tab_bar_items,
         help_echoes,
+        pointer_regions,
         tooltip,
         popup_menu_items,
         scroll_bars,

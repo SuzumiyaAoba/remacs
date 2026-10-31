@@ -326,6 +326,11 @@ impl TestAppContext {
         self.test_platform.opened_url.borrow().clone()
     }
 
+    /// The native pointer shape most recently selected by the application.
+    pub fn active_cursor_style(&self) -> crate::CursorStyle {
+        self.test_platform.active_cursor_style()
+    }
+
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
