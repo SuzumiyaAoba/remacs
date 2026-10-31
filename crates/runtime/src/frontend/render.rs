@@ -1899,6 +1899,7 @@ struct ModeLineContext {
     mode_name: String,
     modified: bool,
     read_only: bool,
+    memory_full: bool,
     line: usize,
     column: usize,
     line_count: usize,
@@ -1929,6 +1930,7 @@ fn mode_line_context(
             mode_name: String::new(),
             modified: false,
             read_only: false,
+            memory_full: false,
             line: 0,
             column: 0,
             line_count: 0,
@@ -1959,6 +1961,8 @@ fn mode_line_context(
         mode_name,
         modified: buffer.is_modified(),
         read_only: buffer_setting(i, "buffer-read-only", buffer_id).truthy(),
+        memory_full: mode_line_variable(i, buffer_id, "memory-full")
+            .is_some_and(|value| value.truthy()),
         line: point_line.saturating_sub(first_line).saturating_add(1),
         column: display_columns(
             &buffer.text.substring(point_line_start, point),
@@ -2226,7 +2230,14 @@ fn format_mode_line_string(
                 }
                 .to_owned()
             }
-            '[' | ']' | 'e' | 's' => String::new(),
+            'e' => {
+                if context.memory_full {
+                    "!MEM FULL! ".to_owned()
+                } else {
+                    String::new()
+                }
+            }
+            '[' | ']' | 's' => String::new(),
             other => other.to_string(),
         };
         if let Some(maximum) = precision {
