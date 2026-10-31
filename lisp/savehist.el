@@ -345,7 +345,8 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
           (let ((symbol (if (consp elem)
                             (car elem)
                           elem)))
-	    (when (boundp symbol)
+	    (when (and (boundp symbol)
+		       (not (memq symbol savehist-ignored-variables)))
 	      (let ((value (symbol-value symbol)))
 	        (when (savehist-printable value)
                   ;; When we have a max-size, chop off the last elements.
