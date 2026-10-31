@@ -998,9 +998,10 @@ defined in `filesets-ingroup-patterns'."
 
 (defun filesets-filter-dir-names (lst &optional negative)
   "Remove non-directory names from a list of strings.
-If NEGATIVE is non-nil, remove all directory names."
+If NEGATIVE is non-nil, remove all directory names.
+Always omit the special directory entries `./' and `../'."
   (seq-filter (lambda (x)
-                (and (not (string-match-p "^\\.+/$" x))
+                (and (not (member x '("./" "../")))
                      (if negative
                          (not (filesets--directory-name-p x))
                        (filesets--directory-name-p x))))
@@ -1038,7 +1039,7 @@ Return full path if FULL-FLAG is non-nil."
 	  (dirs  nil))
       (dolist (this (file-name-all-completions "" dir))
 	(cond
-	 ((string-match-p "^\\.+/$" this)
+	 ((member this '("./" "../"))
 	  nil)
 	 ((file-directory-p (expand-file-name this dir))
 	  (when (or (not match-dirs-flag)
