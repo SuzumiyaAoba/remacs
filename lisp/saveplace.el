@@ -340,34 +340,37 @@ file names."
 			(expand-file-name (if (consp directory)
 					      (car directory)
 					    directory))))))
-    (when (and item
-               (or (not save-place-ignore-files-regexp)
-                   (not (string-match save-place-ignore-files-regexp
-                                      item))))
-      (when save-place-abbreviate-file-names
-        (setq item (abbreviate-file-name item)))
-      (let ((cell (assoc item save-place-alist))
-            (position (cond ((eq major-mode 'hexl-mode)
-			     (with-no-warnings
-			       (1+ (hexl-current-address))))
-			    ((and (derived-mode-p 'dired-mode) directory)
-			     (let ((filename (dired-get-filename nil t)))
-			       (if filename
-                                   (list
-                                    (cons 'dired-filename
-                                          (if save-place-abbreviate-file-names
-                                              (abbreviate-file-name filename)
-                                            filename)))
-				 (point))))
-			    (t (point)))))
-        (if cell
-            (setq save-place-alist (delq cell save-place-alist)))
-        (if (and save-place
-                 (not (and (integerp position)
-			   (= position 1)))) ;; Optimize out the degenerate case.
-            (setq save-place-alist
-                  (cons (cons item position)
-                        save-place-alist)))))
+    (when item
+      (let ((ignored (and save-place-ignore-files-regexp
+                          (string-match save-place-ignore-files-regexp
+                                        item))))
+        (when (and save-place-abbreviate-file-names
+                   (or (not ignored) (not save-place-mode)))
+          (setq item (abbreviate-file-name item)))
+        (let ((cell (assoc item save-place-alist))
+              (position (unless ignored
+                          (cond ((eq major-mode 'hexl-mode)
+				 (with-no-warnings
+				   (1+ (hexl-current-address))))
+				((and (derived-mode-p 'dired-mode) directory)
+				 (let ((filename (dired-get-filename nil t)))
+				   (if filename
+                                     (list
+                                      (cons 'dired-filename
+                                            (if save-place-abbreviate-file-names
+                                                (abbreviate-file-name filename)
+                                              filename)))
+				     (point))))
+				(t (point))))))
+          (if (and cell (or (not save-place-mode) (not ignored)))
+              (setq save-place-alist (delq cell save-place-alist)))
+          (if (and save-place
+                   (not ignored)
+                   (not (and (integerp position)
+			     (= position 1)))) ;; Optimize out the degenerate case.
+              (setq save-place-alist
+                    (cons (cons item position)
+                          save-place-alist))))))
     (save-place--truncate-alist)))
 
 (defun save-place-forget-unreadable-files ()
