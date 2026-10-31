@@ -257,18 +257,54 @@ fn keymap_entries(
     Ok(entries)
 }
 
+fn titled_entries(mut entries: Vec<PopupMenuEntry>, title: Value) -> Vec<PopupMenuEntry> {
+    if let Value::Str(title) = title {
+        entries.insert(0, PopupMenuEntry::separator());
+        entries.insert(
+            0,
+            PopupMenuEntry::text(title.borrow().to_unicode_lossy(), 0),
+        );
+    }
+    entries
+}
+
 fn menu_entries(i: &mut Interp, menu: &Value) -> Result<Vec<PopupMenuEntry>, Flow> {
     if crate::editor::is_keymap(i, menu) {
-        return keymap_entries(i, menu, &[], 0);
+        let entries = keymap_entries(i, menu, &[], 0)?;
+        // A single keymap's prompt is obtained after its dynamic items.
+        let title = crate::editor::f_keymap_prompt(i, vec![menu.clone()].into())?;
+        if let Value::Str(prompt) = &title {
+            if !prompt.borrow().is_empty() {
+                let hide = i.q("hide");
+                let properties = Value::list(crate::buffer::primitives::str_plist_at(
+                    i.str_props(prompt),
+                    0,
+                ));
+                if crate::lisp::eval::plist_get(&properties, hide).truthy() {
+                    return Ok(entries);
+                }
+            }
+        }
+        return Ok(titled_entries(entries, title));
     }
     let Ok(parts) = menu.list_to_vec() else {
         return Ok(Vec::new());
     };
     let mut entries = Vec::new();
+    let mut title = parts.first().cloned().unwrap_or(Value::Nil);
     if parts
         .first()
         .is_some_and(|first| crate::editor::is_keymap(i, first))
     {
+        // For a list of maps, GNU captures the first prompt before computing
+        // any items. Keep its string object through those computations.
+        title = Value::Nil;
+        for map in &parts {
+            let prompt = crate::editor::f_keymap_prompt(i, vec![map.clone()].into())?;
+            if title.is_nil() && !prompt.is_nil() {
+                title = prompt;
+            }
+        }
         for map in parts {
             let pane = keymap_entries(i, &map, &[], 0)?;
             if !pane.is_empty() {
@@ -314,7 +350,7 @@ fn menu_entries(i: &mut Interp, menu: &Value) -> Result<Vec<PopupMenuEntry>, Flo
             }
         }
     }
-    Ok(entries)
+    Ok(titled_entries(entries, title))
 }
 
 pub(crate) fn show_popup_menu(

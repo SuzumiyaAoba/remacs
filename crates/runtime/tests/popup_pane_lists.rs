@@ -51,6 +51,13 @@ fn descriptions(
         .collect()
 }
 
+fn without_separators(rows: &[(String, Option<Value>)]) -> Vec<(String, Option<Value>)> {
+    rows.iter()
+        .filter(|(label, _)| label.is_empty() || !label.chars().all(|ch| ch == '─'))
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn old_fashioned_panes_render_choices_and_nonselectable_rows_in_order() {
     std::thread::Builder::new()
@@ -70,8 +77,9 @@ fn old_fashioned_panes_render_choices_and_nonselectable_rows_in_order() {
                 r#"'("Menu" ("Pane" ("First" . first) ("Second" . second)))"#,
             );
             assert_eq!(
-                descriptions(&mut interp, &rows),
+                descriptions(&mut interp, &without_separators(&rows)),
                 [
+                    ("Menu".into(), None),
                     ("Pane".into(), None),
                     ("First".into(), Some("first".into())),
                     ("Second".into(), Some("second".into())),
@@ -90,16 +98,13 @@ fn old_fashioned_panes_render_choices_and_nonselectable_rows_in_order() {
                 .iter()
                 .filter(|(label, _)| !label.is_empty() && label.chars().all(|ch| ch == '─'))
                 .collect::<Vec<_>>();
-            assert_eq!(separators.len(), 1);
+            assert_eq!(separators.len(), 2);
             assert!(separators[0].1.is_none());
-            let content = rows
-                .iter()
-                .filter(|(label, _)| !label.chars().all(|ch| ch == '─'))
-                .cloned()
-                .collect::<Vec<_>>();
+            let content = without_separators(&rows);
             assert_eq!(
                 descriptions(&mut interp, &content),
                 [
+                    ("Menu".into(), None),
                     ("Left".into(), None),
                     ("Read this:".into(), None),
                     ("Nil".into(), Some("nil".into())),
@@ -110,7 +115,7 @@ fn old_fashioned_panes_render_choices_and_nonselectable_rows_in_order() {
                 ]
             );
             let original = eval(&mut interp, "qa-pane-original");
-            let selected = content[3].1.clone().unwrap();
+            let selected = content[4].1.clone().unwrap();
             let (Value::Cons(original), Value::Cons(selected)) = (original, selected) else {
                 panic!("the original cons value must remain a cons");
             };

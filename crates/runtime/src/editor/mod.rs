@@ -3188,7 +3188,7 @@ fn f_merge_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// `keymap-prompt' — GNU scans KEYMAP's cdr for the first string
 /// element (the menu prompt); non-keymaps return nil, no error.
-fn f_keymap_prompt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_keymap_prompt(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !is_keymap(i, &a[0]) {
         return Ok(Value::Nil);
     }

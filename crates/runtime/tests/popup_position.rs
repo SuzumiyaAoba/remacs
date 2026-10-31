@@ -56,15 +56,19 @@ fn check(
             assert!(grid.popup_menu_items.is_empty(), "wrong frame: {position}");
             continue;
         }
-        assert_eq!(grid.popup_menu_items.len(), 1, "position: {position}");
-        let item = &grid.popup_menu_items[0];
+        assert_eq!(grid.popup_menu_items.len(), 3, "position: {position}");
+        let title = &grid.popup_menu_items[0];
+        assert!(title.selection.is_none());
+        assert!(grid.popup_menu_items[1].selection.is_none());
+        let item = &grid.popup_menu_items[2];
         assert_eq!(item.command.as_deref(), Some("ignore"));
+        // The title and its separator occupy two additional rows. Keep the
+        // whole menu inside the area above the one-row minibuffer.
+        let top = (expected_pixel.1.max(0) as usize / 10).min(23 - 5);
+        assert_eq!(title.row, top + 1);
         assert_eq!(
             (item.left, item.row),
-            (
-                expected_pixel.0.max(0) as usize / 8 + 1,
-                expected_pixel.1.max(0) as usize / 10 + 1,
-            ),
+            (expected_pixel.0.max(0) as usize / 8 + 1, top + 3,),
             "position: {position}"
         );
         let label = grid.rows[item.row]

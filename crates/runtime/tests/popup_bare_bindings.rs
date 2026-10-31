@@ -10,6 +10,14 @@ struct Input {
     labels: Vec<String>,
 }
 
+impl Input {
+    fn body_labels(&self) -> &[String] {
+        assert_eq!(self.labels[0], "Choose");
+        assert!(!self.labels[1].is_empty() && self.labels[1].chars().all(|ch| ch == '─'));
+        &self.labels[2..]
+    }
+}
+
 impl KeyIo for Input {
     fn poll_key(&mut self, _: Duration) -> io::Result<Option<i128>> {
         panic!("popup must read a selection event");
@@ -85,7 +93,7 @@ fn unlabelled_bindings_keep_fallback_labels_and_return_their_key_paths() {
                 )
                 .unwrap();
             assert_eq!(interp.prin1_to_string(&value), "((first) 0)");
-            assert_eq!(input.borrow().labels, ["first"]);
+            assert_eq!(input.borrow().body_labels(), ["first"]);
             assert!(interp.gui_popup_menu.is_none());
 
             let value = interp
@@ -102,7 +110,7 @@ fn unlabelled_bindings_keep_fallback_labels_and_return_their_key_paths() {
                 )
                 .unwrap();
             assert_eq!(interp.prin1_to_string(&value), "((branch leaf) 0)");
-            assert_eq!(input.borrow().labels, ["Disabled", "branch", "leaf"]);
+            assert_eq!(input.borrow().body_labels(), ["Disabled", "branch", "leaf"]);
             assert!(interp.gui_popup_menu.is_none());
         })
         .unwrap()

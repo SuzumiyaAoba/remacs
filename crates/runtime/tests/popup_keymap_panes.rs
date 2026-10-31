@@ -34,7 +34,16 @@ fn check(interp: &mut Interp, menu: &str, expected: &[(&str, &str)]) {
         "menu: {menu}"
     );
     if expected.is_empty() {
-        assert!(grid.popup_menu_items.is_empty());
+        assert_eq!(
+            grid.popup_menu_items.len(),
+            2,
+            "only the title and separator remain"
+        );
+        assert!(
+            grid.popup_menu_items
+                .iter()
+                .all(|item| item.selection.is_none())
+        );
     }
 }
 
