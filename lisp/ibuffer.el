@@ -1468,21 +1468,25 @@ If point is on a group name, this function operates on that group."
     form))
 
 (defun ibuffer-compile-make-eliding-form (strvar elide from-end-p)
-  (let ((ellipsis (propertize ibuffer-eliding-string 'font-lock-face 'bold)))
+  (let ((ellipsis (propertize ibuffer-eliding-string 'font-lock-face 'bold))
+        (ellipsis-var (make-symbol "ibuffer-ellipsis")))
     (if elide
-	`(if (> strlen 5)
-	     ,(if from-end-p
-                  ;; Remacs: use display columns so wide suffixes survive.
-		  `(concat ,ellipsis
-			   (truncate-string-to-width
-			    ,strvar
-			    strlen
-			    (string-width ,ellipsis)))
-		`(concat
-		  (truncate-string-to-width
-                   ,strvar (- strlen (string-width ,ellipsis)) nil ?.)
-                  ,ellipsis))
-	   ,strvar)
+        `(if (> strlen 5)
+             (let ((,ellipsis-var ,ellipsis))
+               ;; Remacs: bound the marker before joining it to column text.
+               (when (> (string-width ,ellipsis-var) strlen)
+                 (setq ,ellipsis-var
+                       (truncate-string-to-width ,ellipsis-var strlen nil ?\s)))
+               ,(if from-end-p
+                    ;; Remacs: use display columns so wide suffixes survive.
+                    `(concat ,ellipsis-var
+                             (truncate-string-to-width
+                              ,strvar strlen (string-width ,ellipsis-var)))
+                  `(concat
+                    (truncate-string-to-width
+                     ,strvar (- strlen (string-width ,ellipsis-var)) nil ?.)
+                    ,ellipsis-var)))
+           ,strvar)
       strvar)))
 
 (defun ibuffer-compile-make-substring-form (strvar maxvar from-end-p)
