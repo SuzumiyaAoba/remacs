@@ -194,28 +194,22 @@ pub(super) fn modifier_state_after_change(
     state
 }
 
+/// Share function-key recognition across routing, modifiers, and event names.
+fn function_key_name(key: &str) -> Option<&str> {
+    match key {
+        "pageup" => Some("prior"),
+        "pagedown" => Some("next"),
+        "up" | "down" | "left" | "right" | "home" | "end" | "begin" | "help" | "break"
+        | "delete" | "insert" | "undo" | "redo" | "insertline" | "deleteline" | "insertchar"
+        | "deletechar" => Some(key),
+        key if key.starts_with("kp-") => Some(key),
+        key if key.starts_with('f') && key[1..].parse::<u32>().is_ok() => Some(key),
+        _ => None,
+    }
+}
+
 fn modifier_context(ks: &Keystroke) -> ModifierContext {
-    let key = ks.key.as_str();
-    if key.starts_with("kp-")
-        || matches!(
-            key,
-            "up" | "down"
-                | "left"
-                | "right"
-                | "home"
-                | "end"
-                | "begin"
-                | "help"
-                | "break"
-                | "delete"
-                | "insert"
-                | "undo"
-                | "redo"
-                | "pageup"
-                | "pagedown"
-        )
-        || (key.starts_with('f') && key[1..].parse::<u32>().is_ok())
-    {
+    if function_key_name(&ks.key).is_some() {
         ModifierContext::Function
     } else {
         ModifierContext::Ordinary
@@ -309,29 +303,11 @@ pub(super) fn mouse_modifier_bits(
 }
 
 fn is_named_key(ks: &Keystroke) -> bool {
-    ks.key.starts_with("kp-")
+    function_key_name(&ks.key).is_some()
         || matches!(
             ks.key.as_str(),
-            "return"
-                | "enter"
-                | "tab"
-                | "backspace"
-                | "escape"
-                | "pageup"
-                | "pagedown"
-                | "up"
-                | "down"
-                | "left"
-                | "right"
-                | "home"
-                | "end"
-                | "help"
-                | "delete"
-                | "insert"
-                | "undo"
-                | "redo"
+            "return" | "enter" | "tab" | "backspace" | "escape"
         )
-        || (ks.key.starts_with('f') && ks.key[1..].parse::<u32>().is_ok())
 }
 
 pub(super) fn keystroke_to_code(ks: &Keystroke) -> Option<i128> {
@@ -349,6 +325,9 @@ pub(super) fn keystroke_to_code_with_mapping(
 ) -> Option<i128> {
     let (mut mods, _) = modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
     let named = |name: &str| remacs_runtime::editor::event_code_for(name);
+    if let Some(name) = function_key_name(&ks.key) {
+        return Some(named(name) | mods);
+    }
     let base = match ks.key.as_str() {
         // Keep special ASCII keys as named events so they remain distinct
         // from the corresponding control characters (C-m, C-i, and C-[).
@@ -357,12 +336,6 @@ pub(super) fn keystroke_to_code_with_mapping(
         "backspace" => 127,
         "escape" => named("escape"),
         "space" => 32,
-        "pageup" => named("prior"),
-        "pagedown" => named("next"),
-        "up" | "down" | "left" | "right" | "home" | "end" | "begin" | "help"
-        | "break" | "delete" | "insert" | "undo" | "redo" => named(ks.key.as_str()),
-        s if s.starts_with("kp-") => named(s),
-        s if s.len() > 1 && s.starts_with('f') && s[1..].parse::<u32>().is_ok() => named(s),
         s if s.chars().count() == 1 => {
             let physical = s.chars().next().unwrap_or('\0');
             // For modified combos the physical key is the event base;

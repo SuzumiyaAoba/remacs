@@ -523,6 +523,47 @@ fn modified_named_keys_follow_gui_command_bindings() {
     assert!(keys.is_empty());
 }
 
+#[test]
+fn insert_delete_keysyms_reach_default_gui_bindings() {
+    use remacs_runtime::editor::event_code_for;
+    let cases = [
+        ("insertline", "open-line", "\nalpha\nbeta\n"),
+        ("deleteline", "kill-line", "\nbeta\n"),
+        ("insertchar", "overwrite-mode", "alpha\nbeta\n"),
+        ("deletechar", "delete-forward-char", "lpha\nbeta\n"),
+    ];
+    for (name, _, _) in cases {
+        let key = ks(name, None, false, false, false, false);
+        assert!(command_keystroke(&key), "{name} must use the command path");
+        assert_eq!(keystroke_to_code(&key), Some(event_code_for(name)));
+        let modified = ks(name, None, true, true, true, true);
+        assert_eq!(
+            keystroke_to_code(&modified),
+            Some(event_code_for(name) | CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_SUPER)
+        );
+    }
+
+    let mut i = Interp::new();
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    for (name, command, expected) in cases {
+        let binding = i
+            .eval_str(&format!("(lookup-key global-map [{name}])"))
+            .unwrap();
+        assert_eq!(i.prin1_to_string(&binding), command);
+        i.eval_str("(progn (erase-buffer) (insert \"alpha\\nbeta\\n\") (goto-char (point-min)) (setq overwrite-mode nil))").unwrap();
+        let code = keystroke_to_code(&ks(name, None, false, false, false, false)).unwrap();
+        remacs_runtime::frontend::dispatch_key_core(&mut i, code, &mut keys, &mut arg_mode, None)
+            .unwrap();
+        let text = i.eval_str("(buffer-string)").unwrap();
+        assert_eq!(i.princ_to_string(&text), expected, "{name}");
+        if name == "insertchar" {
+            assert!(i.eval_str("overwrite-mode").unwrap().truthy());
+        }
+        assert!(keys.is_empty());
+    }
+}
+
 fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
     let (etx, erx) = mpsc::channel();
     let (gtx, grx) = smol::channel::bounded(1);
