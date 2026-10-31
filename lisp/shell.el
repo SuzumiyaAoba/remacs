@@ -1068,10 +1068,11 @@ solution."
       (add-hook 'comint-input-filter-functions #'shell-directory-tracker nil t)
     (remove-hook 'comint-input-filter-functions #'shell-directory-tracker t)))
 
-;; Remacs: skip POSIX cd options before tracking the target directory.
+;; Remacs: skip Bash cd option letters before tracking its target directory.
 (defun shell-directory-tracker--cd-directory (command)
   (let ((index 1) arg arguments options)
-    (while (setq arg (comint-arguments command index index))
+    (while (and (setq arg (comint-arguments command index index))
+                (not (equal arg "")))
       (push (shell-unquote-argument arg) arguments)
       (setq index (1+ index)))
     (setq arguments (nreverse arguments)
@@ -1081,7 +1082,9 @@ solution."
         (cond
          ((string= arg "--")
           (setq options nil))
-         ((member arg '("-L" "-P")))
+         ((or (member arg '("-L" "-P" "-e"))
+              (let ((case-fold-search nil))
+                (string-match-p "\\`-[LPe]+\\'" arg))))
          (t
           (setq options nil
                 arguments (cons arg arguments))))))
