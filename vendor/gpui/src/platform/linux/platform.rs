@@ -825,6 +825,10 @@ impl crate::Keystroke {
         let key = match key_sym {
             Keysym::Return => "enter".to_owned(),
             Keysym::Linefeed => "linefeed".to_owned(),
+            Keysym::InsertLine => "insertline".to_owned(),
+            Keysym::DeleteLine => "deleteline".to_owned(),
+            Keysym::InsertChar => "insertchar".to_owned(),
+            Keysym::DeleteChar => "deletechar".to_owned(),
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
             Keysym::ISO_Left_Tab => "tab".to_owned(),
@@ -1032,7 +1036,7 @@ mod tests {
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]
-    fn linefeed_keysym_keeps_its_control_character_identity() {
+    fn xkb_special_keysyms_keep_their_identity() {
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let source = r#"
                 xkb_keymap {
@@ -1048,6 +1052,10 @@ mod tests {
             "#;
         for (keysym, expected, text) in [
             ("Linefeed", "linefeed", None),
+            ("InsertLine", "insertline", None),
+            ("DeleteLine", "deleteline", None),
+            ("InsertChar", "insertchar", None),
+            ("DeleteChar", "deletechar", None),
             ("Return", "enter", None),
             ("Tab", "tab", None),
             ("j", "j", Some("j")),
