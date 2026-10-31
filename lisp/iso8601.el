@@ -288,7 +288,7 @@ See `decode-time' for the meaning of FORM."
                 (save-match-data
                   (let ((zone (match-string 2 string)))
                     (or (null zone)
-                        (iso8601--zone-in-range-p zone)))))
+                        (iso8601--zone-in-range-p zone))))))
       (signal 'wrong-type-argument (list string))
     (let ((time (match-string 1 string))
           (zone (match-string 2 string)))
@@ -437,7 +437,7 @@ Return the number of minutes."
              (+ (* (string-to-number (substring number 0 decimal)) scale)
                 (string-to-number fraction))
              scale))
-        (string-to-number number))))
+        (string-to-number number)))))
 
 (defun iso8601--parse-duration-component (value unit-seconds)
   "Parse VALUE as a duration component.

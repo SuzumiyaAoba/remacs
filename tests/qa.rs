@@ -758,6 +758,7 @@ qa!(qa_thing, "qa_thing.el");
 qa!(qa_thing2, "qa_thing2.el");
 qa!(qa_diffface, "qa_diffface.el");
 qa!(qa_time, "qa_time.el");
+qa!(qa_iso8601_load, "qa_iso8601_load.el");
 qa!(qa_timefmt, "qa_timefmt.el");
 qa!(qa_encode_time_ranges, "qa_encode_time_ranges.el");
 qa!(qa_format_time_ranges, "qa_format_time_ranges.el");
