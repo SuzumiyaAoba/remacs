@@ -1158,6 +1158,52 @@ fn frame_proxy_file(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> Opt
 }
 
 impl ChanIo {
+    #[cfg(test)]
+    pub(super) fn new_for_test(
+        events: Receiver<GuiEvent>,
+        grids: smol::channel::Sender<Grid>,
+    ) -> Self {
+        Self {
+            events,
+            quit_request: None,
+            grids,
+            legacy_grid_output: true,
+            gui_requests: None,
+            pending: Vec::new(),
+            pending_open_files: VecDeque::new(),
+            #[cfg(target_os = "macos")]
+            pending_native_services: VecDeque::new(),
+            cols: 80,
+            rows: 24,
+            last: None,
+            render_requested: false,
+            geometry: None,
+            frame_sizes: HashMap::new(),
+            frame_runtime_sizes: HashMap::new(),
+            frame_geometries: HashMap::new(),
+            frame_grids: HashMap::new(),
+            latest_snapshots: Vec::new(),
+            frame_snapshot_mailbox: Arc::new(FrameSnapshotMailbox::default()),
+            active_frame_id: None,
+            primary_frame_id: None,
+            pending_frame_selection: None,
+            pending_frame_visibility: None,
+            pending_frame_focus: None,
+            pending_frame_moved: None,
+            pending_frame_delete: None,
+            pending_power_off: false,
+            geometry_symbols: None,
+            mouse_down: None,
+            mouse_positions: HashMap::new(),
+            mouse_position: None,
+            mouse_absolute_position: None,
+            mouse_frame_position: None,
+            scroll_remainders: HashMap::new(),
+            last_input_at: Instant::now(),
+            image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
     fn discard_quit_key(&self, key: i128) -> bool {
         key == 7
             && self

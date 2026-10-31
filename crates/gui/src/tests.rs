@@ -12,6 +12,78 @@ use remacs_runtime::lisp::Interp;
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
+fn monitor_bounds(x: f32, y: f32, width: f32, height: f32) -> gpui::Bounds<gpui::Pixels> {
+    gpui::Bounds::new(point(px(x), px(y)), gpui::size(px(width), px(height)))
+}
+
+#[test]
+fn frame_display_selection_uses_requested_secondary_monitor() {
+    let displays = [
+        (1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0)),
+        (2, monitor_bounds(1920.0, 0.0, 1920.0, 1080.0)),
+    ];
+    // A base window on the primary display (or no base window yet) must not
+    // override the monitor selected by the requested frame bounds.
+    for fallback in [Some(1), None] {
+        assert_eq!(
+            super::display_for_frame_bounds(
+                monitor_bounds(2020.0, 100.0, 640.0, 480.0),
+                displays,
+                fallback
+            ),
+            Some(2)
+        );
+    }
+}
+
+#[test]
+fn frame_display_selection_matches_windows_center_validation() {
+    let displays = [
+        (1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0)),
+        (2, monitor_bounds(1920.0, 0.0, 1920.0, 1080.0)),
+    ];
+    // The origin is on the primary display, but the center is on the second.
+    // Include a center exactly on the shared edge.
+    for left in [1600.0, 1800.0] {
+        assert_eq!(
+            super::display_for_frame_bounds(
+                monitor_bounds(left, 100.0, 640.0, 480.0),
+                displays,
+                Some(1)
+            ),
+            Some(2)
+        );
+    }
+}
+
+#[test]
+fn frame_display_selection_handles_monitors_left_of_and_above_primary() {
+    let displays = [
+        (1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0)),
+        (2, monitor_bounds(-1280.0, 0.0, 1280.0, 1024.0)),
+        (3, monitor_bounds(0.0, -1024.0, 1280.0, 1024.0)),
+    ];
+    for (left, top, expected) in [(-1100.0, 100.0, 2), (100.0, -900.0, 3)] {
+        assert_eq!(
+            super::display_for_frame_bounds(
+                monitor_bounds(left, top, 640.0, 480.0),
+                displays,
+                Some(1)
+            ),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn frame_display_selection_retains_fallback_outside_available_monitors() {
+    let displays = [(1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0))];
+    let offscreen = monitor_bounds(5000.0, 5000.0, 640.0, 480.0);
+    assert_eq!(super::display_for_frame_bounds(offscreen, displays, Some(1)), Some(1));
+    assert_eq!(super::display_for_frame_bounds(offscreen, displays, None), None);
+    assert_eq!(super::display_for_frame_bounds(offscreen, [], Some(2)), Some(2));
+}
+
 fn ks(
     key: &str,
     key_char: Option<&str>,
@@ -284,41 +356,7 @@ fn modified_named_keys_follow_gui_command_bindings() {
 fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
     let (etx, erx) = mpsc::channel();
     let (gtx, grx) = smol::channel::bounded(1);
-    (
-        ChanIo {
-            events: erx,
-            quit_request: None,
-            grids: gtx,
-            legacy_grid_output: true,
-            gui_requests: None,
-            pending: Vec::new(),
-            pending_open_files: std::collections::VecDeque::new(),
-            cols: 80,
-            rows: 24,
-            last: None,
-            render_requested: false,
-            geometry: None,
-            frame_sizes: std::collections::HashMap::new(),
-            frame_geometries: std::collections::HashMap::new(),
-            frame_grids: std::collections::HashMap::new(),
-            latest_snapshots: Vec::new(),
-            frame_snapshot_mailbox: std::sync::Arc::new(
-                super::logic::FrameSnapshotMailbox::default(),
-            ),
-            active_frame_id: None,
-            primary_frame_id: None,
-            pending_frame_selection: None,
-            pending_frame_visibility: None,
-            pending_frame_focus: None,
-            pending_frame_delete: None,
-            pending_power_off: false,
-            geometry_symbols: None,
-            mouse_down: None,
-            scroll_remainders: Default::default(),
-        },
-        etx,
-        grx,
-    )
+    (ChanIo::new_for_test(erx, gtx), etx, grx)
 }
 
 #[test]
@@ -643,7 +681,7 @@ fn missing_dump_fails_before_ui_startup() {
             .as_nanos()
     ));
     assert!(
-        super::start_logic_with_dump(
+        super::start_logic_with_dump_for_test(
             Vec::new(),
             Some(path.to_string_lossy().into_owned()),
             Vec::new()
@@ -725,6 +763,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let text: String = rx
         .try_iter()
         .filter_map(|event| match event {
+            GuiEvent::MenuCommand(_) | GuiEvent::OpenFiles(_) | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
@@ -752,6 +791,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let codes: Vec<_> = rx
         .try_iter()
         .filter_map(|event| match event {
+            GuiEvent::MenuCommand(_) | GuiEvent::OpenFiles(_) | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
@@ -781,7 +821,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             19,
             'f' as i128 | CHAR_META,
             'x' as i128 | CHAR_SUPER,
-            13,
+            remacs_runtime::editor::event_code_for("return"),
             127
         ]
     );

@@ -1443,6 +1443,22 @@ fn frame_window_options(
             content_size,
         )
     };
+    let display_id = parameter_position.and_then(|(_, display_id)| display_id);
+    #[cfg(not(target_os = "macos"))]
+    let display_id = if child {
+        display_id
+    } else {
+        cx.update(|cx| {
+            display_for_frame_bounds(
+                bounds,
+                cx.displays()
+                    .into_iter()
+                    .map(|display| (u32::from(display.id()), display.bounds())),
+                display_id,
+            )
+        })
+        .unwrap_or(display_id)
+    };
     let window_bounds = match frame.fullscreen.as_deref() {
         Some("maximized") => WindowBounds::Maximized(bounds),
         Some("fullboth" | "fullwidth" | "fullheight") => WindowBounds::Fullscreen(bounds),
@@ -1452,9 +1468,7 @@ fn frame_window_options(
         window_bounds: Some(window_bounds),
         window_min_size,
         window_background: frame_background_appearance(frame),
-        display_id: parameter_position
-            .and_then(|(_, display_id)| display_id)
-            .map(DisplayId::from),
+        display_id: display_id.map(DisplayId::from),
         kind: if child {
             WindowKind::Floating
         } else {
@@ -1488,6 +1502,27 @@ fn frame_background_appearance(frame: &FrameSnapshot) -> WindowBackgroundAppeara
 
 fn frame_opacity(alpha_active: u8, alpha_inactive: u8, active: bool) -> f32 {
     f32::from(if active { alpha_active } else { alpha_inactive }) / 100.0
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn display_for_frame_bounds(
+    bounds: Bounds<Pixels>,
+    displays: impl IntoIterator<Item = (u32, Bounds<Pixels>)>,
+    fallback: Option<u32>,
+) -> Option<u32> {
+    // Windows validates initial bounds against the monitor containing their
+    // center.  Right/bottom edges belong to the adjacent display.
+    let center = bounds.center();
+    displays
+        .into_iter()
+        .find(|(_, display)| {
+            center.x >= display.origin.x
+                && center.x < display.origin.x + display.size.width
+                && center.y >= display.origin.y
+                && center.y < display.origin.y + display.size.height
+        })
+        .map(|(id, _)| id)
+        .or(fallback)
 }
 
 fn frame_position_in_window(
@@ -2537,8 +2572,8 @@ fn show_native_about_panel(_version: &str) -> Result<(), String> {
 #[cfg(test)]
 use keys::{command_keystroke, keystroke_to_code};
 #[cfg(test)]
-use logic::{ChanIo, GuiEvent, start_logic, start_logic_with_dump_for_test};
+use logic::{ChanIo, start_logic, start_logic_with_dump_for_test};
 #[cfg(test)]
-use view::EditorView;
+use view::build_editor_view;
 #[cfg(test)]
 mod tests;
