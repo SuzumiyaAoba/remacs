@@ -88,6 +88,7 @@ qa!(qa_buffmenu, "qa_buffmenu.el");
 qa!(qa_display_fallback, "qa_display_fallback.el");
 qa!(qa_case, "qa_case.el");
 qa!(qa_cc_defs_load, "qa_cc_defs_load.el");
+qa!(qa_cc_engine_load, "qa_cc_engine_load.el");
 qa!(qa_case_name_properties, "qa_case_name_properties.el");
 qa!(qa_char, "qa_char.el");
 qa!(qa_char_to_string, "qa_char_to_string.el");

@@ -4328,7 +4328,7 @@ initializing CC Mode.  Currently (2020-06) these are `js-mode' and
      (t
       ;; CASE 4; Best of a bad job: BOL before `here-bol', or beginning of
       ;; literal containing it.
-      (list good-pos (and dropped-cons good-pos) nil))))))
+      (list good-pos (and dropped-cons good-pos) nil)))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -11915,7 +11915,7 @@ This function might do hidden buffer changes."
 		  ;; Leave the point at the end of it, but don't put any
 		  ;; `c-decl-end' marker.
 		  (goto-char kwd-end)
-		  t))))
+		  t)))))
 
      ;; @private, @protected, @public, in Objective C, or similar.
      ((and c-opt-extra-label-key
