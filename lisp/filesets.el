@@ -399,8 +399,10 @@ will not be rewrapped if their length exceeds this value."
 
 (defcustom filesets-browse-dir-function #'dired
   "A function or command used for browsing directories.
-When using an external command, \"%s\" will be replaced with the
-directory's name.
+An external command is specified as (COMMAND ARGUMENTS), where
+ARGUMENTS is split with `split-string-and-unquote'.  Each argument
+is then formatted with the expanded directory name as its \"%s\" value.
+The substituted directory stays in one argument even if it contains spaces.
 
 Note: You have to manually rebuild the menu if you change this value."
   :set #'filesets-set-default
@@ -1314,13 +1316,15 @@ not be opened."
   "Browse DIR using `filesets-browse-dir-function'."
   (if (functionp filesets-browse-dir-function)
       (funcall filesets-browse-dir-function dir)
-    (let ((name (car filesets-browse-dir-function))
-	  (args (format (cadr filesets-browse-dir-function)
-	                (expand-file-name dir))))
+    (let* ((name (car filesets-browse-dir-function))
+           (directory (expand-file-name dir))
+           (args (mapcar (lambda (argument) (format argument directory))
+                         (split-string-and-unquote
+                          (cadr filesets-browse-dir-function)))))
       (with-temp-buffer
-	(start-process (concat "Filesets:" name)
-		       "*Filesets external directory browser*"
-		       name args)))))
+	(apply #'start-process (concat "Filesets:" name)
+	       "*Filesets external directory browser*"
+	       name args)))))
 
 (defun filesets-get-fileset-name (something)
   "Get SOMETHING's name (Don't ask)."
