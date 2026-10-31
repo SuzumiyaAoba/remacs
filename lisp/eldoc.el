@@ -420,6 +420,9 @@ Also store it in `eldoc-last-message' and return that value."
                 ;; overlay versions.
                 (not (memq show-paren-context-when-offscreen
                            '(child-frame overlay)))
+                ;; Remacs: no show-paren overlay means no interference.
+                (boundp 'show-paren--overlay)
+                (overlayp show-paren--overlay)
                 (not (pos-visible-in-window-p
                       (overlay-end show-paren--overlay)))))))
 
