@@ -297,9 +297,12 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
 	(dolist (symbol savehist-minibuffer-history-variables)
 	  (when (and (boundp symbol)
 		     (not (memq symbol savehist-ignored-variables)))
-	    (let ((value (symbol-value symbol))
-		  excess-space)
-	      (when value		; Don't save empty histories.
+	    (let* ((value (symbol-value symbol))
+                   (additional (assq symbol savehist-additional-variables))
+		   excess-space)
+              (when additional
+                (setq value (savehist--truncate-value value (cdr additional))))
+	      (when (or value additional)	; Don't save empty histories.
 		(insert "(setq ")
 		(prin1 symbol (current-buffer))
 		(insert " '(")
@@ -334,7 +337,10 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
 		(insert "))\n"))))))
       ;; Save the additional variables.
       (dolist (elem savehist-additional-variables)
-        (when (not (memq elem savehist-minibuffer-history-variables))
+        (when (not (or (memq elem savehist-minibuffer-history-variables)
+                       (and savehist-save-minibuffer-history
+                            (consp elem)
+                            (memq (car elem) savehist-minibuffer-history-variables))))
           (let ((symbol (if (consp elem)
                             (car elem)
                           elem)))
