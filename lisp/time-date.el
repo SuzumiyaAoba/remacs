@@ -328,7 +328,7 @@ right of \"%x\", trailing zero units are not output."
         spec match usedunits zeroflag larger prev name unit num
 	leading-zeropos trailing-zeropos fraction minus
         chop-leading chop-trailing)
-    (while (string-match "%\\.?[0-9]*\\(,[0-9]\\)?\\(.\\)" string start)
+    (while (string-match "%\\.?[0-9]*\\(,[0-9]+\\)?\\(.\\)" string start)
       (setq start (match-end 0)
             spec (match-string 2 string))
       (unless (string-equal spec "%")
