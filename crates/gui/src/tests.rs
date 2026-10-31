@@ -558,6 +558,19 @@ fn linefeed_keysym_matches_control_j() {
 }
 
 #[test]
+fn find_keysym_reaches_the_named_find_binding() {
+    use remacs_runtime::editor::event_code_for;
+    let key = ks("find", None, false, false, false, false);
+    assert!(command_keystroke(&key));
+    assert_eq!(keystroke_to_code(&key), Some(event_code_for("find")));
+    let modified = ks("find", None, true, true, false, false);
+    assert_eq!(
+        keystroke_to_code(&modified),
+        Some(event_code_for("find") | CHAR_CTL | CHAR_META)
+    );
+}
+
+#[test]
 fn insert_delete_keysyms_reach_default_gui_bindings() {
     use remacs_runtime::editor::event_code_for;
     let cases = [
