@@ -2091,6 +2091,48 @@ fn fit_mode_line_field(field: &str, width: usize, left_align: bool) -> String {
     }
 }
 
+fn readable_mode_line_size(size: usize) -> String {
+    if size < 1000 {
+        return size.to_string();
+    }
+    let mut whole = size;
+    let mut remainder;
+    let mut exponent = 0;
+    loop {
+        remainder = whole % 1000;
+        whole /= 1000;
+        exponent += 1;
+        if whole < 1000 {
+            break;
+        }
+    }
+    // Match GNU pint2hrstr: one decimal below ten, then whole units,
+    // with half-up rounding and promotion at the end of a unit range.
+    let mut tenths = None;
+    if whole < 10 {
+        let rounded = (remainder + 50) / 100;
+        if rounded == 10 {
+            whole += 1;
+            tenths = (whole < 10).then_some(0);
+        } else {
+            tenths = Some(rounded);
+        }
+    } else if remainder >= 500 {
+        whole += 1;
+        if whole == 1000 {
+            whole = 1;
+            exponent += 1;
+            tenths = Some(0);
+        }
+    }
+    let mut output = match tenths {
+        Some(tenths) => format!("{whole}.{tenths}"),
+        None => whole.to_string(),
+    };
+    output.push(b" kMGTPEZYRQ"[exponent] as char);
+    output
+}
+
 fn format_mode_line_string(
     value: &str,
     context: &ModeLineContext,
@@ -2158,7 +2200,7 @@ fn format_mode_line_string(
             'c' => context.column.to_string(),
             'C' => context.column.saturating_add(1).to_string(),
             'L' => context.line_count.to_string(),
-            'I' => context.buffer_size.to_string(),
+            'I' => readable_mode_line_size(context.buffer_size),
             'p' | 'P' => mode_line_position(context, specifier),
             'n' => {
                 if context.narrowed {
@@ -2191,6 +2233,10 @@ fn format_mode_line_string(
             field = field.chars().take(maximum).collect();
         }
         if has_width {
+            // GNU counts the numeric part separately from %I's suffix.
+            let width = width.saturating_add(usize::from(
+                specifier == 'I' && context.buffer_size >= 1000,
+            ));
             field = fit_mode_line_field(&field, width, left_align);
         }
         output.push_str(&field);
@@ -8813,4 +8859,40 @@ fn render_grid_internal(
     };
     resolve_grid_colors(&mut grid, gamma_exponent, face_near_same_color_threshold(i));
     grid
+}
+
+#[cfg(test)]
+mod mode_line_size_tests {
+    use super::readable_mode_line_size;
+
+    #[test]
+    fn decimal_rounding_and_large_units() {
+        for (size, expected) in [
+            (0u128, "0"),
+            (999, "999"),
+            (1000, "1.0k"),
+            (1049, "1.0k"),
+            (1050, "1.1k"),
+            (9949, "9.9k"),
+            (9950, "10k"),
+            (10000, "10k"),
+            (10500, "11k"),
+            (999499, "999k"),
+            (999500, "1.0M"),
+            (1049999, "1.0M"),
+            (1050000, "1.1M"),
+            (9950000, "10M"),
+            (1000000000, "1.0G"),
+            (1500000000, "1.5G"),
+            (1000000000000, "1.0T"),
+            (1000000000000000, "1.0P"),
+            (999500000000000000, "1.0E"),
+            (9223372036854775807, "9.2E"),
+            (18446744073709551615, "18E"),
+        ] {
+            if let Ok(size) = usize::try_from(size) {
+                assert_eq!(readable_mode_line_size(size), expected, "{size}");
+            }
+        }
+    }
 }
