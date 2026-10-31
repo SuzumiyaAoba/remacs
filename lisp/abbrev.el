@@ -83,13 +83,18 @@ be replaced by its expansion."
   "Make a new abbrev-table with the same abbrevs as TABLE.
 This function does not copy property lists of the abbrevs.
 See `define-abbrev' for the documentation of abbrev properties."
-  (let ((new-table (make-abbrev-table)))
+  (let* ((table-properties
+          (plist-put (copy-sequence
+                      (symbol-plist (obarray-get table "")))
+                     :abbrev-table-modiff 0))
+         (new-table (make-abbrev-table table-properties)))
     (obarray-map
      (lambda (symbol)
-       (define-abbrev new-table
-	 (symbol-name symbol)
-	 (symbol-value symbol)
-	 (symbol-function symbol)))
+       (unless (zerop (length (symbol-name symbol)))
+         (define-abbrev new-table
+	   (symbol-name symbol)
+	   (symbol-value symbol)
+	   (symbol-function symbol))))
      table)
     new-table))
 
