@@ -329,7 +329,7 @@ SWITCHES and TIME-INDEX give the full switch list and time data."
     (concat (and (memq ?i switches)	; inode number
 		 (format "%6d " (file-attribute-inode-number file-attr)))
 	    (and (memq ?s switches)	; size in K
-		 (format "%4d " (1+ (/ (file-attribute-size file-attr) 1024))))
+		 (format "%4d " (/ (+ (file-attribute-size file-attr) 1023) 1024)))
 	    (file-attribute-modes file-attr)
 	    (format " %3d %-8s %-8s %8d "
 		    (file-attribute-link-number file-attr)
