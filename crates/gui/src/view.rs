@@ -2366,6 +2366,12 @@ impl Render for EditorView {
                             );
                         }
                         for bar in &grid.scroll_bars {
+                            let (thumb_color, track_color) = scroll_bar_colors(
+                                bar,
+                                default_background,
+                                background_alpha,
+                                grid.gamma_exponent,
+                            );
                             let track_origin = point(
                                 bounds.left() + px(bar.left as f32),
                                 bounds.top() + px(bar.top as f32),
@@ -2379,7 +2385,7 @@ impl Render for EditorView {
                                     origin: track_origin,
                                     size: track_size,
                                 },
-                                rgb(0x303438),
+                                track_color,
                             ));
                             let (thumb_origin, thumb_size) = match bar.orientation {
                                 GridScrollBarOrientation::Vertical => (
@@ -2402,7 +2408,7 @@ impl Render for EditorView {
                                     origin: thumb_origin,
                                     size: thumb_size,
                                 },
-                                rgb(0x747a80),
+                                thumb_color,
                             ));
                         }
                         if bell_flash {
@@ -3665,8 +3671,77 @@ fn style_colors(
     }
 }
 
+fn scroll_bar_colors(
+    bar: &GridScrollBar,
+    default_background: u32,
+    background_alpha: u8,
+    gamma_exponent: Option<f64>,
+) -> (Hsla, Hsla) {
+    let (thumb, track) = style_colors(
+        bar.style,
+        default_background,
+        background_alpha,
+        gamma_exponent,
+    );
+    (
+        thumb,
+        track.unwrap_or_else(|| background_rgba(default_background, background_alpha)),
+    )
+}
+
 fn background_rgba(color: u32, alpha: u8) -> Hsla {
     rgba((color << 8) | u32::from(alpha)).into()
+}
+
+#[cfg(test)]
+mod scroll_bar_color_tests {
+    use super::scroll_bar_colors;
+    use gpui::{rgb, rgba};
+    use remacs_runtime::frontend::{
+        CellColor, CellStyle, GridScrollBar, GridScrollBarOrientation,
+    };
+
+    fn bar(style: CellStyle) -> GridScrollBar {
+        GridScrollBar {
+            window_id: 1,
+            buffer_id: 1,
+            orientation: GridScrollBarOrientation::Vertical,
+            style,
+            left: 0,
+            top: 0,
+            width: 8,
+            height: 100,
+            thumb_start: 0,
+            thumb_size: 20,
+            max_offset: 80,
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn foreground_paints_thumb_and_background_paints_track() {
+        let bar = bar(CellStyle {
+            fg: Some(CellColor(255, 0, 0)),
+            bg: Some(CellColor(255, 255, 0)),
+            ..Default::default()
+        });
+        let (thumb, track) = scroll_bar_colors(&bar, 0, 255, None);
+        assert_eq!(thumb, rgb(0xff0000).into());
+        assert_eq!(track, rgb(0xffff00).into());
+    }
+
+    #[::core::prelude::v1::test]
+    fn inverse_alpha_and_corrected_colors_use_the_common_style_rules() {
+        let bar = bar(CellStyle {
+            fg: Some(CellColor(128, 64, 32)),
+            bg: Some(CellColor(16, 32, 48)),
+            inverse: true,
+            ..Default::default()
+        });
+        let (thumb, track) = scroll_bar_colors(&bar, 0, 128, Some(0.5));
+        // Explicit grid colors have already been gamma corrected by runtime.
+        assert_eq!(thumb, rgb(0x102030).into());
+        assert_eq!(track, rgba(0x80402080).into());
+    }
 }
 
 /// Construct the root view: focus it for key input and spawn the

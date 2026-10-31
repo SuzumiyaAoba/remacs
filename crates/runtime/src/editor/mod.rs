@@ -23478,6 +23478,42 @@ fn set_face_attr(i: &mut Interp, name: &SymId, attr: &str, val: Value) {
     }
 }
 
+fn sync_scroll_bar_color(
+    i: &mut Interp,
+    face: &SymId,
+    attribute: &str,
+    value: &Value,
+    frame: &Value,
+) -> Result<(), Flow> {
+    if builtin_face_name(i, *face) != Some("scroll-bar") {
+        return Ok(());
+    }
+    let parameter = match attribute {
+        ":foreground" => "scroll-bar-foreground",
+        ":background" => "scroll-bar-background",
+        _ => return Ok(()),
+    };
+    if !matches!(value, Value::Str(_)) {
+        return Ok(());
+    }
+    // GNU realizes the graphical scrollbar face through these parameters.
+    // FRAME=t only changes defaults, while FRAME=0 visits all live frames.
+    let frames: Vec<FrameRef> = match frame {
+        Value::Nil => i.selected_frame.clone().into_iter().collect(),
+        Value::Int(0) => i.frames.clone(),
+        Value::Frame(frame) => vec![frame.clone()],
+        _ => return Ok(()),
+    };
+    let key = Value::Sym(i.intern(parameter));
+    for frame in frames {
+        let live = !frame.borrow().dead;
+        if live && frame_is_graphical(i, &frame) {
+            store_frame_parameter(i, &frame, key.clone(), value.clone())?;
+        }
+    }
+    Ok(())
+}
+
 fn f_make_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let name = match &a[0] {
         Value::Sym(s) => *s,
@@ -23626,7 +23662,8 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
         face_global_update(i, &name, &attr, value.clone());
     }
     if !to_t {
-        set_face_attr(i, &name, &attr, value);
+        set_face_attr(i, &name, &attr, value.clone());
+        sync_scroll_bar_color(i, &name, &attr, &value, &arg(&a, 3))?;
     }
     if i.symbol_name(name) == "cursor" && attr == ":background" {
         if let Some(cursor) = i.intern_soft("cursor") {
@@ -23702,6 +23739,7 @@ pub(crate) fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> Eval
             }
             if !to_t {
                 set_face_attr(i, &name, &attr, v.clone());
+                sync_scroll_bar_color(i, &name, &attr, &v, &a[1])?;
             }
         }
     }
@@ -24097,6 +24135,7 @@ fn f_set_face_background(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     face_frame_live(i, &arg(&a, 2))?;
     let name = face_name_of(i, &a[0])?;
     set_face_attr(i, &name, ":background", a[1].clone());
+    sync_scroll_bar_color(i, &name, ":background", &a[1], &arg(&a, 2))?;
     Ok(Value::Nil)
 }
 

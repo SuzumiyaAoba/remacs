@@ -231,6 +231,8 @@ pub struct GridScrollBar {
     pub window_id: usize,
     pub buffer_id: usize,
     pub orientation: GridScrollBarOrientation,
+    /// Foreground colors the thumb; background colors the track.
+    pub style: CellStyle,
     /// Frame-local pixel position and extent.
     pub left: usize,
     pub top: usize,
@@ -1746,6 +1748,28 @@ fn frame_cursor_color(
         .filter(|value| !value.is_nil())
         .unwrap_or_else(|| Value::string("white"));
     face_ctx.color(&value)
+}
+
+fn frame_scroll_bar_style(
+    i: &Interp,
+    face_ctx: &mut FaceCtx,
+    frame: &crate::editor::Frame,
+) -> CellStyle {
+    let mut style = face_ctx.builtin(i, "scroll-bar", 0).finish();
+    let parameter_color = |name: &str| {
+        i.q_soft(name).and_then(|key| {
+            face_ctx.color(&crate::lisp::eval::plist_get_v(&frame.params, &Value::Sym(key)))
+        })
+    };
+    if let Some(color) = parameter_color("scroll-bar-foreground") {
+        style.fg = Some(color);
+    }
+    if let Some(color) = parameter_color("scroll-bar-background") {
+        style.bg = Some(color);
+    }
+    style.fg.get_or_insert(CellColor(0x74, 0x7a, 0x80));
+    style.bg.get_or_insert(CellColor(0x30, 0x34, 0x38));
+    style
 }
 
 fn blink_cursor_settings(i: &Interp) -> (bool, f64, f64, i128) {
@@ -6650,6 +6674,9 @@ fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) 
     for indicator in &mut grid.fill_column_indicators {
         resolve_grid_style(&mut indicator.style, exponent, threshold);
     }
+    for bar in &mut grid.scroll_bars {
+        resolve_grid_style(&mut bar.style, exponent, threshold);
+    }
     for divider in &mut grid.bottom_dividers {
         resolve_grid_style(&mut divider.style, exponent, threshold);
         resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
@@ -6847,6 +6874,11 @@ fn render_grid_internal(
     let title = frame_title(i, &fb);
     let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let scroll_bar_style = if graphical {
+        frame_scroll_bar_style(i, &mut fctx, &fb)
+    } else {
+        CellStyle::default()
+    };
     let frame_char_width = i
         .q_soft("char-width")
         .map(|id| crate::lisp::eval::plist_get(&fb.params, id))
@@ -7564,6 +7596,7 @@ fn render_grid_internal(
                         window_id,
                         buffer_id: buf_id,
                         orientation: GridScrollBarOrientation::Vertical,
+                        style: scroll_bar_style,
                         left: bar_left,
                         top: content_top.saturating_mul(frame_char_height),
                         width: bar_width,
@@ -7612,6 +7645,7 @@ fn render_grid_internal(
                         window_id,
                         buffer_id: buf_id,
                         orientation: GridScrollBarOrientation::Horizontal,
+                        style: scroll_bar_style,
                         left: content_left.saturating_mul(frame_char_width),
                         top,
                         width: track_width,
