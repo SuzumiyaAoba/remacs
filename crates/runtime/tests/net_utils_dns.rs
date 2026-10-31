@@ -25,6 +25,26 @@ const CASES: &str = r#"
       (unless (null (nslookup-host-ipv4 "example.test" nil format))
         (error "Lookup accepted leading-zero IPv4 output"))))
   (let ((system-type 'gnu/linux))
+    (cl-letf (((symbol-function 'nslookup--query) (lambda (&rest _) "")))
+      (dolist (address '("no-such-host.invalid" "host:443" "2001:::1"
+                         "2001:db8::1::2" "1:2:3:4:5:6:7" "1:2:3:4:5:6:7:8:9"
+                         "1:2:3:4:5:6:7:8::" "::1garbage" "::1\n" "\n::1"
+                         "::ffff:192.168.010.010" "::ffff:300.0.0.1"
+                         "::ffff:192.0.2" nil 17 "" ":" "[::1]"))
+        (dolist (format '(nil string vector))
+          (unless (null (nslookup-host-ipv6 address nil format))
+            (error "Lookup returned an invalid IPv6 fallback: %S" address))))
+      (dolist (case '(("::" [0 0 0 0 0 0 0 0])
+                      ("::1" [0 0 0 0 0 0 0 1])
+                      ("2001:DB8::1" [8193 3512 0 0 0 0 0 1])
+                      ("1:2:3:4:5:6:7:8" [1 2 3 4 5 6 7 8])
+                      ("1::" [1 0 0 0 0 0 0 0])
+                      ("1:2:3:4:5:6:7::" [1 2 3 4 5 6 7 0])
+                      ("::ffff:192.0.2.1" [0 0 0 0 0 65535 49152 513])))
+        (dolist (format '(nil string vector))
+          (unless (equal (nslookup-host-ipv6 (car case) nil format)
+                         (if (eq format 'vector) (cadr case) (car case)))
+            (error "Lookup lost a valid IPv6 fallback: %S" (car case))))))
     (dolist (address '("::ffff:192.168.010.010" "::ffff:00.0.0.0"
                        "::ffff:01.2.3.4" "::ffff:1.02.3.4"
                        "::ffff:1.2.03.4" "::ffff:1.2.3.04"))

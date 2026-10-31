@@ -550,6 +550,45 @@ This command uses `nslookup-program' to look up DNS records."
           ipv6-vector
         (error "Invalid IPv6 address")))))
 
+(defun nslookup--ipv6-parse (ip)
+  "Parse IPv6 address IP into eight hextets, or signal an error."
+  (let* ((compression (string-match "::" ip))
+         (left (if compression (substring ip 0 compression) ip))
+         (right (and compression (substring ip (+ compression 2))))
+         (left-parts (unless (equal left "") (split-string left ":")))
+         (right-parts (when (and right (not (equal right "")))
+                        (split-string right ":")))
+         (text-parts (append left-parts (and compression (list nil)) right-parts))
+         (tail (car (last text-parts)))
+         (hextet-parts
+          (if (and (stringp tail) (string-match-p "\\." tail))
+              (progn
+                (unless (nslookup--ipv4-address-p tail)
+                  (error "Invalid IPv4 address: %s" ip))
+                (let ((octets (mapcar #'string-to-number (split-string tail "\\."))))
+                  (append (butlast text-parts)
+                          (list (format "%x" (+ (* 256 (nth 0 octets))
+                                                (nth 1 octets)))
+                                (format "%x" (+ (* 256 (nth 2 octets))
+                                                (nth 3 octets)))))))
+            text-parts))
+         (values
+          (mapcar (lambda (part)
+                    (when part
+                      (unless (and (<= 1 (length part) 4)
+                                   (string-match-p "\\`[0-9a-fA-F]+\\'" part))
+                        (error "Invalid IPv6 address: %s" ip))
+                      (string-to-number part 16)))
+                  hextet-parts)))
+    (nslookup--ipv6-expand (vconcat values))))
+
+(defun nslookup--ipv6-address-p (address)
+  "Return non-nil if ADDRESS is an IPv6 literal."
+  (and (stringp address)
+       (condition-case nil
+           (progn (nslookup--ipv6-parse address) t)
+         (error nil))))
+
 ;;;###autoload
 (defun nslookup-host-ipv6 (host &optional name-server format)
   "Return the IPv6 address for HOST (name or IP address).
@@ -572,52 +611,12 @@ This command uses `nslookup-program' to look up DNS records."
                           output)
                          (match-string 1 output)))
          (ip (or parsed-ip
-                 (and (stringp host) (string-match-p ":" host) host))))
+                 (and (nslookup--ipv6-address-p host) host))))
     (cond ((memq format '(string nil))
            ip)
           ((eq format 'vector)
            (and ip
-                (let* ((compression (string-match "::" ip))
-                  (left (if compression (substring ip 0 compression) ip))
-                  (right (and compression (substring ip (+ compression 2))))
-                  (left-parts (if (equal left "") nil
-                                (split-string left ":")))
-                  (right-parts (if (and right (not (equal right "")))
-                                   (split-string right ":")))
-                  (text-parts (append left-parts
-                                      (and compression (list nil))
-                                      right-parts))
-                  (ipv4-tail (and text-parts
-                                  (stringp (car (last text-parts)))
-                                  (string-match-p "\\."
-                                                  (car (last text-parts)))))
-                  (ipv4-octets (and ipv4-tail
-                                    (split-string
-                                     (car (last text-parts)) "\\.")))
-                  (hextet-parts
-                   (if ipv4-tail
-                       (progn
-                         (unless (nslookup--ipv4-address-p (car (last text-parts)))
-                           (error "Invalid IPv4 address: %s" ip))
-                         (let ((octets (mapcar #'string-to-number ipv4-octets)))
-                           (append
-                            (butlast text-parts)
-                            (list (format "%x" (+ (* 256 (nth 0 octets))
-                                                  (nth 1 octets)))
-                                  (format "%x" (+ (* 256 (nth 2 octets))
-                                                  (nth 3 octets)))))))
-                     text-parts))
-                  (values
-                   (mapcar
-                    (lambda (part)
-                      (when part
-                        (unless (and (<= 1 (length part) 4)
-                                     (string-match-p
-                                      "^[0-9a-fA-F]+$" part))
-                          (error "Invalid IPv6 address: %s" ip))
-                        (string-to-number part 16)))
-                    hextet-parts)))
-                  (nslookup--ipv6-expand (vconcat values)))))
+                (nslookup--ipv6-parse ip)))
           (t (error "Invalid format: %s" format)))))
 
 ;;;###autoload
