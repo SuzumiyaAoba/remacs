@@ -41,6 +41,9 @@
 
 ;; Byte-compiler warnings
 (defvar parse-time-elt)
+(defvar parse-time-elt-width)
+;; When non-nil, the default tokenizer records original widths by result cell.
+(defvar parse-time-tokenize--widths nil)
 (defvar parse-time-val)
 
 (defsubst parse-time-string-chars (char)
@@ -70,9 +73,14 @@ letters, digits, plus or minus signs or colons."
 		  (setq c (parse-time-string-chars (aref string index))))
 	(setq all-digits (and all-digits (eq c ?0))))
       (if (<= index end)
-	  (push (if all-digits (cl-parse-integer string :start start :end index)
-		  (substring string start index))
-		list)))
+          (let* ((token (if all-digits
+                            (cl-parse-integer string :start start :end index)
+                          (substring string start index)))
+                 (cell (cons token list)))
+            (setq list cell)
+            (when parse-time-tokenize--widths
+              (puthash cell (cons token (- index start))
+                       parse-time-tokenize--widths)))))
     (nreverse list)))
 
 (defvar parse-time-months '(("jan" . 1) ("feb" . 2) ("mar" . 3)
@@ -127,9 +135,20 @@ letters, digits, plus or minus signs or colons."
   `(((6) parse-time-weekdays)
     ((3) (1 31))
     ((4) parse-time-months)
-    ((5) (1000))
-    ;;Remacs: RFC 5322 obsolete three-digit years add 1900.
-    ((5) (100 999) ,(lambda () (+ 1900 parse-time-elt)))
+    ;; Preserve the token's original digit width for year interpretation.
+    ((5) ,(lambda ()
+            (and (numberp parse-time-elt)
+                 (if parse-time-elt-width
+                     (>= parse-time-elt-width 4)
+                   (>= parse-time-elt 1000))))
+     ,(lambda () parse-time-elt))
+    ;; RFC 5322 obsolete three-digit years add 1900, including zero-padded 001.
+    ((5) ,(lambda ()
+            (and (numberp parse-time-elt)
+                 (if parse-time-elt-width
+                     (= parse-time-elt-width 3)
+                   (<= 100 parse-time-elt 999))))
+     ,(lambda () (+ 1900 parse-time-elt)))
     ((2 1 0)
      ,(lambda () (and (stringp parse-time-elt)
                       (= (length parse-time-elt) 8)
@@ -170,7 +189,13 @@ letters, digits, plus or minus signs or colons."
                       (= (aref parse-time-elt 1) ?:)))
      [0 1] [2 4] [5 7])
     ((5) (50 110) ,(lambda () (+ 1900 parse-time-elt)))
-    ((5) (0 49) ,(lambda () (+ 2000 parse-time-elt))))
+    ((5) ,(lambda ()
+            (and (numberp parse-time-elt)
+                 (if parse-time-elt-width
+                     (and (<= parse-time-elt-width 2)
+                          (<= 0 parse-time-elt 49))
+                   (<= 0 parse-time-elt 49))))
+     ,(lambda () (+ 2000 parse-time-elt))))
   "(slots predicate extractor...)")
 ;;;###autoload(put 'parse-time-rules 'risky-local-variable t)
 
@@ -197,14 +222,24 @@ See `decode-time' for the meaning of FORM."
       (iso8601-parse string form)
     (wrong-type-argument
     (let* ((time (list nil nil nil nil nil nil nil -1 nil))
-           (temp (parse-time-tokenize
-                  (parse-time--strip-comments (downcase string))))
+           (clean-string (parse-time--strip-comments (downcase string)))
+           (token-widths (make-hash-table :test 'eq))
+           (parse-time-tokenize--widths token-widths)
+           (temp (parse-time-tokenize clean-string))
            ;; RFC 5322 4.3 treats unknown obsolete alphabetic zones as -0000.
            (unknown-zone nil))
       (while temp
-        (let ((parse-time-elt (pop temp))
-              (rules parse-time-rules)
-              (exit nil))
+        (let* ((token-cell temp)
+               (parse-time-elt (pop temp))
+               (parse-time-elt-width
+                (let ((info (gethash token-cell token-widths)))
+                  (if (and info (equal (car info) parse-time-elt))
+                      (cdr info)
+                    (and (integerp parse-time-elt)
+                         (>= parse-time-elt 0)
+                         (length (number-to-string parse-time-elt))))))
+               (rules parse-time-rules)
+               (exit nil))
           (while (and rules (not exit))
             (let* ((rule (pop rules))
                    (slots (pop rule))
