@@ -6,13 +6,24 @@ const CASES: &str = r#"
   (dolist (name '(nslookup--ipv4-address-p nslookup-host-ipv4
                   nslookup--ipv6-expand nslookup-host-ipv6 nslookup ping))
     (unless (fboundp name) (error "Missing net-utils definition: %S" name)))
-  (dolist (address '("0.0.0.0" "192.0.2.5" "255.255.255.255"))
+  (dolist (address '("0.0.0.0" "10.20.30.40" "192.0.2.5" "255.255.255.255"))
     (unless (nslookup--ipv4-address-p address)
       (error "Valid IPv4 address rejected: %S" address)))
   (dolist (address '(nil 1 "" "192.0.2" "192.0.2.5.6" "256.0.2.5"
-                    "-1.0.2.5" "a.0.2.5" "192..2.5" "192.0.2.5\n"))
+                    "-1.0.2.5" "a.0.2.5" "192..2.5" "192.0.2.5\n"
+                    "192.168.010.010" "01.2.3.4" "1.02.3.4" "1.2.03.4"
+                    "1.2.3.04" "00.0.0.0" "001.002.003.004"))
     (when (nslookup--ipv4-address-p address)
       (error "Invalid IPv4 address accepted: %S" address)))
+  (cl-letf (((symbol-function 'nslookup--query) (lambda (&rest _) "")))
+    (dolist (format '(nil string vector))
+      (unless (null (nslookup-host-ipv4 "192.168.010.010" nil format))
+        (error "Lookup accepted a leading-zero IPv4 literal"))))
+  (cl-letf (((symbol-function 'nslookup--query)
+             (lambda (&rest _) "Name: example.test\nAddress: 192.168.010.010\n")))
+    (dolist (format '(nil string vector))
+      (unless (null (nslookup-host-ipv4 "example.test" nil format))
+        (error "Lookup accepted leading-zero IPv4 output"))))
   (let ((ping-program "ping") (ping-program-options '("-c" "2")))
     (cl-letf (((symbol-function 'net-utils-run-program) #'list))
       (unless (equal (nth 3 (ping "example.test")) '("-c" "2" "example.test"))

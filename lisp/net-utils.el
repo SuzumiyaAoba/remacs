@@ -494,6 +494,8 @@ in Lisp code."
                (lambda (octet)
                  (and (<= 1 (length octet) 3)
                       (string-match-p "\\`[0-9]+\\'" octet)
+                      (or (= (length octet) 1)
+                          (/= (aref octet 0) ?0))
                       (<= (string-to-number octet) 255)))
                octets)))))
 
