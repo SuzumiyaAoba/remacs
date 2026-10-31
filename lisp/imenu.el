@@ -99,7 +99,8 @@ element should come before the second.  The arguments are cons cells;
 (defcustom imenu-space-replacement "."
   "The replacement string for spaces in index names.
 Used when presenting the index in a completion buffer to make the
-names work as tokens."
+names work as tokens.  All characters in the replacement are used
+literally.  An empty string removes spaces; nil leaves names unchanged."
   :type '(choice string (const nil)))
 
 (defcustom imenu-level-separator ":"
@@ -742,8 +743,9 @@ Return one of the entries in index-alist or nil."
 	 (if (not imenu-space-replacement) index-alist
 	   (mapcar
 	    (lambda (item)
-	      (cons (subst-char-in-string ?\s (aref imenu-space-replacement 0)
-					  (car item))
+	      ;; Remacs: honor empty and multicharacter replacement strings.
+	      (cons (replace-regexp-in-string " " imenu-space-replacement
+                                            (car item) t t)
 		    (cdr item)))
 	    index-alist))))
     (when (stringp name)
