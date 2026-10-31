@@ -824,6 +824,7 @@ impl crate::Keystroke {
 
         let key = match key_sym {
             Keysym::Return => "enter".to_owned(),
+            Keysym::Linefeed => "linefeed".to_owned(),
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
             Keysym::ISO_Left_Tab => "tab".to_owned(),
@@ -1028,6 +1029,42 @@ impl crate::Capslock {
 mod tests {
     use super::*;
     use crate::{Point, px};
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn linefeed_keysym_keeps_its_control_character_identity() {
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let source = r#"
+                xkb_keymap {
+                    xkb_keycodes "test" { minimum = 8; maximum = 255; <TEST> = 38; };
+                    xkb_types "test" {
+                        type "ONE_LEVEL" { modifiers = None; map[None] = Level1; };
+                    };
+                    xkb_compatibility "test" {};
+                    xkb_symbols "test" {
+                        key <TEST> { type = "ONE_LEVEL", [ TEST_KEYSYM ] };
+                    };
+                };
+            "#;
+        for (keysym, expected, text) in [
+            ("Linefeed", "linefeed", None),
+            ("Return", "enter", None),
+            ("Tab", "tab", None),
+            ("j", "j", Some("j")),
+        ] {
+            let keymap = xkb::Keymap::new_from_string(
+                &context,
+                source.replace("TEST_KEYSYM", keysym),
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+            .unwrap();
+            let state = State::new(&keymap);
+            let key = crate::Keystroke::from_xkb(&state, crate::Modifiers::default(), Keycode::new(38));
+            assert_eq!(key.key, expected, "{keysym}");
+            assert_eq!(key.key_char.as_deref(), text, "{keysym}");
+        }
+    }
 
     #[test]
     fn test_is_within_click_distance() {

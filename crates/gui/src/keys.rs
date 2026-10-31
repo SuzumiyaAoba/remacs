@@ -306,7 +306,7 @@ fn is_named_key(ks: &Keystroke) -> bool {
     function_key_name(&ks.key).is_some()
         || matches!(
             ks.key.as_str(),
-            "return" | "enter" | "tab" | "backspace" | "escape"
+            "return" | "enter" | "tab" | "backspace" | "escape" | "linefeed"
         )
 }
 
@@ -335,6 +335,11 @@ pub(super) fn keystroke_to_code_with_mapping(
         "tab" => named("tab"),
         "backspace" => 127,
         "escape" => named("escape"),
+        "linefeed" => {
+            // LFD already carries Control-j's ASCII control conversion.
+            mods &= !CHAR_CTL;
+            10
+        }
         "space" => 32,
         s if s.chars().count() == 1 => {
             let physical = s.chars().next().unwrap_or('\0');

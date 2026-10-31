@@ -537,6 +537,27 @@ fn execute_keysym_reaches_the_named_execute_binding() {
 }
 
 #[test]
+fn linefeed_keysym_matches_control_j() {
+    for bits in 0..16 {
+        let control = bits & 1 != 0;
+        let meta = bits & 2 != 0;
+        let shift = bits & 4 != 0;
+        let super_key = bits & 8 != 0;
+        let linefeed = ks("linefeed", None, control, meta, shift, super_key);
+        assert!(command_keystroke(&linefeed));
+        let expected = 10
+            | if meta { CHAR_META } else { 0 }
+            | if shift { CHAR_SHIFT } else { 0 }
+            | if super_key { CHAR_SUPER } else { 0 };
+        assert_eq!(keystroke_to_code(&linefeed), Some(expected));
+        assert_eq!(
+            keystroke_to_code(&linefeed),
+            keystroke_to_code(&ks("j", None, true, meta, shift, super_key))
+        );
+    }
+}
+
+#[test]
 fn insert_delete_keysyms_reach_default_gui_bindings() {
     use remacs_runtime::editor::event_code_for;
     let cases = [
