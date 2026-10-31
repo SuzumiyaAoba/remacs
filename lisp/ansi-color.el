@@ -580,7 +580,7 @@ This function can be added to `comint-preoutput-filter-functions'."
                       (ansi-color--next-parameter string cur-pos esc-end)))
                  (when parameter
                    (setq cur-pos (cdr parameter))
-                   (car parameter))))))))
+                   (car parameter)))))))))
     ;; if the rest of the string should have a face, put it there
     (when-let* ((face (ansi-color--face-vec-face face-vec)))
       (put-text-property start (length string)
@@ -936,7 +936,7 @@ old codes.  Finally, the so changed list of codes is returned."
 		     (remq (- new 20) (pcase new
 					(22 (remq 1 codes))
 					(25 (remq 6 codes))
-					(_ codes))))
+					(_ codes)))))
 		((or 3 4 9 10) (let ((r (mod new 10)))
 			    (unless (= r 8)
 			      (let (beg)

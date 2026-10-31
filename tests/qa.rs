@@ -49,6 +49,7 @@ qa!(qa_abbrev, "qa_abbrev.el");
 qa!(qa_abbrev2, "qa_abbrev2.el");
 qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
+qa!(qa_ansi_color_load, "qa_ansi_color_load.el");
 qa!(qa_interactive_ignore, "qa_interactive_ignore.el");
 qa!(qa_apply, "qa_apply.el");
 qa!(qa_apply2, "qa_apply2.el");
