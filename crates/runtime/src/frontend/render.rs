@@ -4955,19 +4955,35 @@ fn window_faces(
     let display_property = i.q_soft("display");
     let mut display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
         display_property.map_or_else(Vec::new, |display| {
-            properties
+            let mut runs: Vec<(usize, usize, Option<DisplayReplacement>, usize)> = Vec::new();
+            let mut previous_value: Option<&Value> = None;
+            for (idx, property) in properties
                 .iter()
                 .enumerate()
                 .filter(|(_, tp)| tp.prop == display)
-                .map(|(idx, tp)| {
-                    (
-                        tp.start,
-                        tp.end,
-                        display_value_replacement(i, &tp.value, bb.id),
-                        idx,
-                    )
-                })
-                .collect()
+            {
+                let start = property.start.max(bb.begv);
+                let end = property.end.min(bb.zv);
+                if start >= end {
+                    continue;
+                }
+                if let Some(last) = runs.last_mut()
+                    && last.1 == start
+                    && previous_value
+                        .is_some_and(|value| crate::lisp::eq_values(value, &property.value))
+                {
+                    last.1 = end;
+                    continue;
+                }
+                runs.push((
+                    start,
+                    end,
+                    display_value_replacement(i, &property.value, bb.id),
+                    idx,
+                ));
+                previous_value = Some(&property.value);
+            }
+            runs
         });
     if let Some(display_property) = display_property {
         let overlay_display: Vec<_> = bb
