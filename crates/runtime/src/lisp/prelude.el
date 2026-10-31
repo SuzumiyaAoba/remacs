@@ -24027,27 +24027,42 @@ comment-starter.  If no comment is found, moves point to LIMIT
 and raises an error or returns nil if NOERROR is non-nil.
 
 Ensure that `comment-normalize-vars' has been called before you use this."
-  ;; FIXME: If a comment-start appears inside a comment, we may erroneously
-  ;; stop there.  This can be rather bad in general, but since
-  ;; comment-search-backward is only used to find the comment-column (in
-  ;; comment-set-column) and to find the comment-start string (via
-  ;; comment-beginning) in indent-new-comment-line, it should be harmless.
   (if (not (re-search-backward comment-start-skip limit 'move))
       (unless noerror (error "No comment"))
-    (beginning-of-line)
-    (let* ((end (match-end 0))
-	   (cs (comment-search-forward end t))
-	   (pt (point)))
-      (if (not cs)
-	  (progn (beginning-of-line)
-		 (comment-search-backward limit noerror))
-	(while (progn (goto-char cs)
-		      (comment-forward)
-		      (and (< (point) end)
-			   (setq cs (comment-search-forward end t))))
-	  (setq pt (point)))
-	(goto-char pt)
-	cs))))
+    (if (not comment-use-syntax)
+        ;; ;Remacs: Replay regexp-delimited comments from a known outside
+        ;; position, rather than treating a starter in a comment as genuine.
+        (let ((end (match-end 0))
+              (bound (or limit (point-min)))
+              start inside candidate)
+          (goto-char (if (equal comment-end "")
+                         (line-beginning-position)
+                       (point-min)))
+          (while (and (< (point) end)
+                      (setq candidate (comment-search-forward end t)))
+            (when (>= candidate bound)
+              (setq start candidate inside (point)))
+            (re-search-forward comment-end-skip nil 'move)
+            ;; Do not loop on a zero-width or otherwise unskippable starter.
+            (when (<= (point) candidate) (goto-char end)))
+          (if start
+              (progn (goto-char inside) start)
+            (goto-char bound)
+            (unless noerror (error "No comment"))))
+      (beginning-of-line)
+      (let* ((end (match-end 0))
+             (cs (comment-search-forward end t))
+             (pt (point)))
+        (if (not cs)
+            (progn (beginning-of-line)
+                   (comment-search-backward limit noerror))
+          (while (progn (goto-char cs)
+                        (comment-forward)
+                        (and (< (point) end)
+                             (setq cs (comment-search-forward end t))))
+            (setq pt (point)))
+          (goto-char pt)
+          cs)))))
 
 (defun comment-beginning ()
   "Find the beginning of the enclosing comment.
