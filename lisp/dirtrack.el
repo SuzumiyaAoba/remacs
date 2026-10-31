@@ -129,6 +129,17 @@ Second is a number, the regexp group to match."
   :local t
   :version "24.1")
 
+;; Remacs: bound the fragment retained across process output chunks.
+(defcustom dirtrack-max-prompt-length 16384
+  "Maximum prompt fragment length retained between process output chunks.
+At most this many characters plus one preceding context character are
+retained.  The context prevents a truncated suffix from becoming a
+false beginning-of-line match.  Complete input chunks are searched in
+full, so this limit applies only to prompts split across chunks.
+Increase this value for unusually long prompts.  Zero disables retention."
+  :type 'natnum
+  :group 'dirtrack)
+
 (defcustom dirtrack-debug nil
   "If non-nil, the function `dirtrack' will report debugging info."
   :type  'boolean)
@@ -156,6 +167,10 @@ Second is a number, the regexp group to match."
 
 (defvar-local dirtrack--pending-input ""
   "Unmatched process output retained for split-prompt detection.")
+
+(defvar-local dirtrack--pending-input-start 0
+  "First searchable position in `dirtrack--pending-input'.
+One means that the leading character is retained only as match context.")
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -191,9 +206,11 @@ directory."
   :lighter nil
   (if dirtrack-mode
       (progn
-        (setq-local dirtrack--pending-input "")
+        (setq-local dirtrack--pending-input ""
+                    dirtrack--pending-input-start 0)
         (add-hook 'comint-preoutput-filter-functions 'dirtrack nil t))
-    (setq-local dirtrack--pending-input nil)
+    (setq-local dirtrack--pending-input nil
+                dirtrack--pending-input-start 0)
     (remove-hook 'comint-preoutput-filter-functions 'dirtrack t)))
 
 
@@ -267,6 +284,19 @@ directory."
       (shell-process-cd (concat (match-string 2 temp) prompt-path))
       (run-hooks 'dirtrack-directory-change-hook)))))
 
+;; Remacs: keep only a bounded fragment and its original leading context.
+(defun dirtrack--remember-input (input &optional search-start)
+  "Retain a bounded suffix of INPUT for the next process output chunk.
+SEARCH-START preserves an existing leading context character."
+  (let* ((limit (max 0 dirtrack-max-prompt-length))
+         (keep (if (zerop limit) 0 (1+ limit)))
+         (cut (max 0 (- (length input) keep))))
+    (setq dirtrack--pending-input (substring input cut)
+          dirtrack--pending-input-start
+          (cond ((zerop keep) 0)
+                ((> cut 0) 1)
+                (t (or search-start 0))))))
+
 ;;;###autoload
 (defun dirtrack (input)
   "Determine the current directory from the process output for a prompt.
@@ -277,32 +307,35 @@ from `default-directory'."
   (when (and dirtrack-mode
 	     (not (eq (point) (point-min)))) ; there must be output
     (save-excursion ; What's this for? -- cyd
-	  (let* ((combined (concat dirtrack--pending-input input))
-	         (prompt-input
-	          (cond ((string-match (nth 0 dirtrack-list) combined) combined)
-	                ((string-match (nth 0 dirtrack-list) input) input)))
-	         (search-start 0)
-	         (consumed 0))
-	    (if (not prompt-input)
-	        (progn
-	          (setq dirtrack--pending-input combined)
-	          (dirtrack-debug-message
-	           "Input failed to match `dirtrack-list': " input))
-	      (while (and (<= search-start (length prompt-input))
-	                  (string-match (nth 0 dirtrack-list)
-	                                prompt-input search-start))
-	        (let* ((match-start (match-beginning 0))
-	               (match-end (match-end 0))
-	               (prompt-path (match-string (nth 1 dirtrack-list)
-	                                          prompt-input)))
-	          (dirtrack--change-directory prompt-path input)
-	          (setq consumed (if (= match-start match-end)
-	                            (min (1+ match-end) (length prompt-input))
-	                          match-end)
-	                search-start (if (= match-start match-end)
-	                                 (1+ match-end)
-	                               match-end))))
-	      (setq dirtrack--pending-input (substring prompt-input consumed))))))
+      (let* ((search-start dirtrack--pending-input-start)
+	     (combined (concat dirtrack--pending-input input))
+	     (prompt-input
+	      (cond ((string-match (nth 0 dirtrack-list) combined search-start)
+                     combined)
+	            ((string-match (nth 0 dirtrack-list) input)
+                     (setq search-start 0)
+                     input)))
+	     (consumed 0))
+	(if (not prompt-input)
+	    (progn
+	      (dirtrack--remember-input combined search-start)
+	      (dirtrack-debug-message
+	       "Input failed to match `dirtrack-list': " input))
+	  (while (and (<= search-start (length prompt-input))
+	              (string-match (nth 0 dirtrack-list)
+	                            prompt-input search-start))
+	    (let* ((match-start (match-beginning 0))
+	           (match-end (match-end 0))
+	           (prompt-path (match-string (nth 1 dirtrack-list)
+	                                      prompt-input)))
+	      (dirtrack--change-directory prompt-path input)
+	      (setq consumed (if (= match-start match-end)
+	                         (min (1+ match-end) (length prompt-input))
+	                       match-end)
+	            search-start (if (= match-start match-end)
+	                             (1+ match-end)
+	                           match-end))))
+	  (dirtrack--remember-input (substring prompt-input consumed))))))
   input)
 
 (provide 'dirtrack)
