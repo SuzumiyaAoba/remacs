@@ -519,9 +519,9 @@ For more information, see Info node `(eww) Top'."
 
 (defun eww--dwim-expand-url (url)
   (setq url (string-trim url))
-  (cond ((string-match-p "\\`file:/" url))
+  (cond ((string-prefix-p "file:/" url t))
 	;; Don't mangle file: URLs at all.
-        ((string-match-p "\\`ftp://" url)
+        ((string-prefix-p "ftp://" url t)
          (user-error "FTP is not supported"))
         (t
 	 ;; Anything that starts with something that vaguely looks
