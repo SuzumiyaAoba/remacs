@@ -1666,8 +1666,15 @@ impl KeyIo for ChanIo {
     }
 
     fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
+        self.poll_key_or_mouse(dur).map(|input| match input {
+            Some(InputEvent::Key(key)) => Some(key),
+            _ => None,
+        })
+    }
+
+    fn poll_key_or_mouse(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
         if let Some(k) = self.pending.pop() {
-            return Ok(Some(k));
+            return Ok(Some(InputEvent::Key(k)));
         }
         let Some(event) = self.receive_event(dur)? else {
             return Ok(None);
@@ -1701,12 +1708,12 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
-            GuiEvent::Key(k) => Ok(Some(k)),
+            GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();
                 self.pending.extend(chars.rev());
-                Ok(first)
+                Ok(first.map(InputEvent::Key))
             }
             GuiEvent::MenuCommand(_) => Ok(None),
             GuiEvent::CommandArgs { .. } => Ok(None),
@@ -1714,7 +1721,7 @@ impl KeyIo for ChanIo {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();
                 self.pending.extend(chars.rev());
-                Ok(first)
+                Ok(first.map(InputEvent::Key))
             }
             GuiEvent::Drop { .. } => Ok(None),
             GuiEvent::OpenFiles(files) => {
@@ -1772,12 +1779,25 @@ impl KeyIo for ChanIo {
                 position,
             } => {
                 self.mouse_down = Some((button, click_count, modifiers, position));
-                Ok(None)
+                Ok(Some(InputEvent::MouseDown(MouseInput {
+                    button,
+                    click_count: click_count.max(1),
+                    modifiers,
+                    start: position,
+                    end: position,
+                })))
             }
-            GuiEvent::MouseUp { .. } => {
-                self.mouse_down = None;
-                Ok(None)
-            }
+            GuiEvent::MouseUp {
+                button,
+                click_count,
+                modifiers,
+                position,
+            } => Ok(Some(InputEvent::Mouse(self.mouse_input(
+                button,
+                click_count,
+                modifiers,
+                position,
+            )))),
             GuiEvent::ScrollBar { .. } => Ok(None),
             GuiEvent::Scroll { .. } => Ok(None),
         }

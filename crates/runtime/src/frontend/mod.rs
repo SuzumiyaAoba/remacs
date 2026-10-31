@@ -334,6 +334,12 @@ pub trait KeyIo {
     fn poll_input(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
         self.poll_key(dur).map(|key| key.map(InputEvent::Key))
     }
+    /// Poll keyboard and click events in a nested search loop. Front-ends
+    /// retain their key-polling policy for other events, such as deferring
+    /// operating-system file-open requests until the outer command loop.
+    fn poll_key_or_mouse(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
+        self.poll_key(dur).map(|key| key.map(InputEvent::Key))
+    }
     /// Push a key back onto the pending queue.
     fn unread(&mut self, k: i128);
     /// Run the pre-redisplay callback for a specific set of windows.

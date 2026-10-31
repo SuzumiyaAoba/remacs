@@ -2711,6 +2711,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
     let mut message_needed = true;
     let mut update_hook_needed = true;
     let mut end_hook_quit = false;
+    let mut edit_click_pending = false;
     loop {
         let event_activity = match crate::lisp::eval::threads::yield_now(i).and_then(|ran_thread| {
             crate::lisp::builtins::evalfn::thread_wait_events(i)
@@ -2770,11 +2771,48 @@ pub(super) fn isearch_loop<T: KeyIo>(
             let _ = t.draw_echo_message_with_state(i, &label);
             render_needed = false;
         }
-        let polled_key = term.borrow_mut().poll_key(Duration::from_millis(50))?;
+        let input = term.borrow_mut().poll_key_or_mouse(Duration::from_millis(50))?;
         apply_frame_selection(term, i);
         super::sync_mouse_absolute_pixel_position(term, i);
-        let Some(key) = polled_key else {
-            continue;
+        let key = match input {
+            Some(InputEvent::Key(key)) => key,
+            Some(InputEvent::Text(text) | InputEvent::ReplaceText { text, .. }) => {
+                let mut characters = text.chars();
+                let Some(first) = characters.next() else {
+                    continue;
+                };
+                for character in characters.rev() {
+                    term.borrow_mut().unread(character as i128);
+                }
+                first as i128
+            }
+            Some(InputEvent::MouseDown(mouse)) => {
+                edit_click_pending = mouse.button == MouseButton::Left
+                    && mouse.click_count == 1
+                    && mouse.modifiers == 0
+                    && mouse.start.area.is_none()
+                    && i.selected_frame.as_ref().is_some_and(|frame| {
+                        frame.borrow().minibuffer.as_ref().is_some_and(|window| {
+                            let window = window.borrow();
+                            !window.dead
+                                && mouse.start.window_id.map_or(
+                                    window.buffer == mouse.start.buffer_id,
+                                    |id| id == window.id,
+                                )
+                        })
+                    });
+                continue;
+            }
+            Some(InputEvent::Mouse(mouse)) => {
+                // GNU waits for and swallows the release before opening the
+                // edit minibuffer, so it cannot move point in the new prompt.
+                let edit = std::mem::take(&mut edit_click_pending);
+                if !edit || mouse.button != MouseButton::Left {
+                    continue;
+                }
+                CHAR_META | 'e' as i128
+            }
+            _ => continue,
         };
         let action = st.step(i, key);
         message_needed = true;

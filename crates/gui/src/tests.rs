@@ -1388,3 +1388,194 @@ fn build_editor_view_pumps_grids() {
     drop(gtx);
     app_cx.run_until_parked();
 }
+
+#[test]
+fn isearch_mouse_poll_keeps_clicks_and_defers_file_open() {
+    let (mut io, tx, _grids) = chan_pair();
+    let position = MousePosition {
+        buffer_id: 7,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 40,
+        y: 368,
+        row: 23,
+        column: 5,
+        window_id: Some(8),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    tx.send(GuiEvent::OpenFiles(vec![("later.txt".into(), Some(3))]))
+        .unwrap();
+    tx.send(GuiEvent::Key('a' as i128)).unwrap();
+    tx.send(GuiEvent::MouseDown {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        position,
+    })
+    .unwrap();
+    tx.send(GuiEvent::MouseUp {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        position,
+    })
+    .unwrap();
+    assert!(io.poll_key_or_mouse(Duration::ZERO).unwrap().is_none());
+    assert!(matches!(
+        io.poll_key_or_mouse(Duration::ZERO).unwrap(),
+        Some(InputEvent::Key(key)) if key == 'a' as i128
+    ));
+    assert!(matches!(
+        io.poll_key_or_mouse(Duration::ZERO).unwrap(),
+        Some(InputEvent::MouseDown(mouse)) if mouse.start == position
+    ));
+    assert!(matches!(
+        io.poll_key_or_mouse(Duration::ZERO).unwrap(),
+        Some(InputEvent::Mouse(mouse)) if mouse.start == position && mouse.end == position
+    ));
+    let Some(InputEvent::OpenFiles(files)) = io.poll_input(Duration::ZERO).unwrap() else {
+        panic!("file-open request must remain available to the outer loop");
+    };
+    assert_eq!(files, vec![("later.txt".to_owned(), Some(3))]);
+}
+
+#[test]
+fn isearch_mouse_echo_area_click_edits_query_and_swallows_release() {
+    let mut interp = Interp::new();
+    interp
+        .eval_str(
+            r#"(progn
+          (erase-buffer) (insert "foo bar baz") (goto-char 1)
+          (setq search-ring nil qa-isearch-edits 0 qa-isearch-releases 0
+                qa-isearch-trace nil)
+          (add-hook 'post-command-hook
+                    (lambda ()
+                      (when (minibufferp)
+                        (push (list this-command (point) (buffer-string) isearch-mode)
+                              qa-isearch-trace))))
+          (add-hook 'minibuffer-setup-hook
+                    (lambda ()
+                      (when (string-prefix-p "I-search edit: " (minibuffer-prompt))
+                        (setq qa-isearch-edits (1+ qa-isearch-edits)))))
+          (define-key minibuffer-local-map [mouse-1]
+                      (lambda () (interactive)
+                        (setq qa-isearch-releases (1+ qa-isearch-releases))))
+          (global-set-key [f12]
+                          (lambda () (interactive)
+                            (setq qa-isearch-result
+                                  (list (buffer-string) (point) search-ring
+                                        isearch-mode qa-isearch-edits qa-isearch-releases))
+                            (kill-emacs)))
+          (message "I-search: foo"))"#,
+        )
+        .unwrap();
+    let (tx, events) = mpsc::channel();
+    let (grids, received_grids) = smol::channel::bounded(64);
+    let mut io = ChanIo::new_for_test(events, grids);
+    io.render(&interp).unwrap();
+    let grid = received_grids.try_recv().unwrap();
+    assert!(grid.rows[23].contains("I-search: foo"));
+    let mapped = grid
+        .input
+        .as_ref()
+        .unwrap()
+        .hit_test_position(23, 10, 10)
+        .expect("message text must map to the minibuffer window even with an empty buffer");
+    let frame = interp.selected_frame.as_ref().unwrap().borrow();
+    let minibuffer = frame.minibuffer.as_ref().unwrap().borrow();
+    assert_eq!(mapped.buffer_id, minibuffer.buffer);
+    assert_eq!(mapped.window_id, Some(minibuffer.id));
+    assert_eq!(mapped.buffer_position, 0);
+    let echo_position = MousePosition {
+        buffer_id: mapped.buffer_id,
+        buffer_position: mapped.buffer_position,
+        utf16_offset: mapped.utf16_offset,
+        x: 80,
+        y: 368,
+        row: 23,
+        column: mapped.column,
+        window_id: mapped.window_id,
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let body_position = MousePosition {
+        buffer_id: frame.selected.borrow().buffer,
+        window_id: Some(frame.selected.borrow().id),
+        x: 0,
+        y: 0,
+        row: 0,
+        column: 0,
+        ..echo_position
+    };
+    drop(minibuffer);
+    drop(frame);
+
+    tx.send(GuiEvent::Key(19)).unwrap();
+    tx.send(GuiEvent::Text("foo".into())).unwrap();
+    // Only a plain single left click in the echo area starts editing.
+    for (button, modifiers, click_count, position) in [
+        (MouseButton::Right, 0, 1, echo_position),
+        (MouseButton::Left, CHAR_CTL, 1, echo_position),
+        (MouseButton::Left, 0, 2, echo_position),
+        (MouseButton::Left, 0, 1, body_position),
+    ] {
+        tx.send(GuiEvent::MouseDown {
+            button,
+            click_count,
+            modifiers,
+            position,
+        })
+        .unwrap();
+        tx.send(GuiEvent::MouseUp {
+            button,
+            click_count,
+            modifiers,
+            position,
+        })
+        .unwrap();
+    }
+    tx.send(GuiEvent::MouseDown {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        position: echo_position,
+    })
+    .unwrap();
+    // A release outside the echo area is still swallowed before editing.
+    tx.send(GuiEvent::MouseUp {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        position: body_position,
+    })
+    .unwrap();
+    for event in [
+        GuiEvent::Key(127), // delete the original three-character query
+        GuiEvent::Key(127),
+        GuiEvent::Key(127),
+        GuiEvent::Text("bar".into()),
+        GuiEvent::Key(13), // finish editing
+        GuiEvent::Key(13), // accept the resumed search
+        GuiEvent::Key(remacs_runtime::editor::event_code_for("f12")),
+    ] {
+        tx.send(event).unwrap();
+    }
+    drop(tx);
+    remacs_runtime::frontend::run_editor_with(io, &mut interp).unwrap();
+    let result_symbol = interp.intern("qa-isearch-result");
+    let result = interp.symbol_value(result_symbol);
+    let trace_symbol = interp.intern("qa-isearch-trace");
+    let trace = interp.symbol_value(trace_symbol);
+    assert_eq!(
+        interp.prin1_to_string(&result).to_unicode_lossy(),
+        "(\"foo bar baz\" 8 (\"bar\") nil 1 0)",
+        "minibuffer commands: {}",
+        interp.prin1_to_string(&trace)
+    );
+    let mut edit_prompt_seen = false;
+    while let Ok(grid) = received_grids.try_recv() {
+        edit_prompt_seen |= grid.rows.iter().any(|row| row.contains("I-search edit: "));
+    }
+    assert!(edit_prompt_seen, "the actual edit prompt must be rendered");
+}

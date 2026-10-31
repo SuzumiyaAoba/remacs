@@ -8544,13 +8544,21 @@ fn render_grid_internal(
             }));
             if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref()) {
                 let buffer_id = buffer.borrow().id;
+                // Echo-area messages do not live in the minibuffer buffer.
+                // Map the whole message row to its empty buffer position so
+                // clicks still identify the minibuffer window.
+                let (buffer_start, source_offsets) = if mini_styled.is_some() {
+                    (range.start, rendered.source_offsets.clone())
+                } else {
+                    (0, vec![0])
+                };
                 snapshot.add_hit_test_row(
                     i,
                     y,
                     buffer_id,
-                    range.start,
-                    rendered.source_offsets.clone(),
-                    None,
+                    buffer_start,
+                    source_offsets,
+                    fb.minibuffer.as_ref().map(|window| window.borrow().id),
                     0,
                     width,
                     0,
