@@ -433,7 +433,7 @@ choice of the actual TABLE).
 See also `add-abbrev', which performs the opposite task."
   (let (name exp start end)
     (save-excursion
-      (forward-word (1+ (- arg)))
+      (forward-word (if (< arg 0) (- arg) (1+ (- arg))))
       (skip-syntax-backward "^w")
       (setq end (point))
       (backward-word 1)
