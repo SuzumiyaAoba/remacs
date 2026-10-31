@@ -353,7 +353,8 @@ pub trait KeyIo {
         i: &mut Interp,
         windows: Vec<crate::editor::WindowRef>,
     ) -> Result<(), crate::lisp::error::Flow> {
-        crate::editor::winxtra::run_pre_redisplay_function(i, windows)
+        crate::editor::winxtra::run_pre_redisplay_function(i, windows.clone())?;
+        render::prepare_mode_line_remote(i, windows)
     }
     /// Run the configured pre-redisplay function for the windows this
     /// front-end will draw. Multi-window front-ends can override this.

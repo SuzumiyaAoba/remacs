@@ -16222,7 +16222,7 @@ fn f_file_remote_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             &handler,
             vec![
                 op_sym,
-                Value::string(&file),
+                a[0].clone(),
                 identification.clone(),
                 connected.clone(),
             ],

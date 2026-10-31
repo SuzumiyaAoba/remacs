@@ -1917,6 +1917,7 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
     format_frame_title_value(i, &format, &context, 0)
 }
 
+#[derive(Default)]
 struct ModeLineContext {
     buffer_name: String,
     file_name: String,
@@ -1924,6 +1925,8 @@ struct ModeLineContext {
     modified: bool,
     read_only: bool,
     memory_full: bool,
+    remote: bool,
+    remote_used: std::cell::Cell<bool>,
     line: usize,
     column: usize,
     line_count: usize,
@@ -1937,6 +1940,80 @@ fn mode_line_variable(i: &Interp, buffer_id: usize, name: &str) -> Option<Value>
     let id = i.q_soft(name)?;
     i.buffer_local_toplevel_value(id, buffer_id)
         .or_else(|| i.default_toplevel_value(id))
+}
+
+pub(super) fn prepare_mode_line_remote(
+    i: &mut Interp,
+    windows: Vec<crate::editor::WindowRef>,
+) -> Result<(), crate::lisp::Flow> {
+    let caller = i.current_buffer;
+    let match_data = i.match_data.clone();
+    let result = (|| {
+        let mut seen = HashSet::new();
+        for window in windows {
+            let (buffer, skip) = {
+                let window = window.borrow();
+                (window.buffer, window.dead || window.minibuffer)
+            };
+            if skip || !seen.insert(buffer) || !i.buffer_live(buffer) {
+                continue;
+            }
+            // Use the actual formatter to collect this dependency, including
+            // active conditionals, symbols, field widths and escaped percents.
+            let probe = ModeLineContext::default();
+            for name in ["mode-line-format", "header-line-format", "tab-line-format"] {
+                if let Some(format) = mode_line_variable(i, buffer, name) {
+                    let _ = format_mode_line_value(i, buffer, &format, &probe, 0, &mut false);
+                }
+            }
+            if !probe.remote_used.get() {
+                continue;
+            }
+            i.set_current_buffer(buffer);
+            let directory_symbol = i.q("default-directory");
+            let directory = i.symbol_value(directory_symbol);
+            let snapshot = match &directory {
+                Value::Str(text) => Value::string(text.borrow().clone()),
+                _ => Value::Nil,
+            };
+            let remote = if matches!(directory, Value::Str(_)) {
+                let function = Value::Sym(i.q("file-remote-p"));
+                i.apply(&function, vec![directory])
+            } else {
+                Ok(Value::Nil)
+            };
+            let cache = i.intern("remacs--mode-line-remote-cache");
+            if i.buffer_live(buffer) {
+                let value = Value::cons(
+                    snapshot,
+                    Value::from_bool(remote.as_ref().is_ok_and(Value::truthy)),
+                );
+                i.buffers.get(buffer).unwrap().borrow_mut().locals.insert(cache, value);
+            }
+            remote?;
+        }
+        Ok(())
+    })();
+    if i.buffer_live(caller) {
+        i.set_current_buffer(caller);
+    }
+    i.match_data = match_data;
+    result
+}
+
+fn mode_line_remote(i: &Interp, buffer: usize) -> bool {
+    let Some(Value::Cons(cache)) = mode_line_variable(i, buffer, "remacs--mode-line-remote-cache") else {
+        return false;
+    };
+    let (directory, remote) = {
+        let cache = cache.borrow();
+        (cache.car.clone(), cache.cdr.truthy())
+    };
+    let (Some(Value::Str(current)), Value::Str(saved)) =
+        (mode_line_variable(i, buffer, "default-directory"), directory)
+    else { return false; };
+    let same_directory = *current.borrow() == *saved.borrow();
+    same_directory && remote
 }
 
 fn mode_line_context(
@@ -1955,6 +2032,8 @@ fn mode_line_context(
             modified: false,
             read_only: false,
             memory_full: false,
+            remote: false,
+            remote_used: Default::default(),
             line: 0,
             column: 0,
             line_count: 0,
@@ -1987,6 +2066,8 @@ fn mode_line_context(
         read_only: buffer_setting(i, "buffer-read-only", buffer_id).truthy(),
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
+        remote: mode_line_remote(i, buffer_id),
+        remote_used: Default::default(),
         line: point_line.saturating_sub(first_line).saturating_add(1),
         column: display_columns(
             &buffer.text.substring(point_line_start, point),
@@ -2230,6 +2311,10 @@ fn format_mode_line_string(
             'L' => context.line_count.to_string(),
             'I' => readable_mode_line_size(context.buffer_size),
             'p' | 'P' => mode_line_position(context, specifier),
+            '@' => {
+                context.remote_used.set(true);
+                if context.remote { "@" } else { "-" }.to_owned()
+            }
             'n' => {
                 if context.narrowed {
                     " Narrow".to_owned()
