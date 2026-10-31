@@ -8835,8 +8835,6 @@ With argument 0, interchanges line point is in with line mark is in."
                       (forward-line arg)))
 		  arg))
 
-;; FIXME seems to leave point BEFORE the current object when ARG = 0,
-;; which seems inconsistent with the ARG /= 0 case.
 ;; FIXME document SPECIAL.
 (defun transpose-subr (mover arg &optional special)
   "Subroutine to do the work of transposing objects.
@@ -8846,22 +8844,34 @@ object (e.g. `forward-sentence', `forward-paragraph'), or a
 function calculating a cons of buffer positions.
 
   If ARG is zero, exchanges the current object with the one
-containing mark.  If ARG is an integer, moves the current object
+containing mark, leaving point after the moved current object.
+If ARG is an integer, moves the current object
 past ARG following (if ARG is positive) or preceding (if ARG is
 negative) objects, leaving point after the current object."
   (let ((aux (if special mover
 	       (lambda (x)
 		 (cons (progn (funcall mover x) (point))
 		       (progn (funcall mover (- x)) (point))))))
-	pos1 pos2)
+	pos1 pos2 destination)
     (cond
      ((= arg 0)
       (save-excursion
 	(setq pos1 (funcall aux 1))
 	(goto-char (or (mark) (error "No mark set in this buffer")))
 	(setq pos2 (funcall aux 1))
+	;Remacs: Capture the moved object's end before text changes move markers.
+	(setq destination
+	      (and pos1 pos2
+		   (let ((start1 (min (car pos1) (cdr pos1)))
+			 (end1 (max (car pos1) (cdr pos1)))
+			 (start2 (min (car pos2) (cdr pos2)))
+			 (end2 (max (car pos2) (cdr pos2))))
+		     (if (< start1 start2)
+			 (+ 0 end2)
+		       (+ start2 (- end1 start1))))))
 	(transpose-subr-1 pos1 pos2))
-      (exchange-point-and-mark))
+      (prog1 (exchange-point-and-mark)
+        (goto-char destination)))
      ((> arg 0)
       (setq pos1 (funcall aux -1))
       (setq pos2 (funcall aux arg))

@@ -2058,20 +2058,32 @@ report errors as appropriate for this kind of usage."
     (insert b m a)))
 
 (defun transpose-subr (mover arg &optional special)
-  "Subroutine to do the work of transposing objects."
+  "Subroutine to do the work of transposing objects.
+When ARG is zero, leave point after the moved current object."
   (let ((aux (if special mover
                (lambda (x)
                  (cons (progn (funcall mover x) (point))
                        (progn (funcall mover (- x)) (point))))))
-        pos1 pos2)
+        pos1 pos2 destination)
     (cond
      ((= arg 0)
       (save-excursion
         (setq pos1 (funcall aux 1))
         (goto-char (or (mark) (error "No mark set in this buffer")))
         (setq pos2 (funcall aux 1))
+        ;Remacs: Capture the moved object's end before text changes move markers.
+        (setq destination
+              (and pos1 pos2
+                   (let ((start1 (min (car pos1) (cdr pos1)))
+                         (end1 (max (car pos1) (cdr pos1)))
+                         (start2 (min (car pos2) (cdr pos2)))
+                         (end2 (max (car pos2) (cdr pos2))))
+                     (if (< start1 start2)
+                         (+ 0 end2)
+                       (+ start2 (- end1 start1))))))
         (transpose-subr-1 pos1 pos2))
-      (exchange-point-and-mark))
+      (prog1 (exchange-point-and-mark)
+        (goto-char destination)))
      ((> arg 0)
       (setq pos1 (funcall aux -1))
       (setq pos2 (funcall aux arg))
