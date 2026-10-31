@@ -160,7 +160,7 @@ parentheses and are equivalent to white space.  RFC822 also
 accepts comments in random places (all of which is handled by
 ietf-drums-date--tokenize-string) and two-digit years.  For
 two-digit years, 50 and up are interpreted as 1950 through 1999
-and 00 through 49 as 200 through 2049.
+and 00 through 49 as 2000 through 2049.
 
 We are somewhat more lax in what we accept (specifically, the
 hours don't have to be two digits, and the TZ and the comma after
