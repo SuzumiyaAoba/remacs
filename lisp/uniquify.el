@@ -31,10 +31,45 @@
   "Refreshes all `uniquify'-managed buffers with current options."
   ;;Remacs: style nil restores the traditional numeric suffix names.
   (save-current-buffer
-    (dolist (buffer (buffer-list))
-      (set-buffer buffer)
-      (when uniquify-managed
-        (rename-buffer (uniquify-buffer-base-name) 'unique)))))
+    (let (groups)
+      (dolist (buffer (buffer-list))
+        (set-buffer buffer)
+        (when uniquify-managed
+          (let ((base (uniquify-buffer-base-name)))
+            ;; Save every member before resetting names.  Rebuild the groups
+            ;; from these buffers instead of relying on their old managed
+            ;; lists, which may change while rename-buffer runs.
+            (let ((entry (assoc base groups)))
+              (if entry
+                  (setcdr entry (cons buffer (cdr entry)))
+                (push (cons base (list buffer)) groups))))))
+      ;; Snapshot all managed buffers before renaming any of them: a rename
+      ;; hook may update another buffer's `uniquify-managed' state.
+      (dolist (group groups)
+        (dolist (buffer (cdr group))
+          (when (buffer-live-p buffer)
+            (with-current-buffer buffer
+              ;; Avoid recursively rationalizing while restoring base names.
+              (let ((uniquify-buffer-name-style nil))
+                (rename-buffer (car group) 'unique))))))
+      (when uniquify-buffer-name-style
+        (dolist (group groups)
+          (let ((base (car group))
+                (fix-list nil))
+            (dolist (buffer (cdr group))
+              (when (buffer-live-p buffer)
+                (let ((dirname (uniquify-buffer-file-directory buffer)))
+                  (if (and dirname
+                           (not (and uniquify-ignore-buffers-re
+                                     (string-match uniquify-ignore-buffers-re
+                                                   (buffer-name buffer)))))
+                      (push (uniquify-make-item
+                             base (uniquify-buffer-file-name buffer) buffer)
+                            fix-list)
+                    (with-current-buffer buffer
+                      (setq uniquify-managed nil))))))
+            (when fix-list
+              (uniquify-rationalize (nreverse fix-list)))))))))
 
 (defun uniquify--set-option (variable value)
   "Call in `defcustom' :set keyword when `uniquify--buffer-refresh' is needed.
