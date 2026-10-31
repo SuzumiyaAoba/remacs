@@ -514,7 +514,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("next-frame", 0, 2, f_frame_self, "Next frame (only one)."),
     S!("previous-frame", 0, 2, f_frame_self, ""),
     S!("old-selected-frame", 0, 0, f_old_selected_frame, ""),
-    S!("old-selected-window", 0, 0, f_sel_window, ""),
+    S!("old-selected-window", 0, 0, f_old_selected_window, ""),
     S!("raise-frame", 0, 1, f_raise_frame, ""),
     S!("lower-frame", 0, 1, f_lower_frame, ""),
     S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
@@ -1201,6 +1201,15 @@ fn f_sel_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         Some(w) => Ok(Value::Window(w)),
         None => Ok(Value::Nil),
     }
+}
+
+fn f_old_selected_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if let Some(symbol) = i.q_soft("remacs--mode-line-selected-window")
+        && i.bound_p(symbol)
+    {
+        return Ok(i.symbol_value(symbol));
+    }
+    f_sel_window(i, a)
 }
 
 /// `window-valid-p': any window object — leaf or internal — that

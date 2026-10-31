@@ -1940,7 +1940,7 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
 }
 
 #[derive(Default)]
-struct ModeLineContext {
+pub(super) struct ModeLineContext {
     buffer_name: String,
     file_name: String,
     mode_name: String,
@@ -1958,7 +1958,7 @@ struct ModeLineContext {
     narrowed: bool,
 }
 
-fn mode_line_variable(i: &Interp, buffer_id: usize, name: &str) -> Option<Value> {
+pub(super) fn mode_line_variable(i: &Interp, buffer_id: usize, name: &str) -> Option<Value> {
     let id = i.q_soft(name)?;
     i.buffer_local_toplevel_value(id, buffer_id)
         .or_else(|| i.default_toplevel_value(id))
@@ -1977,18 +1977,17 @@ pub(super) fn prepare_mode_line_remote(
                 let window = window.borrow();
                 (window.buffer, window.dead || window.minibuffer)
             };
-            if skip || !seen.insert(buffer) || !i.buffer_live(buffer) {
+            if skip || !i.buffer_live(buffer) {
                 continue;
             }
             // Use the actual formatter to collect this dependency, including
             // active conditionals, symbols, field widths and escaped percents.
             let probe = ModeLineContext::default();
             for name in ["mode-line-format", "header-line-format", "tab-line-format"] {
-                if let Some(format) = mode_line_variable(i, buffer, name) {
-                    let _ = format_mode_line_value(i, buffer, &format, &probe, 0, &mut false);
-                }
+                let format = super::mode_line::format(i, buffer, window.borrow().id, name);
+                let _ = format_mode_line_value(i, buffer, &format, &probe, 0, &mut false);
             }
-            if !probe.remote_used.get() {
+            if !probe.remote_used.get() || !seen.insert(buffer) {
                 continue;
             }
             i.set_current_buffer(buffer);
@@ -2437,24 +2436,15 @@ fn mode_line_help_echo(
     }
 }
 
-fn format_mode_line_minor_modes(
-    i: &Interp,
-    buffer_id: usize,
-    context: &ModeLineContext,
-    depth: usize,
-    fill_remaining: &mut bool,
-) -> String {
+pub(super) fn mode_line_minor_values(i: &Interp, buffer_id: usize) -> Vec<Value> {
     let Some(alist) = mode_line_variable(i, buffer_id, "minor-mode-alist") else {
-        return String::new();
+        return Vec::new();
     };
     let Ok(entries) = alist.list_to_vec() else {
-        return String::new();
+        return Vec::new();
     };
-    let mut output = String::new();
+    let mut output = Vec::new();
     for entry in entries {
-        if *fill_remaining {
-            break;
-        }
         let Ok(parts) = entry.list_to_vec() else {
             continue;
         };
@@ -2465,25 +2455,37 @@ fn format_mode_line_minor_modes(
             .unwrap_or(Value::Nil)
             .truthy();
         if active {
-            for value in parts.iter().skip(1) {
-                if *fill_remaining {
-                    break;
-                }
-                output.push_str(&format_mode_line_value(
-                    i,
-                    buffer_id,
-                    value,
-                    context,
-                    depth + 1,
-                    fill_remaining,
-                ));
-            }
+            output.extend(parts.into_iter().skip(1));
         }
     }
     output
 }
 
-fn format_mode_line_value(
+fn format_mode_line_minor_modes(
+    i: &Interp,
+    buffer_id: usize,
+    context: &ModeLineContext,
+    depth: usize,
+    fill_remaining: &mut bool,
+) -> String {
+    let mut output = String::new();
+    for value in mode_line_minor_values(i, buffer_id) {
+        if *fill_remaining {
+            break;
+        }
+        output.push_str(&format_mode_line_value(
+            i,
+            buffer_id,
+            &value,
+            context,
+            depth + 1,
+            fill_remaining,
+        ));
+    }
+    output
+}
+
+pub(super) fn format_mode_line_value(
     i: &Interp,
     buffer_id: usize,
     value: &Value,
@@ -7529,12 +7531,12 @@ fn render_grid_internal(
         let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
         let nobreak_char_display = buffer_setting(i, "nobreak-char-display", buf_id);
         let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
-        let mode_line_format = buffer_setting(i, "mode-line-format", buf_id);
-        let mode_line_enabled = !mode_line_format.is_nil();
-        let tab_line_format = buffer_setting(i, "tab-line-format", buf_id);
-        let tab_line_enabled = !tab_line_format.is_nil();
-        let header_line_format = buffer_setting(i, "header-line-format", buf_id);
-        let header_line_enabled = !header_line_format.is_nil();
+        let mode_line_format = super::mode_line::format(i, buf_id, window_id, "mode-line-format");
+        let mode_line_enabled = !buffer_setting(i, "mode-line-format", buf_id).is_nil();
+        let tab_line_format = super::mode_line::format(i, buf_id, window_id, "tab-line-format");
+        let tab_line_enabled = !buffer_setting(i, "tab-line-format", buf_id).is_nil();
+        let header_line_format = super::mode_line::format(i, buf_id, window_id, "header-line-format");
+        let header_line_enabled = !buffer_setting(i, "header-line-format", buf_id).is_nil();
         let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
         let (line_number_width, line_number_offset) =
             line_number_display_settings(i, buf_id);

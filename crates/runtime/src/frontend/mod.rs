@@ -410,6 +410,7 @@ pub trait KeyIo {
         windows: Vec<crate::editor::WindowRef>,
     ) -> Result<(), crate::lisp::error::Flow> {
         crate::editor::winxtra::run_pre_redisplay_function(i, windows.clone())?;
+        mode_line::prepare(i, &windows)?;
         render::prepare_mode_line_remote(i, windows)
     }
     /// Run the configured pre-redisplay function for the windows this
@@ -487,6 +488,7 @@ pub trait KeyIo {
 
 mod bitmap;
 mod fringe;
+mod mode_line;
 mod command;
 mod render;
 pub(crate) use command::minibuf_dispatch_key;
