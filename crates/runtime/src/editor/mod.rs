@@ -7535,9 +7535,10 @@ fn f_x_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 /// `x-popup-dialog' — GNU menu.c Fx_popup_dialog: POSITION decodes a
 /// window via the posn structure, THEN the contents list is checked.
-/// t / (menu-bar|tab-bar|tool-bar ...) → selected window; cons →
-/// posn-window car(cdr); window/frame → itself; anything else (incl.
-/// nil) → window=nil and CHECK_WINDOW signals `windowp nil'.
+/// t follows the documented mouse-frame contract, rather than GNU 31.1's
+/// selected_window implementation. Bar events use the selected window;
+/// cons → posn-window car(cdr); window/frame → itself; anything else
+/// (incl. nil) → window=nil and CHECK_WINDOW signals `windowp nil'.
 fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     use crate::frontend::DialogItem;
     fn dialog_car(i: &mut Interp, v: &Value) -> Result<Value, Flow> {
@@ -7549,7 +7550,20 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let sel_win = sel_window(i).map(Value::Window).unwrap_or(Value::Nil);
     let window: Value = match &a[0] {
-        Value::Sym(s) if *s == sym::T => sel_win.clone(),
+        Value::Sym(s) if *s == sym::T => i
+            .gui_mouse_frame_pixel_position
+            .or(i.gui_mouse_frame_position)
+            .and_then(|(frame_id, _, _)| {
+                i.frames
+                    .iter()
+                    .find(|frame| {
+                        let frame = frame.borrow();
+                        frame.id == frame_id && !frame.dead
+                    })
+                    .cloned()
+            })
+            .map(Value::Frame)
+            .unwrap_or_else(|| sel_win.clone()),
         Value::Cons(c) => {
             let head = c.borrow().car.clone();
             let cdr = c.borrow().cdr.clone();
