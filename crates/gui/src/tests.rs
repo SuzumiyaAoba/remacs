@@ -240,6 +240,16 @@ fn help_keysym_reaches_the_named_help_binding() {
 }
 
 #[test]
+fn break_keysym_reaches_the_named_break_binding() {
+    let key = ks("break", None, false, false, false, false);
+    assert!(command_keystroke(&key));
+    assert_eq!(
+        keystroke_to_code(&key),
+        Some(remacs_runtime::editor::event_code_for("break"))
+    );
+}
+
+#[test]
 fn modified_named_keys_follow_gui_command_bindings() {
     let mut i = Interp::new();
     i.eval_str("(progn (insert \"alpha\\nbeta\") (goto-char (point-max)))")
