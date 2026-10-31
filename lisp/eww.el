@@ -569,7 +569,8 @@ new buffer instead of reusing the default EWW buffer."
     (eww (concat "file://"
 	         (and (memq system-type '(windows-nt ms-dos))
 		      "/")
-	         (expand-file-name file))
+	         (url-hexify-string (expand-file-name file)
+                                   (append '(?/ ?:) url-unreserved-chars)))
          new-buffer)))
 
 (defun eww--file-buffer (file)
