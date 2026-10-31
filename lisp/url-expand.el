@@ -64,7 +64,7 @@ Second arg DEFAULT is a URL to start with if URL is relative.
 If DEFAULT is nil or missing, the current buffer's URL is used.
 Path components that are `.' are removed, and
 path components followed by `..' are removed, along with the `..' itself."
-  (if (and url (not (string-match "^#" url)))
+  (when url
       ;; Need to nuke newlines and spaces in the URL, or we open
       ;; ourselves up to potential security holes.
       (setq url (mapconcat (lambda (x)
