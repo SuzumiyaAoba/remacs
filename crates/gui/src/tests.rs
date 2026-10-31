@@ -612,6 +612,19 @@ fn insert_delete_keysyms_reach_default_gui_bindings() {
 }
 
 #[test]
+fn menu_keysym_reaches_the_named_menu_binding() {
+    use remacs_runtime::editor::event_code_for;
+    let key = ks("menu", None, false, false, false, false);
+    assert!(command_keystroke(&key));
+    assert_eq!(keystroke_to_code(&key), Some(event_code_for("menu")));
+    let modified = ks("menu", None, false, true, true, false);
+    assert_eq!(
+        keystroke_to_code(&modified),
+        Some(event_code_for("menu") | CHAR_META | CHAR_SHIFT)
+    );
+}
+
+#[test]
 fn sun_again_keysym_uses_the_xkb_redo_binding() {
     let key = ks("redo", None, false, false, false, false);
     assert!(command_keystroke(&key));
