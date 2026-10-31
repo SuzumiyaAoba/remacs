@@ -669,7 +669,9 @@ the test clause will be unchanged."
 	     ((null save-chr) nil)
 	     ((= save-chr ?t)
 	      (delete-region save-pos (progn (forward-char 1) (point)))
-	      (insert (or (cdr (assq 'type type-info)) "\"\"")))
+	      ;;Remacs: Content-Type is untrusted, just like MIME parameters.
+	      (insert (shell-quote-argument
+		       (or (cdr (assq 'type type-info)) ""))))
 	     ((memq save-chr '(?M ?n ?F))
 	      (delete-region save-pos (progn (forward-char 1) (point)))
 	      (insert "\"\""))
