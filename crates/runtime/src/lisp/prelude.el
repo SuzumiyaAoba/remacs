@@ -35956,15 +35956,17 @@ If ANY-SYMBOL is non-nil, don't insist the symbol be bound."
 
 ;; ---------- file wildcards / extended attributes ----------
 
-(defun wildcard--class-end (wildcard start)
+(defun wildcard--class-end (wildcard start &optional no-first-close)
   "Return the position of the closing bracket in WILDCARD, or nil.
 START is the first position inside a bracket expression.  Backslash
-quotes the following character.  POSIX bracket subexpressions do not
-end the surrounding expression."
+quotes the following character.  NO-FIRST-CLOSE means that the first
+position is not a literal closing bracket."
   (let ((i start)
         (len (length wildcard))
         end)
-
+    (unless no-first-close
+      (when (and (< i len) (eq (aref wildcard i) ?\]))
+        (setq i (1+ i))))
     (while (and (< i len) (not end))
       (let ((ch (aref wildcard i)))
         (cond
@@ -36143,10 +36145,6 @@ by `sh' are supported."
 	     (concat result
 		     (cond
 		      ((and (eq ch ?\[)
-			    (< (1+ i) len)
-			    (eq (aref wildcard (1+ i)) ?\]))
-		       "\\[")
-((and (eq ch ?\[)
 			    (not (wildcard--class-end wildcard (1+ i))))
 		       (regexp-quote "["))
 		      ((eq ch ?\[)
@@ -36172,7 +36170,7 @@ by `sh' are supported."
             prefix "[]"
             prefix-member t
             prefix-close t)))
-    (setq j (wildcard--class-end wildcard i))
+    (setq j (wildcard--class-end wildcard i t))
     (let ((content
            (wildcard--class-content wildcard i j prefix-close prefix-member)))
       (if (eq content 'wildcard--empty-class)
