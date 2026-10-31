@@ -337,7 +337,8 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
 		(insert "))\n"))))))
       ;; Save the additional variables.
       (dolist (elem savehist-additional-variables)
-        (when (not (or (memq elem savehist-minibuffer-history-variables)
+        (when (not (or (and savehist-save-minibuffer-history
+                            (memq elem savehist-minibuffer-history-variables))
                        (and savehist-save-minibuffer-history
                             (consp elem)
                             (memq (car elem) savehist-minibuffer-history-variables))))
