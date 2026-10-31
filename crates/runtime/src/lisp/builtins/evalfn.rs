@@ -2826,8 +2826,9 @@ pub(crate) fn combine_after_change_execute(i: &mut Interp) -> EvalResult {
 /// `specbind (inhibit-modification-hooks)' scope for the hook calls.
  pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
     // GNU `prepare_to_modify_buffer_1': barf-if-buffer-read-only
-    // runs before any hook work, even under `inhibit-modification-hooks'.
-    crate::buffer::primitives::check_writable(i)?;
+    // runs at the change start before any hook work, even under
+    // `inhibit-modification-hooks'.
+    crate::buffer::primitives::check_writable_at(i, beg1 - 1)?;
     // `verify_interval_modification' — only when the buffer has an
     // interval tree; resets the saved insert-hook lists either way.
     if buffer_has_intervals(i) {

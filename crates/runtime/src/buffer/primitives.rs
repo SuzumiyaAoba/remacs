@@ -2543,10 +2543,10 @@ fn chg_delete_inner(
     if s0 >= e0 {
         return Ok(DeletedText::default());
     }
-    // GNU barf-if-buffer-read-only: kill/delete in a read-only buffer
-    // signals `buffer-read-only' before touching text.
+    // GNU prepare_to_modify_buffer checks the first changed position,
+    // which need not be point (e.g. delete-region).
     let target = cur(i);
-    check_writable(i)?;
+    check_writable_at(i, s0)?;
     text_ro_range(i, s0, e0)?;
     // GNU del_range_1 preserves the start in a non-advancing marker,
     // then keeps the original length and clamps the end after hooks.
@@ -2926,13 +2926,27 @@ pub(crate) fn err_sym(i: &mut Interp, name: &str, data: Vec<Value>) -> Flow {
 
 /// Signal `buffer-read-only` if the current buffer is read-only.
 pub(crate) fn check_writable(i: &mut Interp) -> Result<(), Flow> {
+    let point = cur(i).borrow().point();
+    check_writable_at(i, point)
+}
+
+pub(crate) fn check_writable_at(i: &mut Interp, pos: usize) -> Result<(), Flow> {
+    check_writable_position(i, Value::Int(pos as i128 + 1))
+}
+
+fn check_writable_position(i: &mut Interp, position: Value) -> Result<(), Flow> {
     let ro_id = i.q("buffer-read-only");
     let ro = i.symbol_value(ro_id);
     let inh_id = i.q("inhibit-read-only");
     let inhibit = i.symbol_value(inh_id);
-    if ro.truthy() && !inhibit.truthy() {
-        let bv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
-        return Err(i.signal_data(sym::BUFFER_READ_ONLY, vec![bv]));
+    if ro.truthy() && inhibit.is_nil() {
+        // Fbarf_if_buffer_read_only uses Fget_text_property: honor
+        // categories/defaults and POSITION validation in the same order.
+        let property = f_get_text_property(i, vec![position, Value::Sym(inh_id)].into())?;
+        if property.is_nil() {
+            let bv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+            return Err(i.signal_data(sym::BUFFER_READ_ONLY, vec![bv]));
+        }
     }
     Ok(())
 }
@@ -8145,7 +8159,7 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Ok(Value::Nil);
         }
         let s: crate::lisp::text::EmacsText = std::iter::repeat(c).take(n as usize).collect();
-        insert_str_at_point(i, &s, false)?;
+        chg_insert_and_inherit_pt(i, &s)?;
         // GNU `internal_self_insert': when `auto-fill-function' is
         // non-nil and the `auto-fill-chars' table maps the inserted
         // char (non-table value falls back to SPC and \n), call
@@ -8442,7 +8456,7 @@ fn f_delete_and_extract_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     if s1 == e1 {
         return Ok(Value::string(""));
     }
-    check_writable(i)?;
+    check_writable_at(i, (s1 - 1) as usize)?;
     barf_if_file_locked(i)?;
     let (s, e) = ((s1 - 1) as usize, (e1 - 1) as usize);
     let deleted = chg_delete_inner(i, s, e, true)?;
@@ -8477,7 +8491,7 @@ fn f_erase_buffer(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         len
     };
     if tlen > 0 {
-        check_writable(i)?;
+        check_writable_at(i, 0)?;
         barf_if_file_locked(i)?;
     }
     chg_delete(i, 0, tlen)?;
@@ -15372,20 +15386,12 @@ fn f_max_char(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     ))
 }
 fn f_barf_if_buffer_read_only(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: optional POSITION is CHECK_FIXNUM'd (a marker whose
-    // buffer was deleted reports `fixnump' too), then the read-only check.
-    match a.get(0) {
-        None | Some(Value::Nil) => {}
-        Some(Value::Marker(m)) => {
-            if m.borrow().buffer.is_none() {
-                return Err(i.wrong_type_mut("fixnump", &a[0].clone()));
-            }
-        }
-        Some(v) => {
-            crate::lisp::builtins::want_fixnum(i, v)?;
-        }
-    }
-    check_writable(i)?;
+    // GNU CHECK_FIXNUM precedes the conditional property/range lookup.
+    let position = match a.get(0) {
+        None | Some(Value::Nil) => Value::Int(cur(i).borrow().point() as i128 + 1),
+        Some(value) => Value::Int(crate::lisp::builtins::want_fixnum(i, value)?),
+    };
+    check_writable_position(i, position)?;
     Ok(Value::Nil)
 }
 

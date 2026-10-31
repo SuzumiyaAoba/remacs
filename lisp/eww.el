@@ -803,6 +803,9 @@ This replaces the region with the preprocessed HTML."
 (defsubst eww-document-base (url dom)
   `(base ((href . ,url)) ,dom))
 
+(defvar eww--disabled-control-map nil
+  "Disabled controls in the document currently being rendered.")
+
 (defun eww-display-document (document &optional point buffer)
   (unless (fboundp 'libxml-parse-html-region)
     (error "This function requires Emacs to be compiled with libxml2"))
@@ -820,6 +823,7 @@ This replaces the region with the preprocessed HTML."
       (setq bidi-paragraph-direction nil)
       (plist-put eww-data :dom document)
       (let ((inhibit-read-only t)
+            (eww--disabled-control-map (eww--disabled-controls document))
             ;; Possibly set by the caller, e.g., `eww-render' which
             ;; preserves the old URL #target before chasing redirects.
             (shr-target-id (or shr-target-id
@@ -1747,13 +1751,72 @@ just re-display the HTML already fetched."
   (1- (next-single-property-change
        (point) 'eww-form nil (point-max))))
 
+(defun eww--collect-disabled-controls (dom inherited table)
+  "Record disabled controls below DOM in TABLE."
+  (when (consp dom)
+    (let* ((fieldset (and (eq (dom-tag dom) 'fieldset)
+                          (dom-attr dom 'disabled)))
+           (legend (and fieldset
+                        (cl-find-if (lambda (child)
+                                      (and (consp child) (eq (dom-tag child) 'legend)))
+                                    (dom-children dom)))))
+      (when (and (memq (dom-tag dom) '(input button select textarea))
+                 (or inherited (dom-attr dom 'disabled)))
+        (puthash dom t table))
+      (dolist (child (dom-children dom))
+        (unless (stringp child)
+          (eww--collect-disabled-controls
+           child (or inherited (and fieldset (not (eq child legend)))) table))))))
+
+(defun eww--disabled-controls (dom)
+  "Return an identity table of disabled controls in DOM."
+  (let ((table (make-hash-table :test #'eq)))
+    (eww--collect-disabled-controls dom nil table)
+    table))
+
+(defun eww--control-disabled-p (dom &optional form)
+  (and dom
+       (or (dom-attr dom 'disabled)
+           (let ((table (or (cdr (assq :disabled-controls (or form eww-form)))
+                            eww--disabled-control-map)))
+             (and table (gethash dom table))))))
+
+(defun eww--field-disabled-p (field &optional form)
+  (or (plist-get field :disabled)
+      (eww--control-disabled-p (plist-get field :dom)
+                               (or form (plist-get field :eww-form)))))
+
+(defun eww--mark-disabled (start end dom)
+  "Record and display the disabled state of the rendered control DOM."
+  (when (< start end)
+    (let* ((field (get-text-property start 'eww-form))
+           (disabled (not (null (eww--field-disabled-p field))))
+           (readonly (and (dom-attr dom 'readonly)
+                          (member (plist-get field :type) eww-text-input-types)))
+           (inhibit-read-only t))
+      (when (eq (plist-get field :dom) dom)
+        (plist-put field :disabled disabled)
+        (when (or disabled readonly)
+          (remove-text-properties start end '(inhibit-read-only nil))
+          (add-text-properties start end '(read-only t rear-nonsticky t)))
+        (when disabled
+          (remove-text-properties start end
+                                  '(keymap nil local-map nil button nil shr-tab-stop nil field nil))
+          (let ((face (get-text-property start 'face)))
+            (unless (or (eq face 'shadow) (and (listp face) (memq 'shadow face)))
+              (add-face-text-property start end 'shadow)))
+          (put-text-property start end 'help-echo "Disabled control"))))))
+
 (defun eww-tag-form (dom)
   (let ((eww-form (list (cons :method (dom-attr dom 'method))
 			(cons :action (dom-attr dom 'action))
                         (cons :controls
                               (dom-search dom (lambda (node)
                                                 (memq (dom-tag node)
-                                                      '(input button select textarea)))))))
+                                                      '(input button select textarea)))))
+                        (cons :disabled-controls
+                              (or eww--disabled-control-map
+                                  (eww--disabled-controls (or (plist-get eww-data :dom) dom))))))
 	(start (point)))
     (insert "\n")
     (shr-ensure-paragraph)
@@ -1787,7 +1850,8 @@ just re-display the HTML already fetched."
     (insert " ")
     (put-text-property start (1+ start) 'help-echo "Button")
     ;; Mark this as an element we can TAB to.
-    (put-text-property start (1+ start) 'shr-tab-stop t)))
+    (put-text-property start (1+ start) 'shr-tab-stop t)
+    (eww--mark-disabled start (point) dom)))
 
 (defun eww-form-checkbox (dom)
   (let ((start (point)))
@@ -1804,7 +1868,8 @@ just re-display the HTML already fetched."
     (put-text-property start (point) 'keymap eww-checkbox-map)
     ;; Pretend to touch-screen.el that this is a button.
     (put-text-property start (point) 'button t)
-    (insert " ")))
+    (insert " ")
+    (eww--mark-disabled start (point) dom)))
 
 (defun eww-form-file (dom)
   (let ((start (point))
@@ -1824,7 +1889,8 @@ just re-display the HTML already fetched."
     (put-text-property start (point) 'keymap eww-submit-file)
     ;; Pretend to touch-screen.el that this is a button.
     (put-text-property start (point) 'button t)
-    (insert " ")))
+    (insert " ")
+    (eww--mark-disabled start (point) dom)))
 
 (defun eww-select-file (&optional event)
   "Change the value of the upload file menu under point.
@@ -1833,12 +1899,12 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
   (interactive (list last-nonmenu-event) eww-mode)
   (when (and event (setq event (event-start event)))
     (goto-char (posn-point event)))
-  (let*  ((input (get-text-property (point) 'eww-form)))
-    (let ((filename
-	   (let ((insert-default-directory t))
-	     (read-file-name "filename:  "))))
-      (eww-update-field filename (length "Browse"))
-              (plist-put input :filename filename))))
+  (let ((input (get-text-property (point) 'eww-form)))
+    (unless (eww--field-disabled-p input)
+      (let ((filename (let ((insert-default-directory t))
+                        (read-file-name "filename:  "))))
+        (eww-update-field filename (length "Browse"))
+        (plist-put input :filename filename)))))
 
 (defun eww--mark-text-padding (start end)
   "Mark display-only padding between START and END."
@@ -1872,7 +1938,8 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
     (put-text-property start (point) 'eww-form form)
     (put-text-property start (point) 'field form)
     (put-text-property start (point) 'front-sticky t)
-    (insert " ")))
+    (insert " ")
+    (eww--mark-disabled start (point) dom)))
 
 (defconst eww-text-input-types '("text" "password" "textarea"
                                  "color" "date" "datetime" "datetime-local"
@@ -2032,7 +2099,8 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
     (put-text-property start (point) 'eww-form form)
     (put-text-property start (point) 'front-sticky t)
     (put-text-property start (point) 'field form)
-    (put-text-property start (1+ start) 'shr-tab-stop t)))
+    (put-text-property start (1+ start) 'shr-tab-stop t)
+    (eww--mark-disabled start (point) dom)))
 
 (defun eww-tag-input (dom)
   (let ((type (downcase (or (dom-attr dom 'type) "text")))
@@ -2057,12 +2125,14 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
 	  (nconc eww-form (list
 			   (list 'hidden
                                  :dom dom
+                                 :disabled (not (null (eww--control-disabled-p dom)))
 				 :name (dom-attr dom 'name)
 				 :value (or (dom-attr dom 'value) "")))))))
      (t
       (eww-form-text dom)))
     (unless (or (= start (point))
-                (equal type "submit"))
+                (equal type "submit")
+                (eww--control-disabled-p dom))
       (put-text-property start (1+ start) 'help-echo "Input field")
       ;; Mark this as an element we can TAB to.
       (put-text-property start (1+ start) 'shr-tab-stop t))))
@@ -2081,15 +2151,15 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
          (menu (list :name (dom-attr dom 'name)
                      :eww-form eww-form :dom dom :type "select"
                      :multiple multiple
-                     :disabled (and multiple (not (null (dom-attr dom 'disabled))))))
+                     :disabled (not (null (eww--control-disabled-p dom)))
+                     :length nil))
 	 (options nil)
          (disabled-options nil)
 	 (start (point))
 	 (max 0))
-    (when multiple
-      (dolist (group (dom-by-tag dom 'optgroup))
-        (when (dom-attr group 'disabled)
-          (setq disabled-options (nconc disabled-options (dom-by-tag group 'option))))))
+    (dolist (group (dom-by-tag dom 'optgroup))
+      (when (dom-attr group 'disabled)
+        (setq disabled-options (nconc disabled-options (dom-by-tag group 'option)))))
     (dolist (elem (dom-by-tag dom 'option))
       (let ((display (dom-inner-text elem))
             (value (or (dom-attr elem 'value)
@@ -2097,24 +2167,24 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
                         (replace-regexp-in-string
                          "[ \t\n\r\f]+" " " (eww--option-text elem))
                         " +" " +"))))
-        (when (and (not multiple) (dom-attr elem 'selected))
-	  (nconc menu (list :value value)))
         (setq max (max max 1 (string-width display)))
 	(push (list 'item
 		    :value value
 		    :display display
                     :selected (not (null (dom-attr elem 'selected)))
-                    :disabled (and multiple
-                                   (not (null (or (dom-attr elem 'disabled)
-                                                  (memq elem disabled-options))))))
+                    :disabled (not (null (or (dom-attr elem 'disabled)
+                                             (memq elem disabled-options)))))
 	      options)))
     (when options
       (setq options (nreverse options))
       (if multiple
           (nconc menu (list :value nil))
-        ;; A single select defaults to the first value.
-        (unless (plist-get menu :value)
-	  (nconc menu (list :value (nth 2 (car options))))))
+        (let ((chosen (or (cl-find-if (lambda (item) (plist-get (cdr item) :selected)) options)
+                          (cl-find-if (lambda (item) (not (plist-get (cdr item) :disabled)))
+                                      options))))
+          (dolist (item options)
+            (plist-put (cdr item) :selected (eq item chosen)))
+          (nconc menu (list :value (and chosen (plist-get (cdr chosen) :value))))))
       (nconc menu options)
       (when multiple
         (plist-put menu :value
@@ -2132,20 +2202,14 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
       (unless (= start (point))
 	(put-text-property start (1+ start) 'help-echo "select field")
 	(put-text-property start (1+ start) 'shr-tab-stop t))
-      (shr-ensure-paragraph))))
+      (shr-ensure-paragraph)
+      (eww--mark-disabled start (point) dom))))
 
 (defun eww-select-display (select)
-  (if (plist-get select :multiple)
-      (mapconcat (lambda (item) (plist-get item :display))
-                 (eww--selected-items select) ", ")
-    (let ((value (plist-get select :value))
-	  display)
-      (dolist (elem select)
-	(when (and (consp elem)
-		   (eq (car elem) 'item)
-		   (equal value (plist-get (cdr elem) :value)))
-	  (setq display (plist-get (cdr elem) :display))))
-      display)))
+  (let ((items (eww--selected-items select)))
+    (if (plist-get select :multiple)
+        (mapconcat (lambda (item) (plist-get item :display)) items ", ")
+      (or (plist-get (car items) :display) ""))))
 
 (defun eww--form-items (form)
   (cl-loop for elem in form
@@ -2155,12 +2219,23 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
 
 (defun eww--selected-items (select &optional enabled-only)
   "Return selected option items from SELECT in document order."
-  (unless (and enabled-only (plist-get select :disabled))
-    (cl-remove-if-not
-     (lambda (item)
-       (and (plist-get item :selected)
-            (or (not enabled-only) (not (plist-get item :disabled)))))
-     (eww--form-items select))))
+  (unless (and enabled-only (eww--field-disabled-p select))
+    (let* ((items (eww--form-items select))
+           (value (plist-get select :value))
+           (selected
+            (if (plist-get select :multiple)
+                (cl-remove-if-not (lambda (item) (plist-get item :selected)) items)
+              (let ((chosen
+                     (and value
+                          (or (cl-find-if (lambda (item)
+                                            (and (plist-get item :selected)
+                                                 (equal (plist-get item :value) value))) items)
+                              (cl-find-if (lambda (item)
+                                            (equal (plist-get item :value) value)) items)))))
+                (and chosen (list chosen))))))
+      (if enabled-only
+          (cl-remove-if (lambda (item) (plist-get item :disabled)) selected)
+        selected))))
 
 (defun eww-change-select (event)
   "Change the value of the select drop-down menu under point."
@@ -2170,7 +2245,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
   (mouse-set-point event)
   (let* ((input (get-text-property (point) 'eww-form))
          (multiple (plist-get input :multiple)))
-    (unless (plist-get input :disabled)
+    (unless (eww--field-disabled-p input)
       (popup-menu
        (cons
 	(if multiple "Change Values" "Change Value")
@@ -2184,7 +2259,7 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
                      (plist-get elem :display))
                    (lambda ()
                      (interactive)
-                     (unless (and multiple (plist-get elem :disabled))
+                     (unless (or (eww--field-disabled-p input) (plist-get elem :disabled))
                        (if multiple
                            (progn
                              (plist-put elem :selected (not (plist-get elem :selected)))
@@ -2192,9 +2267,11 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
 					(mapcar (lambda (item) (plist-get item :value))
 						(eww--selected-items input)))
                              (goto-char (eww-update-field (eww-select-display input))))
+                         (dolist (item (eww--form-items input))
+                           (plist-put item :selected (eq item elem)))
 			 (plist-put input :value (plist-get elem :value))
 			 (goto-char (eww-update-field (plist-get elem :display))))))
-                   (or (not multiple) (not (plist-get elem :disabled)))))
+                   (not (plist-get elem :disabled))))
 	 (eww--form-items input)))
        event))))
 
@@ -2225,29 +2302,30 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
   (when (and event (setq event (event-start event)))
     (goto-char (posn-point event)))
   (let* ((input (get-text-property (point) 'eww-form))
-	 (type (plist-get input :type)))
-    (if (equal type "checkbox")
-	(goto-char
-	 (1+
-	  (if (plist-get input :checked)
-	      (progn
-		(plist-put input :checked nil)
-		(eww-update-field eww-form-checkbox-symbol))
-	    (plist-put input :checked t)
-	    (eww-update-field eww-form-checkbox-selected-symbol))))
-      ;; Radio button.  Switch all other buttons off.
-      (let ((name (plist-get input :name)))
-	(save-excursion
-	  (dolist (elem (eww-inputs (plist-get input :eww-form)))
-	    (when (equal (plist-get (cdr elem) :name) name)
-	      (goto-char (car elem))
-	      (if (not (eq (cdr elem) input))
-		  (progn
-		    (plist-put (cdr elem) :checked nil)
-		    (eww-update-field eww-form-checkbox-symbol))
-		(plist-put (cdr elem) :checked t)
-		(eww-update-field eww-form-checkbox-selected-symbol)))))
-	(forward-char 1)))))
+         (type (plist-get input :type)))
+    (unless (eww--field-disabled-p input)
+      (if (equal type "checkbox")
+          (goto-char
+           (1+ (if (plist-get input :checked)
+                   (progn
+                     (plist-put input :checked nil)
+                     (eww-update-field eww-form-checkbox-symbol))
+                 (plist-put input :checked t)
+                 (eww-update-field eww-form-checkbox-selected-symbol))))
+        ;; Radio grouping includes disabled radios, but no other control type.
+        (let ((name (plist-get input :name)))
+          (save-excursion
+            (dolist (elem (eww-inputs (plist-get input :eww-form)))
+              (when (and (equal (plist-get (cdr elem) :type) "radio")
+                         (equal (plist-get (cdr elem) :name) name))
+                (goto-char (car elem))
+                (if (not (eq (cdr elem) input))
+                    (progn
+                      (plist-put (cdr elem) :checked nil)
+                      (eww-update-field eww-form-checkbox-symbol))
+                  (plist-put (cdr elem) :checked t)
+                  (eww-update-field eww-form-checkbox-selected-symbol)))))
+          (forward-char 1))))))
 
 (defun eww-inputs (form)
   (let ((start (point-min))
@@ -2273,7 +2351,13 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
               (beg start))
           (setq start (next-single-property-change
                        start 'eww-form nil (point-max)))
-          (nconc props (list (cons :length (- start beg)))))))))
+          ;; Form headers are alists; rendered control state is a plist.
+          (if (keywordp (car props))
+              (plist-put props :length (- start beg))
+            (let ((length-entry (assq :length props)))
+              (if length-entry
+                  (setcdr length-entry (- start beg))
+                (nconc props (list (cons :length (- start beg))))))))))))
 
 (defun eww-input-value (input)
   (let ((type (plist-get input :type))
@@ -2294,25 +2378,32 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
   (let* ((this-input (get-text-property (point) 'eww-form))
 	 (form (plist-get this-input :eww-form))
 	 values next-submit)
+    (when (and (equal (plist-get this-input :type) "submit")
+               (eww--field-disabled-p this-input))
+      (user-error "This form control is disabled"))
     (dolist (elem (sort (eww-inputs form)
 			(lambda (o1 o2)
 			  (< (car o1) (car o2)))))
       (let* ((input (cdr elem))
 	     (input-start (car elem))
 	     (name (plist-get input :name)))
-	(when name
+	(when (and name (not (eww--field-disabled-p input)))
 	  (cond
 	   ((member (plist-get input :type) '("checkbox" "radio"))
 	    (when (plist-get input :checked)
               (push (cons (plist-get input :dom)
                           (cons name (or (plist-get input :value) "on")))
 		    values)))
-           ((and (equal (plist-get input :type) "select")
-                 (plist-get input :multiple))
-            (dolist (option (eww--selected-items input t))
-              (push (cons (plist-get input :dom)
-                          (cons name (plist-get option :value)))
-                    values)))
+           ((equal (plist-get input :type) "select")
+            (if (eww--form-items input)
+                (dolist (option (eww--selected-items input t))
+                  (push (cons (plist-get input :dom)
+                              (cons name (plist-get option :value)))
+                        values))
+              ;; Preserve programmatically constructed scalar select fields.
+              (when (stringp (plist-get input :value))
+                (push (cons (plist-get input :dom) (cons name (plist-get input :value)))
+                      values))))
 	   ((equal (plist-get input :type) "file")
             (when-let* ((file (plist-get input :filename)))
               (push (cons (plist-get input :dom)
@@ -2349,7 +2440,8 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
       (when (and (consp elem)
 		 (eq (car elem) 'hidden))
         (when-let* ((name (plist-get (cdr elem) :name))
-                    ((not (equal name ""))))
+                    ((not (equal name "")))
+                    ((not (eww--field-disabled-p (cdr elem) form))))
           (push (cons (plist-get (cdr elem) :dom)
                       (cons name (or (plist-get (cdr elem) :value) "")))
                 values))))
