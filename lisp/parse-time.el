@@ -198,7 +198,7 @@ See `decode-time' for the meaning of FORM."
     (wrong-type-argument
     (let* ((time (list nil nil nil nil nil nil nil -1 nil))
            (temp (parse-time-tokenize
-                  (downcase (parse-time--strip-comments string))))
+                  (parse-time--strip-comments (downcase string))))
            ;; RFC 5322 4.3 treats unknown obsolete alphabetic zones as -0000.
            (unknown-zone nil))
       (while temp

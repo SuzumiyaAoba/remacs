@@ -35,6 +35,11 @@ fn parse_time_string_maps_unknown_obsolete_zones_to_zero() {
                            (cons '((4) remacs-parse-time-custom-months)
                                  parse-time-rules)))
                       (parse-time-string "Wed, 15 Foo 2020 16:12:21")))
+                   ;; Preserve the original case-folding and validation order.
+                   (invalid-type
+                    (condition-case err
+                        (parse-time-string 65)
+                      (error (list (car err) (cadr err) (caddr err)))))
                    (missing (parse-time-string
                              "Wed, 15 Jan 2020 16:12:21")))
                (list
@@ -52,7 +57,8 @@ fn parse_time_string_maps_unknown_obsolete_zones_to_zero() {
                 (nth 8 comment-only)
                 (nth 8 comment-after-unknown)
                 (list (nth 4 custom-month) (nth 8 custom-month))
-                (list (nth 8 missing) (nth 6 missing) (nth 4 missing)))))"#,
+                (list (nth 8 missing) (nth 6 missing) (nth 4 missing))
+                invalid-type)))"#,
     );
     let result = result.unwrap_or_else(|flow| match flow {
         Flow::Signal(signal) => panic!(
@@ -64,6 +70,6 @@ fn parse_time_string_maps_unknown_obsolete_zones_to_zero() {
     });
     assert_eq!(
         interp.prin1_to_string(&result),
-        "((0 3 1) (0 3 1) nil nil nil (-18000 3 1) (-28800 3 1) (-18000 3 1) (-28800 3 1) nil 0 (1 nil) (nil 3 1))"
+        "((0 3 1) (0 3 1) nil nil nil (-18000 3 1) (-28800 3 1) (-18000 3 1) (-28800 3 1) nil 0 (1 nil) (nil 3 1) (wrong-type-argument sequencep 97))"
     );
 }
