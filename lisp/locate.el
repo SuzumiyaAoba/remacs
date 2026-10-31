@@ -400,7 +400,7 @@ listed by the locate program, using the function
       (let ((file-start (point)))
         (goto-char line-end)
         (skip-chars-backward " \t" file-start)
-        (list file-start (point)))))
+        (list file-start (point))))))
 
 ;; From SQL-mode
 (defun locate-current-line-number ()
