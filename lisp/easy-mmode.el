@@ -774,21 +774,36 @@ If none, error with NAME.
 ENDFUN and NARROWFUN are treated like in `easy-mmode-define-navigation'."
   (unless count (setq count 1))
   (if (< count 0) (easy-mmode--next re name (- count) endfun narrowfun)
-    (let ((re-narrow (and narrowfun (prog1 (buffer-narrowed-p) (widen)))))
-      ;; If point is inside a match for RE, move to its beginning like
-      ;; `backward-sexp' and other movement commands.
-      (when (and (not (zerop count))
-                 (save-excursion
-                   ;; Make sure we're out of the current match if any.
-                   (goto-char (if (re-search-backward re nil t 1)
-                                  (match-end 0) (point-min)))
-                   (re-search-forward re nil t 1))
-                 (< (match-beginning 0) (point) (match-end 0)))
-        (goto-char (match-beginning 0))
-        (setq count (1- count)))
-      (unless (re-search-backward re nil t count)
-        (user-error "No previous %s" name))
-      (when re-narrow (funcall narrowfun)))))
+    (let* ((re-narrow (and narrowfun (buffer-narrowed-p)))
+           (narrowed-min (and re-narrow (copy-marker (point-min))))
+           (narrowed-max (and re-narrow (copy-marker (point-max))))
+           completed)
+      (when re-narrow (widen))
+      (unwind-protect
+          (prog1
+              (progn
+                ;; If point is inside a match for RE, move to its beginning like
+                ;; `backward-sexp' and other movement commands.
+                (when (and (not (zerop count))
+                           (save-excursion
+                             ;; Make sure we're out of the current match if any.
+                             (goto-char (if (re-search-backward re nil t 1)
+                                            (match-end 0) (point-min)))
+                             (re-search-forward re nil t 1))
+                           (< (match-beginning 0) (point) (match-end 0)))
+                  (goto-char (match-beginning 0))
+                  (setq count (1- count)))
+                (unless (re-search-backward re nil t count)
+                  (user-error "No previous %s" name))
+                (when re-narrow (funcall narrowfun)))
+            (setq completed t))
+        (when re-narrow
+          (unwind-protect
+              (unless completed
+                (widen)
+                (narrow-to-region narrowed-min narrowed-max))
+            (set-marker narrowed-min nil)
+            (set-marker narrowed-max nil)))))))
 
 (defun easy-mmode--next (re name count &optional endfun narrowfun)
   "Go to the next COUNT'th occurrence of RE.
@@ -799,25 +814,40 @@ ENDFUN and NARROWFUN are treated like in `easy-mmode-define-navigation'."
   (unless count (setq count 1))
   (if (< count 0) (easy-mmode--prev re name (- count) endfun narrowfun)
     (if (looking-at re) (setq count (1+ count)))
-    (let ((re-narrow (and narrowfun (prog1 (buffer-narrowed-p) (widen)))))
-      (if (not (re-search-forward re nil t count))
-          (if (looking-at re)
-              (goto-char (or (if endfun (funcall endfun)) (point-max)))
-            (user-error "No next %s" name))
-        (goto-char (match-beginning 0))
-        (when (and (eq (current-buffer) (window-buffer))
-                   (called-interactively-p 'interactive))
-          (let ((endpt (or (save-excursion
-                             (if endfun (funcall endfun)
-                               (re-search-forward re nil t 2)))
-                           (point-max))))
-            (unless (pos-visible-in-window-p endpt nil t)
-              (let ((ws (window-start)))
-                (recenter '(0))
-                (if (< (window-start) ws)
-                    ;; recenter scrolled in the wrong direction!
-                    (set-window-start nil ws)))))))
-      (when re-narrow (funcall narrowfun)))))
+    (let* ((re-narrow (and narrowfun (buffer-narrowed-p)))
+           (narrowed-min (and re-narrow (copy-marker (point-min))))
+           (narrowed-max (and re-narrow (copy-marker (point-max))))
+           completed)
+      (when re-narrow (widen))
+      (unwind-protect
+          (prog1
+              (progn
+                (if (not (re-search-forward re nil t count))
+                    (if (looking-at re)
+                        (goto-char (or (if endfun (funcall endfun)) (point-max)))
+                      (user-error "No next %s" name))
+                  (goto-char (match-beginning 0))
+                  (when (and (eq (current-buffer) (window-buffer))
+                             (called-interactively-p 'interactive))
+                    (let ((endpt (or (save-excursion
+                                       (if endfun (funcall endfun)
+                                         (re-search-forward re nil t 2)))
+                                     (point-max))))
+                      (unless (pos-visible-in-window-p endpt nil t)
+                        (let ((ws (window-start)))
+                          (recenter '(0))
+                          (if (< (window-start) ws)
+                              ;; recenter scrolled in the wrong direction!
+                              (set-window-start nil ws)))))))
+                (when re-narrow (funcall narrowfun)))
+            (setq completed t))
+        (when re-narrow
+          (unwind-protect
+              (unless completed
+                (widen)
+                (narrow-to-region narrowed-min narrowed-max))
+            (set-marker narrowed-min nil)
+            (set-marker narrowed-max nil)))))))
 
 (defmacro easy-mmode-define-navigation (base re &optional name endfun narrowfun
                                              &rest body)
