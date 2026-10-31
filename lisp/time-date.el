@@ -327,13 +327,14 @@ right of \"%x\", trailing zero units are not output."
         (case-fold-search t)
         spec match usedunits zeroflag larger prev name unit num
 	leading-zeropos trailing-zeropos fraction minus
-        chop-leading chop-trailing)
-    (while (string-match "%\\.?[0-9]*\\(,[0-9]+\\)?\\(.\\)" string start)
+        chop-leading chop-trailing valid-spec-starts)
+    (while (string-match "%\\(?:\\.?[0-9]+\\)?\\(,[0-9]+\\)?\\(.\\)" string start)
       (setq start (match-end 0)
             spec (match-string 2 string))
       (unless (string-equal spec "%")
         (or (setq match (assoc (downcase spec) units))
             (error "Bad format specifier: `%s'" spec))
+        (push (match-beginning 0) valid-spec-starts)
         (if (assoc (downcase spec) usedunits)
             (error "Multiple instances of specifier: `%s'" spec))
         (if (or (string-equal (car match) "z")
@@ -344,6 +345,19 @@ right of \"%x\", trailing zero units are not output."
                   larger (and prev (> unit prev))
                   prev unit)))
         (push match usedunits)))
+    ;; Every unescaped percent must begin a complete specifier.  In
+    ;; particular, reject a trailing percent instead of leaving it literal.
+    (setq start 0)
+    (while (string-match "%" string start)
+      (let ((position (match-beginning 0)))
+        (cond
+         ((or (memq position valid-spec-starts)
+              (format-seconds--escaped-percent-p string position))
+          (setq start (1+ position)))
+         ((and (< (1+ position) (length string))
+               (= (aref string (1+ position)) ?%))
+          (setq start (+ position 2)))
+         (t (error "Bad format specifier: `%s'" "%")))))
     (when (and zeroflag larger)
       (error "Units are not in decreasing order of size"))
     (unless (numberp seconds)
