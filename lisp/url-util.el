@@ -208,7 +208,8 @@ Will not do anything if `url-show-status' is nil."
     (url-file-directory (substring file 0 (match-beginning 0))))
    ((string-match "\\?" file)
     (url-file-directory (substring file 0 (match-beginning 0))))
-   ((string-match "\\(.*\\(/\\|%2[fF]\\)\\)" file)
+   ;;Remacs: percent-encoded slashes are data within a path segment.
+   ((string-match "\\(.*/\\)" file)
     (match-string 1 file))))
 
 ;;;###autoload
