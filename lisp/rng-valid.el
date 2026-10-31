@@ -511,6 +511,20 @@ Return t if there is work to do, nil otherwise."
 	    (rng-process-encoding-name (aref (car regions) 1)
 				       (aref (car regions) 2)))
 	  (setq regions (cdr regions))))
+      ;; `xmltok-forward-prolog' resets `xmltok-dtd' to the child's DTD.
+      ;; Re-add declarations from `nxml-parent-document-set' after parsing
+      ;; the child prolog, keeping declarations in the child ahead of them.
+      (let ((parent-dtd (and (boundp 'nxml-parent-dtd)
+			     (symbol-value 'nxml-parent-dtd))))
+	(dolist (parent-entry parent-dtd)
+	  (when (and (consp parent-entry) (stringp (car parent-entry)))
+	    (let ((found nil))
+	      (dolist (entry xmltok-dtd)
+		(when (and (consp entry)
+			   (equal (car entry) (car parent-entry)))
+		  (setq found t)))
+	      (unless found
+		(setq xmltok-dtd (append xmltok-dtd (list parent-entry)))))))
       (unless (equal rng-dtd xmltok-dtd)
 	(rng-clear-conditional-region))
       (setq rng-dtd xmltok-dtd))
