@@ -5,7 +5,7 @@ use futures::channel::oneshot;
 use crate::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, PromptButton, PromptLevel,
-    Render, StatefulInteractiveElement, Styled, div, opaque_grey, white,
+    Render, ScrollHandle, StatefulInteractiveElement, Styled, div, opaque_grey, px, white,
 };
 
 use super::Window;
@@ -87,6 +87,8 @@ pub fn fallback_prompt_renderer(
         actions: actions.to_vec(),
         action_focus: actions.iter().map(|_| cx.focus_handle()).collect(),
         selected: 0,
+        scroll: ScrollHandle::new(),
+        last_focused: (!actions.is_empty()).then_some(0),
         previous_focus,
         focus: cx.focus_handle(),
     });
@@ -102,6 +104,8 @@ pub struct FallbackPromptRenderer {
     actions: Vec<PromptButton>,
     action_focus: Vec<FocusHandle>,
     selected: usize,
+    scroll: ScrollHandle,
+    last_focused: Option<usize>,
     previous_focus: Option<FocusHandle>,
     focus: FocusHandle,
 }
@@ -163,18 +167,37 @@ impl FallbackPromptRenderer {
 
 impl Render for FallbackPromptRenderer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focused = self
+            .action_focus
+            .iter()
+            .position(|focus| focus.is_focused(window));
+        if focused != self.last_focused {
+            self.last_focused = focused;
+            if let Some(index) = focused {
+                // Follow any focus change while allowing independent wheel scrolling.
+                self.scroll
+                    .scroll_to_item(index + 1 + usize::from(self.detail.is_some()));
+            }
+        }
         let prompt = div()
+            .id("gpui-fallback-prompt")
             .cursor_default()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .w_72()
+            .max_h((window.viewport_size().height - px(24.0)).max(px(0.0)))
+            .flex()
+            .flex_col()
             .bg(white())
             .rounded_lg()
             .overflow_hidden()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p_3()
             .child(
                 div()
                     .w_full()
+                    .flex_shrink_0()
                     .flex()
                     .flex_row()
                     .justify_around()
@@ -183,6 +206,7 @@ impl Render for FallbackPromptRenderer {
             .children(self.detail.clone().map(|detail| {
                 div()
                     .w_full()
+                    .flex_shrink_0()
                     .flex()
                     .flex_row()
                     .justify_around()
@@ -193,6 +217,7 @@ impl Render for FallbackPromptRenderer {
             .children(self.actions.iter().enumerate().map(|(ix, action)| {
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .flex_row()
                     .justify_around()
                     .border_1()
@@ -295,5 +320,139 @@ impl Deref for PromptBuilder {
             Self::Default => &fallback_prompt_renderer,
             Self::Custom(f) => f.as_ref(),
         }
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+    use crate::{
+        Bounds, Modifiers, Pixels, ScrollDelta, ScrollWheelEvent, TestAppContext,
+        VisualTestContext, point, size,
+    };
+
+    struct Empty;
+    impl Render for Empty {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full()
+        }
+    }
+
+    fn prompt(
+        count: usize,
+        detail: bool,
+    ) -> (
+        VisualTestContext,
+        Entity<FallbackPromptRenderer>,
+        oneshot::Receiver<usize>,
+    ) {
+        let mut app = TestAppContext::single();
+        app.update(|app| app.set_prompt_builder(fallback_prompt_renderer));
+        let window = app.add_window(|_, _| Empty);
+        let mut cx = VisualTestContext::from_window(*window, &app);
+        cx.simulate_resize(size(px(400.0), px(300.0)));
+        let actions: Vec<_> = (0..count)
+            .map(|index| PromptButton::new(format!("Option {index}")))
+            .collect();
+        let response = cx.update(|window, app| {
+            window.prompt(
+                PromptLevel::Info,
+                "Choose one",
+                detail.then_some("More details"),
+                &actions,
+                app,
+            )
+        });
+        cx.run_until_parked();
+        let renderer = cx.update(|window, _| {
+            window
+                .prompt
+                .as_ref()
+                .unwrap()
+                .view
+                .any_view()
+                .downcast::<FallbackPromptRenderer>()
+                .ok()
+                .unwrap()
+        });
+        (cx, renderer, response)
+    }
+
+    fn scroll(
+        cx: &mut VisualTestContext,
+        renderer: &Entity<FallbackPromptRenderer>,
+    ) -> ScrollHandle {
+        cx.update(|_, app| renderer.read(app).scroll.clone())
+    }
+
+    fn visible_child(scroll: &ScrollHandle, index: usize) -> Bounds<Pixels> {
+        let mut child = scroll.bounds_for_item(index).expect("laid out button");
+        child.origin += scroll.offset();
+        assert!(
+            child.top() >= scroll.bounds().top(),
+            "button top is visible: {child:?}"
+        );
+        assert!(
+            child.bottom() <= scroll.bounds().bottom(),
+            "button bottom is visible: {child:?}"
+        );
+        child
+    }
+
+    #[test]
+    fn fallback_long_prompt_scrolls_to_the_last_mouse_choice() {
+        let (mut cx, renderer, mut response) = prompt(50, false);
+        let scroll = scroll(&mut cx, &renderer);
+        assert!(scroll.bounds().top() >= px(0.0));
+        assert!(scroll.bounds().bottom() <= px(300.0));
+        assert!(scroll.max_offset().height > px(0.0));
+        cx.simulate_event(ScrollWheelEvent {
+            position: scroll.bounds().center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-100000.0))),
+            ..Default::default()
+        });
+        assert!(scroll.offset().y < px(0.0));
+        let last = visible_child(&scroll, 50);
+        cx.simulate_click(last.center(), Modifiers::default());
+        assert_eq!(response.try_recv().unwrap(), Some(49));
+    }
+
+    #[test]
+    fn fallback_long_prompt_scrolls_the_keyboard_focus_into_view() {
+        let (mut cx, renderer, mut response) = prompt(50, true);
+        cx.simulate_keystrokes("shift-tab");
+        let scroll = scroll(&mut cx, &renderer);
+        assert!(scroll.offset().y < px(0.0));
+        visible_child(&scroll, 51);
+        cx.simulate_keystrokes("enter");
+        assert_eq!(response.try_recv().unwrap(), Some(49));
+    }
+
+    #[test]
+    fn fallback_long_prompt_scrolls_independently_changed_focus_into_view() {
+        let (mut cx, renderer, mut response) = prompt(50, false);
+        cx.update(|window, app| window.focus(&renderer.read(app).action_focus[49]));
+        cx.run_until_parked();
+        let scroll = scroll(&mut cx, &renderer);
+        visible_child(&scroll, 50);
+        cx.simulate_keystrokes("enter");
+        assert_eq!(response.try_recv().unwrap(), Some(49));
+    }
+
+    #[test]
+    fn fallback_prompt_resizes_its_scroll_viewport() {
+        let (mut cx, renderer, mut response) = prompt(50, false);
+        cx.simulate_resize(size(px(400.0), px(180.0)));
+        let scroll = scroll(&mut cx, &renderer);
+        assert!(scroll.bounds().top() >= px(0.0));
+        assert!(scroll.bounds().bottom() <= px(180.0));
+        cx.simulate_event(ScrollWheelEvent {
+            position: scroll.bounds().center(),
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-100000.0))),
+            ..Default::default()
+        });
+        let last = visible_child(&scroll, 50);
+        cx.simulate_click(last.center(), Modifiers::default());
+        assert_eq!(response.try_recv().unwrap(), Some(49));
     }
 }
