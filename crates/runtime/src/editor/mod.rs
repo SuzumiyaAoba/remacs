@@ -6439,6 +6439,11 @@ fn f_frame_parameter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ids.iter().filter_map(|id| i.buffer_value(*id)).collect(),
         ));
     }
+    if name == "visibility"
+        && frame_parameter_value(i, &f, "remacs--visibility-known").truthy()
+    {
+        return Ok(frame_parameter_value(i, &f, "visibility"));
+    }
     let v = crate::lisp::eval::plist_get_v(&f.borrow().params, &i.sym(ps));
     if !v.is_nil() {
         return Ok(v);

@@ -1,12 +1,14 @@
 //! Shared command-line startup actions for the terminal and GUI.
 mod actions;
 mod diagnostics;
+mod init;
 mod queue;
 mod shutdown;
 
 use crate::arguments::StartupOptions;
 use actions::{Action, run_action, visit_file};
 use diagnostics::{eval_bisect, report_startup_flow};
+pub use init::{finish_gui_startup, prepare_gui_startup};
 use queue::{Argument, CommandLine, argument_text};
 use remacs_runtime::host;
 use remacs_runtime::lisp::{EvalResult, Flow, Interp, Value};
@@ -15,12 +17,28 @@ use shutdown::batch_exit;
 /// Apply the live argument stream before starting an editor front-end.
 /// Batch failures end the process; interactive failures return to the front-end.
 pub fn run(i: &mut Interp, args: &[String]) {
-    let mut batch = StartupOptions::scan(args).batch;
+    let batch = StartupOptions::scan(args).batch;
+    let file_directory = startup_directory(i);
+    let queue = CommandLine::new(i, args);
+    run_queue(i, queue, batch, file_directory);
+}
+
+/// Continue the live Lisp argument queue left by GUI initialization.
+pub fn run_prepared(i: &mut Interp) {
+    let batch = i.noninteractive;
+    let file_directory = startup_directory(i);
+    let queue = CommandLine::prepared(i);
+    run_queue(i, queue, batch, file_directory);
+}
+
+fn startup_directory(i: &mut Interp) -> Value {
     // GNU captures this directory once before processing file arguments.
     // Visiting a file must not change the base for subsequent file names.
     let directory_symbol = host::symbol(i, "command-line-default-directory");
-    let file_directory = i.symbol_value(directory_symbol);
-    let mut queue = CommandLine::new(i, args);
+    i.symbol_value(directory_symbol)
+}
+
+fn run_queue(i: &mut Interp, mut queue: CommandLine, mut batch: bool, file_directory: Value) {
     let mut load_path_options = remacs_runtime::lisp::load::CommandLineLoadPath::default();
     loop {
         let (argument, rest) = match queue.next(i) {
@@ -43,13 +61,19 @@ pub fn run(i: &mut Interp, args: &[String]) {
         };
         match name {
             // -Q inhibits site/user init, the splash screen and X resources.
-            // Init files and splash screens are not loaded by this startup.
+            // GUI initialization is performed before this live action stream.
             "-Q" | "--quick" | "--no-x-resources" => {
                 let symbol = host::symbol(i, "inhibit-x-resources");
                 let _ = i.set_symbol_default(symbol, Value::t());
             }
             "--batch" => batch = true,
             "--no-init" | "-q" | "-nw" => {}
+            "--init-directory" => {
+                if let Err(flow) = init::set_init_directory(i, operand.unwrap()) {
+                    argument_error(i, flow, batch);
+                    return;
+                }
+            }
             "--ieval" => eval_bisect(i, &argument_text(&operand.unwrap())),
             "-L" | "--directory" => {
                 let directory = argument_text(&operand.unwrap());

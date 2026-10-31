@@ -18,6 +18,13 @@ pub(super) struct CommandLine {
 }
 
 impl CommandLine {
+    pub(super) fn prepared(i: &mut Interp) -> Self {
+        Self {
+            left: host::symbol(i, "command-line-args-left"),
+            parse_options: true,
+        }
+    }
+
     pub(super) fn new(i: &mut Interp, args: &[String]) -> Self {
         let left = host::symbol(i, "command-line-args-left");
         let _ = i.set_symbol_default(left, Value::list(args.iter().map(Value::string).collect()));

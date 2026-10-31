@@ -49,6 +49,7 @@ pub fn normalize_option(raw: &str) -> Option<OptionForm<'_>> {
         "--funcall" | "-funcall" => "--funcall",
         "-f" => "-f",
         "--directory" | "-directory" => "--directory",
+        "--init-directory" | "-init-directory" => "--init-directory",
         "-L" => "-L",
         "--script" | "-script" => "--script",
         "--dump-file" => "--dump-file",
@@ -67,7 +68,13 @@ pub fn normalize_option(raw: &str) -> Option<OptionForm<'_>> {
     if value.is_some()
         && !matches!(
             name,
-            "--eval" | "--execute" | "--load" | "--funcall" | "--directory" | "--dump-file"
+            "--eval"
+                | "--execute"
+                | "--load"
+                | "--funcall"
+                | "--directory"
+                | "--init-directory"
+                | "--dump-file"
         )
     {
         return None;
@@ -89,6 +96,7 @@ fn needs_operand(name: &str) -> bool {
             | "--dump-file"
             | "-L"
             | "--directory"
+            | "--init-directory"
     )
 }
 
@@ -249,6 +257,7 @@ mod tests {
             "--ieval",
             "-L",
             "--directory",
+            "--init-directory",
             "-f",
             "--funcall",
             "--dump-file",
@@ -279,6 +288,16 @@ mod tests {
         let args = strings(&["--directory=--eval", "file"]);
         assert_eq!(options(&args).collect::<Vec<_>>(), vec!["--directory"]);
         assert_eq!(arguments(&args).last(), Some(Argument::File("file")));
+    }
+
+    #[test]
+    fn init_directory_inline_and_aliases_keep_operand_boundaries() {
+        let args = strings(&["--init-directory=--batch", "file"]);
+        assert_eq!(options(&args).collect::<Vec<_>>(), vec!["--init-directory"]);
+        assert!(!StartupOptions::scan(&args).headless);
+        let args = strings(&["-init-directory", "--batch", "file"]);
+        assert_eq!(options(&args).collect::<Vec<_>>(), vec!["--init-directory"]);
+        assert!(!StartupOptions::scan(&args).headless);
     }
 
     #[test]

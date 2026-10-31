@@ -23,6 +23,7 @@ Startup options:
   -nw, --no-window-system       Use the terminal UI instead of the GUI
   -Q, --quick                   Skip init files and X resources
   -q, --no-init-file            Skip user init files
+      --init-directory DIR      Set the user initialization directory
   --no-x-resources              Ignore X resources
   --dump-file FILE             Restore a portable Remacs image
 

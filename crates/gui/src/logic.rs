@@ -2228,6 +2228,7 @@ fn apply_startup_arguments(
     i: &mut Interp,
     files: &[String],
     arguments: &[String],
+    gui_initialization: bool,
 ) -> remacs_runtime::lisp::EvalResult {
     let mut startup_arguments = arguments.to_vec();
     let mut files_to_open = files.to_vec();
@@ -2261,7 +2262,13 @@ fn apply_startup_arguments(
         }
         startup_arguments.extend(files_to_open);
     }
-    remacs_cli::startup::run(i, &startup_arguments);
+    if gui_initialization {
+        remacs_cli::startup::prepare_gui_startup(i, &startup_arguments)?;
+        remacs_cli::startup::run_prepared(i);
+        remacs_cli::startup::finish_gui_startup(i)?;
+    } else {
+        remacs_cli::startup::run(i, &startup_arguments);
+    }
     Ok(remacs_runtime::lisp::Value::Nil)
 }
 
@@ -2507,7 +2514,8 @@ fn start_logic_inner(
                 // Lisp may now prompt through the installed reader.
                 let _ = startup_tx.send(Ok(()));
             }
-            if let Err(error) = apply_startup_arguments(&mut i, &files, &arguments) {
+            let startup = apply_startup_arguments(&mut i, &files, &arguments, enable_gui_selections);
+            if let Err(error) = startup {
                 let message = format!("GUI startup: {error:?}");
                 eprintln!("remacs: {message}");
                 let _ = startup_tx.send(Err(message));

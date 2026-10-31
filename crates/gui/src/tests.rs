@@ -97,6 +97,96 @@ fn initial_frame_visibility_is_preserved_in_snapshots() {
 }
 
 #[test]
+fn gui_initial_frame_visibility_loads_init_and_honors_quick() {
+    use super::logic::{FrameSnapshot, GuiRequest, start_logic_with_frames};
+    use remacs_runtime::frontend::FrameVisibility;
+
+    struct TempInit(std::path::PathBuf);
+    impl Drop for TempInit {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let root = TempInit(std::env::temp_dir().join(format!(
+        "remacs-gui-initial-visibility-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    )));
+    std::fs::create_dir(&root.0).unwrap();
+    let init = root.0.join("init.el");
+    let changed = format!("{}/changed/", root.0.to_string_lossy());
+    std::fs::write(
+        &init,
+        format!(
+            ";;; -*- lexical-binding: t -*-
+          (setq initial-frame-alist '((visibility . nil)) user-emacs-directory {changed:?})
+          (setq command-line-args-left
+                (append '(\"--eval\" \"(setq gui-init-consumed t)\") command-line-args-left))
+          (add-hook 'window-setup-hook
+                    (lambda () (set-frame-parameter nil 'name
+                                  (concat user-emacs-directory
+                                          (if gui-init-consumed \"ran\" \"bad\")))))\n"
+        ),
+    )
+    .unwrap();
+    for (quick, explicit_load, expected) in [
+        (false, false, FrameVisibility::Hidden),
+        (true, false, FrameVisibility::Visible),
+        (true, true, FrameVisibility::Hidden),
+    ] {
+        let mut args = vec![
+            "--init-directory".into(),
+            root.0.to_string_lossy().into_owned(),
+        ];
+        if quick {
+            args.push("-Q".into());
+        }
+        if explicit_load {
+            args.extend(["--load".into(), init.to_string_lossy().into_owned()]);
+        }
+        let (events, _quit, requests, _clipboard, _) =
+            start_logic_with_frames(Vec::new(), None, args).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let first: Vec<FrameSnapshot> = loop {
+            if let Ok(GuiRequest::FrameSnapshots(mailbox)) = requests.try_recv() {
+                if let Some(snapshots) = mailbox.take_latest() {
+                    break snapshots;
+                }
+            }
+            assert!(
+                !requests.is_closed(),
+                "startup closed before a frame snapshot"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "startup produced no snapshot"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let primary = first
+            .iter()
+            .find(|frame| Some(frame.frame_id) == frame.primary_frame_id)
+            .expect("initial frame snapshot");
+        assert_eq!(
+            primary.visibility, expected,
+            "quick={quick} explicit={explicit_load}"
+        );
+        if !quick || explicit_load {
+            assert_eq!(primary.name, format!("{changed}ran"));
+        }
+        drop(events);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !requests.is_closed() {
+            let _ = requests.try_recv();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "logic thread did not stop"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+#[test]
 fn frame_display_selection_uses_requested_secondary_monitor() {
     let displays = [
         (1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0)),

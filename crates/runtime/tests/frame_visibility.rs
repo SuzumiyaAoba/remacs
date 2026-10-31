@@ -93,6 +93,10 @@ fn parameter_setters_send_distinct_native_visibility_requests() {
         .eval_str("(frame-visible-p (selected-frame))")
         .unwrap();
     assert!(visible.is_nil());
+    let parameter = interp
+        .eval_str("(frame-parameter nil 'visibility)")
+        .unwrap();
+    assert!(parameter.is_nil());
 
     backend.0.borrow_mut().clear();
     interp
@@ -124,7 +128,12 @@ fn parameter_setters_send_distinct_native_visibility_requests() {
         ("t", FrameVisibility::Visible),
         ("(make-symbol \"icon\")", FrameVisibility::Visible),
     ] {
-        interp.eval_str(&format!("(set-frame-parameter nil 'visibility {setting})")).unwrap();
-        assert_eq!(remacs_runtime::editor::frame_visibility(&interp, &frame), expected);
+        interp
+            .eval_str(&format!("(set-frame-parameter nil 'visibility {setting})"))
+            .unwrap();
+        assert_eq!(
+            remacs_runtime::editor::frame_visibility(&interp, &frame),
+            expected
+        );
     }
 }
