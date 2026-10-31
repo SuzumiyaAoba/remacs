@@ -92,10 +92,11 @@
   "Set the trigger time of TIMER to TIME.
 TIME must be a Lisp time value: an integer, a floating-point number,
 or a value in the internal time format returned by, e.g., `current-time'.
-If optional third argument DELTA is a positive number, make the timer
-fire repeatedly that many seconds apart."
+If optional third argument DELTA is a non-negative number, make the timer
+fire repeatedly that many seconds apart.  A zero DELTA repeats each time
+the event loop processes timers."
   (setf (timer--time timer) time)
-  (setf (timer--repeat-delay timer) (and (numberp delta) (> delta 0) delta))
+  (setf (timer--repeat-delay timer) (and (numberp delta) (>= delta 0) delta))
   timer)
 
 (defun timer-set-idle-time (timer secs &optional repeat)
@@ -309,7 +310,8 @@ This function is called, by name, directly by the C code."
               ;; If real time has jumped forward,
               ;; perhaps because Emacs was suspended for a long time,
               ;; limit how many times things get repeated.
-              (if (and (numberp timer-max-repeats)
+              (if (and (> (timer--repeat-delay timer) 0)
+		       (numberp timer-max-repeats)
 		       (time-less-p (timer--time timer) nil))
                   (let ((repeats (/ (timer-until timer nil)
                                     (timer--repeat-delay timer))))
@@ -399,8 +401,11 @@ This function returns a timer object which you can use in
 
     ;; Special case: t means the next integral multiple of REPEAT.
     (when (and (eq time t) repeat)
-      (setq time (timer-next-integral-multiple-of-time nil repeat))
-      (setf (timer--integral-multiple timer) t))
+      (if (zerop repeat)
+          ;; A zero interval has no meaningful integral multiple; start now.
+          (setq time (current-time))
+        (setq time (timer-next-integral-multiple-of-time nil repeat))
+        (setf (timer--integral-multiple timer) t)))
 
     ;; Handle numbers as relative times in seconds.
     (when (numberp time)
