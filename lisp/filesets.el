@@ -1446,10 +1446,11 @@ Use FILESET-ENTRY for finding the save function, if provided."
 
 (defun filesets-file-open (open-function file-name &optional fileset-name)
   "Open FILE-NAME using OPEN-FUNCTION.
-If OPEN-FUNCTION is nil, its value will be deduced from FILESET-NAME."
+If OPEN-FUNCTION is nil, its value will be deduced from FILESET-NAME.
+Skip unreadable files only when `filesets-be-docile-flag' is non-nil."
   (let ((open-function (or open-function
 			   (filesets-entry-get-open-fn fileset-name))))
-    (if (file-readable-p file-name)
+    (if (or (file-readable-p file-name) (not filesets-be-docile-flag))
 	(funcall open-function file-name)
       (message "Filesets: Couldn't open `%s'" file-name))))
 
