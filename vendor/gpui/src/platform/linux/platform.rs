@@ -899,9 +899,12 @@ impl crate::Keystroke {
             Keysym::Insert => "insert".to_owned(),
 
             _ => {
-                let name = xkb::keysym_get_name(key_sym).to_lowercase();
-                if key_sym.is_keypad_key() {
-                    name.replace("kp_", "")
+                let name = xkb::keysym_get_name(key_sym);
+                if name.starts_with("XF86Audio") {
+                    // Preserve the canonical spelling used by named bindings.
+                    name
+                } else if key_sym.is_keypad_key() {
+                    name.to_lowercase().replace("kp_", "")
                 } else if let Some(key) = key_utf8.chars().next()
                     && key_utf8.len() == 1
                     && key.is_ascii()
@@ -918,12 +921,12 @@ impl crate::Keystroke {
                             .to_ascii_lowercase()
                             .to_string()
                     } else {
-                        name
+                        name.to_lowercase()
                     }
                 } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
                     String::from(key_en)
                 } else {
-                    name
+                    name.to_lowercase()
                 }
             }
         };
@@ -1057,6 +1060,25 @@ mod tests {
                 };
             "#;
         for (keysym, expected, text) in [
+            ("XF86AudioLowerVolume", "XF86AudioLowerVolume", None),
+            ("XF86AudioMute", "XF86AudioMute", None),
+            ("XF86AudioRaiseVolume", "XF86AudioRaiseVolume", None),
+            ("XF86AudioPlay", "XF86AudioPlay", None),
+            ("XF86AudioStop", "XF86AudioStop", None),
+            ("XF86AudioPrev", "XF86AudioPrev", None),
+            ("XF86AudioNext", "XF86AudioNext", None),
+            ("XF86AudioRecord", "XF86AudioRecord", None),
+            ("XF86AudioPause", "XF86AudioPause", None),
+            ("XF86AudioMedia", "XF86AudioMedia", None),
+            ("XF86AudioRewind", "XF86AudioRewind", None),
+            ("XF86AudioForward", "XF86AudioForward", None),
+            ("XF86AudioRepeat", "XF86AudioRepeat", None),
+            ("XF86AudioRandomPlay", "XF86AudioRandomPlay", None),
+            ("XF86AudioCycleTrack", "XF86AudioCycleTrack", None),
+            ("XF86AudioMicMute", "XF86AudioMicMute", None),
+            ("XF86AudioPreset", "XF86AudioPreset", None),
+            ("XF86Audio", "XF86Audio", None),
+            ("XF86AudioDesc", "XF86AudioDesc", None),
             ("Linefeed", "linefeed", None),
             ("InsertLine", "insertline", None),
             ("DeleteLine", "deleteline", None),

@@ -671,6 +671,55 @@ fn scroll_lock_keysym_toggles_the_default_mode_binding() {
     }
 }
 
+#[test]
+fn xf86_audio_keysyms_reach_canonical_gui_bindings() {
+    use remacs_runtime::editor::event_code_for;
+    for name in [
+        "XF86AudioLowerVolume",
+        "XF86AudioMute",
+        "XF86AudioRaiseVolume",
+        "XF86AudioPlay",
+        "XF86AudioStop",
+        "XF86AudioPrev",
+        "XF86AudioNext",
+        "XF86AudioRecord",
+        "XF86AudioPause",
+        "XF86AudioMedia",
+        "XF86AudioRewind",
+        "XF86AudioForward",
+        "XF86AudioRepeat",
+        "XF86AudioRandomPlay",
+        "XF86AudioCycleTrack",
+        "XF86AudioMicMute",
+        "XF86AudioPreset",
+        "XF86Audio",
+        "XF86AudioDesc",
+    ] {
+        let key = ks(name, None, false, false, false, false);
+        assert!(command_keystroke(&key), "{name}");
+        assert_eq!(keystroke_to_code(&key), Some(event_code_for(name)));
+        let modified = ks(name, None, true, true, false, true);
+        assert_eq!(
+            keystroke_to_code(&modified),
+            Some(event_code_for(name) | CHAR_CTL | CHAR_META | CHAR_SUPER)
+        );
+    }
+    let mut i = Interp::new();
+    i.eval_str(
+        "(global-set-key [XF86AudioPlay] (lambda () (interactive) (insert \"media received\")))",
+    )
+    .unwrap();
+    let key = ks("XF86AudioPlay", None, false, false, false, false);
+    let code = keystroke_to_code(&key).unwrap();
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    remacs_runtime::frontend::dispatch_key_core(&mut i, code, &mut keys, &mut arg_mode, None)
+        .unwrap();
+    let text = i.eval_str("(buffer-string)").unwrap();
+    assert_eq!(i.princ_to_string(&text), "media received");
+    assert!(keys.is_empty());
+}
+
 fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
     let (etx, erx) = mpsc::channel();
     let (gtx, grx) = smol::channel::bounded(1);
