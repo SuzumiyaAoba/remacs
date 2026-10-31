@@ -1446,6 +1446,30 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_visible(&self, visible: bool) {
+        let window = self.0.lock().native_window;
+        unsafe {
+            let minimized: BOOL = msg_send![window, isMiniaturized];
+            if minimized == YES {
+                let _: () = msg_send![window, deminiaturize: nil];
+            }
+            if visible {
+                let _: () = msg_send![window, orderFront: nil];
+            } else {
+                let _: () = msg_send![window, orderOut: nil];
+            }
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        let window = self.0.lock().native_window;
+        unsafe {
+            let visible: BOOL = msg_send![window, isVisible];
+            let minimized: BOOL = msg_send![window, isMiniaturized];
+            visible == YES && minimized != YES
+        }
+    }
+
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;

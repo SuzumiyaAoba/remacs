@@ -719,6 +719,18 @@ impl PlatformWindow for WindowsWindow {
         Some(done_rx)
     }
 
+    fn set_visible(&self, visible: bool) {
+        unsafe {
+            ShowWindowAsync(self.0.hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE })
+                .ok()
+                .log_err();
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        unsafe { IsWindowVisible(self.0.hwnd).as_bool() && !IsIconic(self.0.hwnd).as_bool() }
+    }
+
     fn activate(&self) {
         let hwnd = self.0.hwnd;
         let this = self.0.clone();

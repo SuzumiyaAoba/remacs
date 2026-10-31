@@ -6263,8 +6263,15 @@ fn set_frame_visibility_value(
     if frame_is_graphical(i, frame)
         && let Some(backend) = i.frame_window_backend.clone()
     {
+        let visibility = if visible {
+            crate::frontend::FrameVisibility::Visible
+        } else if frame_parameter_value(i, frame, "visibility").is_nil() {
+            crate::frontend::FrameVisibility::Hidden
+        } else {
+            crate::frontend::FrameVisibility::Iconified
+        };
         backend
-            .set_visible(frame.borrow().id, visible)
+            .set_visibility(frame.borrow().id, visibility)
             .map_err(|error| i.error(format!("Frame visibility failed: {error}")))?;
     }
     Ok(())
@@ -6566,6 +6573,12 @@ fn store_frame_parameter(
     let ps = i.sym_id(&key);
     let name = ps.map(|ps| i.symbol_name(ps));
     let key = ps.map(|ps| i.sym(ps)).unwrap_or(key);
+    if name.as_deref() == Some("visibility") && frame_is_graphical(i, f) {
+        let icon = i.intern("icon");
+        let visible = !value.is_nil() && !i.sym_is(&value, icon);
+        let value = if visible { Value::t() } else { value };
+        return set_frame_visibility_value(i, f, value, visible);
+    }
     if name.as_deref() == Some("minibuffer") {
         let mut old = crate::lisp::eval::plist_get_v(&f.borrow().params, &key);
         if old.is_nil() && f.borrow().minibuffer.is_some() {

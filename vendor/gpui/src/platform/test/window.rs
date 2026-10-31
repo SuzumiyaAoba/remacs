@@ -29,6 +29,8 @@ pub(crate) struct TestWindowState {
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
+    visible: bool,
+    minimized: bool,
 }
 
 #[derive(Clone)]
@@ -74,6 +76,8 @@ impl TestWindow {
             moved_callback: None,
             input_handler: None,
             is_fullscreen: false,
+            visible: params.show,
+            minimized: false,
         })))
     }
 
@@ -183,12 +187,9 @@ impl PlatformWindow for TestWindow {
     }
 
     fn activate(&self) {
-        self.0
-            .lock()
-            .platform
-            .upgrade()
-            .unwrap()
-            .set_active_window(Some(self.clone()))
+        self.set_visible(true);
+        let platform = self.0.lock().platform.upgrade().unwrap();
+        platform.set_active_window(Some(self.clone()))
     }
 
     fn is_active(&self) -> bool {
@@ -216,7 +217,18 @@ impl PlatformWindow for TestWindow {
     }
 
     fn minimize(&self) {
-        unimplemented!()
+        self.0.lock().minimized = true;
+    }
+
+    fn set_visible(&self, visible: bool) {
+        let mut state = self.0.lock();
+        state.visible = visible;
+        state.minimized = false;
+    }
+
+    fn is_visible(&self) -> bool {
+        let state = self.0.lock();
+        state.visible && !state.minimized
     }
 
     fn zoom(&self) {

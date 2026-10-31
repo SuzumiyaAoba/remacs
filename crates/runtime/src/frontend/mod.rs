@@ -60,9 +60,20 @@ pub trait FontSelectionBackend {
     fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String>;
 }
 
+/// Requested native visibility of a graphical frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameVisibility {
+    Visible,
+    Hidden,
+    Iconified,
+}
+
 /// Host native window bridge used by GUI frame primitives.
 pub trait FrameWindowBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String>;
+    fn set_visibility(&self, frame_id: usize, visibility: FrameVisibility) -> Result<(), String> {
+        self.set_visible(frame_id, visibility == FrameVisibility::Visible)
+    }
     fn raise(&self, frame_id: usize) -> Result<(), String>;
     fn lower(&self, frame_id: usize) -> Result<(), String>;
     /// Move the pointer to pixel coordinates relative to FRAME's native area.

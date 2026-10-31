@@ -24,6 +24,7 @@ use wayland_protocols::{
 };
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
+use super::visibility::{SurfaceVisibility, VisibilityAction};
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
@@ -39,6 +40,8 @@ use crate::{
     },
 };
 use crate::{WindowKind, scene::Scene};
+
+pub(super) struct UnmapBarrier(pub ObjectId);
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -84,10 +87,14 @@ struct InProgressConfigure {
 
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
-    acknowledged_first_configure: bool,
+    visibility: SurfaceVisibility,
+    minimized: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    title: String,
     app_id: Option<String>,
+    parent: Option<XdgToplevel>,
+    minimum_size: Option<Size<Pixels>>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
@@ -136,6 +143,7 @@ impl WaylandWindowState {
         globals: Globals,
         gpu_context: &BladeContext,
         options: WindowParams,
+        parent: Option<XdgToplevel>,
     ) -> anyhow::Result<Self> {
         let renderer = {
             let raw_window = RawWindow {
@@ -160,10 +168,14 @@ impl WaylandWindowState {
 
         Ok(Self {
             xdg_surface,
-            acknowledged_first_configure: false,
+            visibility: SurfaceVisibility::new(options.show),
+            minimized: false,
             surface,
             decoration,
+            title: String::new(),
             app_id: None,
+            parent,
+            minimum_size: options.window_min_size,
             blur: None,
             toplevel,
             viewport,
@@ -289,9 +301,10 @@ impl WaylandWindow {
             .get_xdg_surface(&surface, &globals.qh, surface.id());
         let toplevel = xdg_surface.get_toplevel(&globals.qh, surface.id());
 
-        if params.kind == WindowKind::Floating {
-            toplevel.set_parent(parent.as_ref());
-        }
+        let parent = (params.kind == WindowKind::Floating)
+            .then_some(parent)
+            .flatten();
+        toplevel.set_parent(parent.as_ref());
 
         if let Some(size) = params.window_min_size {
             toplevel.set_min_size(size.width.0 as i32, size.height.0 as i32);
@@ -327,6 +340,7 @@ impl WaylandWindow {
                 globals,
                 gpu_context,
                 params,
+                parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         });
@@ -357,6 +371,9 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
+        if !state.visibility.can_draw() {
+            return;
+        }
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
         drop(state);
@@ -369,6 +386,10 @@ impl WaylandWindowStatePtr {
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         if let xdg_surface::Event::Configure { serial } = event {
+            if !self.state.borrow().visibility.accepts_configure() {
+                // Configures queued before the null-buffer commit belong to the old mapping.
+                return;
+            }
             {
                 let mut state = self.state.borrow_mut();
                 if let Some(window_controls) = state.in_progress_window_controls.take() {
@@ -407,7 +428,8 @@ impl WaylandWindowStatePtr {
                         {
                             let snap = |value: Pixels, increment: Pixels| {
                                 let increment = f32::from(increment).max(1.0);
-                                px((f32::from(value).max(increment) / increment).round() * increment)
+                                px((f32::from(value).max(increment) / increment).round()
+                                    * increment)
                             };
                             size.width = snap(size.width, increments.width);
                             size.height = snap(size.height, increments.height);
@@ -443,13 +465,65 @@ impl WaylandWindowStatePtr {
                 window_geometry.size.height,
             );
 
-            let request_frame_callback = !state.acknowledged_first_configure;
+            let request_frame_callback = state.visibility.configure();
             if request_frame_callback {
-                state.acknowledged_first_configure = true;
                 drop(state);
                 self.frame();
             }
         }
+    }
+
+    fn apply_visibility_action(&self, action: VisibilityAction) {
+        match action {
+            VisibilityAction::None => {}
+            VisibilityAction::Draw => self.frame(),
+            VisibilityAction::Configure => {
+                let state = self.state.borrow();
+                // xdg_toplevel attributes are discarded by unmapping. Restore the
+                // application's current settings before the new initial commit.
+                state.toplevel.set_title(state.title.clone());
+                if let Some(app_id) = &state.app_id {
+                    state.toplevel.set_app_id(app_id.clone());
+                }
+                state.toplevel.set_parent(state.parent.as_ref());
+                if let Some(size) = state.minimum_size {
+                    state
+                        .toplevel
+                        .set_min_size(size.width.0 as i32, size.height.0 as i32);
+                }
+                if state.maximized {
+                    state.toplevel.set_maximized();
+                }
+                if state.fullscreen {
+                    state.toplevel.set_fullscreen(None);
+                }
+                if state.minimized {
+                    state.toplevel.set_minimized();
+                }
+                state.surface.commit();
+            }
+            VisibilityAction::Unmap => {
+                let mut state = self.state.borrow_mut();
+                state.in_progress_configure = None;
+                state.in_progress_window_controls = None;
+                state.resize_throttle = false;
+                state.surface.attach(None, 0, 0);
+                state.surface.commit();
+                // Wait until the compositor has processed the unmap before starting a new
+                // configure handshake. Old configure events must not authorize a new buffer.
+                let connection = wayland_client::Connection::from_backend(
+                    state.surface.backend().upgrade().unwrap(),
+                );
+                connection
+                    .display()
+                    .sync(&state.globals.qh, UnmapBarrier(state.surface.id()));
+            }
+        }
+    }
+
+    pub(super) fn unmap_complete(&self) {
+        let action = self.state.borrow_mut().visibility.unmap_complete();
+        self.apply_visibility_action(action);
     }
 
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
@@ -749,7 +823,13 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn set_focused(&self, focus: bool) {
-        self.state.borrow_mut().active = focus;
+        {
+            let mut state = self.state.borrow_mut();
+            state.active = focus;
+            if focus {
+                state.minimized = false;
+            }
+        }
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
         }
@@ -929,6 +1009,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn activate(&self) {
+        self.set_visible(true);
         // Try to request an activation token. Even though the activation is likely going to be rejected,
         // KWin and Mutter can use the app_id to visually indicate we're requesting attention.
         let state = self.borrow();
@@ -954,7 +1035,9 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.borrow().toplevel.set_title(title.to_string());
+        let mut state = self.borrow_mut();
+        state.title = title.to_owned();
+        state.toplevel.set_title(state.title.clone());
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -970,7 +1053,30 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        self.borrow().toplevel.set_minimized();
+        if self.borrow().minimized { return; }
+        self.set_visible(true);
+        let mut state = self.borrow_mut();
+        state.minimized = true;
+        state.toplevel.set_minimized();
+    }
+
+    fn set_visible(&self, visible: bool) {
+        let action = {
+            let mut state = self.borrow_mut();
+            let was_minimized = state.minimized;
+            state.minimized = false;
+            if visible && was_minimized {
+                state.visibility.remap()
+            } else {
+                state.visibility.set_visible(visible)
+            }
+        };
+        self.0.apply_visibility_action(action);
+    }
+
+    fn is_visible(&self) -> bool {
+        let state = self.borrow();
+        state.visibility.is_visible() && !state.minimized
     }
 
     fn zoom(&self) {
@@ -1036,12 +1142,18 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+        if !state.visibility.can_draw() {
+            return;
+        }
         state.renderer.draw(scene);
+        state.visibility.drawn();
     }
 
     fn completed_frame(&self) {
         let state = self.borrow();
-        state.surface.commit();
+        if state.visibility.can_draw() {
+            state.surface.commit();
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

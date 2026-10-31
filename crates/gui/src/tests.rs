@@ -17,6 +17,31 @@ fn monitor_bounds(x: f32, y: f32, width: f32, height: f32) -> gpui::Bounds<gpui:
 }
 
 #[test]
+fn frame_visibility_applies_hide_iconify_and_show_to_window() {
+    use remacs_runtime::frontend::FrameVisibility;
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|_window, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |_view, window, _cx| {
+            for focus_on_map in [false, true] {
+                for state in [
+                    FrameVisibility::Hidden,
+                    FrameVisibility::Visible,
+                    FrameVisibility::Iconified,
+                    FrameVisibility::Hidden,
+                    FrameVisibility::Visible,
+                ] {
+                    super::apply_frame_visibility(window, state, focus_on_map);
+                    assert_eq!(window.is_visible(), state == FrameVisibility::Visible);
+                }
+            }
+        })
+        .unwrap();
+}
+
+#[test]
 fn frame_display_selection_uses_requested_secondary_monitor() {
     let displays = [
         (1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0)),

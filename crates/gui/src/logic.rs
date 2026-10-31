@@ -1,7 +1,7 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        AppleScriptResult, DragAction, Grid, GridImageSource,
+        AppleScriptResult, DragAction, FrameVisibility, Grid, GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
         MousePosition, QuitRequest, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
@@ -304,7 +304,7 @@ pub(super) struct InitialFrameSize {
 
 pub(super) enum GuiRequest {
     FrameSnapshots(Arc<FrameSnapshotMailbox>),
-    FrameVisibility { frame_id: usize, visible: bool },
+    FrameVisibility { frame_id: usize, visibility: FrameVisibility },
     FrameOrder { frame_id: usize, raise: bool },
     WarpPointer {
         frame_id: usize,
@@ -574,8 +574,15 @@ impl GuiFrameVisibilityBackend {
 
 impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend {
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String> {
+        self.set_visibility(
+            frame_id,
+            if visible { FrameVisibility::Visible } else { FrameVisibility::Iconified },
+        )
+    }
+
+    fn set_visibility(&self, frame_id: usize, visibility: FrameVisibility) -> Result<(), String> {
         self.requests
-            .send_blocking(GuiRequest::FrameVisibility { frame_id, visible })
+            .send_blocking(GuiRequest::FrameVisibility { frame_id, visibility })
             .map_err(|_| "GUI window service is unavailable".to_owned())
     }
 

@@ -1329,6 +1329,22 @@ impl PlatformWindow for X11Window {
         None
     }
 
+    fn set_visible(&self, visible: bool) {
+        if visible {
+            self.0.xcb.map_window(self.0.x_window).log_err();
+        } else {
+            self.0.xcb.unmap_window(self.0.x_window).log_err();
+        }
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn is_visible(&self) -> bool {
+        self.0.xcb.get_window_attributes(self.0.x_window)
+            .log_err()
+            .and_then(|cookie| cookie.reply().log_err())
+            .is_some_and(|reply| reply.map_state == xproto::MapState::VIEWABLE)
+    }
+
     fn activate(&self) {
         let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
         let message = xproto::ClientMessageEvent::new(

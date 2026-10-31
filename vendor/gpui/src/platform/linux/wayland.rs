@@ -3,6 +3,7 @@ mod clipboard;
 mod cursor;
 mod display;
 mod serial;
+mod visibility;
 mod window;
 
 pub(crate) use client::*;

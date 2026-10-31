@@ -4221,6 +4221,16 @@ impl Window {
         self.platform_window.minimize();
     }
 
+    /// Show or hide this window without changing its focus.
+    pub fn set_visible(&self, visible: bool) {
+        self.platform_window.set_visible(visible);
+    }
+
+    /// Whether the native window is shown and not minimized.
+    pub fn is_visible(&self) -> bool {
+        self.platform_window.is_visible()
+    }
+
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.platform_window.toggle_fullscreen();

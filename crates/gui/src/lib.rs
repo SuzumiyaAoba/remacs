@@ -1006,7 +1006,8 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
-                    GuiRequest::FrameVisibility { frame_id, visible } => {
+                    GuiRequest::FrameVisibility { frame_id, visibility } => {
+                        let visible = visibility == remacs_runtime::frontend::FrameVisibility::Visible;
                         native_visibility.insert(frame_id, visible);
                         let focus_on_map = frame_focus_on_map
                             .get(&frame_id)
@@ -1014,11 +1015,7 @@ pub fn run_gui_with_dump(
                             .unwrap_or(true);
                         if let Some(handle) = windows.get(&frame_id).copied() {
                             let _ = handle.update(cx, |_view, window, _cx| {
-                                if visible {
-                                    show_frame_window(window, focus_on_map);
-                                } else {
-                                    window.minimize_window();
-                                }
+                                apply_frame_visibility(window, visibility, focus_on_map);
                             });
                         }
                     }
@@ -1637,36 +1634,27 @@ fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
 }
 
 fn native_frame_visible(window: &Window) -> Option<bool> {
-    #[cfg(target_os = "macos")]
-    {
-        let native_window = appkit_native_window(window)?;
-        unsafe {
-            let minimized: BOOL = msg_send![native_window, isMiniaturized];
-            Some(minimized != YES)
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window;
-        None
+    Some(window.is_visible())
+}
+
+fn apply_frame_visibility(
+    window: &Window,
+    visibility: remacs_runtime::frontend::FrameVisibility,
+    focus_on_map: bool,
+) {
+    use remacs_runtime::frontend::FrameVisibility;
+    match visibility {
+        FrameVisibility::Hidden => window.set_visible(false),
+        FrameVisibility::Iconified => window.minimize_window(),
+        FrameVisibility::Visible => show_frame_window(window, focus_on_map),
     }
 }
 
 fn show_frame_window(window: &Window, focus_on_map: bool) {
-    #[cfg(target_os = "macos")]
-    if let Some(native_window) = appkit_native_window(window) {
-        unsafe {
-            let minimized: BOOL = msg_send![native_window, isMiniaturized];
-            if minimized == YES {
-                let _: () = msg_send![native_window, deminiaturize: nil];
-            }
-            if !focus_on_map {
-                let _: () = msg_send![native_window, orderFront: nil];
-                return;
-            }
-        }
+    window.set_visible(true);
+    if focus_on_map {
+        window.activate_window();
     }
-    window.activate_window();
 }
 
 #[cfg(target_os = "macos")]
