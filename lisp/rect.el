@@ -309,8 +309,9 @@ The returned value has the form of (WIDTH . HEIGHT)."
 	(if (or (> begextra 0) (> endextra 0))
 	    (setq line (concat (spaces-string begextra)
 			       line
-			       (spaces-string endextra)))))
-    (setcdr lines (cons line (cdr lines))))))
+			       (spaces-string endextra))))))
+    ;; Remacs: record slices handled by either branch, including tab interiors.
+    (setcdr lines (cons line (cdr lines)))))
 
 (defconst spaces-strings
   '["" " " "  " "   " "    " "     " "      " "       " "        "])
