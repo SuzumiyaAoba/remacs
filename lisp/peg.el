@@ -923,9 +923,11 @@ input.  PATH is the list of rules that we have visited so far."
 (cl-defmethod peg--merge-error (merged (_ (eql or)) e1 e2)
   (peg-merge-error e2 (peg-merge-error e1 merged)))
 
-(cl-defmethod peg--merge-error (merged (_ (eql and)) e1 _e2)
-  ;; FIXME: Why is `e2' not used?
-  (peg-merge-error e1 merged))
+(cl-defmethod peg--merge-error (merged (_ (eql and)) _e1 _e2)
+  ;Remacs: Each failing child records its own position and expression.
+  ;; The enclosing sequence cannot tell which child failed; its first child
+  ;; may already have matched successfully before the rightmost failure.
+  merged)
 
 (cl-defmethod peg--merge-error (merged (_ (eql str)) str)
   ;;(add-to-list 'merged str)
