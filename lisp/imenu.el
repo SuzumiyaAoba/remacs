@@ -100,7 +100,8 @@ element should come before the second.  The arguments are cons cells;
   "The replacement string for spaces in index names.
 Used when presenting the index in a completion buffer to make the
 names work as tokens.  All characters in the replacement are used
-literally.  An empty string removes spaces; nil leaves names unchanged."
+literally.  An empty string removes spaces; nil leaves names unchanged.
+If replacement makes names identical, later candidates get numeric suffixes."
   :type '(choice string (const nil)))
 
 (defcustom imenu-level-separator ":"
@@ -732,6 +733,37 @@ depending on PATTERNS."
 	  (dolist (x completions)
 	    (if (string-match re (car x)) (throw 'found (car x)))))))))
 
+;; Remacs: keep every candidate selectable after replacing spaces.
+(defun imenu--completion-alist (index-alist)
+  "Prepare INDEX-ALIST for completion with unique replacement names."
+  (if (not imenu-space-replacement) index-alist
+    (let ((reserved (make-hash-table :test 'equal))
+          (seen (make-hash-table :test 'equal))
+          (prepared
+           (mapcar (lambda (item)
+                     (cons (replace-regexp-in-string
+                            " " imenu-space-replacement (car item) t t)
+                           (cdr item)))
+                   index-alist)))
+      ;; Reserve all literal names before generating suffixes, including names
+      ;; that already look like a generated candidate.
+      (dolist (item prepared)
+        (puthash (car item) t reserved))
+      (dolist (item prepared)
+        (let* ((name (car item))
+               (number (gethash name seen)))
+          (if (not number)
+              (puthash name 1 seen)
+            (let (candidate)
+              (while (progn
+                       (setq number (1+ number)
+                             candidate (concat name (format "<%d>" number)))
+                       (gethash candidate reserved)))
+              (puthash name number seen)
+              (puthash candidate t reserved)
+              (setcar item candidate)))))
+      prepared)))
+
 (defun imenu--completion-buffer (index-alist &optional prompt)
   "Let the user select from INDEX-ALIST in a completion buffer with PROMPT.
 
@@ -739,15 +771,7 @@ Return one of the entries in index-alist or nil."
   ;; Create a list for this buffer only when needed.
   (let ((name (thing-at-point 'symbol))
 	choice
-	(prepared-index-alist
-	 (if (not imenu-space-replacement) index-alist
-	   (mapcar
-	    (lambda (item)
-	      ;; Remacs: honor empty and multicharacter replacement strings.
-	      (cons (replace-regexp-in-string " " imenu-space-replacement
-                                            (car item) t t)
-		    (cdr item)))
-	    index-alist))))
+	(prepared-index-alist (imenu--completion-alist index-alist)))
     (when (stringp name)
       (setq name (or (imenu-find-default name prepared-index-alist) name)))
     (unless prompt
