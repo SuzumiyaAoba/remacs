@@ -1000,7 +1000,7 @@ When `shr-fill-text' is nil, only indent."
 	 ;; Totally relative.  Allow Tramp file names if we're
 	 ;; rendering a file:// URL.
          (let ((url-allow-non-local-files (equal (nth 2 base) "file")))
-	   (url-expand-file-name url (concat (car base) (cadr base)))))))
+	   (url-expand-file-name url (nth 3 base))))))
 
 (defun shr-ensure-newline ()
   (unless (bobp)
