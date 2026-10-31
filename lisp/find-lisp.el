@@ -310,11 +310,18 @@ This function heeds `dired-actual-switches'."
             (find-lisp-format
              (propertize file 'dired-filename t)
              (file-attributes file 'string)
-             (or (and dired-actual-switches
-                      (split-string-and-unquote dired-actual-switches))
-                 (list ""))
+             (find-lisp--format-switches dired-actual-switches)
              nil))
     (dired-insert-set-properties pt (point))))
+
+(defun find-lisp--format-switches (switches)
+  "Return the switches in SWITCHES recognized by `find-lisp-format'."
+  (delq nil
+        (list (and (dired-check-switches switches "F" "classify") ?F)
+              (and (dired-check-switches switches "i" "inode") ?i)
+              (and (dired-check-switches switches "s" "size") ?s)
+              (and (dired-check-switches switches "c" "time=ctime") ?c)
+              (and (dired-check-switches switches "u" "time=atime") ?u))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lifted from ls-lisp. We don't want to require it, because that
