@@ -96,6 +96,10 @@ path components followed by `..' are removed, along with the `..' itself."
     (let ((base (copy-sequence default)))
       (setf (url-target base) nil)
       (url-recreate-url base)))
+   ((string-prefix-p "#" url)
+    (let ((base (copy-sequence default)))
+      (setf (url-target base) (substring url 1))
+      (url-recreate-url base)))
    ((string-match url-nonrelative-link url) ; Fully-qualified URL
     (let* ((urlobj (url-generic-parse-url url))
            (path-query (url-path-and-query urlobj))
