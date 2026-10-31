@@ -497,6 +497,15 @@ in Lisp code."
                       (<= (string-to-number octet) 255)))
                octets)))))
 
+(defun nslookup--query (type host name-server)
+  "Return the raw lookup output for TYPE, HOST and NAME-SERVER."
+  ;; ;Remacs: Pass names as process arguments, preserving literal shell syntax.
+  (with-temp-buffer
+    (apply #'process-file nslookup-program nil t nil
+           (append (list (concat "-type=" type) host)
+                   (and name-server (list name-server))))
+    (buffer-string)))
+
 ;;;###autoload
 (defun nslookup-host-ipv4 (host &optional name-server format)
   "Return the IPv4 address for HOST (name or IP address).
@@ -510,9 +519,7 @@ vector of octets.
 Return nil if HOST is neither an IPv4 literal nor resolves to an IPv4 address.
 
 This command uses `nslookup-program' to look up DNS records."
-  (let* ((args `(,nslookup-program "-type=A" ,host ,name-server))
-         (output (shell-command-to-string
-                  (string-join (cl-remove nil args) " ")))
+  (let* ((output (nslookup--query "A" host name-server))
          (parsed-ip (and (string-match
                           "Name:.*\nAddress: *\\(\\([0-9]\\{1,3\\}\\.?\\)\\{4\\}\\)"
                           output)
@@ -554,9 +561,7 @@ vector of hextets.
 If no record is found and HOST is not an IPv6 literal, return nil.
 
 This command uses `nslookup-program' to look up DNS records."
-  (let* ((args `(,nslookup-program "-type=AAAA" ,host ,name-server))
-         (output (shell-command-to-string
-                  (string-join (cl-remove nil args) " ")))
+  (let* ((output (nslookup--query "AAAA" host name-server))
          (ip-regex "\\([0-9a-fA-F:.]+\\)")
          (parsed-ip (and (string-match
                           (if (eq system-type 'windows-nt)

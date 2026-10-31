@@ -20,11 +20,12 @@ const CASES: &str = r#"
       (unless (equal (nth 3 (ping "example.test" '("-n"))) '("-n" "example.test"))
         (error "Ping explicit options are not usable"))))
   (let ((system-type 'darwin))
-    (cl-letf (((symbol-function 'shell-command-to-string)
-               (lambda (command)
-                 (if (string-match-p "-type=AAAA" command)
-                     "example.test has AAAA address 2001:db8::5\n"
-                   "Name: example.test\nAddress: 192.0.2.5\n"))))
+    (cl-letf (((symbol-function 'process-file)
+               (lambda (_program _infile _destination _display &rest arguments)
+                 (insert (if (equal (car arguments) "-type=AAAA")
+                             "example.test has AAAA address 2001:db8::5\n"
+                           "Name: example.test\nAddress: 192.0.2.5\n"))
+                 0)))
       (unless (equal (nslookup-host-ipv4 "example.test") "192.0.2.5")
         (error "IPv4 lookup definition is not usable"))
       (unless (equal (nslookup-host-ipv4 "example.test" nil 'vector) [192 0 2 5])
@@ -34,6 +35,35 @@ const CASES: &str = r#"
       (unless (equal (nslookup-host-ipv6 "example.test" nil 'vector)
                      [8193 3512 0 0 0 0 0 5])
         (error "IPv6 vector conversion is not usable"))))
+  (let ((nslookup-program "/path with spaces/nslookup")
+        (host "x; printf 'Name: x\\nAddress: 192.0.2.7\\n'")
+        (server "server $(printf injected) 'quoted'\nmore")
+        calls)
+    (cl-letf (((symbol-function 'shell-command-to-string)
+               (lambda (&rest _) (error "DNS lookup invoked a shell")))
+              ((symbol-function 'process-file)
+               (lambda (&rest arguments)
+                 (push arguments calls)
+                 (insert "raw output")
+                 1)))
+      (dolist (type '("A" "AAAA"))
+        (dolist (name-server (list nil server))
+          (unless (equal (nslookup--query type host name-server) "raw output")
+            (error "Lookup lost subprocess output"))
+          (unless (equal (pop calls)
+                         (append (list nslookup-program nil t nil
+                                       (concat "-type=" type) host)
+                                 (and name-server (list name-server))))
+            (error "Lookup changed literal process arguments"))))))
+  ;; Exercise the real subprocess boundary with harmless injection payloads.
+  (let ((nslookup-program (executable-find "true")))
+    (when nslookup-program
+      (dolist (type '("A" "AAAA"))
+        (dolist (payload '("x; printf 'Name: x\\nAddress: 192.0.2.7\\n'"
+                           "x; printf 'has AAAA address ::1\\n'"))
+          (unless (and (equal (nslookup--query type payload nil) "")
+                       (equal (nslookup--query type "example.test" payload) ""))
+            (error "Lookup executed injected shell syntax"))))))
   t)
 "#;
 
