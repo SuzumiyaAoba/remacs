@@ -2460,6 +2460,8 @@ page was saved."
       string)))
 
 (defun eww-make-unique-file-name (file directory)
+  ;;Remacs: a decoded URL segment can contain directory separators.
+  (setq file (file-name-nondirectory file))
   (cond
    ((zerop (length file))
     (setq file "!"))
