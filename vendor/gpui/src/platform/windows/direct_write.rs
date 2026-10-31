@@ -616,7 +616,7 @@ impl DirectWriteState {
                         font_info.font_face.GetWeight(),
                         font_info.font_face.GetStyle(),
                         font_info.font_face.GetStretch(),
-                        font_size.0,
+                        first_run.font_size.unwrap_or(font_size).0,
                         &HSTRING::from(&self.components.locale),
                     )?
                     .cast()?;
@@ -644,16 +644,9 @@ impl DirectWriteState {
             };
 
             let mut first_run = true;
-            let mut ascent = Pixels::default();
-            let mut descent = Pixels::default();
             for run in font_runs {
                 if first_run {
                     first_run = false;
-                    let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
-                    let mut line_count = 0u32;
-                    text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
-                    ascent = px(metrics[0].baseline);
-                    descent = px(metrics[0].height - metrics[0].baseline);
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
@@ -674,12 +667,17 @@ impl DirectWriteState {
                 text_layout.SetFontCollection(collection, text_range)?;
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)?;
-                text_layout.SetFontSize(font_size.0, text_range)?;
+                text_layout.SetFontSize(run.font_size.unwrap_or(font_size).0, text_range)?;
                 text_layout.SetFontStyle(font_info.font_face.GetStyle(), text_range)?;
                 text_layout.SetFontWeight(font_info.font_face.GetWeight(), text_range)?;
                 text_layout.SetTypography(&font_info.features, text_range)?;
             }
 
+            let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
+            let mut line_count = 0u32;
+            text_layout.GetLineMetrics(Some(&mut metrics), &mut line_count as _)?;
+            let ascent = px(metrics[0].baseline);
+            let descent = px(metrics[0].height - metrics[0].baseline);
             let mut runs = Vec::new();
             let renderer_context = RendererContext {
                 text_system: self,
@@ -1558,7 +1556,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             }
             glyph_idx += cluster_glyph_count;
         }
-        context.runs.push(ShapedRun { font_id, glyphs });
+        context.runs.push(ShapedRun {
+            font_id,
+            font_size: px(glyphrun.fontEmSize),
+            glyphs,
+        });
         Ok(())
     }
 

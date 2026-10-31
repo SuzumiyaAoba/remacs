@@ -379,17 +379,17 @@ impl CosmicTextSystemState {
         for run in font_runs {
             let loaded_font = self.loaded_font(run.font_id);
             let font = self.font_system.db().face(loaded_font.font.id()).unwrap();
-
-            attrs_list.add_span(
-                offs..(offs + run.len),
-                &Attrs::new()
-                    .metadata(run.font_id.0)
-                    .family(Family::Name(&font.families.first().unwrap().0))
-                    .stretch(font.stretch)
-                    .style(font.style)
-                    .weight(font.weight)
-                    .font_features(loaded_font.features.clone()),
-            );
+            let mut attrs = Attrs::new()
+                .metadata(run.font_id.0)
+                .family(Family::Name(&font.families.first().unwrap().0))
+                .stretch(font.stretch)
+                .style(font.style)
+                .weight(font.weight)
+                .font_features(loaded_font.features.clone());
+            if let Some(size) = run.font_size {
+                attrs = attrs.metrics(cosmic_text::Metrics::new(size.0, size.0));
+            }
+            attrs_list.add_span(offs..(offs + run.len), &attrs);
             offs += run.len;
         }
 
@@ -434,14 +434,14 @@ impl CosmicTextSystemState {
                 is_emoji,
             };
 
-            if let Some(last_run) = runs
-                .last_mut()
-                .filter(|last_run| last_run.font_id == font_id)
-            {
+            if let Some(last_run) = runs.last_mut().filter(|last_run| {
+                last_run.font_id == font_id && last_run.font_size == crate::px(glyph.font_size)
+            }) {
                 last_run.glyphs.push(shaped_glyph);
             } else {
                 runs.push(ShapedRun {
                     font_id,
+                    font_size: crate::px(glyph.font_size),
                     glyphs: vec![shaped_glyph],
                 });
             }

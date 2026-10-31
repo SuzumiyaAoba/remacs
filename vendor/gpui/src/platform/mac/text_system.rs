@@ -462,7 +462,9 @@ impl MacTextSystemState {
                 let text = &text[ix_converter.utf8_ix..][..run.len];
                 // if the fonts are the same, we need to disconnect the text with a ZWNJ
                 // to prevent core text from forming ligatures between them
-                let needs_zwnj = last_font_run.replace(run.font_id) == Some(run.font_id);
+                let run_size = run.font_size.unwrap_or(font_size);
+                let run_key = (run.font_id, run_size);
+                let needs_zwnj = last_font_run.replace(run_key) == Some(run_key);
 
                 let utf16_start = string.char_len(); // insert at end of string
                 ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
@@ -483,7 +485,7 @@ impl MacTextSystemState {
                 let font = &self.fonts[run.font_id.0];
 
                 let font_metrics = font.metrics();
-                let font_scale = font_size.0 / font_metrics.units_per_em as f32;
+                let font_scale = run_size.0 / font_metrics.units_per_em as f32;
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
@@ -491,7 +493,7 @@ impl MacTextSystemState {
                     string.set_attribute(
                         cf_range,
                         kCTFontAttributeName,
-                        &font.native_font().clone_with_font_size(font_size.into()),
+                        &font.native_font().clone_with_font_size(run_size.into()),
                     );
                 }
             }
@@ -509,13 +511,19 @@ impl MacTextSystemState {
                     .downcast::<CTFont>()
                     .unwrap()
             };
+            let run_size = px(font.pt_size() as f32);
             let font_id = self.id_for_native_font(font);
+            let metrics = self.fonts[font_id.0].metrics();
+            let scale = run_size.0 / metrics.units_per_em as f32;
+            max_ascent = max_ascent.max(metrics.ascent * scale);
+            max_descent = max_descent.max(-metrics.descent * scale);
 
             let mut glyphs = match runs.last_mut() {
-                Some(run) if run.font_id == font_id => &mut run.glyphs,
+                Some(run) if run.font_id == font_id && run.font_size == run_size => &mut run.glyphs,
                 _ => {
                     runs.push(ShapedRun {
                         font_id,
+                        font_size: run_size,
                         glyphs: Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0)),
                     });
                     &mut runs.last_mut().unwrap().glyphs
@@ -733,6 +741,7 @@ mod tests {
         let mut style = FontRun {
             font_id,
             len: line.len(),
+            font_size: None,
         };
 
         let layout = fonts.layout_line(line, px(16.), &[style]);
@@ -754,10 +763,12 @@ mod tests {
             FontRun {
                 len: "\u{feff}".len(),
                 font_id,
+                font_size: None,
             },
             FontRun {
                 len: "ab".len(),
                 font_id,
+                font_size: None,
             },
         ];
         let layout = fonts.layout_line(line, px(16.), font_runs);
@@ -776,8 +787,16 @@ mod tests {
 
         let text = "hello world";
         let font_runs = &[
-            FontRun { font_id, len: 5 }, // "hello"
-            FontRun { font_id, len: 6 }, // " world"
+            FontRun {
+                font_id,
+                len: 5,
+                font_size: None,
+            }, // "hello"
+            FontRun {
+                font_id,
+                len: 6,
+                font_size: None,
+            }, // " world"
         ];
 
         let layout = fonts.layout_line(text, px(16.), font_runs);
@@ -797,11 +816,16 @@ mod tests {
         // Test with different font runs - should not insert ZWNJ
         let font_id2 = fonts.font_id(&font("Times")).unwrap_or(font_id);
         let font_runs_different = &[
-            FontRun { font_id, len: 5 }, // "hello"
+            FontRun {
+                font_id,
+                len: 5,
+                font_size: None,
+            }, // "hello"
             // " world"
             FontRun {
                 font_id: font_id2,
                 len: 6,
+                font_size: None,
             },
         ];
 
@@ -826,15 +850,31 @@ mod tests {
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";
-        let font_runs = &[FontRun { font_id, len: 5 }];
+        let font_runs = &[FontRun {
+            font_id,
+            len: 5,
+            font_size: None,
+        }];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());
 
         let text = "abc";
         let font_runs = &[
-            FontRun { font_id, len: 1 }, // "a"
-            FontRun { font_id, len: 1 }, // "b"
-            FontRun { font_id, len: 1 }, // "c"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "a"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "b"
+            FontRun {
+                font_id,
+                len: 1,
+                font_size: None,
+            }, // "c"
         ];
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, text.len());

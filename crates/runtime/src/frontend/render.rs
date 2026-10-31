@@ -368,6 +368,8 @@ struct StyleMix {
     font_weight: Option<Option<u16>>,
     font_width: Option<Option<u8>>,
     font_height: Option<Option<u16>>,
+    /// Relative heights remain composable until a lower face supplies a size.
+    font_height_scale: Option<f64>,
     box_style: Option<Option<BoxStyle>>,
     stipple: Option<Option<u16>>,
     bold: Option<bool>,
@@ -385,6 +387,18 @@ struct StyleMix {
 impl StyleMix {
     /// Later (higher-priority) layer wins wherever it specifies a value.
     fn merge(&mut self, other: &StyleMix) {
+        if other.font_height.is_some() {
+            self.font_height = other.font_height;
+            self.font_height_scale = None;
+        }
+        if let Some(scale) = other.font_height_scale {
+            if let Some(height) = self.font_height.flatten() {
+                self.font_height = Some(scale_font_height(height, scale).or(Some(height)));
+                self.font_height_scale = None;
+            } else {
+                self.font_height_scale = Some(self.font_height_scale.unwrap_or(1.0) * scale);
+            }
+        }
         macro_rules! m {
             ($($f:ident),*) => {
                 $(if let Some(v) = other.$f { self.$f = Some(v); })*
@@ -397,7 +411,6 @@ impl StyleMix {
             font_family,
             font_weight,
             font_width,
-            font_height,
             box_style,
             stipple,
             bold,
@@ -421,7 +434,7 @@ impl StyleMix {
             font_family: self.font_family.flatten(),
             font_weight: self.font_weight.flatten(),
             font_width: self.font_width.flatten(),
-            font_height: self.font_height.flatten(),
+            font_height: self.resolved_font_height(140),
             box_style: self.box_style.flatten(),
             stipple: self.stipple.flatten(),
             bold: self.bold.unwrap_or(false),
@@ -436,6 +449,14 @@ impl StyleMix {
             extend: self.extend.unwrap_or(false),
         }
     }
+
+    fn resolved_font_height(&self, default: u16) -> Option<u16> {
+        let height = self.font_height.flatten();
+        match self.font_height_scale {
+            Some(scale) => scale_font_height(height.unwrap_or(default), scale).or(height),
+            None => height,
+        }
+    }
 }
 
 impl PartialEq for StyleMix {
@@ -447,6 +468,7 @@ impl PartialEq for StyleMix {
             && self.font_weight == o.font_weight
             && self.font_width == o.font_width
             && self.font_height == o.font_height
+            && self.font_height_scale == o.font_height_scale
             && self.box_style == o.box_style
             && self.stipple == o.stipple
             && self.bold == o.bold
@@ -4568,10 +4590,16 @@ impl FaceCtx {
     /// new-frame defaults layer like GNU's realize_default_face, then
     /// the compiled-in basic-face fallbacks).
     fn builtin(&mut self, i: &Interp, name: &str, depth: u32) -> StyleMix {
-        match i.q_soft(name) {
+        let mut mix = match i.q_soft(name) {
             Some(face) => self.named(i, &face, depth),
             None => builtin_face_defaults(i, name),
+        };
+        if mix.font_height_scale.is_some() {
+            let default = self.default_style.and_then(|style| style.font_height).unwrap_or(140);
+            mix.font_height = Some(mix.resolved_font_height(default));
+            mix.font_height_scale = None;
         }
+        mix
     }
 
     fn named(&mut self, i: &Interp, name: &crate::lisp::value::SymId, depth: u32) -> StyleMix {
@@ -4588,6 +4616,12 @@ impl FaceCtx {
             mix.merge(&self.face_plist(i, plist, depth));
         }
         if i.symbol_name(*name) == "default" {
+            // Cache the realized default size, so inheriting it cannot apply
+            // its own relative factor for a second time.
+            if mix.font_height_scale.is_some() {
+                mix.font_height = Some(mix.resolved_font_height(140));
+                mix.font_height_scale = None;
+            }
             if mix.fg.is_none()
                 && let Some(color) = self.frame_default_foreground
             {
@@ -4677,6 +4711,7 @@ impl FaceCtx {
                         mix.font_weight = Some(default_style.font_weight);
                         mix.font_width = Some(default_style.font_width);
                         mix.font_height = Some(default_style.font_height);
+                        mix.font_height_scale = None;
                         mix.bold = Some(default_style.bold);
                         mix.italic = Some(default_style.italic);
                     } else if !is_unspecified && let Value::Str(_) = v {
@@ -4707,10 +4742,17 @@ impl FaceCtx {
                 ":height" => {
                     if is_reset {
                         mix.font_height = Some(default_style.font_height);
-                    } else if !is_unspecified
-                        && let Some(height) = font_height_tenths(v)
-                    {
-                        mix.font_height = Some(Some(height));
+                        mix.font_height_scale = None;
+                    } else if !is_unspecified {
+                        if let Value::Float(scale) = v
+                            && scale.is_finite() && **scale > 0.0
+                        {
+                            mix.font_height = None;
+                            mix.font_height_scale = Some(**scale);
+                        } else if let Some(height) = font_height_tenths(v) {
+                            mix.font_height = Some(Some(height));
+                            mix.font_height_scale = None;
+                        }
                     }
                 }
                 ":stipple" => {
@@ -4891,6 +4933,11 @@ fn font_height_tenths(value: &Value) -> Option<u16> {
         Value::Int(height) if *height > 0 => u16::try_from(*height).ok(),
         _ => None,
     }
+}
+
+fn scale_font_height(base: u16, scale: f64) -> Option<u16> {
+    let height = (f64::from(base) * scale).round();
+    (height >= 1.0 && height <= f64::from(u16::MAX)).then_some(height as u16)
 }
 
 /// GNU slant mapping: italic/oblique slant the text.
@@ -9176,24 +9223,9 @@ fn render_grid_internal(
             .zip(&composed_char_attrs)
             .enumerate()
         {
-            let mut font_height = None;
-            let mut uniform = true;
-            for (column, character) in text.chars().enumerate() {
-                if character.is_whitespace() {
-                    continue;
-                }
-                let Some(height) = styles.get(column).and_then(|style| style.font_height) else {
-                    uniform = false;
-                    break;
-                };
-                if font_height.is_some_and(|current| current != height) {
-                    uniform = false;
-                    break;
-                }
-                font_height = Some(height);
-            }
-            if uniform
-                && let Some(font_height) = font_height
+            let font_height = styles.iter().take(text.chars().count())
+                .filter_map(|style| style.font_height).max();
+            if let Some(font_height) = font_height
                 && let Some(row_height) = row_heights.get_mut(row)
             {
                 let scaled_height = frame_char_height

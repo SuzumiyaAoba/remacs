@@ -3,6 +3,8 @@ mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
+#[cfg(all(test, target_os = "macos"))]
+mod mixed_font_tests;
 
 pub use font_fallbacks::*;
 pub use font_features::*;
@@ -369,6 +371,19 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> ShapedLine {
+        self.shape_line_with_font_sizes(text, font_size, runs, &[], force_width)
+    }
+
+    /// Shape a line with optional sizes corresponding to the styled runs.
+    /// Missing, nonpositive or nonfinite sizes use the line's default size.
+    pub fn shape_line_with_font_sizes(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        font_sizes: &[Option<Pixels>],
+        force_width: Option<Pixels>,
+    ) -> ShapedLine {
         debug_assert!(
             text.find('\n').is_none(),
             "text argument should not contain newlines"
@@ -394,7 +409,8 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(&text, font_size, runs, force_width);
+        let layout =
+            self.layout_line_with_font_sizes(&text, font_size, runs, font_sizes, force_width);
 
         ShapedLine {
             layout,
@@ -464,6 +480,7 @@ impl WindowTextSystem {
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,
+                        font_size: None,
                     });
                 }
 
@@ -539,12 +556,29 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
+        self.layout_line_with_font_sizes(text, font_size, runs, &[], force_width)
+    }
+
+    /// Lay out a line with optional font sizes corresponding to `runs`.
+    pub fn layout_line_with_font_sizes(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[TextRun],
+        font_sizes: &[Option<Pixels>],
+        force_width: Option<Pixels>,
+    ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut last_font: Option<FontId> = None;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
 
-        for run in runs.iter() {
+        for (index, run) in runs.iter().enumerate() {
+            let font_id = self.resolve_font(&run.font);
+            let run_size = font_sizes
+                .get(index)
+                .copied()
+                .flatten()
+                .filter(|size| size.0.is_finite() && size.0 > 0.0 && *size != font_size);
             let decoration_changed = if let Some(last_run) = last_run
                 && last_run.color == run.color
                 && last_run.underline == run.underline
@@ -559,16 +593,16 @@ impl WindowTextSystem {
             };
 
             if let Some(font_run) = font_runs.last_mut()
-                && Some(font_run.font_id) == last_font
+                && font_run.font_id == font_id
+                && font_run.font_size == run_size
                 && !decoration_changed
             {
                 font_run.len += run.len;
             } else {
-                let font_id = self.resolve_font(&run.font);
-                last_font = Some(font_id);
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    font_size: run_size,
                 });
             }
         }

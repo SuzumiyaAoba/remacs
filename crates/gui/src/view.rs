@@ -172,31 +172,6 @@ pub(super) fn grid_row_height(grid: &Grid, row: usize, fallback: Pixels) -> Pixe
     )
 }
 
-fn uniform_row_font_size(grid: &Grid, row: usize, text: &str, fallback: Pixels) -> Pixels {
-    let Some(styles) = grid
-        .char_attrs
-        .get(row)
-        .filter(|styles| !styles.is_empty())
-        .or_else(|| grid.attrs.get(row))
-    else {
-        return fallback;
-    };
-    let mut height = None;
-    for (index, character) in text.chars().enumerate() {
-        if character.is_whitespace() {
-            continue;
-        }
-        let Some(font_height) = styles.get(index).and_then(|style| style.font_height) else {
-            return fallback;
-        };
-        if height.is_some_and(|height| height != font_height) {
-            return fallback;
-        }
-        height = Some(font_height);
-    }
-    height.map_or(fallback, |height| px(height as f32 / 10.0))
-}
-
 fn adjusted_row_height(height: usize, default_line_height: usize, fallback: Pixels) -> Pixels {
     let adjustment = height as i128 - default_line_height.max(1) as i128;
     (fallback + px(adjustment as f32)).max(px(1.0))
@@ -1687,8 +1662,6 @@ impl Render for EditorView {
                                     .get(y)
                                     .filter(|cells| !cells.is_empty())
                                     .or_else(|| grid.attrs.get(y));
-                                let row_font_size =
-                                    uniform_row_font_size(&grid, y, row, font_size);
                                 let bidi_disabled_ranges = grid
                                     .bidi_disabled_ranges
                                     .iter()
@@ -1782,6 +1755,7 @@ impl Render for EditorView {
                                     }
                                 }
                                 let mut runs: Vec<TextRun> = Vec::new();
+                                let mut font_sizes = Vec::new();
                                 let mut push_run =
                                     |st: remacs_runtime::frontend::CellStyle, len: usize| {
                                         if len == 0 {
@@ -1834,6 +1808,7 @@ impl Render for EditorView {
                                                     .map(|color| rgb(color_rgb(color)).into()),
                                             }),
                                         });
+                                        font_sizes.push(st.font_height.map(|height| px(height as f32 / 10.0)));
                                     };
                                 for (len, style) in styled_spans {
                                     push_run(style, len);
@@ -1847,11 +1822,13 @@ impl Render for EditorView {
                                         underline: None,
                                         strikethrough: None,
                                     });
+                                    font_sizes.push(None);
                                 }
-                                window.text_system().shape_line(
+                                window.text_system().shape_line_with_font_sizes(
                                     shaping_text.into(),
-                                    row_font_size,
+                                    font_size,
                                     &runs,
+                                    &font_sizes,
                                     None,
                                 )
                             })
