@@ -34,9 +34,10 @@ This might not yet be honored by all index-building functions."
   :type 'boolean)
 
 (defcustom imenu-max-item-length 60
-  "If a number, truncate Imenu entries to that length."
-  :type '(choice integer
-                 (const :tag "Unlimited")))
+  "Maximum number of characters in an Imenu entry, or nil for no limit.
+The limit must be a nonnegative integer."
+  :type '(choice natnum
+                 (const :tag "Unlimited" nil)))
 
 (defcustom imenu-auto-rescan nil
   "Non-nil means Imenu should always rescan the buffers."
@@ -413,6 +414,9 @@ NOT share structure with ALIST."
 
 (defun imenu--truncate-items (menulist)
   "Truncate all strings in MENULIST to `imenu-max-item-length'."
+  ;; Remacs: validate before mutating any menu labels.
+  (unless (or (null imenu-max-item-length) (natnump imenu-max-item-length))
+    (user-error "Invalid imenu-max-item-length: %S" imenu-max-item-length))
   (mapc (lambda (item)
 	  ;; Truncate if necessary.
 	  (when (and (numberp imenu-max-item-length)
