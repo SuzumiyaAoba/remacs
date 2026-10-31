@@ -1338,6 +1338,11 @@ return an empty string, and set `ffap-string-at-point-region' to `(1 1)'."
 			     (memq mode '(nil file)))
 		    (ffap-search-forward-file-end dir-separator)
 		    (ffap-search-backward-file-end dir-separator))
+                  ;; ;Remacs: Keep URL path parentheses while excluding an
+                  ;; unmatched closing parenthesis from surrounding prose.
+                  (when (eq (or mode major-mode) 'url)
+                    (goto-char (thing-at-point--trim-unmatched-closing-parentheses
+                                beg (point))))
 		  (point))))
          (region-len (- (max beg end) (min beg end))))
 
