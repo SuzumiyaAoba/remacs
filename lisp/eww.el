@@ -2067,20 +2067,33 @@ See URL `https://developer.mozilla.org/en-US/docs/Web/HTML/Element/Input'.")
       ;; Mark this as an element we can TAB to.
       (put-text-property start (1+ start) 'shr-tab-stop t))))
 
+(defun eww--option-text (dom)
+  "Collect option text before normalizing ASCII whitespace."
+  (if (memq (dom-tag dom) '(script comment img template))
+      ""
+    (mapconcat (lambda (child)
+                 (if (stringp child) child (eww--option-text child)))
+               (dom-children dom) "")))
+
 (defun eww-tag-select (dom)
   (shr-ensure-paragraph)
   (let ((menu (list :name (dom-attr dom 'name)
-		    :eww-form eww-form :dom dom))
+		    :eww-form eww-form :dom dom :type "select"))
 	(options nil)
 	(start (point))
 	(max 0))
     (dolist (elem (dom-by-tag dom 'option))
-      (when (dom-attr elem 'selected)
-	(nconc menu (list :value (dom-attr elem 'value))))
-      (let ((display (dom-inner-text elem)))
-        (setq max (max max (string-width display)))
+      (let ((display (dom-inner-text elem))
+            (value (or (dom-attr elem 'value)
+                       (string-trim
+                        (replace-regexp-in-string
+                         "[ \t\n\r\f]+" " " (eww--option-text elem))
+                        " +" " +"))))
+        (when (dom-attr elem 'selected)
+	  (nconc menu (list :value value)))
+        (setq max (max max 1 (string-width display)))
 	(push (list 'item
-		    :value (dom-attr elem 'value)
+		    :value value
 		    :display display)
 	      options)))
     (when options
@@ -2219,7 +2232,7 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
 (defun eww-input-value (input)
   (let ((type (plist-get input :type))
 	(value (plist-get input :value)))
-    (if (member type eww-text-input-types)
+    (if (or (member type eww-text-input-types) (equal type "select"))
 	value
 	(if (string-match " +\\'" value)
 	    (substring value 0 (match-beginning 0))
