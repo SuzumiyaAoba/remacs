@@ -1176,12 +1176,22 @@ For instance, `image/png' will result in `png'."
             res)))
        (nreverse res)))))
 
+(defun mailcap--format-command (command file)
+  "Format COMMAND, substituting FILE for every `%s' placeholder."
+  (let ((start 0)
+        (count 0))
+    (save-match-data
+      (while (string-match "%s" command start)
+        (setq count (1+ count)
+              start (match-end 0))))
+    (apply #'format command (make-list (max 1 count) file))))
+
 (defun mailcap--async-shell (command file)
   "Asynchronously call MIME viewer shell COMMAND.
 Replace %s in COMMAND with FILE, as per `mailcap-mime-data'.
 Delete FILE once COMMAND exits."
   (let ((buf (get-buffer-create " *mailcap shell*")))
-    (async-shell-command (format command file) buf)
+    (async-shell-command (mailcap--format-command command file) buf)
     (add-function :after (process-sentinel (get-buffer-process buf))
                   (lambda (proc _msg)
                     (when (memq (process-status proc) '(exit signal))
