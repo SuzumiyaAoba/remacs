@@ -93,7 +93,7 @@ unsafe fn build_classes() {
             );
             decl.add_method(
                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
-                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, BOOL) -> BOOL,
             );
             decl.add_method(
                 sel!(applicationWillTerminate:),
@@ -1444,16 +1444,23 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
-    if !has_open_windows {
+extern "C" fn should_handle_reopen(
+    this: &mut Object,
+    _: Sel,
+    _: id,
+    has_open_windows: BOOL,
+) -> BOOL {
+    if has_open_windows == NO {
         let platform = unsafe { get_mac_platform(this) };
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.reopen.take() {
             drop(lock);
             callback();
             platform.0.lock().reopen.get_or_insert(callback);
+            return NO;
         }
     }
+    YES
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
@@ -1798,6 +1805,19 @@ mod tests {
     use crate::ClipboardItem;
 
     use super::*;
+
+    #[test]
+    fn test_reopen_delegate_uses_bool_abi() {
+        let class = unsafe { &*APP_DELEGATE_CLASS };
+        let method = class
+            .instance_method(sel!(applicationShouldHandleReopen:hasVisibleWindows:))
+            .unwrap();
+        assert_eq!(method.return_type(), <BOOL as objc::Encode>::encode());
+        assert_eq!(
+            method.argument_type(3),
+            Some(<BOOL as objc::Encode>::encode())
+        );
+    }
 
     #[test]
     fn test_clipboard() {
