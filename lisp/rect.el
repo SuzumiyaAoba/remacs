@@ -263,7 +263,9 @@ The returned value has the form of (WIDTH . HEIGHT)."
           (when (< endextra 0)
             (if (zerop (length line))
                 (setq begextra (+ begextra endextra))
-              (setq line (substring line 0 (+ (length line) endextra))))
+              ;; Remacs: ENDEXTRA measures display columns.
+              (setq line (truncate-string-to-width
+                          line (+ (string-width line) endextra) 0 ?\s)))
             (setq endextra 0))
           (when (or (> begextra 0) (> endextra 0))
             (setq line (concat (spaces-string begextra)
@@ -304,7 +306,9 @@ The returned value has the form of (WIDTH . HEIGHT)."
 	(when (< endextra 0)
 	  (if (zerop (length line))
 	      (setq begextra (+ begextra endextra))
-	    (setq line (substring line 0 (+ (length line) endextra))))
+	    ;; Remacs: preserve the selected part of a wide character as spaces.
+	    (setq line (truncate-string-to-width
+                        line (+ (string-width line) endextra) 0 ?\s)))
 	  (setq endextra 0))
 	(if (or (> begextra 0) (> endextra 0))
 	    (setq line (concat (spaces-string begextra)

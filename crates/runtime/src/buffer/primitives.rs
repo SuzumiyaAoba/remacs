@@ -5639,7 +5639,7 @@ fn f_current_column(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             c if c == '\t' => col = (col / tab_width + 1) * tab_width,
             c => {
                 col += text_display_width(&bb, k, display, ctl_arrow)
-                    .unwrap_or_else(|| char_width_with_ctl(c, ctl_arrow));
+                    .unwrap_or_else(|| column_char_width(i, c, ctl_arrow));
             }
         }
         k += 1;
@@ -5689,7 +5689,7 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             c => {
                 col += text_display_width(&bb, k, display, ctl_arrow)
-                    .unwrap_or_else(|| char_width_with_ctl(c, ctl_arrow));
+                    .unwrap_or_else(|| column_char_width(i, c, ctl_arrow));
             }
         }
         k += 1;
@@ -5745,6 +5745,25 @@ fn f_move_to_column(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         goto_char_set_point_with_forward_limit(i, &b, k, Some(le))?;
         Ok(Value::Int(col))
     }
+}
+
+fn column_char_width(i: &Interp, character: EmacsChar, ctl_arrow: bool) -> i128 {
+    // GNU CHARACTER_WIDTH handles ASCII directly and uses the live table
+    // for other characters, including byte8 and Mule character codes.
+    let code = crate::lisp::value::lisp_char_code(character) as u32;
+    if code >= 0x80 {
+        if let Some(symbol) = i.q_soft("char-width-table") {
+            let table = i.symbol_value(symbol);
+            if let Value::Int(width) =
+                crate::lisp::builtins::misc::char_table_ref(i, &table, code as usize)
+            {
+                if width >= 0 {
+                    return width;
+                }
+            }
+        }
+    }
+    char_width_with_ctl(character, ctl_arrow)
 }
 
 fn text_display_width(
