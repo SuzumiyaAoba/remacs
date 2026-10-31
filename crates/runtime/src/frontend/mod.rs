@@ -443,6 +443,7 @@ pub trait KeyIo {
 }
 
 mod bitmap;
+mod fringe;
 mod command;
 mod render;
 pub(crate) use command::minibuf_dispatch_key;
@@ -452,7 +453,8 @@ pub use command::{
 };
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
-    GridCursorShape, GridHelpEcho, GridImage, GridImageSource, GridInput, GridInputPosition,
+    GridCursorShape, GridFringeBitmap, GridFringeBitmapAlign, GridHelpEcho, GridImage,
+    GridImageSource, GridInput, GridInputPosition,
     GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,

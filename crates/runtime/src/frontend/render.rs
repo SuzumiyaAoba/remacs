@@ -132,6 +132,26 @@ pub struct GridImage {
     pub height: Option<usize>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GridFringeBitmapAlign {
+    Center,
+    Top,
+    Bottom,
+}
+
+/// A monochrome fringe bitmap. Each byte holds one row, most significant bit
+/// on the left, matching GNU's standard eight-pixel fringe bitmaps.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridFringeBitmap {
+    pub row: usize,
+    pub column: usize,
+    pub pixel_width: usize,
+    pub bits: Arc<[u8]>,
+    pub align: GridFringeBitmapAlign,
+    pub repeat: bool,
+    pub style: CellStyle,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum GridImageSource {
     File(String),
@@ -458,6 +478,7 @@ pub struct Grid {
     pub rows: Vec<String>,
     /// Image runs from `display' properties, positioned in grid cells.
     pub images: Vec<GridImage>,
+    pub fringe_bitmaps: Vec<GridFringeBitmap>,
     /// Fill-column indicator glyphs overlaying otherwise blank text cells.
     pub fill_column_indicators: Vec<GridFillColumnIndicator>,
     /// Bitmap face backgrounds referenced by `CellStyle::stipple`.
@@ -713,6 +734,7 @@ impl Grid {
             internal_border_style: CellStyle::default(),
             rows: vec![String::new(); height],
             images: Vec::new(),
+            fringe_bitmaps: Vec::new(),
             fill_column_indicators: Vec::new(),
             stipples: Vec::new(),
             menus: Vec::new(),
@@ -3238,6 +3260,14 @@ struct RenderedRow {
     padding_char_start: usize,
     images: Vec<RenderedImage>,
     compositions: Vec<RenderedComposition>,
+    fringes: Vec<RenderedFringe>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderedFringe {
+    left: bool,
+    bitmap: usize,
+    style: CellStyle,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -3304,6 +3334,7 @@ enum Visibility {
 #[derive(Clone, PartialEq, Eq)]
 enum DisplayReplacement {
     Text(String),
+    Fringe(RenderedFringe),
     GlyphlessText(String, CellStyle),
     CompositionDefault(usize),
     Image {
@@ -3714,6 +3745,7 @@ where
     let mut hidden_run = false;
     let mut images = Vec::new();
     let mut compositions = Vec::new();
+    let mut fringes = Vec::new();
 
     for (index, ch) in chars.iter().enumerate() {
         let mut keep_rendering = true;
@@ -3761,6 +3793,12 @@ where
         };
         let keep_rendering = match replacement {
             Some(DisplayReplacement::Hidden) => true,
+            Some(DisplayReplacement::Fringe(fringe)) => {
+                if graphical {
+                    fringes.push(fringe);
+                }
+                true
+            }
             Some(DisplayReplacement::Text(replacement)) => {
                 append_rendered_text(
                     &replacement,
@@ -3968,6 +4006,7 @@ where
         padding_char_start,
         images,
         compositions,
+        fringes,
     }
 }
 
@@ -4849,7 +4888,7 @@ struct OverlayStrings {
 
 fn window_faces(
     i: &Interp,
-    ctx: &FaceCtx,
+    ctx: &mut FaceCtx,
     b: &std::rc::Rc<std::cell::RefCell<Buffer>>,
     win: &Value,
     mouse_position: Option<MousePosition>,
@@ -5087,7 +5126,7 @@ fn window_faces(
                 runs.push((
                     start,
                     end,
-                    display_value_replacement(i, &property.value, bb.id),
+                    display_value_replacement(i, ctx, &property.value, bb.id),
                     idx,
                 ));
                 previous_value = Some(&property.value);
@@ -5105,7 +5144,7 @@ fn window_faces(
             })
             .filter_map(|overlay| {
                 let value = overlay.property(i, &Value::Sym(display_property));
-                let replacement = display_value_replacement(i, &value, bb.id)?;
+                let replacement = display_value_replacement(i, ctx, &value, bb.id)?;
                 Some((overlay.clone(), replacement))
             })
             .collect();
@@ -5881,13 +5920,52 @@ fn image_display_replacement(
 
 fn display_value_replacement(
     i: &Interp,
+    faces: &mut FaceCtx,
     value: &Value,
     buffer_id: usize,
 ) -> Option<DisplayReplacement> {
+    if let Value::Cons(spec) = value {
+        let (head, tail) = {
+            let spec = spec.borrow();
+            (spec.car.clone(), spec.cdr.clone())
+        };
+        if let Value::Sym(head) = head {
+            let name = i.symbol_name(head);
+            if matches!(name.as_str(), "left-fringe" | "right-fringe") {
+                let Value::Cons(arguments) = tail else {
+                    return None;
+                };
+                let (bitmap, tail) = {
+                    let arguments = arguments.borrow();
+                    (arguments.car.clone(), arguments.cdr.clone())
+                };
+                let bitmap = i
+                    .sym_id(&bitmap)
+                    .and_then(|symbol| {
+                        i.q_soft("fringe")
+                            .map(|property| i.get_prop(symbol, property))
+                    })
+                    .and_then(|index| index.int())
+                    .and_then(|index| usize::try_from(index).ok())
+                    .filter(|index| super::fringe::defined(*index));
+                let Some(bitmap) = bitmap else {
+                    return Some(DisplayReplacement::Hidden);
+                };
+                let mut style = faces.builtin(i, "default", 0);
+                style.merge(&faces.builtin(i, "fringe", 0));
+                if let Value::Cons(face) = tail {
+                    style.merge(&faces.face_value(i, &face.borrow().car, 0));
+                }
+                return Some(DisplayReplacement::Fringe(RenderedFringe {
+                    left: name == "left-fringe",
+                    bitmap,
+                    style: style.finish(),
+                }));
+            }
+        }
+    }
     match value {
-        Value::Str(string) => Some(DisplayReplacement::Text(
-            string.borrow().to_unicode_lossy(),
-        )),
+        Value::Str(string) => Some(DisplayReplacement::Text(string.borrow().to_unicode_lossy())),
         _ => image_display_replacement(i, value, buffer_id),
     }
 }
@@ -6762,6 +6840,9 @@ fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) 
     for bar in &mut grid.scroll_bars {
         resolve_grid_style(&mut bar.style, exponent, threshold);
     }
+    for bitmap in &mut grid.fringe_bitmaps {
+        resolve_grid_style(&mut bitmap.style, exponent, threshold);
+    }
     for divider in &mut grid.bottom_dividers {
         resolve_grid_style(&mut divider.style, exponent, threshold);
         resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
@@ -6880,6 +6961,7 @@ fn render_grid_internal(
     let mut char_attrs = vec![Vec::new(); height];
     let mut images = Vec::new();
     let mut bidi_disabled_cell_ranges = Vec::<(usize, usize, usize)>::new();
+    let mut fringe_bitmaps = Vec::new();
     let mut bidi_paragraph_cell_ranges =
         Vec::<(usize, usize, usize, GridBidiDirection)>::new();
     let mut pending_compositions = Vec::<(usize, usize, Vec<char>, CellStyle)>::new();
@@ -6916,6 +6998,7 @@ fn render_grid_internal(
                 internal_border_style,
                 rows,
                 images,
+                fringe_bitmaps,
                 fill_column_indicators,
                 stipples: fctx.stipples,
                 menus,
@@ -7746,7 +7829,7 @@ fn render_grid_internal(
         let mut wf = i
             .buffers
             .get(buf_id)
-            .map(|b| window_faces(i, &fctx, &b, &Value::Window(w.clone()), mouse_position));
+            .map(|b| window_faces(i, &mut fctx, &b, &Value::Window(w.clone()), mouse_position));
         let glyphless_style = fctx.builtin(i, "glyphless-char", 0).finish();
         let fill_column_indicator =
             buffer_fill_column_indicator(i, &mut fctx, wf.as_ref(), buf_id);
@@ -7878,7 +7961,49 @@ fn render_grid_internal(
                 .map(|prefix| display_columns(prefix, tab_width))
                 .unwrap_or(0)
                 .min(content_width);
-            let first_character_width = line.chars().next().map_or(0, |character| {
+            // Fringe display specifications consume source characters but no
+            // text columns. Keep their source indices for wrapping and input.
+            let metric_line: Option<EmacsText> = wf
+                .as_ref()
+                .filter(|faces| {
+                    faces
+                        .display_props
+                        .iter()
+                        .any(|(start, end, replacement, _)| {
+                            *start < line_pos.saturating_add(line_len)
+                                && *end > line_pos
+                                && matches!(
+                                    replacement,
+                                    Some(DisplayReplacement::Fringe(_) | DisplayReplacement::Hidden)
+                                )
+                        })
+                })
+                .map(|faces| {
+                    line.chars()
+                        .enumerate()
+                        .map(|(index, character)| {
+                            let position = line_pos + index;
+                            let zero_width = faces
+                                .display_props
+                                .iter()
+                                .filter(|(start, end, _, _)| position >= *start && position < *end)
+                                .max_by_key(|(_, _, _, order)| *order)
+                                .is_some_and(|(_, _, replacement, _)| {
+                                    matches!(
+                                        replacement,
+                                        Some(DisplayReplacement::Fringe(_) | DisplayReplacement::Hidden)
+                                    )
+                                });
+                            if zero_width {
+                                EmacsChar::new(0x200b).unwrap()
+                            } else {
+                                character
+                            }
+                        })
+                        .collect()
+                });
+            let metric_line = metric_line.as_ref().unwrap_or(&line);
+            let first_character_width = metric_line.chars().next().map_or(0, |character| {
                 let byte8 = character.byte8().is_some();
                 let code = character.code();
                 let character = character.unicode().unwrap_or('\u{fffd}');
@@ -7902,7 +8027,7 @@ fn render_grid_internal(
             };
             let ranges = if wrap_lines {
                 wrap_ranges_with_prefix(
-                    &line,
+                    metric_line,
                     content_width,
                     line_prefix_width,
                     tab_width,
@@ -8227,16 +8352,17 @@ fn render_grid_internal(
                     right_indicator = "·".to_owned();
                 }
                 if !wrap_lines
-                    && display_columns(&line, tab_width) > row_hscroll.saturating_add(text_width)
+                    && display_columns(metric_line, tab_width) > row_hscroll.saturating_add(text_width)
                 {
                     right_indicator = "›".to_owned();
                 }
-                if let Some((_, arrow)) = overlay_arrows.iter().find(|(position, _)| {
+                let overlay_arrow = overlay_arrows.iter().find(|(position, _)| {
                     *position >= segment_pos
                         && (*position < segment_pos.saturating_add(segment_len)
                             || (*position == segment_pos.saturating_add(segment_len)
                                 && segment_end == line_len))
-                }) {
+                });
+                if let Some((_, arrow)) = overlay_arrow {
                     left_indicator = arrow.clone();
                 }
                 place_fringe_glyph(
@@ -8255,6 +8381,47 @@ fn render_grid_internal(
                     &right_indicator,
                     fringe_style,
                 );
+                // User display specifications override automatic indicators.
+                // The last specification encountered on each side wins.
+                for left in [true, false] {
+                    // GNU paints the overlay arrow over a left user bitmap.
+                    if left && overlay_arrow.is_some() {
+                        continue;
+                    }
+                    let Some(fringe) = rendered
+                        .fringes
+                        .iter()
+                        .rev()
+                        .find(|fringe| fringe.left == left)
+                    else {
+                        continue;
+                    };
+                    let (column, cells, pixels) = if left {
+                        (window_left, fringe_left_cells, fringe_left_pixels)
+                    } else {
+                        (right_fringe_left, fringe_right_cells, fringe_right_pixels)
+                    };
+                    if cells == 0 {
+                        continue;
+                    }
+                    let pixel_width = pixels.min(cells.saturating_mul(frame_char_width));
+                    if let Some(bitmap) = super::fringe::get(fringe.bitmap) {
+                        if let Some(row) = screen_rows.get_mut(y) {
+                            for cell in row.iter_mut().skip(column).take(cells) {
+                                *cell = ScreenCell::new(fringe_style);
+                            }
+                        }
+                        fringe_bitmaps.push(GridFringeBitmap {
+                            row: y,
+                            column,
+                            pixel_width,
+                            bits: Arc::from(bitmap.rows),
+                            align: bitmap.align,
+                            repeat: bitmap.repeat,
+                            style: fringe.style,
+                        });
+                    }
+                }
                 images.extend(rendered.images.iter().filter_map(|image| {
                     let column = content_left.saturating_add(image.column);
                     if column >= width {
@@ -8637,7 +8804,7 @@ fn render_grid_internal(
     let mini_top = rows.len().saturating_sub(mini_height);
     if mini_visible_rows > 0 {
         let wf =
-            mini_styled.map(|buffer| window_faces(i, &fctx, buffer, &Value::Nil, mouse_position));
+            mini_styled.map(|buffer| window_faces(i, &mut fctx, buffer, &Value::Nil, mouse_position));
         if let (Some(position), Some(buffer)) = (mouse_position, mini_buf.as_ref())
             && position.buffer_id == buffer.borrow().id
         {
@@ -8971,6 +9138,7 @@ fn render_grid_internal(
         internal_border_style,
         rows,
         images,
+        fringe_bitmaps,
         fill_column_indicators,
         stipples: fctx.stipples,
         menus,

@@ -25,6 +25,7 @@ use std::sync::{
 };
 use std::{cell::Cell, rc::Rc};
 mod input;
+mod fringe;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
@@ -2365,6 +2366,10 @@ impl Render for EditorView {
                                 },
                             );
                         }
+                        fringe::paint(
+                            &grid, bounds, cell_width, line_height,
+                            default_background, background_alpha, window,
+                        );
                         for bar in &grid.scroll_bars {
                             let (thumb_color, track_color) = scroll_bar_colors(
                                 bar,
