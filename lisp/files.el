@@ -8037,7 +8037,9 @@ by `sh' are supported."
 			    (< (1+ i) len)
 			    (eq (aref wildcard (1+ i)) ?\]))
 		       "\\[")
-
+((and (eq ch ?\[)
+			    (not (wildcard--class-end wildcard (1+ i))))
+		       (regexp-quote "["))
 		      ((eq ch ?\[)
   (let ((prefix "[")
         negative prefix-member prefix-close)
