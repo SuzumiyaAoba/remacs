@@ -1177,8 +1177,9 @@ For instance, `image/png' will result in `png'."
        (nreverse res)))))
 
 (defun mailcap--format-command (command file)
-  "Format COMMAND, substituting FILE for every `%s' placeholder."
-  (let ((start 0)
+  "Format COMMAND, substituting shell-quoted FILE for every `%s'."
+  (let ((file (shell-quote-argument file))
+        (start 0)
         (count 0))
     (save-match-data
       (while (string-match "%s" command start)
