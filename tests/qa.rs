@@ -198,6 +198,7 @@ qa!(qa_fontlock, "qa_fontlock.el");
 qa!(qa_docstring_escape, "qa_docstring_escape.el");
 qa!(qa_skip_classes, "qa_skip_classes.el");
 qa!(qa_woman_indent_zero, "qa_woman_indent_zero.el");
+qa!(qa_woman_path_precedence, "qa_woman_path_precedence.el");
 qa!(qa_tab_indent, "qa_tab_indent.el");
 qa!(qa_format, "qa_format.el");
 qa!(qa_format_conversions, "qa_format_conversions.el");

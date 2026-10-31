@@ -1399,12 +1399,13 @@ The cdr of each alist element is the path-index / filename."
   ;; will be a list of the first `woman-cache-level' elements of the
   ;; following list: (topic path-index filename).  This alist `files'
   ;; is re-processed by `woman-topic-all-completions-merge'.
-  (let (dir files (path-index 0))	; indexing starts at zero
+  (let (dir files seen (path-index 0))	; indexing starts at zero
     (while path
       (setq dir (pop path))
-      (if (woman-not-member dir path)	; use each directory only once!
-	  (push (woman-topic-all-completions-1 dir path-index)
-		files))
+      ;; Remacs: retain the first occurrence to preserve MANPATH precedence.
+      (when (woman-not-member dir seen)
+        (push dir seen)
+        (push (woman-topic-all-completions-1 dir path-index) files))
       (setq path-index (1+ path-index)))
     ;; Uniquify topics:
     ;; Concatenate all lists with a single nconc call to
@@ -1486,7 +1487,7 @@ Also make each path-info component into a list.
 	  woman-file-regexp))		; extension
 	(topics woman-topic-all-completions)
 	(path woman-expanded-directory-path)
-	dir files)
+	dir files seen)
     (if (cdr (car topics))
 	;; Use cached path-info to locate files for each topic:
 	(let ((path-info (cdr (assoc topic topics)))
@@ -1504,9 +1505,11 @@ Also make each path-info component into a list.
       (while path
 	(setq dir (car path)
 	      path (cdr path))
-	(if (woman-not-member dir path)	; use each directory only once!
-	    (setq files (nconc files
-			       (directory-files dir t topic-regexp))))))
+        ;; Remacs: uncached lookups use the same first-occurrence order.
+        (when (woman-not-member dir seen)
+          (push dir seen)
+          (setq files (nconc files
+                             (directory-files dir t topic-regexp))))))
     (mapcar #'list files)))
 
 
