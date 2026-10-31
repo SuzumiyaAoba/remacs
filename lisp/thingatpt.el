@@ -261,7 +261,7 @@ a symbol as a valid THING."
            (let ((bounds (bounds-of-thing-at-point thing)))
              (when bounds
                (buffer-substring (car bounds) (cdr bounds))))))))
-    (when (and text no-properties (sequencep text))
+    (when (and text no-properties (stringp text))
       ;; A provider may retain or share its returned string.
       (setq text (copy-sequence text))
       (set-text-properties 0 (length text) nil text))
