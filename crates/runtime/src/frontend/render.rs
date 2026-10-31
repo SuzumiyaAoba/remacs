@@ -3949,6 +3949,8 @@ struct FaceCtx {
     /// Bitmap face backgrounds interned for compact cell styles.
     stipples: Vec<GridStipple>,
     stipple_ids: HashMap<GridStipple, u16>,
+    stipple_files: HashMap<EmacsText, Option<u16>>,
+    bitmap_directory: EmacsText,
     /// Resolved face name -> merged StyleMix.
     cache: HashMap<crate::lisp::value::SymId, StyleMix>,
     /// Resolved `default' face values used by :reset in other face specs.
@@ -4017,6 +4019,18 @@ impl FaceCtx {
                 }
             }
         }
+        let bitmap_directory = frame
+            .map(|frame| frame.borrow().selected.borrow().buffer)
+            .and_then(|buffer| {
+                let symbol = i.q_soft("default-directory")?;
+                i.buffer_local_toplevel_value(symbol, buffer)
+                    .or_else(|| i.default_toplevel_value(symbol))
+            })
+            .and_then(|value| match value {
+                Value::Str(directory) => Some(directory.borrow().clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| crate::editor::default_directory(i));
         let mut ctx = FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
@@ -4037,6 +4051,8 @@ impl FaceCtx {
             font_family_ids: HashMap::new(),
             stipples: Vec::new(),
             stipple_ids: HashMap::new(),
+            stipple_files: HashMap::new(),
+            bitmap_directory,
             cache: HashMap::new(),
             frame_default_foreground: None,
             frame_default_background: None,
@@ -4097,9 +4113,19 @@ impl FaceCtx {
         Some(id)
     }
 
-    fn stipple_id(&mut self, value: &Value) -> Option<Option<u16>> {
+    fn stipple_id(&mut self, i: &Interp, value: &Value) -> Option<Option<u16>> {
         if value.is_nil() {
             return Some(None);
+        }
+        if let Value::Str(file) = value {
+            let file = file.borrow().clone();
+            if let Some(id) = self.stipple_files.get(&file) {
+                return id.map(Some);
+            }
+            let id = read_stipple_file(i, &file, &self.bitmap_directory)
+                .and_then(|stipple| self.intern_stipple(stipple));
+            self.stipple_files.insert(file, id);
+            return id.map(Some);
         }
         let values = match value {
             Value::Vec(vector) => vector.borrow().clone(),
@@ -4135,13 +4161,17 @@ impl FaceCtx {
             height,
             data: Arc::<[u8]>::from(bytes[..data_len].to_vec()),
         };
+        self.intern_stipple(stipple).map(Some)
+    }
+
+    fn intern_stipple(&mut self, stipple: GridStipple) -> Option<u16> {
         if let Some(id) = self.stipple_ids.get(&stipple) {
-            return Some(Some(*id));
+            return Some(*id);
         }
         let id = u16::try_from(self.stipples.len()).ok()?;
         self.stipples.push(stipple.clone());
         self.stipple_ids.insert(stipple, id);
-        Some(Some(id))
+        Some(id)
     }
 
     fn parse_box_style(&self, i: &Interp, value: &Value) -> Option<BoxStyle> {
@@ -4355,7 +4385,7 @@ impl FaceCtx {
                     if is_reset {
                         mix.stipple = Some(default_style.stipple);
                     } else if !is_unspecified {
-                        mix.stipple = self.stipple_id(v);
+                        mix.stipple = self.stipple_id(i, v);
                     }
                 }
                 ":box" => {
@@ -5335,6 +5365,62 @@ fn svg_intrinsic_dimensions(bytes: &[u8]) -> (Option<usize>, Option<usize>) {
             _ => {}
         }
     }
+}
+
+fn read_stipple_file(i: &Interp, file: &EmacsStr, default_directory: &EmacsStr) -> Option<GridStipple> {
+    let path = i.q_soft("x-bitmap-file-path")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    let mut directories = Vec::new();
+    if path.is_nil() {
+        directories.push(default_directory.to_string());
+    } else {
+        let mut cursor = path;
+        let mut visited = HashSet::new();
+        while let Value::Cons(cell) = cursor {
+            if !visited.insert(std::rc::Rc::as_ptr(&cell) as usize) {
+                break;
+            }
+            let (directory, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            let directory = match directory {
+                Value::Str(directory) => {
+                    crate::editor::expand_against_dir(i, &directory.borrow(), default_directory)
+                }
+                Value::Nil => default_directory.to_string(),
+                _ => EmacsText::from("/"),
+            };
+            directories.push(directory);
+            cursor = next;
+        }
+    }
+    let mut searched = HashSet::new();
+    for directory in directories {
+        let filename = crate::editor::expand_against_dir(i, file, &directory);
+        // GNU openp strips the local-file quoting prefix at the OS boundary.
+        let filename = filename.strip_prefix("/:").unwrap_or(&filename);
+        let Ok(native) = filename.to_os_string() else {
+            continue;
+        };
+        let path = std::path::PathBuf::from(native);
+        if !searched.insert(path.clone()) || !path.is_file() {
+            continue;
+        }
+        let Ok(contents) = std::fs::read(path) else {
+            continue;
+        };
+        // A readable file earlier in the search path shadows later entries,
+        // even if its contents are not a valid bitmap.
+        let bitmap = super::bitmap::parse_xbm(&contents)?;
+        return Some(GridStipple {
+            width: bitmap.width,
+            height: bitmap.height,
+            data: Arc::from(bitmap.data),
+        });
+    }
+    None
 }
 
 fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {

@@ -417,6 +417,7 @@ pub trait KeyIo {
     fn size(&self) -> (usize, usize);
 }
 
+mod bitmap;
 mod command;
 mod render;
 pub(crate) use command::minibuf_dispatch_key;

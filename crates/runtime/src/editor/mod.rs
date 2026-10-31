@@ -12145,7 +12145,7 @@ fn tilde_user_home(user: &EmacsStr) -> Option<EmacsText> {
 /// Returns None when NAME starts with `~' but is not expandable
 /// (`~user' for an unknown user): GNU `expand-file-name' then
 /// falls back to joining the name onto the DIRECTORY argument.
-fn expand_file_name_raw_opt<T: TextSource + ?Sized>(i: &mut Interp, name: &T) -> Option<EmacsText> {
+fn expand_file_name_raw_opt<T: TextSource + ?Sized>(i: &Interp, name: &T) -> Option<EmacsText> {
     name.with_text(|name| {
         let mut text = name.to_string();
         if let Some(rest) = text.strip_prefix('~') {
@@ -12166,7 +12166,7 @@ fn expand_file_name_raw_opt<T: TextSource + ?Sized>(i: &mut Interp, name: &T) ->
     })
 }
 
-fn expand_file_name_opt<T: TextSource + ?Sized>(i: &mut Interp, name: &T) -> Option<EmacsText> {
+fn expand_file_name_opt<T: TextSource + ?Sized>(i: &Interp, name: &T) -> Option<EmacsText> {
     expand_file_name_raw_opt(i, name).map(|text| normalize_path(&text))
 }
 
@@ -12182,7 +12182,7 @@ fn directory_join(directory: &EmacsStr, name: &EmacsStr) -> EmacsText {
 }
 
 /// Preserve physical path components until file-truename follows links.
-fn expand_file_name_raw_str<T: TextSource + ?Sized>(i: &mut Interp, name: &T) -> EmacsText {
+fn expand_file_name_raw_str<T: TextSource + ?Sized>(i: &Interp, name: &T) -> EmacsText {
     name.with_text(|name| expand_file_name_raw_opt(i, name)
         .unwrap_or_else(|| directory_join(&default_directory(i), name)))
 }
@@ -12781,12 +12781,12 @@ fn f_file_name_absolute_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// path) in NAME ignores DIR entirely; otherwise NAME joins DIR
 /// (itself expanded against default-directory), then `/.'/`/..' are
 /// normalized.
-fn expand_against_dir<N: TextSource + ?Sized, D: TextSource + ?Sized>(i: &mut Interp, name: &N, dir: &D) -> EmacsText {
+pub(crate) fn expand_against_dir<N: TextSource + ?Sized, D: TextSource + ?Sized>(i: &Interp, name: &N, dir: &D) -> EmacsText {
     name.with_text(|name| dir.with_text(|dir| {
         if let Some(expanded) = expand_file_name_opt(i, name) {
             if name.starts_with('~') || name.starts_with('/') { return expanded; }
         }
-        let directory = expand_file_name_str(i, dir);
+        let directory = normalize_path(&expand_file_name_raw_str(i, dir));
         if name.is_empty() { directory.trim_end_matches('/').to_string() }
         else { normalize_path(&directory_join(&directory, name)) }
     }))
