@@ -247,6 +247,16 @@ Normally invoked by calling `savehist-mode' to unset the minor mode."
   (remove-hook 'kill-emacs-hook #'savehist-autosave)
   (savehist--manage-timer))
 
+(defun savehist--truncate-value (value max-size)
+  "Return VALUE truncated to at most MAX-SIZE elements when it is a list."
+  (if (and (listp value) (length> value max-size))
+      (if (zerop max-size)
+          nil
+        (let ((copy (copy-sequence value)))
+          (setcdr (nthcdr (1- max-size) copy) nil)
+          copy))
+    value))
+
 (defvar savehist--has-given-file-warning nil)
 (defun savehist-save (&optional auto-save)
   "Save the values of minibuffer history variables.
@@ -333,14 +343,8 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
 	        (when (savehist-printable value)
                   ;; When we have a max-size, chop off the last elements.
                   (when (and (consp elem)
-                             (listp value)
-                             (length> value (cdr elem)))
-                    (setq value
-                          (if (zerop (cdr elem))
-                              nil
-                            (let ((copy (copy-sequence value)))
-                              (setcdr (nthcdr (cdr elem) copy) nil)
-                              copy))))
+                             (listp value))
+                    (setq value (savehist--truncate-value value (cdr elem))))
 	          (prin1 `(setq ,symbol ',value) (current-buffer))
 	          (insert ?\n))))))))
     ;; If autosaving, avoid writing if nothing has changed since the
