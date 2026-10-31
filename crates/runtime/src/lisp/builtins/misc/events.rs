@@ -608,6 +608,7 @@ fn current_popup_position(i: &Interp) -> Option<crate::frontend::PopupMenuPositi
         return Some(PopupMenuPosition {
             frame_id,
             anchor: PopupMenuAnchor::Frame,
+            from_event: false,
             x,
             y,
         });
@@ -618,6 +619,7 @@ fn current_popup_position(i: &Interp) -> Option<crate::frontend::PopupMenuPositi
         return Some(PopupMenuPosition {
             frame_id,
             anchor: PopupMenuAnchor::Frame,
+            from_event: false,
             x: x.saturating_mul(frame_char_width(i, frame) as i128),
             y: y.saturating_mul(frame_char_height(i, frame) as i128),
         });
@@ -627,6 +629,7 @@ fn current_popup_position(i: &Interp) -> Option<crate::frontend::PopupMenuPositi
         .map(|frame| PopupMenuPosition {
             frame_id: frame.borrow().id,
             anchor: PopupMenuAnchor::Frame,
+            from_event: false,
             x: 0,
             y: 0,
         })
@@ -660,7 +663,7 @@ pub(crate) fn decode_popup_position(
             return Ok(current_popup_position(i));
         }
     }
-    let (window, x, y, text_area);
+    let (window, x, y, text_area, from_event);
     if let Value::Cons(xyc) = &pcar {
         // ((X Y) WINDOW): window = Fcar(Fcdr pos) — Fcar on an
         // atomic tail signals listp on the tail.
@@ -669,6 +672,7 @@ pub(crate) fn decode_popup_position(
         // y = Fcar(XCDR(xy)): raw cdr then Fcar — atom → listp.
         y = popup_fcar(i, &xyc.borrow().cdr)?;
         text_area = false;
+        from_event = false;
     } else {
         // EVENT: tem = CAR_SAFE(CDR_SAFE pos) = cadr (atomic cdr
         // → nil); then Fcar/Fcdr chains signal listp on atoms.
@@ -677,13 +681,17 @@ pub(crate) fn decode_popup_position(
         let t1 = popup_fcdr(i, &tem)?;
         let tem2 = popup_fcar(i, &t1)?;
         text_area = matches!(tem2, Value::Int(_));
+        from_event = true;
         let t2 = popup_fcdr(i, &t1)?;
         let tem3 = popup_fcar(i, &t2)?;
         x = popup_fcar(i, &tem3)?;
         y = popup_fcdr(i, &tem3)?;
     }
     if matches!(x, Value::Nil) && matches!(y, Value::Nil) {
-        return Ok(current_popup_position(i)); // get_current_pos_p
+        return Ok(current_popup_position(i).map(|mut position| {
+            position.from_event = from_event;
+            position
+        })); // get_current_pos_p
     }
     match &window {
         Value::Frame(_) => {}
@@ -718,6 +726,7 @@ pub(crate) fn decode_popup_position(
     Ok(Some(crate::frontend::PopupMenuPosition {
         frame_id: frame.borrow().id,
         anchor,
+        from_event,
         x,
         y,
     }))
@@ -987,12 +996,8 @@ pub(super) fn f_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         _ => return Ok(Value::Nil),
     }
-    if let Some(position) = position
-        && i.frames.iter().any(|frame| {
-            frame.borrow().id == position.frame_id && crate::editor::frame_is_graphical(i, frame)
-        })
-    {
-        i.gui_popup_menu = Some((a[0].clone(), position));
+    if let Some(position) = position {
+        return crate::frontend::show_popup_menu(i, &a[0], position);
     }
     Ok(Value::Nil)
 }

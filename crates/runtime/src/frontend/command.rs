@@ -2,6 +2,7 @@
 #[cfg(test)]
 use super::render_grid;
 use super::{GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
+use crate::lisp::Flow;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     editor::{CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER},
@@ -139,6 +140,19 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
 ) {
+    let popup_io = term.clone();
+    i.popup_menu_reader = Some(std::rc::Rc::new(move |interp, menu| {
+        let previous = interp.gui_popup_menu.replace(menu.clone());
+        let result = popup_loop(&popup_io, interp, &menu);
+        interp.gui_popup_menu = previous;
+        let redraw = popup_io.borrow_mut().render(interp);
+        match result {
+            Err(flow) => Err(flow),
+            Ok(selection) => redraw
+                .map(|_| selection)
+                .map_err(|error| interp.error(format!("popup menu: {error}"))),
+        }
+    }));
     let t = term.clone();
     i.minibuf_reader = Some(std::rc::Rc::new(move |interp, prompt, single| {
         // The recursive minibuffer has its own key sequence while it
@@ -154,6 +168,78 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
         interp.command_key_capture_active = saved_capture;
         result
     }));
+}
+
+fn popup_loop<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    menu: &super::PopupMenu,
+) -> Result<Option<usize>, Flow> {
+    if menu.entries.is_empty() {
+        return Ok(None);
+    }
+    let mut render_needed = true;
+    loop {
+        i.maybe_quit()?;
+        render_needed |= crate::lisp::eval::threads::yield_now(i)?;
+        render_needed |= crate::lisp::builtins::evalfn::thread_wait_events(i)?;
+        if term.borrow().popup_should_cancel()
+            || !i.frames.iter().any(|frame| {
+                let frame = frame.borrow();
+                frame.id == menu.position.frame_id && !frame.dead
+            })
+        {
+            return Ok(None);
+        }
+        render_needed |= term.borrow_mut().take_render_request();
+        if render_needed {
+            term.borrow_mut()
+                .render(i)
+                .map_err(|error| i.error(format!("popup menu: {error}")))?;
+            render_needed = false;
+        }
+        let input = term
+            .borrow_mut()
+            .poll_key_or_mouse(Duration::from_millis(50))
+            .map_err(|error| i.error(format!("popup menu input: {error}")))?;
+        i.maybe_quit()?;
+        match input {
+            Some(InputEvent::PopupMenuSelection { menu_id, index }) if menu_id == menu.id => {
+                match index {
+                    None => return Ok(None),
+                    Some(index)
+                        if menu
+                            .entries
+                            .get(index)
+                            .is_some_and(|entry| entry.value.is_some()) =>
+                    {
+                        return Ok(Some(index));
+                    }
+                    _ => {}
+                }
+            }
+            Some(InputEvent::PopupMenuSelection { .. }) | None => {}
+            Some(InputEvent::Key(7)) => return Err(Flow::Quit),
+            Some(InputEvent::MouseMoved {
+                frame_id,
+                frame_position,
+                frame_pixel_position,
+                ..
+            }) => {
+                remember_gui_mouse_position(i, frame_id, frame_position, frame_pixel_position);
+            }
+            Some(InputEvent::FrameMoved {
+                frame_id,
+                left,
+                top,
+            }) => {
+                dispatch_frame_moved(i, frame_id, left, top)?;
+                render_needed = true;
+            }
+            Some(InputEvent::MouseMovement { .. }) => {}
+            Some(_) => return Ok(None),
+        }
+    }
 }
 
 pub fn run_editor_with_shared<T: KeyIo + 'static>(
@@ -264,6 +350,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::Text(text) => {
                 dispatch_text(&term, i, &text, &mut keys, &mut arg_mode)?
             }
+            InputEvent::PopupMenuSelection { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
@@ -2363,6 +2450,7 @@ fn minibuf_loop<T: KeyIo>(
                     return Err(i.error(format!("minibuffer input: {e}")));
                 }
             }
+            InputEvent::PopupMenuSelection { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }

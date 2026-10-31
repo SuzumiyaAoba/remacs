@@ -7523,12 +7523,8 @@ fn f_x_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let position = crate::lisp::builtins::misc::decode_popup_position(i, &a[0])?;
     check_popup_menu(i, &a[1], true)?;
-    if let Some(position) = position
-        && i.frames.iter().any(|frame| {
-            frame.borrow().id == position.frame_id && crate::editor::frame_is_graphical(i, frame)
-        })
-    {
-        i.gui_popup_menu = Some((a[1].clone(), position));
+    if let Some(position) = position {
+        return crate::frontend::show_popup_menu(i, &a[1], position);
     }
     Ok(Value::Nil)
 }

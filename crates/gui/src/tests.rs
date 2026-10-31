@@ -1184,6 +1184,41 @@ fn chanio_committed_text_preserves_unicode_and_unread_order() {
 }
 
 #[test]
+fn chanio_preserves_popup_choices_for_nested_input_and_pending_close() {
+    let (mut io, tx, _rx) = chan_pair();
+    tx.send(GuiEvent::PopupMenuSelection {
+        menu_id: 41,
+        index: Some(3),
+    })
+    .unwrap();
+    assert!(matches!(
+        io.poll_key_or_mouse(Duration::ZERO).unwrap(),
+        Some(InputEvent::PopupMenuSelection {
+            menu_id: 41,
+            index: Some(3)
+        })
+    ));
+    tx.send(GuiEvent::PopupMenuSelection {
+        menu_id: 41,
+        index: None,
+    })
+    .unwrap();
+    assert!(matches!(
+        io.poll_input(Duration::ZERO).unwrap(),
+        Some(InputEvent::PopupMenuSelection {
+            menu_id: 41,
+            index: None
+        })
+    ));
+    tx.send(GuiEvent::FrameDeleteRequest { frame_id: 7 })
+        .unwrap();
+    assert!(io.poll_key_or_mouse(Duration::ZERO).unwrap().is_none());
+    assert!(io.popup_should_cancel());
+    assert_eq!(io.take_frame_delete_request(), Some(7));
+    assert!(!io.popup_should_cancel());
+}
+
+#[test]
 fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let mut app = gpui::TestAppContext::single();
     let (tx, rx) = mpsc::channel();
@@ -1196,7 +1231,10 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let text: String = rx
         .try_iter()
         .filter_map(|event| match event {
-            GuiEvent::MenuCommand(_) | GuiEvent::OpenFiles(_) | GuiEvent::MouseMove { .. } => None,
+            GuiEvent::MenuCommand(_)
+            | GuiEvent::PopupMenuSelection { .. }
+            | GuiEvent::OpenFiles(_)
+            | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
@@ -1224,7 +1262,10 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
     let codes: Vec<_> = rx
         .try_iter()
         .filter_map(|event| match event {
-            GuiEvent::MenuCommand(_) | GuiEvent::OpenFiles(_) | GuiEvent::MouseMove { .. } => None,
+            GuiEvent::MenuCommand(_)
+            | GuiEvent::PopupMenuSelection { .. }
+            | GuiEvent::OpenFiles(_)
+            | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,

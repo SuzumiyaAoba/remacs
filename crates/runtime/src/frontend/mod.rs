@@ -64,6 +64,7 @@ pub enum PopupMenuAnchor {
 pub struct PopupMenuPosition {
     pub frame_id: usize,
     pub anchor: PopupMenuAnchor,
+    pub from_event: bool,
     pub x: i128,
     pub y: i128,
 }
@@ -303,6 +304,8 @@ pub enum InputEvent {
     Text(String),
     /// Execute a command selected from a native GUI menu.
     Command(String),
+    /// A choice or dismissal of a specific popup, never a command dispatch.
+    PopupMenuSelection { menu_id: usize, index: Option<usize> },
     /// Execute a GUI action with pre-supplied interactive arguments.
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
@@ -420,6 +423,10 @@ pub trait KeyIo {
     fn poll_key_or_mouse(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
         self.poll_key(dur).map(|key| key.map(InputEvent::Key))
     }
+    /// A close/shutdown request that must release a nested popup input loop.
+    fn popup_should_cancel(&self) -> bool {
+        false
+    }
     /// Push a key back onto the pending queue.
     fn unread(&mut self, k: i128);
     /// Run the pre-redisplay callback for a specific set of windows.
@@ -510,6 +517,9 @@ mod fringe;
 mod mode_line;
 mod command;
 mod render;
+mod popup;
+pub use popup::{PopupMenu, PopupMenuEntry};
+pub(crate) use popup::show_popup_menu;
 pub(crate) use command::minibuf_dispatch_key;
 pub use command::{
     batch_command_error, dispatch_key_core, install_minibuf_reader, nonblocking_sleep,

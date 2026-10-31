@@ -72,6 +72,7 @@ pub(super) enum GuiEvent {
     Key(i128),
     Text(String),
     MenuCommand(String),
+    PopupMenuSelection { menu_id: usize, index: Option<usize> },
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
     Drop {
@@ -1656,6 +1657,9 @@ impl ChanIo {
 }
 
 impl KeyIo for ChanIo {
+    fn popup_should_cancel(&self) -> bool {
+        self.pending_frame_delete.is_some() || self.pending_power_off
+    }
     fn mouse_absolute_pixel_position(&self, i: &Interp) -> Option<(i128, i128)> {
         let (x, y) = self.mouse_absolute_position?;
         let frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id)?;
@@ -1736,6 +1740,9 @@ impl KeyIo for ChanIo {
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
             GuiEvent::MenuCommand(command) => Ok(Some(InputEvent::Command(command))),
+            GuiEvent::PopupMenuSelection { menu_id, index } => {
+                Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
+            }
             GuiEvent::CommandArgs { command, args } => {
                 Ok(Some(InputEvent::CommandArgs { command, args }))
             }
@@ -1953,6 +1960,9 @@ impl KeyIo for ChanIo {
                 Ok(first.map(InputEvent::Key))
             }
             GuiEvent::MenuCommand(_) => Ok(None),
+            GuiEvent::PopupMenuSelection { menu_id, index } => {
+                Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
+            }
             GuiEvent::CommandArgs { .. } => Ok(None),
             GuiEvent::ReplaceText { text, .. } => {
                 let mut chars = text.chars().map(|ch| ch as i128);

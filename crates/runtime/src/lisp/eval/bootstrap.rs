@@ -96,6 +96,7 @@ impl Interp {
             echo_message_props: Vec::new(),
             gui_tip: None,
             gui_popup_menu: None,
+            popup_menu_reader: None,
             gui_mouse_position: None,
             gui_mouse_absolute_position: None,
             gui_mouse_frame_position: None,

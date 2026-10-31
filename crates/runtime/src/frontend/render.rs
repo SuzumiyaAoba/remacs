@@ -210,6 +210,8 @@ pub struct GridTabBarItem {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridPopupMenuItem {
+    pub menu_id: usize,
+    pub selection: Option<usize>,
     pub row: usize,
     pub left: usize,
     pub width: usize,
@@ -2640,7 +2642,7 @@ fn menu_key_name(i: &Interp, key: &Value) -> String {
     }
 }
 
-fn menu_label_and_definition(
+pub(super) fn menu_label_and_definition(
     i: &Interp,
     key: &Value,
     definition: &Value,
@@ -2679,7 +2681,11 @@ fn menu_label_and_definition(
     }
 }
 
-fn menu_keymap_from_definition(i: &Interp, definition: &Value, depth: usize) -> Option<Value> {
+pub(super) fn menu_keymap_from_definition(
+    i: &Interp,
+    definition: &Value,
+    depth: usize,
+) -> Option<Value> {
     if depth > 16 {
         return None;
     }
@@ -3105,26 +3111,9 @@ fn render_tab_bar(
     items
 }
 
-fn flatten_popup_items(
-    items: &[GridMenuItem],
-    depth: usize,
-    flat: &mut Vec<(String, Option<String>, bool, usize)>,
-) {
-    for item in items {
-        if item.separator {
-            flat.push((String::new(), None, true, depth));
-        } else if item.items.is_empty() {
-            flat.push((item.label.clone(), item.command.clone(), false, depth));
-        } else {
-            flat.push((item.label.clone(), None, false, depth));
-            flatten_popup_items(&item.items, depth.saturating_add(1), flat);
-        }
-    }
-}
-
 fn render_popup_menu(
     i: &Interp,
-    menu: &Value,
+    menu: &super::PopupMenu,
     pixel_position: (i128, i128),
     width: usize,
     height: usize,
@@ -3134,50 +3123,21 @@ fn render_popup_menu(
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
 ) -> Vec<GridPopupMenuItem> {
-    let menu_items = if crate::editor::is_keymap(i, menu) {
-        menu_items(i, menu, 0)
-    } else if let Value::Cons(cell) = menu {
-        let first = cell.borrow().car.clone();
-        if crate::editor::is_keymap(i, &first) {
-            let mut panes = Vec::new();
-            for keymap in menu.list_to_vec().unwrap_or_default() {
-                let items = menu_items(i, &keymap, 0);
-                if items.is_empty() {
-                    continue;
-                }
-                if !panes.is_empty() {
-                    panes.push(GridMenuItem {
-                        label: String::new(),
-                        command: None,
-                        items: Vec::new(),
-                        separator: true,
-                    });
-                }
-                panes.extend(items);
-            }
-            panes
-        } else {
-            return Vec::new();
-        }
-    } else {
-        return Vec::new();
-    };
-    let mut flat_items = Vec::new();
-    flatten_popup_items(&menu_items, 0, &mut flat_items);
+    let flat_items = &menu.entries;
     if flat_items.is_empty() || width == 0 || height == 0 {
         return Vec::new();
     }
     let max_label_width = flat_items
         .iter()
-        .map(|(label, _, separator, depth)| {
-            if *separator {
+        .map(|item| {
+            if item.separator {
                 1
             } else {
-                label
+                item.label
                     .chars()
                     .map(display_char_width)
                     .sum::<usize>()
-                    .saturating_add(depth.saturating_mul(2))
+                    .saturating_add(item.depth.saturating_mul(2))
             }
         })
         .max()
@@ -3223,16 +3183,16 @@ fn render_popup_menu(
         }
     }
     let mut hit_items = Vec::new();
-    for (index, (label, command, separator, depth)) in flat_items
+    for (index, item) in flat_items
         .iter()
         .take(menu_height.saturating_sub(2))
         .enumerate()
     {
         let item_row = top.saturating_add(index).saturating_add(1);
-        let text = if *separator {
+        let text = if item.separator {
             "─".repeat(menu_width.saturating_sub(2))
         } else {
-            format!("{}{}", " ".repeat(depth.saturating_mul(2)), label)
+            format!("{}{}", " ".repeat(item.depth.saturating_mul(2)), item.label)
         };
         let text = fit_text_to_cells_with_tab_width(&text, menu_width.saturating_sub(2), 8).0;
         let cell_styles = vec![style; menu_width.saturating_sub(2)];
@@ -3250,7 +3210,13 @@ fn render_popup_menu(
             row: item_row,
             left: left.saturating_add(1),
             width: menu_width.saturating_sub(2),
-            command: if *separator { None } else { command.clone() },
+            command: if item.separator {
+                None
+            } else {
+                item.command.clone()
+            },
+            menu_id: menu.id,
+            selection: item.value.as_ref().map(|_| index),
         });
     }
     hit_items
@@ -7331,10 +7297,10 @@ fn render_grid_internal(
     let mut popup_pixel_position = i
         .gui_popup_menu
         .as_ref()
-        .filter(|(_, position)| {
-            position.frame_id == fb.id && position.anchor == super::PopupMenuAnchor::Frame
+        .filter(|menu| {
+            menu.position.frame_id == fb.id && menu.position.anchor == super::PopupMenuAnchor::Frame
         })
-        .map(|(_, position)| (position.x, position.y));
+        .map(|menu| (menu.position.x, menu.position.y));
     let (root_left, root_top, root_width, root_height) = fb
         .root
         .as_ref()
@@ -7646,9 +7612,10 @@ fn render_grid_internal(
         let text_rows = window_height
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
         let content_top = window_top + top_rows;
-        if let Some((_, position)) = &i.gui_popup_menu
-            && position.frame_id == fb.id
+        if let Some(menu) = &i.gui_popup_menu
+            && menu.position.frame_id == fb.id
         {
+            let position = &menu.position;
             let origin = match position.anchor {
                 super::PopupMenuAnchor::Window(id) if id == window_id => {
                     Some((raw_window_left, raw_window_top))
@@ -9043,13 +9010,14 @@ fn render_grid_internal(
         .saturating_sub(mini_visible_rows.saturating_sub(1))
         .min(mini_rows.len().saturating_sub(mini_visible_rows));
     let mini_top = rows.len().saturating_sub(mini_height);
-    if let Some((_, position)) = &i.gui_popup_menu
-        && position.frame_id == fb.id
+    if let Some(menu) = &i.gui_popup_menu
+        && menu.position.frame_id == fb.id
         && let Some(minibuffer) = &fb.minibuffer
-        && matches!(position.anchor,
+        && matches!(menu.position.anchor,
             super::PopupMenuAnchor::Window(id) | super::PopupMenuAnchor::TextArea(id)
                 if id == minibuffer.borrow().id)
     {
+        let position = &menu.position;
         popup_pixel_position = Some((
             position.x,
             (mini_top.saturating_mul(frame_char_height) as i128).saturating_add(position.y),
@@ -9166,7 +9134,7 @@ fn render_grid_internal(
         }
     }
     if graphical
-        && let Some((menu, _)) = &i.gui_popup_menu
+        && let Some(menu) = &i.gui_popup_menu
         && let Some(pixel_position) = popup_pixel_position
     {
         popup_menu_items = render_popup_menu(

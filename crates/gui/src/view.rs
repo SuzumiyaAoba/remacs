@@ -522,18 +522,77 @@ fn tab_bar_command_at(
         })
 }
 
-fn popup_menu_command_at(
+fn popup_menu_event_at(
     items: &[GridPopupMenuItem],
     point: Point<Pixels>,
     cell_width: Pixels,
     line_height: Pixels,
-) -> Option<Option<String>> {
-    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
-    let row = (f32::from(point.y) / f32::from(line_height)).floor().max(0.0) as usize;
-    items
+) -> Option<GuiEvent> {
+    let menu_id = items.first()?.menu_id;
+    let column = (f32::from(point.x) / f32::from(cell_width))
+        .floor()
+        .max(0.0) as usize;
+    let row = (f32::from(point.y) / f32::from(line_height))
+        .floor()
+        .max(0.0) as usize;
+    let hit = items
         .iter()
-        .find(|item| item.row == row && column >= item.left && column < item.left + item.width)
-        .map(|item| item.command.clone())
+        .find(|item| item.row == row && column >= item.left && column < item.left + item.width);
+    match hit {
+        Some(item) => item.selection.map(|index| GuiEvent::PopupMenuSelection {
+            menu_id,
+            index: Some(index),
+        }),
+        None => Some(GuiEvent::PopupMenuSelection {
+            menu_id,
+            index: None,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod popup_selection_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn popup_click_returns_a_choice_or_dismissal_without_a_command() {
+        let items = [
+            GridPopupMenuItem {
+                menu_id: 23,
+                selection: Some(4),
+                row: 2,
+                left: 4,
+                width: 10,
+                command: Some("must-not-execute".into()),
+            },
+            GridPopupMenuItem {
+                menu_id: 23,
+                selection: None,
+                row: 3,
+                left: 4,
+                width: 10,
+                command: None,
+            },
+        ];
+        assert!(matches!(
+            popup_menu_event_at(&items, point(px(40.0), px(40.0)), px(8.0), px(20.0)),
+            Some(GuiEvent::PopupMenuSelection {
+                menu_id: 23,
+                index: Some(4)
+            })
+        ));
+        assert!(matches!(
+            popup_menu_event_at(&items, point(px(0.0), px(0.0)), px(8.0), px(20.0)),
+            Some(GuiEvent::PopupMenuSelection {
+                menu_id: 23,
+                index: None
+            })
+        ));
+        assert!(
+            popup_menu_event_at(&items, point(px(40.0), px(60.0)), px(8.0), px(20.0)).is_none()
+        );
+        assert!(popup_menu_event_at(&[], point(px(0.0), px(0.0)), px(8.0), px(20.0)).is_none());
+    }
 }
 
 #[derive(Clone, PartialEq, gpui::Action)]
@@ -1279,15 +1338,16 @@ impl Render for EditorView {
                             content_top_offset,
                         );
                         let _ = this.tx.send_mouse_move(None, Some(absolute_position));
-                        if let Some(command) = popup_menu_command_at(
-                            &left_mouse_down_grid.popup_menu_items,
-                            point,
-                            cell_width,
-                            line_height,
-                        ) {
+                        if !left_mouse_down_grid.popup_menu_items.is_empty() {
                             this.toolbar_pressed = true;
-                            let command = command.unwrap_or_else(|| "ignore".to_owned());
-                            let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
+                            if let Some(event) = popup_menu_event_at(
+                                &left_mouse_down_grid.popup_menu_items,
+                                point,
+                                cell_width,
+                                line_height,
+                            ) {
+                                let _ = left_mouse_down_tx.send(event);
+                            }
                             window.prevent_default();
                             cx.stop_propagation();
                             return;
