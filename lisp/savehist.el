@@ -363,7 +363,7 @@ If AUTO-SAVE is non-nil, compare the saved contents to the one last saved,
 	        (coding-system-for-write savehist-coding-system)
                 (dir (file-name-directory savehist-file)))
             ;; Ensure that the directory exists before saving.
-            (unless (file-exists-p dir)
+            (when (and dir (not (file-exists-p dir)))
               (make-directory dir t))
 	    (write-region (point-min) (point-max) savehist-file nil
 			  (unless (called-interactively-p 'interactive) 'quiet)))
