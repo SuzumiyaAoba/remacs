@@ -337,6 +337,9 @@ The delimiters are <! and >."
 Use `nxml-parent-document-set' to set it.")
 (put 'nxml-parent-document 'safe-local-variable 'stringp)
 
+(defvar-local nxml-parent-dtd nil
+  "DTD inherited from `nxml-parent-document'.")
+
 (defvar-local nxml-prolog-regions nil
   "List of regions in the prolog to be fontified.
 See the function `xmltok-forward-prolog' for more information.")
@@ -404,11 +407,6 @@ reference.")
 
 (defun nxml-parent-document-set (parent-document)
   "Set `nxml-parent-document' and inherit the DTD &c."
-  ;; FIXME: this does not work.
-  ;;  the idea is that by inheriting some variables from the parent,
-  ;;  `rng-validate-mode' will validate entities declared in the parent.
-  ;;  alas, the most interesting variables (`rng-compile-table' et al)
-  ;;  are circular and cannot be printed even with `print-circle'.
   (interactive "fParent document")
   (let (dtd current-schema current-schema-file-name compile-table
         ipattern-table last-ipattern-index)
@@ -429,9 +427,14 @@ reference.")
           rng-compile-table compile-table
           rng-ipattern-table ipattern-table
           rng-last-ipattern-index last-ipattern-index
+          nxml-parent-dtd dtd
           nxml-parent-document parent-document)
     (message "Set parent document to %s" parent-document)
     (when rng-validate-mode
+      ;; The previous validation may already have marked parent entities as
+      ;; unresolved.  Reinitialize its cache after installing the inherited
+      ;; DTD so the child is checked again with the parent declarations.
+      (rng-validate-mode 1)
       (rng-validate-while-idle (current-buffer)))))
 
 (defvar nxml-prolog-end) ;; nxml-rap.el
