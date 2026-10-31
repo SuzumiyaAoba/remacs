@@ -661,6 +661,14 @@ impl PlatformWindow for WindowsWindow {
                     let title;
                     let main_icon;
                     match level {
+                        crate::PromptLevel::Question => {
+                            title = windows::core::w!("Question");
+                            main_icon = PCWSTR::null();
+                        }
+                        crate::PromptLevel::Information => {
+                            title = windows::core::w!("Information");
+                            main_icon = TD_INFORMATION_ICON;
+                        }
                         crate::PromptLevel::Info => {
                             title = windows::core::w!("Info");
                             main_icon = TD_INFORMATION_ICON;

@@ -52,6 +52,19 @@ pub trait DialogBackend {
         detail: Option<&str>,
         buttons: &[String],
     ) -> Result<Option<usize>, String>;
+
+    /// Choose with a Question (false) or Information (true) dialog header.
+    /// The default forwards to the existing chooser for older backends.
+    fn choose_with_header(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        buttons: &[String],
+        _header: bool,
+    ) -> Result<Option<usize>, String> {
+        self.choose(frame_id, message, detail, buttons)
+    }
 }
 
 /// Host file panel used by graphical file-name primitives.

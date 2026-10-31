@@ -422,6 +422,7 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         message: String,
         detail: Option<String>,
+        header: Option<bool>,
         buttons: Vec<String>,
         reply: SyncSender<Result<Option<usize>, String>>,
     },
@@ -529,6 +530,9 @@ pub(super) enum ClipboardRequest {
     Write(ClipboardTarget, String, Option<SyncSender<Result<(), String>>>),
 }
 
+#[cfg(test)]
+mod dialog_tests;
+
 struct GuiDialogBackend {
     requests: smol::channel::Sender<GuiRequest>,
 }
@@ -541,12 +545,37 @@ impl remacs_runtime::frontend::DialogBackend for GuiDialogBackend {
         detail: Option<&str>,
         buttons: &[String],
     ) -> Result<Option<usize>, String> {
+        self.request_prompt(frame_id, message, detail, buttons, None)
+    }
+
+    fn choose_with_header(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        buttons: &[String],
+        header: bool,
+    ) -> Result<Option<usize>, String> {
+        self.request_prompt(frame_id, message, detail, buttons, Some(header))
+    }
+}
+
+impl GuiDialogBackend {
+    fn request_prompt(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        buttons: &[String],
+        header: Option<bool>,
+    ) -> Result<Option<usize>, String> {
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(GuiRequest::Prompt {
                 frame_id,
                 message: message.to_owned(),
                 detail: detail.map(str::to_owned),
+                header,
                 buttons: buttons.to_vec(),
                 reply,
             })

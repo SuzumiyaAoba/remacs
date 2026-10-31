@@ -7597,10 +7597,7 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         unreachable!("title was checked above")
     };
     let title = title.borrow().to_unicode_lossy();
-    let detail = a.get(2).and_then(|value| match value {
-        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
-        _ => None,
-    });
+    let header = a.get(2).is_some_and(Value::truthy);
     let frame = match &window {
         Value::Frame(frame) => Some(frame.clone()),
         Value::Window(window) => frame_of_window(i, window),
@@ -7639,7 +7636,7 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !buttons.is_empty() {
         let frame_id = frame.borrow().id;
         let selected = backend
-            .choose(frame_id, &title, detail.as_deref(), &buttons)
+            .choose_with_header(frame_id, &title, None, &buttons, header)
             .map_err(|error| i.error(format!("Dialog failed: {error}")))?;
         // A dismissed dialog is distinct from selecting a button whose value is nil.
         let selected = selected.ok_or(Flow::Quit)?;

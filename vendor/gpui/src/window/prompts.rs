@@ -81,7 +81,7 @@ pub fn fallback_prompt_renderer(
 ) -> RenderablePromptHandle {
     let previous_focus = window.focused(cx);
     let renderer = cx.new(|cx| FallbackPromptRenderer {
-        _level: level,
+        level,
         message: message.to_string(),
         detail: detail.map(ToString::to_string),
         actions: actions.to_vec(),
@@ -98,7 +98,7 @@ pub fn fallback_prompt_renderer(
 
 /// The default GPUI fallback for rendering prompts, when the platform doesn't support it.
 pub struct FallbackPromptRenderer {
-    _level: PromptLevel,
+    level: PromptLevel,
     message: String,
     detail: Option<String>,
     actions: Vec<PromptButton>,
@@ -179,21 +179,17 @@ impl Render for FallbackPromptRenderer {
                     .scroll_to_item(index + 1 + usize::from(self.detail.is_some()));
             }
         }
-        let prompt = div()
-            .id("gpui-fallback-prompt")
-            .cursor_default()
+        let content = div()
+            .id("gpui-fallback-prompt-content")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
-            .w_72()
-            .max_h((window.viewport_size().height - px(24.0)).max(px(0.0)))
+            .min_h_0()
             .flex()
             .flex_col()
-            .bg(white())
-            .rounded_lg()
+            .flex_shrink()
             .overflow_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.scroll)
-            .p_3()
             .child(
                 div()
                     .w_full()
@@ -237,6 +233,25 @@ impl Render for FallbackPromptRenderer {
                         cx.emit(PromptResponse(ix));
                     }))
             }));
+
+        let prompt = div()
+            .id("gpui-fallback-prompt")
+            .cursor_default()
+            .w_72()
+            .max_h((window.viewport_size().height - px(24.0)).max(px(0.0)))
+            .flex()
+            .flex_col()
+            .bg(white())
+            .rounded_lg()
+            .overflow_hidden()
+            .p_3()
+            .children(self.level.dialog_title().map(|title| {
+                let heading = div().w_full().flex_shrink_0().text_sm().mb_2().child(title);
+                #[cfg(any(test, feature = "test-support"))]
+                let heading = heading.debug_selector(|| "fallback-dialog-title".to_string());
+                heading
+            }))
+            .child(content);
 
         div()
             .size_full()
@@ -346,6 +361,18 @@ mod scroll_tests {
         Entity<FallbackPromptRenderer>,
         oneshot::Receiver<usize>,
     ) {
+        prompt_with_level(count, detail, PromptLevel::Info)
+    }
+
+    fn prompt_with_level(
+        count: usize,
+        detail: bool,
+        level: PromptLevel,
+    ) -> (
+        VisualTestContext,
+        Entity<FallbackPromptRenderer>,
+        oneshot::Receiver<usize>,
+    ) {
         let mut app = TestAppContext::single();
         app.update(|app| app.set_prompt_builder(fallback_prompt_renderer));
         let window = app.add_window(|_, _| Empty);
@@ -356,7 +383,7 @@ mod scroll_tests {
             .collect();
         let response = cx.update(|window, app| {
             window.prompt(
-                PromptLevel::Info,
+                level,
                 "Choose one",
                 detail.then_some("More details"),
                 &actions,
@@ -454,5 +481,23 @@ mod scroll_tests {
         let last = visible_child(&scroll, 50);
         cx.simulate_click(last.center(), Modifiers::default());
         assert_eq!(response.try_recv().unwrap(), Some(49));
+    }
+
+    #[test]
+    fn explicit_dialog_headings_stay_visible_while_choices_scroll() {
+        for level in [PromptLevel::Question, PromptLevel::Information] {
+            let (mut cx, renderer, mut response) = prompt_with_level(50, true, level);
+            let heading = cx
+                .debug_bounds("fallback-dialog-title")
+                .expect("rendered heading");
+            let scroll = scroll(&mut cx, &renderer);
+            assert!(heading.size.height > px(0.0));
+            assert!(heading.bottom() <= scroll.bounds().top());
+            cx.simulate_keystrokes("shift-tab");
+            assert_eq!(cx.debug_bounds("fallback-dialog-title"), Some(heading));
+            visible_child(&scroll, 51);
+            cx.simulate_keystrokes("enter");
+            assert_eq!(response.try_recv().unwrap(), Some(49));
+        }
     }
 }

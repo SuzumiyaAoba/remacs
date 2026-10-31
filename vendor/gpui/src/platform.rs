@@ -1397,6 +1397,22 @@ pub enum PromptLevel {
 
     /// A prompt that is shown when a critical problem has occurred
     Critical,
+
+    /// A question dialog with an explicit title.
+    Question,
+
+    /// An information dialog with an explicit title.
+    Information,
+}
+
+impl PromptLevel {
+    pub(crate) fn dialog_title(self) -> Option<&'static str> {
+        match self {
+            Self::Question => Some("Question"),
+            Self::Information => Some("Information"),
+            _ => None,
+        }
+    }
 }
 
 /// Prompt Button

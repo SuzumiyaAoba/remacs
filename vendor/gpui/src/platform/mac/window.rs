@@ -1273,7 +1273,7 @@ impl PlatformWindow for MacWindow {
             let alert: id = msg_send![class!(NSAlert), alloc];
             let alert: id = msg_send![alert, init];
             let alert_style = match level {
-                PromptLevel::Info => 1,
+                PromptLevel::Info | PromptLevel::Question | PromptLevel::Information => 1,
                 PromptLevel::Warning => 0,
                 PromptLevel::Critical => 2,
             };
@@ -1321,6 +1321,11 @@ impl PlatformWindow for MacWindow {
                         beginSheetModalForWindow: native_window
                         completionHandler: block
                     ];
+                    if let Some(title) = level.dialog_title() {
+                        let panel: id = msg_send![alert, window];
+                        panel.setTitle_(ns_string(title));
+                        panel.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleVisible);
+                    }
                 })
                 .detach();
 

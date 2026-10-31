@@ -49,11 +49,13 @@ use objc::{
     },
     sel, sel_impl,
 };
+mod dialogs;
 mod file_dialog;
 mod keys;
 mod logic;
 mod monitor;
 mod view;
+use dialogs::{dialog_prompt_buttons, dialog_prompt_level};
 use logic::{
     ClipboardRequest, ClipboardTarget, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames,
 };
@@ -958,6 +960,7 @@ pub fn run_gui_with_dump(
                         frame_id,
                         message,
                         detail,
+                        header,
                         buttons,
                         reply,
                     } => {
@@ -965,7 +968,7 @@ pub fn run_gui_with_dump(
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             match handle.update(cx, |_view, window, cx| {
                                 window.prompt(
-                                    PromptLevel::Info,
+                                    dialog_prompt_level(header),
                                     &message,
                                     detail.as_deref(),
                                     &buttons,
@@ -1287,23 +1290,6 @@ pub fn run_gui_with_dump(
         Some(message) => Err(io::Error::new(io::ErrorKind::Other, message)),
         None => Ok(()),
     }
-}
-
-fn dialog_prompt_buttons(labels: Vec<String>) -> Vec<PromptButton> {
-    // Native Cancel has one reserved ID.  Later duplicate labels must retain
-    // distinct custom IDs so clicking them still returns their own index.
-    let mut has_cancel = false;
-    labels
-        .into_iter()
-        .map(|label| {
-            if !has_cancel && label.eq_ignore_ascii_case("cancel") {
-                has_cancel = true;
-                PromptButton::cancel(label)
-            } else {
-                PromptButton::new(label)
-            }
-        })
-        .collect()
 }
 
 fn frame_minimum_size(
