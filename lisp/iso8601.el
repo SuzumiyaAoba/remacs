@@ -54,10 +54,111 @@
 (require 'time-date)
 (require 'cl-lib)
 
+(defun iso8601--make-regexp-groups-shy (regexp)
+  "Convert all captures in REGEXP, including numbered groups, to shy groups.
+Preserve existing shy groups, escaped syntax, and character alternatives.
+References to captures that are removed are not retained."
+  (let ((index 0)
+        (length (length regexp))
+        in-class class-first class-negated
+        parts)
+    (while (< index length)
+      (let ((char (aref regexp index)))
+        (cond
+         (in-class
+          (cond
+           ((and class-first (not class-negated) (= char 94))
+            (push (substring regexp index (1+ index)) parts)
+            (setq index (1+ index)
+                  class-negated t))
+           ((and class-first (= char 93))
+            (push (substring regexp index (1+ index)) parts)
+            (setq index (1+ index)
+                  class-first nil))
+           ((and (= char 91)
+                 (< (1+ index) length)
+                 (memq (aref regexp (1+ index)) '(58 46 61)))
+            ;; Preserve POSIX character classes, collating symbols, and
+            ;; equivalence classes inside the enclosing character class.
+            (let* ((delimiter (aref regexp (1+ index)))
+                   (scan (+ index 2))
+                   end)
+              (while (and (< scan length) (not end))
+                (cond
+                 ((and (= (aref regexp scan) delimiter)
+                       (< (1+ scan) length)
+                       (= (aref regexp (1+ scan)) 93))
+                  (setq end (+ scan 2)))
+                 (t (setq scan (1+ scan)))))
+              (setq end (or end length))
+              (push (substring regexp index end) parts)
+              (setq index end
+                    class-first nil)))
+           ((= char 93)
+            (push (substring regexp index (1+ index)) parts)
+            (setq index (1+ index)
+                  in-class nil
+                  class-first nil
+                  class-negated nil))
+           (t
+            (push (substring regexp index (1+ index)) parts)
+            (setq index (1+ index)
+                  class-first nil))))
+         ((= char 92)
+          (let ((start index)
+                (slash-count 0))
+            (while (and (< index length)
+                        (= (aref regexp index) 92))
+              (setq slash-count (1+ slash-count)
+                    index (1+ index)))
+            (let ((next (and (< index length) (aref regexp index)))
+                  (shy-group
+                   (and (< (+ index 2) length)
+                        (= (aref regexp (1+ index)) 63)
+                        (= (aref regexp (+ index 2)) 58)))
+                  (numbered-group-end
+                   (when (and (< (+ index 2) length)
+                              (= (aref regexp (1+ index)) 63))
+                     (let ((scan (+ index 2)))
+                       (while (and (< scan length)
+                                   (<= 48 (aref regexp scan) 57))
+                         (setq scan (1+ scan)))
+                       (and (> scan (+ index 2))
+                            (< scan length)
+                            (= (aref regexp scan) 58)
+                            (1+ scan))))))
+              (cond
+               ((and next (= next 40)
+                     (= (% slash-count 2) 1)
+                     (not shy-group))
+                (push (concat (make-string slash-count 92) "(?:") parts)
+                ;; An explicit \(?N: header has no counterpart in a shy
+                ;; group, so discard it together with the opening paren.
+                (setq index (or numbered-group-end (1+ index))))
+               ((and next (= (% slash-count 2) 1))
+                ;; Keep escaped syntax together, so an escaped `[' does not
+                ;; start a character class.
+                (push (substring regexp start (1+ index)) parts)
+                (setq index (1+ index)))
+               (t
+                ;; With an even run of backslashes, process the following
+                ;; character normally (it might open a character class).
+                (push (substring regexp start index) parts))))))
+         ((= char 91)
+          (push (substring regexp index (1+ index)) parts)
+          (setq index (1+ index)
+                in-class t
+                class-first t
+                class-negated nil))
+         (t
+          (push (substring regexp index (1+ index)) parts)
+          (setq index (1+ index))))))
+    (apply #'concat (nreverse parts))))
+
 (defun iso8601--concat-regexps (regexps)
   (mapconcat (lambda (regexp)
                (concat "\\(?:"
-                       (string-replace "(" "(?:" regexp)
+                       (iso8601--make-regexp-groups-shy regexp)
                        "\\)"))
              regexps "\\|"))
 
@@ -107,13 +208,13 @@
   "\\(Z\\|\\([+-]\\)\\([0-9][0-9]\\):?\\([0-9][0-9]\\)?\\)")
 
 (defconst iso8601--full-time-match
-  (concat "\\(" (string-replace "(" "(?:" iso8601--time-match) "\\)"
+  (concat "\\(" (iso8601--make-regexp-groups-shy iso8601--time-match) "\\)"
           "\\(" iso8601--zone-match "\\)?"))
 
 (defconst iso8601--combined-match
   (concat "\\(" iso8601--date-match "\\)"
           "\\(?:T\\("
-          (string-replace "(" "(?:" iso8601--time-match)
+          (iso8601--make-regexp-groups-shy iso8601--time-match)
           "\\)"
           "\\(" iso8601--zone-match "\\)?\\)?"))
 
