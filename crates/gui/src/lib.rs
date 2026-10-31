@@ -1049,15 +1049,13 @@ pub fn run_gui_with_dump(
                         let _ = reply.send(result);
                     }
                     GuiRequest::AboutPanel {
-                        frame_id,
+                        frame_id: _,
                         version,
                         reply,
                     } => {
-                        let result = if windows.contains_key(&frame_id) {
-                            show_native_about_panel(&version)
-                        } else {
-                            Err(format!("GUI frame {frame_id} is not open"))
-                        };
+                        // About is application-wide; the selected frame may
+                        // still be waiting for its first native snapshot.
+                        let result = show_native_about_panel(&version);
                         let _ = reply.send(result);
                     }
                     GuiRequest::CharacterPalette { frame_id, reply } => {
