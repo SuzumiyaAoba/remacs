@@ -110,7 +110,7 @@ const CASES: &str = r##"
         (progn (let ((last-command-event ?X)) (self-insert-command 1)) nil)
       ((buffer-read-only text-read-only) t)))
   (defun remacs-test-eww-disabled
-      (method children expected disabled-ids readonly-ids &optional table outside submit-id callback)
+      (method children expected disabled-ids readonly-ids &optional table outside submit-id callback enctype)
     (with-temp-buffer
       (setq remacs-test-eww-disabled-phase (list 'mode method table outside))
       (eww-mode)
@@ -120,7 +120,8 @@ const CASES: &str = r##"
              (submit (dom-node 'button '((id . "_submit")) "Send"))
              (nodes (append children (list submit)))
              (form (append (list 'form (list (cons 'method method)
-                                            (cons 'action "https://example.test/search")))
+                                            (cons 'action "https://example.test/search")
+                                            (cons 'enctype enctype)))
                            (if table
                                (list (dom-node 'table nil
                                                (append (list 'tr nil)
@@ -144,11 +145,18 @@ const CASES: &str = r##"
           (plist-put (cdr (remacs-test-eww-field "upload")) :filename
                      "/private/tmp/remacs-no-such-upload-2673"))
         (setq remacs-test-eww-disabled-phase (list 'submit method table outside))
-        (unless (let ((actual (remacs-test-eww-disabled-query method (or submit-id "_submit"))))
-                  (if (functionp expected-query) (funcall expected-query actual)
-                    (equal actual expected-query)))
-          (error "Disabled control leaked into %S data: %S" method
-                 (remacs-test-eww-disabled-query method (or submit-id "_submit"))))
+        (if outside
+            ;; A disabled default submitter prevents implicit submission entirely.
+            (progn
+              (goto-char (car (remacs-test-eww-field (or submit-id "_submit"))))
+              (cl-letf (((symbol-function 'eww-browse-url)
+                         (lambda (&rest _) (error "Disabled default submitter navigated"))))
+                (eww-submit)))
+          (unless (let ((actual (remacs-test-eww-disabled-query method (or submit-id "_submit"))))
+                    (if (functionp expected-query) (funcall expected-query actual)
+                      (equal actual expected-query)))
+            (error "Disabled control leaked into %S data: %S" method
+                   (remacs-test-eww-disabled-query method (or submit-id "_submit")))))
         (dolist (id disabled-ids)
           (setq remacs-test-eww-disabled-phase (list 'disabled id method table outside))
           (let* ((entry (remacs-test-eww-field id))
@@ -341,7 +349,7 @@ const CASES: &str = r##"
                     (string-search "readonly-description-2673" body)
                     (not (string-search "disabled-secret-2673" body))
                     (not (string-search "name=\"blocked\"" body))))
-             '("upload") '("description"))))
+             '("upload") '("description") nil nil nil nil "multipart/form-data")))
       (delete-file file)))
   (with-temp-buffer
     (let* ((form (list (cons :method "post") (cons :action "https://example.test/search")))

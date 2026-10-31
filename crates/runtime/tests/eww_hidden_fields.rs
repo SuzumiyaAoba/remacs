@@ -15,7 +15,8 @@ const CASES: &str = r##"
                 (button . eww-form-submit) (textarea . eww-tag-textarea)
                 (select . eww-tag-select)))
              (form (append (list 'form (list (cons 'method method)
-                                            (cons 'action "https://example.test/submit")))
+                                            (cons 'action "https://example.test/submit")
+                                            (cons 'enctype (and filename "multipart/form-data"))))
                            (if table
                                (list (list 'table nil
                                            (append (list 'tr nil)

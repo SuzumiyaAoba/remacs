@@ -1810,6 +1810,7 @@ just re-display the HTML already fetched."
 (defun eww-tag-form (dom)
   (let ((eww-form (list (cons :method (dom-attr dom 'method))
 			(cons :action (dom-attr dom 'action))
+                        (cons :enctype (dom-attr dom 'enctype))
                         (cons :controls
                               (dom-search dom (lambda (node)
                                                 (memq (dom-tag node)
@@ -1843,6 +1844,9 @@ just re-display the HTML already fetched."
 		       (list :eww-form eww-form :dom dom
 			     :value value
 			     :type "submit"
+                             :formaction (dom-attr dom 'formaction)
+                             :formmethod (dom-attr dom 'formmethod)
+                             :formenctype (dom-attr dom 'formenctype)
 			     :name (dom-attr dom 'name)))
     (put-text-property start (point) 'keymap eww-submit-map)
     ;; Pretend to touch-screen.el that this is a button.
@@ -2368,6 +2372,16 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
 	    (substring value 0 (match-beginning 0))
 	  value))))
 
+(defun eww--encode-plain-form-data (values)
+  "Encode form VALUES as text/plain with CRLF line endings."
+  (mapconcat
+   (lambda (pair)
+     (concat (mapconcat (lambda (text)
+                          (replace-regexp-in-string "\r\n\\|[\r\n]" "\r\n" (or text "") t t))
+                        (list (car pair) (cdr pair)) "=")
+             "\r\n"))
+   values ""))
+
 (defun eww-submit (&optional event)
   "Submit the form under point or EVENT.
 EVENT, if non-nil, is the mouse event that preceded this command.
@@ -2376,129 +2390,110 @@ Interactively, EVENT is the value of `last-nonmenu-event'."
   (when (and event (setq event (event-start event)))
     (goto-char (posn-point event)))
   (let* ((this-input (get-text-property (point) 'eww-form))
-	 (form (plist-get this-input :eww-form))
-	 values next-submit)
+         (form (plist-get this-input :eww-form))
+         (inputs (sort (eww-inputs form) (lambda (a b) (< (car a) (car b)))))
+         (submitter (if (equal (plist-get this-input :type) "submit") this-input
+                      (cdr (cl-find-if (lambda (entry)
+                                         (equal (plist-get (cdr entry) :type) "submit"))
+                                       inputs))))
+         (action (or (plist-get submitter :formaction) (cdr (assq :action form))))
+         (method (or (plist-get submitter :formmethod) (cdr (assq :method form))))
+         (enctype (or (plist-get submitter :formenctype) (cdr (assq :enctype form))))
+         values)
+    (setq method (if (stringp method) (downcase method) "get"))
+    (setq enctype (if (and (stringp enctype)
+                           (member (downcase enctype) '("multipart/form-data" "text/plain")))
+                      (downcase enctype) "application/x-www-form-urlencoded"))
+    (when (or (null action) (equal action ""))
+      (setq action (plist-get eww-data :url)))
     (when (and (equal (plist-get this-input :type) "submit")
                (eww--field-disabled-p this-input))
       (user-error "This form control is disabled"))
-    (dolist (elem (sort (eww-inputs form)
-			(lambda (o1 o2)
-			  (< (car o1) (car o2)))))
-      (let* ((input (cdr elem))
-	     (input-start (car elem))
-	     (name (plist-get input :name)))
-	(when (and name (not (eww--field-disabled-p input)))
-	  (cond
-	   ((member (plist-get input :type) '("checkbox" "radio"))
-	    (when (plist-get input :checked)
-              (push (cons (plist-get input :dom)
-                          (cons name (or (plist-get input :value) "on")))
-		    values)))
-           ((equal (plist-get input :type) "select")
-            (if (eww--form-items input)
-                (dolist (option (eww--selected-items input t))
-                  (push (cons (plist-get input :dom)
-                              (cons name (plist-get option :value)))
-                        values))
-              ;; Preserve programmatically constructed scalar select fields.
-              (when (stringp (plist-get input :value))
-                (push (cons (plist-get input :dom) (cons name (plist-get input :value)))
-                      values))))
-	   ((equal (plist-get input :type) "file")
-            (when-let* ((file (plist-get input :filename)))
-              (push (cons (plist-get input :dom)
-                          (list "file"
-                                (cons "filedata"
-                                      (with-temp-buffer
-                                        (insert-file-contents file)
-                                        (buffer-string)))
-                                (cons "name" name)
-                                ;; RFC 2183 declares that recipients should
-                                ;; only respect the basename of the filename
-                                ;; parameter, and the leading directories
-                                ;; might divulge private information, so we
-                                ;; only send the basename in our request.
-                                (cons "filename" (file-name-nondirectory file))))
-                    values)))
-	   ((equal (plist-get input :type) "submit")
-	    ;; We want the values from buttons if we hit a button if
-	    ;; we hit enter on it, or if it's the first button after
-	    ;; the field we did hit return on.
-	    (when (or (eq input this-input)
-		      (and (not (eq input this-input))
-			   (null next-submit)
-			   (> input-start (point))))
-	      (setq next-submit t)
+    (unless (or (equal method "dialog") (eww--field-disabled-p submitter))
+      (dolist (elem inputs)
+        (let* ((input (cdr elem))
+               (name (plist-get input :name)))
+	  (when (and name (not (eww--field-disabled-p input)))
+	    (cond
+	     ((member (plist-get input :type) '("checkbox" "radio"))
+	      (when (plist-get input :checked)
+                (push (cons (plist-get input :dom)
+                            (cons name (or (plist-get input :value) "on")))
+		      values)))
+             ((equal (plist-get input :type) "select")
+              (if (eww--form-items input)
+                  (dolist (option (eww--selected-items input t))
+                    (push (cons (plist-get input :dom)
+                                (cons name (plist-get option :value)))
+                          values))
+                ;; Preserve programmatically constructed scalar select fields.
+                (when (stringp (plist-get input :value))
+                  (push (cons (plist-get input :dom) (cons name (plist-get input :value)))
+                        values))))
+             ((equal (plist-get input :type) "file")
+              (let ((file (plist-get input :filename)))
+                (push (cons (plist-get input :dom)
+                            (if (and (equal method "post") (equal enctype "multipart/form-data"))
+                                (list "file"
+                                      (cons "filedata" (if file
+                                                           (with-temp-buffer
+                                                             (insert-file-contents file)
+                                                             (buffer-string)) ""))
+                                      (cons "name" name)
+                                      (cons "filename" (if file (file-name-nondirectory file) "")))
+                              (cons name (if file (file-name-nondirectory file) ""))))
+                      values)))
+             ((equal (plist-get input :type) "submit")
+              (when (eq input submitter)
+                (push (cons (plist-get input :dom)
+                            (cons name (or (plist-get input :value) "")))
+                      values)))
+	     (t
 	      (push (cons (plist-get input :dom)
-                          (cons name (plist-get input :value)))
-		    values)))
-	   (t
-	    (push (cons (plist-get input :dom)
-                        (cons name (eww-input-value input)))
-		  values))))))
-    (dolist (elem form)
-      (when (and (consp elem)
-		 (eq (car elem) 'hidden))
-        (when-let* ((name (plist-get (cdr elem) :name))
-                    ((not (equal name "")))
-                    ((not (eww--field-disabled-p (cdr elem) form))))
-          (push (cons (plist-get (cdr elem) :dom)
-                      (cons name (or (plist-get (cdr elem) :value) "")))
-                values))))
-    ;;Remacs: hidden controls have no buffer position.  Use the DOM order
-    ;; for all entries, including those mixed with visible controls.
-    (setq values (nreverse values))
-    (when-let* ((controls (cdr (assq :controls form))))
-      (let ((order (make-hash-table :test #'eq))
-            (index 0))
-        (dolist (control controls)
-          (puthash control index order)
-          (setq index (1+ index)))
-        (setq values
-              (sort values (lambda (a b)
-                             (< (gethash (car a) order index)
-                                (gethash (car b) order index)))))))
-    (setq values (mapcar #'cdr values))
-    (if (and (stringp (cdr (assq :method form)))
-	     (equal (downcase (cdr (assq :method form))) "post"))
-	(let ((mtype))
-	  (dolist (x values mtype)
-	    (if (equal (car x) "file")
-		(progn
-		  (setq mtype "multipart/form-data"))))
-	  (cond ((equal mtype "multipart/form-data")
-		 (let ((boundary (mml-compute-boundary '())))
-		   (let ((url-request-method "POST")
-			 (url-request-extra-headers
-			  (list (cons "Content-Type"
-				      (concat "multipart/form-data; boundary="
-					      boundary))))
-			 (url-request-data
-			  (mm-url-encode-multipart-form-data values boundary)))
-		     (eww-browse-url (shr-expand-url
-				      (cdr (assq :action form))
-				      (plist-get eww-data :url))))))
-		(t
-		 (let ((url-request-method "POST")
-		       (url-request-extra-headers
-			'(("Content-Type" .
-			   "application/x-www-form-urlencoded")))
-		       (url-request-data
-			(mm-url-encode-www-form-urlencoded values)))
-		   (eww-browse-url (shr-expand-url
-				    (cdr (assq :action form))
-				    (plist-get eww-data :url)))))))
-      (let* ((action
-              (url-generic-parse-url
-               (shr-expand-url
-                (or (cdr (assq :action form))
-                    (car (url-path-and-query
-                          (url-generic-parse-url (plist-get eww-data :url)))))
-                (plist-get eww-data :url))))
-             (path (car (url-path-and-query action))))
-        (setf (url-filename action)
-              (concat path "?" (mm-url-encode-www-form-urlencoded values)))
-        (eww-browse-url (url-recreate-url action))))))
+                          (cons name (eww-input-value input)))
+		    values))))))
+      (dolist (elem form)
+        (when (and (consp elem)
+		   (eq (car elem) 'hidden))
+          (when-let* ((name (plist-get (cdr elem) :name))
+                      ((not (equal name "")))
+                      ((not (eww--field-disabled-p (cdr elem) form))))
+            (push (cons (plist-get (cdr elem) :dom)
+                        (cons name (or (plist-get (cdr elem) :value) "")))
+                  values))))
+      ;;Remacs: hidden controls have no buffer position.  Use the DOM order
+      ;; for all entries, including those mixed with visible controls.
+      (setq values (nreverse values))
+      (when-let* ((controls (cdr (assq :controls form))))
+        (let ((order (make-hash-table :test #'eq))
+              (index 0))
+          (dolist (control controls)
+            (puthash control index order)
+            (setq index (1+ index)))
+          (setq values
+                (sort values (lambda (a b)
+                               (< (gethash (car a) order index)
+                                  (gethash (car b) order index)))))))
+      (setq values (mapcar #'cdr values))
+      (if (equal method "post")
+          (let* ((boundary (and (equal enctype "multipart/form-data")
+                                (mml-compute-boundary '())))
+                 (url-request-method "POST")
+                 (url-request-extra-headers
+                  (list (cons "Content-Type" (if boundary
+                                                 (concat enctype "; boundary=" boundary)
+                                               enctype))))
+                 (url-request-data
+                  (cond (boundary (mm-url-encode-multipart-form-data values boundary))
+                        ((equal enctype "text/plain") (eww--encode-plain-form-data values))
+                        (t (mm-url-encode-www-form-urlencoded values)))))
+            (eww-browse-url (shr-expand-url action (plist-get eww-data :url))))
+        (let* ((action (url-generic-parse-url
+                        (shr-expand-url action (plist-get eww-data :url))))
+               (path (car (url-path-and-query action))))
+          (setf (url-filename action)
+                (concat path "?" (mm-url-encode-www-form-urlencoded values)))
+          (eww-browse-url (url-recreate-url action)))))))
 
 (defun eww-browse-with-external-browser (&optional url)
   "Browse the current URL with an external browser.
