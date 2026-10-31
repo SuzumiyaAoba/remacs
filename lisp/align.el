@@ -1309,13 +1309,14 @@ position of exclusion areas, but could also be used for any other
 purpose where you might want to know where the regions that the
 aligner would have dealt with are."
   (let* ((end-mark (and end (copy-marker end t)))
-	 (real-beg beg)
-	 (report (and (not func) align-large-region beg end
-		      (>= (- end beg) align-large-region)))
+         (real-beg beg)
+         (end-specified end)
+         (report (and (not func) align-large-region beg end
+                      (>= (- end beg) align-large-region)))
          (rules (seq-filter #'align--rule-should-run rules))
-	 (rule-index 1)
-	 (rule-count (length rules))
-	 markers)
+         (rule-index 1)
+         (rule-count (length rules))
+         markers)
     (if (and align-indent-before-aligning real-beg end-mark)
 	(indent-region real-beg end-mark nil))
     (while rules
@@ -1354,7 +1355,31 @@ aligner would have dealt with are."
 	      ;; each rule to have its own definition of what that
 	      ;; current alignment section is.
 	      (if real-beg
-		  (goto-char beg)
+		  (progn
+		    (goto-char beg)
+		    (when (not end-specified)
+		      (when end-mark
+			(set-marker end-mark nil))
+		      ;; When END is omitted, stop at the first section
+		      ;; boundary found between matches of this rule.
+		      (setq end-mark (copy-marker (point-max) t))
+		      (unless (or (not thissep) (eq thissep 'entire))
+			(let ((here beg)
+			      section-end)
+			  (while (and here
+				      (if regfunc
+					  (funcall regfunc end-mark nil)
+					(re-search-forward regexp end-mark t)))
+			    (if (align-new-section-p here (point) thissep)
+				(setq section-end here
+				      here nil)
+			      (setq here (point))))
+			  (when (not here)
+			    (goto-char section-end)
+			    (forward-line)
+			    (set-marker end-mark (point)))))
+		      (setq end (marker-position end-mark)))
+		    (goto-char beg))
 		(if (or (not thissep) (eq thissep 'entire))
 		    (error "Cannot determine alignment region for `%s'"
 			   (symbol-name (cdr (assq 'title rule)))))
@@ -1381,25 +1406,26 @@ aligner would have dealt with are."
 		      (goto-char beg))
 		  (beginning-of-line)
 		  (setq beg (point))
-		  (goto-char start)
-		  (setq here (point))
-		  (while (and here
-			      (let ((terminus
-				     (and align-region-heuristic
-					  (+ (point)
-					     align-region-heuristic))))
-				(if regfunc
-				    (funcall regfunc terminus nil)
-				  (re-search-forward regexp terminus t))))
-		    (if (align-new-section-p here (point) thissep)
-			(setq end here
-			      here nil)
-		      (setq here (point))))
-		  (if (not here)
-		      (goto-char end))
-		  (forward-line)
-		  (setq end (point))
-                  (align--set-marker end-mark end t)
+		  (unless end-specified
+		    (goto-char start)
+		    (setq here (point))
+		    (while (and here
+				(let ((terminus
+				       (and align-region-heuristic
+					    (+ (point)
+					       align-region-heuristic))))
+				  (if regfunc
+				      (funcall regfunc terminus nil)
+				    (re-search-forward regexp terminus t))))
+		      (if (align-new-section-p here (point) thissep)
+			  (setq end here
+				here nil)
+			(setq here (point))))
+		    (if (not here)
+			(goto-char end))
+		    (forward-line)
+		    (setq end (point))
+		    (align--set-marker end-mark end t))
 		  (goto-char beg)))
 
 	      ;; If we have a region to align, and `func' is set and
