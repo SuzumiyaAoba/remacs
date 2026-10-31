@@ -17796,6 +17796,9 @@ fn f_indent_rigidly(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let len = cur(i).borrow().text.len();
     let (s, e) = region_bounds_strict(i, &a[0], &a[1], len)?;
     let col = want_int(i, &a[2])?;
+    if col == 0 {
+        return Ok(Value::Nil);
+    }
     // For each line in [s,e): insert col spaces (or delete -col cols).
     // Report the batch as one change covering the region (GNU's
     // `combine-change-calls' shape).

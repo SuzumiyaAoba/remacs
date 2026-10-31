@@ -3755,16 +3755,19 @@ indentation by specifying a large negative ARG."
       (setq end (point-marker))
       (goto-char start)
       (or (bolp) (forward-line 1))
-      (while (< (point) end)
-        (let ((indent (current-indentation))
-              eol-flag)
-          (save-excursion
-            (skip-chars-forward " \t")
-            (setq eol-flag (eolp)))
-          (or eol-flag
-              (indent-to (max 0 (+ indent (prefix-numeric-value arg))) 0))
-          (delete-region (point) (progn (skip-chars-forward " \t") (point))))
-        (forward-line 1))
+      ;Remacs: A zero shift must not rewrite indentation or run change hooks.
+      (let ((columns (prefix-numeric-value arg)))
+        (unless (zerop columns)
+          (while (< (point) end)
+            (let ((indent (current-indentation))
+                  eol-flag)
+              (save-excursion
+                (skip-chars-forward " \t")
+                (setq eol-flag (eolp)))
+              (or eol-flag
+                  (indent-to (max 0 (+ indent columns)) 0))
+              (delete-region (point) (progn (skip-chars-forward " \t") (point))))
+            (forward-line 1))))
       (move-marker end nil)
       ;; Keep the active region in transient mode.
       (when (eq (cadr overriding-terminal-local-map) indent-rigidly-map)
