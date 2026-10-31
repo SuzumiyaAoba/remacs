@@ -1379,6 +1379,7 @@ Optional argument N must be a valid digit number.  It defaults to 1.
 1 opens the most recent file, 2 the second most recent one, etc..
 0 opens the tenth most recent file."
   (interactive "p")
+  (unless n (setq n 1))
   (cond
    ((zerop n) (setq n 10))
    ((and (> n 0) (< n 10)))
