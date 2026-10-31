@@ -718,7 +718,7 @@ particular, calling `iter-next' will give unpredictable results)."
             (signal 'iter-end-of-sequence nil)
           (avl-tree-stack-pop stack)))
        ((eq operation :close) nil)
-       (t (error "Unknown iterator operation %S" operation)))))
+       (t (error "Unknown iterator operation %S" operation))))))
 
 
 (provide 'avl-tree)
