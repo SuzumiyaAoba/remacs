@@ -791,6 +791,7 @@ qa!(qa_reverse_strings, "qa_reverse_strings.el");
 qa!(qa_string_width_tabs, "qa_string_width_tabs.el");
 qa!(qa_string_glyph_split, "qa_string_glyph_split.el");
 qa!(qa_outline_arg_zero, "qa_outline_arg_zero.el");
+qa!(qa_outline_subtree, "qa_outline_subtree.el");
 qa!(qa_window, "qa_window.el");
 qa!(qa_window_end_not_height, "qa_window_end_not_height.el");
 qa!(qa_window_configuration, "qa_window_configuration.el");

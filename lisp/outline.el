@@ -924,13 +924,18 @@ the match data is set appropriately."
 ;; Vertical tree motion
 
 (defun outline-move-subtree-up (&optional arg)
-  "Move the current subtree up past ARG headlines of the same level."
+  "Move the current subtree up past ARG headlines of the same level.
+ARG defaults to 1."
   (interactive "p")
-  (outline-move-subtree-down (- arg)))
+  ;; Remacs: omitted optional counts mean one, as for interactive calls.
+  (outline-move-subtree-down (- (or arg 1))))
 
 (defun outline-move-subtree-down (&optional arg)
-  "Move the current subtree down past ARG headlines of the same level."
+  "Move the current subtree down past ARG headlines of the same level.
+ARG defaults to 1."
   (interactive "p")
+  ;; Remacs: accept omitted and explicitly nil counts without changing zero.
+  (setq arg (or arg 1))
 
   (unless (and (numberp arg) (zerop arg))
     (outline-back-to-heading)
