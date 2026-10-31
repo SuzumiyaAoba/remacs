@@ -856,6 +856,8 @@ pub struct Window {
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
+    last_visible_cursor_style: Cell<CursorStyle>,
+    frozen_cursor_style: Option<CursorStyle>,
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
@@ -1239,6 +1241,8 @@ impl Window {
             default_prevented: true,
             mouse_position,
             mouse_hit_test: HitTest::default(),
+            last_visible_cursor_style: Cell::new(CursorStyle::Arrow),
+            frozen_cursor_style: None,
             modifiers,
             capslock,
             scale_factor,
@@ -2431,6 +2435,18 @@ impl Window {
         })
     }
 
+    /// Retains the current visible pointer shape while hover targets change.
+    /// Cursor invisibility requests continue to apply while the shape is frozen.
+    pub fn set_cursor_style_frozen(&mut self, frozen: bool) {
+        if frozen {
+            if self.frozen_cursor_style.is_none() {
+                self.frozen_cursor_style = Some(self.last_visible_cursor_style.get());
+            }
+        } else {
+            self.frozen_cursor_style = None;
+        }
+    }
+
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
     /// during the paint phase of element drawing.
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
@@ -3590,10 +3606,14 @@ impl Window {
     fn reset_cursor_style(&self, cx: &mut App) {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
-            let style = self
+            let mut style = self
                 .rendered_frame
                 .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
+            if style != CursorStyle::None {
+                style = self.frozen_cursor_style.unwrap_or(style);
+                self.last_visible_cursor_style.set(style);
+            }
             cx.platform.set_cursor_style(style);
         }
     }

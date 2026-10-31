@@ -557,6 +557,8 @@ pub struct Grid {
     pub default_row_height: usize,
     /// Pointer shape at the current mouse position, if it is over buffer text.
     pub hover_cursor: Option<GridPointerShape>,
+    /// Keep the pointer shape while `track-mouse` has the value `dragging`.
+    pub freeze_pointer_shape: bool,
     /// Whether the native mouse pointer should be visible over this frame.
     pub pointer_visible: bool,
     /// Unicode text and visible positions for the active OS text client.
@@ -819,6 +821,7 @@ impl Grid {
             default_line_height: 19,
             default_row_height: 19,
             hover_cursor: None,
+            freeze_pointer_shape: false,
             pointer_visible: true,
             input: None,
         }
@@ -7248,6 +7251,13 @@ fn render_grid_internal(
     let mut input_screen_lefts = Vec::new();
     let mut cursor_index = None;
     let mut hover_cursor = None;
+    let dragging_symbol = i.q_soft("dragging");
+    let freeze_pointer_shape = i
+        .q_soft("track-mouse")
+        .map(|symbol| i.symbol_value(symbol))
+        .is_some_and(
+            |value| matches!(value, Value::Sym(symbol) if Some(symbol) == dragging_symbol),
+        );
     let (blink_cursor, blink_interval, blink_delay, blink_blinks) = blink_cursor_settings(i);
     let mut input = if include_input {
         input_snapshot(i, frame.as_ref(), cached_input)
@@ -7300,6 +7310,7 @@ fn render_grid_internal(
                 default_line_height,
                 default_row_height,
                 hover_cursor,
+                freeze_pointer_shape,
                 pointer_visible: true,
                 input,
             };
@@ -9477,6 +9488,7 @@ fn render_grid_internal(
         default_line_height,
         default_row_height,
         hover_cursor,
+        freeze_pointer_shape,
         pointer_visible: fb.pointer_visible,
         input,
     };

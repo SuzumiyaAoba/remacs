@@ -933,6 +933,7 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_cursor_style_frozen(self.grid.freeze_pointer_shape);
         if self.grid.tooltip.is_none() {
             self.follow_tooltip_drag = false;
         }
