@@ -1258,6 +1258,32 @@ impl PlatformWindow for X11Window {
         xcb_flush(self.0.xcb.as_ref());
     }
 
+    fn set_minimum_size(&self, size: Option<Size<Pixels>>) {
+        let scale_factor = self.0.state.borrow().scale_factor;
+        let mut hints = match WmSizeHints::get_normal_hints(self.0.xcb.as_ref(), self.0.x_window)
+            .and_then(|cookie| cookie.reply_unchecked())
+        {
+            Ok(Some(hints)) => hints,
+            Ok(None) => WmSizeHints::new(),
+            Err(error) => {
+                log::error!("X11 get WM_SIZE_HINTS failed: {error}");
+                return;
+            }
+        };
+        hints.min_size = size.map(|size| {
+            (
+                (size.width.0 * scale_factor).max(0.0).ceil() as i32,
+                (size.height.0 * scale_factor).max(0.0).ceil() as i32,
+            )
+        });
+        check_reply(
+            || "X11 setting minimum size failed.",
+            hints.set_normal_hints(self.0.xcb.as_ref(), self.0.x_window),
+        )
+        .log_err();
+        xcb_flush(self.0.xcb.as_ref());
+    }
+
     fn set_position(&mut self, position: Point<Pixels>, _display_id: Option<u32>) {
         let bounds = crate::bounds(position, self.bounds().size)
             .to_device_pixels(self.scale_factor())

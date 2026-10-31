@@ -585,6 +585,8 @@ pub(super) struct EditorView {
     cell_width: Pixels,
     line_height: Pixels,
     resize_increments: Option<(f32, f32)>,
+    minimum_cells: (Option<usize>, Option<usize>),
+    native_minimum_size: Option<(Size<Pixels>, f32)>,
     geometry: Option<GuiGeometry>,
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
@@ -652,6 +654,8 @@ impl EditorView {
             cell_width: px(8.0),
             line_height: px(LINE_HEIGHT),
             resize_increments: None,
+            minimum_cells: (None, None),
+            native_minimum_size: None,
             geometry: None,
             runtime_frame_size: None,
             runtime_frame_position: None,
@@ -681,6 +685,7 @@ impl EditorView {
         self.tx.set_frame_id(frame_id);
         self.follow_tooltip_drag = false;
         self.resize_increments = None;
+        self.native_minimum_size = None;
         self.mouse_face_position.set(None);
         self.geometry = None;
         self.runtime_frame_size = None;
@@ -776,7 +781,7 @@ impl EditorView {
         height: usize,
         window: &mut Window,
     ) {
-        let width = width.max(10);
+        let width = width.max(super::MIN_FRAME_COLUMNS);
         let height = height.max(3);
         let default_style = self.grid.default_style;
         let requested_family = default_style
@@ -800,19 +805,51 @@ impl EditorView {
             .map(|metrics| metrics.width)
             .unwrap_or(px(8.0));
         self.line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
+        let minimum = self.update_minimum_size(window, self.cell_width, self.line_height);
         let viewport = window.viewport_size();
         let border = self.internal_border_width as f32 * 2.0;
         let pixel_height = (0..height)
             .map(|row| f32::from(grid_row_height(&self.grid, row, px(self.grid.default_row_height.max(1) as f32))))
             .sum::<f32>();
-        let desired_width = self.cell_width * width as f32 + px(border);
-        let desired_height = px(pixel_height + border);
+        let desired_width = (self.cell_width * width as f32 + px(border)).max(minimum.width);
+        let desired_height = px(pixel_height + border).max(minimum.height);
         if (f32::from(viewport.width) - f32::from(desired_width)).abs() < 1.0
             && (f32::from(viewport.height) - f32::from(desired_height)).abs() < 1.0
         {
             return;
         }
         window.resize(size(desired_width, desired_height));
+    }
+
+    pub(super) fn set_minimum_cells(&mut self, width: Option<usize>, height: Option<usize>) -> bool {
+        let cells = (width, height);
+        if self.minimum_cells == cells {
+            return false;
+        }
+        self.minimum_cells = cells;
+        self.native_minimum_size = None;
+        true
+    }
+
+    pub(super) fn update_minimum_size(
+        &mut self,
+        window: &Window,
+        cell_width: Pixels,
+        line_height: Pixels,
+    ) -> Size<Pixels> {
+        let minimum = super::frame_minimum_size(
+            self.minimum_cells.0,
+            self.minimum_cells.1,
+            f32::from(cell_width),
+            f32::from(line_height),
+            self.internal_border_width as f32 * 2.0,
+        ).expect("minimum grid width");
+        let state = (minimum, window.scale_factor());
+        if self.native_minimum_size != Some(state) {
+            window.set_minimum_size(Some(minimum));
+            self.native_minimum_size = Some(state);
+        }
+        minimum
     }
 
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
@@ -913,6 +950,7 @@ impl Render for EditorView {
             .map(|s| s.width)
             .unwrap_or(px(8.0));
         self.cell_width = cell_width;
+        let minimum = self.update_minimum_size(window, cell_width, line_height);
         let resize_increments = if self.grid.frame_resize_pixelwise {
             (1.0, 1.0)
         } else {
@@ -931,13 +969,18 @@ impl Render for EditorView {
 
         // Report grid-size changes to the logic thread.
         let vp = window.viewport_size();
+        if vp.width < minimum.width || vp.height < minimum.height {
+            // Minimum hints constrain interactive resizing, but a font change
+            // or programmatic resize can also leave an existing window too small.
+            window.resize(size(vp.width.max(minimum.width), vp.height.max(minimum.height)));
+        }
         let border = px(self.internal_border_width as f32);
         let border_total = border * 2.0;
         let content_width = px((f32::from(vp.width) - f32::from(border_total)).max(0.0));
         let content_height = px((f32::from(vp.height) - f32::from(border_total)).max(0.0));
         let cols = (f32::from(content_width) / f32::from(cell_width)) as usize;
         let rows = rows_fitting_viewport(&self.grid, content_height, line_height);
-        let cols = cols.max(10);
+        let cols = cols.max(super::MIN_FRAME_COLUMNS);
         let rows = rows.max(3);
         if (cols, rows) != (self.cols, self.rows) {
             self.cols = cols;

@@ -1043,6 +1043,17 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn set_minimum_size(&self, size: Option<Size<Pixels>>) {
+        let native_window = self.0.lock().native_window;
+        let size = size.unwrap_or_default();
+        unsafe {
+            native_window.setContentMinSize_(NSSize {
+                width: size.width.0.max(0.0) as f64,
+                height: size.height.0.max(0.0) as f64,
+            });
+        }
+    }
+
     fn set_position(&mut self, position: Point<Pixels>, display_id: Option<u32>) {
         let this = self.0.lock();
         let window = this.native_window;

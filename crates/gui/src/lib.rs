@@ -37,25 +37,6 @@ unsafe extern "system" {
         height: i32,
         flags: u32,
     ) -> i32;
-    fn GetWindowRect(hwnd: *mut std::ffi::c_void, rect: *mut Win32Rect) -> i32;
-    fn GetClientRect(hwnd: *mut std::ffi::c_void, rect: *mut Win32Rect) -> i32;
-    fn CallWindowProcW(
-        previous: isize,
-        hwnd: *mut std::ffi::c_void,
-        message: u32,
-        wparam: usize,
-        lparam: isize,
-    ) -> isize;
-    fn DefWindowProcW(
-        hwnd: *mut std::ffi::c_void,
-        message: u32,
-        wparam: usize,
-        lparam: isize,
-    ) -> isize;
-    #[cfg(target_pointer_width = "64")]
-    fn GetWindowLongPtrW(hwnd: *mut std::ffi::c_void, index: i32) -> isize;
-    #[cfg(target_pointer_width = "64")]
-    fn SetWindowLongPtrW(hwnd: *mut std::ffi::c_void, index: i32, value: isize) -> isize;
 }
 #[cfg(target_os = "macos")]
 use objc::{
@@ -75,54 +56,14 @@ mod view;
 use logic::{ClipboardRequest, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames};
 use view::{EditorView, build_managed_editor_view};
 
+const MIN_FRAME_COLUMNS: usize = 10;
+
 #[cfg(target_os = "macos")]
 static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
 #[cfg(target_os = "macos")]
 static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
 #[cfg(target_os = "windows")]
 static ORIGINAL_WINDOW_EX_STYLES: OnceLock<Mutex<HashMap<isize, i32>>> = OnceLock::new();
-#[cfg(target_os = "windows")]
-static WINDOWS_MINIMUM_SIZES: OnceLock<Mutex<HashMap<isize, WindowsMinimumSizeState>>> =
-    OnceLock::new();
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Win32Point {
-    x: i32,
-    y: i32,
-}
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Win32Rect {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct Win32MinMaxInfo {
-    reserved: Win32Point,
-    max_size: Win32Point,
-    max_position: Win32Point,
-    min_track_size: Win32Point,
-    max_track_size: Win32Point,
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Clone, Copy)]
-struct WindowsMinimumSizeState {
-    original_window_proc: isize,
-    min_width: Option<i32>,
-    min_height: Option<i32>,
-    nonclient_width: i32,
-    nonclient_height: i32,
-}
-
 #[cfg(target_os = "macos")]
 #[link(name = "objc", kind = "dylib")]
 unsafe extern "C" {
@@ -454,6 +395,9 @@ pub fn run_gui_with_dump(
         .map(|frame| !frame.no_focus_on_map && !frame.no_accept_focus)
         .unwrap_or(true);
     let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
+    let initial_minimum_cells = initial_frame_size
+        .map(|frame| (frame.min_width, frame.min_height))
+        .unwrap_or((None, None));
     let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
     let initial_sticky = initial_frame_size.is_some_and(|frame| frame.sticky);
     let initial_shaded = initial_frame_size.is_some_and(|frame| frame.shaded);
@@ -542,7 +486,7 @@ pub fn run_gui_with_dump(
                     cx.activate(false);
                 }
                 cx.new(|cx| {
-                    build_managed_editor_view(
+                    let mut view = build_managed_editor_view(
                         window,
                         cx,
                         event_tx.clone(),
@@ -551,7 +495,9 @@ pub fn run_gui_with_dump(
                         None,
                         initial_focus_on_map,
                         initial_no_accept_focus,
-                    )
+                    );
+                    view.set_minimum_cells(initial_minimum_cells.0, initial_minimum_cells.1);
+                    view
                 })
             },
         ) {
@@ -573,8 +519,6 @@ pub fn run_gui_with_dump(
             let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
             let mut frame_sticky = HashMap::<usize, bool>::new();
             let mut frame_shaded = HashMap::<usize, bool>::new();
-            let mut frame_minimum_cells =
-                HashMap::<usize, (Option<usize>, Option<usize>, usize, usize)>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -628,22 +572,7 @@ pub fn run_gui_with_dump(
                             let shaded = snapshot.shaded;
                             let shaded_changed = frame_shaded.get(&frame_id) != Some(&shaded);
                             frame_shaded.insert(frame_id, shaded);
-                            let minimum_cells = (
-                                snapshot.min_width,
-                                snapshot.min_height,
-                                snapshot.grid.default_line_height,
-                                internal_border_width,
-                            );
-                            let minimum_size_changed =
-                                frame_minimum_cells.get(&frame_id) != Some(&minimum_cells);
-                            frame_minimum_cells.insert(frame_id, minimum_cells);
-                            let minimum_size = frame_minimum_size(
-                                snapshot.min_width,
-                                snapshot.min_height,
-                                8.0,
-                                snapshot.grid.default_line_height.max(1) as f32,
-                                internal_border_width as f32 * 2.0,
-                            );
+                            let minimum_cells = (snapshot.min_width, snapshot.min_height);
                             let parent_bounds = snapshot
                                 .parent_frame
                                 .and_then(|parent| windows.get(&parent))
@@ -690,9 +619,8 @@ pub fn run_gui_with_dump(
                                     if shaded_changed {
                                         update_native_shaded(window, shaded);
                                     }
-                                    if minimum_size_changed {
-                                        update_native_minimum_size(window, minimum_size);
-                                    }
+                                    let minimum_size_changed =
+                                        view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
                                     let modifier_mapping_changed =
                                         view.set_modifier_mapping(modifier_mapping);
                                     let internal_border_changed =
@@ -713,6 +641,7 @@ pub fn run_gui_with_dump(
                                         view.grid = grid;
                                         cx.notify();
                                     } else if modifier_mapping_changed
+                                        || minimum_size_changed
                                         || internal_border_changed
                                         || alpha_background_changed
                                         || appearance_changed
@@ -796,6 +725,7 @@ pub fn run_gui_with_dump(
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
+                                    view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
                                     view.set_image_cache_metrics(
                                         initial_image_cache_entries,
                                         initial_image_cache_size,
@@ -876,19 +806,11 @@ pub fn run_gui_with_dump(
                             let quit_request = quit_request.clone();
                             let image_cache_entries = image_cache_entries.clone();
                             let image_cache_size = image_cache_size.clone();
-                            let minimum_size = frame_minimum_size(
-                                snapshot.min_width,
-                                snapshot.min_height,
-                                8.0,
-                                snapshot.grid.default_line_height.max(1) as f32,
-                                snapshot.internal_border_width as f32 * 2.0,
-                            );
                             let handle = match cx.open_window(options, move |window, app| {
                                 set_native_no_accept_focus(window, no_accept_focus);
                                 update_native_skip_taskbar(window, skip_taskbar);
                                 update_native_sticky(window, sticky);
                                 update_native_shaded(window, shaded);
-                                update_native_minimum_size(window, minimum_size);
                                 window.set_opacity(frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
@@ -913,6 +835,7 @@ pub fn run_gui_with_dump(
                                         focus_on_map && visibility == FrameVisibility::Visible,
                                         no_accept_focus,
                                     );
+                                    view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
                                     view.set_modifier_mapping(modifier_mapping);
                                     view.set_alpha_background(alpha_background);
                                     view.set_appearance(window_appearance);
@@ -966,7 +889,6 @@ pub fn run_gui_with_dump(
                             frame_skip_taskbar.remove(&frame_id);
                             frame_sticky.remove(&frame_id);
                             frame_shaded.remove(&frame_id);
-                            frame_minimum_cells.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -1338,15 +1260,11 @@ fn frame_minimum_size(
     line_height: f32,
     border: f32,
 ) -> Option<Size<Pixels>> {
-    if min_width.is_none() && min_height.is_none() {
-        return None;
-    }
+    let columns = min_width.unwrap_or(MIN_FRAME_COLUMNS).max(MIN_FRAME_COLUMNS);
     Some(size(
-        min_width
-            .map(|width| px(width as f32 * cell_width + border))
-            .unwrap_or(px(0.0)),
+        px((columns as f32 * cell_width.max(1.0) + border).ceil()),
         min_height
-            .map(|height| px(height as f32 * line_height + border))
+            .map(|height| px((height as f32 * line_height.max(1.0) + border).ceil()))
             .unwrap_or(px(0.0)),
     ))
 }
@@ -1837,27 +1755,7 @@ fn update_native_shaded(window: &Window, shaded: bool) {
 }
 
 fn update_native_minimum_size(window: &Window, minimum_size: Option<Size<Pixels>>) {
-    if let Err(error) = set_native_minimum_size(window, minimum_size) {
-        eprintln!("remacs: failed to set frame minimum size: {error}");
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_native_minimum_size(
-    window: &Window,
-    minimum_size: Option<Size<Pixels>>,
-) -> Result<(), String> {
-    let Some(native_window) = appkit_native_window(window) else {
-        return Err("native frame window is unavailable".to_owned());
-    };
-    let minimum_size = minimum_size.unwrap_or(size(px(0.0), px(0.0)));
-    unsafe {
-        let _: () = msg_send![native_window, setContentMinSize: NSSize {
-            width: minimum_size.width.to_f64(),
-            height: minimum_size.height.to_f64(),
-        }];
-    }
-    Ok(())
+    window.set_minimum_size(minimum_size);
 }
 
 #[cfg(target_os = "macos")]
@@ -2113,203 +2011,6 @@ fn set_native_shaded(window: &Window, shaded: bool) -> Result<(), String> {
             0,
         ],
     )
-}
-
-#[cfg(target_os = "linux")]
-fn set_native_minimum_size(
-    window: &Window,
-    minimum_size: Option<Size<Pixels>>,
-) -> Result<(), String> {
-    let Some(context) = xcb_window_context(window)? else {
-        return Ok(());
-    };
-    const P_MIN_SIZE: u32 = 1 << 4;
-    let wm_normal_hints = xcb_intern_atom(&context.connection, b"WM_NORMAL_HINTS")?;
-    let wm_size_hints = xcb_intern_atom(&context.connection, b"WM_SIZE_HINTS")?;
-    let cookie = context.connection.send_request(&xcb::x::GetProperty {
-        delete: false,
-        window: context.window,
-        property: wm_normal_hints,
-        r#type: wm_size_hints,
-        long_offset: 0,
-        long_length: 18,
-    });
-    let reply = context
-        .connection
-        .wait_for_reply(cookie)
-        .map_err(|error| error.to_string())?;
-    let mut hints: Vec<u32> = reply.value::<u32>().take(18).collect();
-    hints.resize(18, 0);
-    if let Some(minimum_size) = minimum_size {
-        hints[0] |= P_MIN_SIZE;
-        hints[5] = minimum_size.width.0.max(0.0).ceil() as u32;
-        hints[6] = minimum_size.height.0.max(0.0).ceil() as u32;
-    } else {
-        hints[0] &= !P_MIN_SIZE;
-        hints[5] = 0;
-        hints[6] = 0;
-    }
-    let cookie = context.connection.send_request_checked(&xcb::x::ChangeProperty {
-        mode: xcb::x::PropMode::Replace,
-        window: context.window,
-        property: wm_normal_hints,
-        r#type: wm_size_hints,
-        data: &hints,
-    });
-    context
-        .connection
-        .check_request(cookie)
-        .map_err(|error| error.to_string())?;
-    context
-        .connection
-        .flush()
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn remacs_minimum_size_window_proc(
-    hwnd: *mut std::ffi::c_void,
-    message: u32,
-    wparam: usize,
-    lparam: isize,
-) -> isize {
-    const WM_GETMINMAXINFO: u32 = 0x0024;
-    let state = WINDOWS_MINIMUM_SIZES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap()
-        .get(&(hwnd as isize))
-        .copied();
-    let Some(state) = state else {
-        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
-    };
-    let result = unsafe {
-        CallWindowProcW(state.original_window_proc, hwnd, message, wparam, lparam)
-    };
-    if message == WM_GETMINMAXINFO && lparam != 0 {
-        let info = unsafe { &mut *(lparam as *mut Win32MinMaxInfo) };
-        if let Some(min_width) = state.min_width {
-            info.min_track_size.x = info
-                .min_track_size
-                .x
-                .max(min_width.saturating_add(state.nonclient_width));
-        }
-        if let Some(min_height) = state.min_height {
-            info.min_track_size.y = info
-                .min_track_size
-                .y
-                .max(min_height.saturating_add(state.nonclient_height));
-        }
-    }
-    result
-}
-
-#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
-unsafe fn windows_get_long_ptr(hwnd: *mut std::ffi::c_void, index: i32) -> isize {
-    unsafe { GetWindowLongPtrW(hwnd, index) }
-}
-
-#[cfg(all(target_os = "windows", target_pointer_width = "64"))]
-unsafe fn windows_set_long_ptr(
-    hwnd: *mut std::ffi::c_void,
-    index: i32,
-    value: isize,
-) -> isize {
-    unsafe { SetWindowLongPtrW(hwnd, index, value) }
-}
-
-#[cfg(all(target_os = "windows", target_pointer_width = "32"))]
-unsafe fn windows_get_long_ptr(hwnd: *mut std::ffi::c_void, index: i32) -> isize {
-    unsafe { GetWindowLongW(hwnd, index) as isize }
-}
-
-#[cfg(all(target_os = "windows", target_pointer_width = "32"))]
-unsafe fn windows_set_long_ptr(
-    hwnd: *mut std::ffi::c_void,
-    index: i32,
-    value: isize,
-) -> isize {
-    unsafe { SetWindowLongW(hwnd, index, value as i32) as isize }
-}
-
-#[cfg(target_os = "windows")]
-fn set_native_minimum_size(
-    window: &Window,
-    minimum_size: Option<Size<Pixels>>,
-) -> Result<(), String> {
-    use raw_window_handle::RawWindowHandle;
-
-    const GWLP_WNDPROC: i32 = -4;
-    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
-        .map_err(|error| error.to_string())?;
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        return Ok(());
-    };
-    let hwnd_id = handle.hwnd.get();
-    let hwnd = hwnd_id as *mut std::ffi::c_void;
-    let (min_width, min_height) = match minimum_size {
-        Some(size) => {
-            let scale = window.scale_factor();
-            (
-                Some((size.width.0 * scale).ceil() as i32).filter(|value| *value > 0),
-                Some((size.height.0 * scale).ceil() as i32).filter(|value| *value > 0),
-            )
-        }
-        None => (None, None),
-    };
-    let states = WINDOWS_MINIMUM_SIZES.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut states = states.lock().unwrap();
-    if min_width.is_none() && min_height.is_none() {
-        if let Some(state) = states.remove(&hwnd_id) {
-            drop(states);
-            unsafe { windows_set_long_ptr(hwnd, GWLP_WNDPROC, state.original_window_proc) };
-        }
-        return Ok(());
-    }
-    if let Some(state) = states.get_mut(&hwnd_id) {
-        state.min_width = min_width;
-        state.min_height = min_height;
-        return Ok(());
-    }
-    drop(states);
-
-    let original_window_proc = unsafe { windows_get_long_ptr(hwnd, GWLP_WNDPROC) };
-    if original_window_proc == 0 {
-        return Err("native window procedure is unavailable".to_owned());
-    }
-    let mut outer = Win32Rect::default();
-    let mut client = Win32Rect::default();
-    unsafe {
-        GetWindowRect(hwnd, &mut outer);
-        GetClientRect(hwnd, &mut client);
-    }
-    let nonclient_width = (outer.right - outer.left - (client.right - client.left)).max(0);
-    let nonclient_height = (outer.bottom - outer.top - (client.bottom - client.top)).max(0);
-    let replacement = remacs_minimum_size_window_proc as *const () as isize;
-    unsafe { windows_set_long_ptr(hwnd, GWLP_WNDPROC, replacement) };
-    WINDOWS_MINIMUM_SIZES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap()
-        .insert(
-            hwnd_id,
-            WindowsMinimumSizeState {
-                original_window_proc,
-                min_width,
-                min_height,
-                nonclient_width,
-                nonclient_height,
-            },
-        );
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn set_native_minimum_size(
-    _window: &Window,
-    _minimum_size: Option<Size<Pixels>>,
-) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -2590,3 +2291,5 @@ use logic::{ChanIo, start_logic, start_logic_with_dump_for_test};
 use view::build_editor_view;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod minimum_tests;

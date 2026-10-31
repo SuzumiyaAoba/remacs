@@ -954,6 +954,16 @@ impl PlatformWindow for WaylandWindow {
         self.borrow_mut().resize_increments = Some(increments);
     }
 
+    fn set_minimum_size(&self, size: Option<Size<Pixels>>) {
+        let mut state = self.borrow_mut();
+        state.minimum_size = size;
+        let size = size.unwrap_or_default();
+        state.toplevel.set_min_size(
+            size.width.0.max(0.0).ceil() as i32,
+            size.height.0.max(0.0).ceil() as i32,
+        );
+    }
+
     fn scale_factor(&self) -> f32 {
         self.borrow().scale
     }

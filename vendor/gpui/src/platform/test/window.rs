@@ -31,6 +31,7 @@ pub(crate) struct TestWindowState {
     is_fullscreen: bool,
     visible: bool,
     minimized: bool,
+    minimum_size: Option<Size<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -78,12 +79,14 @@ impl TestWindow {
             is_fullscreen: false,
             visible: params.show,
             minimized: false,
+            minimum_size: params.window_min_size,
         })))
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let scale_factor = self.scale_factor();
         let mut lock = self.0.lock();
+        let size = lock.minimum_size.map_or(size, |minimum| size.max(&minimum));
         let Some(mut callback) = lock.resize_callback.take() else {
             return;
         };
@@ -135,6 +138,10 @@ impl PlatformWindow for TestWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let mut lock = self.0.lock();
         lock.bounds.size = size;
+    }
+
+    fn set_minimum_size(&self, size: Option<Size<Pixels>>) {
+        self.0.lock().minimum_size = size;
     }
 
     fn scale_factor(&self) -> f32 {

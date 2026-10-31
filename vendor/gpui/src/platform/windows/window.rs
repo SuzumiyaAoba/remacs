@@ -568,6 +568,10 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().resize_increments = Some(increments);
     }
 
+    fn set_minimum_size(&self, size: Option<Size<Pixels>>) {
+        self.0.state.borrow_mut().min_size = size;
+    }
+
     fn set_position(&mut self, position: Point<Pixels>, _display_id: Option<u32>) {
         let hwnd = self.0.hwnd;
         let bounds =
