@@ -1011,7 +1011,7 @@ The path separator is colon in GNU and GNU-like systems."
                      (let ((first (locate-file dir cd-path nil)))
                        (and first (file-directory-p first))))
                  (locate-file dir cd-path nil
-                              (lambda (f) (and (file-directory-p f) 'dir-ok))))))
+                              (lambda (f) (and (file-directory-p f) 'dir-ok)))))))
       (unless cd-path
         (setq cd-path (or (parse-colon-path (getenv "CDPATH"))
                           (list "./"))))
@@ -3532,7 +3532,7 @@ If CASE-INSENSITIVE, the file system of file NAME is case-insensitive."
                  ;; Fallback to case-insensitive match.
                  (and auto-mode-case-fold
                       (let ((case-fold-search t))
-                        (assoc-default name alist 'string-match)))))
+                        (assoc-default name alist 'string-match))))))
              ;; Save the match position before running an earlier mode,
              ;; which can change match data.
              (match-pos (and newmode (match-beginning 0))))
