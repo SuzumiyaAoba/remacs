@@ -32044,6 +32044,9 @@ This can be used to detect if xterm-mouse-mode was explicitly set.")
 (register-definition-prefixes "zone" '("zone-"))
 
 ;Remacs: GNU loaddefs.el side-effect forms the generator missed.
+;Remacs: Autoloaded trust declarations from GNU which-func.el.
+(put 'which-func-format 'risky-local-variable t)
+(put 'which-func-current 'risky-local-variable t)
 ;; Mail user-agent registrations (GNU loaddefs lines 15469/21607/21790/30108).
 (define-mail-user-agent 'gnus-user-agent 'gnus-msg-mail 'message-send-and-exit 'message-kill-buffer 'message-send-hook)
 (define-mail-user-agent 'message-user-agent 'message-mail 'message-send-and-exit 'message-kill-buffer 'message-send-hook)
