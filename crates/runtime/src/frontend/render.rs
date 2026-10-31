@@ -1964,6 +1964,12 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
 }
 
 #[derive(Default)]
+struct ModeLineProperties {
+    help: Vec<Option<String>>,
+    fill_help: Option<Option<String>>,
+}
+
+#[derive(Default)]
 pub(super) struct ModeLineContext {
     buffer_name: String,
     file_name: String,
@@ -1973,6 +1979,7 @@ pub(super) struct ModeLineContext {
     memory_full: bool,
     remote: bool,
     remote_used: std::cell::Cell<bool>,
+    properties: std::cell::RefCell<Option<ModeLineProperties>>,
     line: usize,
     column: usize,
     line_count: usize,
@@ -2079,6 +2086,7 @@ fn mode_line_context(
             memory_full: false,
             remote: false,
             remote_used: Default::default(),
+            properties: Default::default(),
             line: 0,
             column: 0,
             line_count: 0,
@@ -2113,6 +2121,7 @@ fn mode_line_context(
             .is_some_and(|value| value.truthy()),
         remote: mode_line_remote(i, buffer_id),
         remote_used: Default::default(),
+        properties: Default::default(),
         line: point_line.saturating_sub(first_line).saturating_add(1),
         column: display_columns(
             &buffer.text.substring(point_line_start, point),
@@ -2288,31 +2297,46 @@ fn readable_mode_line_size(size: usize) -> String {
 }
 
 fn format_mode_line_string(
-    value: &str,
+    i: &Interp,
+    value: &crate::lisp::value::StrRef,
     context: &ModeLineContext,
     fill_remaining: &mut bool,
 ) -> String {
-    let characters: Vec<_> = value.chars().collect();
+    let characters: Vec<_> = value.borrow().to_unicode_lossy().chars().collect();
     let mut output = String::new();
+    let collect = context.properties.borrow().is_some();
+    let mut sources = Vec::new();
+    let mut fill_source = None;
     let mut index = 0usize;
     while index < characters.len() {
+        let source = index;
         if characters[index] != '%' {
             output.push(characters[index]);
+            if collect {
+                sources.push(source);
+            }
             index += 1;
             continue;
         }
         index += 1;
         if index >= characters.len() {
             output.push('%');
+            if collect {
+                sources.push(source);
+            }
             break;
         }
         if characters[index] == '%' {
             output.push('%');
+            if collect {
+                sources.push(source);
+            }
             index += 1;
             continue;
         }
         if characters[index] == '-' && index + 1 == characters.len() {
             *fill_remaining = true;
+            fill_source = Some(source);
             break;
         }
         let left_align = characters[index] == '-';
@@ -2342,6 +2366,9 @@ fn format_mode_line_string(
         }
         if index >= characters.len() {
             output.push('%');
+            if collect {
+                sources.push(source);
+            }
             break;
         }
         let specifier = characters[index];
@@ -2376,14 +2403,7 @@ fn format_mode_line_string(
                     "-".to_owned()
                 }
             }
-            '+' => {
-                if context.modified {
-                    "*"
-                } else {
-                    "-"
-                }
-                .to_owned()
-            }
+            '+' => if context.modified { "*" } else { "-" }.to_owned(),
             'e' => {
                 if context.memory_full {
                     "!MEM FULL! ".to_owned()
@@ -2399,63 +2419,35 @@ fn format_mode_line_string(
         }
         if has_width {
             // GNU counts the numeric part separately from %I's suffix.
-            let width = width.saturating_add(usize::from(
-                specifier == 'I' && context.buffer_size >= 1000,
-            ));
+            let width =
+                width.saturating_add(usize::from(specifier == 'I' && context.buffer_size >= 1000));
             field = fit_mode_line_field(&field, width, left_align);
         }
+        if collect {
+            sources.extend(std::iter::repeat_n(source, field.chars().count()));
+        }
         output.push_str(&field);
+    }
+    if let Some(properties) = context.properties.borrow_mut().as_mut() {
+        let help_at = |position| {
+            let property = i.q_soft("help-echo")?;
+            let plist = Value::list(crate::buffer::primitives::str_plist_at(
+                i.str_props(value),
+                position,
+            ));
+            help_echo_text(crate::lisp::eval::plist_get(&plist, property))
+        };
+        properties.help.extend(sources.into_iter().map(help_at));
+        if let Some(source) = fill_source {
+            properties.fill_help = Some(help_at(source));
+        }
     }
     output
 }
 
-fn mode_line_help_echo(
-    i: &Interp,
-    buffer_id: usize,
-    value: &Value,
-    depth: usize,
-) -> Option<String> {
-    if depth > 24 {
-        return None;
-    }
-    let help_echo = i.q_soft("help-echo");
+fn help_echo_text(value: Value) -> Option<String> {
     match value {
-        Value::Str(string) => {
-            let plist = Value::list(crate::buffer::primitives::str_plist_at(
-                i.str_props(string),
-                0,
-            ));
-            help_echo
-                .map(|property| crate::lisp::eval::plist_get(&plist, property))
-                .and_then(|value| match value {
-                    Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
-                    _ => None,
-                })
-        }
-        Value::Sym(symbol) => mode_line_variable(i, buffer_id, &i.symbol_name(*symbol))
-            .filter(|current| !matches!(current, Value::Sym(id) if id == symbol))
-            .and_then(|current| mode_line_help_echo(i, buffer_id, &current, depth + 1)),
-        Value::Cons(_) => {
-            let elements = value.list_to_vec().ok()?;
-            if matches!(elements.first(), Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == ":propertize")
-                && elements.len() >= 2
-            {
-                if let Some(property) = help_echo {
-                    let plist = Value::list(elements.iter().skip(2).cloned().collect());
-                    if let Value::Str(text) = crate::lisp::eval::plist_get(&plist, property) {
-                        return Some(text.borrow().to_unicode_lossy());
-                    }
-                }
-                return mode_line_help_echo(i, buffer_id, &elements[1], depth + 1);
-            }
-            elements
-                .iter()
-                .find_map(|element| mode_line_help_echo(i, buffer_id, element, depth + 1))
-        }
-        Value::Vec(vector) => vector
-            .borrow()
-            .iter()
-            .find_map(|element| mode_line_help_echo(i, buffer_id, element, depth + 1)),
+        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
         _ => None,
     }
 }
@@ -2522,15 +2514,20 @@ pub(super) fn format_mode_line_value(
     }
     match value {
         Value::Nil => String::new(),
-        Value::Str(string) => {
-            format_mode_line_string(
-                &string.borrow().to_unicode_lossy(),
-                context,
-                fill_remaining,
-            )
+        Value::Str(string) => format_mode_line_string(i, string, context, fill_remaining),
+        Value::Int(_) | Value::Float(_) => {
+            let output = match value {
+                Value::Int(number) => number.to_string(),
+                Value::Float(number) => number.to_string(),
+                _ => unreachable!(),
+            };
+            if let Some(properties) = context.properties.borrow_mut().as_mut() {
+                properties
+                    .help
+                    .extend(std::iter::repeat_n(None, output.chars().count()));
+            }
+            output
         }
-        Value::Int(number) => number.to_string(),
-        Value::Float(number) => number.to_string(),
         Value::Sym(symbol) => {
             if i.symbol_name(*symbol) == "mode-line-minor-modes" {
                 return format_mode_line_minor_modes(
@@ -2560,7 +2557,8 @@ pub(super) fn format_mode_line_value(
                 match i.symbol_name(*head).as_str() {
                     ":eval" => return String::new(),
                     ":propertize" => {
-                        return elements.get(1).map_or_else(String::new, |body| {
+                        let start = context.properties.borrow().as_ref().map(|p| p.help.len());
+                        let output = elements.get(1).map_or_else(String::new, |body| {
                             format_mode_line_value(
                                 i,
                                 buffer_id,
@@ -2570,6 +2568,21 @@ pub(super) fn format_mode_line_value(
                                 fill_remaining,
                             )
                         });
+                        if let Some(start) = start
+                            && let Some(property) = i.q_soft("help-echo")
+                            && let Some(pair) =
+                                elements.get(2..).unwrap_or_default().chunks_exact(2).find(
+                                    |pair| matches!(pair[0], Value::Sym(id) if id == property),
+                                )
+                            && let Some(properties) = context.properties.borrow_mut().as_mut()
+                        {
+                            let help = help_echo_text(pair[1].clone());
+                            properties.help[start..].fill(help.clone());
+                            if properties.fill_help.is_some() {
+                                properties.fill_help = Some(help);
+                            }
+                        }
+                        return output;
                     }
                     _ => {}
                 }
@@ -3620,15 +3633,54 @@ fn place_formatted_window_row(
     format: &Value,
     context: &ModeLineContext,
     face_name: &str,
+    help_echoes: &mut Vec<GridHelpEcho>,
 ) {
     let Some(screen_row) = screen.get_mut(row) else {
         return;
     };
+    *context.properties.borrow_mut() = Some(ModeLineProperties::default());
     let mut fill_remaining = false;
     let mut text = format_mode_line_value(i, buffer_id, format, context, 0, &mut fill_remaining);
+    let mut properties = context.properties.borrow_mut().take().unwrap_or_default();
     if fill_remaining {
         let occupied = fit_text_to_cells_with_tab_width(&text, width, tab_width).1;
-        text.push_str(&"-".repeat(width.saturating_sub(occupied)));
+        let count = width.saturating_sub(occupied);
+        text.push_str(&"-".repeat(count));
+        properties
+            .help
+            .extend(std::iter::repeat_n(properties.fill_help.flatten(), count));
+    }
+    // Use the same column conversion and clipping as the visible row. In
+    // particular, tabs cover several cells and a clipped wide glyph covers none.
+    let mut column = 0usize;
+    for (character, help) in text.chars().zip(properties.help) {
+        let character = match character {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        let cells = if character == '\t' {
+            let tab_width = tab_width.max(1);
+            tab_width - column % tab_width
+        } else {
+            display_char_width(character)
+        };
+        if column.saturating_add(cells) > width {
+            break;
+        }
+        if cells > 0
+            && let Some(text) = help
+        {
+            push_help_echo(
+                help_echoes,
+                GridHelpEcho {
+                    row,
+                    left: left.saturating_add(column),
+                    width: cells,
+                    text,
+                },
+            );
+        }
+        column += cells;
     }
     let row_text = fit_text_to_cells_with_tab_width(&text, width, tab_width).0;
     let mut style = faces.builtin(i, face_name, 0).finish();
@@ -3642,13 +3694,7 @@ fn place_formatted_window_row(
     }
     let cell_styles = vec![style; width];
     let character_styles = row_text.chars().map(|_| style).collect::<Vec<_>>();
-    place_text_row(
-        screen_row,
-        left,
-        &row_text,
-        &cell_styles,
-        &character_styles,
-    );
+    place_text_row(screen_row, left, &row_text, &cell_styles, &character_styles);
 }
 
 fn compose_screen_rows(
@@ -8877,15 +8923,8 @@ fn render_grid_internal(
                 &tab_line_format,
                 &mode_context,
                 "tab-line",
+                &mut help_echoes,
             );
-            if let Some(text) = mode_line_help_echo(i, buf_id, &tab_line_format, 0) {
-                push_help_echo(&mut help_echoes, GridHelpEcho {
-                    row: auxiliary_row,
-                    left: window_left,
-                    width: window_width,
-                    text,
-                });
-            }
             auxiliary_row += 1;
         }
         if header_line_enabled && auxiliary_row < content_top {
@@ -8901,15 +8940,8 @@ fn render_grid_internal(
                 &header_line_format,
                 &mode_context,
                 "header-line",
+                &mut help_echoes,
             );
-            if let Some(text) = mode_line_help_echo(i, buf_id, &header_line_format, 0) {
-                push_help_echo(&mut help_echoes, GridHelpEcho {
-                    row: auxiliary_row,
-                    left: window_left,
-                    width: window_width,
-                    text,
-                });
-            }
         }
         // Mode line.
         let my = window_top + text_rows;
@@ -8936,6 +8968,7 @@ fn render_grid_internal(
                 &mode_line_format,
                 &mode_context,
                 ml_name,
+                &mut help_echoes,
             );
             let buffer_name_range = screen_rows.get(my).and_then(|row| {
                 screen_row_find_text_range(
@@ -8953,14 +8986,6 @@ fn render_grid_internal(
                 width: window_width,
                 buffer_name_range,
             });
-            if let Some(text) = mode_line_help_echo(i, buf_id, &mode_line_format, 0) {
-                push_help_echo(&mut help_echoes, GridHelpEcho {
-                    row: my,
-                    left: window_left,
-                    width: window_width,
-                    text,
-                });
-            }
             mode_rows.push(my);
         }
     }
