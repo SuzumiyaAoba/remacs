@@ -7539,6 +7539,7 @@ fn f_x_popup_menu(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// posn-window car(cdr); window/frame → itself; anything else (incl.
 /// nil) → window=nil and CHECK_WINDOW signals `windowp nil'.
 fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    use crate::frontend::DialogItem;
     fn dialog_car(i: &mut Interp, v: &Value) -> Result<Value, Flow> {
         match v {
             Value::Cons(c) => Ok(c.borrow().car.clone()),
@@ -7609,7 +7610,7 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Some(backend) = i.dialog_backend.clone() else {
         return Ok(Value::Nil);
     };
-    let mut buttons = Vec::new();
+    let mut dialog_items = Vec::new();
     let mut values = Vec::new();
     while let Value::Cons(cell) = items {
         let (item, rest) = {
@@ -7617,6 +7618,10 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             (cell.car.clone(), cell.cdr.clone())
         };
         items = rest;
+        if let Value::Str(text) = &item {
+            dialog_items.push(DialogItem::Text(text.borrow().to_unicode_lossy()));
+            continue;
+        }
         let Value::Cons(item) = item else {
             continue;
         };
@@ -7627,16 +7632,16 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let Value::Str(label) = label else {
             return Err(i.wrong_type_mut("stringp", &label));
         };
-        buttons.push(label.borrow().to_unicode_lossy());
+        dialog_items.push(DialogItem::Button(label.borrow().to_unicode_lossy()));
         values.push(value);
     }
 
     // Keep the interpreter on its logic thread while the frontend presents
     // the native prompt.
-    if !buttons.is_empty() {
+    if !dialog_items.is_empty() {
         let frame_id = frame.borrow().id;
         let selected = backend
-            .choose_with_header(frame_id, &title, None, &buttons, header)
+            .choose_with_items(frame_id, &title, None, &dialog_items, header)
             .map_err(|error| i.error(format!("Dialog failed: {error}")))?;
         // A dismissed dialog is distinct from selecting a button whose value is nil.
         let selected = selected.ok_or(Flow::Quit)?;

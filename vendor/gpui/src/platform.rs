@@ -1424,6 +1424,8 @@ pub enum PromptButton {
     Cancel(SharedString),
     /// Other button
     Other(SharedString),
+    /// Nonselectable text displayed alongside the choices.
+    Text(SharedString),
 }
 
 impl PromptButton {
@@ -1442,6 +1444,15 @@ impl PromptButton {
         PromptButton::Cancel(label.into())
     }
 
+    /// Create a nonselectable text item.
+    pub fn text(label: impl Into<SharedString>) -> Self {
+        PromptButton::Text(label.into())
+    }
+
+    pub(crate) fn is_selectable(&self) -> bool {
+        !matches!(self, Self::Text(_))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn is_cancel(&self) -> bool {
         matches!(self, PromptButton::Cancel(_))
@@ -1453,6 +1464,7 @@ impl PromptButton {
             PromptButton::Ok(label) => label,
             PromptButton::Cancel(label) => label,
             PromptButton::Other(label) => label,
+            PromptButton::Text(label) => label,
         }
     }
 }
@@ -1464,6 +1476,86 @@ impl From<&str> for PromptButton {
             "cancel" => PromptButton::Cancel("Cancel".into()),
             _ => PromptButton::Other(SharedString::from(value.to_owned())),
         }
+    }
+}
+
+/// Native alerts can show leading text in their detail area.  Other item
+/// layouts use the common prompt renderer to preserve their order.
+pub(crate) fn native_prompt_detail(
+    answers: &[PromptButton],
+    detail: Option<&str>,
+) -> Option<Option<String>> {
+    let prefix = answers
+        .iter()
+        .take_while(|item| !item.is_selectable())
+        .count();
+    if answers[prefix..].iter().any(|item| !item.is_selectable()) {
+        return None;
+    }
+    if prefix == 0 {
+        return Some(detail.map(str::to_owned));
+    }
+    if prefix == answers.len() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    if let Some(detail) = detail {
+        lines.push(detail);
+    }
+    lines.extend(answers[..prefix].iter().map(|item| item.label().as_str()));
+    Some(Some(lines.join("\n")))
+}
+
+#[cfg(test)]
+mod prompt_text_tests {
+    use super::*;
+
+    #[test]
+    fn native_text_keeps_order_and_existing_detail() {
+        let items = [
+            PromptButton::text("First"),
+            PromptButton::text("説明"),
+            PromptButton::new("OK"),
+        ];
+        assert_eq!(
+            native_prompt_detail(&items, None),
+            Some(Some("First\n説明".into()))
+        );
+        assert_eq!(
+            native_prompt_detail(&items, Some("Details")),
+            Some(Some("Details\nFirst\n説明".into()))
+        );
+        assert_eq!(
+            native_prompt_detail(&[PromptButton::new("OK")], Some("Details")),
+            Some(Some("Details".into()))
+        );
+        assert_eq!(native_prompt_detail(&[], None), Some(None));
+    }
+
+    #[test]
+    fn nonleading_and_text_only_layouts_require_the_common_renderer() {
+        assert_eq!(
+            native_prompt_detail(
+                &[
+                    PromptButton::new("One"),
+                    PromptButton::text("Between"),
+                    PromptButton::new("Two")
+                ],
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            native_prompt_detail(
+                &[PromptButton::new("One"), PromptButton::text("After")],
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            native_prompt_detail(&[PromptButton::text("Only text")], None),
+            None
+        );
     }
 }
 

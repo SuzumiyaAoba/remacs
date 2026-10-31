@@ -423,7 +423,7 @@ pub(super) enum GuiRequest {
         message: String,
         detail: Option<String>,
         header: Option<bool>,
-        buttons: Vec<String>,
+        items: Vec<remacs_runtime::frontend::DialogItem>,
         reply: SyncSender<Result<Option<usize>, String>>,
     },
     FileDialog {
@@ -558,6 +558,17 @@ impl remacs_runtime::frontend::DialogBackend for GuiDialogBackend {
     ) -> Result<Option<usize>, String> {
         self.request_prompt(frame_id, message, detail, buttons, Some(header))
     }
+
+    fn choose_with_items(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        items: &[remacs_runtime::frontend::DialogItem],
+        header: bool,
+    ) -> Result<Option<usize>, String> {
+        self.request_items(frame_id, message, detail, items, Some(header))
+    }
 }
 
 impl GuiDialogBackend {
@@ -569,6 +580,22 @@ impl GuiDialogBackend {
         buttons: &[String],
         header: Option<bool>,
     ) -> Result<Option<usize>, String> {
+        let items: Vec<_> = buttons
+            .iter()
+            .cloned()
+            .map(remacs_runtime::frontend::DialogItem::Button)
+            .collect();
+        self.request_items(frame_id, message, detail, &items, header)
+    }
+
+    fn request_items(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        items: &[remacs_runtime::frontend::DialogItem],
+        header: Option<bool>,
+    ) -> Result<Option<usize>, String> {
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(GuiRequest::Prompt {
@@ -576,13 +603,14 @@ impl GuiDialogBackend {
                 message: message.to_owned(),
                 detail: detail.map(str::to_owned),
                 header,
-                buttons: buttons.to_vec(),
+                items: items.to_vec(),
                 reply,
             })
             .map_err(|_| "GUI dialog service is unavailable".to_owned())?;
-        response
+        let selected = response
             .recv()
-            .map_err(|_| "GUI dialog service stopped".to_owned())?
+            .map_err(|_| "GUI dialog service stopped".to_owned())??;
+        Ok(selected.and_then(|index| super::dialog_items::dialog_button_index(items, index)))
     }
 }
 

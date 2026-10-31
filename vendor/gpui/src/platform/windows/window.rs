@@ -646,9 +646,9 @@ impl PlatformWindow for WindowsWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
+        let detail_string = crate::platform::native_prompt_detail(answers, detail)?;
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
-        let detail_string = detail.map(|detail| detail.to_string());
         let handle = self.0.hwnd;
         let answers = answers.to_vec();
         self.0
@@ -694,7 +694,11 @@ impl PlatformWindow for WindowsWindow {
                     let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
-                    for (index, btn) in answers.iter().enumerate() {
+                    for (index, btn) in answers
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, btn)| btn.is_selectable())
+                    {
                         let encoded = HSTRING::from(btn.label().as_ref());
                         let button_id = match btn {
                             PromptButton::Ok(_) => IDOK.0,
@@ -702,8 +706,9 @@ impl PlatformWindow for WindowsWindow {
                             // the first few low integer values are reserved for known buttons
                             // so for simplicity we just go backwards from -1
                             PromptButton::Other(_) => -(index as i32) - 1,
+                            PromptButton::Text(_) => unreachable!("text is not a native button"),
                         };
-                        button_id_map.push(button_id);
+                        button_id_map.push((button_id, index));
                         buttons.push(TASKDIALOG_BUTTON {
                             nButtonID: button_id,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
@@ -719,10 +724,11 @@ impl PlatformWindow for WindowsWindow {
                         .context("unable to create task dialog")
                         .log_err();
 
-                    if let Some(clicked) =
-                        button_id_map.iter().position(|&button_id| button_id == res)
+                    if let Some((_, clicked)) = button_id_map
+                        .iter()
+                        .find(|&&(button_id, _)| button_id == res)
                     {
-                        let _ = done_tx.send(clicked);
+                        let _ = done_tx.send(*clicked);
                     }
                 }
             })

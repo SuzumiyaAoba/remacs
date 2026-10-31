@@ -1244,6 +1244,8 @@ impl PlatformWindow for MacWindow {
         detail: Option<&str>,
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
+        let detail = crate::platform::native_prompt_detail(answers, detail)?;
+        let first_selectable = answers.iter().position(PromptButton::is_selectable);
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
         // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
@@ -1266,8 +1268,8 @@ impl PlatformWindow for MacWindow {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, label)| !label.is_cancel())
-            .filter(|&(label_index, _)| label_index > 0);
+            .find(|(_, label)| label.is_selectable() && !label.is_cancel())
+            .filter(|&(label_index, _)| Some(label_index) != first_selectable);
 
         unsafe {
             let alert: id = msg_send![class!(NSAlert), alloc];
@@ -1279,15 +1281,13 @@ impl PlatformWindow for MacWindow {
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            if let Some(detail) = detail {
+            if let Some(detail) = detail.as_deref() {
                 let _: () = msg_send![alert, setInformativeText: ns_string(detail)];
             }
 
-            for (ix, answer) in answers
-                .iter()
-                .enumerate()
-                .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
-            {
+            for (ix, answer) in answers.iter().enumerate().filter(|&(ix, answer)| {
+                answer.is_selectable() && Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix)
+            }) {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
 

@@ -42,6 +42,13 @@ pub trait AboutPanelBackend {
     fn show(&self, frame_id: usize, version: &str) -> Result<(), String>;
 }
 
+/// A selectable choice or nonselectable text in a graphical dialog.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DialogItem {
+    Button(String),
+    Text(String),
+}
+
 /// Host dialog backend used by interactive graphical front-ends. The logic
 /// thread blocks until the UI returns the selected button index.
 pub trait DialogBackend {
@@ -64,6 +71,29 @@ pub trait DialogBackend {
         _header: bool,
     ) -> Result<Option<usize>, String> {
         self.choose(frame_id, message, detail, buttons)
+    }
+
+    /// Choose from structured items. Returned indices count only Button items.
+    /// Older backends receive the selectable labels through their existing API.
+    fn choose_with_items(
+        &self,
+        frame_id: usize,
+        message: &str,
+        detail: Option<&str>,
+        items: &[DialogItem],
+        header: bool,
+    ) -> Result<Option<usize>, String> {
+        let buttons: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                DialogItem::Button(label) => Some(label.clone()),
+                DialogItem::Text(_) => None,
+            })
+            .collect();
+        if buttons.is_empty() {
+            return Ok(None);
+        }
+        self.choose_with_header(frame_id, message, detail, &buttons, header)
     }
 }
 

@@ -28,6 +28,19 @@ fn prompt(
     Response,
     FocusHandle,
 ) {
+    let buttons =
+        crate::dialog_prompt_buttons(labels.iter().map(|label| (*label).into()).collect());
+    prompt_buttons(buttons)
+}
+
+fn prompt_buttons(
+    buttons: Vec<gpui::PromptButton>,
+) -> (
+    TestAppContext,
+    WindowHandle<PromptRoot>,
+    Response,
+    FocusHandle,
+) {
     let mut app = TestAppContext::single();
     app.update(|app| app.set_prompt_builder(gpui::fallback_prompt_renderer));
     let window = app.add_window(|window, cx| {
@@ -41,8 +54,6 @@ fn prompt(
     let previous_focus = window
         .update(&mut app, |root, _, _| root.focus.clone())
         .unwrap();
-    let buttons =
-        crate::dialog_prompt_buttons(labels.iter().map(|label| (*label).into()).collect());
     let receiver = window
         .update(&mut app, |_, window, app| {
             window.prompt(PromptLevel::Info, "Choose", None, &buttons, app)
@@ -147,6 +158,56 @@ fn fallback_prompt_escape_without_cancel_dismisses_without_selection() {
 #[test]
 fn fallback_prompt_empty_actions_still_allow_dismissal() {
     let (mut app, window, response, focus) = prompt(&[]);
+    app.simulate_keystrokes(*window, "tab shift-tab enter space");
+    assert_eq!(response.get(), None);
+    app.simulate_keystrokes(*window, "escape");
+    assert_eq!(response.get(), Some(Err(())));
+    restored(&mut app, window, &focus);
+}
+
+#[test]
+fn fallback_keyboard_skips_static_text_items() {
+    for (keys, selected) in [
+        ("enter", 1),
+        ("tab enter", 3),
+        ("shift-tab space", 3),
+        ("tab tab enter", 1),
+    ] {
+        let (mut app, window, response, focus) = prompt_buttons(vec![
+            gpui::PromptButton::text("Before"),
+            gpui::PromptButton::new("One"),
+            gpui::PromptButton::text("Between"),
+            gpui::PromptButton::new("Two"),
+            gpui::PromptButton::text("After"),
+        ]);
+        app.simulate_keystrokes(*window, keys);
+        assert_eq!(response.get(), Some(Ok(selected)));
+        restored(&mut app, window, &focus);
+    }
+}
+
+#[test]
+fn fallback_static_text_is_drawn_but_cannot_be_clicked_or_cancel_selected() {
+    let (mut app, window, response, focus) = prompt_buttons(vec![
+        gpui::PromptButton::text("Cancel"),
+        gpui::PromptButton::new("OK"),
+    ]);
+    let mut visual = gpui::VisualTestContext::from_window(*window, &app);
+    let text = visual
+        .debug_bounds("fallback-prompt-text")
+        .expect("rendered text item");
+    assert!(text.size.height > gpui::px(0.0));
+    visual.simulate_click(text.center(), gpui::Modifiers::default());
+    assert_eq!(response.get(), None);
+    app.simulate_keystrokes(*window, "escape");
+    assert_eq!(response.get(), Some(Err(())));
+    restored(&mut app, window, &focus);
+}
+
+#[test]
+fn fallback_text_only_prompt_allows_dismissal() {
+    let (mut app, window, response, focus) =
+        prompt_buttons(vec![gpui::PromptButton::text("Only information")]);
     app.simulate_keystrokes(*window, "tab shift-tab enter space");
     assert_eq!(response.get(), None);
     app.simulate_keystrokes(*window, "escape");

@@ -49,13 +49,17 @@ use objc::{
     },
     sel, sel_impl,
 };
+mod dialog_items;
 mod dialogs;
 mod file_dialog;
 mod keys;
 mod logic;
 mod monitor;
 mod view;
-use dialogs::{dialog_prompt_buttons, dialog_prompt_level};
+use dialog_items::dialog_prompt_items;
+#[cfg(test)]
+use dialogs::dialog_prompt_buttons;
+use dialogs::dialog_prompt_level;
 use logic::{
     ClipboardRequest, ClipboardTarget, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames,
 };
@@ -961,10 +965,10 @@ pub fn run_gui_with_dump(
                         message,
                         detail,
                         header,
-                        buttons,
+                        items,
                         reply,
                     } => {
-                        let buttons = dialog_prompt_buttons(buttons);
+                        let buttons = dialog_prompt_items(&items);
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             match handle.update(cx, |_view, window, cx| {
                                 window.prompt(

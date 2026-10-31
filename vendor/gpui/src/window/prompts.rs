@@ -86,9 +86,12 @@ pub fn fallback_prompt_renderer(
         detail: detail.map(ToString::to_string),
         actions: actions.to_vec(),
         action_focus: actions.iter().map(|_| cx.focus_handle()).collect(),
-        selected: 0,
+        selected: actions
+            .iter()
+            .position(PromptButton::is_selectable)
+            .unwrap_or(0),
         scroll: ScrollHandle::new(),
-        last_focused: (!actions.is_empty()).then_some(0),
+        last_focused: actions.iter().position(PromptButton::is_selectable),
         previous_focus,
         focus: cx.focus_handle(),
     });
@@ -130,20 +133,32 @@ impl FallbackPromptRenderer {
             self.selected = selected;
         }
         match key.key.as_str() {
-            "tab" if !self.actions.is_empty() => {
-                self.selected = if key.modifiers.shift {
-                    if self.selected == 0 {
-                        self.actions.len() - 1
+            "tab" if self.actions.iter().any(PromptButton::is_selectable) => {
+                for _ in 0..self.actions.len() {
+                    self.selected = if key.modifiers.shift {
+                        if self.selected == 0 {
+                            self.actions.len() - 1
+                        } else {
+                            self.selected - 1
+                        }
                     } else {
-                        self.selected - 1
+                        (self.selected + 1) % self.actions.len()
+                    };
+                    if self.actions[self.selected].is_selectable() {
+                        break;
                     }
-                } else {
-                    (self.selected + 1) % self.actions.len()
-                };
+                }
                 window.focus(&self.action_focus[self.selected]);
+                self.scroll
+                    .scroll_to_item(self.selected + 1 + usize::from(self.detail.is_some()));
                 cx.notify();
             }
-            "enter" | "space" if !self.actions.is_empty() => {
+            "enter" | "space"
+                if self
+                    .actions
+                    .get(self.selected)
+                    .is_some_and(PromptButton::is_selectable) =>
+            {
                 cx.emit(PromptResponse(self.selected));
             }
             "escape" => {
@@ -211,27 +226,34 @@ impl Render for FallbackPromptRenderer {
                     .child(div().child(detail))
             }))
             .children(self.actions.iter().enumerate().map(|(ix, action)| {
-                div()
+                let row = div()
                     .flex()
                     .flex_shrink_0()
                     .flex_row()
                     .justify_around()
-                    .border_1()
+                    .mt_1()
+                    .text_sm()
+                    .child(action.label().clone());
+                if !action.is_selectable() {
+                    let text = row.w_full().justify_start().cursor_default();
+                    #[cfg(any(test, feature = "test-support"))]
+                    let text = text.debug_selector(|| "fallback-prompt-text".to_string());
+                    return text.into_any_element();
+                }
+                row.border_1()
                     .border_color(if self.action_focus[ix].is_focused(window) {
                         opaque_grey(0.1, 1.0)
                     } else {
                         opaque_grey(0.2, 0.5)
                     })
-                    .mt_1()
                     .rounded_xs()
                     .cursor_pointer()
-                    .text_sm()
-                    .child(action.label().clone())
                     .id(ix)
                     .track_focus(&self.action_focus[ix])
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptResponse(ix));
                     }))
+                    .into_any_element()
             }));
 
         let prompt = div()
@@ -288,7 +310,12 @@ impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
 impl Focusable for FallbackPromptRenderer {
     fn focus_handle(&self, _: &crate::App) -> FocusHandle {
-        self.action_focus.first().unwrap_or(&self.focus).clone()
+        self.actions
+            .iter()
+            .position(PromptButton::is_selectable)
+            .map(|index| &self.action_focus[index])
+            .unwrap_or(&self.focus)
+            .clone()
     }
 }
 
