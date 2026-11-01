@@ -2464,8 +2464,8 @@ property and RRULE an `icalendar-rrule'."
 
 ;; TODO: give this value to diary-time-regexp?
 (defconst diary-icalendar-time-regexp
-  (rx-let ((hours (or (seq (any "0-2") (any "0-9"))
-                      (any "0-9")))
+  ;; Remacs: capture complete hours so an invalid token cannot match by suffix.
+  (rx-let ((hours (one-or-more (any "0-9")))
            (minutes (seq (any "0-5") (any "0-9")))
            (am/pm (seq (any "ap") "m"))) ;; am, pm
     (rx
@@ -2494,11 +2494,12 @@ property and RRULE an `icalendar-rrule'."
          ;; 10h
          "h")))
      (one-or-more space)))
-  "Regular expression to match diary appointment times.
+  "Regular expression to match diary appointment time candidates.
+Hour ranges are checked by `diary-icalendar-parse-time'.
 
 Accepted time formats look like e.g.:
   9AM 9:00 09:00 9h 9h00 9.00am 9.00h
-  9PM 9:00pm 21:00 21h00 21.00pm 21.00h
+  9PM 9:00pm 21:00 21h00 9.00pm 21.00h
   9AM-1PM 09:00-13:00
 
 Group 1 matches the start time:
@@ -2511,10 +2512,17 @@ Group 2 matches the end time:
   Group 22 matches the minutes digits
   Group 23 matches an AM/PM specification")
 
+(defun diary-icalendar--parse-hour (digits am/pm)
+  "Convert captured hour DIGITS and AM/PM to a valid 24-hour value."
+  (when (and digits (<= 1 (length digits) 2))
+    (let ((hour (string-to-number digits)))
+      (when (if am/pm (<= 1 hour 12) (<= 0 hour 23))
+        (if am/pm (+ (mod hour 12) (if (equal am/pm "PM") 12 0)) hour)))))
+
 (defun diary-icalendar-parse-time ()
   "Parse diary time string in the current restriction.
 
-If a time specification is found, move the current restriction past it,
+If a valid time specification is found, move the current restriction past it,
 and return a list (START END), where START and END are decoded-time
 values containing the hours and minutes slots parsed from the time
 specification.  END may be nil if no end time was specified."
@@ -2522,40 +2530,25 @@ specification.  END may be nil if no end time was specified."
   (let ((regexp diary-icalendar-time-regexp)
         (case-fold-search t))
     (when diary-icalendar-export-linewise
-      ;; In this case, only look for a time following whitespace,
-      ;; at the beginning of a continuation line of the full entry:
+      ;; Only continuation-line times are considered in linewise export.
       (setq regexp (concat "^[[:space:]]+" diary-icalendar-time-regexp)))
-
-    (when (re-search-forward regexp (line-end-position) t)
-      (let* ((start-hh (string-to-number (match-string 11)))
-             (start-am/pm (when (match-string 13)
-                            (upcase (match-string 13))))
-             ;; Remacs: twelve AM is midnight; twelve PM stays noon.
-             (start-hours (cond ((and (equal start-am/pm "AM") (= start-hh 12)) 0)
-                                ((and (equal start-am/pm "PM") (< start-hh 12)) (+ 12 start-hh))
-                                (t start-hh)))
+    (when (save-excursion (re-search-forward regexp (line-end-position) t))
+      (let* ((end-position (match-end 0))
+             (start-digits (match-string 11))
+             (start-am/pm (when (match-string 13) (upcase (match-string 13))))
              (start-minutes (string-to-number (or (match-string 12) "0")))
-             (start
-              (when (and start-hours start-minutes)
-                (make-decoded-time :hour start-hours
-                                   :minute start-minutes
-                                   :second 0)))
-             (end-hh (when (match-string 21)
-                       (string-to-number (match-string 21))))
-             (end-am/pm (when (match-string 23)
-                          (upcase (match-string 23))))
-             (end-hours (cond ((and end-hh (equal end-am/pm "AM") (= end-hh 12)) 0)
-                              ((and end-hh (equal end-am/pm "PM") (< end-hh 12)) (+ 12 end-hh))
-                              (t end-hh)))
-             (end-minutes (when end-hours
-                            (string-to-number (or (match-string 22) "0"))))
-             (end (when (and end-hours end-minutes)
-                    (make-decoded-time :hour end-hours
-                                       :minute end-minutes
-                                       :second 0))))
-        (narrow-to-region (match-end 0) (point-max))
-        ;; Return the times:
-        (list start end)))))
+             (end-digits (match-string 21))
+             (end-am/pm (when (match-string 23) (upcase (match-string 23))))
+             (end-minutes (when end-digits (string-to-number (or (match-string 22) "0"))))
+             (start-hours (diary-icalendar--parse-hour start-digits start-am/pm))
+             (end-hours (when end-digits (diary-icalendar--parse-hour end-digits end-am/pm))))
+        ;; Remacs: reject the entire range before constructing times or consuming text.
+        (when (and start-hours (or (null end-digits) end-hours))
+          (let ((start (make-decoded-time :hour start-hours :minute start-minutes :second 0))
+                (end (when end-digits
+                       (make-decoded-time :hour end-hours :minute end-minutes :second 0))))
+            (narrow-to-region end-position (point-max))
+            (list start end)))))))
 
 (defun diary-icalendar--tz-is-utc-p ()
   "Return non-nil if the current time zone is UTC."
