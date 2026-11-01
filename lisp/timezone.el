@@ -198,14 +198,17 @@ Understands the following styles:
 
     (when year
       (setq year (match-string year date))
-      ;; Guess ambiguous years.  Assume years < 69 don't predate the
-      ;; Unix Epoch, so are 2000+.  Three-digit years are assumed to
-      ;; be relative to 1900.
-      (when (< (length year) 4)
+      ;; Guess ambiguous years.  Two-digit (and legacy one-digit) years
+      ;; below 69 are windowed into the 2000s; three-digit years are always
+      ;; relative to 1900, regardless of their numeric value.
+      (cond
+       ((= (length year) 3)
+        (setq year (int-to-string (+ 1900 (string-to-number year)))))
+       ((< (length year) 4)
         (let ((y (string-to-number year)))
           (when (< y 69)
             (setq y (+ y 100)))
-          (setq year (int-to-string (+ 1900 y)))))
+          (setq year (int-to-string (+ 1900 y))))))
       (setq month
             (if (or (= (aref date (+ (match-beginning month) 2)) ?-)
                     (let ((n (string-to-number
