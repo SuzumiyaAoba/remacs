@@ -208,6 +208,8 @@ pub struct GridTabBarItem {
     pub row: usize,
     pub left: usize,
     pub width: usize,
+    /// UTF-8 byte range of the visible item in the composed row.
+    pub byte_range: Option<(usize, usize)>,
     pub command: String,
     pub argument: Option<i128>,
 }
@@ -3121,6 +3123,7 @@ fn render_tab_bar(
         }
         items.push(GridTabBarItem {
             row: screen_row,
+            byte_range: None,
             left: column,
             width: label_width.min(button_width),
             command: "tab-bar-select-tab".to_owned(),
@@ -3129,6 +3132,7 @@ fn render_tab_bar(
         if close_visible && close_width > 0 {
             items.push(GridTabBarItem {
                 row: screen_row,
+                byte_range: None,
                 left: column.saturating_add(label_width.min(button_width)),
                 width: close_width.min(button_width.saturating_sub(label_width.min(button_width))),
                 command: "tab-bar-close-tab".to_owned(),
@@ -3181,6 +3185,7 @@ fn render_tab_bar(
             }
             items.push(GridTabBarItem {
                 row: screen_row,
+                byte_range: None,
                 left: column,
                 width: button_width,
                 command: "tab-bar-new-tab".to_owned(),
@@ -9442,6 +9447,16 @@ fn render_grid_internal(
             });
     }
     for item in &mut popup_menu_items {
+        if let Some(offsets) = cell_offsets.get(item.row)
+            && let (Some(start), Some(end)) = (
+                offsets.get(item.left),
+                offsets.get(item.left.saturating_add(item.width)),
+            )
+        {
+            item.byte_range = Some((*start, *end));
+        }
+    }
+    for item in &mut tab_bar_items {
         if let Some(offsets) = cell_offsets.get(item.row)
             && let (Some(start), Some(end)) = (
                 offsets.get(item.left),
