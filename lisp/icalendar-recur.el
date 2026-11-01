@@ -1311,7 +1311,9 @@ retrieved on subsequent calls with the same arguments."
                               (and (icalendar-date/time<= low rec)
                                    (icalendar-date/time< rec high))))
                           rdates))
-                        (included-recs (append until-recs interval-rdates))
+                        ;; Remacs: discard duplicates before limiting or
+                        ;; caching the union of RRULE and RDATE instances.
+                        (included-recs (seq-uniq (append until-recs interval-rdates)))
                         ;; Exclude any values from the EXDATE property;
                         ;; this gives us the complete set of recurrences
                         ;; in this interval:
