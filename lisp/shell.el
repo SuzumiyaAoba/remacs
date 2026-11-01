@@ -449,7 +449,7 @@ can be determined, a default according to the shell type is used."
               (when (memq system-type '(ms-dos windows-nt))
                 "\\|%\\(?1:[^\\/]*\\)%")
               (when comint-file-name-quote-list
-                "\\|\\\\\\(.\\)")))
+                "\\|\\\\\\(.\\|\n\\)")))
          (qupos nil)
          (push (lambda (str end)
                  (push str ustrs)
@@ -460,7 +460,20 @@ can be determined, a default according to the shell type is used."
     (while (setq match (string-match re qstr qpos))
       (funcall push (substring qstr qpos match) match)
       (cond
-       ((match-beginning 2) (funcall push (match-string 2 qstr) (match-end 0)))
+       ((match-beginning 2)
+        (let ((escaped (match-string 2 qstr)))
+          (funcall push
+                   (cond
+                    ;; Backslash-newline is removed as a line continuation.
+                    ((string= escaped "\n") "")
+                    ;; Within double quotes, retain backslashes before
+                    ;; characters the shell does not treat as escaped.
+                    ((and dquotes
+                          (not (memq (aref escaped 0)
+                                     '(?$ ?` ?\" ?\\))))
+                     (concat "\\" escaped))
+                    (t escaped))
+                   (match-end 0))))
        ((match-beginning 1) (funcall push (getenv (match-string 1 qstr))
                                      (- (match-end 0))))
        ((eq (aref qstr match) ?\") (setq dquotes (not dquotes)))
