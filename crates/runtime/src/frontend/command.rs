@@ -311,8 +311,8 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             term.borrow_mut().render(i)?;
             render_needed = false;
         }
-        if let Some(key) = pop_unread_simple_key(i) {
-            dispatch_key_pretranslated(&term, i, key, &mut keys, &mut arg_mode)?;
+        if let Some((key, event)) = pop_unread_key_event(i) {
+            dispatch_unread_event(&term, i, key, &event, &mut keys, &mut arg_mode)?;
             render_needed = true;
             i.macro_replaying = false;
             if let Some(f) = i.macro_pending_flow.take() {
@@ -1127,7 +1127,8 @@ fn dispatch_gui_window_autoselect(
     let Some(mouse_autoselect_window) = i.q_soft("mouse-autoselect-window") else {
         return Ok(());
     };
-    if !i.symbol_value(mouse_autoselect_window).truthy() {
+    let autoselect = i.symbol_value(mouse_autoselect_window);
+    if !autoselect.truthy() {
         return Ok(());
     }
     let (Some(frame_id), Some((x, y))) = (frame_id, frame_position) else {
@@ -1161,7 +1162,27 @@ fn dispatch_gui_window_autoselect(
 
     if crate::editor::sel_window(i).is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, &window))
     {
+        let cancel = Value::Sym(i.q("mouse-autoselect-window-cancel"));
+        let _ = i.apply(&cancel, vec![Value::t()]);
         return Ok(());
+    }
+    let delayed = matches!(
+        autoselect,
+        Value::Int(_) | Value::Float(_) | Value::BigInt(_)
+    );
+    if delayed {
+        let pending_window = i
+            .q_soft("mouse-autoselect-window-window")
+            .map(|symbol| i.symbol_value(symbol));
+        let pending_position = i
+            .q_soft("mouse-autoselect-window-position-1")
+            .map(|symbol| i.symbol_value(symbol))
+            .is_some_and(|value| value.truthy());
+        if pending_position
+            && matches!(pending_window, Some(Value::Window(pending)) if std::rc::Rc::ptr_eq(&pending, &window))
+        {
+            return Ok(());
+        }
     }
 
     let point = window.borrow().point.saturating_add(1) as i128;
@@ -1287,6 +1308,22 @@ fn dispatch_key_pretranslated<T: KeyIo>(
 ) -> io::Result<()> {
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
     dispatch_key_core(i, key, keys, arg_mode, Some(&mut hook))
+}
+
+fn dispatch_unread_event<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    key: i128,
+    event: &Value,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    if matches!(event, Value::Int(_) | Value::Sym(_)) {
+        return dispatch_key_pretranslated(term, i, key, keys, arg_mode);
+    }
+    crate::editor::record_recent_input_event(i, event.clone());
+    let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
+    dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(event))
 }
 
 fn dispatch_mouse<T: KeyIo>(
@@ -2115,18 +2152,10 @@ enum KeyTranslation {
     Command(Value),
 }
 
-fn pop_unread_simple_key(i: &mut Interp) -> Option<i128> {
-    let symbol = i.intern_soft("unread-command-events")?;
-    let Value::Cons(queue) = i.symbol_value(symbol) else {
-        return None;
-    };
-    let event = queue.borrow().car.clone();
-    if !matches!(event, Value::Int(_) | Value::Sym(_)) {
-        return None;
-    }
+fn pop_unread_key_event(i: &mut Interp) -> Option<(i128, Value)> {
     let event = crate::editor::pop_unread_command_event(i)?;
-    let keys = crate::editor::key_seq(i, &Value::vector(vec![event])).ok()?;
-    (keys.len() == 1).then(|| keys[0])
+    let key = event_key_code(i, &event)?;
+    Some((key, event))
 }
 
 fn translation_map_binding(
@@ -2349,8 +2378,8 @@ fn minibuf_loop<T: KeyIo>(
             }
             render_needed = false;
         }
-        if !single && let Some(key) = pop_unread_simple_key(i) {
-            if let Err(e) = dispatch_key_pretranslated(term, i, key, &mut keys, &mut arg_mode) {
+        if !single && let Some((key, event)) = pop_unread_key_event(i) {
+            if let Err(e) = dispatch_unread_event(term, i, key, &event, &mut keys, &mut arg_mode) {
                 return Err(i.error(format!("minibuffer input: {e}")));
             }
             if let Some(f) = i.minibuf_exit_fn.take() {
