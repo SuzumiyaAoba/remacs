@@ -2620,6 +2620,39 @@ written into the buffer `*icalendar-errors*'."
     found-error))
 
 ;; subroutines for importing
+(defun icalendar--weekly-week-start (date week-start-day)
+  "Return the absolute start of DATE's week using WEEK-START-DAY."
+  (- (calendar-absolute-from-gregorian date)
+     (mod (- (calendar-day-of-week date) week-start-day) 7)))
+
+(defun icalendar--weekly-last-date (dtstart-dec rrule-props interval count)
+  "Return the last Gregorian date selected by weekly COUNT occurrences."
+  (unless (and (integerp count) (> count 0)
+               (integerp interval) (> interval 0))
+    (error "Invalid weekly COUNT/INTERVAL: %S/%S" count interval))
+  (let* ((start-date (list (nth 4 dtstart-dec) (nth 3 dtstart-dec) (nth 5 dtstart-dec)))
+         (start-absolute (calendar-absolute-from-gregorian start-date))
+         (week-start-day (icalendar--get-weekday-number
+                          (or (cadr (assoc 'WKST rrule-props)) "MO")))
+         (week-start (icalendar--weekly-week-start start-date week-start-day))
+         (weekdays (or (delete-dups (icalendar--get-weekday-numbers
+                                     (cadr (assoc 'BYDAY rrule-props))))
+                       (list (calendar-day-of-week start-date))))
+         (offsets (sort (mapcar (lambda (day) (mod (- day week-start-day) 7)) weekdays) #'<))
+         first last)
+    ;; The initial active week may begin before DTSTART.
+    (dolist (offset offsets)
+      (when (>= offset (- start-absolute week-start)) (push offset first)))
+    (setq first (nreverse first))
+    (setq last
+          (if (<= count (length first))
+              (+ week-start (nth (1- count) first))
+            (let* ((remaining (1- (- count (length first))))
+                   (periods (1+ (/ remaining (length offsets)))))
+              (+ week-start (* periods interval 7)
+                 (nth (mod remaining (length offsets)) offsets)))))
+    (calendar-gregorian-from-absolute last)))
+
 (defun icalendar--convert-recurring-to-diary (e dtstart-dec start-t end-t)
   "Convert recurring iCalendar event E to diary format.
 
@@ -2657,14 +2690,13 @@ END-T is the event's end time in diary format."
                                       0 0)))
                  )
                 ((string-equal frequency "WEEKLY")
-                 (setq until (icalendar--add-decoded-times
-                              dtstart-dec
-                              (list 0 0 0 (* (read count) 7 interval) 0 0)))
-                 (setq until-1 (icalendar--add-decoded-times
-                                dtstart-dec
-                                (list 0 0 0 (* (- (read count) 1) 7
-                                               interval) 0 0)))
-                 )
+                 (let ((last-date (icalendar--weekly-last-date
+                                   dtstart-dec rrule-props interval (read count))))
+                   ;; Diary bounds use only the calendar date, inclusively.
+                   (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
+                                     (nth 2 dtstart-dec) (cadr last-date)
+                                     (car last-date) (nth 2 last-date))
+                         until-1 until)))
                 ((string-equal frequency "MONTHLY")
                  (setq until (icalendar--add-decoded-times
                               dtstart-dec (list 0 0 0 0 (* (- (read count) 1)
@@ -2702,9 +2734,7 @@ END-T is the event's end time in diary format."
                      (let* ((week-start-day
                              (icalendar--get-weekday-number
                               (or (cadr (assoc 'WKST rrule-props)) "MO")))
-                            (week-start
-                             (- (calendar-absolute-from-gregorian start-date)
-                                (mod (- (calendar-day-of-week start-date) week-start-day) 7))))
+                            (week-start (icalendar--weekly-week-start start-date week-start-day)))
                        (format
                         (concat "(and (memq (calendar-day-of-week date) '%S) "
                                 "(< (mod (- (calendar-absolute-from-gregorian date) %d) %d) 7)) ")
