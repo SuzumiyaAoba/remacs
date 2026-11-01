@@ -3,6 +3,24 @@ use remacs_runtime::lisp::{Flow, Interp};
 const CASES: &str = r##"
 ;;; -*- lexical-binding: t; -*-
 (progn
+  (with-temp-buffer
+    (insert-file-contents (locate-library "icalendar-recur.el"))
+    (emacs-lisp-mode)
+    (goto-char (point-min))
+    (let (definitions)
+      (while (progn (forward-comment (point-max)) (not (eobp)))
+        (let ((form (read (current-buffer))))
+          (when (and (eq (car-safe form) 'defun)
+                     (memq (car-safe (cdr-safe form))
+                           '(icalendar-recur-recurrences-in-window-w/end-times
+                             icalendar-recur-recurrences-to-count)))
+            (push (car-safe (cdr-safe form)) definitions))
+          (when (equal form '(provide 'icalendar-recur))
+            (push 'provide definitions))))
+      (unless (equal (nreverse definitions)
+                     '(icalendar-recur-recurrences-in-window-w/end-times
+                       icalendar-recur-recurrences-to-count provide))
+        (error "The window/end-time form swallowed later top-level forms"))))
   (require 'icalendar-recur)
   (unless (and (featurep 'icalendar-recur)
                (fboundp 'icalendar-recur-recurrences-in-window-w/end-times)
@@ -36,7 +54,7 @@ fn check(interp: &mut Interp, source: &str) {
 }
 
 #[test]
-fn recurrence_source_load_executes_window_end_bindings() {
+fn recurrence_source_load_preserves_top_level_forms_and_window_end_bindings() {
     let mut interp = Interp::new();
     check(&mut interp, CASES);
     check(&mut interp, r#"(load "icalendar-recur.el" nil t)"#);
