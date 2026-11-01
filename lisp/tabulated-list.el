@@ -969,30 +969,33 @@ where every string is an outline heading at increasing level of deepness."
 
 (defun tabulated-list-groups-flatten (tree)
   "Flatten multi-level TREE to single level."
-  (let ((header "") acc)
+  (let (acc)
     (cl-labels
-        ((flatten (tree level)
-           (mapcar (lambda (elt)
-                     (setq header (format "%s%s %s\n" header
-                                          (make-string level ?*)
-                                          (car elt)))
-                     (cond
-                      ((vectorp (cdr elt))
-                       (setq acc (cons (cons (string-trim-right header)
-                                             (append (cdr elt) nil))
-                                       acc))
-                       (setq header ""))
-                      ((and (consp (cdr elt)) (vectorp (cadr elt)))
-                       (setq header (format "%s%s %s\n" header
-                                            (make-string level ?*)
-                                            (car elt)))
-                       (setq acc (cons (cons (string-trim-right header)
-                                             (append (cadr elt) nil))
-                                       acc))
-                       (flatten (cddr elt) (1+ level)))
-                      (t (flatten (cdr elt) (1+ level)))))
-                   tree)))
-      (flatten tree 1)
+        ((flatten (nodes level header)
+           (mapc
+            (lambda (elt)
+              (let* ((name (car elt))
+                     (node-header
+                      (format "%s%s %s\n" header
+                              (make-string level ?*) name))
+                     (value (cdr elt))
+                     (entries
+                      (cond ((vectorp value) value)
+                            ((and (consp value) (vectorp (car value)))
+                             (car value))))
+                     (children
+                      (cond ((vectorp value) nil)
+                            ((and (consp value) (vectorp (car value)))
+                             (cdr value))
+                            (t value))))
+                (when entries
+                  (push (cons (string-trim-right node-header)
+                              (append entries nil))
+                        acc))
+                (when children
+                  (flatten children (1+ level) node-header))))
+            nodes)))
+      (flatten tree 1 "")
       (nreverse acc))))
 
 (provide 'tabulated-list)
