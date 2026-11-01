@@ -200,6 +200,8 @@ pub struct GridToolBarItem {
     pub row: usize,
     pub left: usize,
     pub width: usize,
+    /// UTF-8 byte range of the painted button in the composed row.
+    pub byte_range: Option<(usize, usize)>,
     pub command: String,
 }
 
@@ -2974,6 +2976,7 @@ fn render_tool_bar(
         }
         items.push(GridToolBarItem {
             row: screen_row_index,
+            byte_range: None,
             left: column,
             width: button_width,
             command: i.symbol_name(command),
@@ -9457,6 +9460,16 @@ fn render_grid_internal(
         }
     }
     for item in &mut tab_bar_items {
+        if let Some(offsets) = cell_offsets.get(item.row)
+            && let (Some(start), Some(end)) = (
+                offsets.get(item.left),
+                offsets.get(item.left.saturating_add(item.width)),
+            )
+        {
+            item.byte_range = Some((*start, *end));
+        }
+    }
+    for item in &mut tool_bar_items {
         if let Some(offsets) = cell_offsets.get(item.row)
             && let (Some(start), Some(end)) = (
                 offsets.get(item.left),

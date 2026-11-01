@@ -14,7 +14,7 @@ use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridCursor, GridImage,
     GridImageSource,
     GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
-    GridScrollBarOrientation, GridStipple, GridToolBarItem, GridVScroll,
+    GridScrollBarOrientation, GridStipple, GridVScroll,
     MouseButton as RemacsMouseButton, QuitRequest,
 };
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,8 @@ mod autoselect_tests;
 mod popup_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod tool_hit_tests;
 // The test platform uses window activation for cursor ownership on macOS.
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
@@ -503,29 +505,27 @@ fn file_drop_uri(path: &std::path::Path) -> String {
     uri
 }
 
-fn tool_bar_command_at(
-    items: &[GridToolBarItem],
-    point: Point<Pixels>,
-    cell_width: Pixels,
-    line_height: Pixels,
-) -> Option<String> {
-    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
-    let row = (f32::from(point.y) / f32::from(line_height)).floor().max(0.0) as usize;
+fn tool_bar_command_at(items: &[CommandHitRegion], point: Point<Pixels>) -> Option<String> {
     items
         .iter()
-        .find(|item| item.row == row && column >= item.left && column < item.left + item.width)
+        .find(|item| {
+            point.x >= item.bounds.left()
+                && point.x < item.bounds.right()
+                && point.y >= item.bounds.top()
+                && point.y < item.bounds.bottom()
+        })
         .map(|item| item.command.clone())
 }
 
 #[derive(Clone)]
-struct TabBarHitRegion {
+struct CommandHitRegion {
     bounds: Bounds<Pixels>,
     command: String,
     argument: Option<i128>,
 }
 
 fn tab_bar_command_at(
-    items: &[TabBarHitRegion],
+    items: &[CommandHitRegion],
     point: Point<Pixels>,
 ) -> Option<(String, Vec<i128>)> {
     items
@@ -567,15 +567,38 @@ fn grid_text_range_bounds(
     })
 }
 
+fn tool_bar_hit_regions(
+    grid: &Grid,
+    lines: &[ShapedLine],
+    line_height: Pixels,
+) -> Vec<CommandHitRegion> {
+    grid.tool_bar_items
+        .iter()
+        .filter_map(|item| {
+            Some(CommandHitRegion {
+                bounds: grid_text_range_bounds(
+                    grid,
+                    lines,
+                    item.row,
+                    item.byte_range?,
+                    line_height,
+                )?,
+                command: item.command.clone(),
+                argument: None,
+            })
+        })
+        .collect()
+}
+
 fn tab_bar_hit_regions(
     grid: &Grid,
     lines: &[ShapedLine],
     line_height: Pixels,
-) -> Vec<TabBarHitRegion> {
+) -> Vec<CommandHitRegion> {
     grid.tab_bar_items
         .iter()
         .filter_map(|item| {
-            Some(TabBarHitRegion {
+            Some(CommandHitRegion {
                 bounds: grid_text_range_bounds(
                     grid,
                     lines,
@@ -696,7 +719,8 @@ pub(super) struct EditorView {
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
     popup_hit_regions: Rc<RefCell<Vec<PopupMenuHitRegion>>>,
-    tab_hit_regions: Rc<RefCell<Vec<TabBarHitRegion>>>,
+    tab_hit_regions: Rc<RefCell<Vec<CommandHitRegion>>>,
+    tool_hit_regions: Rc<RefCell<Vec<CommandHitRegion>>>,
     modifier_mapping: ModifierMapping,
     internal_border_width: usize,
     alpha_background: u8,
@@ -768,6 +792,7 @@ impl EditorView {
             grid: Grid::blank(0, 0),
             popup_hit_regions: Rc::new(RefCell::new(Vec::new())),
             tab_hit_regions: Rc::new(RefCell::new(Vec::new())),
+            tool_hit_regions: Rc::new(RefCell::new(Vec::new())),
             modifier_mapping: ModifierMapping::default(),
             internal_border_width: 0,
             alpha_background: 100,
@@ -1284,6 +1309,8 @@ impl Render for EditorView {
         let popup_hit_for_shape = self.popup_hit_regions.clone();
         let tab_hit_for_input = self.tab_hit_regions.clone();
         let tab_hit_for_shape = self.tab_hit_regions.clone();
+        let tool_hit_for_input = self.tool_hit_regions.clone();
+        let tool_hit_for_shape = self.tool_hit_regions.clone();
         let left_mouse_down_modifiers = physical_modifier_state.clone();
         let left_mouse_up_tx = self.tx.clone();
         let left_mouse_up_grid = mouse_grid.clone();
@@ -1443,10 +1470,8 @@ impl Render for EditorView {
                             return;
                         }
                         if let Some(command) = tool_bar_command_at(
-                            &left_mouse_down_grid.tool_bar_items,
+                            &tool_hit_for_input.borrow(),
                             point,
-                            cell_width,
-                            line_height,
                         ) {
                             this.toolbar_pressed = true;
                             let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
@@ -1939,6 +1964,7 @@ impl Render for EditorView {
                             .collect();
                         *popup_hit_for_shape.borrow_mut() = popup_menu_hit_regions(&grid, &shaped, line_height);
                         *tab_hit_for_shape.borrow_mut() = tab_bar_hit_regions(&grid, &shaped, line_height);
+                        *tool_hit_for_shape.borrow_mut() = tool_bar_hit_regions(&grid, &shaped, line_height);
                         (shaped, grid)
                     },
                     move |bounds, (lines, grid), window, _cx| {
