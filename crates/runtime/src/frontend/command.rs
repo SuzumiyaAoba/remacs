@@ -305,6 +305,9 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             if let Err(flow) = crate::editor::changes::run(i) {
                 report_flow(i, flow);
             }
+            if let Err(flow) = super::prepare_native_menus(i) {
+                report_flow(i, flow);
+            }
             term.borrow_mut().render(i)?;
             render_needed = false;
         }
@@ -2319,22 +2322,24 @@ fn minibuf_loop<T: KeyIo>(
             || render_on_idle
             || render_requested;
         if render_needed {
-            let mut t = term.borrow_mut();
             let shown = if single {
                 prompt.to_string()
             } else {
                 minibuf_echo_text(i, prompt)
             };
             if single {
-                let _ = t.draw_echo(&shown.to_unicode_lossy());
+                let _ = term.borrow_mut().draw_echo(&shown.to_unicode_lossy());
             } else {
-                if let Err(flow) = t.run_pre_redisplay_functions(i) {
+                if let Err(flow) = term.borrow_mut().run_pre_redisplay_functions(i) {
                     report_flow(i, flow);
                 }
                 if let Err(flow) = crate::editor::changes::run(i) {
                     report_flow(i, flow);
                 }
-                let _ = t.draw_echo_with_state(i, &shown.to_unicode_lossy());
+                if let Err(flow) = super::prepare_native_menus(i) {
+                    report_flow(i, flow);
+                }
+                let _ = term.borrow_mut().draw_echo_with_state(i, &shown.to_unicode_lossy());
             }
             render_needed = false;
         }

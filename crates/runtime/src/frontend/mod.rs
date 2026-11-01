@@ -534,6 +534,8 @@ mod mode_line;
 mod command;
 mod render;
 mod popup;
+mod menus;
+pub use menus::prepare_native_menus;
 pub use popup::{PopupMenu, PopupMenuEntry};
 pub(crate) use popup::show_popup_menu;
 pub(crate) use command::minibuf_dispatch_key;

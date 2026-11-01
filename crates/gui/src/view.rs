@@ -2538,14 +2538,44 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
             items: item.items.iter().filter_map(gpui_menu_item).collect(),
         }));
     }
-    item.command.as_ref().map(|command| {
+    Some(if let Some(command) = &item.command {
         MenuItem::action(
             item.label.clone(),
             RunMenuCommand {
                 command: command.clone(),
             },
         )
+    } else {
+        MenuItem::disabled(item.label.clone())
     })
+}
+
+#[cfg(test)]
+mod native_menu_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn nonselectable_native_rows_keep_their_label_without_an_action() {
+        let item = GridMenuItem {
+            label: "Disabled".into(),
+            command: None,
+            items: Vec::new(),
+            separator: false,
+        };
+        let converted = gpui_menu_item(&item).unwrap();
+        assert!(matches!(&converted, MenuItem::Disabled { name } if name.as_str() == "Disabled"));
+        assert!(
+            matches!(converted.owned().clone(), gpui::OwnedMenuItem::Disabled { name } if name == "Disabled")
+        );
+        let enabled = GridMenuItem {
+            command: Some("ignore".into()),
+            ..item
+        };
+        assert!(matches!(
+            gpui_menu_item(&enabled),
+            Some(MenuItem::Action { .. })
+        ));
+    }
 }
 
 fn grid_image_element(

@@ -2760,13 +2760,16 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 update_hook_needed = false;
             }
             let label = i.echo_message.to_unicode_lossy();
-            let mut t = term.borrow_mut();
-            if let Err(flow) = t.run_pre_redisplay_functions(i) {
+            if let Err(flow) = term.borrow_mut().run_pre_redisplay_functions(i) {
                 report_flow(i, flow);
             }
             if let Err(flow) = crate::editor::changes::run(i) {
                 report_flow(i, flow);
             }
+            if let Err(flow) = super::super::prepare_native_menus(i) {
+                report_flow(i, flow);
+            }
+            let mut t = term.borrow_mut();
             let _ = t.render(i);
             let _ = t.draw_echo_message_with_state(i, &label);
             render_needed = false;

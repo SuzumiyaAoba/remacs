@@ -144,7 +144,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     }))
 }
 
-fn keymap_item(
+pub(super) fn keymap_item(
     i: &mut Interp,
     key: &Value,
     binding: &Value,

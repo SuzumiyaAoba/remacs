@@ -2828,76 +2828,8 @@ pub(super) fn menu_keymap_from_definition(
     }
 }
 
-fn menu_items(i: &Interp, keymap: &Value, depth: usize) -> Vec<GridMenuItem> {
-    if depth > 8 {
-        return Vec::new();
-    }
-    crate::editor::keymap_own_bindings(i, keymap)
-        .into_iter()
-        .filter_map(|(key, definition)| {
-            let (label, definition, separator) =
-                menu_label_and_definition(i, &key, &definition);
-            if separator {
-                return Some(GridMenuItem {
-                    label,
-                    command: None,
-                    items: Vec::new(),
-                    separator: true,
-                });
-            }
-            if definition.is_nil() {
-                return None;
-            }
-            if let Some(submenu) = menu_keymap_from_definition(i, &definition, depth + 1) {
-                let items = menu_items(i, &submenu, depth + 1);
-                return (!items.is_empty()).then_some(GridMenuItem {
-                    label,
-                    command: None,
-                    items,
-                    separator: false,
-                });
-            }
-            let Value::Sym(command) = definition else {
-                return None;
-            };
-            i.fbound_p(command).then(|| GridMenuItem {
-                label,
-                command: Some(i.symbol_name(command)),
-                items: Vec::new(),
-                separator: false,
-            })
-        })
-        .collect()
-}
-
 fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
-    if !mode_line_variable(i, i.current_buffer, "menu-bar-mode")
-        .unwrap_or(Value::Nil)
-        .truthy()
-    {
-        return Vec::new();
-    }
-    let Some(global_map) = mode_line_variable(i, i.current_buffer, "global-map") else {
-        return Vec::new();
-    };
-    let menu_bar_key = crate::editor::event_code_for("menu-bar");
-    let Some((_, definition)) = crate::editor::keymap_own_bindings(i, &global_map)
-        .into_iter()
-        .find(|(key, _)| matches!(key, Value::Int(code) if *code == menu_bar_key))
-    else {
-        return Vec::new();
-    };
-    let Some(menu_bar_map) = menu_keymap_from_definition(i, &definition, 0) else {
-        return Vec::new();
-    };
-    menu_items(i, &menu_bar_map, 0)
-        .into_iter()
-        .filter(|item| !item.separator && !item.items.is_empty())
-        .map(|item| GridMenu {
-            label: item.label,
-            items: item.items,
-        })
-        .collect()
+    i.native_menus.clone()
 }
 
 fn render_tool_bar(

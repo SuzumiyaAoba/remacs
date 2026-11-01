@@ -332,6 +332,13 @@ impl MacPlatform {
         unsafe {
             match item {
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
+                MenuItem::Disabled { name } => {
+                    let item = NSMenuItem::new(nil).autorelease();
+                    item.setTitle_(ns_string(name));
+                    let _: () = msg_send![item, setEnabled: NO];
+                    let _: () = msg_send![item, setTag: -1 as NSInteger];
+                    item
+                }
                 MenuItem::Action {
                     name,
                     action,

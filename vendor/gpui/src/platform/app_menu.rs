@@ -53,6 +53,12 @@ pub enum MenuItem {
     /// A separator between items
     Separator,
 
+    /// A visible label that cannot invoke an action.
+    Disabled {
+        /// The visible label of this menu item.
+        name: SharedString,
+    },
+
     /// A submenu
     Submenu(Menu),
 
@@ -74,6 +80,10 @@ pub enum MenuItem {
 }
 
 impl MenuItem {
+    /// Create a visible, nonselectable menu item.
+    pub fn disabled(name: impl Into<SharedString>) -> Self {
+        Self::Disabled { name: name.into() }
+    }
     /// Creates a new menu item that is a separator
     pub fn separator() -> Self {
         Self::Separator
@@ -118,6 +128,7 @@ impl MenuItem {
     pub fn owned(self) -> OwnedMenuItem {
         match self {
             MenuItem::Separator => OwnedMenuItem::Separator,
+            MenuItem::Disabled { name } => OwnedMenuItem::Disabled { name: name.into() },
             MenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.owned()),
             MenuItem::Action {
                 name,
@@ -159,6 +170,11 @@ pub struct OwnedMenu {
 pub enum OwnedMenuItem {
     /// A separator between items
     Separator,
+    /// A visible label with no action or keyboard equivalent.
+    Disabled {
+        /// The visible label of this menu item.
+        name: String,
+    },
 
     /// A submenu
     Submenu(OwnedMenu),
@@ -184,6 +200,7 @@ impl Clone for OwnedMenuItem {
     fn clone(&self) -> Self {
         match self {
             OwnedMenuItem::Separator => OwnedMenuItem::Separator,
+            OwnedMenuItem::Disabled { name } => OwnedMenuItem::Disabled { name: name.clone() },
             OwnedMenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.clone()),
             OwnedMenuItem::Action {
                 name,
