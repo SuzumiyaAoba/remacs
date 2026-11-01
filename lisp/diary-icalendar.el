@@ -1887,7 +1887,7 @@ Components with no start date/time are sorted after components that do."
           (c1start t)
           (c2start nil)
           ;; otherwise they can stay as-is:
-          (t t))))
+          (t nil))))
 
 (defcustom diary-icalendar-import-comparison-function #'diary-icalendar-sort-by-start-ascending
   "Comparison function for sorting imported iCalendar components.
