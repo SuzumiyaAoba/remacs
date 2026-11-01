@@ -100,6 +100,21 @@ impl KeyEventState {
     }
 }
 
+/// Deliver the entire system-key release sequence and report whether its
+/// synthetic press was consumed, so Windows can suppress SC_KEYMENU.
+pub(crate) fn dispatch_system_key_release(
+    inputs: impl IntoIterator<Item = PlatformInput>,
+    mut dispatch: impl FnMut(PlatformInput) -> bool,
+) -> bool {
+    let mut handled_press = false;
+    for input in inputs {
+        let is_press = matches!(&input, PlatformInput::KeyDown(_));
+        let handled = dispatch(input);
+        handled_press |= is_press && handled;
+    }
+    handled_press
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +261,49 @@ mod event_tests {
         assert_eq!(state.normalize(0x41, down("a")).len(), 1);
         state.reset();
         assert_eq!(state.normalize(0x2c, up("print")).len(), 2);
+    }
+    #[test]
+    fn handled_synthetic_system_press_still_delivers_the_release() {
+        let mut state = KeyEventState::default();
+        let mut delivered = Vec::new();
+        let handled =
+            dispatch_system_key_release(state.normalize(0x2c, up("print")), |input| match input {
+                PlatformInput::KeyDown(_) => {
+                    delivered.push("down");
+                    true
+                }
+                PlatformInput::KeyUp(_) => {
+                    delivered.push("up");
+                    false
+                }
+                _ => panic!("unexpected input"),
+            });
+        assert_eq!(delivered, ["down", "up"]);
+        assert!(
+            handled,
+            "consumed Alt+Print Screen must suppress SC_KEYMENU"
+        );
+    }
+    #[test]
+    fn handled_release_alone_does_not_claim_a_system_press() {
+        let mut state = KeyEventState::default();
+        state.normalize(0x2c, down("print"));
+        assert!(!dispatch_system_key_release(
+            state.normalize(0x2c, up("print")),
+            |_| true
+        ));
+        state.reset();
+        let mut count = 0;
+        assert!(!dispatch_system_key_release(
+            state.normalize(0x2c, up("print")),
+            |_| {
+                count += 1;
+                false
+            }
+        ));
+        assert_eq!(
+            count, 2,
+            "unhandled synthetic press must still deliver release"
+        );
     }
 }

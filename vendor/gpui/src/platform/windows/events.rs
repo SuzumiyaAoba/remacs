@@ -414,10 +414,13 @@ impl WindowsWindowInner {
         })?;
         let mut func = lock.callbacks.input.take()?;
         drop(lock);
-        for input in inputs {
-            func(input);
-        }
-        self.state.borrow_mut().callbacks.input = Some(func);
+        let handled_press =
+            crate::platform::windows_key_names::dispatch_system_key_release(inputs, |input| {
+                !func(input).propagate
+            });
+        let mut lock = self.state.borrow_mut();
+        lock.callbacks.input = Some(func);
+        lock.system_key_handled |= handled_press;
         // Always return 0 to indicate that the message was handled, so we could properly handle `ModifiersChanged` event.
         Some(0)
     }
