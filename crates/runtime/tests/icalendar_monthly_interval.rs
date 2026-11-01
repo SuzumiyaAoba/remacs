@@ -47,6 +47,45 @@ const CASES: &str = r##"
            '(1 10 2025) '(1 1 2025) '(6 15 2025)
            (if limited '((1 10 2025) (3 10 2025))
              '((1 10 2025) (3 10 2025) (5 10 2025))) (car times) (cadr times))))))
+  ;; A monthly BYDAY list is a union, including every ordinal selector (#1562).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-monthly-hits
+       "FREQ=MONTHLY;BYDAY=1MO,-1FR" '(1 6 2025) '(1 1 2025) '(3 31 2025)
+       '((1 6 2025) (1 31 2025) (2 3 2025) (2 28 2025) (3 3 2025) (3 28 2025))
+       (car times) (cadr times))
+      (remacs-test-ical-monthly-hits
+       (concat "FREQ=MONTHLY;INTERVAL=2;BYDAY=1MO,-1FR;UNTIL="
+               (if (car times) "20250328T235959" "20250328"))
+       '(1 6 2025) '(1 1 2025) '(5 31 2025)
+       '((1 6 2025) (1 31 2025) (3 3 2025) (3 28 2025)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    ;; RFC 5545's every-other-month first/last Sunday pattern, bounded by UNTIL.
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;INTERVAL=2;BYDAY=1SU,-1SU;UNTIL=19980531"
+     '(9 7 1997) '(9 1 1997) '(6 30 1998)
+     '((9 7 1997) (9 28 1997) (11 2 1997) (11 30 1997) (1 4 1998) (1 25 1998)
+       (3 1 1998) (3 29 1998) (5 3 1998) (5 31 1998)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=-1FR,1MO,-1FR,1MO;UNTIL=20250228" '(1 6 2025) '(1 1 2025) '(3 31 2025)
+     '((1 6 2025) (1 31 2025) (2 3 2025) (2 28 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=2MO,-2MO;UNTIL=20250331" '(1 13 2025) '(1 1 2025) '(3 31 2025)
+     '((1 13 2025) (1 20 2025) (2 10 2025) (2 17 2025) (3 10 2025) (3 24 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=1MO,FR;UNTIL=20250214" '(1 6 2025) '(1 1 2025) '(3 1 2025)
+     '((1 6 2025) (1 10 2025) (1 17 2025) (1 24 2025) (1 31 2025)
+       (2 3 2025) (2 7 2025) (2 14 2025)))
+    ;; Distinct ordinals can select the same day; the entry still appears once.
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=2MO,-3MO;UNTIL=20250228" '(1 13 2025) '(1 1 2025) '(2 28 2025)
+     '((1 13 2025) (2 10 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=1MO,-1FR;UNTIL=20250228" '(1 6 2025) '(1 1 2025) '(3 31 2025)
+     '((1 6 2025) (2 3 2025)) nil nil '((EXDATE nil "20250131") (EXDATE nil "20250228")))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=+2MO,-2FR;UNTIL=20250228" '(1 13 2025) '(1 1 2025) '(2 28 2025)
+     '((1 13 2025) (1 24 2025) (2 10 2025) (2 21 2025))))
   (let ((calendar-date-style 'american))
     ;; Missing INTERVAL and explicit INTERVAL=1 retain the original diary rule.
     (dolist (byday '("" ";BYDAY=2MO"))

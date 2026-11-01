@@ -2653,6 +2653,28 @@ written into the buffer `*icalendar-errors*'."
                  (nth (mod remaining (length offsets)) offsets)))))
     (calendar-gregorian-from-absolute last)))
 
+(defun icalendar--monthly-weekday-clause (byday)
+  "Return a diary predicate for every comma-separated BYDAY selector."
+  (when byday
+    (save-match-data
+      (let ((rules
+             (delete-dups
+              (mapcar
+               (lambda (selector)
+                 (unless (string-match "\\`\\([+-]?[0-9]+\\)?\\([A-Z][A-Z]\\)\\'" selector)
+                   (error "Invalid monthly BYDAY: %s" selector))
+                 (let* ((ordinal (match-string 1 selector))
+                        (weekday (icalendar--get-weekday-number (match-string 2 selector))))
+                   (unless (and weekday (or (null ordinal) (/= (string-to-number ordinal) 0)))
+                     (error "Invalid monthly BYDAY: %s" selector))
+                   (if ordinal
+                       (format "(diary-float t %d %d)" weekday (string-to-number ordinal))
+                     (format "(= (calendar-day-of-week date) %d)" weekday))))
+               (split-string byday "," t)))))
+        (if (cdr rules)
+            (format "(or %s)" (mapconcat #'identity rules " "))
+          (car rules))))))
+
 (defun icalendar--convert-recurring-to-diary (e dtstart-dec start-t end-t)
   "Convert recurring iCalendar event E to diary format.
 
@@ -2830,23 +2852,10 @@ END-T is the event's end time in diary format."
                               "(calendar-extract-month date)) %d) %d)) ")
                       (+ (* 12 (nth 5 dtstart-dec)) (nth 4 dtstart-dec))
                       interval)))
-                  (count-weekday
-                   (and byday
-                        (save-match-data
-                          (when (string-match "\\(-?[0-9]+\\)\\([A-Z][A-Z]\\)"
-                                              byday)
-                            (cons (substring byday
-                                             (match-beginning 1)
-                                             (match-end 1))
-                                  (substring byday
-                                             (match-beginning 2)
-                                             (match-end 2)))))))
+                  ;; Remacs: BYDAY is a union of all weekday selectors.
+                  (weekday-clause (icalendar--monthly-weekday-clause byday))
                   (rule-part
-                   (if count-weekday
-                       (let ((count (car count-weekday))
-                             (weekdaynum (icalendar--get-weekday-number
-                                          (cdr count-weekday))))
-                         (format "(diary-float t %s %s)" weekdaynum count))
+                   (or weekday-clause
                      (format "(diary-date %s)"
                              (let ((day (nth 3 dtstart-dec)))
                                (cond ((eq calendar-date-style 'iso)
