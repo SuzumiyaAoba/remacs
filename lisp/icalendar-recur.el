@@ -702,9 +702,14 @@ WKST=... clause (if any).  See `icalendar-recur' for the possible values."
          (end-year (decoded-time-year interval-end))
          (subintervals nil))
     (while curr-year
-      ;; For each year in the interval...
-      (dolist (wn sorted-weeknos)
-        ;; ...the subinterval is one week long in the wn-th week
+      ;; Remacs: discard nonexistent week numbers for each year before
+      ;; clipping their intervals to the requested bounds.
+      (dolist (wn (seq-filter
+                   (lambda (wn)
+                     (<= 1 (abs wn)
+                         (icalendar-number-of-weeks curr-year weekstart)))
+                   sorted-weeknos))
+        ;; The subinterval is one week long in the wn-th week.
         (let* ((nth-wstart (icalendar-start-of-weekno wn curr-year weekstart))
                (low (icalendar-make-date-time :year (calendar-extract-year nth-wstart)
                                          :month (calendar-extract-month nth-wstart)
