@@ -255,9 +255,9 @@ must never cause a Lisp error."
 	       (let ((first (aref string (1+ index)))
 		     (second (aref string (+ index 2))))
 		 (and (or (<= ?0 first ?9) (<= ?A first ?F) (<= ?a first ?f))
-		      (or (<= ?0 second ?9) (<= ?A second ?F) (<= ?a second ?f))))
+		      (or (<= ?0 second ?9) (<= ?A second ?F) (<= ?a second ?f)))))
 	  (setq index (+ index 3))
-	(setq valid nil))))
+	(setq valid nil)))
     valid))
 
 (defun rfc2231-decode-encoded-string (string &optional signal-error)
