@@ -361,9 +361,26 @@ See `decode-time' for the meaning of FORM."
    (t
     (signal 'wrong-type-argument (list string)))))
 
+(defun iso8601--time-separators-consistent-p (string)
+  "Return non-nil if STRING uses a consistent basic or extended time form."
+  (and (iso8601--match iso8601--time-match string)
+       (let* ((minute (match-string 2 string))
+              (second (match-string 3 string))
+              (first-colon (string-match-p ":" string))
+              (second-colon (string-match-p ":[0-9][0-9]:" string)))
+         (cond
+          (second
+           (and minute
+                (eq (not (null first-colon))
+                    (not (null second-colon)))))
+          (minute (and (not second-colon)
+                       (or (not first-colon) (= first-colon 2))))
+          (t (not first-colon))))))
+
 (defun iso8601--time-in-range-p (string)
   ;;Remacs: validate clock fields and ISO's end-of-day 24:00 form.
   (and (iso8601--match iso8601--time-match string)
+       (save-match-data (iso8601--time-separators-consistent-p string))
        (let* ((hour (string-to-number (match-string 1 string)))
               (minute (if (match-string 2 string)
                           (string-to-number (match-string 2 string))
