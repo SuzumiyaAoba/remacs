@@ -89,6 +89,30 @@ const CASES: &str = r##"
     (remacs-test-ical-weekly-hits
      "FREQ=WEEKLY;INTERVAL=2;BYDAY=WE" '(1 6 2025) '(1 1 2025) '(2 5 2025)
      '((1 8 2025) (1 22 2025) (2 5 2025)) "09:00" nil))
+  ;; A single BYDAY must be used even when it differs from DTSTART (#1561).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-weekly-hits
+       "FREQ=WEEKLY;BYDAY=WE" '(1 6 2025) '(1 1 2025) '(1 31 2025)
+       '((1 8 2025) (1 15 2025) (1 22 2025) (1 29 2025)) (car times) (cadr times))
+      (remacs-test-ical-weekly-hits
+       (concat "FREQ=WEEKLY;BYDAY=WE;UNTIL="
+               (if (car times) "20250115T235959" "20250115"))
+       '(1 6 2025) '(1 1 2025) '(1 31 2025)
+       '((1 8 2025) (1 15 2025)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-weekly-hits
+     "FREQ=WEEKLY;BYDAY=SU" '(1 6 2025) '(1 1 2025) '(2 2 2025)
+     '((1 12 2025) (1 19 2025) (1 26 2025) (2 2 2025)))
+    (remacs-test-ical-weekly-hits
+     "FREQ=WEEKLY;BYDAY=MO;INTERVAL=2" '(1 9 2025) '(1 1 2025) '(2 10 2025)
+     '((1 20 2025) (2 3 2025)))
+    (remacs-test-ical-weekly-hits
+     "FREQ=WEEKLY;BYDAY=MO;INTERVAL=2;WKST=TU" '(1 9 2025) '(1 1 2025) '(2 10 2025)
+     '((1 13 2025) (1 27 2025) (2 10 2025)) "09:00" "10:00")
+    (remacs-test-ical-weekly-hits
+     "FREQ=WEEKLY;BYDAY=TU;INTERVAL=2" '(1 5 2025) '(1 1 2025) '(2 11 2025)
+     '((1 14 2025) (1 28 2025) (2 11 2025))))
   t)
 "##;
 
