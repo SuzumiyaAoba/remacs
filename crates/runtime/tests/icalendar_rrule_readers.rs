@@ -54,10 +54,53 @@ const CASES: &str = r##"
   t)
 "##;
 
-#[test]
-fn rrule_part_readers_use_their_argument_and_preserve_caller_match_data() {
-    let mut interp = Interp::new();
-    match interp.eval_str(CASES) {
+const WEEKDAY_CASES: &str = r##"
+(progn
+  (require 'icalendar-parser)
+  (with-temp-buffer
+    (insert "1MO")
+    (goto-char (point-min))
+    (re-search-forward (rx-to-string 'icalendar-weekdaynum))
+    (unless (equal (icalendar-read-weekdaynum "2TU") '(2 . 2))
+      (error "The weekday reader used an ambient weekday")))
+  (dolist (weekday '(("SU" 0) ("MO" 1) ("TU" 2) ("WE" 3)
+                     ("TH" 4) ("FR" 5) ("SA" 6)))
+    (dolist (offset '(nil 1 -1 2 -2 53 -53))
+      (let* ((source (concat (if offset
+                                 (concat (if (> offset 0) "+" "") (number-to-string offset))
+                               "")
+                             (car weekday)))
+             (expected (if offset (cons (cadr weekday) offset) (cadr weekday)))
+             (canonical (concat (if offset (number-to-string offset) "") (car weekday))))
+        (dolist (context '(empty buffer string))
+          (with-temp-buffer
+            (cond
+             ((eq context 'empty) (set-match-data nil))
+             ((eq context 'buffer)
+              (insert "1MO")
+              (goto-char (point-min))
+              (re-search-forward (rx-to-string 'icalendar-weekdaynum)))
+             (t
+              (insert "!")
+              (string-match (rx-to-string 'icalendar-weekdaynum) "1MO")))
+            (let* ((before (match-data)) (position (point))
+                   (actual (icalendar-read-weekdaynum source)))
+              (unless (and (equal actual expected)
+                           (equal (icalendar-print-weekdaynum actual) canonical)
+                           (equal before (match-data)) (= position (point)))
+                (error "Wrong weekday or caller state: %S in %S produced %S"
+                       source context actual))))))))
+  ;; A string reader can also be mapped without pre-matching each item.
+  (set-match-data nil)
+  (unless (equal (icalendar-read-list-with #'icalendar-read-weekdaynum
+                                          "MO,2TU,-1SU" nil ",")
+                 '(1 (2 . 2) (0 . -1)))
+    (error "Unseeded weekday list reads did not use each input string"))
+  t)
+"##;
+
+fn check(interp: &mut Interp, source: &str) {
+    match interp.eval_str(source) {
         Ok(value) => assert!(value.truthy()),
         Err(Flow::Signal(signal)) => panic!(
             "{} {}",
@@ -66,4 +109,11 @@ fn rrule_part_readers_use_their_argument_and_preserve_caller_match_data() {
         ),
         Err(other) => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn rrule_and_weekday_readers_use_their_arguments_and_preserve_match_data() {
+    let mut interp = Interp::new();
+    check(&mut interp, CASES);
+    check(&mut interp, WEEKDAY_CASES);
 }

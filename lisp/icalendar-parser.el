@@ -1341,15 +1341,15 @@ decoded-time-* functions.")
   "Read a weekday abbreviation to a number.
 If the abbreviation is preceded by an offset, read a dotted
 pair (WEEKDAY . OFFSET).  Thus \"SU\" becomes 0, \"-1SU\"
-becomes (0 . -1), etc.  S should have been matched against
-`icalendar-weekdaynum'."
-  ;; TODO: this smells like a design flaw.  Silence the byte compiler for now.
-  (ignore s)
-  (let ((dayno (cdr (assoc (match-string 20) icalendar-weekday-numbers)))
-        (weekno (match-string 19)))
-    (if weekno
-        (cons dayno (string-to-number weekno))
-      dayno)))
+becomes (0 . -1), etc.  S should match rx `icalendar-weekdaynum'."
+  (save-match-data
+    ;; Remacs: read the supplied weekday independently of caller matches.
+    (string-match (rx-to-string 'icalendar-weekdaynum) s)
+    (let ((dayno (cdr (assoc (match-string 20 s) icalendar-weekday-numbers)))
+          (weekno (match-string 19 s)))
+      (if weekno
+          (cons dayno (string-to-number weekno))
+        dayno))))
 
 (defun icalendar-print-weekdaynum (val)
   "Serialize a number or dotted pair VAL to a string.
