@@ -22,6 +22,7 @@ fn grid(kind: Kind) -> Grid {
                 width: end - left,
                 byte_range: Some((left, end)),
                 command: "same-tool-command".into(),
+                command_id: None,
             }),
             Kind::Tab => grid.tab_bar_items.push(GridTabBarItem {
                 row: 1,

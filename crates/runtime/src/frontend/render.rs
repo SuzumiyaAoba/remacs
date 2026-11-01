@@ -211,6 +211,8 @@ pub struct GridToolBarItem {
     /// UTF-8 byte range of the painted button in the composed row.
     pub byte_range: Option<(usize, usize)>,
     pub command: String,
+    /// Runtime-owned command object; the symbol-name field remains compatible.
+    pub command_id: Option<super::NativeMenuCommandId>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -3368,6 +3370,7 @@ fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
 
 fn render_tool_bar(
     i: &Interp,
+    frame: &crate::editor::Frame,
     width: usize,
     rows: usize,
     row_offset: usize,
@@ -3396,39 +3399,58 @@ fn render_tool_bar(
         return Vec::new();
     };
     let map = i
-        .buffer_local_toplevel_value(map_id, i.current_buffer)
+        .buffer_local_toplevel_value(map_id, frame.selected.borrow().buffer)
         .or_else(|| i.default_toplevel_value(map_id))
         .unwrap_or(Value::Nil);
     let mut items = Vec::new();
     let mut row = 0usize;
     let mut column = 0usize;
-    for (key, definition) in crate::editor::keymap_own_bindings(i, &map) {
-        let (mut label, command, separator) = menu_label_and_definition(i, &key, &definition);
+    // Unprepared symbol maps retain the legacy read-only rendering path.
+    let fallback;
+    let bindings = if let Some(items) = i.native_menu_commands.tool_bar(frame.id) {
+        items
+    } else {
+        fallback = crate::editor::keymap_own_bindings(i, &map)
+            .into_iter()
+            .filter_map(|(key, definition)| {
+                let (mut label, command, separator) =
+                    menu_label_and_definition(i, &key, &definition);
+                let name = match command {
+                    Value::Sym(symbol) if i.fbound_p(symbol) => Some(i.symbol_name(symbol)),
+                    _ if separator => None,
+                    _ => return None,
+                };
+                if let Ok(parts) = definition.list_to_vec() {
+                    let properties = Value::list(parts.into_iter().skip(3).collect());
+                    if let Some(property) = i.q_soft(":label")
+                        && let Value::Str(value) =
+                            crate::lisp::eval::plist_get(&properties, property)
+                    {
+                        label = value.borrow().to_unicode_lossy();
+                    }
+                }
+                Some(GridMenuItem {
+                    label,
+                    help: None,
+                    command: name,
+                    command_id: None,
+                    items: Vec::new(),
+                    separator,
+                    checked: false,
+                    key_hint: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        &fallback
+    };
+    for binding in bindings {
+        let label = &binding.label;
+        let separator = binding.separator;
         if separator {
             column = column.saturating_add(1);
             continue;
         }
-        let Value::Sym(command) = command else {
-            continue;
-        };
-        if !i.fbound_p(command) {
-            continue;
-        }
-        if let Ok(parts) = definition.list_to_vec()
-            && matches!(parts.first(), Some(Value::Sym(id)) if i.symbol_name(*id) == "menu-item")
-        {
-            let properties = Value::list(parts.into_iter().skip(3).collect());
-            if let Some(label_symbol) = i.q_soft(":label")
-                && let Value::Str(value) = crate::lisp::eval::plist_get(&properties, label_symbol)
-            {
-                label = value.borrow().to_unicode_lossy();
-            }
-        }
-        let label_width = label
-            .chars()
-            .map(display_char_width)
-            .sum::<usize>()
-            .max(1);
+        let label_width = label.chars().map(display_char_width).sum::<usize>().max(1);
         let button_width = label_width.saturating_add(2).min(width.max(1));
         if column.saturating_add(button_width) > width {
             row = row.saturating_add(1);
@@ -3437,12 +3459,7 @@ fn render_tool_bar(
         if row >= rows || width == 0 {
             break;
         }
-        let text = fit_text_to_cells_with_tab_width(
-            &format!(" {label} "),
-            button_width,
-            8,
-        )
-        .0;
+        let text = fit_text_to_cells_with_tab_width(&format!(" {label} "), button_width, 8).0;
         let mut button_style = background;
         button_style.box_style = Some(BoxStyle {
             vertical_width: 1,
@@ -3454,20 +3471,15 @@ fn render_tool_bar(
         let character_styles = text.chars().map(|_| button_style).collect::<Vec<_>>();
         let screen_row_index = row_offset.saturating_add(row);
         if let Some(screen_row) = screen.get_mut(screen_row_index) {
-            place_text_row(
-                screen_row,
-                column,
-                &text,
-                &cell_styles,
-                &character_styles,
-            );
+            place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
         }
         items.push(GridToolBarItem {
             row: screen_row_index,
             byte_range: None,
             left: column,
             width: button_width,
-            command: i.symbol_name(command),
+            command: binding.command.clone().unwrap_or_default(),
+            command_id: binding.command_id.clone(),
         });
         column = column.saturating_add(button_width).saturating_add(1);
     }
@@ -8022,6 +8034,7 @@ fn render_grid_internal(
     if tool_bar_rows > 0 {
         tool_bar_items = render_tool_bar(
             i,
+            &fb,
             width,
             tool_bar_rows,
             tab_bar_rows,

@@ -185,6 +185,9 @@ native menu は共通コマンドループの描画準備で、選択中フレ�
 lambda などの command object は runtime に保持し、GUI には寿命を追跡する参照 ID だけを渡す。
 表示中の snapshot と選択済み入力が値を保持し、native action table は弱い参照 ID を使う。
 参照 ID は元の menu key の経路も保持し、選択を keyboard macro の入力イベント列へ記録する。
+tool bar もフレームの選択バッファで項目を準備し、同じ参照 ID で lambda・closure を実行する。
+描画済みボタンと押下状態は ID を保持し、binding 差し替え時の誤実行を防ぐ。
+tool-bar-map の再準備後も、古い描画や選択済み入力が残る間は元の関数を保持する。
 `:help` の定数文字列は runtime でキー名を置換し、native item の tooltip として渡す。
 無効な項目は action を持たないメニュー項目へ変換し、OS に無効状態を明示する。
 キー割り当ての検証と検索は runtime で行い、Cocoa の複数キー列は右寄せのタブ列に描画する。

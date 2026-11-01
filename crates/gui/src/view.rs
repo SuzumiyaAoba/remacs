@@ -59,6 +59,8 @@ mod execute_key_tests;
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod tool_command_object_tests;
 // The test platform uses window activation for cursor ownership on macOS.
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
@@ -536,12 +538,16 @@ fn file_drop_uri(path: &std::path::Path) -> String {
 struct CommandHitRegion {
     bounds: Bounds<Pixels>,
     command: String,
+    command_id: Option<NativeMenuCommandId>,
     argument: Option<i128>,
 }
 
 #[derive(PartialEq)]
 enum ButtonAction {
-    Tool(String),
+    Tool {
+        command: String,
+        command_id: Option<NativeMenuCommandId>,
+    },
     Tab {
         command: String,
         argument: Option<i128>,
@@ -572,7 +578,13 @@ impl PressedButton {
 
     fn into_event(self) -> GuiEvent {
         match self.action {
-            ButtonAction::Tool(command) => GuiEvent::MenuCommand(command),
+            ButtonAction::Tool {
+                command,
+                command_id,
+            } => match command_id {
+                Some(command_id) => GuiEvent::NativeMenuCommand(command_id),
+                None => GuiEvent::MenuCommand(command),
+            },
             ButtonAction::Tab { command, argument } => GuiEvent::CommandArgs {
                 command,
                 args: argument.into_iter().collect(),
@@ -621,6 +633,9 @@ fn tool_bar_hit_regions(
     grid.tool_bar_items
         .iter()
         .filter_map(|item| {
+            if item.command.is_empty() && item.command_id.is_none() {
+                return None;
+            }
             Some(CommandHitRegion {
                 bounds: grid_text_range_bounds(
                     grid,
@@ -630,6 +645,7 @@ fn tool_bar_hit_regions(
                     line_height,
                 )?,
                 command: item.command.clone(),
+                command_id: item.command_id.clone(),
                 argument: None,
             })
         })
@@ -653,6 +669,7 @@ fn tab_bar_hit_regions(
                     line_height,
                 )?,
                 command: item.command.clone(),
+                command_id: None,
                 argument: item.argument,
             })
         })
@@ -972,7 +989,10 @@ impl EditorView {
         {
             return Some(PressedButton {
                 bounds: item.bounds,
-                action: ButtonAction::Tool(item.command.clone()),
+                action: ButtonAction::Tool {
+                    command: item.command.clone(),
+                    command_id: item.command_id.clone(),
+                },
             });
         }
         let tabs = self.tab_hit_regions.borrow();

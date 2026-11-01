@@ -1,3 +1,4 @@
+use super::GridMenuItem;
 use crate::lisp::{Value, builtins::eq_values};
 use std::sync::{Arc, Weak};
 
@@ -40,6 +41,7 @@ impl WeakNativeMenuCommandId {
 #[derive(Default)]
 pub(crate) struct NativeMenuCommands {
     entries: Vec<(WeakNativeMenuCommandId, NativeMenuBinding)>,
+    tool_bars: Vec<(usize, Vec<GridMenuItem>)>,
 }
 
 #[derive(Clone)]
@@ -49,6 +51,17 @@ pub(crate) struct NativeMenuBinding {
 }
 
 impl NativeMenuCommands {
+    pub(crate) fn tool_bar(&self, frame: usize) -> Option<&[GridMenuItem]> {
+        self.tool_bars
+            .iter()
+            .find(|(id, _)| *id == frame)
+            .map(|(_, items)| items.as_slice())
+    }
+
+    pub(crate) fn set_tool_bars(&mut self, tool_bars: Vec<(usize, Vec<GridMenuItem>)>) {
+        self.tool_bars = tool_bars;
+    }
+
     pub(crate) fn register(&mut self, value: &Value, keys: &[Value]) -> NativeMenuCommandId {
         for (token, old) in &self.entries {
             if eq_values(&old.command, value)

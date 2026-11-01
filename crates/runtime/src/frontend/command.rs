@@ -1110,9 +1110,19 @@ fn dispatch_native_menu_command(
 ) {
     if let Some(binding) = i.native_menu_commands.resolve(token) {
         let mut events = binding.keys;
-        // GNU's MENU_BAR_EVENT prefix is the parameterized (menu-bar),
-        // followed by the root and submenu keys.
-        if let Some(prefix) = events.first_mut() {
+        if events.len() == 3
+            && matches!(events.first(), Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "tool-bar")
+            && matches!(events.last(), Some(Value::Frame(_)))
+        {
+            let frame = events.pop().unwrap();
+            let key = events.pop().unwrap();
+            // read-key-sequence inserts tool-bar and marks the consumed area
+            // as (tool-bar) before recording the parameterized clicked event.
+            let area = Value::list(vec![events[0].clone()]);
+            events.push(Value::list(vec![key, Value::list(vec![frame, area])]));
+        } else if let Some(prefix) = events.first_mut()
+            && matches!(prefix, Value::Sym(symbol) if i.symbol_name(*symbol) == "menu-bar")
+        {
             *prefix = Value::list(vec![prefix.clone()]);
         }
         dispatch_frontend_command_value(i, binding.command, &[], keys, arg_mode, &events);

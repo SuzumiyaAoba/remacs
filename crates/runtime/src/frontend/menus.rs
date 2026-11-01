@@ -314,12 +314,7 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
         .collect())
 }
 
-/// Compute the application's native menu on the Lisp thread, outside any
-/// borrowed frontend. Rendering only copies the resulting value-free snapshot.
-pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
-    if i.preparing_native_menus {
-        return Ok(());
-    }
+fn prepare_menu_bar(i: &mut Interp) -> Result<(), Flow> {
     i.native_menu_commands.prune();
     let Some(frame) = i
         .selected_frame
@@ -337,7 +332,6 @@ pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
     let previous_buffer = i.current_buffer;
     let previous_match = i.match_data.clone();
     let mark = i.specbind_depth();
-    i.preparing_native_menus = true;
     i.set_current_buffer(buffer);
     let result = (|| {
         let inhibit = i.q("inhibit-quit");
@@ -360,9 +354,101 @@ pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
         i.set_current_buffer(previous_buffer);
     }
     i.match_data = previous_match;
-    i.preparing_native_menus = false;
     restored?;
     i.native_menus = result?;
     i.native_menu_commands.prune();
     Ok(())
+}
+
+fn tool_bar_items(
+    i: &mut Interp,
+    frame: &crate::editor::FrameRef,
+) -> Result<Vec<GridMenuItem>, Flow> {
+    let map_symbol = i.q("tool-bar-map");
+    let map = i.symbol_value(map_symbol);
+    let mut items = Vec::new();
+    for (key, binding) in crate::editor::keymap_own_bindings(i, &map) {
+        let Some(item) = keymap_item(i, &key, &binding)? else {
+            continue;
+        };
+        let definition = crate::editor::keymap_def(i, item.definition.clone())?;
+        if !item.separator
+            && (definition.is_nil()
+                || menu_keymap_from_definition(i, &definition, 0).is_some()
+                || matches!(definition, Value::Sym(symbol) if !i.fbound_p(symbol)))
+        {
+            continue;
+        }
+        let mut label = item.label.clone();
+        if let Ok(parts) = binding.list_to_vec()
+            && matches!(parts.first(), Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "menu-item")
+        {
+            let properties = Value::list(parts.into_iter().skip(3).collect());
+            let property = i.q(":label");
+            if let Value::Str(text) = crate::lisp::eval::plist_get(&properties, property) {
+                label = text.borrow().to_unicode_lossy();
+            }
+        }
+        let prefix = Value::Sym(i.q("tool-bar"));
+        let key = menu_key(i, &key);
+        // Keep stable key objects for registry identity. Dispatch materializes
+        // GNU's parameterized toolbar event using the originating frame.
+        let keys = vec![prefix, key, Value::Frame(frame.clone())];
+        let (command, command_id) =
+            command_binding(i, &definition, item.enabled && !item.separator, &keys);
+        items.push(GridMenuItem {
+            label,
+            help: item.help_text(),
+            command,
+            command_id,
+            items: Vec::new(),
+            separator: item.separator,
+            checked: false,
+            key_hint: None,
+        });
+    }
+    Ok(items)
+}
+
+fn prepare_tool_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<GridMenuItem>)>, Flow> {
+    let mut tool_bars = Vec::new();
+    for frame in i.frames.clone() {
+        if frame.borrow().dead
+            || !crate::editor::frame_is_graphical(i, &frame)
+            || crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0) == 0
+        {
+            continue;
+        }
+        let window = frame.borrow().selected.clone();
+        if !i.buffer_live(window.borrow().buffer) {
+            continue;
+        }
+        let items = super::mode_line::with_window(i, &window, |i| {
+            let mark = i.specbind_depth();
+            let updating = i.q("menu-updating-frame");
+            let result = i
+                .specbind(updating, Value::Frame(frame.clone()))
+                .and_then(|_| tool_bar_items(i, &frame));
+            let unwind = i.unbind_to(mark);
+            let items = result?;
+            unwind?;
+            Ok(items)
+        })?;
+        tool_bars.push((frame.borrow().id, items));
+    }
+    Ok(tool_bars)
+}
+
+/// Prepare value-free menu and toolbar snapshots on the Lisp thread. Command
+/// objects stay in the runtime registry while any snapshot/input owns its ID.
+pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
+    if i.preparing_native_menus {
+        return Ok(());
+    }
+    i.preparing_native_menus = true;
+    let result = prepare_menu_bar(i).and_then(|_| prepare_tool_bars(i));
+    let result = result.map(|tool_bars| i.native_menu_commands.set_tool_bars(tool_bars));
+    i.preparing_native_menus = false;
+    i.native_menu_commands.prune();
+    result
 }

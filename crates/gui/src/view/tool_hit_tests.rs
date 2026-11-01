@@ -40,6 +40,7 @@ fn adjacent_tool_buttons_use_their_native_painted_glyph_bounds() {
                     width: 6,
                     byte_range: Some((0, 6)),
                     command: "first-command".into(),
+                    command_id: None,
                 },
                 GridToolBarItem {
                     row: 0,
@@ -47,6 +48,7 @@ fn adjacent_tool_buttons_use_their_native_painted_glyph_bounds() {
                     width: 6,
                     byte_range: Some((7, 13)),
                     command: "second-command".into(),
+                    command_id: None,
                 },
             ];
             view.grid = grid;

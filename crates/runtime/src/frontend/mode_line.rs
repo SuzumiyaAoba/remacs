@@ -45,7 +45,7 @@ pub(super) fn format(i: &Interp, buffer: usize, window: usize, name: &str) -> Va
     original
 }
 
-fn with_window<T>(
+pub(super) fn with_window<T>(
     i: &mut Interp,
     window: &WindowRef,
     body: impl FnOnce(&mut Interp) -> Result<T, Flow>,
