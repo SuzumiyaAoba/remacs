@@ -682,7 +682,7 @@ pub fn run_gui_with_dump(
                                         window.set_represented_file(requested_represented_file);
                                     }
                                     if view.grid != grid || grid.blink_cursor {
-                                        view.grid = grid;
+                                        view.set_grid(grid, window);
                                         cx.notify();
                                     } else if modifier_mapping_changed
                                         || minimum_size_changed
@@ -774,7 +774,7 @@ pub fn run_gui_with_dump(
                                         initial_image_cache_entries,
                                         initial_image_cache_size,
                                     );
-                                    view.grid = grid;
+                                    view.set_grid(grid, window);
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
                                     view.set_alpha_background(initial_alpha_background);

@@ -169,6 +169,9 @@ live な値を取り出す。operand の Lisp 文字列と処理前のキュー�
 `logic.rs` は評価スレッドと、入力イベント／frame ごとの画面スナップショット／ネイティブダイアログ／window lifecycle 要求のチャネルを所有する。
 `lib.rs` はスナップショットを GPUI window に割り当て、親を持つ child frame は親の bounds 上に popup window として表示する。Lisp の選択ダイアログは同じ window の prompt API を使い、close と macOS power-off 要求は Lisp の終了処理に渡す。
 `keys.rs` はコマンドキーを Emacs イベントへ変換する。
+タイトルは runtime が表示状態に応じて `frame-title-format`／`icon-title-format` から計算する。
+GUI は snapshot の受信時に native title を反映し、最小化中も描画を待たずに更新する。
+X11 は通常の window name と icon name の両方を、UTF-8 の EWMH property と共に更新する。
 `view.rs` が GPUI のレイアウトと描画を行い、`view/input.rs` が IME と UTF-16 の
 OS テキスト入力を扱う。確定前の入力は view、確定したテキストは評価スレッドが所有する。
 `gpui` は workspace の `vendor/gpui` パッチを使い、Font stretch を各 OS の font selector に渡す。

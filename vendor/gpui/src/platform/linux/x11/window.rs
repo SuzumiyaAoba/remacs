@@ -60,6 +60,7 @@ x11rb::atom_manager! {
         WM_TRANSIENT_FOR,
         _NET_WM_PID,
         _NET_WM_NAME,
+        _NET_WM_ICON_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
@@ -1419,6 +1420,14 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_title(&mut self, title: &str) {
+        let latin1_icon_name: Option<Vec<u8>> = title
+            .chars()
+            .map(|ch| u8::try_from(ch as u32).ok())
+            .collect();
+        let (icon_encoding, icon_bytes) = match latin1_icon_name.as_deref() {
+            Some(bytes) => (xproto::AtomEnum::STRING.into(), bytes),
+            None => (self.0.state.borrow().atoms.UTF8_STRING, title.as_bytes()),
+        };
         check_reply(
             || "X11 ChangeProperty8 on WM_NAME failed.",
             self.0.xcb.change_property8(
@@ -1437,6 +1446,28 @@ impl PlatformWindow for X11Window {
                 xproto::PropMode::REPLACE,
                 self.0.x_window,
                 self.0.state.borrow().atoms._NET_WM_NAME,
+                self.0.state.borrow().atoms.UTF8_STRING,
+                title.as_bytes(),
+            ),
+        )
+        .log_err();
+        check_reply(
+            || "X11 ChangeProperty8 on WM_ICON_NAME failed.",
+            self.0.xcb.change_property8(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                xproto::AtomEnum::WM_ICON_NAME,
+                icon_encoding,
+                icon_bytes,
+            ),
+        )
+        .log_err();
+        check_reply(
+            || "X11 ChangeProperty8 on _NET_WM_ICON_NAME failed.",
+            self.0.xcb.change_property8(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                self.0.state.borrow().atoms._NET_WM_ICON_NAME,
                 self.0.state.borrow().atoms.UTF8_STRING,
                 title.as_bytes(),
             ),

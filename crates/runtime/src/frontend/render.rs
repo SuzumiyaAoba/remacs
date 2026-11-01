@@ -533,7 +533,7 @@ impl PartialEq for StyleMix {
 /// rows, and cursor positions for terminals and shaped GUI text.
 #[derive(Clone, PartialEq)]
 pub struct Grid {
-    /// Native frame title: explicit `title` before `frame-title-format`.
+    /// Native title: explicit `title`, or the visible/iconified title format.
     pub title: String,
     /// Face family names referenced by styles in this snapshot.
     pub font_families: Vec<String>,
@@ -2342,10 +2342,13 @@ fn frame_title_multiple_frames(i: &Interp, frame: &crate::editor::Frame) -> bool
 
 fn frame_title(
     i: &Interp,
-    frame: &crate::editor::Frame,
+    frame: &crate::editor::FrameRef,
     graphical: bool,
     dependencies: Option<&FrameTitleDependencies>,
 ) -> String {
+    let iconified = graphical
+        && crate::editor::frame_visibility(i, frame) == super::FrameVisibility::Iconified;
+    let frame = frame.borrow();
     if let Some(parameter) = i.q_soft("title")
         && let Value::Str(title) = crate::lisp::eval::plist_get(&frame.params, parameter)
     {
@@ -2418,7 +2421,7 @@ fn frame_title(
         narrowed,
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
-        multiple_frames: frame_title_multiple_frames(i, frame),
+        multiple_frames: frame_title_multiple_frames(i, &frame),
         recursion_depth: i.recursion_depth,
         process_status: crate::lisp::process::buffer_process(i, buffer_id)
             .map_or("no process", |process| process.borrow().status),
@@ -2443,6 +2446,15 @@ fn frame_title(
     else {
         return buffer_name;
     };
+    let icon_format = i
+        .q_soft("icon-title-format")
+        .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
+        .unwrap_or(Value::Nil);
+    let use_icon_format = iconified
+        && !matches!(icon_format, Value::Sym(symbol) if symbol == crate::lisp::obarray::sym::T);
+    if use_icon_format {
+        return format_frame_title_value(i, &icon_format, &context, 0);
+    }
     if matches!(format, Value::Nil)
         || matches!(format, Value::Sym(symbol) if symbol == crate::lisp::obarray::sym::T)
     {
@@ -2517,7 +2529,7 @@ pub(super) fn prepare_mode_line_remote(
                 if frame_state.dead || !window_ids.contains(&frame_state.selected.borrow().id) {
                     continue;
                 }
-                let _ = frame_title(i, &frame_state, graphical, Some(&dependencies));
+                let _ = frame_title(i, frame, graphical, Some(&dependencies));
                 (
                     frame_state.selected.borrow().buffer,
                     frame_state.width,
@@ -2529,7 +2541,7 @@ pub(super) fn prepare_mode_line_remote(
                 // the viewport before collecting the title's remote dependency.
                 let _ = render_frame_grid_with_input_cached(i, frame, width, height, None);
                 dependencies.remote.set(false);
-                let _ = frame_title(i, &frame.borrow(), graphical, Some(&dependencies));
+                let _ = frame_title(i, frame, graphical, Some(&dependencies));
             }
             if dependencies.remote.get() && i.buffer_live(buffer) && seen.insert(buffer) {
                 buffers.push(buffer);
@@ -10075,7 +10087,7 @@ fn render_grid_internal(
     let mut grid = Grid {
         // Redisplay has now published each window's actual endpoint, including
         // wrapping, narrowing, header rows and scrolling in inactive frames.
-        title: frame_title(i, &fb, graphical, None),
+        title: frame_title(i, &frame, graphical, None),
         font_families: fctx.font_families,
         default_style,
         internal_border_style,

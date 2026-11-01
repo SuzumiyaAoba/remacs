@@ -32,6 +32,8 @@ mod fringe;
 #[cfg(test)]
 mod mouse_tests;
 #[cfg(test)]
+mod icon_title_tests;
+#[cfg(test)]
 mod autoselect_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod popup_hit_tests;
@@ -882,6 +884,19 @@ pub(super) struct EditorView {
 }
 
 impl EditorView {
+    pub(super) fn set_grid(&mut self, grid: Grid, window: &mut Window) {
+        self.grid = grid;
+        // Minimized windows may not render again until they are restored.
+        self.update_window_title(window);
+    }
+
+    fn update_window_title(&mut self, window: &mut Window) {
+        if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
+            window.set_window_title(&self.grid.title);
+            self.window_title = Some(self.grid.title.clone());
+        }
+    }
+
     pub(super) fn new(tx: Sender<GuiEvent>, cx: &mut Context<Self>) -> Self {
         Self::new_for_frame_with_quit(tx, None, None, cx)
     }
@@ -1243,10 +1258,7 @@ impl Render for EditorView {
         } else {
             self.last_window_active = None;
         }
-        if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
-            window.set_window_title(&self.grid.title);
-            self.window_title = Some(self.grid.title.clone());
-        }
+        self.update_window_title(window);
         if self.installed_menus != self.grid.menus {
             cx.set_menu_bar_items(gpui_menus(&self.grid.menus));
             self.installed_menus = self.grid.menus.clone();
@@ -4518,15 +4530,15 @@ pub(super) fn build_editor_view(
     view.focus.focus(window);
     cx.spawn_in(window, async move |this, cx| {
         while let Ok(grid) = grid_rx.recv().await {
-            if this
-                .update(cx, |v, cx| {
+            if !matches!(
+                cx.update(|window, cx| this.update(cx, |v, cx| {
                     if v.grid != grid || grid.blink_cursor {
-                        v.grid = grid;
+                        v.set_grid(grid, window);
                         cx.notify();
                     }
-                })
-                .is_err()
-            {
+                })),
+                Ok(Ok(()))
+            ) {
                 return;
             }
         }
@@ -4553,7 +4565,7 @@ pub(super) fn build_managed_editor_view(
     let mut view = EditorView::new_for_frame_with_quit(event_tx, frame_id, Some(quit_request), cx);
     view.no_accept_focus.set(no_accept_focus);
     if let Some(grid) = grid {
-        view.grid = grid;
+        view.set_grid(grid, window);
     }
     let close_events = view.tx.clone();
     window.on_window_should_close(cx, move |_window, cx| {
