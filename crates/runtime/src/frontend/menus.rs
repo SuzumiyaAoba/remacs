@@ -10,46 +10,50 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
         if binding.is_nil() {
             continue;
         }
-        let Some((label, definition, separator, enabled)) = keymap_item(i, &key, &binding)? else {
+        let Some(item) = keymap_item(i, &key, &binding)? else {
             continue;
         };
-        if depth == 0 && !enabled {
+        if depth == 0 && !item.enabled {
             continue;
         }
-        if separator {
+        if item.separator {
             items.push(GridMenuItem {
-                label,
+                label: item.label,
                 command: None,
                 items: Vec::new(),
                 separator: true,
+                checked: false,
             });
             continue;
         }
-        let definition = crate::editor::keymap_def(i, definition)?;
+        let definition = crate::editor::keymap_def(i, item.definition.clone())?;
         if let Some(map) = menu_keymap_from_definition(i, &definition, depth + 1) {
-            let children = if enabled {
+            let children = if item.enabled {
                 menu_items(i, &map, depth + 1)?
             } else {
                 Vec::new()
             };
             items.push(GridMenuItem {
-                label,
+                label: item.label,
                 command: None,
                 items: children,
                 separator: false,
+                checked: false,
             });
         } else {
+            let checked = depth > 0 && !definition.is_nil() && item.button_selected(i)?;
             let command = match definition {
-                Value::Sym(command) if enabled && i.fbound_p(command) => {
+                Value::Sym(command) if item.enabled && i.fbound_p(command) => {
                     Some(i.symbol_name(command))
                 }
                 _ => None,
             };
             items.push(GridMenuItem {
-                label,
+                label: item.label,
                 command,
                 items: Vec::new(),
                 separator: false,
+                checked,
             });
         }
     }

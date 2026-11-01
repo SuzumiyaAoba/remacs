@@ -86,16 +86,21 @@ struct MenuProperties {
     enable: Value,
     /// Retain the value cell, since a dynamic name can replace its function.
     filter: Option<Value>,
+    selected: Value,
 }
 
-/// Check :visible in source order and retain the final enable/filter fields.
+/// Check :visible in source order and retain the final property fields.
 fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuProperties>, Flow> {
     let enable = i.q(":enable");
     let visible = i.q(":visible");
     let filter = i.q(":filter");
+    let button = i.q(":button");
+    let toggle = i.q(":toggle");
+    let radio = i.q(":radio");
     let force = i.q("enable-disabled-menus-and-buttons");
     let mut enable_form = Value::t();
     let mut filter_cell = None;
+    let mut selected = Value::Nil;
     let cache_tail = if let Value::Cons(cell) = &properties {
         let cell = cell.borrow();
         matches!(cell.car, Value::Cons(_)).then(|| cell.cdr.clone())
@@ -133,6 +138,13 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
             return Ok(None);
         } else if matches!(property, Value::Sym(symbol) if symbol == filter) {
             filter_cell = Some(Value::Cons(value.clone()));
+        } else if matches!(property, Value::Sym(symbol) if symbol == button)
+            && let Value::Cons(button) = form
+        {
+            let button = button.borrow();
+            if matches!(button.car, Value::Sym(symbol) if symbol == toggle || symbol == radio) {
+                selected = button.cdr.clone();
+            }
         }
         // Visibility callbacks may alter later property cells, as in GNU's
         // live plist walk. Retaining visited cells prevents address reuse.
@@ -141,14 +153,31 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     Ok(Some(MenuProperties {
         enable: enable_form,
         filter: filter_cell,
+        selected,
     }))
+}
+
+pub(super) struct ParsedMenuItem {
+    pub(super) label: String,
+    pub(super) definition: Value,
+    pub(super) separator: bool,
+    pub(super) enabled: bool,
+    selected: Value,
+}
+
+impl ParsedMenuItem {
+    // GNU evaluates the selected form only for leaf commands, after the name,
+    // filter and enable properties. Submenus and plain text skip this step.
+    pub(super) fn button_selected(&self, i: &mut Interp) -> Result<bool, Flow> {
+        Ok(!self.selected.is_nil() && eval_property(i, &self.selected)?.truthy())
+    }
 }
 
 pub(super) fn keymap_item(
     i: &mut Interp,
     key: &Value,
     binding: &Value,
-) -> Result<Option<(String, Value, bool, bool)>, Flow> {
+) -> Result<Option<ParsedMenuItem>, Flow> {
     let menu_item = i.q("menu-item");
     if let Value::Cons(head) = binding {
         let (tag, tail) = {
@@ -191,11 +220,23 @@ pub(super) fn keymap_item(
                 || eval_property(i, &properties.enable)?.truthy();
             let label = name.borrow().to_unicode_lossy();
             let separator = label == "--" || label.contains("separator");
-            return Ok(Some((label, definition, separator, enabled)));
+            return Ok(Some(ParsedMenuItem {
+                label,
+                definition,
+                separator,
+                enabled,
+                selected: properties.selected,
+            }));
         }
     }
     let (label, definition, separator) = menu_label_and_definition(i, key, binding);
-    Ok(Some((label, definition, separator, true)))
+    Ok(Some(ParsedMenuItem {
+        label,
+        definition,
+        separator,
+        enabled: true,
+        selected: Value::Nil,
+    }))
 }
 
 fn keymap_entries(
@@ -214,7 +255,13 @@ fn keymap_entries(
         if binding.is_nil() {
             continue;
         }
-        let Some((label, definition, separator, enabled)) = keymap_item(i, &key, &binding)? else {
+        let Some(ParsedMenuItem {
+            label,
+            definition,
+            separator,
+            enabled,
+            ..
+        }) = keymap_item(i, &key, &binding)? else {
             continue;
         };
         if separator {

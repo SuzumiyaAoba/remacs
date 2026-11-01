@@ -18,8 +18,9 @@ fn main() {
             Menu {
                 name: "QA Test".into(),
                 items: vec![
-                    MenuItem::disabled("Disabled"),
-                    MenuItem::action("Enabled", Enabled),
+                    MenuItem::disabled("Disabled").checked(true),
+                    MenuItem::action("Enabled", Enabled).checked(true),
+                    MenuItem::action("Unchecked", Enabled),
                 ],
             },
         ]);
@@ -35,6 +36,7 @@ fn main() {
                 let _: () = msg_send![submenu, update];
                 let disabled: id = msg_send![submenu, itemAtIndex: 0usize];
                 let action_item: id = msg_send![submenu, itemAtIndex: 1usize];
+                let unchecked: id = msg_send![submenu, itemAtIndex: 2usize];
                 let title: id = msg_send![disabled, title];
                 let bytes: *const std::ffi::c_char = msg_send![title, UTF8String];
                 let title = CStr::from_ptr(bytes).to_string_lossy();
@@ -43,11 +45,17 @@ fn main() {
                 let action: *const std::ffi::c_void = msg_send![disabled, action];
                 let tag: isize = msg_send![disabled, tag];
                 let active_action: *const std::ffi::c_void = msg_send![action_item, action];
+                let disabled_state: isize = msg_send![disabled, state];
+                let active_state: isize = msg_send![action_item, state];
+                let unchecked_state: isize = msg_send![unchecked, state];
                 println!(
                     "title={title:?} enabled={enabled} target_nil={} action_nil={} tag={tag} normal_action={}",
                     target == nil,
                     action.is_null(),
                     !active_action.is_null()
+                );
+                println!(
+                    "check states: disabled={disabled_state} active={active_state} unchecked={unchecked_state}"
                 );
                 title == "Disabled"
                     && enabled == NO
@@ -55,6 +63,9 @@ fn main() {
                     && action.is_null()
                     && tag == -1
                     && !active_action.is_null()
+                    && disabled_state == 1
+                    && active_state == 1
+                    && unchecked_state == 0
             };
             if !passed {
                 std::process::exit(1);

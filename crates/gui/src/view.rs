@@ -2544,16 +2544,19 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
             items: item.items.iter().filter_map(gpui_menu_item).collect(),
         }));
     }
-    Some(if let Some(command) = &item.command {
-        MenuItem::action(
-            item.label.clone(),
-            RunMenuCommand {
-                command: command.clone(),
-            },
-        )
-    } else {
-        MenuItem::disabled(item.label.clone())
-    })
+    Some(
+        if let Some(command) = &item.command {
+            MenuItem::action(
+                item.label.clone(),
+                RunMenuCommand {
+                    command: command.clone(),
+                },
+            )
+        } else {
+            MenuItem::disabled(item.label.clone())
+        }
+        .checked(item.checked),
+    )
 }
 
 #[cfg(test)]
@@ -2567,11 +2570,14 @@ mod native_menu_tests {
             command: None,
             items: Vec::new(),
             separator: false,
+            checked: false,
         };
         let converted = gpui_menu_item(&item).unwrap();
-        assert!(matches!(&converted, MenuItem::Disabled { name } if name.as_str() == "Disabled"));
         assert!(
-            matches!(converted.owned().clone(), gpui::OwnedMenuItem::Disabled { name } if name == "Disabled")
+            matches!(&converted, MenuItem::Disabled { name, checked: false } if name.as_str() == "Disabled")
+        );
+        assert!(
+            matches!(converted.owned().clone(), gpui::OwnedMenuItem::Disabled { name, checked: false } if name == "Disabled")
         );
         let enabled = GridMenuItem {
             command: Some("ignore".into()),
@@ -2581,6 +2587,29 @@ mod native_menu_tests {
             gpui_menu_item(&enabled),
             Some(MenuItem::Action { .. })
         ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn checked_native_rows_preserve_state_and_action_through_owned_clones() {
+        for checked in [true, false] {
+            for command in [None, Some("ignore".into())] {
+                let item = GridMenuItem {
+                    label: "Toggle".into(),
+                    command: command.clone(),
+                    items: Vec::new(),
+                    separator: false,
+                    checked,
+                };
+                let owned = gpui_menu_item(&item).unwrap().owned().clone();
+                match (owned, command) {
+                    (gpui::OwnedMenuItem::Disabled { checked: state, .. }, None)
+                    | (gpui::OwnedMenuItem::Action { checked: state, .. }, Some(_)) => {
+                        assert_eq!(state, checked);
+                    }
+                    _ => panic!("native item must preserve its action and check state"),
+                }
+            }
+        }
     }
 }
 

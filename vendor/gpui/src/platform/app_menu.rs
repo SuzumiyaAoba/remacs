@@ -57,6 +57,8 @@ pub enum MenuItem {
     Disabled {
         /// The visible label of this menu item.
         name: SharedString,
+        /// Whether this item displays a checkmark.
+        checked: bool,
     },
 
     /// A submenu
@@ -76,13 +78,28 @@ pub enum MenuItem {
         /// The OS Action that corresponds to this action, if any
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
+        /// Whether this item displays a checkmark.
+        checked: bool,
     },
 }
 
 impl MenuItem {
     /// Create a visible, nonselectable menu item.
     pub fn disabled(name: impl Into<SharedString>) -> Self {
-        Self::Disabled { name: name.into() }
+        Self::Disabled {
+            name: name.into(),
+            checked: false,
+        }
+    }
+
+    /// Set the checkmark of an action or disabled item.
+    pub fn checked(mut self, checked: bool) -> Self {
+        if let Self::Action { checked: state, .. } | Self::Disabled { checked: state, .. } =
+            &mut self
+        {
+            *state = checked;
+        }
+        self
     }
     /// Creates a new menu item that is a separator
     pub fn separator() -> Self {
@@ -108,6 +125,7 @@ impl MenuItem {
             name: name.into(),
             action: Box::new(action),
             os_action: None,
+            checked: false,
         }
     }
 
@@ -121,6 +139,7 @@ impl MenuItem {
             name: name.into(),
             action: Box::new(action),
             os_action: Some(os_action),
+            checked: false,
         }
     }
 
@@ -128,16 +147,21 @@ impl MenuItem {
     pub fn owned(self) -> OwnedMenuItem {
         match self {
             MenuItem::Separator => OwnedMenuItem::Separator,
-            MenuItem::Disabled { name } => OwnedMenuItem::Disabled { name: name.into() },
+            MenuItem::Disabled { name, checked } => OwnedMenuItem::Disabled {
+                name: name.into(),
+                checked,
+            },
             MenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.owned()),
             MenuItem::Action {
                 name,
                 action,
                 os_action,
+                checked,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
+                checked,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
@@ -174,6 +198,8 @@ pub enum OwnedMenuItem {
     Disabled {
         /// The visible label of this menu item.
         name: String,
+        /// Whether this item displays a checkmark.
+        checked: bool,
     },
 
     /// A submenu
@@ -193,6 +219,8 @@ pub enum OwnedMenuItem {
         /// The OS Action that corresponds to this action, if any
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
+        /// Whether this item displays a checkmark.
+        checked: bool,
     },
 }
 
@@ -200,16 +228,21 @@ impl Clone for OwnedMenuItem {
     fn clone(&self) -> Self {
         match self {
             OwnedMenuItem::Separator => OwnedMenuItem::Separator,
-            OwnedMenuItem::Disabled { name } => OwnedMenuItem::Disabled { name: name.clone() },
+            OwnedMenuItem::Disabled { name, checked } => OwnedMenuItem::Disabled {
+                name: name.clone(),
+                checked: *checked,
+            },
             OwnedMenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.clone()),
             OwnedMenuItem::Action {
                 name,
                 action,
                 os_action,
+                checked,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
+                checked: *checked,
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }

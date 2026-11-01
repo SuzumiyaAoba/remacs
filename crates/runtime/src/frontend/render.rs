@@ -189,6 +189,8 @@ pub struct GridMenuItem {
     pub command: Option<String>,
     pub items: Vec<GridMenuItem>,
     pub separator: bool,
+    /// Selected state of a toggle or radio leaf item.
+    pub checked: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

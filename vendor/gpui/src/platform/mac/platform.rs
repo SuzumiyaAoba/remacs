@@ -332,17 +332,19 @@ impl MacPlatform {
         unsafe {
             match item {
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
-                MenuItem::Disabled { name } => {
+                MenuItem::Disabled { name, checked } => {
                     let item = NSMenuItem::new(nil).autorelease();
                     item.setTitle_(ns_string(name));
                     let _: () = msg_send![item, setEnabled: NO];
                     let _: () = msg_send![item, setTag: -1 as NSInteger];
+                    let _: () = msg_send![item, setState: *checked as NSInteger];
                     item
                 }
                 MenuItem::Action {
                     name,
                     action,
                     os_action,
+                    checked,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -439,6 +441,7 @@ impl MacPlatform {
 
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
+                    let _: () = msg_send![item, setState: *checked as NSInteger];
                     actions.push(action.boxed_clone());
                     item
                 }
