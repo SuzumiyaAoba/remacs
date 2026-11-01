@@ -120,6 +120,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "insert" => NSInsertFunctionKey,
         "undo" => NSUndoFunctionKey,
         "redo" => NSRedoFunctionKey,
+        "find" => NSFindFunctionKey,
         "menu" => NSMenuFunctionKey,
         "f1" => NSF1FunctionKey,
         "f2" => NSF2FunctionKey,
@@ -438,6 +439,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSHelpFunctionKey) => "insert".to_string(),
             Some(NSUndoFunctionKey) => "undo".to_string(),
             Some(NSRedoFunctionKey) => "redo".to_string(),
+            Some(NSFindFunctionKey) => "find".to_string(),
             Some(NSMenuFunctionKey) => "menu".to_string(),
             Some(NSF1FunctionKey) => "f1".to_string(),
             Some(NSF2FunctionKey) => "f2".to_string(),
@@ -635,99 +637,64 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
 }
 
 #[cfg(test)]
-mod menu_key_tests {
-    use super::*;
+fn assert_named_function_key(code: u16, name: &str, key_code: u16) {
     use cocoa::{
-        appkit::NSMenuFunctionKey,
         base::{NO, nil},
         foundation::{NSPoint, NSString},
     };
+    let characters = String::from_utf16(&[code]).unwrap();
+    objc::rc::autoreleasepool(|| unsafe {
+        for event_type in [NSEventType::NSKeyDown, NSEventType::NSKeyUp] {
+            for modified in [false, true] {
+                let mut flags = NSEventModifierFlags::NSFunctionKeyMask;
+                if modified {
+                    flags |= NSEventModifierFlags::NSControlKeyMask
+                        | NSEventModifierFlags::NSAlternateKeyMask
+                        | NSEventModifierFlags::NSShiftKeyMask
+                        | NSEventModifierFlags::NSCommandKeyMask;
+                }
+                let text = NSString::alloc(nil).init_str(&characters);
+                let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode_(
+                    nil, event_type, NSPoint::new(0.0, 0.0), flags, 0.0, 0,
+                    nil, text, text, NO, key_code,
+                );
+                let _: () = msg_send![text, release];
+                assert_ne!(event, nil);
+                let input = PlatformInput::from_native(event, None).unwrap();
+                let key = match input {
+                    PlatformInput::KeyDown(event) => event.keystroke,
+                    PlatformInput::KeyUp(event) => event.keystroke,
+                    _ => panic!("expected a keyboard event"),
+                };
+                assert_eq!(key.key, name);
+                assert!(key.key_char.is_none());
+                assert!(!key.modifiers.function);
+                assert_eq!(key.modifiers.control, modified);
+                assert_eq!(key.modifiers.alt, modified);
+                assert_eq!(key.modifiers.shift, modified);
+                assert_eq!(key.modifiers.platform, modified);
+            }
+        }
+    });
+    assert_eq!(key_to_native(name).as_ref(), characters);
+}
 
+#[cfg(test)]
+mod menu_key_tests {
+    use super::*;
+    use cocoa::appkit::NSMenuFunctionKey;
     #[test]
     fn menu_function_key_is_a_named_non_text_event() {
-        let characters = String::from_utf16(&[NSMenuFunctionKey]).unwrap();
-        assert_eq!(key_to_native("menu").as_ref(), characters);
-        objc::rc::autoreleasepool(|| unsafe {
-            for event_type in [NSEventType::NSKeyDown, NSEventType::NSKeyUp] {
-                for modified in [false, true] {
-                    let mut flags = NSEventModifierFlags::NSFunctionKeyMask;
-                    if modified {
-                        flags |= NSEventModifierFlags::NSControlKeyMask
-                            | NSEventModifierFlags::NSAlternateKeyMask
-                            | NSEventModifierFlags::NSShiftKeyMask
-                            | NSEventModifierFlags::NSCommandKeyMask;
-                    }
-                    let text = NSString::alloc(nil).init_str(&characters);
-                    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode_(
-                        nil, event_type, NSPoint::new(0.0, 0.0), flags, 0.0, 0,
-                        nil, text, text, NO, 0,
-                    );
-                    let _: () = msg_send![text, release];
-                    assert_ne!(event, nil);
-                    let input = PlatformInput::from_native(event, None).unwrap();
-                    let key = match input {
-                        PlatformInput::KeyDown(event) => event.keystroke,
-                        PlatformInput::KeyUp(event) => event.keystroke,
-                        _ => panic!("expected a key event"),
-                    };
-                    assert_eq!(key.key, "menu");
-                    assert!(key.key_char.is_none());
-                    assert_eq!(key.modifiers.control, modified);
-                    assert_eq!(key.modifiers.alt, modified);
-                    assert_eq!(key.modifiers.shift, modified);
-                    assert_eq!(key.modifiers.platform, modified);
-                    assert!(!key.modifiers.function);
-                }
-            }
-        });
+        assert_named_function_key(NSMenuFunctionKey, "menu", 0);
     }
 }
 
 #[cfg(test)]
 mod insert_key_tests {
     use super::*;
-    use cocoa::{
-        base::{NO, nil},
-        foundation::{NSPoint, NSString},
-    };
-
     #[test]
     fn insert_function_key_is_a_named_non_text_event() {
-        let characters = String::from_utf16(&[NSInsertFunctionKey]).unwrap();
-        objc::rc::autoreleasepool(|| unsafe {
-            for event_type in [NSEventType::NSKeyDown, NSEventType::NSKeyUp] {
-                for modified in [false, true] {
-                    let mut flags = NSEventModifierFlags::NSFunctionKeyMask;
-                    if modified {
-                        flags |= NSEventModifierFlags::NSControlKeyMask
-                            | NSEventModifierFlags::NSAlternateKeyMask
-                            | NSEventModifierFlags::NSShiftKeyMask
-                            | NSEventModifierFlags::NSCommandKeyMask;
-                    }
-                    let text = NSString::alloc(nil).init_str(&characters);
-                    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode_(
-                        nil, event_type, NSPoint::new(0.0, 0.0), flags, 0.0, 0,
-                        nil, text, text, NO, 0x72,
-                    );
-                    let _: () = msg_send![text, release];
-                    assert_ne!(event, nil);
-                    let input = PlatformInput::from_native(event, None).unwrap();
-                    let key = match input {
-                        PlatformInput::KeyDown(event) => event.keystroke,
-                        PlatformInput::KeyUp(event) => event.keystroke,
-                        _ => panic!("expected a keyboard event"),
-                    };
-                    assert_eq!(key.key, "insert");
-                    assert!(key.key_char.is_none());
-                    assert!(!key.modifiers.function);
-                    assert_eq!(key.modifiers.control, modified);
-                    assert_eq!(key.modifiers.alt, modified);
-                    assert_eq!(key.modifiers.shift, modified);
-                    assert_eq!(key.modifiers.platform, modified);
-                }
-            }
-        });
-        assert_eq!(key_to_native("insert").as_ref(), characters);
+        assert_named_function_key(NSInsertFunctionKey, "insert", 0x72);
     }
 }
 
@@ -735,49 +702,19 @@ mod insert_key_tests {
 mod undo_redo_key_tests {
     use super::*;
     use cocoa::appkit::{NSRedoFunctionKey, NSUndoFunctionKey};
-    use cocoa::{
-        base::{NO, nil},
-        foundation::{NSPoint, NSString},
-    };
-
     #[test]
     fn undo_redo_function_keys_are_named_non_text_events() {
-        for (code, name) in [(NSUndoFunctionKey, "undo"), (NSRedoFunctionKey, "redo")] {
-            let characters = String::from_utf16(&[code]).unwrap();
-            objc::rc::autoreleasepool(|| unsafe {
-                for event_type in [NSEventType::NSKeyDown, NSEventType::NSKeyUp] {
-                    for modified in [false, true] {
-                        let mut flags = NSEventModifierFlags::NSFunctionKeyMask;
-                        if modified {
-                            flags |= NSEventModifierFlags::NSControlKeyMask
-                                | NSEventModifierFlags::NSAlternateKeyMask
-                                | NSEventModifierFlags::NSShiftKeyMask
-                                | NSEventModifierFlags::NSCommandKeyMask;
-                        }
-                        let text = NSString::alloc(nil).init_str(&characters);
-                        let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode_(
-                        nil, event_type, NSPoint::new(0.0, 0.0), flags, 0.0, 0,
-                        nil, text, text, NO, 0,
-                    );
-                        let _: () = msg_send![text, release];
-                        assert_ne!(event, nil);
-                        let input = PlatformInput::from_native(event, None).unwrap();
-                        let key = match input {
-                            PlatformInput::KeyDown(event) => event.keystroke,
-                            PlatformInput::KeyUp(event) => event.keystroke,
-                            _ => panic!("expected a keyboard event"),
-                        };
-                        assert_eq!(key.key, name);
-                        assert!(key.key_char.is_none());
-                        assert!(!key.modifiers.function);
-                        assert_eq!(key.modifiers.control, modified);
-                        assert_eq!(key.modifiers.alt, modified);
-                        assert_eq!(key.modifiers.shift, modified);
-                        assert_eq!(key.modifiers.platform, modified);
-                    }
-                }
-            });
-            assert_eq!(key_to_native(name).as_ref(), characters);
-        }
+        assert_named_function_key(NSUndoFunctionKey, "undo", 0);
+        assert_named_function_key(NSRedoFunctionKey, "redo", 0);
+    }
+}
+
+#[cfg(test)]
+mod find_key_tests {
+    use super::*;
+    use cocoa::appkit::NSFindFunctionKey;
+    #[test]
+    fn find_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSFindFunctionKey, "find", 0);
     }
 }
