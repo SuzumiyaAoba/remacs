@@ -151,6 +151,12 @@ must never cause a Lisp error."
 						  (progn
 						    (forward-sexp 1)
 						    (1- (point)))))
+		    ;; Quoted encoded values are percent-escaped below, so validate
+		    ;; their raw prefix before that normalization hides it.
+		    (when (and signal-error encoded (numberp number) (> number 0)
+			       (string-match-p "\\`[^']*'[^']*'" value))
+		      (error "RFC 2231 charset prefix outside first segment for %s"
+			     attribute))
 		    (when encoded
 		      (setq value (mapconcat (lambda (c) (format "%%%02x" c))
 					     value ""))))
@@ -198,7 +204,16 @@ must never cause a Lisp error."
 				      (number-to-string (car part))))
 		  (error "Invalid RFC 2231 continuation numbering for %s"
 			 attribute))
-		(setq expected (1+ expected))))))
+		(setq expected (1+ expected)))
+	      ;; Charset and language prefixes belong only in the first segment.
+	      (dolist (parameter parameters)
+		(when (and (eq (car parameter) attribute)
+			   (numberp (nth 2 parameter))
+			   (> (nth 2 parameter) 0)
+			   (nth 3 parameter)
+			   (string-match-p "\\`[^']*'[^']*'" (nth 1 parameter)))
+		  (error "RFC 2231 charset prefix outside first segment for %s"
+			 attribute))))))
 
 	;; Now collect and concatenate continuation parameters.
 	(let ((cparams nil)
