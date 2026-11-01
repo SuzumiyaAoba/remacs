@@ -1513,10 +1513,11 @@ DAYNO must be in [0..6] and OFFSET in [-53..53], excluding 0."
              (bymonthday (icalendar-rrule-by* 'BYMONTHDAY vals))
              (byyearday (icalendar-rrule-by* 'BYYEARDAY vals)))
          (and
+          ;; Remacs: ordinal restrictions apply to every BYDAY value.
           ;; "The BYDAY rule part MUST NOT be specified with a numeric
           ;; value when the FREQ rule part is not set to MONTHLY or
           ;; YEARLY."
-          (or (not (consp (car byday)))
+          (or (not (seq-some #'consp byday))
               (memq freq '(MONTHLY YEARLY)))
           ;; "The BYDAY rule part MUST NOT be specified with a numeric
           ;; value with the FREQ rule part set to YEARLY when the
@@ -1525,7 +1526,7 @@ DAYNO must be in [0..6] and OFFSET in [-53..53], excluding 0."
           ;; rule part is set to anything other than YEARLY."
           (or (not byweekno)
               (and (eq freq 'YEARLY)
-                   (not (consp (car byday)))))
+                   (not (seq-some #'consp byday))))
           ;; "The BYMONTHDAY rule part MUST NOT be specified when the
           ;; FREQ rule part is set to WEEKLY."
           (not (and bymonthday (eq freq 'WEEKLY)))
