@@ -42,6 +42,8 @@ mod popup_scroll_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod popup_navigation_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod button_release_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
@@ -518,18 +520,6 @@ fn file_drop_uri(path: &std::path::Path) -> String {
     uri
 }
 
-fn tool_bar_command_at(items: &[CommandHitRegion], point: Point<Pixels>) -> Option<String> {
-    items
-        .iter()
-        .find(|item| {
-            point.x >= item.bounds.left()
-                && point.x < item.bounds.right()
-                && point.y >= item.bounds.top()
-                && point.y < item.bounds.bottom()
-        })
-        .map(|item| item.command.clone())
-}
-
 #[derive(Clone)]
 struct CommandHitRegion {
     bounds: Bounds<Pixels>,
@@ -537,19 +527,50 @@ struct CommandHitRegion {
     argument: Option<i128>,
 }
 
-fn tab_bar_command_at(
-    items: &[CommandHitRegion],
-    point: Point<Pixels>,
-) -> Option<(String, Vec<i128>)> {
-    items
-        .iter()
-        .find(|item| {
-            point.x >= item.bounds.left()
-                && point.x < item.bounds.right()
-                && point.y >= item.bounds.top()
-                && point.y < item.bounds.bottom()
-        })
-        .map(|item| (item.command.clone(), item.argument.into_iter().collect()))
+#[derive(PartialEq)]
+enum ButtonAction {
+    Tool(String),
+    Tab {
+        command: String,
+        argument: Option<i128>,
+    },
+    Popup {
+        menu_id: usize,
+        parent: Option<usize>,
+        index: usize,
+    },
+}
+
+#[derive(PartialEq)]
+struct PressedButton {
+    bounds: Bounds<Pixels>,
+    action: ButtonAction,
+}
+
+impl PressedButton {
+    fn cancel_event(self) -> Option<GuiEvent> {
+        match self.action {
+            ButtonAction::Popup { menu_id, .. } => Some(GuiEvent::PopupMenuSelection {
+                menu_id,
+                index: None,
+            }),
+            _ => None,
+        }
+    }
+
+    fn into_event(self) -> GuiEvent {
+        match self.action {
+            ButtonAction::Tool(command) => GuiEvent::MenuCommand(command),
+            ButtonAction::Tab { command, argument } => GuiEvent::CommandArgs {
+                command,
+                args: argument.into_iter().collect(),
+            },
+            ButtonAction::Popup { menu_id, index, .. } => GuiEvent::PopupMenuSelection {
+                menu_id,
+                index: Some(index),
+            },
+        }
+    }
 }
 
 fn grid_text_range_bounds(
@@ -801,6 +822,8 @@ pub(super) struct EditorView {
     follow_tooltip_drag: bool,
     mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
     consumed_mouse_buttons: HashSet<MouseButton>,
+    pressed_button: Option<PressedButton>,
+    button_activation_subscription: Option<Subscription>,
     bell_flash: bool,
     bell_flash_generation: u64,
     focus_subscriptions: Vec<Subscription>,
@@ -873,6 +896,8 @@ impl EditorView {
             follow_tooltip_drag: false,
             mouse_down_position: None,
             consumed_mouse_buttons: HashSet::new(),
+            pressed_button: None,
+            button_activation_subscription: None,
             bell_flash: false,
             bell_flash_generation: 0,
             focus_subscriptions: Vec::new(),
@@ -904,6 +929,49 @@ impl EditorView {
 
     pub(super) fn set_follow_tooltip_drag(&mut self, follow: bool) {
         self.follow_tooltip_drag = follow;
+    }
+
+    /// Snapshot the action and painted bounds together: two adjacent buttons
+    /// can invoke the same command without being the same pressed item.
+    fn button_at(&self, point: Point<Pixels>) -> Option<PressedButton> {
+        let contains = |bounds: Bounds<Pixels>| {
+            point.x >= bounds.left()
+                && point.x < bounds.right()
+                && point.y >= bounds.top()
+                && point.y < bounds.bottom()
+        };
+        if !self.grid.popup_menu_items.is_empty() {
+            let popup = self.popup_hit_regions.borrow();
+            let item = popup.iter().rev().find(|item| contains(item.bounds))?;
+            return Some(PressedButton {
+                bounds: item.bounds,
+                action: ButtonAction::Popup {
+                    menu_id: item.menu_id,
+                    parent: item.parent,
+                    index: item.selection?,
+                },
+            });
+        }
+        if let Some(item) = self
+            .tool_hit_regions
+            .borrow()
+            .iter()
+            .find(|item| contains(item.bounds))
+        {
+            return Some(PressedButton {
+                bounds: item.bounds,
+                action: ButtonAction::Tool(item.command.clone()),
+            });
+        }
+        let tabs = self.tab_hit_regions.borrow();
+        let item = tabs.iter().find(|item| contains(item.bounds))?;
+        Some(PressedButton {
+            bounds: item.bounds,
+            action: ButtonAction::Tab {
+                command: item.command.clone(),
+                argument: item.argument,
+            },
+        })
     }
 
     pub(super) fn set_image_cache_metrics(
@@ -1105,6 +1173,16 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.button_activation_subscription.is_none() {
+            self.button_activation_subscription = Some(cx.observe_window_activation(
+                window,
+                |view, window, _cx| {
+                    if !window.is_window_active() {
+                        view.pressed_button = None;
+                    }
+                },
+            ));
+        }
         window.set_cursor_style_frozen(self.grid.freeze_pointer_shape);
         if self.grid.tooltip.is_none() {
             self.follow_tooltip_drag = false;
@@ -1366,9 +1444,7 @@ impl Render for EditorView {
         let popup_hit_for_input = self.popup_hit_regions.clone();
         let popup_hit_for_shape = self.popup_hit_regions.clone();
         let popup_hit_for_scroll = self.popup_hit_regions.clone();
-        let tab_hit_for_input = self.tab_hit_regions.clone();
         let tab_hit_for_shape = self.tab_hit_regions.clone();
-        let tool_hit_for_input = self.tool_hit_regions.clone();
         let tool_hit_for_shape = self.tool_hit_regions.clone();
         let left_mouse_down_modifiers = physical_modifier_state.clone();
         let left_mouse_up_tx = self.tx.clone();
@@ -1502,6 +1578,8 @@ impl Render for EditorView {
                 cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.mouse_down_position = None;
+                        this.pressed_button = None;
+                        this.consumed_mouse_buttons.remove(&MouseButton::Left);
                         let Some(point) = frame_content_point(
                             event.position,
                             window.viewport_size(),
@@ -1518,32 +1596,19 @@ impl Render for EditorView {
                         let _ = this.tx.send_mouse_move(None, Some(absolute_position));
                         if !left_mouse_down_grid.popup_menu_items.is_empty() {
                             this.consumed_mouse_buttons.insert(MouseButton::Left);
-                            if let Some(event) = popup_menu_event_at(
-                                &popup_hit_for_input.borrow(),
-                                point,
-                            ) {
+                            this.pressed_button = this.button_at(point);
+                            if let Some(event @ GuiEvent::PopupMenuSelection { index: None, .. }) =
+                                popup_menu_event_at(&popup_hit_for_input.borrow(), point)
+                            {
                                 let _ = left_mouse_down_tx.send(event);
                             }
                             window.prevent_default();
                             cx.stop_propagation();
                             return;
                         }
-                        if let Some(command) = tool_bar_command_at(
-                            &tool_hit_for_input.borrow(),
-                            point,
-                        ) {
+                        if let Some(button) = this.button_at(point) {
                             this.consumed_mouse_buttons.insert(MouseButton::Left);
-                            let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
-                            window.prevent_default();
-                            cx.stop_propagation();
-                            return;
-                        }
-                        if let Some((command, args)) = tab_bar_command_at(
-                            &tab_hit_for_input.borrow(),
-                            point,
-                        ) {
-                            this.consumed_mouse_buttons.insert(MouseButton::Left);
-                            let _ = left_mouse_down_tx.send(GuiEvent::CommandArgs { command, args });
+                            this.pressed_button = Some(button);
                             window.prevent_default();
                             cx.stop_propagation();
                             return;
@@ -1674,6 +1739,19 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
+                        if let Some(pressed) = this.pressed_button.take() {
+                            let current = frame_content_point(
+                                event.position,
+                                window.viewport_size(),
+                                border,
+                            )
+                            .and_then(|point| this.button_at(point));
+                            if current.as_ref() == Some(&pressed) {
+                                let _ = left_mouse_up_tx.send(pressed.into_event());
+                            } else if let Some(event) = pressed.cancel_event() {
+                                let _ = left_mouse_up_tx.send(event);
+                            }
+                        }
                         window.prevent_default();
                         cx.stop_propagation();
                         return;
@@ -1725,6 +1803,20 @@ impl Render for EditorView {
                             ),
                             position,
                         });
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseUpEvent, window, cx| {
+                    if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
+                        if let Some(event) = this.pressed_button.take()
+                            .and_then(PressedButton::cancel_event)
+                        {
+                            let _ = this.tx.send(event);
+                        }
+                        window.prevent_default();
+                        cx.stop_propagation();
                     }
                 }),
             )
