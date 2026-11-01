@@ -783,8 +783,19 @@ Use variable `browse-url-filename-alist' to map filenames to URLs."
     ;; remain available to `browse-url-filename-alist' regular expressions.
     (dolist (map browse-url-filename-alist)
       (when (and map (string-match (car map) file))
-        (setq file (replace-match (cdr map) t nil file)
-              mapped t)))
+        (let ((match-end-pos (match-end 0))
+              (replacement (cdr map)))
+          ;; An FTP mapping supplies the URL authority and path prefix;
+          ;; the unmatched filename suffix is path data.  Escape path
+          ;; delimiters in that data before `url-encode-url' parses it.
+          (when (string-match-p "\\`ftp://" replacement)
+            (setq file
+                  (concat (substring file 0 match-end-pos)
+                          (save-match-data
+                            (browse-url-url-encode-chars
+                             (substring file match-end-pos) "[%#?]")))))
+          (setq file (replace-match replacement t nil file)
+                mapped t))))
     (if (and mapped (string-match-p "\\`[[:alpha:]][[:alnum:].+-]*:" file))
         (url-encode-url
          (if (string-match-p "\\`file:" file)
