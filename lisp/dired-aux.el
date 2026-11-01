@@ -824,8 +824,14 @@ Commands that are run asynchronously do not accept user input."
       current-prefix-arg
       files))
    dired-mode)
-  (unless (string-match-p "&[ \t]*\\'" command)
-    (setq command (concat command " &")))
+  (let* ((windows-shell
+          (and (fboundp 'w32-shell-dos-semantics)
+               (w32-shell-dos-semantics)
+               (not (file-remote-p default-directory))))
+         (operator
+          (dired--shell-command-final-operator command windows-shell t)))
+    (unless (eq (car-safe operator) ?&)
+      (setq command (concat command " &"))))
   (dired-do-shell-command command arg file-list))
 
 ;;;###autoload
@@ -928,9 +934,12 @@ Also see the `dired-confirm-shell-command' variable."
 (defvar dired-mark-separator " "
   "Separates marked files in Dired shell commands.")
 
-(defun dired--shell-command-final-operator (command &optional w32-shell)
+(defun dired--shell-command-final-operator (command &optional w32-shell
+                                                dired-suffix)
   "Return a trailing unquoted shell operator and its start in COMMAND.
-The result is (OPERATOR . POSITION), where OPERATOR is `&' or `;'."
+The result is (OPERATOR . POSITION), where OPERATOR is `&' or `;'.
+If DIRED-SUFFIX is non-nil, recognize Dired's documented `;&' suffix
+as asynchronous sequential execution."
   (let ((end (length command))
         (index 0)
         quote-stack
@@ -943,7 +952,7 @@ The result is (OPERATOR . POSITION), where OPERATOR is `&' or `;'."
       (setq end (1- end)))
     (let ((operator-position (1- end)))
       (when (and (>= operator-position 0)
-                 (memq (aref command operator-position) '(?& ?;)))
+                 (memq (aref command operator-position) '(?& ?\;)))
         (while (< index operator-position)
           (let* ((character (aref command index))
                  (next (and (< (1+ index) operator-position)
@@ -998,19 +1007,28 @@ The result is (OPERATOR . POSITION), where OPERATOR is `&' or `;'."
                    (eq character ?#)
                    (or (= index 0)
                        (memq (aref command (1- index))
-                             '(?\s ?\t ?\n ?\r ?; ?& ?| ?\( ?\) ?< ?>))))
+                             '(?\s ?\t ?\n ?\r ?\; ?& ?| ?\( ?\) ?< ?>))))
               (setq comment t
                     previous-operator nil))
              (t
               (setq previous-operator
-                    (and (memq character '(?& ?;)) character))))
+                    (and (or (memq character '(?& ?\;))
+                             (and (not w32-shell) (eq character ?|)))
+                         character))))
           (setq index (1+ index))))
         (when (and (null quote)
                    (not comment)
                    (not escaped)
                    ;; `&&', `;;', and `;&' are compound shell syntax,
-                   ;; not a trailing background/sequential suffix.
-                   (null previous-operator))
+                   ;; not a trailing background/sequential suffix.  Bash
+                   ;; `|&' is also a compound operator, but only outside
+                   ;; Windows shell syntax.
+                   (or (null previous-operator)
+                       (and dired-suffix
+                            (eq (aref command operator-position) ?&)
+                            (eq previous-operator ?\;))
+                       (and (eq (aref command operator-position) ?\;)
+                            (eq previous-operator ?|))))
           (let ((start operator-position))
             (while (and (> start 0)
                         (memq (aref command (1- start)) '(?\s ?\t)))
@@ -1030,14 +1048,14 @@ The result is (OPERATOR . POSITION), where OPERATOR is `&' or `;'."
                          (w32-shell-dos-semantics)))
          (windows-shell (and w32-shell (not file-remote)))
          (background-operator
-          (dired--shell-command-final-operator command windows-shell))
+          (dired--shell-command-final-operator command windows-shell t))
          (in-background (eq (car-safe background-operator) ?&))
          (command (if in-background
                       (substring command 0 (cdr background-operator))
                     command))
          (sequential-operator
-          (dired--shell-command-final-operator command windows-shell))
-         (sequentially (eq (car-safe sequential-operator) ?;))
+          (dired--shell-command-final-operator command windows-shell t))
+         (sequentially (eq (car-safe sequential-operator) ?\;))
          (command (if sequentially
                       (substring command 0 (cdr sequential-operator))
                     command))
