@@ -250,11 +250,8 @@ Gregorian date Sunday, December 31, 1 BC."
              leap-days
              (calendar-sum m 1 (< m month) 19)
              (if (= month 19)
-                 ;; For Ayyám-i-Há (day <= 0), adjust by (ayyam-ha-days - 1)
-                 ;; instead of ayyam-ha-days to match encoding
-                 (if (<= day 0)
-                     (1- (if (calendar-bahai-leap-year-p year) 5 4))
-                   (if (calendar-bahai-leap-year-p year) 5 4))
+                 ;; Nonpositive days also count back from the final month.
+                 (if (calendar-bahai-leap-year-p year) 5 4)
                0)
              day))                              ; days so far this month
       ;; Post-reform: use actual Naw-Rúz dates
@@ -270,7 +267,7 @@ Gregorian date Sunday, December 31, 1 BC."
             ;; Month 19, day <= 0: Ayyám-i-Há
             ((<= day 0)
              (+ (* 19 18)
-                (+ day (1- ayyam-ha-days))))
+                (+ day ayyam-ha-days)))
             ;; Month 19, day > 0: month 'Alá'
             (t
              (+ (* 19 18)
