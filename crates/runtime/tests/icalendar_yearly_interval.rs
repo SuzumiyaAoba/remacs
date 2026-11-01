@@ -21,7 +21,11 @@ const CASES: &str = r##"
            (generated (remacs-test-ical-yearly-format rule start start-time end-time extras))
            hits)
       (dolist (day candidates)
-        (when (diary-sexp-entry (cdr generated) "event" day) (push day hits)))
+        (let ((entry (diary-sexp-entry (cdr generated) "event" day)))
+          (when entry
+            (unless (equal (if (consp entry) (cdr entry) entry) "event")
+              (error "Yearly predicate returned invalid entry data: %S" entry))
+            (push day hits))))
       (setq hits (nreverse hits))
       (unless (equal hits expected)
         (error "Wrong yearly occurrences: %S expected %S, generated %S"
@@ -70,6 +74,119 @@ const CASES: &str = r##"
              (entry (diary-sexp-entry (cdr generated) "anniversary %d%s" '(1 6 2027))))
         (unless (equal (if (consp entry) (cdr entry) entry) "anniversary 3rd")
           (error "The yearly interval filter lost the anniversary's formatted entry")))))
+  (defun remacs-test-ical-yearly-range (rule start begin end expected &optional start-time end-time)
+    (let ((cursor (calendar-absolute-from-gregorian begin))
+          (last (calendar-absolute-from-gregorian end)) candidates)
+      (while (<= cursor last)
+        (push (calendar-gregorian-from-absolute cursor) candidates)
+        (setq cursor (1+ cursor)))
+      (remacs-test-ical-yearly-hits rule start (nreverse candidates) expected start-time end-time)))
+  ;; YEARLY BYDAY uses month ordinals with BYMONTH, year ordinals otherwise (#1570).
+  (let ((candidates '((1 14 2025) (1 15 2025) (1 16 2025) (8 31 2025)
+                       (9 1 2025) (9 2 2025) (9 8 2025) (9 15 2025) (1 15 2026)
+                       (9 1 2026) (9 7 2026) (9 14 2026) (9 6 2027))))
+    (dolist (calendar-date-style '(american european iso))
+      (dolist (times '((nil nil) ("09:00" "10:00")))
+        (remacs-test-ical-yearly-hits
+         "FREQ=YEARLY;BYMONTH=9;BYDAY=1MO" '(1 15 2025) candidates
+         '((1 15 2025) (9 1 2025) (9 7 2026) (9 6 2027)) (car times) (cadr times))
+        (remacs-test-ical-yearly-hits
+         (concat "FREQ=YEARLY;BYMONTH=9;BYDAY=1MO;UNTIL="
+                 (if (car times) "20260907T235959" "20260907"))
+         '(1 15 2025) candidates '((1 15 2025) (9 1 2025) (9 7 2026)) (car times) (cadr times))
+        (remacs-test-ical-yearly-hits
+         "FREQ=YEARLY;BYMONTH=9;BYDAY=1MO;COUNT=2" '(1 15 2025) candidates
+         '((1 15 2025) (9 1 2025)) (car times) (cadr times)))))
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-yearly-range
+       "FREQ=YEARLY;BYDAY=MO,WE" '(1 15 2025) '(1 1 2025) '(2 6 2025)
+       '((1 15 2025) (1 20 2025) (1 22 2025) (1 27 2025) (1 29 2025) (2 3 2025) (2 5 2025))
+       (car times) (cadr times))
+      (remacs-test-ical-yearly-range
+       "FREQ=YEARLY;BYDAY=WE,MO,WE;COUNT=5" '(1 15 2025) '(1 1 2025) '(2 6 2025)
+       '((1 15 2025) (1 20 2025) (1 22 2025) (1 27 2025) (1 29 2025)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=2;BYMONTH=9,1,9;BYDAY=-1FR,1MO,-1FR;COUNT=5" '(1 15 2025)
+     '((1 6 2025) (1 15 2025) (1 31 2025) (9 1 2025) (9 26 2025) (1 5 2026)
+       (1 4 2027) (1 29 2027))
+     '((1 15 2025) (1 31 2025) (9 1 2025) (9 26 2025) (1 4 2027)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=9;BYDAY=MO,1MO;COUNT=4" '(1 15 2025)
+     '((1 15 2025) (9 1 2025) (9 8 2025) (9 15 2025) (9 22 2025))
+     '((1 15 2025) (9 1 2025) (9 8 2025) (9 15 2025)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=9;BYDAY=5MO;COUNT=2" '(1 15 2025)
+     '((1 15 2025) (9 1 2025) (9 22 2025) (9 29 2025) (10 6 2025))
+     '((1 15 2025) (9 29 2025)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=9;BYDAY=6MO;COUNT=10" '(1 15 2025)
+     '((1 15 2025) (9 1 2025) (9 29 2025) (9 7 2026)) '((1 15 2025)))
+    ;; RFC 5545's twentieth Monday of each year.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYDAY=20MO;COUNT=3" '(5 19 1997)
+     '((5 12 1997) (5 19 1997) (5 18 1998) (5 17 1999) (5 15 2000))
+     '((5 19 1997) (5 18 1998) (5 17 1999)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYDAY=-1FR;COUNT=3" '(1 15 2025)
+     '((1 15 2025) (1 31 2025) (12 19 2025) (12 26 2025) (12 31 2025) (12 25 2026) (12 31 2027))
+     '((1 15 2025) (12 26 2025) (12 25 2026)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYDAY=53MO;COUNT=3" '(1 1 2024)
+     '((1 1 2024) (12 30 2024) (12 29 2025) (12 31 2029) (12 31 2035))
+     '((1 1 2024) (12 30 2024) (12 31 2029)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=2;BYDAY=MO,WE" '(1 15 2025)
+     '((1 15 2025) (1 20 2025) (1 5 2026) (1 4 2027) (1 5 2027))
+     '((1 15 2025) (1 20 2025) (1 4 2027)))
+    ;; A February29 DTSTART must not restrict the expanded rule to leap years.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYDAY=1MO" '(2 29 2024)
+     '((1 1 2024) (2 29 2024) (1 6 2025) (1 5 2026) (1 3 2028))
+     '((2 29 2024) (1 6 2025) (1 5 2026) (1 3 2028)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=3;BYDAY=TH;COUNT=10" '(3 13 1997)
+     '((3 6 1997) (3 13 1997) (3 20 1997) (3 27 1997) (4 3 1997)
+       (3 5 1998) (3 12 1998) (3 19 1998) (3 26 1998)
+       (3 4 1999) (3 11 1999) (3 18 1999) (3 25 1999))
+     '((3 13 1997) (3 20 1997) (3 27 1997) (3 5 1998) (3 12 1998) (3 19 1998)
+       (3 26 1998) (3 4 1999) (3 11 1999) (3 18 1999)))
+    ;; BYMONTHDAY limits BYDAY; a year ordinal stays year-scoped without BYMONTH.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=1,15;BYDAY=MO;COUNT=3" '(6 10 2025)
+     '((6 10 2025) (6 15 2025) (9 1 2025) (9 15 2025) (12 1 2025))
+     '((6 10 2025) (9 1 2025) (9 15 2025)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=1,15;BYDAY=1MO;COUNT=3" '(6 10 2025)
+     '((6 10 2025) (9 1 2025) (1 5 2026) (1 1 2029) (1 1 2035) (1 1 2046))
+     '((6 10 2025) (1 1 2029) (1 1 2035)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=9;BYDAY=1MO;COUNT=3" '(1 15 2025)
+     '((1 15 2025) (9 1 2025) (9 7 2026) (9 6 2027)) '((9 1 2025)) nil nil
+     '((EXDATE nil "20250115") (EXDATE nil "20260907")))
+    ;; Independently enumerated endpoints and the following eligible occurrences.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYDAY=MO,WE;COUNT=1000000" '(1 6 2025)
+     '((1 6 2025) (9 5 11607) (9 10 11607)) '((1 6 2025) (9 5 11607)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=2;BYDAY=MO,WE;COUNT=1000000" '(1 6 2025)
+     '((1 6 2025) (12 7 21205) (12 12 21205)) '((1 6 2025) (12 7 21205)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYDAY=20MO;COUNT=1000000" '(1 15 2025)
+     '((1 15 2025) (5 15 1002023) (5 13 1002024)) '((1 15 2025) (5 15 1002023)))
+    (let* ((start '(0 0 9 15 1 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=YEARLY;BYMONTH=9,1,9;BYDAY=-1FR,1MO;COUNT=4"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "Yearly weekday conversion mutated its inputs")))
+    (dolist (rule '("FREQ=YEARLY;BYDAY=54MO" "FREQ=YEARLY;BYDAY=0MO" "FREQ=YEARLY;BYDAY=NO"
+                     "FREQ=YEARLY;BYDAY=MO;COUNT=0" "FREQ=YEARLY;BYDAY=MO;COUNT=1.5"
+                     "FREQ=YEARLY;BYDAY=MO;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-yearly-format rule '(1 15 2025)) nil)
+                (error t))
+        (error "An invalid yearly weekday/count/interval was accepted: %S" rule))))
   ;; February 29 instances disappear in common years; they never shift (#1580).
   (let (candidates)
     (dotimes (i 17)
@@ -273,7 +390,7 @@ fn check(interp: &mut Interp, source: &str) {
 }
 
 #[test]
-fn yearly_recurrences_preserve_months_intervals_and_counts() {
+fn yearly_recurrences_preserve_selectors_intervals_and_counts() {
     let mut interp = Interp::new();
     check(&mut interp, CASES);
     check(&mut interp, r#"(load "icalendar.el" nil t)"#);

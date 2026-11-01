@@ -2874,6 +2874,139 @@ With STRICT-MONTH, ordinal weekdays must belong to the current month."
                       (when (<= day (calendar-last-day-of-month month year)) month))
                     months)))
 
+(defun icalendar--yearly-weekdays (value)
+  "Return parsed yearly BYDAY selectors, checking their ordinal range."
+  (let ((selectors (icalendar--rrule-weekdays value)))
+    (dolist (selector selectors)
+      (when (and (car selector) (> (abs (car selector)) 53))
+        (error "Invalid yearly BYDAY ordinal: %s" value)))
+    selectors))
+
+(defun icalendar--yearly-weekday-clause (byday month-scope)
+  "Return a portable BYDAY predicate using MONTH-SCOPE or year ordinals."
+  (if month-scope
+      (icalendar--monthly-weekday-clause byday t)
+    (let ((rules
+           (mapcar
+            (lambda (selector)
+              (let ((ordinal (car selector))
+                    (weekday-rule (format "(= (calendar-day-of-week date) %d)" (cdr selector))))
+                (if (null ordinal) weekday-rule
+                  (let ((distance
+                         (if (> ordinal 0)
+                             (concat "(- (calendar-absolute-from-gregorian date) "
+                                     "(calendar-absolute-from-gregorian "
+                                     "(list 1 1 (calendar-extract-year date))))")
+                           (concat "(- (calendar-absolute-from-gregorian "
+                                   "(list 1 1 (1+ (calendar-extract-year date)))) "
+                                   "(calendar-absolute-from-gregorian date) 1)"))))
+                    (format "(and %s (= (1+ (/ %s 7)) %d))" weekday-rule distance (abs ordinal))))))
+            (icalendar--yearly-weekdays byday))))
+      (if (cdr rules) (format "(or %s)" (mapconcat #'identity rules " ")) (car rules)))))
+
+(defun icalendar--weekday-period-offsets (first-weekday extent weekdays)
+  "Return distinct weekday offsets within an EXTENT-day calendar period."
+  (let (result)
+    (dolist (selector weekdays)
+      (let* ((ordinal (car selector)) (weekday (cdr selector))
+             (offset (mod (- weekday first-weekday) 7)))
+        (cond
+         ((null ordinal)
+          (while (< offset extent)
+            (push offset result)
+            (setq offset (+ offset 7))))
+         ((> ordinal 0)
+          (setq offset (+ offset (* 7 (1- ordinal))))
+          (when (< offset extent) (push offset result)))
+         (t
+          (setq offset (- (1- extent) (mod (- (+ first-weekday extent -1) weekday) 7)
+                          (* 7 (1- (- ordinal)))))
+          (when (>= offset 0) (push offset result))))))
+    (sort (delete-dups result) #'<)))
+
+(defun icalendar--yearly-selected-offsets (year months month-days weekdays month-scope)
+  "Return sorted day offsets matching the yearly selectors in YEAR."
+  (let* ((year-start (calendar-absolute-from-gregorian (list 1 1 year)))
+         (year-length (- (calendar-absolute-from-gregorian (list 1 1 (1+ year))) year-start)))
+    (if (and weekdays (null month-days) (not month-scope)
+             (equal months '(1 2 3 4 5 6 7 8 9 10 11 12)))
+        (icalendar--weekday-period-offsets
+         (calendar-day-of-week (list 1 1 year)) year-length weekdays)
+      (let (result)
+        (dolist (month months)
+          (let* ((last (calendar-last-day-of-month month year))
+                 (month-start (calendar-absolute-from-gregorian (list month 1 year)))
+                 (first-weekday (and weekdays (calendar-day-of-week (list month 1 year))))
+                 (preselected (and weekdays (null month-days) month-scope))
+                 (valid (cond
+                         (preselected (icalendar--weekday-period-offsets first-weekday last weekdays))
+                         (month-days (icalendar--monthly-selected-days month year month-days nil))
+                         (t (number-sequence 1 last)))))
+            (dolist (value valid)
+              (let* ((day (if preselected (1+ value) value))
+                     (offset (- (+ month-start day -1) year-start)))
+                (when (or preselected (null weekdays)
+                          (catch 'matching-weekday
+                            (dolist (selector weekdays)
+                              (let ((ordinal (car selector)))
+                                (when (and (= (cdr selector) (mod (+ first-weekday day -1) 7))
+                                           (or (null ordinal)
+                                               (let ((position (if month-scope day (1+ offset)))
+                                                     (extent (if month-scope last year-length)))
+                                                 (if (> ordinal 0)
+                                                     (= ordinal (1+ (/ (1- position) 7)))
+                                                   (= (- ordinal) (1+ (/ (- extent position) 7)))))))
+                                  (throw 'matching-weekday t))))))
+                  (push offset result))))))
+        (nreverse result)))))
+
+(defun icalendar--yearly-filtered-last-date (dtstart-dec months month-days weekdays month-scope interval count)
+  "Return the COUNT endpoint for the normalized yearly selectors."
+  (unless (and (integerp count) (> count 0)
+               (integerp interval) (> interval 0))
+    (error "Invalid yearly COUNT/INTERVAL: %S/%S" count interval))
+  (let* ((year (nth 5 dtstart-dec))
+         (year-start (calendar-absolute-from-gregorian (list 1 1 year)))
+         (start-offset (- (calendar-absolute-from-gregorian
+                           (list (nth 4 dtstart-dec) (nth 3 dtstart-dec) year)) year-start))
+         (first (cons start-offset
+                      (delq nil (mapcar (lambda (offset) (when (> offset start-offset) offset))
+                                        (icalendar--yearly-selected-offsets
+                                         year months month-days weekdays month-scope))))))
+    (if (<= count (length first))
+        (calendar-gregorian-from-absolute (+ year-start (nth (1- count) first)))
+      (catch 'last-date
+        (let ((a 400) (b (mod interval 400)))
+          (while (/= b 0)
+            (let ((remainder (mod a b)))
+              (setq a b b remainder)))
+          (let ((periods (/ 400 a)) (cursor year)
+                (left (- count (length first))) (total 0) pattern)
+            ;; Small counts finish early; large counts inspect one calendar cycle.
+            (dotimes (_ periods)
+              (setq cursor (+ cursor interval))
+              (let ((valid (icalendar--yearly-selected-offsets
+                            cursor months month-days weekdays month-scope)))
+                (when (<= left (length valid))
+                  (throw 'last-date
+                         (calendar-gregorian-from-absolute
+                          (+ (calendar-absolute-from-gregorian (list 1 1 cursor))
+                             (nth (1- left) valid)))))
+                (setq left (- left (length valid)) total (+ total (length valid)))
+                (push valid pattern)))
+            (if (= total 0)
+                (calendar-gregorian-from-absolute (+ year-start (car (last first))))
+              (let* ((cycles (/ (1- left) total))
+                     (left (1+ (mod (1- left) total)))
+                     (cursor (+ year (* interval (1+ (* (1+ cycles) periods))))))
+                (dolist (valid (nreverse pattern))
+                  (when (<= left (length valid))
+                    (throw 'last-date
+                           (calendar-gregorian-from-absolute
+                            (+ (calendar-absolute-from-gregorian (list 1 1 cursor))
+                               (nth (1- left) valid)))))
+                  (setq left (- left (length valid)) cursor (+ cursor interval)))))))))))
+
 (defun icalendar--yearly-last-date (dtstart-dec months interval count)
   "Return the last date for yearly COUNT with sorted, distinct MONTHS.
 DTSTART-DEC is always the first occurrence, even outside MONTHS."
@@ -2940,6 +3073,12 @@ END-T is the event's end time in diary format."
          (year-months  (let ((value (and (string-equal frequency "YEARLY")
                                         (cadr (assoc 'BYMONTH rrule-props)))))
                          (when value (icalendar--rrule-months value))))
+         (year-weekdays (let ((value (and (string-equal frequency "YEARLY")
+                                         (cadr (assoc 'BYDAY rrule-props)))))
+                          (when value (icalendar--yearly-weekdays value))))
+         (year-monthdays (let ((value (and (string-equal frequency "YEARLY")
+                                          (cadr (assoc 'BYMONTHDAY rrule-props)))))
+                           (when value (icalendar--rrule-monthdays value))))
          (month-months (let ((value (and (string-equal frequency "MONTHLY")
                                         (cadr (assoc 'BYMONTH rrule-props)))))
                          (when value (icalendar--rrule-months value))))
@@ -3000,9 +3139,13 @@ END-T is the event's end time in diary format."
                                   dtstart-dec (list 0 0 0 0 (* (- (read count) 1)
                                                                interval) 0)))))
                 ((string-equal frequency "YEARLY")
-                 (let ((last-date (icalendar--yearly-last-date
-                                   dtstart-dec (or year-months (list (nth 4 dtstart-dec)))
-                                   interval (read count))))
+                 (let ((last-date
+                        (if (or year-weekdays year-monthdays)
+                            (icalendar--yearly-filtered-last-date
+                             dtstart-dec (or year-months (number-sequence 1 12))
+                             year-monthdays year-weekdays (not (null year-months)) interval (read count))
+                          (icalendar--yearly-last-date
+                           dtstart-dec (or year-months (list (nth 4 dtstart-dec))) interval (read count)))))
                    (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
                                      (nth 2 dtstart-dec) (cadr last-date)
                                      (car last-date) (nth 2 last-date))
@@ -3088,6 +3231,23 @@ END-T is the event's end time in diary format."
            (icalendar--dmsg "yearly")
            (let ((rule
                   (cond
+                   ((or year-weekdays year-monthdays)
+                    ;; Remacs: year/month ordinals and day selectors share one set.
+                    (let* ((clauses
+                            (delq nil
+                                  (list (and year-months
+                                             (format "(memq (calendar-extract-month date) '%S)" year-months))
+                                        (and year-monthdays (icalendar--monthly-monthday-clause year-monthdays))
+                                        (and year-weekdays
+                                             (icalendar--yearly-weekday-clause
+                                              (cadr (assoc 'BYDAY rrule-props)) (not (null year-months)))))))
+                           (selected (if (cdr clauses)
+                                         (format "(and %s)" (mapconcat #'identity clauses " ")) (car clauses)))
+                           (start-date (list (nth 4 dtstart-dec) (nth 3 dtstart-dec) (nth 5 dtstart-dec))))
+                      (format "(and (or (diary-date %s) %s) %s)" dtstart-conv selected
+                              (if until (format "(diary-block %s %s)" dtstart-conv until-conv)
+                                (format "(<= %d (calendar-absolute-from-gregorian date))"
+                                        (calendar-absolute-from-gregorian start-date))))))
                    (year-months
                     ;; Remacs: BYMONTH expands the year; DTSTART remains an instance.
                     (let* ((day (nth 3 dtstart-dec))
@@ -3123,7 +3283,7 @@ END-T is the event's end time in diary format."
                       (format "(diary-anniversary %s)"
                               (icalendar--datetime-to-diary-date dtstart-1y-dec)))))))
              ;; Remacs: invalid February 29 instances must not shift to March 1.
-             (when (and (not until) (null year-months)
+             (when (and (not until) (null year-months) (null year-weekdays) (null year-monthdays)
                         (= (nth 4 dtstart-dec) 2) (= (nth 3 dtstart-dec) 29))
                (setq rule
                      (format "(and (calendar-leap-year-p (calendar-extract-year date)) %s)"
