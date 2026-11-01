@@ -226,6 +226,14 @@ decode it afterward."
       ;; return the new end of the region, for format.el conversion:
       (marker-position end-marker))))
 
+(defun icalendar--unfolded-buffer-coding-system (coding)
+  "Return a CR-LF coding for unfolded data decoded using CODING.
+Use the iCalendar UTF-8 default when CODING is nil or undecided."
+  ;; Remacs: ASCII-only input can leave an undecided coding after detection.
+  (if (or (null coding) (eq (coding-system-type coding) 'undecided))
+      'prefer-utf-8-dos
+    (coding-system-change-eol-conversion coding 'dos)))
+
 (defun icalendar-unfolded-buffer-from-region (start end &optional buffer)
   "Create a new, unfolded buffer with the same contents as the region.
 
@@ -247,12 +255,9 @@ Returns the new buffer."
       ;; ensure we'll use CR-LF line endings on write, even if they weren't
       ;; in the source data.  The standard also says UTF-8 is the default
       ;; encoding, so use 'prefer-utf-8-dos when last-coding-system-used
-      ;; is nil.
+      ;; is nil or undecided.
       (setq buffer-file-coding-system
-            (if last-coding-system-used
-                (coding-system-change-eol-conversion last-coding-system-used
-                                                     'dos)
-              'prefer-utf-8-dos))
+            (icalendar--unfolded-buffer-coding-system last-coding-system-used))
       ;; inhibit auto-save-mode, which will otherwise create save
       ;; files containing the unfolded data; these are probably
       ;; not useful to the user and a nuisance when running tests:
@@ -311,12 +316,9 @@ arguments VISIT, BEG, END are as in `insert-file-contents'."
             ;; ensure we'll use CR-LF line endings on write, even if they weren't
             ;; in the source data.  The standard also says UTF-8 is the default
             ;; encoding, so use 'prefer-utf-8-dos when last-coding-system-used
-            ;; is nil.  FIXME: for some reason, this doesn't seem to run at all!
+            ;; is nil or undecided.
             (setq buffer-file-coding-system
-                  (if last-coding-system-used
-                      (coding-system-change-eol-conversion last-coding-system-used
-                                                           'dos)
-                    'prefer-utf-8-dos))
+                  (icalendar--unfolded-buffer-coding-system last-coding-system-used))
             ;; restore buffer name after renaming by set-visited-file-name:
             (let ((bname (buffer-name)))
               (set-visited-file-name filename t)
