@@ -1993,6 +1993,8 @@ fn frame_title_specifier(context: &FrameTitleContext<'_>, specifier: char) -> Op
     let mut title = String::new();
     match specifier {
         '%' => title.push('%'),
+        // GNU ignores line and column constructs in native frame titles.
+        'c' | 'C' | 'l' => {}
         'b' => title.push_str(context.buffer_name),
         'f' => title.push_str(context.file_name.unwrap_or_default()),
         'F' => title.push_str(context.frame_name),
