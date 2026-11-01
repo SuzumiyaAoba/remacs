@@ -1345,6 +1345,19 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn raise_without_focus(&self) {
+        let state = self.0.lock();
+        let window = state.native_window;
+        state
+            .executor
+            .spawn(async move {
+                unsafe {
+                    let _: () = msg_send![window, orderFront: nil];
+                }
+            })
+            .detach();
+    }
+
     fn is_active(&self) -> bool {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }

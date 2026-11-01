@@ -13,6 +13,8 @@ use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
 mod fallback_prompts;
+#[cfg(target_os = "macos")]
+mod frame_order;
 
 fn monitor_bounds(x: f32, y: f32, width: f32, height: f32) -> gpui::Bounds<gpui::Pixels> {
     gpui::Bounds::new(point(px(x), px(y)), gpui::size(px(width), px(height)))

@@ -199,6 +199,10 @@ impl PlatformWindow for TestWindow {
         platform.set_active_window(Some(self.clone()))
     }
 
+    fn raise_without_focus(&self) {
+        self.set_visible(true);
+    }
+
     fn is_active(&self) -> bool {
         false
     }
