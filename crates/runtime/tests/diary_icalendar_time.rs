@@ -32,6 +32,23 @@ const CASES: &str = r##"
         (unless (and (= (point-min) begin) (= (point-max) end) (= (point) begin)
                      (equal original (buffer-string)))
           (error "Invalid time consumed input: %S" text)))))
+  ;; Every hour24..29 must be rejected in both fields and all exported forms (#1618).
+  (dolist (hour '(24 25 26 27 28 29))
+    (dolist (pattern '("%02d:00" "%02d:59" "%02dh" "%02dh00" "%02d.59h"))
+      (let ((text (format pattern hour)))
+        (remacs-test-diary-time-reject text)
+        (remacs-test-diary-time-reject (concat "00:00-" text))
+        (remacs-test-diary-time-reject (concat text "-23:59"))
+        (remacs-test-diary-time-reject (concat "  00:00-" text) t)))
+    (dolist (suffix '("AM" "PM"))
+      (remacs-test-diary-time-reject (format "%d:30%s" hour suffix))
+      (remacs-test-diary-time-reject (format "12PM-%d%s" hour suffix))))
+  (dolist (hour '(0 13 14 23))
+    (dolist (suffix '("am" "pm"))
+      (remacs-test-diary-time-reject (format "%d%s" hour suffix))
+      (remacs-test-diary-time-reject (format "12AM-%d:00%s" hour suffix))))
+  (remacs-test-diary-time "23:59-00:00" '(23 59 0) '(0 0 0))
+  (remacs-test-diary-time "1AM-12PM" '(1 0 0) '(12 0 0))
   ;; Reject complete invalid hours, including invalid end fields (#1586).
   (dolist (text '("25:00" "24:00" "29:59" "30:00" "99:00" "100:00" "123:45" "001:00"
                    "0AM" "00:30am" "13PM" "23:00AM" "25h" "25h00" "25.00h" "25.00am"
