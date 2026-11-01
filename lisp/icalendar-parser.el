@@ -1365,27 +1365,28 @@ See `icalendar-read-weekdaynum' for the format of VAL."
 
 (defun icalendar-read-rrule-part (s)
   "Read an `icalendar-rrule-part' from string S.
-S should have been matched against `icalendar-rrule-part'.
+S should match rx `icalendar-rrule-part'.
 The return value is a list (KEYWORD VALUE), where VALUE may
 itself be a list, depending on the values allowed by KEYWORD."
-  ;; TODO: this smells like a design flaw.  Silence the byte compiler for now.
-  (ignore s)
-  (let ((keyword (intern (upcase (match-string 11))))
-        (values (match-string 12)))
-    (list keyword
-      (cl-case keyword
-        (FREQ (intern (upcase values)))
-        (UNTIL (if (length> values 8)
-                   (icalendar-read-date-time values)
-                 (icalendar-read-date values)))
-        ((COUNT INTERVAL)
-         (string-to-number values))
-        ((BYSECOND BYMINUTE BYHOUR BYMONTHDAY BYYEARDAY BYWEEKNO BYMONTH BYSETPOS)
-         (icalendar-read-list-with #'string-to-number values nil ","))
-        (BYDAY
-         (icalendar-read-list-with #'icalendar-read-weekdaynum values
-                              (rx icalendar-weekdaynum) ","))
-        (WKST (cdr (assoc values icalendar-weekday-numbers)))))))
+  (save-match-data
+    ;; Remacs: match the argument independently; the rx is registered below.
+    (string-match (rx-to-string 'icalendar-rrule-part) s)
+    (let ((keyword (intern (upcase (match-string 11 s))))
+          (values (match-string 12 s)))
+      (list keyword
+        (cl-case keyword
+          (FREQ (intern (upcase values)))
+          (UNTIL (if (length> values 8)
+                     (icalendar-read-date-time values)
+                   (icalendar-read-date values)))
+          ((COUNT INTERVAL)
+           (string-to-number values))
+          ((BYSECOND BYMINUTE BYHOUR BYMONTHDAY BYYEARDAY BYWEEKNO BYMONTH BYSETPOS)
+           (icalendar-read-list-with #'string-to-number values nil ","))
+          (BYDAY
+           (icalendar-read-list-with #'icalendar-read-weekdaynum values
+                                (rx icalendar-weekdaynum) ","))
+          (WKST (cdr (assoc values icalendar-weekday-numbers))))))))
 
 (defun icalendar-print-rrule-part (part)
   "Serialize recur rule part PART to a string."
