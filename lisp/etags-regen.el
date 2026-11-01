@@ -260,7 +260,6 @@ is used in buffers that have no alternative completion configured."
                     "\\."
                     (regexp-opt etags-regen-file-extensions)
                     "\\'"))
-         (ir-start (1- (length root)))
          (ignores-regexps
           (mapcar #'etags-regen--ignore-regexp
                   etags-regen-ignores))
@@ -268,24 +267,35 @@ is used in buffers that have no alternative completion configured."
     (cl-delete-if
      (lambda (f) (or (not (string-match-p match-re f))
                 (string-match-p "/\\.#" f) ;Backup files.
-                (cl-some (lambda (ignore) (string-match-p ignore f ir-start))
-                         ignores-regexps)))
+                (let ((relative-name
+                       (etags-regen--project-relative-name f root)))
+                  (cl-some (lambda (ignore)
+                             (string-match-p ignore relative-name))
+                           ignores-regexps))))
      files)))
+
+(defun etags-regen--project-relative-name (file root)
+  "Return FILE as a slash-prefixed path relative to project ROOT.
+Use the same path coordinate for full scans and incremental updates."
+  (concat "/" (file-relative-name file (file-name-as-directory root))))
 
 (defun etags-regen--ignore-regexp (ignore)
   (require 'dired)
   ;; It's somewhat brittle to rely on Dired.
-  (let ((re (dired-glob-regexp ignore)))
-    ;; We could implement root anchoring here, but \\= doesn't work in
-    ;; string-match :-(.
-    (concat (unless (eq ?/ (aref re 3)) "/")
-            ;; Cutting off the anchors added by `dired-glob-regexp'.
-            (substring re 2 (- (length re) 2))
-            ;; This way we allow a glob to match against a directory
-            ;; name, or a file name.  And when it ends with / already,
-            ;; no need to add the anchoring.
-            (unless (eq ?/ (aref re (- (length re) 3)))
-              ;; Either match a full name segment, or eos.
+  (let* ((rooted (string-prefix-p "./" ignore))
+         (glob (if rooted (substring ignore 2) ignore))
+         (re (dired-glob-regexp glob))
+         ;; Cutting off the anchors added by `dired-glob-regexp'.
+         (body (substring re 2 (- (length re) 2)))
+         (directory-only (and (> (length ignore) 0)
+                              (eq (aref ignore (1- (length ignore))) ?/))))
+    ;; All matching strings start with a slash relative to the project root.
+    ;; Rooted ignores anchor there; ordinary ignores may match later too.
+    (concat (if rooted "\\`/" "/")
+            body
+            ;; A trailing slash matches directories and their contents.
+            ;; Otherwise, don't let e.g. "build" match "builder".
+            (unless directory-only
               "\\(?:/\\|\\'\\)"))))
 
 (defun etags-regen--process-file-region ( start end program
@@ -396,8 +406,8 @@ their command-line syntax, including the documented \"ctags -e\"."
   (let* ((file-name buffer-file-name)
          (tags-file-buf (and etags-regen--tags-root
                              (get-file-buffer etags-regen--tags-file)))
-         (relname (concat "/" (file-relative-name file-name
-                                                  etags-regen--tags-root)))
+         (relname (etags-regen--project-relative-name
+                   file-name etags-regen--tags-root))
          (fun (if (equal (file-name-directory etags-regen--tags-file)
                          (expand-file-name etags-regen--tags-root))
                   #'file-relative-name #'file-local-name))
