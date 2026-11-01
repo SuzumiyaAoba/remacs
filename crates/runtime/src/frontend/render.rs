@@ -7700,6 +7700,7 @@ fn render_grid_internal(
             continue;
         }
         let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
+        let use_buffer_point = selected_frame && selected_window;
         // Untagged legacy input refers to this frame's selected window.
         let mouse_position = mouse_position.filter(|position| {
             position.buffer_id == buf_id
@@ -7830,7 +7831,7 @@ fn render_grid_internal(
                     )
                 };
                 let bb = b.borrow();
-                let pt = (if std::rc::Rc::ptr_eq(w, &fb.selected) {
+                let pt = (if use_buffer_point {
                     bb.point()
                 } else {
                     w.borrow().point
@@ -8240,7 +8241,7 @@ fn render_grid_internal(
                     } else {
                         le
                     };
-                    let point = if selected_window {
+                    let point = if use_buffer_point {
                         bb.point()
                     } else {
                         w.borrow().point
@@ -9020,7 +9021,7 @@ fn render_grid_internal(
         w.borrow_mut().redisplay_end = Some((buf_id, tick, start, visible_end));
         let mode_point = i.buffers.get(buf_id).map_or(0, |buffer| {
             let bb = buffer.borrow();
-            (if selected_window {
+            (if use_buffer_point {
                 bb.point()
             } else {
                 w.borrow().point
