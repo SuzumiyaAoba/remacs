@@ -311,7 +311,8 @@ TABLE must be at point in the current buffer."
               (line (elt (vtable--cache-lines cache) line-number)))
         (with-current-buffer (vtable-buffer table)
           (let ((inhibit-read-only t)
-                (inhibit-modification-hooks t))
+                (inhibit-modification-hooks t)
+                (old-values (cdr line)))
             (setcar line object)
             (setcdr line (vtable--compute-cached-line table object))
             ;; ... and redisplay the line in question.
@@ -325,9 +326,9 @@ TABLE must be at point in the current buffer."
                                      (vtable--spacer table))
                 (add-text-properties start (point) (list 'keymap keymap
                                                          'vtable table))))
-            ;; We may have inserted a non-numerical value into a previously
-            ;; all-numerical table, so recompute.
-            (vtable--recompute-numerical table (cdr line))))
+            ;; The object's values may have changed between numerical and
+            ;; non-numerical, so recompute.
+            (vtable--recompute-numerical table (cdr line) old-values)))
       (error "Can't find cached object in vtable"))))
 
 (defun vtable-remove-object (table object)
@@ -856,18 +857,21 @@ If NEXT, do the next column."
                                         (1- column))
                                       (- end-x start-x)))))))
 
-(defun vtable--recompute-numerical (table line)
-  "Recompute numericalness of columns if necessary."
+(defun vtable--recompute-numerical (table line &optional old-values)
+  "Recompute numericalness of columns if necessary.
+OLD-VALUES, when non-nil, are the cached cells before a row update."
   (let ((columns (vtable-columns table))
-        (recompute nil))
+        (indices nil))
     (seq-do-indexed
      (lambda (elem index)
-       (when (and (vtable-column--numerical (elt columns index))
-                  (not (numberp (car elem))))
-         (setq recompute t)))
+       (when (or (and old-values
+                      (not (eq (numberp (car elem))
+                               (numberp (car (nth index old-values))))))
+                 (and (vtable-column--numerical (elt columns index))
+                      (not (numberp (car elem)))))
+         (push index indices)))
      line)
-    (when recompute
-      (vtable--compute-columns table t))))
+    (vtable--recompute-numerical-columns table (nreverse indices) line)))
 
 (defun vtable--recompute-numerical-columns (table indices &optional new-line)
   "Recompute numerical metadata for INDICES from the current cache.
