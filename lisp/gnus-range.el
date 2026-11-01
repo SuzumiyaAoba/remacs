@@ -284,7 +284,7 @@ ranges."
     (while (and list (< (car list) num))
       (setq prev list
 	    list (cdr list)))
-    (unless (eq (car list) num)
+    (unless (and list (= (car list) num))
       (setcdr prev (cons num list)))
     (cdr top)))
 
