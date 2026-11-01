@@ -1242,13 +1242,17 @@ to pass both END and DURATION, or neither."
 
 (defun icalendar-read-period (s)
   "Read an `icalendar-period' from a string S.
-S should have been matched against rx `icalendar-period'."
-  ;; TODO: this smells like a design flaw.  Silence the byte compiler for now.
-  (ignore s)
-  (let ((start (icalendar-read-date-time (match-string 11)))
-        (end (when (match-string 12) (icalendar-read-date-time (match-string 12))))
-        (dur (when (match-string 13) (icalendar-read-dur-value (match-string 13)))))
-    (icalendar-make-period start :end end :duration dur)))
+S should match rx `icalendar-period'."
+  (save-match-data
+    ;; Remacs: match the argument independently; the rx is registered below.
+    (string-match (rx-to-string 'icalendar-period) s)
+    (let ((start (match-string 11 s))
+          (end (match-string 12 s))
+          (dur (match-string 13 s)))
+      (icalendar-make-period
+       (icalendar-read-date-time start)
+       :end (when end (icalendar-read-date-time end))
+       :duration (when dur (icalendar-read-dur-value dur))))))
 
 (defun icalendar-print-period (per)
   "Serialize an `icalendar-period' to a string."
