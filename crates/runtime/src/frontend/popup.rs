@@ -70,6 +70,23 @@ impl PopupMenuEntry {
 /// GNU keyboard.c menu_item_eval_property: dynamic eval with redisplay
 /// inhibited, caught conditions becoming nil, and quit still propagating.
 fn eval_property(i: &mut Interp, form: &Value) -> EvalResult {
+    protected_menu_eval(i, None, |i| {
+        crate::lisp::builtins::evalfn::f_eval(i, vec![form.clone(), Value::Nil].into())
+    })
+}
+
+/// GNU safe_funcall: errors and quits are logged without opening the debugger.
+pub(super) fn safe_menu_call(i: &mut Interp, function: Value, args: Vec<Value>) -> EvalResult {
+    protected_menu_eval(i, Some((function.clone(), args.clone())), |i| {
+        i.apply(&function, args)
+    })
+}
+
+fn protected_menu_eval(
+    i: &mut Interp,
+    safe_call: Option<(Value, Vec<Value>)>,
+    evaluate: impl FnOnce(&mut Interp) -> EvalResult,
+) -> EvalResult {
     let mark = i.specbind_depth();
     let inhibit = i.q("inhibit-redisplay");
     if let Err(flow) = i.specbind(inhibit, Value::t()) {
@@ -78,18 +95,36 @@ fn eval_property(i: &mut Interp, form: &Value) -> EvalResult {
     }
     let depth = i.case_handlers.len();
     i.case_handlers.push(CaseHandler::single(Value::t()));
-    let result = crate::lisp::builtins::evalfn::f_eval(i, vec![form.clone(), Value::Nil].into());
+    let result = evaluate(i);
     let result = i.offer_flow(result);
     i.case_handlers.truncate(depth);
     let result = match result {
         Err(Flow::Signal(signal)) if signal.claims_frame(depth) => {
             let quit = signal.is_symbol(sym::QUIT);
             i.finish_quit_unwind();
-            if quit {
+            if let Some((function, args)) = &safe_call {
+                let call = Value::list(
+                    std::iter::once(function.clone())
+                        .chain(args.iter().cloned())
+                        .collect(),
+                );
+                let log = format!(
+                    "Error muted by safe_call: {} signaled {}",
+                    i.prin1_to_string(&call),
+                    i.prin1_to_string(&signal.condition)
+                );
+                i.message_log(&log);
+                Ok(Value::Nil)
+            } else if quit {
                 Err(Flow::Quit)
             } else {
                 Ok(Value::Nil)
             }
+        }
+        Err(Flow::Quit) if safe_call.is_some() => {
+            i.finish_quit_unwind();
+            i.message_log("Error muted by safe_call: menu computation signaled quit");
+            Ok(Value::Nil)
         }
         Err(flow) => {
             i.rebase_quit_unwind();
@@ -202,6 +237,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
 
 pub(super) struct ParsedMenuItem {
     pub(super) label: String,
+    pub(super) name: Value,
     pub(super) definition: Value,
     pub(super) separator: bool,
     pub(super) enabled: bool,
@@ -338,6 +374,7 @@ pub(super) fn keymap_item(
             let separator = menu_separator_name_p(&label);
             return Ok(Some(ParsedMenuItem {
                 label,
+                name: Value::Str(name),
                 definition,
                 separator,
                 enabled,
@@ -348,8 +385,13 @@ pub(super) fn keymap_item(
         }
     }
     let (label, definition, separator) = menu_label_and_definition(i, key, binding);
+    let name = match binding {
+        Value::Cons(cell) if matches!(cell.borrow().car, Value::Str(_)) => cell.borrow().car.clone(),
+        _ => Value::string(label.clone()),
+    };
     Ok(Some(ParsedMenuItem {
         label,
+        name,
         definition,
         separator,
         enabled: true,

@@ -180,6 +180,9 @@ native menu は共通コマンドループの描画準備で、選択中フレ�
 読み取り専用の描画処理と GUI スレッドには、評価済みのラベル・コマンド・サブメニュー・チェック状態・キー表示を渡す。
 無効な項目は action を持たないメニュー項目へ変換し、OS に無効状態を明示する。
 キー割り当ての検証と検索は runtime で行い、Cocoa の複数キー列は右寄せのタブ列に描画する。
+メニューの入力元は、文字プロパティ・emulation/minor-mode・local・global map から集める。
+同じメニューキーの定義は優先順位を保って pane に束ね、継承・composed map は正規化してから評価する。
+override map は `overriding-local-map-menu-flag` に従って適用し、計算中の一時束縛を復元する。
 
 GUI も CLI と同じ起動処理を使うが、GUI 単独ビルドでは crossterm に依存しない。
 統合バイナリは GUI と端末の両方を提供し、`--no-default-features` で GUI を除外できる。

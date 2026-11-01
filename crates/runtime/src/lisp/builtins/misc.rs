@@ -81,6 +81,7 @@ use bool_vectors::{
 use crate::editor::err_sym;
 use crate::editor::is_keymap;
 mod keymaps;
+pub(crate) use keymaps::menu_bar_maps;
 use keymaps::{
     f_accessible_keymaps, f_current_active_maps, f_describe_bindings, f_keymap_canonicalize,
     f_keymap_get_keyelt, f_make_composed_keymap, f_map_keymap, f_map_keymap_internal,

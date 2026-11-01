@@ -7756,7 +7756,7 @@ pub(crate) fn is_keymap(i: &Interp, v: &Value) -> bool {
 /// Otherwise returns DEF unchanged.
 pub(crate) fn keymap_def(i: &mut Interp, def: Value) -> EvalResult {
     if let Value::Sym(s) = &def {
-        if let f @ Value::Cons(_) = i.symbol_function(*s) {
+        if let f @ Value::Cons(_) = i.indirect_function_value(&Value::Sym(*s)) {
             if is_keymap(i, &f) {
                 return Ok(f);
             }

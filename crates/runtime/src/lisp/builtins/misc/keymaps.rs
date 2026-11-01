@@ -60,16 +60,17 @@ pub(super) fn f_keymap_canonicalize(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         },
     )?;
     let dk = Value::Sym(i.q("define-key"));
-    for (lo, hi, def) in ranges {
+    for (lo, hi, def) in ranges.into_iter().rev() {
         let rk = Value::cons(Value::Int(lo), Value::Int(hi));
         let kv = Value::vector(vec![rk]);
         i.apply(&dk, vec![map.clone(), kv, def])?;
     }
-    // Merge duplicate keys; GNU pushes each binding then nconcs, so the
-    // result's alist is reversed (later bindings come first).
+    // GNU first pushes the traversal into a list, then folds that list from
+    // low precedence to high precedence. Move each replacement to the front
+    // of the final alist, preserving the first occurrence's original order.
     let merge = Value::Sym(i.q("keymap--merge-bindings"));
     let mut out: Vec<Value> = Vec::new();
-    for b in bindings {
+    for b in bindings.into_iter().rev() {
         let key = match &b {
             Value::Cons(c) => c.borrow().car.clone(),
             _ => continue,
@@ -89,7 +90,8 @@ pub(super) fn f_keymap_canonicalize(i: &mut Interp, a: crate::lisp::Argv) -> Eva
                     _ => Value::Nil,
                 };
                 let merged = i.apply(&merge, vec![newdef, olddef])?;
-                out[pos] = Value::cons(key, merged);
+                out.remove(pos);
+                out.push(Value::cons(key, merged));
             }
         }
     }
@@ -569,6 +571,96 @@ pub(super) fn f_make_composed_keymap(i: &mut Interp, a: crate::lisp::Argv) -> Ev
         tail = Value::cons(m.clone(), tail);
     }
     Ok(Value::cons(Value::Sym(i.q("keymap")), tail))
+}
+
+/// GNU keyboard.c's menu-bar source order, highest priority first.
+pub(crate) fn menu_bar_maps(i: &mut Interp) -> Result<Vec<Value>, Flow> {
+    let flag = i.q("overriding-local-map-menu-flag");
+    let use_overrides = i.symbol_value(flag).truthy();
+    let terminal = i.q("overriding-terminal-local-map");
+    let terminal = i.symbol_value(terminal);
+    let local = i.q("overriding-local-map");
+    let local = i.symbol_value(local);
+    let mut maps = Vec::new();
+    if use_overrides && !local.is_nil() {
+        if !terminal.is_nil() {
+            maps.push(terminal);
+        }
+        maps.push(local);
+    } else {
+        // Capture mode maps before reading point properties, as in GNU.
+        let minors = crate::editor::current_minor_maps(i)?;
+        if use_overrides && !terminal.is_nil() {
+            maps.push(terminal);
+        }
+        let property = menu_local_map(i, "keymap")?;
+        if !property.is_nil() {
+            maps.push(property);
+        }
+        maps.extend(minors.into_iter().map(|(_, map)| map));
+        maps.push(menu_local_map(i, "local-map")?);
+    }
+    let global = i.q("global-map");
+    maps.push(i.symbol_value(global));
+    Ok(maps)
+}
+
+/// get_local_map ignores narrowing and falls back to BUFFER's local map.
+fn menu_local_map(i: &mut Interp, name: &str) -> EvalResult {
+    let buffer = crate::editor::cur(i);
+    let (begv, zv, position) = {
+        let buffer = buffer.borrow();
+        (
+            buffer.begv,
+            buffer.zv,
+            buffer.point().clamp(buffer.begv, buffer.zv),
+        )
+    };
+    let mark = i.specbind_depth();
+    let inhibit = i.q("inhibit-quit");
+    if let Err(flow) = i.specbind(inhibit, Value::t()) {
+        let _ = i.unbind_to(mark);
+        return Err(flow);
+    }
+    {
+        let mut buffer = buffer.borrow_mut();
+        buffer.begv = 0;
+        buffer.zv = buffer.text.len();
+    }
+    let property = Value::Sym(i.q(name));
+    let args = vec![
+        Value::Int(position as i128 + 1),
+        property,
+        Value::Buffer(buffer.clone()),
+    ];
+    let result =
+        crate::buffer::primitives::f_get_char_property(i, args.clone().into()).and_then(|value| {
+            if value.is_nil() {
+                crate::buffer::primitives::f_get_pos_property(i, args.into())
+            } else {
+                Ok(value)
+            }
+        });
+    {
+        let mut buffer = buffer.borrow_mut();
+        buffer.begv = begv;
+        buffer.zv = zv;
+    }
+    i.unbind_to(mark)?;
+    let property = crate::editor::keymap_def_noautoload(i, &result?);
+    if is_keymap(i, &property) {
+        Ok(property)
+    } else if name == "local-map" {
+        let local = i.q("local-keymap");
+        Ok(buffer
+            .borrow()
+            .locals
+            .get(&local)
+            .cloned()
+            .unwrap_or(Value::Nil))
+    } else {
+        Ok(Value::Nil)
+    }
 }
 
 pub(super) fn f_current_active_maps(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
