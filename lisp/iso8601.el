@@ -706,6 +706,45 @@ UNIT-SECONDS is the nominal length of the component."
    (t
     (signal 'wrong-type-argument (list string)))))
 
+(defun iso8601--encode-time-exact (time)
+  "Encode decoded TIME without rounding its fractional second to picoseconds."
+  (let* ((time (copy-sequence time))
+         (second (decoded-time-second time))
+         (whole-second (if (consp second)
+                           (truncate (car second) (cdr second))
+                         (or second 0)))
+         (fractional-ticks (if (consp second)
+                               (- (car second)
+                                  (* whole-second (cdr second)))
+                             0))
+         (fractional-hz (and (consp second) (cdr second))))
+    (setf (decoded-time-second time) whole-second)
+    (let ((encoded (iso8601--encode-time time)))
+      (if (zerop fractional-ticks)
+          encoded
+        ;; TIME-CONVERT's TICKS/HZ form keeps sub-picosecond fractions exact.
+        (time-add encoded
+                  (time-convert (cons fractional-ticks fractional-hz) 't))))))
+
+(defun iso8601--elapsed-duration (elapsed-time)
+  "Return ELAPSED-TIME as an elapsed `decoded-time' duration."
+  (let* ((tick-ratio (time-convert elapsed-time 't))
+         (ticks (car tick-ratio))
+         (hz (cdr tick-ratio))
+         (elapsed-seconds (truncate ticks hz))
+         (fractional-ticks (- ticks (* elapsed-seconds hz)))
+         (days (truncate elapsed-seconds 86400))
+         (after-days (- elapsed-seconds (* days 86400)))
+         (hours (truncate after-days 3600))
+         (after-hours (- after-days (* hours 3600)))
+         (minutes (truncate after-hours 60))
+         (second-integer (- after-hours (* minutes 60)))
+         (second (iso8601--fractional-value
+                  (+ (* second-integer hz) fractional-ticks)
+                  hz)))
+    (iso8601--decoded-time :year 0 :month 0 :day days
+                           :hour hours :minute minutes :second second)))
+
 (defun iso8601-parse-interval (string)
   "Parse ISO 8601 intervals."
   (let ((bits (split-string string "/"))
@@ -743,13 +782,9 @@ UNIT-SECONDS is the nominal length of the component."
                                             duration))))
     (list start end
           (or duration
-	      ;; FIXME: Support subseconds.
-	      ;; FIXME: It makes no sense to decode a time difference
-	      ;; according to (decoded-time-zone end), or according to
-	      ;; any other time zone for that matter.
-              (decode-time (time-subtract (iso8601--encode-time end)
-                                          (iso8601--encode-time start))
-			   (or (decoded-time-zone end) 0) t)))))
+              (iso8601--elapsed-duration
+               (time-subtract (iso8601--encode-time-exact end)
+                              (iso8601--encode-time-exact start)))))))
 
 (defun iso8601--match (regexp string)
   (let ((case-fold-search t))
