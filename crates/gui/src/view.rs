@@ -13,7 +13,7 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridCursor, GridImage,
     GridImageSource,
-    GridMenu, GridMenuItem, GridPointerShape, GridPopupMenuItem, GridScrollBar,
+    GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridTabBarItem, GridToolBarItem, GridVScroll,
     MouseButton as RemacsMouseButton, QuitRequest,
 };
@@ -23,13 +23,18 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     mpsc::Sender,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 mod input;
 mod fringe;
 #[cfg(test)]
 mod mouse_tests;
 #[cfg(test)]
 mod autoselect_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod popup_hit_tests;
 // The test platform uses window activation for cursor ownership on macOS.
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
@@ -529,22 +534,56 @@ fn tab_bar_command_at(
         })
 }
 
-fn popup_menu_event_at(
-    items: &[GridPopupMenuItem],
-    point: Point<Pixels>,
-    cell_width: Pixels,
+#[derive(Clone)]
+struct PopupMenuHitRegion {
+    menu_id: usize,
+    selection: Option<usize>,
+    bounds: Bounds<Pixels>,
+}
+
+fn popup_menu_hit_regions(
+    grid: &Grid,
+    lines: &[ShapedLine],
     line_height: Pixels,
-) -> Option<GuiEvent> {
-    let menu_id = items.first()?.menu_id;
-    let column = (f32::from(point.x) / f32::from(cell_width))
-        .floor()
-        .max(0.0) as usize;
-    let row = (f32::from(point.y) / f32::from(line_height))
-        .floor()
-        .max(0.0) as usize;
-    let hit = items
+) -> Vec<PopupMenuHitRegion> {
+    grid.popup_menu_items
         .iter()
-        .find(|item| item.row == row && column >= item.left && column < item.left + item.width);
+        .filter_map(|item| {
+            let (start, end) = item.byte_range?;
+            let text = grid.rows.get(item.row)?;
+            let line = lines.get(item.row)?;
+            let selected = text.get(start..end)?;
+            let mut left = grid_line_x(grid, item.row, line, start);
+            let mut right = left;
+            for byte in selected
+                .char_indices()
+                .map(|(byte, _)| start + byte)
+                .chain(std::iter::once(end))
+            {
+                let x = grid_line_x(grid, item.row, line, byte);
+                left = left.min(x);
+                right = right.max(x);
+            }
+            (right > left).then(|| PopupMenuHitRegion {
+                menu_id: item.menu_id,
+                selection: item.selection,
+                bounds: Bounds {
+                    origin: point(left, grid_row_top(grid, item.row, line_height)),
+                    size: size(right - left, grid_row_height(grid, item.row, line_height)),
+                },
+            })
+        })
+        .collect()
+}
+
+fn popup_menu_event_at(items: &[PopupMenuHitRegion], point: Point<Pixels>) -> Option<GuiEvent> {
+    let menu_id = items.first()?.menu_id;
+    let hit = items.iter().find(|item| {
+        point.x >= item.bounds.left()
+            && point.x < item.bounds.right()
+            && point.y >= item.bounds.top()
+            && point.y < item.bounds.bottom()
+    });
     match hit {
         Some(item) => item.selection.map(|index| GuiEvent::PopupMenuSelection {
             menu_id,
@@ -564,41 +603,39 @@ mod popup_selection_tests {
     #[::core::prelude::v1::test]
     fn popup_click_returns_a_choice_or_dismissal_without_a_command() {
         let items = [
-            GridPopupMenuItem {
+            PopupMenuHitRegion {
                 menu_id: 23,
                 selection: Some(4),
-                row: 2,
-                left: 4,
-                width: 10,
-                command: Some("must-not-execute".into()),
+                bounds: Bounds {
+                    origin: point(px(32.0), px(40.0)),
+                    size: size(px(80.0), px(20.0)),
+                },
             },
-            GridPopupMenuItem {
+            PopupMenuHitRegion {
                 menu_id: 23,
                 selection: None,
-                row: 3,
-                left: 4,
-                width: 10,
-                command: None,
+                bounds: Bounds {
+                    origin: point(px(32.0), px(60.0)),
+                    size: size(px(80.0), px(20.0)),
+                },
             },
         ];
         assert!(matches!(
-            popup_menu_event_at(&items, point(px(40.0), px(40.0)), px(8.0), px(20.0)),
+            popup_menu_event_at(&items, point(px(40.0), px(40.0))),
             Some(GuiEvent::PopupMenuSelection {
                 menu_id: 23,
                 index: Some(4)
             })
         ));
         assert!(matches!(
-            popup_menu_event_at(&items, point(px(0.0), px(0.0)), px(8.0), px(20.0)),
+            popup_menu_event_at(&items, point(px(0.0), px(0.0))),
             Some(GuiEvent::PopupMenuSelection {
                 menu_id: 23,
                 index: None
             })
         ));
-        assert!(
-            popup_menu_event_at(&items, point(px(40.0), px(60.0)), px(8.0), px(20.0)).is_none()
-        );
-        assert!(popup_menu_event_at(&[], point(px(0.0), px(0.0)), px(8.0), px(20.0)).is_none());
+        assert!(popup_menu_event_at(&items, point(px(40.0), px(60.0))).is_none());
+        assert!(popup_menu_event_at(&[], point(px(0.0), px(0.0))).is_none());
     }
 }
 
@@ -614,6 +651,7 @@ pub(super) struct EditorView {
     image_cache_size: Arc<AtomicUsize>,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
+    popup_hit_regions: Rc<RefCell<Vec<PopupMenuHitRegion>>>,
     modifier_mapping: ModifierMapping,
     internal_border_width: usize,
     alpha_background: u8,
@@ -683,6 +721,7 @@ impl EditorView {
             image_cache_size: Arc::new(AtomicUsize::new(0)),
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
+            popup_hit_regions: Rc::new(RefCell::new(Vec::new())),
             modifier_mapping: ModifierMapping::default(),
             internal_border_width: 0,
             alpha_background: 100,
@@ -1195,6 +1234,8 @@ impl Render for EditorView {
         let external_text_drop_tx = self.tx.clone();
         let left_mouse_down_tx = self.tx.clone();
         let left_mouse_down_grid = mouse_grid.clone();
+        let popup_hit_for_input = self.popup_hit_regions.clone();
+        let popup_hit_for_shape = self.popup_hit_regions.clone();
         let left_mouse_down_modifiers = physical_modifier_state.clone();
         let left_mouse_up_tx = self.tx.clone();
         let left_mouse_up_grid = mouse_grid.clone();
@@ -1344,10 +1385,8 @@ impl Render for EditorView {
                         if !left_mouse_down_grid.popup_menu_items.is_empty() {
                             this.toolbar_pressed = true;
                             if let Some(event) = popup_menu_event_at(
-                                &left_mouse_down_grid.popup_menu_items,
+                                &popup_hit_for_input.borrow(),
                                 point,
-                                cell_width,
-                                line_height,
                             ) {
                                 let _ = left_mouse_down_tx.send(event);
                             }
@@ -1852,6 +1891,7 @@ impl Render for EditorView {
                                 )
                             })
                             .collect();
+                        *popup_hit_for_shape.borrow_mut() = popup_menu_hit_regions(&grid, &shaped, line_height);
                         (shaped, grid)
                     },
                     move |bounds, (lines, grid), window, _cx| {

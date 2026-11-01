@@ -217,6 +217,8 @@ pub struct GridPopupMenuItem {
     pub row: usize,
     pub left: usize,
     pub width: usize,
+    /// UTF-8 byte range in the composed row, resolved after cell composition.
+    pub byte_range: Option<(usize, usize)>,
     pub command: Option<String>,
 }
 
@@ -3286,6 +3288,7 @@ fn render_popup_menu(
             row: item_row,
             left: left.saturating_add(1),
             width: menu_width.saturating_sub(2),
+            byte_range: None,
             command: if item.separator {
                 None
             } else {
@@ -9435,6 +9438,16 @@ fn render_grid_internal(
             .retain(|buffer_id, _| {
                 *buffer_id == active_buffer || visible_buffers.contains(buffer_id)
             });
+    }
+    for item in &mut popup_menu_items {
+        if let Some(offsets) = cell_offsets.get(item.row)
+            && let (Some(start), Some(end)) = (
+                offsets.get(item.left),
+                offsets.get(item.left.saturating_add(item.width)),
+            )
+        {
+            item.byte_range = Some((*start, *end));
+        }
     }
     let mut grid = Grid {
         title,

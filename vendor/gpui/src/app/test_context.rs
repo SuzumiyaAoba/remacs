@@ -122,10 +122,20 @@ impl AppContext for TestAppContext {
 impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
+        Self::build_with_text_system(dispatcher, fn_name, Arc::new(crate::platform::NoopTextSystem))
+    }
+
+    fn build_with_text_system(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        platform_text_system: Arc<dyn crate::PlatformTextSystem>,
+    ) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let platform = TestPlatform::with_text_system(
+            background_executor.clone(), foreground_executor.clone(), platform_text_system,
+        );
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -146,6 +156,13 @@ impl TestAppContext {
     pub fn single() -> Self {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         Self::build(dispatcher, None)
+    }
+
+    /// Creates a test application backed by Core Text instead of placeholder glyph metrics.
+    #[cfg(target_os = "macos")]
+    pub fn single_with_native_text_system() -> Self {
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
+        Self::build_with_text_system(dispatcher, None, Arc::new(crate::platform::MacTextSystem::new()))
     }
 
     /// The name of the test function that created this `TestAppContext`
