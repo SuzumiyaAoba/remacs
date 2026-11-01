@@ -206,6 +206,11 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
     if !i.symbol_value(mode).truthy() {
         return Ok(Vec::new());
     }
+    // GNU runs activation and update hooks before collecting menu maps.
+    // Each callback uses safe_run_hooks error handling, like command hooks.
+    for hook in ["activate-menubar-hook", "menu-bar-update-hook"] {
+        crate::lisp::builtins::evalfn::safe_call_hook(i, hook)?;
+    }
     let mut pending = Vec::new();
     for entry in collect_menu_bar(i)? {
         let command = match entry.definitions.first() {
