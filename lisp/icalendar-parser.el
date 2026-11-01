@@ -1052,19 +1052,20 @@ When read, a date-time is a decoded time, i.e. a list in the format
   "Read an `icalendar-dur-value' from a string S.
 S should be a match against rx `icalendar-dur-value'."
   (save-match-data
-    (string-match (rx icalendar-dur-value) s)
-    (let ((sign (if (equal (match-string 20) "-") -1 1)))
-      (if (match-string 15)
+    ;; Remacs: the duration rx is registered later in this source file.
+    (string-match (rx-to-string 'icalendar-dur-value) s)
+    (let ((sign (if (equal (match-string 20 s) "-") -1 1)))
+      (if (match-string 15 s)
           ;; dur-value specified in weeks, so just return an integer:
-          (* sign (string-to-number (match-string 15)))
+          (* sign (string-to-number (match-string 15 s)))
         ;; otherwise, make a time delta from the other units:
-        (let* ((days (match-string 16))
+        (let* ((days (match-string 16 s))
                (ndays (* sign (if days (string-to-number days) 0)))
-               (hours (match-string 17))
+               (hours (match-string 17 s))
                (nhours (* sign (if hours (string-to-number hours) 0)))
-               (minutes (match-string 18))
+               (minutes (match-string 18 s))
                (nminutes (* sign (if minutes (string-to-number minutes) 0)))
-               (seconds (match-string 19))
+               (seconds (match-string 19 s))
                (nseconds (* sign (if seconds (string-to-number seconds) 0))))
           (make-decoded-time :second nseconds :minute nminutes :hour nhours
                              :day ndays))))))
