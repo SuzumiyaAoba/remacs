@@ -3491,13 +3491,14 @@ parameter."
 
 (defun icalendar-read-req-status-info (s)
   "Read a request status value from S.
-S should have been previously matched against `icalendar-request-status-info'."
-  ;; TODO: this smells like a design flaw.  Silence the byte compiler for now.
-  (ignore s)
-  (let ((code (match-string 11))
-        (desc (match-string 12))
-        (exdata (match-string 13)))
-    (list code (icalendar-read-text desc) (when exdata (icalendar-read-text exdata)))))
+S should match rx `icalendar-req-status-info'."
+  (save-match-data
+    ;; Remacs: match the argument independently; the rx is registered below.
+    (string-match (rx-to-string 'icalendar-req-status-info) s)
+    (let ((code (match-string 11 s))
+          (desc (match-string 12 s))
+          (exdata (match-string 13 s)))
+      (list code (icalendar-read-text desc) (when exdata (icalendar-read-text exdata))))))
 
 (defun icalendar-print-req-status-info (rsi)
   "Serialize request status info value RSI to a string."
