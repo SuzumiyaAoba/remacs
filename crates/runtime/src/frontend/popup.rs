@@ -1,6 +1,6 @@
 use super::{
     PopupMenuPosition,
-    render::{menu_keymap_from_definition, menu_label_and_definition},
+    render::{menu_keymap_from_definition, menu_label_and_definition, menu_separator_name_p},
 };
 use crate::lisp::{
     Interp, Value,
@@ -219,7 +219,7 @@ pub(super) fn keymap_item(
             let enabled = matches!(properties.enable, Value::Sym(symbol) if symbol == sym::T)
                 || eval_property(i, &properties.enable)?.truthy();
             let label = name.borrow().to_unicode_lossy();
-            let separator = label == "--" || label.contains("separator");
+            let separator = menu_separator_name_p(&label);
             return Ok(Some(ParsedMenuItem {
                 label,
                 definition,

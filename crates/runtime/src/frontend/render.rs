@@ -2762,6 +2762,32 @@ fn menu_key_name(i: &Interp, key: &Value) -> String {
     }
 }
 
+/// GNU keyboard.c's separator names, including empty/single-dash compatibility.
+pub(super) fn menu_separator_name_p(label: &str) -> bool {
+    // GNU passes a C string to the native menu constructor.
+    let label = label.split('\0').next().unwrap_or_default();
+    label.bytes().all(|byte| byte == b'-')
+        || matches!(
+            label.strip_prefix("--"),
+            Some(
+                "space"
+                    | "no-line"
+                    | "single-line"
+                    | "double-line"
+                    | "single-dashed-line"
+                    | "double-dashed-line"
+                    | "shadow-etched-in"
+                    | "shadow-etched-out"
+                    | "shadow-etched-in-dash"
+                    | "shadow-etched-out-dash"
+                    | "shadow-double-etched-in"
+                    | "shadow-double-etched-out"
+                    | "shadow-double-etched-in-dash"
+                    | "shadow-double-etched-out-dash"
+            )
+        )
+}
+
 pub(super) fn menu_label_and_definition(
     i: &Interp,
     key: &Value,
@@ -2771,11 +2797,9 @@ pub(super) fn menu_label_and_definition(
     if let Value::Cons(cell) = definition {
         let head = cell.borrow().car.clone();
         if let Value::Str(label) = &head {
-            return (
-                label.borrow().to_unicode_lossy(),
-                cell.borrow().cdr.clone(),
-                false,
-            );
+            let label = label.borrow().to_unicode_lossy();
+            let separator = menu_separator_name_p(&label);
+            return (label, cell.borrow().cdr.clone(), separator);
         }
         if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "menu-item") {
             if let Ok(items) = definition.list_to_vec() {
@@ -2787,18 +2811,18 @@ pub(super) fn menu_label_and_definition(
                     })
                     .unwrap_or_else(|| fallback.clone());
                 let definition = items.get(2).cloned().unwrap_or(Value::Nil);
-                let separator = label == "--" || label.contains("separator");
+                let separator = menu_separator_name_p(&label);
                 return (label, definition, separator);
             }
         }
     }
-    let separator = fallback.contains("separator")
-        || matches!(definition, Value::Str(label) if label.borrow().to_unicode_lossy() == "--");
-    if separator {
-        ("--".to_owned(), Value::Nil, true)
-    } else {
-        (fallback, definition.clone(), false)
+    if let Value::Str(label) = definition {
+        let label = label.borrow().to_unicode_lossy();
+        if menu_separator_name_p(&label) {
+            return (label, Value::Nil, true);
+        }
     }
+    (fallback, definition.clone(), false)
 }
 
 pub(super) fn menu_keymap_from_definition(
