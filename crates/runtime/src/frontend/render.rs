@@ -1928,6 +1928,7 @@ fn blink_cursor_settings(i: &Interp) -> (bool, f64, f64, i128) {
 const MEMORY_FULL_WARNING: &str = "!MEM FULL! ";
 
 struct FrameTitleContext<'a> {
+    buffer_id: usize,
     buffer_name: &'a str,
     file_name: Option<&'a str>,
     frame_name: &'a str,
@@ -1986,7 +1987,7 @@ fn format_frame_title_value(
             if i.symbol_name(*symbol) == "t" {
                 return context.buffer_name.to_owned();
             }
-            let symbol_value = i.symbol_value(*symbol);
+            let symbol_value = i.symbol_value_in_buffer(*symbol, context.buffer_id);
             if matches!(&symbol_value, Value::Sym(other) if other == symbol) {
                 i.symbol_name(*symbol).to_string()
             } else {
@@ -2025,6 +2026,7 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
     };
     let frame_name = frame.name.borrow().to_unicode_lossy();
     let context = FrameTitleContext {
+        buffer_id,
         buffer_name: &buffer_name,
         file_name: file_name.as_deref(),
         frame_name: &frame_name,
@@ -2034,7 +2036,7 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
     };
     let Some(format) = i
         .q_soft("frame-title-format")
-        .map(|symbol| i.symbol_value(symbol))
+        .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
     else {
         return buffer_name;
     };

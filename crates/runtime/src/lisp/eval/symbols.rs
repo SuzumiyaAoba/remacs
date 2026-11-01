@@ -146,9 +146,15 @@ impl Interp {
         }
     }
 
+    #[inline]
     pub fn symbol_value(&self, id: SymId) -> Value {
+        self.symbol_value_in_buffer(id, self.current_buffer)
+    }
+
+    /// Read the active binding in BUFFER without changing the current buffer.
+    pub(crate) fn symbol_value_in_buffer(&self, id: SymId, buffer: usize) -> Value {
         let id = self.var_alias_target(id);
-        // Buffer-local binding in current buffer wins. `try_borrow`:
+        // Buffer-local binding in the requested buffer wins. `try_borrow`:
         // primitives that hold the buffer mutably borrowed may still
         // consult variables (they see the global binding).
         if id == u32::MAX {
@@ -157,7 +163,7 @@ impl Interp {
         if self.quit_flag && self.symbol_name(id) == "quit-flag" {
             return Value::t();
         }
-        if let Some(b) = self.buffers.get(self.current_buffer) {
+        if let Some(b) = self.buffers.get(buffer) {
             if let Ok(bb) = b.try_borrow() {
                 if let Some(v) = bb.locals.get(&id) {
                     return v.clone();
