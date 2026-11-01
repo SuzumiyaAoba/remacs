@@ -1186,12 +1186,8 @@ fn dispatch_gui_window_autoselect(
 }
 
 fn mouse_movement_tracking_enabled(i: &Interp) -> bool {
-    ["track-mouse", "mouse-autoselect-window"]
-        .into_iter()
-        .any(|name| {
-            i.q_soft(name)
-                .is_some_and(|symbol| i.symbol_value(symbol).truthy())
-        })
+    i.q_soft("track-mouse")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy())
 }
 
 fn dispatch_gui_mouse_move(
