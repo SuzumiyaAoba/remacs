@@ -70,6 +70,103 @@ const CASES: &str = r##"
              (entry (diary-sexp-entry (cdr generated) "anniversary %d%s" '(1 6 2027))))
         (unless (equal (if (consp entry) (cdr entry) entry) "anniversary 3rd")
           (error "The yearly interval filter lost the anniversary's formatted entry")))))
+  ;; BYMONTH expands a year into selected months while retaining DTSTART (#1564).
+  (let (candidates)
+    (dotimes (i 6)
+      (let ((year (+ 2024 i)))
+        (dotimes (m 12)
+          (dolist (day '(9 10 11))
+            (push (list (1+ m) day year) candidates)))))
+    (setq candidates (nreverse candidates))
+    (dolist (calendar-date-style '(american european iso))
+      (dolist (times '((nil nil) ("09:00" "10:00")))
+        (remacs-test-ical-yearly-hits
+         "FREQ=YEARLY;BYMONTH=1" '(6 10 2025) candidates
+         '((6 10 2025) (1 10 2026) (1 10 2027) (1 10 2028) (1 10 2029))
+         (car times) (cadr times))
+        (remacs-test-ical-yearly-hits
+         (concat "FREQ=YEARLY;INTERVAL=2;BYMONTH=7,1,7;UNTIL="
+                 (if (car times) "20270710T235959" "20270710"))
+         '(6 10 2025) candidates
+         '((6 10 2025) (7 10 2025) (1 10 2027) (7 10 2027)) (car times) (cadr times))
+        (remacs-test-ical-yearly-hits
+         "FREQ=YEARLY;BYMONTH=1,7;COUNT=3" '(6 10 2025) candidates
+         '((6 10 2025) (7 10 2025) (1 10 2026)) (car times) (cadr times))))
+    (let ((calendar-date-style 'american))
+      (dolist (case '((1 ((6 10 2025)))
+                      (2 ((6 10 2025) (7 10 2025)))
+                      (4 ((6 10 2025) (7 10 2025) (1 10 2027) (7 10 2027)))))
+        (remacs-test-ical-yearly-hits
+         (format "FREQ=YEARLY;BYMONTH=1,7;INTERVAL=2;COUNT=%d" (car case))
+         '(6 10 2025) candidates (cadr case)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;BYMONTH=6,7;COUNT=4" '(6 10 2025) candidates
+       '((6 10 2025) (7 10 2025) (6 10 2026) (7 10 2026)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;BYMONTH=1;COUNT=2" '(6 10 2025) candidates
+       '((6 10 2025) (1 10 2026)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;BYMONTH=1,7;UNTIL=20260709" '(6 10 2025) candidates
+       '((6 10 2025) (7 10 2025) (1 10 2026)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;BYMONTH=7,1;COUNT=4" '(6 10 2025) candidates
+       '((7 10 2025) (1 10 2026)) nil nil '((EXDATE nil "20250610") (EXDATE nil "20260710")))))
+  (let ((calendar-date-style 'iso))
+    ;; RFC 5545 section 3.8.5.3: ten June/July occurrences, not ten years.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;COUNT=10;BYMONTH=6,7" '(6 10 1997)
+     '((6 10 1997) (7 10 1997) (6 10 1998) (7 10 1998) (6 10 1999) (7 10 1999)
+       (6 10 2000) (7 10 2000) (6 10 2001) (7 10 2001) (6 10 2002) (7 10 2002))
+     '((6 10 1997) (7 10 1997) (6 10 1998) (7 10 1998) (6 10 1999) (7 10 1999)
+       (6 10 2000) (7 10 2000) (6 10 2001) (7 10 2001)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=2;COUNT=10;BYMONTH=1,2,3" '(3 10 1997)
+     '((1 10 1997) (2 10 1997) (3 10 1997) (1 10 1998)
+       (1 10 1999) (2 10 1999) (3 10 1999) (1 10 2001) (2 10 2001) (3 10 2001)
+       (1 10 2003) (2 10 2003) (3 10 2003) (1 10 2005))
+     '((3 10 1997) (1 10 1999) (2 10 1999) (3 10 1999) (1 10 2001) (2 10 2001)
+       (3 10 2001) (1 10 2003) (2 10 2003) (3 10 2003)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=2,3;COUNT=3" '(1 31 2025)
+     '((1 31 2025) (2 28 2025) (3 1 2025) (3 31 2025) (1 31 2026) (2 28 2026)
+       (3 31 2026) (3 31 2027))
+     '((1 31 2025) (3 31 2025) (3 31 2026)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=2;COUNT=20" '(1 31 2025)
+     '((1 31 2025) (2 28 2025) (3 3 2025) (1 31 2026) (2 28 2026)) '((1 31 2025)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=2;COUNT=3;INTERVAL=100" '(2 29 2000)
+     '((2 29 2000) (3 1 2100) (3 1 2200) (3 1 2300)
+       (2 29 2400) (2 29 2800) (2 29 3200))
+     '((2 29 2000) (2 29 2400) (2 29 2800)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=2;COUNT=3;INTERVAL=400" '(2 29 2000)
+     '((2 29 2000) (2 29 2400) (2 29 2800) (2 29 3200))
+     '((2 29 2000) (2 29 2400) (2 29 2800)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=2;COUNT=100" '(2 29 2096)
+     '((2 29 2096) (3 1 2100) (2 29 2104) (2 29 2496) (3 1 2500)
+       (2 29 2504) (2 29 2508) (2 29 2512))
+     '((2 29 2096) (2 29 2104) (2 29 2496) (2 29 2504) (2 29 2508)))
+    ;; A million instances should use cycle arithmetic and support large years.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=1,7;COUNT=1000000" '(1 10 2025)
+     '((1 10 2025) (7 10 2025) (1 10 502024) (7 10 502024) (1 10 502025))
+     '((1 10 2025) (7 10 2025) (1 10 502024) (7 10 502024)))
+    (let* ((start '(0 0 9 10 6 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=YEARLY;BYMONTH=7,1,7;COUNT=3"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "BYMONTH conversion mutated its inputs")))
+    (dolist (rule '("FREQ=YEARLY;BYMONTH=0" "FREQ=YEARLY;BYMONTH=13"
+                     "FREQ=YEARLY;BYMONTH=1,NO"
+                     "FREQ=YEARLY;BYMONTH=1;COUNT=0" "FREQ=YEARLY;BYMONTH=1;COUNT=-1"
+                     "FREQ=YEARLY;BYMONTH=1;COUNT=1.5"
+                     "FREQ=YEARLY;BYMONTH=1;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-yearly-format rule '(6 10 2025)) nil)
+                (error t))
+        (error "An invalid yearly month/count/interval was accepted: %S" rule))))
   (dolist (calendar-date-style '(american european iso))
     (dolist (suffix '("" ";UNTIL=20300106"))
       (unless (equal (car (remacs-test-ical-yearly-format (concat "FREQ=YEARLY" suffix) '(1 6 2025)))
@@ -116,7 +213,7 @@ fn check(interp: &mut Interp, source: &str) {
 }
 
 #[test]
-fn yearly_recurrences_respect_start_year_and_interval() {
+fn yearly_recurrences_preserve_months_intervals_and_counts() {
     let mut interp = Interp::new();
     check(&mut interp, CASES);
     check(&mut interp, r#"(load "icalendar.el" nil t)"#);

@@ -2675,6 +2675,65 @@ written into the buffer `*icalendar-errors*'."
             (format "(or %s)" (mapconcat #'identity rules " "))
           (car rules))))))
 
+(defun icalendar--rrule-months (value)
+  "Return the sorted, distinct month numbers in BYMONTH VALUE."
+  (save-match-data
+    (sort (delete-dups
+           (mapcar (lambda (part)
+                     (let ((month (string-to-number part)))
+                       (unless (and (string-match "\\`[0-9][0-9]?\\'" part)
+                                    (<= 1 month 12))
+                         (error "Invalid BYMONTH: %s" part))
+                       month))
+                   (split-string value ",")))
+          #'<)))
+
+(defun icalendar--yearly-valid-months (months day year)
+  "Return MONTHS in which DAY exists in YEAR, preserving their order."
+  (delq nil (mapcar (lambda (month)
+                      (when (<= day (calendar-last-day-of-month month year)) month))
+                    months)))
+
+(defun icalendar--yearly-last-date (dtstart-dec months interval count)
+  "Return the last date for yearly COUNT with sorted, distinct MONTHS.
+DTSTART-DEC is always the first occurrence, even outside MONTHS."
+  (unless (and (integerp count) (> count 0)
+               (integerp interval) (> interval 0))
+    (error "Invalid yearly COUNT/INTERVAL: %S/%S" count interval))
+  (let* ((day (nth 3 dtstart-dec))
+         (month (nth 4 dtstart-dec))
+         (year (nth 5 dtstart-dec))
+         (first (cons month
+                      (delq nil (mapcar (lambda (candidate)
+                                          (when (> candidate month) candidate))
+                                        (icalendar--yearly-valid-months months day year))))))
+    (if (<= count (length first))
+        (list (nth (1- count) first) day year)
+      ;; Gregorian dates repeat after 400 years.  Only visit one cycle of
+      ;; active years, even when COUNT or INTERVAL is very large.
+      (let ((a 400) (b (mod interval 400)))
+        (while (/= b 0)
+          (let ((remainder (mod a b))) (setq a b b remainder)))
+        (let ((periods (/ 400 a)) (cursor year) (total 0) pattern)
+          (dotimes (_ periods)
+            (setq cursor (+ cursor interval))
+            (let ((valid (icalendar--yearly-valid-months months day cursor)))
+              (setq total (+ total (length valid)))
+              (push valid pattern)))
+          (if (= total 0)
+              ;; BYMONTH can select no valid dates (e.g. February for day 31).
+              (list (car (last first)) day year)
+            (let* ((remaining (- count (length first)))
+                   (cycles (/ (1- remaining) total))
+                   (left (1+ (mod (1- remaining) total)))
+                   (cursor (+ year (* interval (1+ (* cycles periods))))))
+              (catch 'last-date
+                (dolist (valid (nreverse pattern))
+                  (when (<= left (length valid))
+                    (throw 'last-date (list (nth (1- left) valid) day cursor)))
+                  (setq left (- left (length valid))
+                        cursor (+ cursor interval)))))))))))
+
 (defun icalendar--convert-recurring-to-diary (e dtstart-dec start-t end-t)
   "Convert recurring iCalendar event E to diary format.
 
@@ -2689,14 +2748,15 @@ END-T is the event's end time in diary format."
          (until        (cadr (assoc 'UNTIL rrule-props)))
          (count        (cadr (assoc 'COUNT rrule-props)))
          (interval     (read (or (cadr (assoc 'INTERVAL rrule-props)) "1")))
+         (year-months  (let ((value (and (string-equal frequency "YEARLY")
+                                        (cadr (assoc 'BYMONTH rrule-props)))))
+                         (when value (icalendar--rrule-months value))))
          (dtstart-conv (icalendar--datetime-to-diary-date dtstart-dec))
          (until-conv   (icalendar--datetime-to-diary-date
                         (icalendar--decode-isodatetime until)))
          (until-1-conv (icalendar--datetime-to-diary-date
                         (icalendar--decode-isodatetime until -1)))
          (result  ""))
-
-    ;; FIXME FIXME interval!!!!!!!!!!!!!
 
     (when count
       (if until
@@ -2728,14 +2788,20 @@ END-T is the event's end time in diary format."
                                                              interval) 0)))
                  )
                 ((string-equal frequency "YEARLY")
-                 (setq until (icalendar--add-decoded-times
-                              dtstart-dec (list 0 0 0 0 0 (* (- (read count) 1)
-                                                             interval))))
-                 (setq until-1 (icalendar--add-decoded-times
-                                dtstart-dec
-                                (list 0 0 0 0 0 (* (- (read count) 1)
-                                                   interval))))
-                 )
+                 (if year-months
+                     (let ((last-date (icalendar--yearly-last-date
+                                       dtstart-dec year-months interval (read count))))
+                       (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
+                                         (nth 2 dtstart-dec) (cadr last-date)
+                                         (car last-date) (nth 2 last-date))
+                             until-1 until))
+                   (setq until (icalendar--add-decoded-times
+                                dtstart-dec (list 0 0 0 0 0 (* (- (read count) 1)
+                                                               interval))))
+                   (setq until-1 (icalendar--add-decoded-times
+                                  dtstart-dec
+                                  (list 0 0 0 0 0 (* (- (read count) 1)
+                                                     interval))))))
                 (t
                  (message "Cannot handle COUNT attribute for `%s' events."
                           frequency)))
@@ -2816,22 +2882,41 @@ END-T is the event's end time in diary format."
           ((string-equal frequency "YEARLY")
            (icalendar--dmsg "yearly")
            (let ((rule
-                  (if until
-                      (let ((day (nth 3 dtstart-dec))
-                            (month (nth 4 dtstart-dec)))
-                        (concat "(and (diary-date "
-                                (cond ((eq calendar-date-style 'iso)
-                                       (format "t %d %d" month day))
-                                      ((eq calendar-date-style 'european)
-                                       (format "%d %d t" day month))
-                                      ((eq calendar-date-style 'american)
-                                       (format "%d %d t" month day)))
-                                ") (diary-block " dtstart-conv " " until-conv "))"))
+                  (cond
+                   (year-months
+                    ;; Remacs: BYMONTH expands the year; DTSTART remains an instance.
+                    (let* ((day (nth 3 dtstart-dec))
+                           (start-date (list (nth 4 dtstart-dec) day (nth 5 dtstart-dec)))
+                           (selected
+                            (cond ((eq calendar-date-style 'iso)
+                                   (format "t '%S %d" year-months day))
+                                  ((eq calendar-date-style 'european)
+                                   (format "%d '%S t" day year-months))
+                                  ((eq calendar-date-style 'american)
+                                   (format "'%S %d t" year-months day)))))
+                      (format "(and %s (or (diary-date %s) (diary-date %s)))"
+                              (if until
+                                  (format "(diary-block %s %s)" dtstart-conv until-conv)
+                                (format "(<= %d (calendar-absolute-from-gregorian date))"
+                                        (calendar-absolute-from-gregorian start-date)))
+                              dtstart-conv selected)))
+                   (until
+                    (let ((day (nth 3 dtstart-dec))
+                          (month (nth 4 dtstart-dec)))
+                      (concat "(and (diary-date "
+                              (cond ((eq calendar-date-style 'iso)
+                                     (format "t %d %d" month day))
+                                    ((eq calendar-date-style 'european)
+                                     (format "%d %d t" day month))
+                                    ((eq calendar-date-style 'american)
+                                     (format "%d %d t" month day)))
+                              ") (diary-block " dtstart-conv " " until-conv "))")))
+                   (t
                     (let* ((year (nth 5 dtstart-dec))
                            (dtstart-1y-dec (copy-sequence dtstart-dec)))
                       (setf (nth 5 dtstart-1y-dec) (1- year))
                       (format "(diary-anniversary %s)"
-                              (icalendar--datetime-to-diary-date dtstart-1y-dec))))))
+                              (icalendar--datetime-to-diary-date dtstart-1y-dec)))))))
              ;; Remacs: INTERVAL selects years relative to DTSTART.
              (unless (= interval 1)
                (setq rule
