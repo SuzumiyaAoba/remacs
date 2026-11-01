@@ -1947,9 +1947,15 @@ struct FrameTitleContext<'a> {
     coding_with_eol: String,
     remote: bool,
     remote_used: Option<&'a std::cell::Cell<bool>>,
+    global_mode_string: Value,
 }
 
-fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
+fn format_frame_title_string(
+    i: &Interp,
+    format: &str,
+    context: &FrameTitleContext<'_>,
+    depth: usize,
+) -> String {
     let mut title = String::with_capacity(format.len());
     let mut chars = format.chars();
     while let Some(character) = chars.next() {
@@ -1969,6 +1975,13 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
             's' => title.push_str(context.process_status),
             'z' => title.push_str(&context.coding),
             'Z' => title.push_str(&context.coding_with_eol),
+            'M' => title.push_str(&format_frame_title_field(
+                i,
+                &context.global_mode_string,
+                context,
+                depth + 1,
+                None,
+            )),
             '@' => {
                 if let Some(used) = context.remote_used {
                     used.set(true);
@@ -2033,6 +2046,7 @@ fn format_frame_title_string_field(
     format: &str,
     context: &FrameTitleContext<'_>,
     maximum: Option<usize>,
+    depth: usize,
 ) -> String {
     let mut output = String::new();
     let mut columns = 0usize;
@@ -2052,9 +2066,26 @@ fn format_frame_title_string_field(
             break;
         } else {
             let next = offset + 1 + tail[1..].chars().next().map_or(0, char::len_utf8);
-            let decoded = format_frame_title_string(&format[offset..next], context);
-            let (piece, width) = frame_title_prefix(i, context, &decoded, remaining);
-            (piece.to_owned(), width, next)
+            if tail.starts_with("%M") {
+                // %M is another mode-line element, not a flat decoded string:
+                // apply the remaining precision while formatting its contents.
+                let piece = format_frame_title_field(
+                    i,
+                    &context.global_mode_string,
+                    context,
+                    depth + 1,
+                    Some(FrameTitleField {
+                        minimum: 0,
+                        maximum: remaining,
+                    }),
+                );
+                let width = frame_title_prefix(i, context, &piece, None).1;
+                (piece, width, next)
+            } else {
+                let decoded = format_frame_title_string(i, &format[offset..next], context, depth);
+                let (piece, width) = frame_title_prefix(i, context, &decoded, remaining);
+                (piece.to_owned(), width, next)
+            }
         };
         output.push_str(&piece);
         columns = columns.saturating_add(width);
@@ -2079,35 +2110,34 @@ fn format_frame_title_field(
     depth: usize,
     field: Option<FrameTitleField>,
 ) -> String {
-    if depth >= 32 {
-        return String::new();
-    }
+    // GNU display_mode_element substitutes this element after 100 levels.
+    let too_deep = (depth > 100).then(|| Value::string("*too-deep*"));
+    let value = too_deep.as_ref().unwrap_or(value);
     let mut output = match value {
         Value::Nil => String::new(),
         Value::Str(string) => {
             let text = string.borrow().to_unicode_lossy();
             if let Some(field) = field {
-                format_frame_title_string_field(i, &text, context, field.maximum)
+                format_frame_title_string_field(i, &text, context, field.maximum, depth)
             } else {
-                format_frame_title_string(&text, context)
+                format_frame_title_string(i, &text, context, depth)
             }
         }
         Value::Sym(symbol) => {
-            if i.symbol_name(*symbol) == "t" {
-                if let Some(field) = field {
-                    frame_title_prefix(i, context, context.buffer_name, field.maximum)
-                        .0
-                        .to_owned()
-                } else {
-                    context.buffer_name.to_owned()
-                }
+            let symbol_value = i.symbol_value_in_buffer(*symbol, context.buffer_id);
+            if matches!(&symbol_value, Value::Sym(other) if other == symbol
+                || *other == crate::lisp::obarray::sym::UNBOUND)
+            {
+                String::new()
+            } else if let Value::Str(text) = symbol_value {
+                // A string-valued variable is literal, unlike a string
+                // appearing directly in global-mode-string or a format list.
+                let text = text.borrow().to_unicode_lossy();
+                frame_title_prefix(i, context, &text, field.and_then(|field| field.maximum))
+                    .0
+                    .to_owned()
             } else {
-                let symbol_value = i.symbol_value_in_buffer(*symbol, context.buffer_id);
-                if matches!(&symbol_value, Value::Sym(other) if other == symbol) {
-                    i.symbol_name(*symbol).to_string()
-                } else {
-                    format_frame_title_field(i, &symbol_value, context, depth + 1, field)
-                }
+                format_frame_title_field(i, &symbol_value, context, depth + 1, field)
             }
         }
         Value::Cons(cell) => {
@@ -2182,8 +2212,14 @@ fn format_frame_title_field(
             }
             text
         }
-        Value::Int(number) => number.to_string(),
-        _ => String::new(),
+        _ => frame_title_prefix(
+            i,
+            context,
+            "*invalid*",
+            field.and_then(|field| field.maximum),
+        )
+        .0
+        .to_owned(),
     };
     if let Some(field) = field {
         let columns = frame_title_prefix(i, context, &output, None).1;
@@ -2284,6 +2320,10 @@ fn frame_title(
             buffer_directory_remote(i, buffer_id, &i.symbol_value_in_buffer(symbol, buffer_id))
         }),
         remote_used,
+        global_mode_string: i
+            .q_soft("global-mode-string")
+            .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
+            .unwrap_or(Value::Nil),
     };
     let Some(format) = i
         .q_soft("frame-title-format")
@@ -2291,7 +2331,9 @@ fn frame_title(
     else {
         return buffer_name;
     };
-    if matches!(format, Value::Nil) {
+    if matches!(format, Value::Nil)
+        || matches!(format, Value::Sym(symbol) if symbol == crate::lisp::obarray::sym::T)
+    {
         return buffer_name;
     }
     format_frame_title_value(i, &format, &context, 0)
