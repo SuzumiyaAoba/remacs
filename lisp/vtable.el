@@ -323,61 +323,103 @@ If TABLE can't be found, return nil and don't move point."
       (goto-char (prop-match-beginning match))
     (end-of-line)))
 
+(defun vtable--display-row-start (table line-number object)
+  "Return TABLE's displayed row start at LINE-NUMBER if it stores OBJECT.
+LINE-NUMBER indexes the current cache order.  Narrowing to TABLE prevents a
+missing row from being mistaken for an identical object in an adjacent table."
+  (save-excursion
+    ;; Validate that TABLE is fully accessible, then constrain row lookup to
+    ;; its exact bounds before counting cache rows.
+    (let* ((bounds (vtable--accessible-table-bounds table))
+           (table-start (car bounds))
+           (table-end (cdr bounds)))
+      (save-restriction
+        (narrow-to-region table-start table-end)
+        (goto-char table-start)
+        ;; A direct header occupies one buffer line.  Header-line mode and
+        ;; auto-generated columns do not.
+        (when (and (slot-value table '-has-column-spec)
+                   (not (vtable-use-header-line table)))
+          (forward-line 1))
+        (let ((remaining (forward-line line-number)))
+          (when (and (zerop remaining)
+                     (< (point) (point-max))
+                     (eq (get-text-property (line-end-position) 'vtable) table)
+                     (eq (get-text-property (line-end-position) 'vtable-object)
+                         object))
+            (line-beginning-position)))))))
+
 (defun vtable-update-object (table object &optional old-object)
   "Update OBJECT's representation in TABLE.
-If OLD-OBJECT is non-nil, replace OLD-OBJECT with OBJECT and display it.
-In either case, if the existing object is not found in the table (being
-compared with `equal'), signal an error.
+If OLD-OBJECT is non-nil, update the first matching object and display it.
+An `eq' match takes precedence; otherwise the first `equal' match is used.
+If no matching cached object is found, signal an error without changing TABLE.
 
 TABLE must be at point in the current buffer."
   (unless old-object
     (setq old-object object))
-  (let ((objects (vtable-objects table)))
-    ;; First replace the object in the object storage.
-    (if (eq old-object (car objects))
-        ;; It's at the head, so replace it there.
-        (setf (vtable-objects table)
-              (cons object (cdr objects)))
-      ;; Otherwise splice into the list.
-      (while (and (cdr objects)
-                  (not (eq (cadr objects) old-object)))
-        (setq objects (cdr objects)))
-      (unless (cdr objects)
-        (error "Can't find the old object"))
-      (setcar (cdr objects) object))
-    ;; Then update the rendered vtable in its buffer.
-    (if-let* ((cache (vtable--current-cache table))
-              (line-number (seq-position (vtable--cache-lines cache)
-                                         old-object
-                                         (lambda (a b)
-                                           (equal (car a) b))))
-              (line (elt (vtable--cache-lines cache) line-number)))
-        (with-current-buffer (vtable-buffer table)
-          (let ((inhibit-read-only t)
-                (inhibit-modification-hooks t)
-                (old-values (cdr line)))
-            (setcar line object)
-            (setcdr line (vtable--compute-cached-line table object))
-            ;; ... and redisplay the line in question.
-            (save-excursion
-              (vtable-goto-object old-object)
-              (let ((keymap (get-text-property (point) 'keymap))
-                    (start (point)))
-                (delete-line)
-                (vtable--insert-line table line line-number
-                                     (vtable--cache-widths cache)
-                                     (vtable--spacer table))
-                (add-text-properties start (point) (list 'keymap keymap
-                                                         'vtable table))))
-            ;; The object's values may have changed between numerical and
-            ;; non-numerical, so recompute.
-            (let ((result
-                   (vtable--recompute-numerical table (cdr line) old-values)))
-              (vtable--clear-other-caches
-               table (slot-value table '-current-cache-key))
-              result)))
-      (error "Can't find cached object in vtable"))))
-
+  (let* ((objects (vtable-objects table))
+         (object-index (or (seq-position objects old-object #'eq)
+                           (seq-position objects old-object #'equal))))
+    (unless object-index
+      (error "Can't find the old object"))
+    (let* ((target-object (nth object-index objects))
+           (cache (vtable--current-cache table))
+           (cache-lines (and cache (vtable--cache-lines cache)))
+           (line-number
+            (and cache-lines
+                 (seq-position cache-lines target-object
+                               (lambda (line object)
+                                 (eq (car line) object)))))
+           (line (and line-number (nth line-number cache-lines))))
+      (unless line
+        (error "Can't find cached object in vtable"))
+      ;; Normalize `vtable-buffer', which can be either a buffer or its name.
+      (let* ((buffer (and (vtable-buffer table)
+                          (get-buffer (vtable-buffer table))))
+             (display-start
+              (and buffer (buffer-live-p buffer)
+                   (with-current-buffer buffer
+                     (vtable--display-row-start table line-number
+                                                target-object)))))
+        ;; Validate the exact display row before changing the model/cache or
+        ;; invoking user getters.  Cache order plus the row-end EQ check
+        ;; distinguishes consecutive rows with the same object identity.
+        (unless display-start
+          (error "Can't find displayed object in vtable"))
+        (let ((display-marker
+               (with-current-buffer buffer (copy-marker display-start))))
+          (unwind-protect
+              (progn
+                (if (zerop object-index)
+                    (setf (vtable-objects table) (cons object (cdr objects)))
+                  (setcar (nthcdr object-index objects) object))
+                (with-current-buffer buffer
+                  (let ((inhibit-read-only t)
+                        (inhibit-modification-hooks t)
+                        (old-values (cdr line)))
+                    (setcar line object)
+                    (setcdr line (vtable--compute-cached-line table object))
+                    ;; ... and redisplay the exact cache row selected above.
+                    (save-excursion
+                      (goto-char display-marker)
+                      (let ((keymap (get-text-property (point) 'keymap))
+                            (start (point)))
+                        (delete-line)
+                        (vtable--insert-line table line line-number
+                                             (vtable--cache-widths cache)
+                                             (vtable--spacer table))
+                        (add-text-properties start (point) (list 'keymap keymap
+                                                                 'vtable table))))
+                    ;; The object's values may have changed between numerical
+                    ;; and non-numerical, so recompute.
+                    (let ((result
+                           (vtable--recompute-numerical
+                            table (cdr line) old-values)))
+                      (vtable--clear-other-caches
+                       table (slot-value table '-current-cache-key))
+                      result))))
+            (set-marker display-marker nil)))))))
 (defun vtable-remove-object (table object)
   "Remove OBJECT from TABLE.
 This will also remove the displayed line."
