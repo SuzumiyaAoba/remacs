@@ -81,6 +81,87 @@ const CASES: &str = r##"
         (push (calendar-gregorian-from-absolute cursor) candidates)
         (setq cursor (1+ cursor)))
       (remacs-test-ical-yearly-hits rule start (nreverse candidates) expected start-time end-time)))
+  ;; Without BYMONTH, yearly BYMONTHDAY expands across the year's months (#1571).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-yearly-range
+       "FREQ=YEARLY;BYMONTHDAY=1" '(6 10 2025) '(6 1 2025) '(1 3 2026)
+       '((6 10 2025) (7 1 2025) (8 1 2025) (9 1 2025) (10 1 2025) (11 1 2025) (12 1 2025) (1 1 2026))
+       (car times) (cadr times))
+      (remacs-test-ical-yearly-range
+       (concat "FREQ=YEARLY;BYMONTHDAY=1;UNTIL=" (if (car times) "20251001T235959" "20251001"))
+       '(6 10 2025) '(6 1 2025) '(1 3 2026)
+       '((6 10 2025) (7 1 2025) (8 1 2025) (9 1 2025) (10 1 2025)) (car times) (cadr times))
+      (remacs-test-ical-yearly-range
+       "FREQ=YEARLY;BYMONTHDAY=1;COUNT=3" '(6 10 2025) '(6 1 2025) '(1 3 2026)
+       '((6 10 2025) (7 1 2025) (8 1 2025)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=2;BYMONTHDAY=1;COUNT=8" '(6 10 2025)
+     '((6 1 2025) (6 10 2025) (7 1 2025) (12 1 2025) (1 1 2026) (6 1 2026) (1 1 2027) (2 1 2027))
+     '((6 10 2025) (7 1 2025) (12 1 2025) (1 1 2027)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=12,6,12;BYMONTHDAY=15,1,15;COUNT=5" '(6 10 2025)
+     '((6 1 2025) (6 10 2025) (6 15 2025) (7 1 2025) (12 1 2025) (12 15 2025) (6 1 2026) (6 15 2026))
+     '((6 10 2025) (6 15 2025) (12 1 2025) (12 15 2025) (6 1 2026)))
+    (remacs-test-ical-yearly-range
+     "FREQ=YEARLY;BYMONTHDAY=31,-1,31;COUNT=4" '(1 10 2025) '(1 1 2025) '(5 1 2025)
+     '((1 10 2025) (1 31 2025) (2 28 2025) (3 31 2025)))
+    (remacs-test-ical-yearly-range
+     "FREQ=YEARLY;BYMONTHDAY=-31;COUNT=3" '(1 1 2025) '(1 1 2025) '(8 1 2025)
+     '((1 1 2025) (3 1 2025) (5 1 2025)))
+    (remacs-test-ical-yearly-range
+     "FREQ=YEARLY;BYMONTHDAY=1,-1;COUNT=5" '(1 1 2025) '(1 1 2025) '(4 1 2025)
+     '((1 1 2025) (1 31 2025) (2 1 2025) (2 28 2025) (3 1 2025)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=3" '(1 31 2023)
+     '((1 31 2023) (3 1 2023) (2 29 2024) (3 1 2025) (2 29 2028) (2 29 2032))
+     '((1 31 2023) (2 29 2024) (2 29 2028)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=100;BYMONTH=2;BYMONTHDAY=29;COUNT=3" '(2 29 2000)
+     '((2 29 2000) (3 1 2100) (3 1 2200) (3 1 2300) (2 29 2400) (2 29 2800) (2 29 3200))
+     '((2 29 2000) (2 29 2400) (2 29 2800)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=400;BYMONTH=2;BYMONTHDAY=29;COUNT=3" '(2 29 2000)
+     '((2 29 2000) (2 29 2400) (2 29 2800) (2 29 3200))
+     '((2 29 2000) (2 29 2400) (2 29 2800)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=400;BYMONTH=2;BYMONTHDAY=31;COUNT=100" '(1 31 2025)
+     '((1 31 2025) (2 28 2025) (3 3 2025) (1 31 2425)) '((1 31 2025)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=1;COUNT=4" '(6 10 2025)
+     '((6 10 2025) (7 1 2025) (8 1 2025) (9 1 2025) (10 1 2025))
+     '((7 1 2025) (8 1 2025)) nil nil '((EXDATE nil "20250610") (EXDATE nil "20250901")))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=1,-31;BYDAY=SU;COUNT=3" '(1 1 2023)
+     '((1 1 2023) (7 1 2023) (10 1 2023) (9 1 2024) (12 1 2024) (3 1 2026))
+     '((1 1 2023) (10 1 2023) (9 1 2024)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=1" '(6 10 2025)
+     '((1 1 10001) (1 10 10001) (2 1 10001)) '((1 1 10001) (2 1 10001)))
+    ;; Count endpoints were independently enumerated without Gregorian cycle jumps.
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=1;COUNT=1000000" '(6 10 2025)
+     '((6 10 2025) (9 1 85358) (10 1 85358)) '((6 10 2025) (9 1 85358)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;INTERVAL=2;BYMONTHDAY=1,-1;COUNT=1000000" '(6 10 2025)
+     '((6 10 2025) (1 31 85359) (2 1 85359)) '((6 10 2025) (1 31 85359)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;BYMONTHDAY=31;COUNT=1000000" '(6 10 2025)
+     '((6 10 2025) (5 31 144882) (7 31 144882)) '((6 10 2025) (5 31 144882)))
+    (let* ((start '(0 0 9 10 6 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=YEARLY;BYMONTH=12,6;BYMONTHDAY=15,1,15;COUNT=4"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "Yearly month-day conversion mutated its inputs")))
+    (dolist (rule '("FREQ=YEARLY;BYMONTHDAY=0" "FREQ=YEARLY;BYMONTHDAY=32"
+                     "FREQ=YEARLY;BYMONTHDAY=-32" "FREQ=YEARLY;BYMONTHDAY=1,NO"
+                     "FREQ=YEARLY;BYMONTHDAY=1;COUNT=0" "FREQ=YEARLY;BYMONTHDAY=1;COUNT=1.5"
+                     "FREQ=YEARLY;BYMONTHDAY=1;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-yearly-format rule '(6 10 2025)) nil)
+                (error t))
+        (error "An invalid yearly month-day/count/interval was accepted: %S" rule))))
   ;; YEARLY BYDAY uses month ordinals with BYMONTH, year ordinals otherwise (#1570).
   (let ((candidates '((1 14 2025) (1 15 2025) (1 16 2025) (8 31 2025)
                        (9 1 2025) (9 2 2025) (9 8 2025) (9 15 2025) (1 15 2026)
