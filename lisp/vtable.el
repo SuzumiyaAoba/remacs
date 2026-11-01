@@ -71,6 +71,7 @@
    (-cached-colors :initform nil)
    (-cache :initform (make-hash-table :test #'equal))
    (-current-cache :initform nil :accessor vtable--current-cache)
+   (-current-cache-key :initform nil)
    (-cached-keymap :initform nil)
    (-has-column-spec :initform nil))
   "An object to hold the data for a table.")
@@ -328,7 +329,11 @@ TABLE must be at point in the current buffer."
                                                          'vtable table))))
             ;; The object's values may have changed between numerical and
             ;; non-numerical, so recompute.
-            (vtable--recompute-numerical table (cdr line) old-values)))
+            (let ((result
+                   (vtable--recompute-numerical table (cdr line) old-values)))
+              (vtable--clear-other-caches
+               table (slot-value table '-current-cache-key))
+              result)))
       (error "Can't find cached object in vtable"))))
 
 (defun vtable-remove-object (table object)
@@ -384,6 +389,8 @@ This will also remove the displayed line."
               (setq result (delete-line)))
             ;; Removing a row can leave every value in a column numerical.
             (vtable--recompute-numerical-columns table columns-to-recompute)
+            (vtable--clear-other-caches
+             table (slot-value table '-current-cache-key))
             result))))))
 
 ;; FIXME: The fact that the `location' argument of
@@ -490,7 +497,10 @@ This also updates the displayed table."
                                                        'vtable table)))
             ;; We may have inserted a non-numerical value into a previously
             ;; all-numerical table, so recompute.
-            (vtable--recompute-numerical table (cdr line))))))))
+            (let ((result (vtable--recompute-numerical table (cdr line))))
+              (vtable--clear-other-caches
+               table (slot-value table '-current-cache-key))
+              result)))))))
 
 (defun vtable-column (table index)
   "Return the name of the INDEXth column in TABLE."
@@ -579,10 +589,11 @@ recompute the column specs when the table data has changed."
          ;; We maintain a cache per screen/window width, so that we render
          ;; correctly if Emacs is open on two different screens (or the
          ;; user resizes the frame).
-         (cache (or (gethash (vtable--cache-key) (slot-value table '-cache))
+         (cache-key (vtable--cache-key))
+         (cache (or (gethash cache-key (slot-value table '-cache))
                     (let* ((data (vtable--compute-cache table))
                            (widths (vtable--compute-widths table data)))
-                      (setf (gethash (vtable--cache-key) (slot-value table '-cache))
+                      (setf (gethash cache-key (slot-value table '-cache))
                             (list data widths)))))
          (widths (vtable--cache-widths cache)))
     ;; Don't insert any header or header line if the user hasn't
@@ -609,7 +620,8 @@ recompute the column specs when the table data has changed."
     (add-text-properties start (point)
                          (list 'rear-nonsticky t
                                'vtable table))
-    (setf (vtable--current-cache table) cache)
+    (setf (vtable--current-cache table) cache
+          (slot-value table '-current-cache-key) cache-key)
     (goto-char start)))
 
 (defun vtable-insert (table)
@@ -731,6 +743,19 @@ itself in the new buffer."
 
 (defun vtable--clear-cache (table)
   (setf (gethash (vtable--cache-key) (slot-value table '-cache)) nil))
+
+(defun vtable--clear-other-caches (table keep-key)
+  "Discard cached layouts of TABLE except KEEP-KEY.
+If KEEP-KEY is nil, discard every cached layout.  Invalidation is keyed:
+two keys can refer to the same cache object but still denote separate widths."
+  (let ((cache-table (slot-value table '-cache))
+        keys)
+    (maphash (lambda (key _cache)
+               (unless (and keep-key (equal key keep-key))
+                 (push key keys)))
+             cache-table)
+    (dolist (key keys)
+      (remhash key cache-table))))
 
 (defun vtable--sort (table cache)
   (pcase-dolist (`(,index . ,direction) (vtable-sort-by table))
@@ -1064,6 +1089,9 @@ CACHE is TABLE's cache data as returned by `vtable--compute-cache'."
   (unless table
     (user-error "No table under point"))
   (with-current-buffer (vtable-buffer table)
+    (let* ((key (vtable--cache-key))
+           (keep-key (and (gethash key (slot-value table '-cache)) key)))
+      (vtable--clear-other-caches table keep-key))
     (let ((object (vtable-current-object))
           (column (vtable-current-column))
           (inhibit-read-only t)
