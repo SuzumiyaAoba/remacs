@@ -42,10 +42,33 @@
 
 ;;; Code:
 
+(require 'nadvice)
+
 (defvar-local linum-overlays nil "Overlays used in this buffer.")
 (defvar-local linum-available nil "Overlays available for reuse.")
 (defvar linum-before-numbering-hook nil
   "Functions run in each buffer before line numbering starts.")
+(defvar linum--setting-margins nil
+  "Window whose margins Linum is currently setting.")
+
+(defun linum--forget-margin-ownership (window &rest _args)
+  "Forget Linum's saved margins after an external setter succeeds."
+  (let ((window (or window (selected-window))))
+    (unless (eq window linum--setting-margins)
+      (when (window-live-p window)
+        (set-window-parameter window 'linum--set-margins nil)))))
+
+;; Keep this advice idempotent when linum.el is loaded more than once.  A
+;; successful public margin change relinquishes Linum's ownership even if the
+;; new values happen to equal the values Linum recorded.
+(unless (advice-member-p #'linum--forget-margin-ownership 'set-window-margins)
+  (advice-add 'set-window-margins :after #'linum--forget-margin-ownership))
+
+(defun linum--set-window-margins (window left right)
+  "Set Linum margins for WINDOW and record the resulting ownership state."
+  (let ((linum--setting-margins window))
+    (set-window-margins window left right))
+  (set-window-parameter window 'linum--set-margins (window-margins window)))
 
 (defgroup linum nil
   "Show line numbers in the left margin."
@@ -138,9 +161,8 @@ Linum mode is a buffer-local minor mode."
   (mapc #'delete-overlay linum-overlays)
   (setq linum-overlays nil)
   (dolist (w (get-buffer-window-list (current-buffer) nil t))
-    ;; restore margins if needed FIXME: This still fails if the
-    ;; "other" mode has incidentally set margins to exactly what linum
-    ;; had: see bug#20674 for a similar workaround in nlinum.el
+    ;; Restore margins while Linum still owns the current setting.
+    ;; A successful external setter clears the ownership parameter.
     (let ((set-margins (window-parameter w 'linum--set-margins))
           (current-margins (window-margins w)))
       (when (and set-margins
@@ -231,8 +253,7 @@ Linum mode is a buffer-local minor mode."
     ;; fact as the window-parameter `linum--set-margins'
     (let ((existing-margins (window-margins win)))
       (when (> width (or (car existing-margins) 0))
-        (set-window-margins win width (cdr existing-margins))
-        (set-window-parameter win 'linum--set-margins (window-margins win))))))
+        (linum--set-window-margins win width (cdr existing-margins))))))
 
 (defun linum-after-change (beg end _len)
   ;; update overlays on deletions, and after newlines are inserted
@@ -251,6 +272,13 @@ Linum mode is a buffer-local minor mode."
 (defun linum-unload-function ()
   "Unload the Linum library."
   (global-linum-mode -1)
+  ;; Local Linum modes own margins too; disable them before removing the
+  ;; setter advice that tracks ownership.
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when linum-mode
+        (linum-mode -1))))
+  (advice-remove 'set-window-margins #'linum--forget-margin-ownership)
   ;; continue standard unloading
   nil)
 
