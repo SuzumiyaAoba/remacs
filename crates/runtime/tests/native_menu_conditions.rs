@@ -134,6 +134,47 @@ fn native_menu_conditions_are_prepared_before_the_readonly_snapshot() {
                     .any(|menu| menu.label == "QA Test")
             );
 
+            // Dynamic names apply to both the top-level menu and its items.
+            // Invalid results and errors do not fall back to the event name.
+            interp
+                .eval_str(
+                    r#"(progn
+          (setq qa-label-state t qa-label-calls 0)
+          (let ((map (make-sparse-keymap)))
+            (define-key map [dynamic]
+              '(menu-item (progn (setq qa-label-calls (1+ qa-label-calls))
+                                 (if qa-label-state "Shown label" "Other")) ignore))
+            (define-key map [invalid] '(menu-item 42 ignore))
+            (define-key map [failed] '(menu-item (error "Invalid menu name") ignore))
+            (define-key global-map [menu-bar qa-native]
+              (list 'menu-item '(if qa-label-state "QA Dynamic" "QA Other") map))))"#,
+                )
+                .unwrap();
+            prepare_native_menus(&mut interp).unwrap();
+            let grid = render_grid(&interp, 80, 24);
+            let menu = grid
+                .menus
+                .iter()
+                .find(|menu| menu.label == "QA Dynamic")
+                .unwrap();
+            assert_eq!(menu.items.len(), 1);
+            assert_eq!(menu.items[0].label, "Shown label");
+            assert_eq!(menu.items[0].command.as_deref(), Some("ignore"));
+            let _ = render_grid(&interp, 80, 24);
+            assert!(interp.eval_str("(= qa-label-calls 1)").unwrap().truthy());
+
+            interp.eval_str("(setq qa-label-state nil)").unwrap();
+            prepare_native_menus(&mut interp).unwrap();
+            let grid = render_grid(&interp, 80, 24);
+            let menu = grid
+                .menus
+                .iter()
+                .find(|menu| menu.label == "QA Other")
+                .unwrap();
+            assert_eq!(menu.items.len(), 1);
+            assert_eq!(menu.items[0].label, "Other");
+            assert!(interp.eval_str("(= qa-label-calls 2)").unwrap().truthy());
+
             // Conditions may use nested input. Menu preparation must neither hold
             // the frontend borrow nor recursively recompute the same menu.
             interp
