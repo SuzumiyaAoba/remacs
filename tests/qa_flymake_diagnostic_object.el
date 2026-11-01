@@ -7,7 +7,7 @@
      (list (type-of diag)
            (fboundp 'flymake-diagnostic-text)
            (flymake-diagnostic-text diag))))
- '(flymake--diag t "  oops"))
+ '(flymake--diag t "oops"))
 (qa
  (with-temp-buffer
    (let* ((diag (flymake-make-diagnostic

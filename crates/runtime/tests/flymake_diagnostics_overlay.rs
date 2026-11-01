@@ -74,37 +74,44 @@ const CASES: &str = r##"(progn
         (remacs-2249-assert
          (eq (car (flymake-diagnostics)) diag)
          "overlay query did not widen the current buffer"))))
-  ;; Retain the pre-existing list-backed Remacs QA contract when this buffer
-  ;; has no overlay diagnostics.
+  ;; Keep the original region/point query coverage, represented only by real
+  ;; GNU diagnostic overlays rather than the private Remacs list.
   (with-temp-buffer
     (insert "abcdef")
-    (setq flymake--diagnostics
-          (list (flymake-make-diagnostic
-                 (current-buffer) 1 2 :error "first")
-                (flymake-make-diagnostic
-                 (current-buffer) 5 6 :warning "second")))
-    (remacs-2249-assert
-     (equal (list (length (flymake-diagnostics))
-                  (length (flymake-diagnostics 1 2))
-                  (mapcar #'flymake-diagnostic-message
-                          (flymake-diagnostics 5))
-                  (length (flymake-diagnostics 3)))
-            '(2 1 ("second") 0))
-     "legacy list-backed diagnostics region behavior changed"))
-  ;; Once overlays represent diagnostics in a buffer, do not mix unrelated
-  ;; private-list entries into GNU's overlay-backed view.
-  (with-temp-buffer
-    (insert "abcdef")
-    (let ((overlay-diag (flymake-make-diagnostic
-                         (current-buffer) 1 2 :error "overlay"))
-          (private-diag (flymake-make-diagnostic
-                         (current-buffer) 5 6 :warning "private")))
-      (setq flymake--diagnostics (list private-diag))
-      (overlay-put (make-overlay 1 2) 'flymake-diagnostic overlay-diag)
+    (let* ((first (flymake-make-diagnostic
+                   (current-buffer) 1 2 :error "first"))
+           (second (flymake-make-diagnostic
+                    (current-buffer) 5 6 :warning "second"))
+           (first-overlay (make-overlay 1 2))
+           (second-overlay (make-overlay 5 6)))
+      (overlay-put first-overlay 'flymake-diagnostic first)
+      (overlay-put second-overlay 'flymake-diagnostic second)
       (remacs-2249-assert
-       (equal (mapcar #'flymake-diagnostic-message (flymake-diagnostics))
-              '("overlay"))
-       "overlay diagnostics were mixed with the legacy private list")))
+       (equal (list (length (flymake-diagnostics))
+                    (length (flymake-diagnostics 1 2))
+                    (mapcar #'flymake-diagnostic-message
+                            (flymake-diagnostics 5))
+                    (length (flymake-diagnostics 3)))
+              '(2 1 ("second") 0))
+       "overlay-backed diagnostics region/point behavior changed")))
+  ;; Overlay placement is canonical: moving the overlay moves the diagnostic
+  ;; query result even though the record retains its original BEG and END.
+  (with-temp-buffer
+    (insert "abcdef")
+    (let* ((diag (flymake-make-diagnostic
+                  (current-buffer) 1 2 :error "moved"))
+           (unplaced (flymake-make-diagnostic
+                      (current-buffer) 3 4 :warning "unplaced"))
+           (overlay (make-overlay 1 2)))
+      (overlay-put overlay 'flymake-diagnostic diag)
+      (move-overlay overlay 5 6)
+      (remacs-2249-assert
+       (and (equal (mapcar #'flymake-diagnostic-message (flymake-diagnostics))
+                   '("moved"))
+            (null (flymake-diagnostics 1 2))
+            (eq (car (flymake-diagnostics 5 6)) diag)
+            (not (memq unplaced (flymake-diagnostics))))
+       "diagnostic query did not follow its canonical overlay")))
   t)"##;
 
 fn lisp_string(value: &str) -> String {
