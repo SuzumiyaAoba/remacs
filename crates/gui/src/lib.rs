@@ -52,6 +52,9 @@ use objc::{
 mod dialog_items;
 mod dialogs;
 mod file_dialog;
+mod frame_visibility;
+use frame_visibility::{apply_frame_visibility, apply_initial_frame_visibility};
+
 mod keys;
 mod logic;
 mod monitor;
@@ -1457,6 +1460,7 @@ fn frame_window_options(
                 ..Default::default()
             })
         },
+        // Apply mapping focus after installing the native focus/behavior hooks.
         focus: false,
         show: frame.visibility == FrameVisibility::Visible,
         is_movable: !child,
@@ -1612,35 +1616,6 @@ fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
 
 fn native_frame_visible(window: &Window) -> Option<bool> {
     Some(window.is_visible())
-}
-
-fn apply_frame_visibility(
-    window: &Window,
-    visibility: FrameVisibility,
-    focus_on_map: bool,
-) {
-    match visibility {
-        FrameVisibility::Hidden => window.set_visible(false),
-        FrameVisibility::Iconified => window.minimize_window(),
-        FrameVisibility::Visible => show_frame_window(window, focus_on_map),
-    }
-}
-
-fn apply_initial_frame_visibility(
-    window: &Window,
-    visibility: FrameVisibility,
-    focus_on_map: bool,
-) {
-    if visibility != FrameVisibility::Visible || !window.is_visible() {
-        apply_frame_visibility(window, visibility, focus_on_map);
-    }
-}
-
-fn show_frame_window(window: &Window, focus_on_map: bool) {
-    window.set_visible(true);
-    if focus_on_map {
-        window.activate_window();
-    }
 }
 
 #[cfg(target_os = "macos")]

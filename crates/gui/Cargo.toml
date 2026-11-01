@@ -22,3 +22,9 @@ xcb = "1.7.1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+
+# Opens native windows; run explicitly under the external watchdog.
+[[test]]
+name = "native_frame_map_focus"
+harness = false
+test = false
