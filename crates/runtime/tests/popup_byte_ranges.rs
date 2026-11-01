@@ -20,6 +20,7 @@ fn popup_item_ranges_identify_the_composed_unicode_text() {
     i.gui_popup_menu = Some(
         PopupMenu {
             id: 29,
+            navigation: Default::default(),
             scroll_offset: Default::default(),
             visible_rows: Default::default(),
             position: PopupMenuPosition {
@@ -31,6 +32,7 @@ fn popup_item_ranges_identify_the_composed_unicode_text() {
             },
             entries: vec![
                 PopupMenuEntry {
+                    submenu: false,
                     label: "e\u{301}漢WW".into(),
                     command: None,
                     separator: false,
@@ -38,6 +40,7 @@ fn popup_item_ranges_identify_the_composed_unicode_text() {
                     value: Some(Value::Int(1)),
                 },
                 PopupMenuEntry {
+                    submenu: false,
                     label: "Second".into(),
                     command: None,
                     separator: false,

@@ -102,8 +102,17 @@ fn popup_renders_all_keymap_panes_in_order() {
             check(
                 &mut interp,
                 "(list qa-popup-first qa-popup-second)",
-                &[first, third, second],
+                &[first, second],
             );
+            let grid = render_grid(&interp, 80, 24);
+            let menu = interp.gui_popup_menu.as_ref().unwrap();
+            let more = menu.entries.iter().position(|entry| entry.label == "More").unwrap();
+            assert!(grid.popup_menu_items.iter().any(|item| {
+                item.parent.is_none() && item.selection == Some(more)
+            }), "the second pane must expose its submenu parent");
+            let third = menu.entries.iter().position(|entry| entry.label == "Third item").unwrap();
+            assert!(!grid.popup_menu_items.iter().any(|item| item.selection == Some(third)),
+                "a pane's submenu must stay collapsed until opened");
         })
         .unwrap()
         .join()

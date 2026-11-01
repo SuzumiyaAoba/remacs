@@ -170,6 +170,23 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
     }));
 }
 
+fn scroll_popup(
+    menu: &super::PopupMenu,
+    remainders: &mut std::collections::HashMap<Option<usize>, f32>,
+    parent: Option<usize>,
+    delta: f32,
+) -> bool {
+    if !delta.is_finite() {
+        return false;
+    }
+    let limit = menu.level_entries(parent).len() as f32;
+    let remainder = remainders.entry(parent).or_default();
+    *remainder += delta.clamp(-limit, limit);
+    let rows = remainder.trunc() as isize;
+    *remainder -= rows as f32;
+    menu.scroll_column(parent, rows)
+}
+
 fn popup_loop<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
@@ -179,7 +196,7 @@ fn popup_loop<T: KeyIo>(
         return Ok(None);
     }
     let mut render_needed = true;
-    let mut scroll_remainder = 0.0f32;
+    let mut scroll_remainders = std::collections::HashMap::<Option<usize>, f32>::new();
     loop {
         i.maybe_quit()?;
         render_needed |= crate::lisp::eval::threads::yield_now(i)?;
@@ -206,34 +223,77 @@ fn popup_loop<T: KeyIo>(
         i.maybe_quit()?;
         match input {
             Some(InputEvent::PopupMenuSelection { menu_id, index }) if menu_id == menu.id => {
-                match index {
-                    None => return Ok(None),
-                    Some(index)
-                        if menu
-                            .entries
-                            .get(index)
-                            .is_some_and(|entry| entry.value.is_some()) =>
-                    {
-                        return Ok(Some(index));
-                    }
-                    _ => {}
+                let Some(index) = index else {
+                    return Ok(None);
+                };
+                match menu.select(index) {
+                    super::popup::PopupMenuAction::Select(index) => return Ok(Some(index)),
+                    super::popup::PopupMenuAction::Redraw => render_needed = true,
+                    super::popup::PopupMenuAction::None => {}
                 }
+            }
+            Some(InputEvent::PopupMenuHover {
+                menu_id,
+                parent,
+                index,
+            }) if menu_id == menu.id => {
+                render_needed |= menu.hover(parent, index);
             }
             Some(InputEvent::PopupMenuScroll {
                 menu_id,
                 delta_lines,
             }) if menu_id == menu.id => {
-                if delta_lines.is_finite() {
-                    let limit = menu.entries.len() as f32;
-                    scroll_remainder += delta_lines.clamp(-limit, limit);
-                    let rows = scroll_remainder.trunc() as isize;
-                    scroll_remainder -= rows as f32;
-                    render_needed |= menu.scroll_by(rows);
-                }
+                render_needed |= scroll_popup(menu, &mut scroll_remainders, None, delta_lines);
             }
-            Some(InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. })
+            Some(InputEvent::PopupMenuScrollAt {
+                menu_id,
+                parent,
+                delta_lines,
+            }) if menu_id == menu.id => {
+                render_needed |= scroll_popup(menu, &mut scroll_remainders, parent, delta_lines);
+            }
+            Some(
+                InputEvent::PopupMenuSelection { .. }
+                | InputEvent::PopupMenuScroll { .. }
+                | InputEvent::PopupMenuHover { .. }
+                | InputEvent::PopupMenuScrollAt { .. },
+            )
             | None => {}
             Some(InputEvent::Key(7)) => return Err(Flow::Quit),
+            Some(InputEvent::Key(27)) => {
+                if let Some(parent) = menu.opened_submenus().last().copied() {
+                    render_needed |= menu.close_submenu(parent);
+                } else {
+                    return Ok(None);
+                }
+            }
+            Some(InputEvent::Key(code)) => {
+                let name = if code == 13 || code == 10 {
+                    Some("enter".to_owned())
+                } else {
+                    crate::editor::key_name_for(code)
+                };
+                let Some(name) = name.filter(|name| {
+                    matches!(
+                        name.as_str(),
+                        "up" | "down"
+                            | "home"
+                            | "end"
+                            | "prior"
+                            | "next"
+                            | "left"
+                            | "right"
+                            | "enter"
+                    )
+                }) else {
+                    return Ok(None);
+                };
+                match menu.key(&name) {
+                    super::popup::PopupMenuAction::Select(index) => return Ok(Some(index)),
+                    super::popup::PopupMenuAction::Redraw => render_needed = true,
+                    super::popup::PopupMenuAction::None => {}
+                }
+            }
             Some(InputEvent::MouseMoved {
                 frame_id,
                 frame_position,
@@ -367,7 +427,8 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::Text(text) => {
                 dispatch_text(&term, i, &text, &mut keys, &mut arg_mode)?
             }
-            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. } => {}
+            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. }
+            | InputEvent::PopupMenuHover { .. } | InputEvent::PopupMenuScrollAt { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
@@ -2568,7 +2629,8 @@ fn minibuf_loop<T: KeyIo>(
                     return Err(i.error(format!("minibuffer input: {e}")));
                 }
             }
-            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. } => {}
+            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. }
+            | InputEvent::PopupMenuHover { .. } | InputEvent::PopupMenuScrollAt { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }

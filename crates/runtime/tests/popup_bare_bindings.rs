@@ -23,13 +23,18 @@ impl KeyIo for Input {
         panic!("popup must read a selection event");
     }
     fn poll_key_or_mouse(&mut self, _: Duration) -> io::Result<Option<InputEvent>> {
+        let parent = self
+            .grid
+            .as_ref()
+            .and_then(|grid| grid.popup_menu_items.last())
+            .and_then(|item| item.parent);
         let item = self
             .grid
             .as_ref()
             .and_then(|grid| {
                 grid.popup_menu_items
                     .iter()
-                    .find(|item| item.selection.is_some())
+                    .find(|item| item.parent == parent && item.selection.is_some())
             })
             .ok_or_else(|| io::Error::other("popup has no selectable item"))?;
         Ok(Some(InputEvent::PopupMenuSelection {
@@ -50,6 +55,8 @@ impl KeyIo for Input {
                         .skip(item.left)
                         .take(item.width)
                         .collect::<String>()
+                        .trim()
+                        .trim_end_matches('▸')
                         .trim()
                         .to_owned()
                 })

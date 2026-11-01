@@ -16,6 +16,7 @@ fn popup_wheel_motion_reaches_both_input_paths_without_buffer_wheel_events() {
             view.grid.rows = vec![" ".repeat(32); 6];
             view.grid.rows[1] = "    Item                        ".into();
             view.grid.popup_menu_items = vec![GridPopupMenuItem {
+                parent: None,
                 menu_id: 41,
                 selection: Some(37),
                 row: 1,

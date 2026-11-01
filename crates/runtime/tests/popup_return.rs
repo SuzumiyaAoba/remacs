@@ -145,7 +145,7 @@ fn popup_returns_choices_to_the_blocked_caller_without_executing_them() {
         ];
         let mut outcomes = Vec::new();
         for (case, label) in actions.into_iter().enumerate() {
-            let grid = loop {
+            let mut grid = loop {
                 let grid = grid_rx
                     .recv_timeout(Duration::from_secs(30))
                     .map_err(|error| format!("case {case}: {error}"))?;
@@ -159,6 +159,42 @@ fn popup_returns_choices_to_the_blocked_caller_without_executing_them() {
             );
             let menu_id = grid.popup_menu_items[0].menu_id;
             if let Some(label) = label {
+                if case == 1 {
+                    let branch = grid
+                        .popup_menu_items
+                        .iter()
+                        .find(|item| {
+                            let text = grid.rows[item.row]
+                                .chars()
+                                .skip(item.left)
+                                .take(item.width)
+                                .collect::<String>();
+                            text.trim().trim_end_matches('▸').trim() == "Branch"
+                        })
+                        .expect("submenu parent must be visible");
+                    input_tx
+                        .send(Ok(InputEvent::PopupMenuSelection {
+                            menu_id,
+                            index: branch.selection,
+                        }))
+                        .unwrap();
+                    grid = loop {
+                        let next = grid_rx
+                            .recv_timeout(Duration::from_secs(30))
+                            .map_err(|error| format!("submenu: {error}"))?;
+                        if next.popup_menu_items.iter().any(|item| {
+                            next.rows[item.row]
+                                .chars()
+                                .skip(item.left)
+                                .take(item.width)
+                                .collect::<String>()
+                                .trim()
+                                == "Leaf"
+                        }) {
+                            break next;
+                        }
+                    };
+                }
                 let item = grid
                     .popup_menu_items
                     .iter()

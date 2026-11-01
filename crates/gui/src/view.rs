@@ -40,6 +40,8 @@ mod popup_dismiss_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod popup_scroll_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod popup_navigation_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
@@ -627,6 +629,7 @@ fn tab_bar_hit_regions(
 #[derive(Clone)]
 struct PopupMenuHitRegion {
     menu_id: usize,
+    parent: Option<usize>,
     selection: Option<usize>,
     bounds: Bounds<Pixels>,
 }
@@ -641,6 +644,7 @@ fn popup_menu_hit_regions(
         .filter_map(|item| {
             Some(PopupMenuHitRegion {
                 menu_id: item.menu_id,
+                parent: item.parent,
                 selection: item.selection,
                 bounds: grid_text_range_bounds(
                     grid,
@@ -674,6 +678,23 @@ fn popup_menu_event_at(items: &[PopupMenuHitRegion], point: Point<Pixels>) -> Op
     }
 }
 
+fn popup_menu_hover_event_at(
+    items: &[PopupMenuHitRegion],
+    point: Point<Pixels>,
+) -> Option<GuiEvent> {
+    let hit = items.iter().rev().find(|item| {
+        point.x >= item.bounds.left()
+            && point.x < item.bounds.right()
+            && point.y >= item.bounds.top()
+            && point.y < item.bounds.bottom()
+    })?;
+    Some(GuiEvent::PopupMenuHover {
+        menu_id: hit.menu_id,
+        parent: hit.parent,
+        index: hit.selection,
+    })
+}
+
 #[cfg(test)]
 mod popup_selection_tests {
     use super::*;
@@ -682,6 +703,7 @@ mod popup_selection_tests {
     fn popup_click_returns_a_choice_or_dismissal_without_a_command() {
         let items = [
             PopupMenuHitRegion {
+                parent: None,
                 menu_id: 23,
                 selection: Some(4),
                 bounds: Bounds {
@@ -690,6 +712,7 @@ mod popup_selection_tests {
                 },
             },
             PopupMenuHitRegion {
+                parent: None,
                 menu_id: 23,
                 selection: None,
                 bounds: Bounds {
@@ -1342,6 +1365,7 @@ impl Render for EditorView {
         let left_mouse_down_grid = mouse_grid.clone();
         let popup_hit_for_input = self.popup_hit_regions.clone();
         let popup_hit_for_shape = self.popup_hit_regions.clone();
+        let popup_hit_for_scroll = self.popup_hit_regions.clone();
         let tab_hit_for_input = self.tab_hit_regions.clone();
         let tab_hit_for_shape = self.tab_hit_regions.clone();
         let tool_hit_for_input = self.tool_hit_regions.clone();
@@ -1602,6 +1626,19 @@ impl Render for EditorView {
                         Some(absolute_position),
                         text_window_id,
                     );
+                    {
+                        let popup = this.popup_hit_regions.borrow();
+                        if !popup.is_empty() {
+                            if let Some(event) =
+                                point.and_then(|point| popup_menu_hover_event_at(&popup, point))
+                            {
+                                let _ = this.tx.send(event);
+                            }
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
+                    }
                     if !event.dragging() {
                         return;
                     }
@@ -1785,10 +1822,25 @@ impl Render for EditorView {
                     let delta = event.delta.pixel_delta(line_height);
                     let delta_lines = -f32::from(delta.y) / f32::from(line_height);
                     if delta_lines != 0.0 {
-                        let _ = scroll_tx.send(GuiEvent::PopupMenuScroll {
-                            menu_id: menu.menu_id,
-                            delta_lines,
-                        });
+                        let point =
+                            frame_content_point(event.position, window.viewport_size(), border);
+                        let regions = popup_hit_for_scroll.borrow();
+                        let parent = point
+                            .and_then(|point| {
+                                regions.iter().rev().find(|item| {
+                                    point.x >= item.bounds.left() && point.x < item.bounds.right()
+                                        && point.y >= item.bounds.top() && point.y < item.bounds.bottom()
+                                }).map(|item| item.parent)
+                            })
+                            .unwrap_or_else(|| {
+                                scroll_grid.popup_menu_items.last().and_then(|item| item.parent)
+                            });
+                        let event = if parent.is_none() {
+                            GuiEvent::PopupMenuScroll { menu_id: menu.menu_id, delta_lines }
+                        } else {
+                            GuiEvent::PopupMenuScrollAt { menu_id: menu.menu_id, parent, delta_lines }
+                        };
+                        let _ = scroll_tx.send(event);
                     }
                     window.prevent_default();
                     cx.stop_propagation();

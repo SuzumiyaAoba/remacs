@@ -1338,6 +1338,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             | GuiEvent::NativeMenuCommand(_)
             | GuiEvent::PopupMenuSelection { .. }
             | GuiEvent::PopupMenuScroll { .. }
+            | GuiEvent::PopupMenuHover { .. } | GuiEvent::PopupMenuScrollAt { .. }
             | GuiEvent::OpenFiles(_)
             | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
@@ -1371,6 +1372,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             | GuiEvent::NativeMenuCommand(_)
             | GuiEvent::PopupMenuSelection { .. }
             | GuiEvent::PopupMenuScroll { .. }
+            | GuiEvent::PopupMenuHover { .. } | GuiEvent::PopupMenuScrollAt { .. }
             | GuiEvent::OpenFiles(_)
             | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,

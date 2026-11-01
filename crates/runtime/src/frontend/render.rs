@@ -227,6 +227,8 @@ pub struct GridTabBarItem {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridPopupMenuItem {
     pub menu_id: usize,
+    /// The submenu owning this column; None denotes the root.
+    pub parent: Option<usize>,
     pub selection: Option<usize>,
     pub row: usize,
     pub left: usize,
@@ -3649,47 +3651,64 @@ fn render_popup_menu(
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
 ) -> Vec<GridPopupMenuItem> {
-    let flat_items = &menu.entries;
-    if flat_items.is_empty() || width == 0 || height == 0 {
+    if menu.entries.is_empty() || width < 3 || height < 3 {
         return Vec::new();
     }
-    let max_label_width = flat_items
+    let parents = std::iter::once(None)
+        .chain(menu.opened_submenus().into_iter().map(Some))
+        .collect::<Vec<_>>();
+    let panels = parents
         .iter()
-        .map(|item| {
-            if item.separator {
-                1
-            } else {
-                item.label
+        .map(|&parent| {
+            let rows = menu.level_entries(parent);
+            let base = parent.map_or(0, |parent| menu.entries[parent].depth + 1);
+            let label_width = rows
+                .iter()
+                .map(|&index| {
+                    let entry = &menu.entries[index];
+                    entry.label.chars().map(display_char_width).sum::<usize>()
+                        + entry.depth.saturating_sub(base) * 2
+                        + usize::from(entry.submenu) * 2
+                })
+                .max()
+                .unwrap_or(1);
+            let back_width = parent.map_or(0, |parent| {
+                menu.entries[parent]
+                    .label
                     .chars()
                     .map(display_char_width)
                     .sum::<usize>()
-                    .saturating_add(item.depth.saturating_mul(2))
-            }
+                    + 2
+            });
+            (
+                parent,
+                rows,
+                label_width
+                    .max(back_width)
+                    .saturating_add(2)
+                    .max(3)
+                    .min(width),
+            )
         })
-        .max()
-        .unwrap_or(1);
-    let menu_width = max_label_width.saturating_add(2).max(3).min(width);
-    let menu_height = flat_items.len().saturating_add(2).min(height);
-    if menu_height < 3 || menu_width < 3 {
-        return Vec::new();
+        .collect::<Vec<_>>();
+    // Keep as many ancestor columns as fit. On a narrow frame, a child panel
+    // replaces them and provides a back action in its top border.
+    let mut first = 0;
+    let mut total_width = panels.iter().map(|panel| panel.2).sum::<usize>();
+    while total_width > width && first + 1 < panels.len() {
+        total_width -= panels[first].2;
+        first += 1;
     }
-    let visible_rows = menu_height.saturating_sub(2);
-    menu.visible_rows.set(visible_rows);
-    let offset = menu
-        .scroll_offset
-        .get()
-        .min(flat_items.len().saturating_sub(visible_rows));
-    menu.scroll_offset.set(offset);
-    let left = usize::try_from(pixel_position.0.max(0))
+    menu.focus_visible_levels(&parents[first..]);
+    let mut left = usize::try_from(pixel_position.0.max(0))
         .unwrap_or(usize::MAX)
         .checked_div(cell_width.max(1))
         .unwrap_or(0)
-        .min(width.saturating_sub(menu_width));
-    let top = usize::try_from(pixel_position.1.max(0))
+        .min(width.saturating_sub(total_width));
+    let origin_top = usize::try_from(pixel_position.1.max(0))
         .unwrap_or(usize::MAX)
         .checked_div(cell_height.max(1))
-        .unwrap_or(0)
-        .min(height.saturating_sub(menu_height));
+        .unwrap_or(0);
     let mut style = faces.builtin(i, "menu", 0).finish();
     if style.fg.is_none() {
         style.fg = default_style.fg;
@@ -3703,56 +3722,99 @@ fn render_popup_menu(
         color: style.fg,
         kind: BoxStyleKind::Flat,
     });
-    for row_index in top..top.saturating_add(menu_height) {
-        if let Some(row) = screen.get_mut(row_index) {
-            for cell in row.iter_mut().skip(left).take(menu_width) {
-                *cell = ScreenCell {
-                    chars: Vec::new(),
-                    style,
-                    occupied: true,
-                    continuation: false,
-                };
+    let mut selected_style = style;
+    selected_style.fg = style.bg.or(Some(CellColor(0, 0, 0)));
+    selected_style.bg = style.fg.or(Some(CellColor(0xee, 0xee, 0xee)));
+    let mut hit_items: Vec<GridPopupMenuItem> = Vec::new();
+    for (level, (parent, rows, panel_width)) in panels.iter().enumerate().skip(first) {
+        if rows.is_empty() {
+            continue;
+        }
+        let panel_height = rows.len().saturating_add(2).min(height);
+        let capacity = panel_height - 2;
+        let offset = menu.viewport(*parent).0;
+        menu.set_viewport(*parent, offset, capacity);
+        if let Some(&Some(next)) = parents.get(level + 1) {
+            menu.ensure_visible(*parent, next);
+        } else if let Some(selected) = menu.highlighted().filter(|index| rows.contains(index)) {
+            menu.ensure_visible(*parent, selected);
+        }
+        let offset = menu.viewport(*parent).0;
+        let anchor = if level > first {
+            let Some(parent_row) = hit_items.iter().rfind(|item| item.selection == *parent) else {
+                break;
+            };
+            parent_row.row.saturating_sub(1)
+        } else {
+            origin_top
+        };
+        let top = anchor.min(height.saturating_sub(panel_height));
+        for row_index in top..top + panel_height {
+            if let Some(row) = screen.get_mut(row_index) {
+                for cell in row.iter_mut().skip(left).take(*panel_width) {
+                    *cell = ScreenCell {
+                        chars: Vec::new(),
+                        style,
+                        occupied: true,
+                        continuation: false,
+                    };
+                }
             }
         }
-    }
-    let mut hit_items = Vec::new();
-    for (index, item) in flat_items
-        .iter()
-        .enumerate()
-        .skip(offset)
-        .take(visible_rows)
-    {
-        let item_row = top.saturating_add(index - offset).saturating_add(1);
-        let text = if item.separator {
-            "─".repeat(menu_width.saturating_sub(2))
-        } else {
-            format!("{}{}", " ".repeat(item.depth.saturating_mul(2)), item.label)
-        };
-        let text = fit_text_to_cells_with_tab_width(&text, menu_width.saturating_sub(2), 8).0;
-        let cell_styles = vec![style; menu_width.saturating_sub(2)];
-        let char_styles = text.chars().map(|_| style).collect::<Vec<_>>();
-        if let Some(row) = screen.get_mut(item_row) {
-            place_text_row(
-                row,
-                left.saturating_add(1),
-                &text,
-                &cell_styles,
-                &char_styles,
-            );
+        let mut painted_rows = Vec::new();
+        if level == first && first != 0 {
+            painted_rows.push((top, parent.unwrap(), true));
         }
-        hit_items.push(GridPopupMenuItem {
-            row: item_row,
-            left: left.saturating_add(1),
-            width: menu_width.saturating_sub(2),
-            byte_range: None,
-            command: if item.separator {
-                None
+        painted_rows.extend(
+            rows.iter()
+                .copied()
+                .skip(offset)
+                .take(capacity)
+                .enumerate()
+                .map(|(line, index)| (top + line + 1, index, false)),
+        );
+        let base = parent.map_or(0, |parent| menu.entries[parent].depth + 1);
+        for (row_index, index, back) in painted_rows {
+            let item = &menu.entries[index];
+            let text = if back {
+                format!("‹ {}", item.label)
+            } else if item.separator {
+                "─".repeat(panel_width.saturating_sub(2))
             } else {
-                item.command.clone()
-            },
-            menu_id: menu.id,
-            selection: item.value.as_ref().map(|_| index),
-        });
+                format!(
+                    "{}{}{}",
+                    " ".repeat(item.depth.saturating_sub(base) * 2),
+                    item.label,
+                    if item.submenu { " ▸" } else { "" }
+                )
+            };
+            let text = fit_text_to_cells_with_tab_width(&text, panel_width.saturating_sub(2), 8).0;
+            let row_style = if !back && menu.highlighted() == Some(index) {
+                selected_style
+            } else {
+                style
+            };
+            let cell_styles = vec![row_style; panel_width.saturating_sub(2)];
+            let char_styles = text.chars().map(|_| row_style).collect::<Vec<_>>();
+            if let Some(row) = screen.get_mut(row_index) {
+                place_text_row(row, left + 1, &text, &cell_styles, &char_styles);
+            }
+            hit_items.push(GridPopupMenuItem {
+                menu_id: menu.id,
+                parent: *parent,
+                selection: (back || item.submenu || item.value.is_some()).then_some(index),
+                row: row_index,
+                left: left + 1,
+                width: panel_width.saturating_sub(2),
+                byte_range: None,
+                command: if back || item.separator || item.submenu {
+                    None
+                } else {
+                    item.command.clone()
+                },
+            });
+        }
+        left += panel_width;
     }
     hit_items
 }

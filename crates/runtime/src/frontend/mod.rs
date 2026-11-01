@@ -310,6 +310,10 @@ pub enum InputEvent {
     PopupMenuSelection { menu_id: usize, index: Option<usize> },
     /// Scroll a specific popup without dispatching a buffer wheel command.
     PopupMenuScroll { menu_id: usize, delta_lines: f32 },
+    /// Point at an item in one displayed popup level without selecting it.
+    PopupMenuHover { menu_id: usize, parent: Option<usize>, index: Option<usize> },
+    /// Scroll a specific displayed submenu; None denotes the root level.
+    PopupMenuScrollAt { menu_id: usize, parent: Option<usize>, delta_lines: f32 },
     /// Execute a GUI action with pre-supplied interactive arguments.
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
@@ -546,7 +550,7 @@ mod menu_commands;
 pub use menu_commands::{NativeMenuCommandId, WeakNativeMenuCommandId};
 pub(crate) use menu_commands::NativeMenuCommands;
 pub use menus::prepare_native_menus;
-pub use popup::{PopupMenu, PopupMenuEntry};
+pub use popup::{PopupMenu, PopupMenuEntry, PopupMenuNavigation};
 pub(crate) use popup::show_popup_menu;
 pub(crate) use command::minibuf_dispatch_key;
 pub use command::{

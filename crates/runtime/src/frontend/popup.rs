@@ -8,11 +8,15 @@ use crate::lisp::{
     obarray::sym,
 };
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
+
+mod navigation;
+pub(crate) use navigation::PopupMenuAction;
+pub use navigation::PopupMenuNavigation;
 
 /// One row of a popup snapshot. Values remain on the Lisp logic thread.
 #[derive(Clone)]
@@ -20,15 +24,17 @@ pub struct PopupMenuEntry {
     pub label: String,
     pub command: Option<String>,
     pub separator: bool,
+    pub submenu: bool,
     pub depth: usize,
     pub value: Option<Value>,
 }
 
-/// An immutable set of choices for one synchronous popup request.
+/// Choices and view navigation for one synchronous popup request.
 pub struct PopupMenu {
     pub id: usize,
     pub position: PopupMenuPosition,
     pub entries: Vec<PopupMenuEntry>,
+    pub navigation: RefCell<PopupMenuNavigation>,
     /// First entry in the current scroll viewport.
     pub scroll_offset: Cell<usize>,
     /// Entry rows available in the most recently rendered viewport.
@@ -38,14 +44,7 @@ pub struct PopupMenu {
 impl PopupMenu {
     /// Scroll the menu while keeping its final page filled when possible.
     pub fn scroll_by(&self, rows: isize) -> bool {
-        let previous = self.scroll_offset.get();
-        let maximum = self
-            .entries
-            .len()
-            .saturating_sub(self.visible_rows.get().max(1));
-        let next = previous.saturating_add_signed(rows).min(maximum);
-        self.scroll_offset.set(next);
-        next != previous
+        self.scroll_column(None, rows)
     }
 }
 
@@ -55,14 +54,18 @@ impl PopupMenuEntry {
             label,
             command: None,
             separator: false,
+            submenu: false,
             depth,
             value: None,
         }
     }
     fn separator() -> Self {
+        Self::separator_at(0)
+    }
+    fn separator_at(depth: usize) -> Self {
         Self {
             separator: true,
-            ..Self::text(String::new(), 0)
+            ..Self::text(String::new(), depth)
         }
     }
 }
@@ -482,11 +485,12 @@ fn keymap_entries(
             separator,
             enabled,
             ..
-        }) = keymap_item(i, &key, &binding)? else {
+        }) = keymap_item(i, &key, &binding)?
+        else {
             continue;
         };
         if separator {
-            entries.push(PopupMenuEntry::separator());
+            entries.push(PopupMenuEntry::separator_at(depth));
             continue;
         }
         let mut keys = prefix.to_vec();
@@ -505,7 +509,9 @@ fn keymap_entries(
             }
             let children = keymap_entries(i, &submenu, &keys, depth + 1)?;
             if !children.is_empty() {
-                entries.push(PopupMenuEntry::text(label, depth));
+                let mut parent = PopupMenuEntry::text(label, depth);
+                parent.submenu = true;
+                entries.push(parent);
                 entries.extend(children);
             }
         } else {
@@ -517,6 +523,7 @@ fn keymap_entries(
                 label,
                 command,
                 separator: false,
+                submenu: false,
                 depth,
                 value: (enabled && definition.truthy()).then(|| Value::list(keys)),
             });
@@ -608,6 +615,7 @@ fn menu_entries(i: &mut Interp, menu: &Value) -> Result<Vec<PopupMenuEntry>, Flo
                                 label: label.borrow().to_unicode_lossy(),
                                 command: None,
                                 separator: false,
+                                submenu: false,
                                 depth: 1,
                                 value: Some(cell.cdr.clone()),
                             });
@@ -637,6 +645,7 @@ pub(crate) fn show_popup_menu(
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         position,
         entries: menu_entries(i, menu)?,
+        navigation: RefCell::new(PopupMenuNavigation::default()),
         scroll_offset: Cell::new(0),
         visible_rows: Cell::new(0),
     });

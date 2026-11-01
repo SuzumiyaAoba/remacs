@@ -42,13 +42,20 @@ impl KeyIo for Input {
         if self.cancel {
             return Ok(Some(InputEvent::Key(27)));
         }
+        let parent = self
+            .grid
+            .as_ref()
+            .unwrap()
+            .popup_menu_items
+            .last()
+            .and_then(|item| item.parent);
         let item = self
             .grid
             .as_ref()
             .unwrap()
             .popup_menu_items
             .iter()
-            .find(|item| item.selection.is_some())
+            .find(|item| item.parent == parent && item.selection.is_some())
             .ok_or_else(|| io::Error::other("popup has no selectable item"))?;
         Ok(Some(InputEvent::PopupMenuSelection {
             menu_id: item.menu_id,
@@ -108,6 +115,16 @@ fn displayed(input: &Rc<RefCell<Input>>) -> Vec<Row> {
         .unwrap_or_default()
 }
 
+fn opened_submenu(input: &Rc<RefCell<Input>>, label: &str) -> Vec<Row> {
+    input
+        .borrow()
+        .frames
+        .iter()
+        .find(|rows| rows.iter().any(|row| row.0 == label))
+        .cloned()
+        .expect("submenu must be opened before selecting its leaf")
+}
+
 #[test]
 fn popup_filters_replace_bindings_before_display_and_keep_gnu_evaluation_order() {
     std::thread::Builder::new().stack_size(64 * 1024 * 1024).spawn(|| {
@@ -137,8 +154,9 @@ fn popup_filters_replace_bindings_before_display_and_keep_gnu_evaluation_order()
               (list 'menu-item "Branch" 'ignore :filter (lambda (_binding) child)))
             (list (x-popup-menu t map) qa-filter-ran)))"#);
         assert_eq!(interp.prin1_to_string(&value), "((branch leaf) nil)");
-        assert_eq!(displayed(&input), [
-            ("Branch".into(), None, false),
+        assert_eq!(displayed(&input), [("Branch ▸".into(), None, true)]);
+        assert_eq!(opened_submenu(&input, "Filtered leaf"), [
+            ("Branch ▸".into(), None, true),
             ("Filtered leaf".into(), Some("qa-filter-target".into()), true),
         ]);
 
@@ -159,8 +177,9 @@ fn popup_filters_replace_bindings_before_display_and_keep_gnu_evaluation_order()
             (list (x-popup-menu t map) qa-filter-autoloaded)))"#);
         let value = open(&mut interp, &input, false, &source);
         assert_eq!(interp.prin1_to_string(&value), "((auto loaded) t)");
-        assert_eq!(displayed(&input), [
-            ("Autoload branch".into(), None, false),
+        assert_eq!(displayed(&input), [("Autoload branch ▸".into(), None, true)]);
+        assert_eq!(opened_submenu(&input, "Loaded leaf"), [
+            ("Autoload branch ▸".into(), None, true),
             ("Loaded leaf".into(), Some("ignore".into()), true),
         ]);
 

@@ -38,6 +38,7 @@ fn popup_click_uses_the_native_painted_glyph_extent() {
             }
             grid.popup_menu_items = vec![
                 GridPopupMenuItem {
+                    parent: None,
                     menu_id: 41,
                     selection: Some(0),
                     row: 1,
@@ -47,6 +48,7 @@ fn popup_click_uses_the_native_painted_glyph_extent() {
                     command: None,
                 },
                 GridPopupMenuItem {
+                    parent: None,
                     menu_id: 41,
                     selection: Some(1),
                     row: 2,
