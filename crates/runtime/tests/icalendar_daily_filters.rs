@@ -57,6 +57,91 @@ const CASES: &str = r##"
        "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=6" '(1 6 2025) '(1 1 2025) '(1 20 2025)
        '((1 6 2025) (1 7 2025) (1 8 2025) (1 9 2025) (1 10 2025) (1 13 2025))
        (car times) (cadr times))))
+  ;; Daily BYMONTHDAY limits calendar dates without resetting the day-step phase (#1568).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-daily-hits
+       "FREQ=DAILY;BYMONTHDAY=1,15" '(1 1 2025) '(1 1 2025) '(3 15 2025)
+       '((1 1 2025) (1 15 2025) (2 1 2025) (2 15 2025) (3 1 2025) (3 15 2025))
+       (car times) (cadr times))
+      (remacs-test-ical-daily-hits
+       (concat "FREQ=DAILY;BYMONTHDAY=1,15;UNTIL="
+               (if (car times) "20250201T235959" "20250201"))
+       '(1 1 2025) '(1 1 2025) '(3 15 2025)
+       '((1 1 2025) (1 15 2025) (2 1 2025)) (car times) (cadr times))
+      (remacs-test-ical-daily-hits
+       "FREQ=DAILY;BYMONTHDAY=15,1,15;COUNT=3" '(1 10 2025) '(1 1 2025) '(3 15 2025)
+       '((1 10 2025) (1 15 2025) (2 1 2025)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-daily-hits
+     "FREQ=DAILY;BYMONTHDAY=1,15;INTERVAL=2;COUNT=4" '(1 1 2025) '(1 1 2025) '(5 20 2025)
+     '((1 1 2025) (1 15 2025) (4 1 2025) (4 15 2025)) "09:00" nil)
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1,15;INTERVAL=3;COUNT=4" '(1 10 2025)
+     '((1 10 2025) (1 15 2025) (2 1 2025) (2 15 2025) (4 1 2025) (5 1 2025) (6 15 2025))
+     '((1 10 2025) (2 15 2025) (4 1 2025) (5 1 2025)))
+    (remacs-test-ical-daily-hits
+     "FREQ=DAILY;BYMONTHDAY=31,-1,31;COUNT=4" '(1 10 2025) '(1 1 2025) '(5 1 2025)
+     '((1 10 2025) (1 31 2025) (2 28 2025) (3 31 2025)))
+    (remacs-test-ical-daily-hits
+     "FREQ=DAILY;BYMONTHDAY=-31;COUNT=3" '(1 1 2025) '(1 1 2025) '(6 1 2025)
+     '((1 1 2025) (3 1 2025) (5 1 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1,15;BYDAY=MO,WE;COUNT=3" '(1 10 2025)
+     '((1 1 2025) (1 10 2025) (1 15 2025) (2 1 2025) (9 1 2025) (9 15 2025))
+     '((1 10 2025) (1 15 2025) (9 1 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1,15;BYDAY=MO,WE;INTERVAL=2;COUNT=3" '(1 1 2025)
+     '((1 1 2025) (1 15 2025) (4 1 2025) (9 1 2025) (10 1 2025) (12 1 2025) (12 15 2025))
+     '((1 1 2025) (1 15 2025) (12 1 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1;BYDAY=WE;INTERVAL=7;COUNT=100" '(1 6 2025)
+     '((1 6 2025) (1 13 2025) (10 1 2025)) '((1 6 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1;INTERVAL=146097;COUNT=3" '(1 1 2025)
+     '((1 1 2025) (1 1 2425) (1 1 2825) (1 1 3225))
+     '((1 1 2025) (1 1 2425) (1 1 2825)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1;INTERVAL=146097;COUNT=100" '(1 2 2025)
+     '((1 2 2025) (1 1 2425) (1 2 2425)) '((1 2 2025)))
+    (remacs-test-ical-daily-hits
+     "FREQ=DAILY;BYMONTHDAY=29;COUNT=3" '(2 28 2024) '(2 27 2024) '(4 30 2024)
+     '((2 28 2024) (2 29 2024) (3 29 2024)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=29;INTERVAL=2;COUNT=3" '(2 28 2024)
+     '((2 28 2024) (2 29 2024) (3 29 2024) (4 29 2024) (5 29 2024) (6 29 2024) (7 29 2024))
+     '((2 28 2024) (3 29 2024) (6 29 2024)))
+    (remacs-test-ical-daily-hits
+     "FREQ=DAILY;BYMONTHDAY=1,15;COUNT=4" '(1 1 2025) '(1 1 2025) '(3 20 2025)
+     '((1 15 2025) (2 1 2025)) nil nil '((EXDATE nil "20250101") (EXDATE nil "20250215")))
+    (let* ((calendar-debug-sexp t)
+           (generated (remacs-test-ical-daily-format "FREQ=DAILY;BYMONTHDAY=1,15;INTERVAL=2" '(1 1 2025)))
+           (entry (diary-sexp-entry (cdr generated) "repeat %d" '(1 15 2025))))
+      (unless (equal (if (consp entry) (cdr entry) entry) "repeat 7")
+        (error "The month-day filter lost diary-cyclic's formatted entry")))
+    ;; Independent month-by-month enumeration supplied these endpoints and next matches.
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1,15;COUNT=1000000" '(1 1 2025)
+     '((1 1 2025) (8 15 43691) (9 1 43691)) '((1 1 2025) (8 15 43691)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1,15;INTERVAL=2;COUNT=1000000" '(1 1 2025)
+     '((1 1 2025) (3 15 85358) (6 1 85358)) '((1 1 2025) (3 15 85358)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTHDAY=1,15;INTERVAL=37;COUNT=1000" '(1 1 2025)
+     '((1 1 2025) (11 1 3543) (6 15 3545)) '((1 1 2025) (11 1 3543)))
+    (let* ((start '(0 0 9 10 1 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=DAILY;BYMONTHDAY=15,1,15;INTERVAL=2;COUNT=4"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "Daily month-day conversion mutated its inputs")))
+    (dolist (rule '("FREQ=DAILY;BYMONTHDAY=0" "FREQ=DAILY;BYMONTHDAY=32"
+                     "FREQ=DAILY;BYMONTHDAY=-32" "FREQ=DAILY;BYMONTHDAY=NO"
+                     "FREQ=DAILY;BYMONTHDAY=1;COUNT=0" "FREQ=DAILY;BYMONTHDAY=1;COUNT=1.5"
+                     "FREQ=DAILY;BYMONTHDAY=1;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-daily-format rule '(1 1 2025)) nil)
+                (error t))
+        (error "An invalid daily month-day/count/interval was accepted: %S" rule))))
   (let ((calendar-date-style 'american))
     (dolist (case '((1 ((1 10 2025))) (2 ((1 10 2025) (1 13 2025)))
                     (4 ((1 10 2025) (1 13 2025) (1 15 2025) (1 20 2025)))))
@@ -135,7 +220,7 @@ fn check(interp: &mut Interp, source: &str) {
 }
 
 #[test]
-fn daily_recurrences_apply_weekday_filters() {
+fn daily_recurrences_apply_calendar_filters() {
     let mut interp = Interp::new();
     check(&mut interp, CASES);
     check(&mut interp, r#"(load "icalendar.el" nil t)"#);
