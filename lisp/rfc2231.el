@@ -202,12 +202,24 @@ must never cause a Lisp error."
 
 	;; Now collect and concatenate continuation parameters.
 	(let ((cparams nil)
+	      (extended-attributes
+	       (delete-dups
+		(cl-loop for parameter in parameters
+			 when (or (nth 3 parameter)
+				  (numberp (nth 2 parameter)))
+			 collect (car parameter))))
 	      elem)
 	  (cl-loop for (attribute value part encoded _part-string)
 		in (sort parameters (lambda (e1 e2)
 				      (< (or (caddr e1) 0)
 					 (or (caddr e2) 0))))
 		do (cond
+		    ;; Prefer RFC 2231 values over regular fallbacks regardless
+		    ;; of which parameter appeared first.
+		    ((and (null part)
+			  (not encoded)
+			  (memq attribute extended-attributes))
+		     nil)
 		    ;; First part.
 		    ((or (not (setq elem (assq attribute cparams)))
 			 (and (numberp part)
