@@ -86,6 +86,37 @@ const CASES: &str = r##"
     (remacs-test-ical-monthly-hits
      "FREQ=MONTHLY;BYDAY=+2MO,-2FR;UNTIL=20250228" '(1 13 2025) '(1 1 2025) '(2 28 2025)
      '((1 13 2025) (1 24 2025) (2 10 2025) (2 21 2025))))
+  ;; Plain BYDAY selects every such weekday within an active month (#1565).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (dolist (limited '(nil t))
+        (remacs-test-ical-monthly-hits
+         (concat "FREQ=MONTHLY;BYDAY=MO"
+                 (if limited (if (car times) ";UNTIL=20250120T235959" ";UNTIL=20250120") ""))
+         '(1 6 2025) '(1 1 2025) '(3 1 2025)
+         (if limited '((1 6 2025) (1 13 2025) (1 20 2025))
+           '((1 6 2025) (1 13 2025) (1 20 2025) (1 27 2025)
+             (2 3 2025) (2 10 2025) (2 17 2025) (2 24 2025))) (car times) (cadr times)))))
+  (let ((calendar-date-style 'american))
+    ;; RFC 5545's every-Tuesday, every-other-month example.
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;INTERVAL=2;BYDAY=TU;UNTIL=19980131" '(9 2 1997) '(9 1 1997) '(2 28 1998)
+     '((9 2 1997) (9 9 1997) (9 16 1997) (9 23 1997) (9 30 1997)
+       (11 4 1997) (11 11 1997) (11 18 1997) (11 25 1997)
+       (1 6 1998) (1 13 1998) (1 20 1998) (1 27 1998)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;INTERVAL=2;BYDAY=MO,WE" '(1 6 2025) '(1 1 2025) '(3 5 2025)
+     '((1 6 2025) (1 8 2025) (1 13 2025) (1 15 2025) (1 20 2025) (1 22 2025)
+       (1 27 2025) (1 29 2025) (3 3 2025) (3 5 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=SU" '(1 5 2025) '(1 1 2025) '(2 2 2025)
+     '((1 5 2025) (1 12 2025) (1 19 2025) (1 26 2025) (2 2 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYDAY=MO" '(1 6 2025) '(1 1 2025) '(1 31 2025)
+     '((1 6 2025) (1 20 2025)) nil nil '((EXDATE nil "20250113") (EXDATE nil "20250127")))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;INTERVAL=2;BYDAY=MO" '(1 20 2025) '(1 1 2025) '(3 10 2025)
+     '((1 20 2025) (1 27 2025) (3 3 2025) (3 10 2025)) "09:00" nil))
   (let ((calendar-date-style 'american))
     ;; Missing INTERVAL and explicit INTERVAL=1 retain the original diary rule.
     (dolist (byday '("" ";BYDAY=2MO"))
@@ -156,7 +187,7 @@ fn check(interp: &mut Interp, source: &str) {
 }
 
 #[test]
-fn monthly_recurrences_respect_start_month_and_interval() {
+fn monthly_recurrences_preserve_weekdays_and_intervals() {
     let mut interp = Interp::new();
     check(&mut interp, CASES);
     check(&mut interp, r#"(load "icalendar.el" nil t)"#);
