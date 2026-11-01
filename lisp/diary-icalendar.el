@@ -2530,9 +2530,10 @@ specification.  END may be nil if no end time was specified."
       (let* ((start-hh (string-to-number (match-string 11)))
              (start-am/pm (when (match-string 13)
                             (upcase (match-string 13))))
-             (start-hours (if (and (equal start-am/pm "PM") (< start-hh 12))
-                              (+ 12 start-hh)
-                            start-hh))
+             ;; Remacs: twelve AM is midnight; twelve PM stays noon.
+             (start-hours (cond ((and (equal start-am/pm "AM") (= start-hh 12)) 0)
+                                ((and (equal start-am/pm "PM") (< start-hh 12)) (+ 12 start-hh))
+                                (t start-hh)))
              (start-minutes (string-to-number (or (match-string 12) "0")))
              (start
               (when (and start-hours start-minutes)
@@ -2543,9 +2544,9 @@ specification.  END may be nil if no end time was specified."
                        (string-to-number (match-string 21))))
              (end-am/pm (when (match-string 23)
                           (upcase (match-string 23))))
-             (end-hours (if (and end-hh (equal end-am/pm "PM") (< end-hh 12))
-                            (+ 12 end-hh)
-                          end-hh))
+             (end-hours (cond ((and end-hh (equal end-am/pm "AM") (= end-hh 12)) 0)
+                              ((and end-hh (equal end-am/pm "PM") (< end-hh 12)) (+ 12 end-hh))
+                              (t end-hh)))
              (end-minutes (when end-hours
                             (string-to-number (or (match-string 22) "0"))))
              (end (when (and end-hours end-minutes)
