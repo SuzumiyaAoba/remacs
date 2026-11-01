@@ -59,6 +59,7 @@ supported.  Defaults to non-nil on Windows, nil otherwise."
 
 (defun mailclient-encode-string-as-url (string)
   "Convert STRING to a URL, using utf-8 as encoding."
+  (setq string (string-replace "\r\n" "\n" string))
   (apply (function concat)
 	 (mapcar
 	  (lambda (char)
