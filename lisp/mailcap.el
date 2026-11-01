@@ -1012,12 +1012,20 @@ merged with values from mailcap files by `mailcap-parse-mimetypes'.")
 
 (defvar mailcap-mimetypes-parsed-p nil)
 
+(defvar mailcap--mimetypes-file-entries
+  (make-hash-table :test #'eq :weakness 'key)
+  "Original values of extension pairs produced by complete MIME-type scans.
+Weak keys retain ownership across temporary bindings of
+`mailcap-mime-extensions' without retaining discarded mappings.")
+
 (defun mailcap-parse-mimetypes (&optional path force)
   "Parse out all the mimetypes specified in a Unix-style path string PATH.
 Components of PATH are separated by the `path-separator' character
 appropriate for this system.  If PATH is omitted, use the value of
 environment variable MIMETYPES if set; otherwise use a default path.
-If FORCE, re-parse even if already parsed."
+If FORCE, re-parse even if already parsed.
+Each scan replaces unmodified mappings from earlier calls to this function.
+Lisp customizations and direct `mailcap-parse-mimetype-file' additions remain."
   (interactive (list nil t))
   (when (or (not mailcap-mimetypes-parsed-p)
 	    force)
@@ -1040,12 +1048,30 @@ If FORCE, re-parse even if already parsed."
 		"/usr/etc/mime-types"
 		"/usr/local/etc/mime-types"
 		"/usr/local/www/conf/mime-types"))))
-    (dolist (fname (reverse (if (stringp path)
-                                (split-string path path-separator t)
-                              path)))
-      (when (file-readable-p fname)
-        (mailcap-parse-mimetype-file fname)))
-    (setq mailcap-mimetypes-parsed-p t)))
+    ;; Remacs: replace successful scans, preserving caller-owned entries.
+    (let (custom)
+      (dolist (entry mailcap-mime-extensions)
+        (let ((original (gethash entry mailcap--mimetypes-file-entries)))
+          (unless (and original (equal entry original))
+            (when original
+              ;; An edited file entry is now an explicit Lisp customization.
+              (remhash entry mailcap--mimetypes-file-entries))
+            (push entry custom))))
+      ;; Stage file data separately, so failed reads preserve the last table.
+      (let ((parsed
+             (let ((mailcap-mime-extensions nil))
+               (dolist (fname (reverse (if (stringp path)
+                                           (split-string path path-separator t)
+                                         path)))
+                 (when (file-readable-p fname)
+                   (mailcap-parse-mimetype-file fname)))
+               mailcap-mime-extensions)))
+        (dolist (entry parsed)
+          (puthash entry
+                   (cons (copy-sequence (car entry)) (copy-sequence (cdr entry)))
+                   mailcap--mimetypes-file-entries))
+        (setq mailcap-mime-extensions (append parsed (nreverse custom))
+              mailcap-mimetypes-parsed-p t)))))
 
 (defun mailcap-parse-mimetype-file (fname)
   "Parse out a mime-types file FNAME."
