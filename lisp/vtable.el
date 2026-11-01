@@ -436,6 +436,9 @@ This will also remove the displayed line."
                (removed-lines
                 (cl-remove-if-not (lambda (line) (eq (car line) object))
                                   cache-lines))
+               (first-removed-index
+                (and removed-lines
+                     (seq-position cache-lines (car removed-lines) #'eq)))
                (remaining-lines
                 (cl-remove-if (lambda (line) (eq (car line) object))
                               cache-lines))
@@ -471,6 +474,8 @@ This will also remove the displayed line."
             (dolist (position positions)
               (goto-char position)
               (setq result (delete-line)))
+            ;; Reassign row-color faces without rebuilding cached cell data.
+            (vtable--recolor-rows-from table first-removed-index)
             ;; Removing a row can leave every value in a column numerical.
             (vtable--recompute-numerical-columns table columns-to-recompute)
             (vtable--clear-other-caches
@@ -580,18 +585,21 @@ This also updates the displayed table, if TABLE has already been inserted."
                 ;; Otherwise, append the object.
                 (setcar cache (nconc lines (list line)))
                 (vtable-end-of-table)))
-            (let* ((start (point))
+            (let* ((cache-lines (vtable--cache-lines cache))
+                   (line-number (- (length cache-lines)
+                                   (length (memq line cache-lines))))
+                   (start (point))
                    (keymap (get-text-property (point) 'keymap)))
-              ;; FIXME: We have to adjust colors in lines below this if we
-              ;; have :row-colors.
-              (vtable--insert-line table line 0
+              (vtable--insert-line table line line-number
                                    (vtable--cache-widths cache)
                                    (vtable--spacer table)
                                    (vtable--ellipsis table)
                                    (string-pixel-width
                                     (vtable--ellipsis table) (current-buffer)))
               (add-text-properties start (point) (list 'keymap keymap
-                                                       'vtable table)))
+                                                       'vtable table))
+              ;; Existing rows below the insertion changed their color index.
+              (vtable--recolor-rows-from table (1+ line-number)))
             ;; We may have inserted a non-numerical value into a previously
             ;; all-numerical table, so recompute.
             (let ((result (vtable--recompute-numerical table (cdr line))))
@@ -750,6 +758,71 @@ itself in the new buffer."
           (vtable--set-start-marker table (point) buffer-object))
       (vtable--set-start-marker table nil))))
 
+(defun vtable--add-row-color-face (start end face)
+  "Apply FACE over START through END and record its exact contribution."
+  (let ((position start))
+    (while (< position end)
+      (let* ((base-face (get-text-property position 'face))
+             (next-face
+              (or (next-single-property-change position 'face nil end) end))
+             (rear-nonsticky (get-text-property position 'rear-nonsticky))
+             (next-rear
+              (or (next-single-property-change
+                   position 'rear-nonsticky nil end)
+                  end))
+             (next (min next-face next-rear)))
+        (unless (or (eq rear-nonsticky t)
+                    (memq 'vtable--row-color-face-record
+                          (and (listp rear-nonsticky) rear-nonsticky)))
+          (put-text-property
+           position next 'rear-nonsticky
+           (cons 'vtable--row-color-face-record
+                 (cond ((null rear-nonsticky) nil)
+                       ((listp rear-nonsticky) rear-nonsticky)
+                       (t (list rear-nonsticky))))))
+        (when face
+          (put-text-property position next 'face
+                             (vtable--face-components base-face))
+          (add-face-text-property position next face))
+        (put-text-property
+         position next 'vtable--row-color-face-record
+         (vector base-face face (get-text-property position 'face)))
+        (setq position next)))))
+
+(defun vtable--face-components (face)
+  "Return FACE as a proper list of top-level face components."
+  (cond ((null face) nil)
+        ((not (consp face)) (list face))
+        ;; Face plists and legacy (foreground-color . COLOR) /
+        ;; (background-color . COLOR) properties are one component, not
+        ;; sequences of face components.
+        ((or (keywordp (car face))
+             (memq (car face) '(foreground-color background-color)))
+         (list face))
+        (t face)))
+
+(defun vtable--remove-row-color-face (face row-face base-face)
+  "Remove one recorded ROW-FACE from FACE while retaining BASE-FACE."
+  (if (null row-face)
+      face
+    (let* ((components (vtable--face-components face))
+           (base-components (vtable--face-components base-face))
+           (face-count (cl-count row-face components :test #'equal))
+           (base-count (cl-count row-face base-components :test #'equal)))
+      (if (<= face-count base-count)
+          face
+        (let ((removed nil) result)
+          (dolist (component components)
+            (if (and (not removed) (equal component row-face))
+                (setq removed t)
+              (push component result)))
+          (setq result (nreverse result))
+          (cond ((null result) nil)
+                ((and (not (and (consp face) (keywordp (car face))))
+                      (= (length result) 1))
+                 (car result))
+                (t result)))))))
+
 (defun vtable--insert-line (table line line-number widths spacer
                                   &optional ellipsis ellipsis-width)
   (let ((start (point))
@@ -828,20 +901,118 @@ itself in the new buffer."
            (put-text-property start (point) 'vtable-column index)
            (put-text-property start (point) 'keymap keymap)
            (when column-colors
-             (add-face-text-property
-              start (point)
-              (elt column-colors (mod index (length column-colors)))))
+             (let ((face (elt column-colors
+                             (mod index (length column-colors)))))
+               (if (vtable-row-colors table)
+                   (vtable--add-row-color-face start (point) face)
+                 (add-face-text-property start (point) face))))
            (when (and divider (not last))
              (insert divider)
              (setq start (point))))))
      (cdr line))
     (insert "\n")
     (put-text-property start (point) 'vtable-object (car line))
+    ;; A unique token marks the whole logical row, including embedded newlines.
+    ;; The object property alone cannot delimit repeated EQ objects.
+    (when (vtable-row-colors table)
+      (put-text-property start (point) 'vtable--row-color-row-token
+                         (make-symbol "vtable-row-color-row")))
     (unless column-colors
       (when-let* ((row-colors (slot-value table '-cached-colors)))
-        (add-face-text-property
+        (vtable--add-row-color-face
          start (point)
          (elt row-colors (mod line-number (length row-colors))))))))
+
+(defun vtable--recolor-row-face-properties (table start end line-number)
+  "Reapply row colors in START through END without redrawing cell contents."
+  (let* ((row-colors (vtable-row-colors table))
+         (column-colors (vtable-column-colors table))
+         (cached-colors (slot-value table '-cached-colors))
+         (row-index (mod line-number (length row-colors)))
+         (position start))
+    (while (< position end)
+      (let* ((record
+              (get-text-property position 'vtable--row-color-face-record))
+             (next-record
+              (or (next-single-property-change
+                   position 'vtable--row-color-face-record nil end)
+                  end))
+             (face-end
+              (or (next-single-property-change position 'face nil end) end))
+             (column-index
+              (and column-colors (get-text-property position 'vtable-column)))
+             (next-column
+              (and column-colors
+                   (or (next-single-property-change
+                        position 'vtable-column nil end)
+                       end)))
+             ;; User edits can split a recorded interval by changing FACE.
+             ;; Preserve each resulting style independently, and also split
+             ;; at column boundaries when adjacent cells have equal faces.
+             (next (min next-record face-end (or next-column end))))
+        (when record
+          (let* ((base-face (aref record 0))
+                 (old-face (aref record 1))
+                 (applied-face (aref record 2))
+                 (current-face (get-text-property position 'face))
+                 (base (if (eq current-face applied-face)
+                           base-face
+                         (vtable--remove-row-color-face
+                          current-face old-face base-face)))
+                 (new-face
+                  (if column-colors
+                      (and (numberp column-index)
+                           (elt (elt cached-colors row-index)
+                                (mod column-index (length column-colors))))
+                    (elt cached-colors row-index))))
+            (put-text-property position next 'face
+                               (if new-face
+                                   (vtable--face-components base)
+                                 base))
+            (when new-face
+              (add-face-text-property position next new-face))
+            (put-text-property
+             position next 'vtable--row-color-face-record
+             (vector base new-face (get-text-property position 'face)))))
+        (setq position next)))))
+
+(defun vtable--recolor-rows-from (table start-index)
+  "Recolor TABLE logical rows from START-INDEX using saved face data."
+  (when (and (vtable-row-colors table)
+             (> (length (vtable-row-colors table)) 1)
+             (integerp start-index)
+             (vtable--current-cache table))
+    (with-current-buffer (vtable-buffer table)
+      (let ((row-count
+             (length (vtable--cache-lines (vtable--current-cache table)))))
+        (save-excursion
+          (when (vtable-goto-table table)
+            ;; Skip an in-buffer header line.  Header-line mode keeps data rows
+            ;; at the beginning of the table region.
+            (when (and (slot-value table '-has-column-spec)
+                       (not (vtable-use-header-line table)))
+              (forward-line 1))
+            (let ((table-end (save-excursion (vtable-end-of-table)))
+                  (row-index 0))
+              ;; One cache row can occupy multiple physical lines when a cell
+              ;; contains newlines.  Walk the private unique row tokens instead
+              ;; of advancing one line per cache entry.
+              (while (and (< row-index row-count)
+                          (< (point) table-end))
+                (let* ((token
+                        (get-text-property
+                         (point) 'vtable--row-color-row-token))
+                       (next
+                        (or (next-single-property-change
+                             (point) 'vtable--row-color-row-token nil table-end)
+                            table-end)))
+                  (when token
+                    (when (>= row-index start-index)
+                      (vtable--recolor-row-face-properties
+                       table (point) next row-index))
+                    (setq row-index (1+ row-index)))
+                  ;; Skip any non-row text between logical rows.
+                  (goto-char next))))))))))
 
 (defun vtable--cache-key-snapshot (object)
   "Return a detached, complete snapshot of OBJECT for a cache key."
