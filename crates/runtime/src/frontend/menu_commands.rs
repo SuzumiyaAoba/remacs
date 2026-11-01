@@ -39,24 +39,38 @@ impl WeakNativeMenuCommandId {
 
 #[derive(Default)]
 pub(crate) struct NativeMenuCommands {
-    entries: Vec<(WeakNativeMenuCommandId, Value)>,
+    entries: Vec<(WeakNativeMenuCommandId, NativeMenuBinding)>,
+}
+
+#[derive(Clone)]
+pub(crate) struct NativeMenuBinding {
+    pub(crate) command: Value,
+    pub(crate) keys: Vec<Value>,
 }
 
 impl NativeMenuCommands {
-    pub(crate) fn register(&mut self, value: &Value) -> NativeMenuCommandId {
+    pub(crate) fn register(&mut self, value: &Value, keys: &[Value]) -> NativeMenuCommandId {
         for (token, old) in &self.entries {
-            if eq_values(old, value)
+            if eq_values(&old.command, value)
+                && old.keys.len() == keys.len()
+                && old.keys.iter().zip(keys).all(|(a, b)| eq_values(a, b))
                 && let Some(token) = token.upgrade()
             {
                 return token;
             }
         }
         let token = NativeMenuCommandId(Arc::new(()));
-        self.entries.push((token.downgrade(), value.clone()));
+        self.entries.push((
+            token.downgrade(),
+            NativeMenuBinding {
+                command: value.clone(),
+                keys: keys.to_vec(),
+            },
+        ));
         token
     }
 
-    pub(crate) fn resolve(&self, token: &NativeMenuCommandId) -> Option<Value> {
+    pub(crate) fn resolve(&self, token: &NativeMenuCommandId) -> Option<NativeMenuBinding> {
         self.entries.iter().find_map(|(old, value)| {
             std::ptr::eq(old.0.as_ptr(), Arc::as_ptr(&token.0)).then(|| value.clone())
         })
@@ -83,10 +97,15 @@ mod tests {
             unreachable!()
         };
         let value_lifetime = std::rc::Rc::downgrade(string);
-        let token = commands.register(&value);
-        let second_snapshot = commands.register(&value);
+        let token = commands.register(&value, &[]);
+        let second_snapshot = commands.register(&value, &[]);
         assert_eq!(token, second_snapshot);
-        assert!(eq_values(&commands.resolve(&token).unwrap(), &value));
+        let another_path = commands.register(&value, &[Value::Int(1)]);
+        assert_ne!(token, another_path);
+        assert!(eq_values(
+            &commands.resolve(&token).unwrap().command,
+            &value
+        ));
         assert!(NativeMenuCommands::default().resolve(&token).is_none());
         let old_action = token.downgrade();
         drop(value);
@@ -94,6 +113,7 @@ mod tests {
         commands.prune();
         assert!(value_lifetime.upgrade().is_some());
         drop(second_snapshot);
+        drop(another_path);
         commands.prune();
         assert!(old_action.upgrade().is_none());
         assert!(value_lifetime.upgrade().is_none());

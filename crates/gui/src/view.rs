@@ -2785,9 +2785,12 @@ mod native_menu_tests {
                 r#"(progn
           (set-frame-parameter nil 'window-system 'ns)
           (setq global-map (make-sparse-keymap) menu-bar-update-hook nil
-                pre-redisplay-function nil qa-native-runs 0)
+                pre-redisplay-function nil qa-native-runs 0 qa-native-named-runs 0)
           (setq-local fontification-functions nil)
+          (defun qa-native-named () (interactive)
+            (setq qa-native-named-runs (1+ qa-native-named-runs)))
           (let ((map (make-sparse-keymap)))
+            (define-key map [named] '(menu-item "Run named" qa-native-named))
             (define-key map [run]
               '(menu-item "Run lambda" (lambda () (interactive)
                                          (setq qa-native-runs (1+ qa-native-runs))
@@ -2824,6 +2827,22 @@ mod native_menu_tests {
         let (grids, _received_grids) = smol::channel::bounded(1);
         send.send(action.event().expect("the displayed command is live"))
             .unwrap();
+        let named = menu
+            .items
+            .iter()
+            .find(|item| item.label == "Run named")
+            .unwrap();
+        assert_eq!(named.command.as_deref(), Some("qa-native-named"));
+        let MenuItem::Action { action: named, .. } = gpui_menu_item(named).unwrap() else {
+            unreachable!()
+        };
+        let named = named.as_any().downcast_ref::<RunMenuCommand>().unwrap();
+        let event = named.event().unwrap();
+        assert!(
+            matches!(&event, GuiEvent::NativeMenuCommand(_)),
+            "named items also need their original menu key sequence"
+        );
+        send.send(event).unwrap();
         drop(send);
         drop(grid);
         interp
@@ -2837,6 +2856,12 @@ mod native_menu_tests {
             remacs_runtime::frontend::run_editor_with_shared(frontend, &mut interp).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
         assert!(interp.eval_str("(= qa-native-runs 1)").unwrap().truthy());
+        assert!(
+            interp
+                .eval_str("(= qa-native-named-runs 1)")
+                .unwrap()
+                .truthy()
+        );
         assert_eq!(interp.echo_message, "ran");
         assert!(
             action.event().is_none(),

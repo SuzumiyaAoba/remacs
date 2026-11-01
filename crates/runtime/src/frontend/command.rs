@@ -583,7 +583,14 @@ pub fn dispatch_key_core(
 
 fn key_event_lisp_value(i: &mut Interp, code: i128) -> Value {
     crate::editor::key_name_for(code)
-        .map(|name| Value::Sym(i.intern(&name)))
+        .map(|name| {
+            let event = Value::Sym(i.intern(&name));
+            if name == "menu-bar" {
+                Value::list(vec![event])
+            } else {
+                event
+            }
+        })
         .unwrap_or(Value::Int(code))
 }
 
@@ -606,6 +613,14 @@ fn dispatch_key_core_inner(
     i.store_internal_value(last_input_event, input_event.clone());
     if command_event.is_none() {
         crate::editor::record_recent_input_event(i, input_event.clone());
+    }
+    // Prefix-argument digits take the early path below, but still belong to
+    // the recorded input, just like all other keys.
+    if !i.macro_replaying {
+        let defining = i.q("defining-kbd-macro");
+        if i.symbol_value(defining).truthy() {
+            i.kbd_macro_events.push(Value::Int(key));
+        }
     }
     if keys.is_empty() {
         // GNU resets this for each command key sequence; a Shift-modified
@@ -663,14 +678,6 @@ fn dispatch_key_core_inner(
             && command_event.is_some()
         {
             *last = input_event.clone();
-        }
-        // Record the event when defining a keyboard macro (replayed
-        // keys are not re-recorded, matching GNU).
-        if !i.macro_replaying {
-            let dm = i.q("defining-kbd-macro");
-            if i.symbol_value(dm).truthy() {
-                i.kbd_macro_events.push(Value::Int(key));
-            }
         }
         let seq = Value::vector(keys.iter().map(|k| Value::Int(*k)).collect());
         // Look up the key sequence and retain the translated sequence
@@ -1040,8 +1047,14 @@ fn dispatch_native_menu_command(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) {
-    if let Some(command) = i.native_menu_commands.resolve(token) {
-        dispatch_frontend_command_value(i, command, &[], keys, arg_mode);
+    if let Some(binding) = i.native_menu_commands.resolve(token) {
+        let mut events = binding.keys;
+        // GNU's MENU_BAR_EVENT prefix is the parameterized (menu-bar),
+        // followed by the root and submenu keys.
+        if let Some(prefix) = events.first_mut() {
+            *prefix = Value::list(vec![prefix.clone()]);
+        }
+        dispatch_frontend_command_value(i, binding.command, &[], keys, arg_mode, &events);
     }
 }
 
@@ -1276,7 +1289,7 @@ fn dispatch_frontend_command_with_args(
     arg_mode: &mut bool,
 ) {
     let command = Value::Sym(i.intern(command));
-    dispatch_frontend_command_value(i, command, args, keys, arg_mode);
+    dispatch_frontend_command_value(i, command, args, keys, arg_mode, &[]);
 }
 
 fn dispatch_frontend_command_value(
@@ -1285,10 +1298,27 @@ fn dispatch_frontend_command_value(
     args: &[i128],
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
+    events: &[Value],
 ) {
     keys.clear();
     *arg_mode = false;
     i.gui_popup_menu = None;
+    i.command_key_events = events.to_vec();
+    i.command_raw_key_events = events.to_vec();
+    i.command_key_start = 0;
+    for event in events {
+        crate::editor::record_recent_input_event(i, event.clone());
+    }
+    if let Some(last) = events.last() {
+        let input = i.q("last-input-event");
+        i.store_internal_value(input, last.clone());
+    }
+    if !i.macro_replaying {
+        let defining = i.q("defining-kbd-macro");
+        if i.symbol_value(defining).truthy() {
+            i.kbd_macro_events.extend_from_slice(events);
+        }
+    }
     crate::editor::record_recent_command(i, command.clone());
     let saved_args = std::mem::replace(
         &mut i.command_args,
@@ -1300,7 +1330,7 @@ fn dispatch_frontend_command_value(
     let _ = i.set_symbol(last_command, previous);
     let _ = i.set_symbol(this_command, command.clone());
     let last_event = i.q("last-command-event");
-    let _ = i.set_symbol(last_event, command.clone());
+    let _ = i.set_symbol(last_event, events.last().unwrap_or(&command).clone());
     let prefix = i.q("prefix-arg");
     let current_prefix = i.q("current-prefix-arg");
     let prefix_value = i.symbol_value(prefix);
@@ -1309,7 +1339,12 @@ fn dispatch_frontend_command_value(
 
     let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
-    match i.command_execute(&command) {
+    let result = if events.is_empty() {
+        i.command_execute(&command)
+    } else {
+        i.command_execute_with_keys(&command, &Value::vector(events.to_vec()))
+    };
+    match result {
         Ok(_) => post_command_undo_boundary(i),
         Err(flow) => report_flow(i, flow),
     }
@@ -2439,7 +2474,11 @@ fn minibuf_loop<T: KeyIo>(
         }
         // Propagate io errors — swallowing them as None spins an
         // infinite poll loop on a dead input source.
-        let polled = term.borrow_mut().poll_input(Duration::from_millis(50));
+        let polled = if i.macro_replaying && !i.macro_replay.is_empty() {
+            Ok(i.macro_replay.pop_front().map(InputEvent::Key))
+        } else {
+            term.borrow_mut().poll_input(Duration::from_millis(50))
+        };
         apply_frame_selection(term, i);
         sync_mouse_absolute_pixel_position(term, i);
         if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved() {

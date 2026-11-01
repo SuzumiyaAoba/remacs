@@ -5,21 +5,38 @@ use super::{
 };
 use crate::lisp::{Interp, Value, error::Flow};
 
+fn menu_key(i: &mut Interp, key: &Value) -> Value {
+    if let Value::Int(code) = key
+        && let Some(name) = crate::editor::key_name_for(*code)
+    {
+        return Value::Sym(i.intern(&name));
+    }
+    key.clone()
+}
+
 fn command_binding(
     i: &mut Interp,
     definition: &Value,
     enabled: bool,
+    keys: &[Value],
 ) -> (Option<String>, Option<super::NativeMenuCommandId>) {
     if !enabled || definition.is_nil() || crate::editor::is_keymap(i, definition) {
         return (None, None);
     }
-    if let Value::Sym(symbol) = definition {
+    let name = if let Value::Sym(symbol) = definition {
         let name = i.symbol_name(*symbol);
         if i.obarray.intern_soft(&name) == Some(*symbol) {
-            return (Some(name), None);
+            Some(name)
+        } else {
+            None
         }
-    }
-    (None, Some(i.native_menu_commands.register(definition)))
+    } else {
+        None
+    };
+    (
+        name,
+        Some(i.native_menu_commands.register(definition, keys)),
+    )
 }
 
 fn canonical_bindings(i: &mut Interp, map: &Value) -> Result<Vec<(Value, Value)>, Flow> {
@@ -35,7 +52,12 @@ fn menu_name(name: &Value) -> String {
     }
 }
 
-fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuItem>, Flow> {
+fn menu_items(
+    i: &mut Interp,
+    map: &Value,
+    depth: usize,
+    prefix: &[Value],
+) -> Result<Vec<GridMenuItem>, Flow> {
     if depth >= 10 {
         return Ok(Vec::new());
     }
@@ -47,6 +69,8 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
         let Some(item) = keymap_item(i, &key, &binding)? else {
             continue;
         };
+        let mut keys = prefix.to_vec();
+        keys.push(menu_key(i, &key));
         if depth == 0 && !item.enabled {
             continue;
         }
@@ -70,7 +94,7 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
         }
         if let Some(map) = submenu {
             let children = if item.enabled {
-                menu_items(i, &map, depth + 1)?
+                menu_items(i, &map, depth + 1, &keys)?
             } else {
                 Vec::new()
             };
@@ -84,7 +108,7 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
                 key_hint,
             });
         } else {
-            let (command, command_id) = command_binding(i, &definition, item.enabled);
+            let (command, command_id) = command_binding(i, &definition, item.enabled, &keys);
             items.push(GridMenuItem {
                 label,
                 command,
@@ -227,11 +251,13 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
         crate::lisp::builtins::evalfn::safe_call_hook(i, hook)?;
     }
     let mut pending = Vec::new();
+    let menu_bar = Value::Sym(i.q("menu-bar"));
     for entry in collect_menu_bar(i)? {
+        let keys = vec![menu_bar.clone(), menu_key(i, &entry.key)];
         let (command, command_id) = entry
             .definitions
             .first()
-            .map(|definition| command_binding(i, definition, true))
+            .map(|definition| command_binding(i, definition, true, &keys))
             .unwrap_or_default();
         let mut panes = Vec::new();
         for map in entry.definitions {
@@ -246,7 +272,7 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
             };
             panes.push(MenuPane {
                 name,
-                items: menu_items(i, &map, 1)?,
+                items: menu_items(i, &map, 1, &keys)?,
             });
         }
         pending.push((entry.name, command, command_id, panes));

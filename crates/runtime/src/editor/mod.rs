@@ -20353,20 +20353,27 @@ mod wide_macro_event_tests {
     }
 }
 
-/// Events of a string/vector macro as key codes.
-fn macro_event_codes(v: &Value) -> Vec<i128> {
+fn macro_events(v: &Value) -> Vec<Value> {
     match v {
-        Value::Str(s) => s.borrow().chars().map(|c| (c).code() as i128).collect(),
-        Value::Vec(v) => v
+        Value::Str(s) => s
             .borrow()
-            .iter()
-            .filter_map(|e| match e {
-                Value::Int(n) => Some(*n),
-                _ => None,
-            })
+            .chars()
+            .map(|c| Value::Int(c.code() as i128))
             .collect(),
+        Value::Vec(v) => v.borrow().clone(),
         _ => Vec::new(),
     }
+}
+
+/// Decode characters, named events and native menu's (menu-bar) prefix.
+fn macro_event_codes(i: &mut Interp, value: &Value) -> Result<Vec<i128>, Flow> {
+    let mut codes = Vec::new();
+    for event in macro_events(value) {
+        if let Some(code) = key_seq_elt(i, &event)? {
+            codes.push(code);
+        }
+    }
+    Ok(codes)
 }
 
 fn f_defining_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -20381,10 +20388,7 @@ fn f_defining_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let last = i.symbol_value(lk);
             match &last {
                 Value::Str(_) | Value::Vec(_) => {
-                    i.kbd_macro_events = macro_event_codes(&last)
-                        .iter()
-                        .map(|c| Value::Int(*c))
-                        .collect();
+                    i.kbd_macro_events = macro_events(&last);
                 }
                 other => return Err(i.wrong_type_mut("arrayp", other)),
             }
@@ -20396,7 +20400,7 @@ fn f_defining_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             i.message("Defining kbd macro...");
         }
     }
-    i.kbd_macro_mark = 0;
+    i.kbd_macro_mark = i.kbd_macro_events.len();
     let _ = i.set_symbol(defining, Value::t());
     Ok(Value::Nil)
 }
@@ -20430,6 +20434,11 @@ fn f_end_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn end_kbd_macro_recording(i: &mut Interp) -> Value {
     let defining = kbd_var(i, "defining-kbd-macro");
     i.store_internal_value(defining, Value::Nil);
+    // GNU copies only events committed at the previous command boundary.
+    // In particular, the C-x ) sequence ending the macro is not part of it.
+    if i.command_key_capture_active {
+        i.kbd_macro_events.truncate(i.kbd_macro_mark);
+    }
     // GNU's batch kboard yields [] regardless of stored events; keep
     // real events for interactive sessions.
     let mut events = std::mem::take(&mut i.kbd_macro_events);
@@ -20480,7 +20489,7 @@ fn f_execute_kbd_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !matches!(final_v, Value::Str(_) | Value::Vec(_)) {
         return Err(i.error("Keyboard macros must be strings or vectors"));
     }
-    let events = macro_event_codes(&final_v);
+    let events = macro_event_codes(i, &final_v)?;
     let loopfunc = arg(&a, 2);
     // The buffer shown in the currently selected window is made current.
     let sw = i.q("selected-window");

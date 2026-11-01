@@ -107,7 +107,7 @@ impl Interp {
         let result = (|| {
             let events = match keys {
                 Value::Vec(events) => events.borrow().clone(),
-                _ => Vec::new(),
+                _ => self.command_key_events.clone(),
             };
             let argv = self.eval_interactive_spec_for(&spec, cmd, &events)?;
             for (symbol, value) in saved_commands {
