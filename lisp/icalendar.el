@@ -2793,32 +2793,31 @@ END-T is the event's end time in diary format."
           ;; yearly
           ((string-equal frequency "YEARLY")
            (icalendar--dmsg "yearly")
-           (if until
-               (let ((day (nth 3 dtstart-dec))
-                     (month (nth 4 dtstart-dec)))
-                 (setq result (concat "%%(and (diary-date "
-                                      (cond ((eq calendar-date-style 'iso)
-                                             (format "t %d %d" month day))
-                                            ((eq calendar-date-style 'european)
-                                             (format "%d %d t" day month))
-                                            ((eq calendar-date-style 'american)
-                                             (format "%d %d t" month day)))
-                                      ") (diary-block "
-                                      dtstart-conv
-                                      " "
-                                      until-conv
-                                      ")) "
-                                      (or start-t "")
-                                      (if end-t "-" "")
-                                      (or end-t ""))))
-             (setq result (format
-                           "%%%%(diary-anniversary %s) %s%s%s"
-                           (let* ((year (nth 5 dtstart-dec))
-                                  (dtstart-1y-dec (copy-sequence dtstart-dec)))
-                             (setf (nth 5 dtstart-1y-dec) (1- year))
-                             (icalendar--datetime-to-diary-date dtstart-1y-dec))
-                           (or start-t "")
-                           (if end-t "-" "") (or end-t "")))))
+           (let ((rule
+                  (if until
+                      (let ((day (nth 3 dtstart-dec))
+                            (month (nth 4 dtstart-dec)))
+                        (concat "(and (diary-date "
+                                (cond ((eq calendar-date-style 'iso)
+                                       (format "t %d %d" month day))
+                                      ((eq calendar-date-style 'european)
+                                       (format "%d %d t" day month))
+                                      ((eq calendar-date-style 'american)
+                                       (format "%d %d t" month day)))
+                                ") (diary-block " dtstart-conv " " until-conv "))"))
+                    (let* ((year (nth 5 dtstart-dec))
+                           (dtstart-1y-dec (copy-sequence dtstart-dec)))
+                      (setf (nth 5 dtstart-1y-dec) (1- year))
+                      (format "(diary-anniversary %s)"
+                              (icalendar--datetime-to-diary-date dtstart-1y-dec))))))
+             ;; Remacs: INTERVAL selects years relative to DTSTART.
+             (unless (= interval 1)
+               (setq rule
+                     (format
+                      "(and (zerop (mod (- (calendar-extract-year date) %d) %d)) %s)"
+                      (nth 5 dtstart-dec) interval rule)))
+             (setq result (format "%%%%%s %s%s%s" rule
+                                  (or start-t "") (if end-t "-" "") (or end-t "")))))
           ;; monthly
           ((string-equal frequency "MONTHLY")
            (icalendar--dmsg "monthly")
