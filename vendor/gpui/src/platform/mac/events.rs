@@ -115,6 +115,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "pageup" => NSPageUpFunctionKey,
         "pagedown" => NSPageDownFunctionKey,
         "home" => NSHomeFunctionKey,
+        "begin" => NSBeginFunctionKey,
         "end" => NSEndFunctionKey,
         "delete" => NSDeleteFunctionKey,
         "insert" => NSInsertFunctionKey,
@@ -432,6 +433,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSPageUpFunctionKey) => "pageup".to_string(),
             Some(NSPageDownFunctionKey) => "pagedown".to_string(),
             Some(NSHomeFunctionKey) => "home".to_string(),
+            Some(NSBeginFunctionKey) => "begin".to_string(),
             Some(NSEndFunctionKey) => "end".to_string(),
             Some(NSDeleteFunctionKey) => "delete".to_string(),
             Some(NSInsertFunctionKey) => "insert".to_string(),
@@ -716,5 +718,14 @@ mod find_key_tests {
     #[test]
     fn find_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSFindFunctionKey, "find", 0);
+    }
+}
+
+#[cfg(test)]
+mod begin_key_tests {
+    use super::*;
+    #[test]
+    fn begin_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSBeginFunctionKey, "begin", 0);
     }
 }
