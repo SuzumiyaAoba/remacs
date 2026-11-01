@@ -2661,14 +2661,45 @@ written into the buffer `*icalendar-errors*'."
        (mapcar
         (lambda (selector)
           (unless (string-match "\\`\\([+-]?[0-9]+\\)?\\([A-Z][A-Z]\\)\\'" selector)
-            (error "Invalid monthly BYDAY: %s" selector))
+            (error "Invalid BYDAY: %s" selector))
           (let* ((number (match-string 1 selector))
                  (ordinal (and number (string-to-number number)))
                  (weekday (icalendar--get-weekday-number (match-string 2 selector))))
-            (unless (and weekday (or (null ordinal) (/= ordinal 0)))
-              (error "Invalid monthly BYDAY: %s" selector))
+            (unless (and (integerp weekday) (<= 0 weekday 6)
+                         (or (null ordinal) (/= ordinal 0)))
+              (error "Invalid BYDAY: %s" selector))
             (cons ordinal weekday)))
         (split-string byday "," t))))))
+
+(defun icalendar--daily-weekdays (value)
+  "Return distinct non-ordinal weekday numbers in daily BYDAY VALUE."
+  (mapcar (lambda (selector)
+            (when (car selector) (error "Invalid daily BYDAY ordinal: %s" value))
+            (cdr selector))
+          (icalendar--rrule-weekdays value)))
+
+(defun icalendar--daily-last-date (dtstart-dec weekdays interval count)
+  "Return the COUNT endpoint for daily WEEKDAYS and INTERVAL."
+  (unless (and (integerp count) (> count 0)
+               (integerp interval) (> interval 0))
+    (error "Invalid daily COUNT/INTERVAL: %S/%S" count interval))
+  (let* ((start-date (list (nth 4 dtstart-dec) (nth 3 dtstart-dec) (nth 5 dtstart-dec)))
+         (start-absolute (calendar-absolute-from-gregorian start-date))
+         (start-weekday (calendar-day-of-week start-date))
+         (a 7) (b (mod interval 7)))
+    (while (/= b 0)
+      (let ((remainder (mod a b))) (setq a b b remainder)))
+    (let ((periods (/ 7 a)) offsets)
+      (dotimes (i periods)
+        (when (memq (mod (+ start-weekday (* (1+ i) interval)) 7) weekdays)
+          (push (1+ i) offsets)))
+      (setq offsets (nreverse offsets))
+      ;; DTSTART counts first even outside BYDAY; a disjoint cycle adds none.
+      (if (or (= count 1) (null offsets)) start-date
+        (let* ((remaining (- count 2))
+               (cycles (/ remaining (length offsets)))
+               (steps (+ (* cycles periods) (nth (mod remaining (length offsets)) offsets))))
+          (calendar-gregorian-from-absolute (+ start-absolute (* interval steps))))))))
 
 (defun icalendar--monthly-weekday-clause (byday &optional strict-month)
   "Return a diary predicate for every comma-separated BYDAY selector.
@@ -2845,6 +2876,9 @@ END-T is the event's end time in diary format."
          (until        (cadr (assoc 'UNTIL rrule-props)))
          (count        (cadr (assoc 'COUNT rrule-props)))
          (interval     (read (or (cadr (assoc 'INTERVAL rrule-props)) "1")))
+         (daily-weekdays (let ((value (and (string-equal frequency "DAILY")
+                                          (cadr (assoc 'BYDAY rrule-props)))))
+                           (when value (icalendar--daily-weekdays value))))
          (year-months  (let ((value (and (string-equal frequency "YEARLY")
                                         (cadr (assoc 'BYMONTH rrule-props)))))
                          (when value (icalendar--rrule-months value))))
@@ -2866,14 +2900,17 @@ END-T is the event's end time in diary format."
           (message "Must not have UNTIL and COUNT -- ignoring COUNT element!")
         (let ((until-1 0))
           (cond ((string-equal frequency "DAILY")
-                 (setq until (icalendar--add-decoded-times
-                              dtstart-dec
-                              (list 0 0 0 (* (read count) interval) 0 0)))
-                 (setq until-1 (icalendar--add-decoded-times
-                                dtstart-dec
-                                (list 0 0 0 (* (- (read count) 1) interval)
-                                      0 0)))
-                 )
+                 (if daily-weekdays
+                     (let ((last-date (icalendar--daily-last-date
+                                       dtstart-dec daily-weekdays interval (read count))))
+                       (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
+                                         (nth 2 dtstart-dec) (cadr last-date)
+                                         (car last-date) (nth 2 last-date))
+                             until-1 until))
+                   (setq until (icalendar--add-decoded-times
+                                dtstart-dec (list 0 0 0 (* (read count) interval) 0 0)))
+                   (setq until-1 (icalendar--add-decoded-times
+                                  dtstart-dec (list 0 0 0 (* (- (read count) 1) interval) 0 0)))))
                 ((string-equal frequency "WEEKLY")
                  (let ((last-date (icalendar--weekly-last-date
                                    dtstart-dec rrule-props interval (read count))))
@@ -3083,23 +3120,24 @@ END-T is the event's end time in diary format."
                                   interval-clause rule-part bound (or start-t "")
                                   (if end-t "-" "") (or end-t "")))))
           ;; daily
-          ((and (string-equal frequency "DAILY"))
-           (if until
+          ((string-equal frequency "DAILY")
+           (let ((selector-clause
+                  (when daily-weekdays
+                    ;; Remacs: BYDAY filters daily steps, while retaining DTSTART.
+                    (format "(or (diary-date %s) (memq (calendar-day-of-week date) '%S)) "
+                            dtstart-conv daily-weekdays))))
+             (if until
+                 (setq result
+                       (format
+                        (concat "%%%%(and %s(diary-cyclic %s %s) "
+                                "(diary-block %s %s)) %s%s%s")
+                        (or selector-clause "") interval dtstart-conv dtstart-conv
+                        (if count until-1-conv until-conv)
+                        (or start-t "") (if end-t "-" "") (or end-t "")))
                (setq result
-                     (format
-                      (concat "%%%%(and (diary-cyclic %s %s) "
-                              "(diary-block %s %s)) %s%s%s")
-                      interval dtstart-conv dtstart-conv
-                      (if count until-1-conv until-conv)
-                      (or start-t "")
-                      (if end-t "-" "") (or end-t "")))
-             (setq result
-                   (format
-                    "%%%%(and (diary-cyclic %s %s)) %s%s%s"
-                    interval
-                    dtstart-conv
-                    (or start-t "")
-                    (if end-t "-" "") (or end-t ""))))))
+                     (format "%%%%(and %s(diary-cyclic %s %s)) %s%s%s"
+                             (or selector-clause "") interval dtstart-conv
+                             (or start-t "") (if end-t "-" "") (or end-t "")))))))
     ;; Handle exceptions from recurrence rules
     (let ((ex-dates (icalendar--get-event-properties e 'EXDATE)))
       (while ex-dates
