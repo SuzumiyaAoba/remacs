@@ -499,9 +499,11 @@ translation is found for PATTERN."
             (if (and (not has-comma)
                      (< pos length))
                 (let ((pattern-sub (substring pattern index pos)))
-                  (setq num-range (string-match
-                                   editorconfig-fnmatch--numeric-range-regexp
-                                   pattern-sub))
+                  (setq num-range
+                        (string-match
+                         (concat "\\`" editorconfig-fnmatch--numeric-range-regexp
+                                 "\\'")
+                         pattern-sub))
                   (setq index (1+ pos))
                   (if num-range
                       (let ((number-start (string-to-number
