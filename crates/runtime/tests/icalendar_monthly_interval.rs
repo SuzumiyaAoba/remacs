@@ -117,6 +117,97 @@ const CASES: &str = r##"
     (remacs-test-ical-monthly-hits
      "FREQ=MONTHLY;INTERVAL=2;BYDAY=MO" '(1 20 2025) '(1 1 2025) '(3 10 2025)
      '((1 20 2025) (1 27 2025) (3 3 2025) (3 10 2025)) "09:00" nil))
+  (defun remacs-test-ical-monthly-probes (rule start candidates expected)
+    (let* ((calendar-debug-sexp t)
+           (generated (remacs-test-ical-monthly-format rule start))
+           hits)
+      (dolist (day candidates)
+        (when (diary-sexp-entry (cdr generated) "event" day) (push day hits)))
+      (setq hits (nreverse hits))
+      (unless (equal hits expected)
+        (error "Wrong monthly probes: %S expected %S, generated %S" hits expected (car generated)))))
+  ;; BYMONTHDAY selects a set of days and retains the initial DTSTART (#1566).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-monthly-hits
+       "FREQ=MONTHLY;BYMONTHDAY=1,15" '(1 10 2025) '(1 1 2025) '(4 1 2025)
+       '((1 10 2025) (1 15 2025) (2 1 2025) (2 15 2025) (3 1 2025) (3 15 2025) (4 1 2025))
+       (car times) (cadr times))
+      (remacs-test-ical-monthly-hits
+       (concat "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=15,1,15;UNTIL="
+               (if (car times) "20250315T235959" "20250315"))
+       '(1 10 2025) '(1 1 2025) '(4 1 2025)
+       '((1 10 2025) (1 15 2025) (3 1 2025) (3 15 2025)) (car times) (cadr times))
+      (remacs-test-ical-monthly-hits
+       "FREQ=MONTHLY;BYMONTHDAY=1,15;COUNT=3" '(1 10 2025) '(1 1 2025) '(4 1 2025)
+       '((1 10 2025) (1 15 2025) (2 1 2025)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYMONTHDAY=31,-1,31;COUNT=4" '(1 10 2025) '(1 1 2025) '(5 1 2025)
+     '((1 10 2025) (1 31 2025) (2 28 2025) (3 31 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYMONTHDAY=+1,-1;COUNT=5" '(1 1 2025) '(1 1 2025) '(4 1 2025)
+     '((1 1 2025) (1 31 2025) (2 1 2025) (2 28 2025) (3 1 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYMONTHDAY=31;COUNT=4" '(1 31 2025) '(1 1 2025) '(8 1 2025)
+     '((1 31 2025) (3 31 2025) (5 31 2025) (7 31 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYMONTHDAY=1,15;COUNT=4" '(1 10 2025) '(1 1 2025) '(4 1 2025)
+     '((1 15 2025) (2 1 2025)) nil nil '((EXDATE nil "20250110") (EXDATE nil "20250215")))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYMONTHDAY=8,9,10,11,12,13,14;BYDAY=2MO;COUNT=4"
+     '(1 10 2025) '(1 1 2025) '(5 1 2025)
+     '((1 10 2025) (1 13 2025) (2 10 2025) (3 10 2025)))
+    (remacs-test-ical-monthly-hits
+     "FREQ=MONTHLY;BYMONTHDAY=-1,-2,-3,-4,-5,-6,-7;BYDAY=-1FR;COUNT=3"
+     '(1 10 2025) '(1 1 2025) '(4 1 2025) '((1 10 2025) (1 31 2025) (2 28 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTHDAY=1,15;BYDAY=MO,WE;COUNT=3" '(1 10 2025)
+     '((1 1 2025) (1 10 2025) (1 15 2025) (2 1 2025) (9 1 2025) (9 15 2025))
+     '((1 10 2025) (1 15 2025) (9 1 2025)))
+    ;; A fifth weekday must belong to the queried month, never spill from the previous one.
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTHDAY=3,29;BYDAY=5MO" '(1 10 2025)
+     '((1 10 2025) (3 3 2025) (6 2 2025) (9 29 2025)) '((1 10 2025) (9 29 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTHDAY=3;BYDAY=5MO;COUNT=100" '(1 10 2025)
+     '((1 10 2025) (3 3 2025) (9 29 2025)) '((1 10 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTHDAY=1,15;COUNT=1000000" '(1 1 2025)
+     '((1 1 2025) (8 1 43691) (8 15 43691) (9 1 43691))
+     '((1 1 2025) (8 1 43691) (8 15 43691)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;INTERVAL=4800;BYMONTHDAY=1,15;COUNT=3" '(1 10 2025)
+     '((1 10 2025) (1 15 2025) (1 1 2425) (1 15 2425))
+     '((1 10 2025) (1 15 2025) (1 1 2425)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;INTERVAL=18;BYMONTHDAY=31;COUNT=3" '(12 31 2023)
+     '((12 31 2023) (6 30 2025) (12 31 2026) (6 30 2028) (12 31 2029) (12 31 2032))
+     '((12 31 2023) (12 31 2026) (12 31 2029)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;INTERVAL=12;BYMONTHDAY=29;COUNT=3" '(2 28 2023)
+     '((2 28 2023) (2 29 2024) (3 1 2025) (2 29 2028) (2 29 2032))
+     '((2 28 2023) (2 29 2024) (2 29 2028)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;INTERVAL=4800;BYMONTHDAY=29;COUNT=100" '(2 28 2025)
+     '((2 28 2025) (3 1 2025) (2 28 2425) (3 1 2425)) '((2 28 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTHDAY=1,15" '(1 10 2025)
+     '((1 1 10001) (1 15 10001)) '((1 1 10001) (1 15 10001)))
+    (let* ((start '(0 0 9 10 1 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=MONTHLY;BYMONTHDAY=15,1,15;COUNT=3"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "BYMONTHDAY conversion mutated its inputs")))
+    (dolist (rule '("FREQ=MONTHLY;BYMONTHDAY=0" "FREQ=MONTHLY;BYMONTHDAY=32"
+                     "FREQ=MONTHLY;BYMONTHDAY=-32" "FREQ=MONTHLY;BYMONTHDAY=1,NO"
+                     "FREQ=MONTHLY;BYMONTHDAY=1;COUNT=0" "FREQ=MONTHLY;BYMONTHDAY=1;COUNT=-1"
+                     "FREQ=MONTHLY;BYMONTHDAY=1;COUNT=1.5"
+                     "FREQ=MONTHLY;BYMONTHDAY=1;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-monthly-format rule '(1 10 2025)) nil)
+                (error t))
+        (error "An invalid monthly day/count/interval was accepted: %S" rule))))
   (let ((calendar-date-style 'american))
     ;; Missing INTERVAL and explicit INTERVAL=1 retain the original diary rule.
     (dolist (byday '("" ";BYDAY=2MO"))
@@ -187,7 +278,7 @@ fn check(interp: &mut Interp, source: &str) {
 }
 
 #[test]
-fn monthly_recurrences_preserve_weekdays_and_intervals() {
+fn monthly_recurrences_preserve_days_intervals_and_counts() {
     let mut interp = Interp::new();
     check(&mut interp, CASES);
     check(&mut interp, r#"(load "icalendar.el" nil t)"#);

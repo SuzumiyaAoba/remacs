@@ -2653,27 +2653,123 @@ written into the buffer `*icalendar-errors*'."
                  (nth (mod remaining (length offsets)) offsets)))))
     (calendar-gregorian-from-absolute last)))
 
-(defun icalendar--monthly-weekday-clause (byday)
-  "Return a diary predicate for every comma-separated BYDAY selector."
+(defun icalendar--rrule-weekdays (byday)
+  "Return BYDAY selectors as (ORDINAL . WEEKDAY) pairs."
   (when byday
     (save-match-data
-      (let ((rules
-             (delete-dups
-              (mapcar
-               (lambda (selector)
-                 (unless (string-match "\\`\\([+-]?[0-9]+\\)?\\([A-Z][A-Z]\\)\\'" selector)
-                   (error "Invalid monthly BYDAY: %s" selector))
-                 (let* ((ordinal (match-string 1 selector))
-                        (weekday (icalendar--get-weekday-number (match-string 2 selector))))
-                   (unless (and weekday (or (null ordinal) (/= (string-to-number ordinal) 0)))
-                     (error "Invalid monthly BYDAY: %s" selector))
-                   (if ordinal
-                       (format "(diary-float t %d %d)" weekday (string-to-number ordinal))
-                     (format "(= (calendar-day-of-week date) %d)" weekday))))
-               (split-string byday "," t)))))
-        (if (cdr rules)
-            (format "(or %s)" (mapconcat #'identity rules " "))
-          (car rules))))))
+      (delete-dups
+       (mapcar
+        (lambda (selector)
+          (unless (string-match "\\`\\([+-]?[0-9]+\\)?\\([A-Z][A-Z]\\)\\'" selector)
+            (error "Invalid monthly BYDAY: %s" selector))
+          (let* ((number (match-string 1 selector))
+                 (ordinal (and number (string-to-number number)))
+                 (weekday (icalendar--get-weekday-number (match-string 2 selector))))
+            (unless (and weekday (or (null ordinal) (/= ordinal 0)))
+              (error "Invalid monthly BYDAY: %s" selector))
+            (cons ordinal weekday)))
+        (split-string byday "," t))))))
+
+(defun icalendar--monthly-weekday-clause (byday &optional strict-month)
+  "Return a diary predicate for every comma-separated BYDAY selector.
+With STRICT-MONTH, ordinal weekdays must belong to the current month."
+  (let ((rules
+         (mapcar
+          (lambda (selector)
+            (let ((ordinal (car selector)) (weekday (cdr selector)))
+              (if ordinal
+                  (if (and strict-month (> (abs ordinal) 5)) "nil"
+                    (format "(diary-float %s %d %d)"
+                            (if strict-month "(calendar-extract-month date)" "t") weekday ordinal))
+                (format "(= (calendar-day-of-week date) %d)" weekday))))
+          (icalendar--rrule-weekdays byday))))
+    (if (cdr rules)
+        (format "(or %s)" (mapconcat #'identity rules " "))
+      (car rules))))
+
+(defun icalendar--rrule-monthdays (value)
+  "Return distinct signed BYMONTHDAY numbers in VALUE."
+  (save-match-data
+    (sort (delete-dups
+           (mapcar (lambda (part)
+                     (let ((day (string-to-number part)))
+                       (unless (and (string-match "\\`[+-]?[0-9][0-9]?\\'" part)
+                                    (<= 1 (abs day) 31))
+                         (error "Invalid BYMONTHDAY: %s" part))
+                       day))
+                   (split-string value ","))) #'<)))
+
+(defun icalendar--monthly-monthday-clause (month-days)
+  "Return a portable diary predicate for signed MONTH-DAYS."
+  (format
+   (concat "(or (memq (calendar-extract-day date) '%S) "
+           "(memq (- (calendar-extract-day date) "
+           "(calendar-last-day-of-month (calendar-extract-month date) "
+           "(calendar-extract-year date)) 1) '%S))")
+   month-days month-days))
+
+(defun icalendar--monthly-selected-days (month year month-days weekdays)
+  "Return valid days in MONTH YEAR matching MONTH-DAYS and WEEKDAYS."
+  (let* ((last (calendar-last-day-of-month month year))
+         (days (sort (delete-dups
+                      (delq nil (mapcar
+                                 (lambda (value)
+                                   (let ((day (if (> value 0) value (+ last value 1))))
+                                     (when (<= 1 day last) day))) month-days))) #'<))
+         (first-weekday (and weekdays (calendar-day-of-week (list month 1 year))))
+         result)
+    (dolist (day days)
+      (when (or (null weekdays)
+                (catch 'matching-weekday
+                  (dolist (selector weekdays)
+                    (let ((ordinal (car selector)))
+                      (when (and (= (cdr selector) (mod (+ first-weekday day -1) 7))
+                                 (or (null ordinal)
+                                     (if (> ordinal 0)
+                                         (= ordinal (1+ (/ (1- day) 7)))
+                                       (= (- ordinal) (1+ (/ (- last day) 7))))))
+                        (throw 'matching-weekday t))))))
+        (push day result)))
+    (nreverse result)))
+
+(defun icalendar--monthly-last-date (dtstart-dec month-days byday interval count)
+  "Return the COUNT endpoint for monthly MONTH-DAYS limited by BYDAY."
+  (unless (and (integerp count) (> count 0)
+               (integerp interval) (> interval 0))
+    (error "Invalid monthly COUNT/INTERVAL: %S/%S" count interval))
+  (let* ((day (nth 3 dtstart-dec)) (month (nth 4 dtstart-dec)) (year (nth 5 dtstart-dec))
+         (start-index (+ (* year 12) (1- month)))
+         (weekdays (icalendar--rrule-weekdays byday))
+         (first (cons day (delq nil (mapcar (lambda (candidate)
+                                              (when (> candidate day) candidate))
+                                            (icalendar--monthly-selected-days month year month-days weekdays))))))
+    (if (<= count (length first))
+        (list month (nth (1- count) first) year)
+      (catch 'last-date
+        (let ((a 4800) (b (mod interval 4800)))
+          (while (/= b 0)
+            (let ((remainder (mod a b))) (setq a b b remainder)))
+          (let ((periods (/ 4800 a)) (cursor start-index)
+                (left (- count (length first))) (total 0) pattern)
+            ;; Stop early for small counts; otherwise inspect at most one
+            ;; Gregorian 400-year month pattern before jumping whole cycles.
+            (dotimes (_ periods)
+              (setq cursor (+ cursor interval))
+              (let* ((month (1+ (mod cursor 12))) (year (/ cursor 12))
+                     (valid (icalendar--monthly-selected-days month year month-days weekdays)))
+                (when (<= left (length valid))
+                  (throw 'last-date (list month (nth (1- left) valid) year)))
+                (setq left (- left (length valid)) total (+ total (length valid)))
+                (push valid pattern)))
+            (if (= total 0)
+                (list month (car (last first)) year)
+              (let* ((cycles (/ (1- left) total))
+                     (left (1+ (mod (1- left) total)))
+                     (cursor (+ start-index (* interval (1+ (* (1+ cycles) periods))))))
+                (dolist (valid (nreverse pattern))
+                  (when (<= left (length valid))
+                    (throw 'last-date (list (1+ (mod cursor 12)) (nth (1- left) valid) (/ cursor 12))))
+                  (setq left (- left (length valid)) cursor (+ cursor interval)))))))))))
 
 (defun icalendar--rrule-months (value)
   "Return the sorted, distinct month numbers in BYMONTH VALUE."
@@ -2751,6 +2847,9 @@ END-T is the event's end time in diary format."
          (year-months  (let ((value (and (string-equal frequency "YEARLY")
                                         (cadr (assoc 'BYMONTH rrule-props)))))
                          (when value (icalendar--rrule-months value))))
+         (month-days   (let ((value (and (string-equal frequency "MONTHLY")
+                                        (cadr (assoc 'BYMONTHDAY rrule-props)))))
+                         (when value (icalendar--rrule-monthdays value))))
          (dtstart-conv (icalendar--datetime-to-diary-date dtstart-dec))
          (until-conv   (icalendar--datetime-to-diary-date
                         (icalendar--decode-isodatetime until)))
@@ -2780,13 +2879,20 @@ END-T is the event's end time in diary format."
                                      (car last-date) (nth 2 last-date))
                          until-1 until)))
                 ((string-equal frequency "MONTHLY")
-                 (setq until (icalendar--add-decoded-times
-                              dtstart-dec (list 0 0 0 0 (* (- (read count) 1)
-                                                           interval) 0)))
-                 (setq until-1 (icalendar--add-decoded-times
+                 (if month-days
+                     (let ((last-date (icalendar--monthly-last-date
+                                       dtstart-dec month-days (cadr (assoc 'BYDAY rrule-props))
+                                       interval (read count))))
+                       (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
+                                         (nth 2 dtstart-dec) (cadr last-date)
+                                         (car last-date) (nth 2 last-date))
+                             until-1 until))
+                   (setq until (icalendar--add-decoded-times
                                 dtstart-dec (list 0 0 0 0 (* (- (read count) 1)
                                                              interval) 0)))
-                 )
+                   (setq until-1 (icalendar--add-decoded-times
+                                  dtstart-dec (list 0 0 0 0 (* (- (read count) 1)
+                                                               interval) 0)))))
                 ((string-equal frequency "YEARLY")
                  (let ((last-date (icalendar--yearly-last-date
                                    dtstart-dec (or year-months (list (nth 4 dtstart-dec)))
@@ -2927,7 +3033,7 @@ END-T is the event's end time in diary format."
           ;; monthly
           ((string-equal frequency "MONTHLY")
            (icalendar--dmsg "monthly")
-	   (let* ((byday (cadr (assoc 'BYDAY rrule-props)))
+           (let* ((byday (cadr (assoc 'BYDAY rrule-props)))
                   ;; Remacs: count calendar months from DTSTART, across years.
                   (interval-clause
                    (if (= interval 1) ""
@@ -2936,28 +3042,33 @@ END-T is the event's end time in diary format."
                               "(calendar-extract-month date)) %d) %d)) ")
                       (+ (* 12 (nth 5 dtstart-dec)) (nth 4 dtstart-dec))
                       interval)))
-                  ;; Remacs: BYDAY is a union of all weekday selectors.
-                  (weekday-clause (icalendar--monthly-weekday-clause byday))
+                  (weekday-clause (icalendar--monthly-weekday-clause byday month-days))
                   (rule-part
-                   (or weekday-clause
-                     (format "(diary-date %s)"
-                             (let ((day (nth 3 dtstart-dec)))
-                               (cond ((eq calendar-date-style 'iso)
-                                      (format "t t %d" day))
-                                     ((eq calendar-date-style 'european)
-                                      (format "%d t t" day))
-                                     ((eq calendar-date-style 'american)
-                                      (format "t %d t" day))))))))
-             (setq result
-                   (format
-                    "%%%%(and %s%s (diary-block %s %s)) %s%s%s"
-                    interval-clause rule-part
-                    dtstart-conv
-                    (if until
-                        until-conv
-                      (if (eq calendar-date-style 'iso) "9999 1 1" "1 1 9999")) ;; FIXME: should be unlimited
-                    (or start-t "")
-                    (if end-t "-" "") (or end-t "")))))
+                   (if month-days
+                       ;; Remacs: BYDAY limits BYMONTHDAY, while DTSTART remains an instance.
+                       (format "(or (diary-date %s) (and %s%s))" dtstart-conv
+                               (icalendar--monthly-monthday-clause month-days)
+                               (if weekday-clause (concat " " weekday-clause) ""))
+                     (or weekday-clause
+                         (format "(diary-date %s)"
+                                 (let ((day (nth 3 dtstart-dec)))
+                                   (cond ((eq calendar-date-style 'iso)
+                                          (format "t t %d" day))
+                                         ((eq calendar-date-style 'european)
+                                          (format "%d t t" day))
+                                         ((eq calendar-date-style 'american)
+                                          (format "t %d t" day))))))))
+                  (bound
+                   (cond (until (format "(diary-block %s %s)" dtstart-conv until-conv))
+                         (month-days
+                          (format "(<= %d (calendar-absolute-from-gregorian date))"
+                                  (calendar-absolute-from-gregorian
+                                   (list (nth 4 dtstart-dec) (nth 3 dtstart-dec) (nth 5 dtstart-dec)))))
+                         (t (format "(diary-block %s %s)" dtstart-conv
+                                    (if (eq calendar-date-style 'iso) "9999 1 1" "1 1 9999"))))))
+             (setq result (format "%%%%(and %s%s %s) %s%s%s"
+                                  interval-clause rule-part bound (or start-t "")
+                                  (if end-t "-" "") (or end-t "")))))
           ;; daily
           ((and (string-equal frequency "DAILY"))
            (if until
