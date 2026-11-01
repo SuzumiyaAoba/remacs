@@ -401,7 +401,7 @@ See `decode-time' for the meaning of FORM."
 (defun iso8601--zone-in-range-p (string)
   ;;Remacs: require complete numeric offsets within the RFC 3339 field ranges.
   (and (iso8601--match iso8601--zone-match string)
-       (or (string= string "Z")
+       (or (string= string "Z") (string= string "z")
            (and (not (eq (aref string (1- (length string))) ?:))
                 (let ((hour (string-to-number (match-string 3 string)))
                       (minute (if (match-string 4 string)
@@ -554,6 +554,128 @@ Return the number of minutes."
          (or (null time-format) (null zone-format)
              (eq time-format zone-format)))))
 
+;; UTC dates whose final minute contained an inserted positive leap second.
+;; Based on https://hpiers.obspm.fr/iers/bul/bulc/Leap_Second.dat, updated
+;; through Bulletin C72 (July 2026).  Bulletin C72 says none will be added
+;; at the end of December 2026; the announcement file expires on 28 June
+;; 2027.  When IERS announces a new positive leap second, add the UTC date
+;; immediately before its effective TAI-UTC date here.
+(defconst iso8601--positive-leap-second-days
+  '("1972-06-30" "1972-12-31" "1973-12-31" "1974-12-31"
+    "1975-12-31" "1976-12-31" "1977-12-31" "1978-12-31"
+    "1979-12-31" "1981-06-30" "1982-06-30" "1983-06-30"
+    "1985-06-30" "1987-12-31" "1989-12-31" "1990-12-31"
+    "1992-06-30" "1993-06-30" "1994-06-30" "1995-12-31"
+    "1997-06-30" "1998-12-31" "2005-12-31" "2008-12-31"
+    "2012-06-30" "2015-06-30" "2016-12-31")
+  "UTC dates on which positive leap seconds were inserted.")
+
+(defun iso8601--iso-week-year-and-number (year month day)
+  "Return the ISO week-year and week number for Gregorian YEAR-MONTH-DAY."
+  (let* ((midnight (encode-time 0 0 0 day month year t))
+         (weekday (decoded-time-weekday (decode-time midnight t)))
+         (iso-weekday (if (zerop weekday) 7 weekday))
+         (thursday (decode-time
+                   (time-add midnight
+                             (seconds-to-time (* (- 4 iso-weekday) 86400)))
+                   t))
+         (week-year (decoded-time-year thursday))
+         (jan4 (encode-time 0 0 0 4 1 week-year t))
+         (jan4-weekday (decoded-time-weekday (decode-time jan4 t)))
+         (jan4-iso-weekday (if (zerop jan4-weekday) 7 jan4-weekday))
+         (week-one-monday
+          (time-add jan4
+                    (seconds-to-time (* (- 1 jan4-iso-weekday) 86400))))
+         (weeks-from-week-one
+          (floor (time-to-seconds (time-subtract midnight week-one-monday))
+                 (* 7 24 60 60))))
+    (cons week-year (1+ weeks-from-week-one))))
+
+(defun iso8601--leap-second-date-matches-p (date-string year month day)
+  "Return non-nil if DATE-STRING can denote Gregorian YEAR-MONTH-DAY."
+  (if (iso8601--match iso8601--week-date-match date-string)
+      (let* ((week-year (string-to-number (match-string 1 date-string)))
+             (week-number (string-to-number (or (match-string 3 date-string)
+                                                (match-string 6 date-string))))
+             (weekday (or (match-string 5 date-string)
+                          (match-string 7 date-string))))
+        (if weekday
+            (let ((parsed (iso8601-parse-date date-string)))
+              (and (= year (decoded-time-year parsed))
+                   (= month (decoded-time-month parsed))
+                   (= day (decoded-time-day parsed))))
+          (let ((week (iso8601--iso-week-year-and-number year month day)))
+            (and (= week-year (car week))
+                 (= week-number (cdr week))))))
+    (let ((parsed (iso8601-parse-date date-string)))
+      (and (or (null (decoded-time-year parsed))
+               (= year (decoded-time-year parsed)))
+           (or (null (decoded-time-month parsed))
+               (= month (decoded-time-month parsed)))
+           (or (null (decoded-time-day parsed))
+               (= day (decoded-time-day parsed)))))))
+
+(defun iso8601--leap-second-unknown-offset-matches-p
+    (date-string hour minute local-date utc-time)
+  "Return non-nil if DATE-STRING and HOUR:MINUTE fit an unknown zone.
+LOCAL-DATE is a decoded Gregorian date; UTC-TIME is the second before
+the leap second.  The implied numeric offset must be within ISO's
+23:59 limit."
+  (let ((year (decoded-time-year local-date))
+        (month (decoded-time-month local-date))
+        (day (decoded-time-day local-date)))
+    (and (iso8601--leap-second-date-matches-p date-string year month day)
+         (let* ((local-time (encode-time 59 minute hour day month year t))
+                (offset (round
+                         (time-to-seconds
+                          (time-subtract local-time utc-time)))))
+           (and (<= (- (* 1439 60)) offset (* 1439 60))
+                (zerop (% offset 60)))))))
+
+(defun iso8601--leap-second-candidate-matches-p
+    (date-string hour minute zone leap-day)
+  "Return non-nil if DATE-STRING HOUR:MINUTE ZONE match LEAP-DAY."
+  (let* ((year (string-to-number (substring leap-day 0 4)))
+         (month (string-to-number (substring leap-day 5 7)))
+         (day (string-to-number (substring leap-day 8 10)))
+         (utc-time (encode-time 59 59 23 day month year t))
+         (utc-midnight (encode-time 0 0 0 day month year t))
+         (next-date
+          (decode-time
+           (time-add utc-midnight (seconds-to-time (* 24 60 60))) t))
+         (zone-minutes (and zone (iso8601-parse-zone zone)))
+         (unknown-offset (null zone)))
+    (if unknown-offset
+        (or (iso8601--leap-second-unknown-offset-matches-p
+             date-string hour minute (decode-time utc-midnight t) utc-time)
+            (iso8601--leap-second-unknown-offset-matches-p
+             date-string hour minute next-date utc-time))
+      (let ((local-time
+             (decode-time
+              (time-add utc-time
+                        (seconds-to-time (* zone-minutes 60)))
+              t)))
+        (and (= hour (decoded-time-hour local-time))
+             (= minute (decoded-time-minute local-time))
+             (iso8601--leap-second-date-matches-p
+              date-string
+              (decoded-time-year local-time)
+              (decoded-time-month local-time)
+              (decoded-time-day local-time)))))))
+
+(defun iso8601--leap-second-valid-p (date time zone)
+  "Return non-nil if TIME's second 60 is valid for DATE and ZONE."
+  (if (not (and (iso8601--match iso8601--time-match time)
+                (equal (match-string 3 time) "60")))
+      t
+    (let ((hour (string-to-number (match-string 1 time)))
+          (minute (match-string 2 time)))
+      (and minute
+           (cl-some (lambda (leap-day)
+                      (iso8601--leap-second-candidate-matches-p
+                       date hour (string-to-number minute) zone leap-day))
+                    iso8601--positive-leap-second-days)))))
+
 (defun iso8601-valid-p (string)
   "Say whether STRING is a valid ISO 8601 representation."
   (let ((valid (iso8601--match iso8601--combined-match string)))
@@ -569,49 +691,57 @@ Return the number of minutes."
                       (save-match-data (iso8601--zone-in-range-p zone)))
                   (or (null time)
                       (iso8601--date-time-format-consistent-p date time zone))
-                  (cond
-                    ;; Preserve a compact signed numeric token as an
-                    ;; expanded year when its width is not otherwise known.
-                    ((iso8601--signed-expanded-year-token-p date)
-                     (iso8601--valid-year-string-p date))
-                    ((iso8601--match iso8601--full-date-match date)
-                     ;;Remacs: validate month/day combinations, including leap days.
-                     (let* ((year-string (match-string 1 date))
-                            (year (string-to-number year-string))
-                            (month (string-to-number
-                                   (or (match-string 3 date)
-                                       (match-string 5 date))))
-                           (day (string-to-number
-                                 (or (match-string 4 date)
-                                     (match-string 6 date)))))
-                       (and (iso8601--valid-year-string-p year-string)
-                            (<= 1 month 12)
-                            (<= 1 day (date-days-in-month year month)))))
-                    ((iso8601--match iso8601--week-date-match date)
-                     (let* ((year-string (match-string 1 date))
-                            (year (string-to-number year-string))
-                            (week (string-to-number (or (match-string 3 date)
-                                                       (match-string 6 date))))
-                            (day (or (match-string 5 date) (match-string 7 date))))
-                       (and (iso8601--valid-year-string-p year-string)
-                            (<= 1 week (iso8601--weeks-in-year year))
-                            (or (null day)
-                                (<= 1 (string-to-number day) 7)))))
-                    ((iso8601--match iso8601--without-day-match date)
-                     (let ((year (match-string 1 date))
-                           (month (string-to-number (match-string 2 date))))
-                       (and (iso8601--valid-year-string-p year)
-                            (<= 1 month 12))))
-                    ((iso8601--match iso8601--ordinal-date-match date)
-                     ;;Remacs: day-of-year is bounded by leap-year status.
-                     (let* ((year-string (match-string 1 date))
-                            (year (string-to-number year-string))
-                            (ordinal (string-to-number (match-string 2 date))))
-                       (and (iso8601--valid-year-string-p year-string)
-                            (<= 1 ordinal (if (date-leap-year-p year) 366 365)))))
-                    ((iso8601--match iso8601--year-match date)
-                     (iso8601--valid-year-string-p (match-string 1 date)))
-                    (t t))))))))
+                  (let ((date-valid
+                         (cond
+			  ;; Preserve a compact signed numeric token as an
+			  ;; expanded year when its width is not otherwise known.
+			  ((iso8601--signed-expanded-year-token-p date)
+			   (iso8601--valid-year-string-p date))
+			  ((iso8601--match iso8601--full-date-match date)
+			   ;;Remacs: validate month/day combinations, including leap days.
+			   (let* ((year-string (match-string 1 date))
+				  (year (string-to-number year-string))
+				  (month (string-to-number
+					  (or (match-string 3 date)
+					      (match-string 5 date))))
+				  (day (string-to-number
+					(or (match-string 4 date)
+					    (match-string 6 date)))))
+			     (and (iso8601--valid-year-string-p year-string)
+				  (<= 1 month 12)
+				  (<= 1 day (date-days-in-month year month)))))
+			  ((iso8601--match iso8601--week-date-match date)
+			   (let* ((year-string (match-string 1 date))
+				  (year (string-to-number year-string))
+				  (week (string-to-number (or (match-string 3 date)
+							      (match-string 6 date))))
+				  (day (or (match-string 5 date) (match-string 7 date))))
+			     (and (iso8601--valid-year-string-p year-string)
+				  (<= 1 week (iso8601--weeks-in-year year))
+				  (or (null day)
+                                      (<= 1 (string-to-number day) 7)))))
+			  ((iso8601--match iso8601--without-day-match date)
+			   (let ((year (match-string 1 date))
+				 (month (string-to-number (match-string 2 date))))
+			     (and (iso8601--valid-year-string-p year)
+				  (<= 1 month 12))))
+			  ((iso8601--match iso8601--ordinal-date-match date)
+			   ;;Remacs: day-of-year is bounded by leap-year status.
+			   (let* ((year-string (match-string 1 date))
+				  (year (string-to-number year-string))
+				  (ordinal (string-to-number (match-string 2 date))))
+			     (and (iso8601--valid-year-string-p year-string)
+				  (<= 1 ordinal (if (date-leap-year-p year) 366 365)))))
+			  ((iso8601--match iso8601--year-match date)
+			   (iso8601--valid-year-string-p (match-string 1 date)))
+			  (t t))))
+                    ;; Keep the date validator's truthy return value (notably
+                    ;; 0 for compact signed years) after leap-second checks.
+                    (if (and date-valid time
+                             (not (iso8601--leap-second-valid-p
+                                   date time zone)))
+                        nil
+                      date-valid))))))))
 
 (defun iso8601--parse-duration-seconds (value)
   ;;Remacs: preserve decimal seconds exactly as a time ratio.
