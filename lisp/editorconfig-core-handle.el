@@ -135,12 +135,44 @@ If HANDLE is nil return nil."
                  do (puthash (intern key) value hash)))
       hash)))
 
+(defun editorconfig-core-handle--pattern-has-path-separator-p (pattern)
+  "Return non-nil if PATTERN has a slash outside a bracket expression."
+  (let ((index 0)
+        (length (length pattern))
+        (escaped nil)
+        has-slash)
+    (while (and (< index length) (not has-slash))
+      (let ((char (aref pattern index)))
+        (setq index (1+ index))
+        (cond
+         ;; A slash outside a parsed class is still a filename separator,
+         ;; including when the glob backslash-escapes it.
+         ((= char ?/)
+          (setq has-slash t))
+         (escaped
+          (setq escaped nil))
+         ((= char ?\\)
+          (setq escaped t))
+         ((= char ?\[)
+          (let ((parsed
+                 (editorconfig-fnmatch--parse-bracket-expression
+                  pattern (1- index) nil)))
+            (if parsed
+                ;; Use the same class parser as the translator so escaped
+                ;; delimiters and a leading literal `]' stay in sync.
+                (setq index (aref parsed 1))
+              ;; Incomplete classes retain the translator's legacy slash
+              ;; behavior; they do not have a closing delimiter to skip.
+              (when (string-match-p "/" pattern (1- index))
+                (setq has-slash t))))))))
+    has-slash))
+
 (defun editorconfig-core-handle--fnmatch-p (name pattern)
   "Return non-nil if NAME match PATTERN.
 If pattern has slash, pattern should be relative to DIR.
 
 This function is a fnmatch with a few modification for EditorConfig usage."
-  (if (string-match-p "/" pattern)
+  (if (editorconfig-core-handle--pattern-has-path-separator-p pattern)
       (let ((pattern (replace-regexp-in-string "\\`/" "" pattern)))
         (editorconfig-fnmatch-p name pattern))
     ;; The match is not "anchored" so it can be either in the current dir or
