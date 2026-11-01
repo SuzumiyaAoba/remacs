@@ -3390,12 +3390,14 @@ END-T is the event's end time in diary format."
                                  result)))
         (setq ex-dates (cdr ex-dates))))
     ;; FIXME: exception rules are not recognized
-    (if (icalendar--get-event-property e 'EXRULE)
+    (when (icalendar--get-event-property e 'EXRULE)
+      (let (rules)
+        ;; Remacs: commas inside an EXRULE are part of the recurrence rule.
+        (dolist (property (nth 2 e))
+          (when (eq (car property) 'EXRULE) (push (nth 2 property) rules)))
         (setq result
-              (concat result
-                      "\n Exception rules: "
-                      (icalendar--get-event-properties
-                       e 'EXRULE))))
+              (concat result "\n Exception rules: "
+                      (mapconcat #'identity (nreverse rules) "\n                  ")))))
     result))
 
 (defun icalendar--convert-non-recurring-all-day-to-diary (start-d end-d)
