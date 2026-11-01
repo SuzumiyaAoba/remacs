@@ -52,6 +52,11 @@ calling this function."
   (let ((case-fold-search t)
 	headers-alist)
     (setq mailto-url (string-replace "\n" " " mailto-url))
+    ;; A raw # starts a URI fragment, which is not part of the mailto
+    ;; address or query.  Cut it before percent-decoding so %23 stays data.
+    (let ((fragment (string-match "#" mailto-url)))
+      (when fragment
+        (setq mailto-url (substring mailto-url 0 fragment))))
     (when (string-match "^\\(mailto:\\)\\([^?]+\\)?\\(\\?\\(.*\\)\\)*"
                         mailto-url)
       (let ((address (match-string 2 mailto-url))
