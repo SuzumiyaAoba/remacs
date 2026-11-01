@@ -769,6 +769,7 @@ pub enum GridPointerShape {
     Text,
     Arrow,
     Hand,
+    Hourglass,
     ResizeHorizontal,
     ResizeVertical,
 }
@@ -6913,6 +6914,7 @@ fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
     match i.symbol_name(*symbol).as_str() {
         "text" | "nil" => GridPointerShape::Text,
         "hand" => GridPointerShape::Hand,
+        "hourglass" => GridPointerShape::Hourglass,
         "hdrag" => GridPointerShape::ResizeHorizontal,
         "nhdrag" => GridPointerShape::ResizeVertical,
         "arrow" | "vdrag" | "modeline" => GridPointerShape::Arrow,

@@ -1618,6 +1618,9 @@ pub enum CursorStyle {
     /// corresponds to the CSS cursor value `text`
     IBeam,
 
+    /// A busy cursor, corresponding to the CSS cursor value `wait`.
+    Wait,
+
     /// A crosshair cursor
     /// corresponds to the CSS cursor value `crosshair`
     Crosshair,

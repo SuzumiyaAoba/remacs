@@ -718,6 +718,7 @@ impl CursorStyle {
         match self {
             CursorStyle::Arrow => &[DEFAULT_CURSOR_ICON_NAME],
             CursorStyle::IBeam => &["text", "xterm"],
+            CursorStyle::Wait => &["wait", "watch"],
             CursorStyle::Crosshair => &["crosshair", "cross"],
             CursorStyle::ClosedHand => &["closedhand", "grabbing", "hand2"],
             CursorStyle::OpenHand => &["openhand", "grab", "hand1"],

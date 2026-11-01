@@ -478,6 +478,7 @@ fn gpui_cursor_style(shape: Option<GridPointerShape>) -> CursorStyle {
     match shape {
         Some(GridPointerShape::Text) => CursorStyle::IBeam,
         Some(GridPointerShape::Hand) => CursorStyle::PointingHand,
+        Some(GridPointerShape::Hourglass) => CursorStyle::Wait,
         Some(GridPointerShape::ResizeHorizontal) => CursorStyle::ResizeLeftRight,
         Some(GridPointerShape::ResizeVertical) => CursorStyle::ResizeUpDown,
         Some(GridPointerShape::Arrow) | None => CursorStyle::Arrow,

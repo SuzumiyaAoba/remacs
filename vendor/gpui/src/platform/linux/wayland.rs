@@ -17,6 +17,7 @@ impl CursorStyle {
         match self {
             CursorStyle::Arrow => Shape::Default,
             CursorStyle::IBeam => Shape::Text,
+            CursorStyle::Wait => Shape::Wait,
             CursorStyle::Crosshair => Shape::Crosshair,
             CursorStyle::ClosedHand => Shape::Grabbing,
             CursorStyle::OpenHand => Shape::Grab,

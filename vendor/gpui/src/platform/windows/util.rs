@@ -113,6 +113,7 @@ pub(crate) fn windows_credentials_target_name(url: &str) -> String {
 pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
     static ARROW: OnceLock<SafeCursor> = OnceLock::new();
     static IBEAM: OnceLock<SafeCursor> = OnceLock::new();
+    static WAIT: OnceLock<SafeCursor> = OnceLock::new();
     static CROSS: OnceLock<SafeCursor> = OnceLock::new();
     static HAND: OnceLock<SafeCursor> = OnceLock::new();
     static SIZEWE: OnceLock<SafeCursor> = OnceLock::new();
@@ -120,6 +121,7 @@ pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
     static NO: OnceLock<SafeCursor> = OnceLock::new();
     let (lock, name) = match style {
         CursorStyle::IBeam | CursorStyle::IBeamCursorForVerticalLayout => (&IBEAM, IDC_IBEAM),
+        CursorStyle::Wait => (&WAIT, IDC_WAIT),
         CursorStyle::Crosshair => (&CROSS, IDC_CROSS),
         CursorStyle::PointingHand | CursorStyle::DragLink => (&HAND, IDC_HAND),
         CursorStyle::ResizeLeft

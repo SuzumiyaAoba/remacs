@@ -1167,6 +1167,7 @@ impl Platform for MacPlatform {
             let new_cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+                CursorStyle::Wait => wait_cursor(),
                 CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
                 CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
                 CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
@@ -1433,6 +1434,23 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
+    }
+}
+
+// macOS has no public wait-cursor factory.  Like winit, request the native
+// busy-but-clickable cursor; fall back to GNU Emacs's NS hourglass cursor
+// if that factory is unavailable.
+unsafe fn wait_cursor() -> id {
+    unsafe {
+        let supported: BOOL =
+            msg_send![class!(NSCursor), respondsToSelector: sel!(busyButClickableCursor)];
+        if supported == YES {
+            let cursor: id = msg_send![class!(NSCursor), busyButClickableCursor];
+            if cursor != nil {
+                return cursor;
+            }
+        }
+        msg_send![class!(NSCursor), disappearingItemCursor]
     }
 }
 
@@ -1961,6 +1979,21 @@ mod tests {
     use crate::ClipboardItem;
 
     use super::*;
+
+    #[test]
+    fn native_wait_cursor_has_an_image_and_is_not_the_arrow() {
+        unsafe {
+            let pool = NSAutoreleasePool::new(nil);
+            let cursor = wait_cursor();
+            let arrow: id = msg_send![class!(NSCursor), arrowCursor];
+            assert!(!cursor.is_null());
+            assert_ne!(cursor, arrow);
+            let image: id = msg_send![cursor, image];
+            let size: NSSize = msg_send![image, size];
+            assert!(size.width > 0.0 && size.height > 0.0);
+            pool.drain();
+        }
+    }
 
     #[test]
     fn test_reopen_delegate_uses_bool_abi() {

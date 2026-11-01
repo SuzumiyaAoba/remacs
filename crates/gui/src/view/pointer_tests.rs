@@ -3,6 +3,63 @@ use gpui::{Modifiers, point, px};
 use std::sync::mpsc;
 
 #[test]
+fn hourglass_pointer_reaches_the_platform_and_respects_pointer_visibility() {
+    use remacs_runtime::frontend::{GridPointerRegion, GridPointerShape};
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.grid = Grid::blank(40, 12);
+            view.grid.rows = vec![" ".repeat(40); 12];
+            view.grid.hover_cursor = Some(GridPointerShape::Hourglass);
+            view.grid.pointer_regions = vec![GridPointerRegion {
+                row: 1,
+                left: 0,
+                width: 40,
+                shape: GridPointerShape::Text,
+            }];
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    let line_height = handle
+        .update(&mut app, |view, _, _| {
+            view.geometry.as_ref().unwrap().char_height as f32
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    visual.simulate_mouse_move(point(px(5.0), px(5.0)), None, Modifiers::none());
+    assert_eq!(app.active_cursor_style(), gpui::CursorStyle::Wait);
+    visual.simulate_mouse_move(
+        point(px(5.0), px(line_height + 5.0)),
+        None,
+        Modifiers::none(),
+    );
+    assert_eq!(app.active_cursor_style(), gpui::CursorStyle::IBeam);
+    handle
+        .update(&mut app, |view, _, cx| {
+            view.grid.pointer_visible = false;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    visual.simulate_mouse_move(point(px(5.0), px(5.0)), None, Modifiers::none());
+    assert_eq!(app.active_cursor_style(), gpui::CursorStyle::None);
+    handle
+        .update(&mut app, |view, _, cx| {
+            view.grid.pointer_visible = true;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    visual.simulate_mouse_move(point(px(5.0), px(5.0)), None, Modifiers::none());
+    assert_eq!(app.active_cursor_style(), gpui::CursorStyle::Wait);
+}
+
+#[test]
 fn auxiliary_pointer_regions_set_native_cursor_without_swallowing_mouse_motion() {
     use remacs_runtime::frontend::{GridPointerRegion, GridPointerShape};
 

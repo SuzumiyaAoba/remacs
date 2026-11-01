@@ -93,6 +93,11 @@ fn auxiliary_pointer_shapes_follow_formatted_properties_and_clear_outside_them()
     );
     check(
         &mut i,
+        r#"'((:propertize "Wait" pointer hourglass) " Plain")"#,
+        &[(0, 4, Shape::Hourglass)],
+    );
+    check(
+        &mut i,
         r#"(list (let ((text "xxOPENzz")) (put-text-property 2 6 'pointer 'hand text) text))"#,
         &[(2, 4, Shape::Hand)],
     );
