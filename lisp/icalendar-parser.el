@@ -906,8 +906,21 @@ S should be a match against rx `icalendar-time'."
                          :hour hour
                          :zone utcoffset)))
 
+(defvar icalendar--print-with-tzid nil
+  "Non-nil while printing a value qualified by a TZID property parameter.")
+
+(defun icalendar--check-printable-time-zone (value)
+  "Reject a numeric time zone in VALUE without a TZID printing context."
+  ;; Remacs: a bare local value cannot retain an explicit numeric UTC offset.
+  (when (and (integerp (decoded-time-zone value))
+             (not icalendar--print-with-tzid))
+    (icalendar-signal-print-error
+     "Numeric UTC offsets require a TZID-qualified property")))
+
 (defun icalendar-print-time (time)
-  "Serialize an `icalendar-time' to a string."
+  "Serialize an `icalendar-time' to a string.
+Numeric offsets require an enclosing property with a TZID parameter."
+  (icalendar--check-printable-time-zone time)
   (format "%02d%02d%02d%s"
           (decoded-time-hour time)
           (decoded-time-minute time)
@@ -996,7 +1009,9 @@ S should be a match against rx `icalendar-date-time'."
                          :zone utcoffset)))
 
 (defun icalendar-print-date-time (datetime)
-  "Serialize an `icalendar-date-time' to a string."
+  "Serialize an `icalendar-date-time' to a string.
+Numeric offsets require an enclosing property with a TZID parameter."
+  (icalendar--check-printable-time-zone datetime)
   (format "%04d%02d%02dT%02d%02d%02d%s"
           (decoded-time-year datetime)
           (decoded-time-month datetime)
@@ -2037,15 +2052,19 @@ parameter type."
 
       (format ";%s=%s" name-str val-str))))
 
-(defun icalendar-print-params (param-nodes)
+(defun icalendar-print-params (param-nodes &optional required-types)
   "Print the property parameter nodes in PARAM-NODES.
-Returns the printed parameter list as a string."
+Returns the printed parameter list as a string.
+Printing errors for parameters of REQUIRED-TYPES propagate instead of
+omitting those parameters."
   (let (param-strs)
     (dolist (node param-nodes)
       (condition-case err
           (push (icalendar-print-param-node node) param-strs)
         (icalendar-print-error
-         (icalendar-handle-print-error err))))
+         (if (memq (icalendar-ast-node-type node) required-types)
+             (signal (car err) (cdr err))
+           (icalendar-handle-print-error err)))))
     (apply #'concat (nreverse param-strs))))
 
 ;; Parameter definitions in RFC5545:
@@ -2496,6 +2515,14 @@ PARAMS."
                        (icalendar-ast-node-meta-get :original-name node)))
          (params (icalendar-ast-node-children node))
          (value (icalendar-ast-node-value node))
+         ;; Remacs: parameters have their own value context.  A broken TZID
+         ;; cannot be omitted before printing a timezone-qualified local value.
+         (params-str
+          (let ((icalendar--print-with-tzid nil))
+            (icalendar-print-params params '(icalendar-tzidparam))))
+         ;; Remacs: resolved numeric offsets are local values under this TZID.
+         (icalendar--print-with-tzid
+          (icalendar-ast-node-first-child-of 'icalendar-tzidparam node))
          (value-str
           (or (icalendar-ast-node-meta-get :original-value node)
               ;; any icalendar-print-error here propagates:
@@ -2510,7 +2537,7 @@ PARAMS."
        :node node))
 
     (concat name-str
-            (icalendar-print-params params)
+            params-str
             ":"
             value-str
             "\n")))
