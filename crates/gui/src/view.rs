@@ -54,6 +54,8 @@ mod begin_key_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod help_key_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod execute_key_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;

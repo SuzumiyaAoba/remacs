@@ -19,6 +19,7 @@ fn immutable_name(vkey: u16) -> Option<&'static str> {
         0xa6 => "back",      // VK_BROWSER_BACK
         0xa7 => "forward",   // VK_BROWSER_FORWARD
         0x1b => "escape",    // VK_ESCAPE
+        0x2b => "execute",   // VK_EXECUTE
         0x2d => "insert",    // VK_INSERT
         0x2e => "delete",    // VK_DELETE
         0x2f => "help",      // VK_HELP
@@ -75,6 +76,23 @@ mod tests {
             };
             let key = immutable_keystroke(0x2f, modifiers).expect("VK_HELP must be recognized");
             assert_eq!(key.key, "help");
+            assert!(key.key_char.is_none());
+            assert_eq!(key.modifiers, modifiers);
+        }
+    }
+
+    #[test]
+    fn execute_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        for modified in [false, true] {
+            let modifiers = Modifiers {
+                control: modified,
+                alt: modified,
+                shift: modified,
+                platform: modified,
+                function: false,
+            };
+            let key = immutable_keystroke(0x2b, modifiers).expect("VK_EXECUTE must be recognized");
+            assert_eq!(key.key, "execute");
             assert!(key.key_char.is_none());
             assert_eq!(key.modifiers, modifiers);
         }

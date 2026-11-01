@@ -1588,3 +1588,24 @@ mod help_key_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod execute_key_tests {
+    use super::*;
+    #[test]
+    fn execute_virtual_key_reaches_normal_key_parser_without_text() {
+        for modified in [false, true] {
+            let modifiers = Modifiers {
+                control: modified,
+                alt: modified,
+                shift: modified,
+                platform: modified,
+                function: false,
+            };
+            let key = parse_normal_key(VK_EXECUTE, LPARAM(0), modifiers).expect("Execute key");
+            assert_eq!(key.key, "execute");
+            assert!(key.key_char.is_none());
+            assert_eq!(key.modifiers, modifiers);
+        }
+    }
+}
