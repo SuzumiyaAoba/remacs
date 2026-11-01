@@ -54,27 +54,38 @@
   "Return a range comprising all the RANGES, which are pre-sorted.
 RANGES will be destructively altered."
   (setq ranges (delete nil ranges))
-  (let* ((result (range-normalize (pop ranges)))
-	 (last (last result)))
+  (let (result last)
     (dolist (range ranges)
       (setq range (range-normalize range))
-      ;; Normalize the single-number case, so that we don't need to
-      ;; special-case that so much.
-      (when (numberp (car last))
-	(setcar last (cons (car last) (car last))))
-      (when (numberp (car range))
-	(setcar range (cons (car range) (car range))))
-      (if (= (1+ (cdar last)) (caar range))
-	  (progn
-	    (setcdr (car last) (cdar range))
-	    (setcdr last (cdr range)))
-	(setcdr last range)
-	;; Denormalize back, since we couldn't join the ranges up.
-	(when (= (caar range) (cdar range))
-	  (setcar range (caar range)))
-	(when (= (caar last) (cdar last))
-	  (setcar last (caar last))))
-      (setq last (last last)))
+      (while range
+	(let* ((span-cell range)
+	       (next (cdr span-cell))
+	       (span (car span-cell))
+	       (start (if (numberp span) span (car span)))
+	       (end (if (numberp span) span (cdr span))))
+	  (cond
+	   ((null last)
+	    ;; Keep the first input list as the result head.
+	    (setq result span-cell
+		  last span-cell
+		  range next))
+	   ((<= start (1+ (if (numberp (car last))
+			      (car last)
+			    (cdr (car last)))))
+	    ;; RANGES are sorted, so only the last result component can
+	    ;; overlap or touch this component.  Widen it and drop SPAN-CELL.
+	    (when (numberp (car last))
+	      (setcar last (cons (car last) (car last))))
+	    (setcdr (car last) (max (cdr (car last)) end))
+	    (when (= (caar last) (cdar last))
+	      (setcar last (caar last)))
+	    (setcdr last next)
+	    (setq range next))
+	   (t
+	    ;; Keep disjoint input nodes and link their tails in place.
+	    (setcdr last span-cell)
+	    (setq last span-cell
+		  range next))))))
     (if (and (consp (car result))
 	     (= (length result) 1))
 	(car result)
