@@ -828,7 +828,7 @@ Argument BUFFER is the buffer of the retrieval process."
                     ;; The xml parser might fail or the xml might be bugged.
                     (if (fboundp 'libxml-parse-xml-region)
                         (progn
-                          (xml-remove-comments (point-min) (point-max))
+                          (newsticker--remove-xml-comments-preserving-markup)
                           (list (libxml-parse-xml-region (point-min) (point-max)
                                                          nil)))
                       (xml-parse-region (point-min) (point-max)))
@@ -966,60 +966,199 @@ Argument BUFFER is the buffer of the retrieval process."
   (when newsticker--sentinel-callback
     (funcall newsticker--sentinel-callback)))
 
+(defun newsticker--xml-protect-region (start end prefix index)
+  "Replace START through END with a unique placeholder.
+Return a cons of the placeholder and the saved text."
+  (let ((token (format "%s-%d-X" prefix index))
+        (text (buffer-substring start end)))
+    (delete-region start end)
+    (goto-char start)
+    (insert token)
+    (cons token text)))
+
+(defun newsticker--xml-skip-tag ()
+  "Move point past the next XML tag, respecting quoted attribute values."
+  (let (quote)
+    (while (and (not (eobp))
+                (or quote (/= (char-after) 62)))
+      (let ((char (char-after)))
+        (cond
+         (quote
+          (when (= char quote) (setq quote nil)))
+         ((memq char '(34 39)) (setq quote char)))
+        (forward-char)))
+    (unless (eobp) (forward-char))))
+
+(defun newsticker--xml-protect-markup-data ()
+  "Protect CDATA, processing instructions, and quoted DTD literals.
+Return (PREFIX . REPLACEMENTS), where each replacement is (TOKEN . TEXT).
+This is a lexical pass for opaque XML regions, not an XML parser."
+  (let ((prefix "NEWSTICKERXMLTOKEN0")
+        (counter 0)
+        (case-fold-search nil)
+        replacements)
+    (while (save-excursion
+             (goto-char (point-min))
+             (search-forward prefix nil t))
+      (setq prefix (concat prefix "X")))
+    (goto-char (point-min))
+    (while (search-forward "<" nil t)
+      (let ((start (match-beginning 0)))
+        (cond
+         ;; Skip comments so their contents cannot be mistaken for CDATA or PI.
+         ((looking-at "!--")
+          (unless (search-forward "-->" nil t)
+            (error "Can't find end of XML comment")))
+         ;; CDATA: only its first closing delimiter ends the section.
+         ((looking-at "!\\[CDATA\\[")
+          (unless (search-forward "]]>" nil t)
+            (error "Can't find end of CDATA section"))
+          (push (newsticker--xml-protect-region start (point) prefix counter)
+                replacements)
+          (setq counter (1+ counter)))
+         ;; PI data can also contain comment-looking text.
+         ((= (or (char-after) -1) 63)
+          (unless (search-forward "?>" nil t)
+            (error "Can't find end of XML processing instruction"))
+          (push (newsticker--xml-protect-region start (point) prefix counter)
+                replacements)
+          (setq counter (1+ counter)))
+         ;; Keep the doctype visible to its old workarounds, but hide quoted
+         ;; literals and PIs so comment-looking text there remains data.
+         ((looking-at "!DOCTYPE")
+          (forward-char (length "!DOCTYPE"))
+          (let ((bracket-depth 0)
+                finished)
+            (while (and (not finished) (not (eobp)))
+              (let ((char (char-after)))
+                (cond
+                 ((memq char '(34 39))
+                  (let ((quote char)
+                        (literal-start (point)))
+                    (forward-char)
+                    (while (and (not (eobp)) (/= (char-after) quote))
+                      (forward-char))
+                    (when (eobp) (error "Unterminated XML DTD literal"))
+                    (forward-char)
+                    (push (newsticker--xml-protect-region
+                           literal-start (point) prefix counter)
+                          replacements)
+                    (setq counter (1+ counter))))
+                 ((looking-at "<!--")
+                  (unless (search-forward "-->" nil t)
+                    (error "Can't find end of XML comment in DOCTYPE")))
+                 ((and (= char 60)
+                       (< (1+ (point)) (point-max))
+                       (= (char-after (1+ (point))) 63))
+                  (let ((instruction-start (point)))
+                    (unless (search-forward "?>" nil t)
+                      (error "Can't find end of XML processing instruction"))
+                    (push (newsticker--xml-protect-region
+                           instruction-start (point) prefix counter)
+                          replacements)
+                    (setq counter (1+ counter))))
+                 ((and (= char 60) (looking-at "<!\\[CDATA\\["))
+                  (let ((cdata-start (point)))
+                    (unless (search-forward "]]>" nil t)
+                      (error "Can't find end of CDATA section in DOCTYPE"))
+                    (push (newsticker--xml-protect-region
+                           cdata-start (point) prefix counter)
+                          replacements)
+                    (setq counter (1+ counter))))
+                 ((= char 91)
+                  (setq bracket-depth (1+ bracket-depth))
+                  (forward-char))
+                 ((= char 93)
+                  (setq bracket-depth (max 0 (1- bracket-depth)))
+                  (forward-char))
+                 ((and (= char 62) (zerop bracket-depth))
+                  (setq finished t)
+                  (forward-char))
+                 (t (forward-char)))))))
+         ;; Skip ordinary tags as a unit so quoted values do not look like
+         ;; markup to this scanner.
+         (t (newsticker--xml-skip-tag)))))
+    (cons prefix (nreverse replacements))))
+
+(defun newsticker--remove-xml-comments-preserving-markup ()
+  "Remove XML comments in the accessible buffer, preserving opaque data."
+  (save-excursion
+    (atomic-change-group
+      (let* ((opaque-markup (newsticker--xml-protect-markup-data))
+             (protected (cdr opaque-markup)))
+        (xml-remove-comments (point-min) (point-max))
+        (let ((case-fold-search nil))
+          (dolist (replacement protected)
+            (goto-char (point-min))
+            (while (search-forward (car replacement) nil t)
+              (replace-match (cdr replacement) t t))))))))
+
 (defun newsticker--do-xml-workarounds ()
   "Fix all issues which `xml-parse-region' could be choking on."
 
-  ;; a very very dirty workaround to overcome the
-  ;; problems with the newest (20030621) xml.el:
-  ;; remove all unnecessary whitespace
-  (goto-char (point-min))
-  (while (re-search-forward ">[ \t\r\n]+<" nil t)
-    (replace-match "><" nil t))
-  ;; and another brutal workaround (20031105)!  For some
-  ;; reason the xml parser does not like the colon in the
-  ;; doctype name "rdf:RDF"
-  (goto-char (point-min))
-  (if (re-search-forward "<!DOCTYPE[ \t\n]+rdf:RDF" nil t)
-      (replace-match "<!DOCTYPE rdfColonRDF" nil t))
-  ;; finally.... ~##^°!!!!!
-  (goto-char (point-min))
-  (while (search-forward "\r\n" nil t)
-    (replace-match "\n" nil t))
-  ;; still more brutal workarounds (20040309)!  The xml
-  ;; parser does not like doctype rss
-  (goto-char (point-min))
-  (if (re-search-forward "<!DOCTYPE[ \t\n]+rss[ \t\n]*>" nil t)
-      (replace-match "" nil t))
-  ;; And another one (20050618)! (Fixed in GNU Emacs 22.0.50.18)
-  ;; Remove comments to avoid this xml-parsing bug:
-  ;; "XML files can have only one toplevel tag"
-  (goto-char (point-min))
-  (while (search-forward "<!--" nil t)
-    (let ((start (match-beginning 0)))
-      (unless (search-forward "-->" nil t)
-        (error "Can't find end of comment"))
-      (delete-region start (point))))
-  ;; And another one (20050702)! If description is HTML
-  ;; encoded and starts with a `<', wrap the whole
-  ;; description in a CDATA expression.  This happened for
-  ;; https://www.thefreedictionary.com/_/WoD/rss.aspx?type=quote
-  (goto-char (point-min))
-  (while (re-search-forward
-          "<description>\\(<img.*?\\)</description>" nil t)
-    (replace-match
-     "<description><![CDATA[ \\1 ]]></description>"))
-  ;; And another one (20051123)! XML parser does not
-  ;; like this: <yweather:location city="Frankfurt/Main"
-  ;; region="" country="GM" />
-  ;; try to "fix" empty attributes
-  ;; This happened for
-  ;; http://xml.weather.yahoo.com/forecastrss?p=GMXX0040&u=f
-  (goto-char (point-min))
-  (while (re-search-forward "\\(<[^>]*\\)=\"\"" nil t)
-    (replace-match "\\1=\" \""))
-  ;;
-  (set-buffer-modified-p nil))
-
+  (atomic-change-group
+    (let* ((opaque-markup (newsticker--xml-protect-markup-data))
+           (opaque-prefix (car opaque-markup))
+           (protected (cdr opaque-markup)))
+      ;; a very very dirty workaround to overcome the
+      ;; problems with the newest (20030621) xml.el:
+      ;; remove all unnecessary whitespace
+      (goto-char (point-min))
+      (while (re-search-forward ">[ \t\r\n]+<" nil t)
+        (replace-match "><" nil t))
+      ;; and another brutal workaround (20031105)!  For some
+      ;; reason the xml parser does not like the colon in the
+      ;; doctype name "rdf:RDF"
+      (goto-char (point-min))
+      (if (re-search-forward "<!DOCTYPE[ \t\n]+rdf:RDF" nil t)
+          (replace-match "<!DOCTYPE rdfColonRDF" nil t))
+      ;; finally.... ~##^°!!!!!
+      (goto-char (point-min))
+      (while (search-forward "\r\n" nil t)
+        (replace-match "\n" nil t))
+      ;; still more brutal workarounds (20040309)!  The xml
+      ;; parser does not like doctype rss
+      (goto-char (point-min))
+      (if (re-search-forward "<!DOCTYPE[ \t\n]+rss[ \t\n]*>" nil t)
+          (replace-match "" nil t))
+      ;; And another one (20050618)! (Fixed in GNU Emacs 22.0.50.18)
+      ;; Remove comments to avoid this xml-parsing bug:
+      ;; "XML files can have only one toplevel tag"
+      (goto-char (point-min))
+      (while (search-forward "<!--" nil t)
+        (let ((start (match-beginning 0)))
+          (unless (search-forward "-->" nil t)
+            (error "Can't find end of comment"))
+          (delete-region start (point))))
+      ;; And another one (20050702)! If description is HTML
+      ;; encoded and starts with a `<', wrap the whole
+      ;; description in a CDATA expression.  This happened for
+      ;; https://www.thefreedictionary.com/_/WoD/rss.aspx?type=quote
+      (goto-char (point-min))
+      (while (re-search-forward
+              "<description>\\(<img.*?\\)</description>" nil t)
+        ;; Do not wrap an HTML-looking string from opaque XML data.
+        (unless (save-match-data
+                  (string-match-p (regexp-quote opaque-prefix) (match-string 1)))
+          (replace-match
+           "<description><![CDATA[ \\1 ]]></description>")))
+      ;; And another one (20051123)! XML parser does not
+      ;; like this: <yweather:location city="Frankfurt/Main"
+      ;; region="" country="GM" />
+      ;; try to "fix" empty attributes
+      ;; This happened for
+      ;; http://xml.weather.yahoo.com/forecastrss?p=GMXX0040&u=f
+      (goto-char (point-min))
+      (while (re-search-forward "\\(<[^>]*\\)=\"\"" nil t)
+        (replace-match "\\1=\" \""))
+      ;; Restore CDATA, PIs, and DTD literals after all textual workarounds.
+      (let ((case-fold-search nil))
+        (dolist (replacement protected)
+          (goto-char (point-min))
+          (while (search-forward (car replacement) nil t)
+            (replace-match (cdr replacement) t t))))
+      ;;
+      (set-buffer-modified-p nil))))
 
 (defun newsticker--get-logo-url-atom-1.0 (node)
   "Return logo URL from atom 1.0 data in NODE."
