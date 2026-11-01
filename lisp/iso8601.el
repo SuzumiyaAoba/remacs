@@ -201,6 +201,15 @@ References to captures that are removed are not retained."
     (signal 'wrong-type-argument (list whole-string)))
   (string-to-number year))
 
+;; A compact signed numeric token can be either an expanded year or a basic
+;; date.  With no agreed expanded-year width, preserve the existing year parse.
+(defun iso8601--signed-expanded-year-token-p (string)
+  "Return non-nil if STRING is a signed expanded-year token."
+  (and (iso8601--match iso8601--year-match string)
+       (let ((year (match-string 1 string)))
+         (and (memq (aref year 0) '(?+ ?-))
+              (iso8601--valid-year-string-p year)))))
+
 (defconst iso8601--time-match
   "\\([0-9][0-9]\\):?\\([0-9][0-9]\\)?:?\\([0-9][0-9]\\)?\\(?:[.,]\\([0-9]+\\)\\)?")
 
@@ -278,10 +287,11 @@ See `decode-time' for the meaning of FORM."
 (defun iso8601-parse-date (string)
   "Parse STRING (in ISO 8601 format) and return a `decode-time' value."
   (cond
-   ;; Just a basic year or signed expanded year.
-   ((iso8601--match iso8601--year-match string)
+   ;; Preserve signed expanded years when compact basic date parsing would be
+   ;; ambiguous without an agreed expanded-year width.
+   ((iso8601--signed-expanded-year-token-p string)
     (iso8601--decoded-time
-     :year (iso8601--parse-year-string (match-string 1 string) string)))
+     :year (iso8601--parse-year-string string string)))
    ;; Calendar dates: YYYY-MM-DD and variants.
    ((iso8601--match iso8601--full-date-match string)
     (iso8601--decoded-time
@@ -338,6 +348,10 @@ See `decode-time' for the meaning of FORM."
       (iso8601--decoded-time :year year
                              :month (decoded-time-month month-day)
                              :day (decoded-time-day month-day))))
+   ;; A year by itself, after longer basic date forms have been tried.
+   ((iso8601--match iso8601--year-match string)
+    (iso8601--decoded-time
+     :year (iso8601--parse-year-string (match-string 1 string) string)))
    ;; Obsolete format with implied year: --MM
    ((iso8601--match "--\\([0-9][0-9]\\)" string)
     (iso8601--decoded-time :month (string-to-number (match-string 1 string))))
@@ -489,18 +503,10 @@ Return the number of minutes."
                   (or (null zone)
                       (save-match-data (iso8601--zone-in-range-p zone)))
                   (cond
-                    ((iso8601--match iso8601--year-match date)
-                     (iso8601--valid-year-string-p (match-string 1 date)))
-                    ((iso8601--match iso8601--week-date-match date)
-                     (let* ((year-string (match-string 1 date))
-                            (year (string-to-number year-string))
-                            (week (string-to-number (or (match-string 3 date)
-                                                       (match-string 6 date))))
-                            (day (or (match-string 5 date) (match-string 7 date))))
-                       (and (iso8601--valid-year-string-p year-string)
-                            (<= 1 week (iso8601--weeks-in-year year))
-                            (or (null day)
-                                (<= 1 (string-to-number day) 7)))))
+                    ;; Preserve a compact signed numeric token as an
+                    ;; expanded year when its width is not otherwise known.
+                    ((iso8601--signed-expanded-year-token-p date)
+                     (iso8601--valid-year-string-p date))
                     ((iso8601--match iso8601--full-date-match date)
                      ;;Remacs: validate month/day combinations, including leap days.
                      (let* ((year-string (match-string 1 date))
@@ -514,6 +520,16 @@ Return the number of minutes."
                        (and (iso8601--valid-year-string-p year-string)
                             (<= 1 month 12)
                             (<= 1 day (date-days-in-month year month)))))
+                    ((iso8601--match iso8601--week-date-match date)
+                     (let* ((year-string (match-string 1 date))
+                            (year (string-to-number year-string))
+                            (week (string-to-number (or (match-string 3 date)
+                                                       (match-string 6 date))))
+                            (day (or (match-string 5 date) (match-string 7 date))))
+                       (and (iso8601--valid-year-string-p year-string)
+                            (<= 1 week (iso8601--weeks-in-year year))
+                            (or (null day)
+                                (<= 1 (string-to-number day) 7)))))
                     ((iso8601--match iso8601--without-day-match date)
                      (let ((year (match-string 1 date))
                            (month (string-to-number (match-string 2 date))))
@@ -526,6 +542,8 @@ Return the number of minutes."
                             (ordinal (string-to-number (match-string 2 date))))
                        (and (iso8601--valid-year-string-p year-string)
                             (<= 1 ordinal (if (date-leap-year-p year) 366 365)))))
+                    ((iso8601--match iso8601--year-match date)
+                     (iso8601--valid-year-string-p (match-string 1 date)))
                     (t t))))))))
 
 (defun iso8601--parse-duration-seconds (value)
