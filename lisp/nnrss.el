@@ -452,26 +452,38 @@ nnrss: %s: Not valid XML %s and libxml-parse-html-region doesn't work %s"
 This function handles the ISO 8601 date format described in
 URL `https://www.w3.org/TR/NOTE-datetime', and also the RFC 822 style
 which RSS 2.0 allows."
-  (let (case-fold-search vector year month day time zone given)
+  (let (case-fold-search vector year month day time zone zone-token given)
     (cond ((null date))			; do nothing for this case
 	  ;; if the date is just digits (unix time stamp):
 	  ((string-match "\\`[0-9]+\\'" date)
 	   (setq given (time-convert (string-to-number date) t)))
 	  ;; RFC 822
 	  ((string-match " [0-9]+ " date)
-	   (setq vector (timezone-parse-date date)
-		 year (string-to-number (aref vector 0)))
-	   (setq month (string-to-number (aref vector 1))
-		 day (string-to-number (aref vector 2)))
-	   (unless (>= (length (setq time (aref vector 3))) 3)
-	     (setq time "00:00:00"))
-	   (when (and (setq zone (aref vector 4))
-		      (not (string-match "\\`[A-Z+-]" zone)))
-	     (setq zone nil))
-	   ;;Remacs: format-time-string needs a fixed offset in seconds, not the
-	   ;;RFC 822 token returned by timezone-parse-date.
-	   (when zone
-	     (setq zone (* 60 (timezone-zone-to-minute zone)))))
+           (setq vector (timezone-parse-date date)
+                 year (string-to-number (aref vector 0)))
+           (setq month (string-to-number (aref vector 1))
+                 day (string-to-number (aref vector 2)))
+           (unless (>= (length (setq time (aref vector 3))) 3)
+             (setq time "00:00:00"))
+           (setq zone-token (aref vector 4)
+                 zone
+                 (cond
+                  ((null zone-token) nil)
+                  ;; Preserve RFC 5322's unknown-local-offset marker.
+                  ((equal (upcase zone-token) "-0000") "-0000")
+                  ;; UTC is a common known alias; UT and GMT are standard.
+                  ((member (upcase zone-token) '("UTC" "UT" "GMT")) 0)
+                  ((assoc (upcase zone-token) timezone-world-timezones)
+                   ;;Remacs: format-time-string needs seconds, not HHMM.
+                   (* 60 (timezone-zone-to-minute zone-token)))
+                  ;; RFC 5322 §4.3 maps an unknown alpha zone to -0000.
+                  ((string-match-p "\\`[A-Za-z]+\\'" zone-token)
+                   "-0000")
+                  ;; Retain the old conversion for other signed/uppercase
+                  ;; tokens such as the timezone library's GMT+N forms.
+                  ((string-match-p "\\`[A-Z+-]" zone-token)
+                   (* 60 (timezone-zone-to-minute zone-token)))
+                  (t nil))))
 	  ;; ISO 8601
 	  ((iso8601-valid-p date)
 	   (let ((decoded (decoded-time-set-defaults (iso8601-parse date))))
@@ -491,7 +503,9 @@ which RSS 2.0 allows."
 				      (encode-time 0 0 0 day month year)))
 		time
 		(if zone
-		    (format-time-string " %z" nil zone)
+		    (if (equal zone "-0000")
+                        " -0000"
+                      (format-time-string " %z" nil zone))
 		  ""))
       (message-make-date given))))
 
