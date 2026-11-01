@@ -1,3 +1,4 @@
+use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
 
 use ::util::ResultExt;
@@ -382,7 +383,7 @@ impl WindowsWindowInner {
 
     fn handle_syskeydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let inputs = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
@@ -390,12 +391,12 @@ impl WindowsWindowInner {
         })?;
         let mut func = lock.callbacks.input.take()?;
         drop(lock);
-
-        let handled = !func(input).propagate;
-
+        let mut handled = false;
+        for input in inputs {
+            handled |= !func(input).propagate;
+        }
         let mut lock = self.state.borrow_mut();
         lock.callbacks.input = Some(func);
-
         if handled {
             lock.system_key_handled = true;
             Some(0)
@@ -408,14 +409,15 @@ impl WindowsWindowInner {
 
     fn handle_syskeyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let inputs = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
         let mut func = lock.callbacks.input.take()?;
         drop(lock);
-        func(input);
+        for input in inputs {
+            func(input);
+        }
         self.state.borrow_mut().callbacks.input = Some(func);
-
         // Always return 0 to indicate that the message was handled, so we could properly handle `ModifiersChanged` event.
         Some(0)
     }
@@ -424,7 +426,7 @@ impl WindowsWindowInner {
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
     fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(inputs) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
@@ -433,7 +435,6 @@ impl WindowsWindowInner {
             return Some(1);
         };
         drop(lock);
-
         let is_composing = self
             .with_input_handler(|input_handler| input_handler.marked_text_range())
             .flatten()
@@ -442,15 +443,14 @@ impl WindowsWindowInner {
             translate_message(handle, wparam, lparam);
             return Some(0);
         }
-
         let Some(mut func) = self.state.borrow_mut().callbacks.input.take() else {
             return Some(1);
         };
-
-        let handled = !func(input).propagate;
-
+        let mut handled = false;
+        for input in inputs {
+            handled |= !func(input).propagate;
+        }
         self.state.borrow_mut().callbacks.input = Some(func);
-
         if handled {
             Some(0)
         } else {
@@ -461,20 +461,30 @@ impl WindowsWindowInner {
 
     fn handle_keyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(inputs) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         }) else {
             return Some(1);
         };
-
-        let Some(mut func) = lock.callbacks.input.take() else {
+        drop(lock);
+        // Match normal key-down handling if a release-only Print Screen arrives
+        // during IME composition, while still delivering its real release.
+        let suppress_press = inputs.len() > 1
+            && self
+                .with_input_handler(|input_handler| input_handler.marked_text_range())
+                .flatten()
+                .is_some();
+        let Some(mut func) = self.state.borrow_mut().callbacks.input.take() else {
             return Some(1);
         };
-        drop(lock);
-
-        let handled = !func(input).propagate;
+        let mut handled = false;
+        for input in inputs {
+            if suppress_press && matches!(&input, PlatformInput::KeyDown(_)) {
+                continue;
+            }
+            handled |= !func(input).propagate;
+        }
         self.state.borrow_mut().callbacks.input = Some(func);
-
         if handled { Some(0) } else { Some(1) }
     }
 
@@ -805,6 +815,9 @@ impl WindowsWindowInner {
         self.executor
             .spawn(async move {
                 let mut lock = this.state.borrow_mut();
+                if !activated {
+                    lock.keyboard_events.reset();
+                }
                 if let Some(mut func) = lock.callbacks.active_status_change.take() {
                     drop(lock);
                     func(activated);
@@ -1355,7 +1368,7 @@ fn handle_key_event<F>(
     lparam: LPARAM,
     state: &mut WindowsWindowState,
     f: F,
-) -> Option<PlatformInput>
+) -> Option<SmallVec<[PlatformInput; 2]>>
 where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
@@ -1371,12 +1384,14 @@ where
                 return None;
             }
             state.last_reported_modifiers = Some(modifiers);
-            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                modifiers,
-                changed_modifier: None,
-                changed_modifier_is_down: None,
-                capslock: current_capslock(),
-            }))
+            Some(smallvec![PlatformInput::ModifiersChanged(
+                ModifiersChangedEvent {
+                    modifiers,
+                    changed_modifier: None,
+                    changed_modifier_is_down: None,
+                    capslock: current_capslock(),
+                }
+            )])
         }
         VK_PACKET => {
             translate_message(handle, wparam, lparam);
@@ -1391,12 +1406,14 @@ where
                 return None;
             }
             state.last_reported_capslock = Some(capslock);
-            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-                modifiers,
-                changed_modifier: None,
-                changed_modifier_is_down: None,
-                capslock,
-            }))
+            Some(smallvec![PlatformInput::ModifiersChanged(
+                ModifiersChangedEvent {
+                    modifiers,
+                    changed_modifier: None,
+                    changed_modifier_is_down: None,
+                    capslock,
+                }
+            )])
         }
         vkey => {
             let vkey = if vkey == VK_PROCESSKEY {
@@ -1405,7 +1422,7 @@ where
                 vkey
             };
             let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
-            Some(f(keystroke))
+            Some(state.keyboard_events.normalize(vkey.0, f(keystroke)))
         }
     }
 }
@@ -1606,6 +1623,29 @@ mod execute_key_tests {
             assert_eq!(key.key, "execute");
             assert!(key.key_char.is_none());
             assert_eq!(key.modifiers, modifiers);
+        }
+    }
+}
+
+#[cfg(test)]
+mod pause_print_screen_key_tests {
+    use super::*;
+    #[test]
+    fn pause_and_snapshot_reach_normal_key_parser_without_text() {
+        for (code, name) in [(VK_PAUSE, "pause"), (VK_SNAPSHOT, "print")] {
+            for modified in [false, true] {
+                let modifiers = Modifiers {
+                    control: modified,
+                    alt: modified,
+                    shift: modified,
+                    platform: modified,
+                    function: false,
+                };
+                let key = parse_normal_key(code, LPARAM(0), modifiers).expect(name);
+                assert_eq!(key.key, name);
+                assert!(key.key_char.is_none());
+                assert_eq!(key.modifiers, modifiers);
+            }
         }
     }
 }

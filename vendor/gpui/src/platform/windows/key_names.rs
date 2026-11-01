@@ -1,4 +1,5 @@
-use crate::{Keystroke, Modifiers};
+use crate::{KeyDownEvent, Keystroke, Modifiers, PlatformInput};
+use smallvec::{SmallVec, smallvec};
 
 // Win32 virtual-key values are fixed independently of the active layout.
 // https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
@@ -7,6 +8,7 @@ fn immutable_name(vkey: u16) -> Option<&'static str> {
         0x20 => "space",     // VK_SPACE
         0x08 => "backspace", // VK_BACK
         0x0d => "enter",     // VK_RETURN
+        0x13 => "pause",     // VK_PAUSE
         0x09 => "tab",       // VK_TAB
         0x26 => "up",        // VK_UP
         0x28 => "down",      // VK_DOWN
@@ -20,6 +22,7 @@ fn immutable_name(vkey: u16) -> Option<&'static str> {
         0xa7 => "forward",   // VK_BROWSER_FORWARD
         0x1b => "escape",    // VK_ESCAPE
         0x2b => "execute",   // VK_EXECUTE
+        0x2c => "print",     // VK_SNAPSHOT
         0x2d => "insert",    // VK_INSERT
         0x2e => "delete",    // VK_DELETE
         0x2f => "help",      // VK_HELP
@@ -60,12 +63,48 @@ pub(crate) fn immutable_keystroke(vkey: u16, modifiers: Modifiers) -> Option<Key
     })
 }
 
+/// Print Screen can arrive as key-up only. Preserve ordinary pairs while
+/// synthesizing the missing press for consumers that listen to key-down.
+#[derive(Default)]
+pub(crate) struct KeyEventState {
+    snapshot_pressed: bool,
+}
+
+impl KeyEventState {
+    pub(crate) fn normalize(
+        &mut self,
+        vkey: u16,
+        input: PlatformInput,
+    ) -> SmallVec<[PlatformInput; 2]> {
+        if vkey == 0x2c {
+            // VK_SNAPSHOT
+            match &input {
+                PlatformInput::KeyDown(_) => self.snapshot_pressed = true,
+                PlatformInput::KeyUp(event) => {
+                    if !std::mem::take(&mut self.snapshot_pressed) {
+                        let press = KeyDownEvent {
+                            keystroke: event.keystroke.clone(),
+                            is_held: false,
+                        };
+                        return smallvec![PlatformInput::KeyDown(press), input];
+                    }
+                }
+                _ => {}
+            }
+        }
+        smallvec![input]
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.snapshot_pressed = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn help_virtual_key_is_named_non_text_and_preserves_modifiers() {
+    fn assert_named_virtual_key(code: u16, name: &str) {
         for modified in [false, true] {
             let modifiers = Modifiers {
                 control: modified,
@@ -74,28 +113,28 @@ mod tests {
                 platform: modified,
                 function: false,
             };
-            let key = immutable_keystroke(0x2f, modifiers).expect("VK_HELP must be recognized");
-            assert_eq!(key.key, "help");
+            let key = immutable_keystroke(code, modifiers).expect(name);
+            assert_eq!(key.key, name);
             assert!(key.key_char.is_none());
             assert_eq!(key.modifiers, modifiers);
         }
     }
 
     #[test]
+    fn help_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        assert_named_virtual_key(0x2f, "help");
+    }
+    #[test]
     fn execute_virtual_key_is_named_non_text_and_preserves_modifiers() {
-        for modified in [false, true] {
-            let modifiers = Modifiers {
-                control: modified,
-                alt: modified,
-                shift: modified,
-                platform: modified,
-                function: false,
-            };
-            let key = immutable_keystroke(0x2b, modifiers).expect("VK_EXECUTE must be recognized");
-            assert_eq!(key.key, "execute");
-            assert!(key.key_char.is_none());
-            assert_eq!(key.modifiers, modifiers);
-        }
+        assert_named_virtual_key(0x2b, "execute");
+    }
+    #[test]
+    fn pause_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        assert_named_virtual_key(0x13, "pause");
+    }
+    #[test]
+    fn print_screen_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        assert_named_virtual_key(0x2c, "print");
     }
 
     #[test]
@@ -137,5 +176,75 @@ mod tests {
         for code in [0x41, 0x30, 0x70 - 1, 0x88] {
             assert!(immutable_keystroke(code, Modifiers::none()).is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    use crate::KeyUpEvent;
+
+    fn key(name: &str) -> Keystroke {
+        Keystroke {
+            key: name.into(),
+            key_char: None,
+            modifiers: Modifiers {
+                control: true,
+                alt: true,
+                shift: true,
+                platform: true,
+                function: false,
+            },
+        }
+    }
+    fn down(name: &str) -> PlatformInput {
+        PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: key(name),
+            is_held: false,
+        })
+    }
+    fn up(name: &str) -> PlatformInput {
+        PlatformInput::KeyUp(KeyUpEvent {
+            keystroke: key(name),
+        })
+    }
+
+    #[test]
+    fn snapshot_release_only_emits_one_press_then_release_with_modifiers() {
+        let mut state = KeyEventState::default();
+        for _ in 0..2 {
+            let events = state.normalize(0x2c, up("print"));
+            assert_eq!(events.len(), 2);
+            let PlatformInput::KeyDown(press) = &events[0] else {
+                panic!("missing synthetic press")
+            };
+            assert_eq!(press.keystroke, key("print"));
+            assert!(!press.is_held);
+            assert!(
+                matches!(&events[1], PlatformInput::KeyUp(release) if release.keystroke == key("print"))
+            );
+        }
+    }
+    #[test]
+    fn snapshot_with_a_real_press_does_not_emit_a_duplicate() {
+        let mut state = KeyEventState::default();
+        let press = state.normalize(0x2c, down("print"));
+        assert_eq!(press.len(), 1);
+        assert!(matches!(&press[0], PlatformInput::KeyDown(_)));
+        let release = state.normalize(0x2c, up("print"));
+        assert_eq!(release.len(), 1);
+        assert!(matches!(&release[0], PlatformInput::KeyUp(_)));
+    }
+    #[test]
+    fn other_keys_stay_single_and_focus_reset_drops_the_old_press() {
+        let mut state = KeyEventState::default();
+        assert_eq!(state.normalize(0x13, down("pause")).len(), 1);
+        let release = state.normalize(0x13, up("pause"));
+        assert_eq!(release.len(), 1);
+        assert!(matches!(&release[0], PlatformInput::KeyUp(_)));
+        state.normalize(0x2c, down("print"));
+        assert_eq!(state.normalize(0x41, down("a")).len(), 1);
+        state.reset();
+        assert_eq!(state.normalize(0x2c, up("print")).len(), 2);
     }
 }

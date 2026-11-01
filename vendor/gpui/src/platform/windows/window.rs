@@ -46,6 +46,7 @@ pub struct WindowsWindowState {
     pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
     pub last_reported_capslock: Option<Capslock>,
+    pub keyboard_events: crate::platform::windows_key_names::KeyEventState,
     pub system_key_handled: bool,
     pub hovered: bool,
 
@@ -135,6 +136,7 @@ impl WindowsWindowState {
             pending_surrogate,
             last_reported_modifiers,
             last_reported_capslock,
+            keyboard_events: Default::default(),
             system_key_handled,
             hovered,
             renderer,
