@@ -227,10 +227,31 @@ translation is found for PATTERN."
                                            (match-string 1 pattern-sub)))
                             (number-end (string-to-number
                                          (match-string 2 pattern-sub))))
-                        (regexp-opt
-                         (mapcar #'number-to-string
-                                 (cl-loop for i from number-start to number-end
-                                          collect i))))
+                        (let (numeric-strings nonnegative-strings)
+                          ;; Visit each numeric value once.  Keep the existing
+                          ;; canonical spelling and also track nonnegative
+                          ;; values for their explicit-plus form.
+                          (cl-loop for i from number-start to number-end
+                                   for number = (number-to-string i)
+                                   do (progn
+                                        (push number numeric-strings)
+                                        (when (>= i 0)
+                                          (push number nonnegative-strings))))
+                          (setq numeric-strings (nreverse numeric-strings)
+                                nonnegative-strings
+                                (nreverse nonnegative-strings))
+                          (let* ((regexp (regexp-opt numeric-strings))
+                                 (positive-regexp
+                                  (and nonnegative-strings
+                                       (concat (regexp-quote "+") "0*"
+                                               (if (equal numeric-strings
+                                                          nonnegative-strings)
+                                                   regexp
+                                                 (regexp-opt nonnegative-strings)))))
+                                 (parts (delq nil (list regexp positive-regexp))))
+                            (if (cdr parts)
+                                (concat "\\(?:" (mapconcat #'identity parts "\\|") "\\)")
+                              (car parts)))))
                     (let ((inner (editorconfig-fnmatch--do-translate
                                   pattern-sub t)))
                       (format "{%s}" inner))))
