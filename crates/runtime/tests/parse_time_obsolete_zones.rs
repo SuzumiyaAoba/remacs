@@ -45,8 +45,8 @@ fn parse_time_string_maps_unknown_obsolete_zones_to_zero() {
                (list
                 (list (nth 8 military) (nth 6 military) (nth 4 military))
                 (list (nth 8 unknown) (nth 6 unknown) (nth 4 unknown))
-                (nth 8 two-letters)
-                (nth 8 six-letters)
+                (list (nth 8 two-letters) (nth 7 two-letters))
+                (list (nth 8 six-letters) (nth 7 six-letters))
                 (nth 8 unicode)
                 (list (nth 8 known) (nth 6 known) (nth 4 known))
                 (list (nth 8 numeric) (nth 6 numeric) (nth 4 numeric))
@@ -70,6 +70,6 @@ fn parse_time_string_maps_unknown_obsolete_zones_to_zero() {
     });
     assert_eq!(
         interp.prin1_to_string(&result),
-        "((0 3 1) (0 3 1) nil nil nil (-18000 3 1) (-28800 3 1) (-18000 3 1) (-28800 3 1) nil 0 (1 nil) (nil 3 1) (wrong-type-argument sequencep 97))"
+        "((0 3 1) (0 3 1) (0 -1) (0 -1) nil (-18000 3 1) (-28800 3 1) (-18000 3 1) (-28800 3 1) nil 0 (1 nil) (nil 3 1) (wrong-type-argument sequencep 97))"
     );
 }

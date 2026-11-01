@@ -276,12 +276,12 @@ See `decode-time' for the meaning of FORM."
                                          (funcall this)))
                                    parse-time-val)))
                     (setf (nth (pop slots) time) new-val)))))))
-          ;; Only unmatched tokens can be obsolete timezone abbreviations.
+          ;; An unmatched alphabetic token after a parsed time can be a zone.
+          ;; Do not mistake unknown weekday/month words before the time for one.
           (when (and (not exit)
+                     (nth 2 time)
                      (stringp parse-time-elt)
-                     (string-match-p "\\`[a-z]+\\'" parse-time-elt)
-                     (let ((length (length parse-time-elt)))
-                       (or (= length 1) (<= 3 length 5))))
+                     (string-match-p "\\`[a-z]+\\'" parse-time-elt))
             (setq unknown-zone t))))
       (when (and unknown-zone (not (nth 8 time)))
         (setf (nth 8 time) 0))
