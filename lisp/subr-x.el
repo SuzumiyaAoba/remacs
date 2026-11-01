@@ -681,6 +681,21 @@ nil (meaning `default-directory') as the associated list element."
     (setq default-directory dir)
     (setq list-buffers-directory dir)))
 
+(defun files--cd-completion-table (dirs suffixes string pred action)
+  "Complete directory names found in DIRS.
+For all-completions and try-completion, keep directory-suffixed candidates.
+Test-completion keeps the broader directory search used by `cd', so an
+explicitly entered bare name may resolve to a directory later in DIRS."
+  (if (or (file-name-absolute-p string)
+          (not (memq action '(nil t))))
+      (locate-file-completion-table dirs suffixes string pred action)
+    (locate-file-completion-table
+     dirs suffixes string
+     (lambda (candidate)
+       (and (directory-name-p candidate)
+            (or (null pred) (funcall pred candidate))))
+     action)))
+
 (defun cd (dir)
   "Make DIR become the current buffer's default directory.
 If your environment includes a `CDPATH' variable, try each one of
@@ -689,18 +704,10 @@ that list of directories (separated by occurrences of
 The path separator is colon in GNU and GNU-like systems."
   (interactive
    (list
-    ;; FIXME: There's a subtle bug in the completion below.  Seems linked
-    ;; to a fundamental difficulty of implementing `predicate' correctly.
-    ;; The manifestation is that TAB may list non-directories in the case where
-    ;; those files also correspond to valid directories (if your cd-path is (A/
-    ;; B/) and you have A/a a file and B/a a directory, then both `a' and `a/'
-    ;; will be listed as valid completions).
-    ;; This is because `a' (listed because of A/a) is indeed a valid choice
-    ;; (which will lead to the use of B/a).
     (minibuffer-with-setup-hook
         (lambda ()
           (setq-local minibuffer-completion-table
-		      (apply-partially #'locate-file-completion-table
+		      (apply-partially #'files--cd-completion-table
 				       cd-path nil))
           (setq-local minibuffer-completion-predicate
 		      (lambda (dir)
