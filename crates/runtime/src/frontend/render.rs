@@ -1933,6 +1933,12 @@ fn blink_cursor_settings(i: &Interp) -> (bool, f64, f64, i128) {
 
 const MEMORY_FULL_WARNING: &str = "!MEM FULL! ";
 
+#[derive(Default)]
+struct FrameTitleDependencies {
+    remote: std::cell::Cell<bool>,
+    position: std::cell::Cell<bool>,
+}
+
 struct FrameTitleContext<'a> {
     buffer_id: usize,
     buffer_name: &'a str,
@@ -1946,9 +1952,11 @@ struct FrameTitleContext<'a> {
     coding: String,
     coding_with_eol: String,
     remote: bool,
-    remote_used: Option<&'a std::cell::Cell<bool>>,
+    dependencies: Option<&'a FrameTitleDependencies>,
     global_mode_string: Value,
     buffer_size: usize,
+    window_start_offset: usize,
+    window_end_offset: usize,
 }
 
 fn format_frame_title_string(
@@ -1978,6 +1986,17 @@ fn format_frame_title_string(
             'Z' => title.push_str(&context.coding_with_eol),
             'i' => title.push_str(&context.buffer_size.to_string()),
             'I' => title.push_str(&readable_mode_line_size(context.buffer_size)),
+            'P' | 'o' | 'q' => {
+                if let Some(dependencies) = context.dependencies {
+                    dependencies.position.set(true);
+                }
+                title.push_str(&buffer_position_indicator(
+                    context.buffer_size,
+                    context.window_start_offset,
+                    context.window_end_offset,
+                    specifier,
+                ));
+            }
             'M' => title.push_str(&format_frame_title_field(
                 i,
                 &context.global_mode_string,
@@ -1986,8 +2005,8 @@ fn format_frame_title_string(
                 None,
             )),
             '@' => {
-                if let Some(used) = context.remote_used {
-                    used.set(true);
+                if let Some(dependencies) = context.dependencies {
+                    dependencies.remote.set(true);
                 }
                 title.push(if context.remote { '@' } else { '-' });
             }
@@ -2260,7 +2279,7 @@ fn frame_title(
     i: &Interp,
     frame: &crate::editor::Frame,
     graphical: bool,
-    remote_used: Option<&std::cell::Cell<bool>>,
+    dependencies: Option<&FrameTitleDependencies>,
 ) -> String {
     if let Some(parameter) = i.q_soft("title")
         && let Value::Str(title) = crate::lisp::eval::plist_get(&frame.params, parameter)
@@ -2271,8 +2290,16 @@ fn frame_title(
     let Some(buffer) = i.buffers.get(buffer_id) else {
         return frame.name.borrow().to_unicode_lossy();
     };
-    let (buffer_name, file_name, modified, buffer_size) = {
+    let (buffer_name, file_name, modified, buffer_size, window_start, window_end) = {
         let buffer = buffer.borrow();
+        let window = frame.selected.borrow();
+        let end = window
+            .redisplay_end
+            .filter(|(id, tick, start, _)| {
+                *id == buffer_id && *tick == buffer.text.mod_tick.get() && *start == window.start
+            })
+            .map(|(_, _, _, end)| end)
+            .unwrap_or(buffer.zv);
         (
             buffer.name.to_unicode_lossy(),
             buffer
@@ -2281,6 +2308,8 @@ fn frame_title(
                 .map(|name| name.to_unicode_lossy()),
             buffer.is_modified(),
             buffer.zv.saturating_sub(buffer.begv),
+            window.start.clamp(buffer.begv, buffer.zv) - buffer.begv,
+            end.clamp(buffer.begv, buffer.zv) - buffer.begv,
         )
     };
     let frame_name = frame.name.borrow().to_unicode_lossy();
@@ -2323,12 +2352,14 @@ fn frame_title(
         remote: i.q_soft("default-directory").is_some_and(|symbol| {
             buffer_directory_remote(i, buffer_id, &i.symbol_value_in_buffer(symbol, buffer_id))
         }),
-        remote_used,
+        dependencies,
         global_mode_string: i
             .q_soft("global-mode-string")
             .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
             .unwrap_or(Value::Nil),
         buffer_size,
+        window_start_offset: window_start,
+        window_end_offset: window_end,
     };
     let Some(format) = i
         .q_soft("frame-title-format")
@@ -2403,15 +2434,28 @@ pub(super) fn prepare_mode_line_remote(
         // formats contain no remote construct. Probe the actual formatter so
         // escaped percents, field limits and inactive branches stay inert.
         for frame in &i.frames {
-            let frame_state = frame.borrow();
-            if frame_state.dead || !window_ids.contains(&frame_state.selected.borrow().id) {
-                continue;
-            }
-            let used = std::cell::Cell::new(false);
+            let dependencies = FrameTitleDependencies::default();
             let graphical = crate::editor::frame_is_graphical(i, frame);
-            let _ = frame_title(i, &frame_state, graphical, Some(&used));
-            let buffer = frame_state.selected.borrow().buffer;
-            if used.get() && i.buffer_live(buffer) && seen.insert(buffer) {
+            let (buffer, width, height) = {
+                let frame_state = frame.borrow();
+                if frame_state.dead || !window_ids.contains(&frame_state.selected.borrow().id) {
+                    continue;
+                }
+                let _ = frame_title(i, &frame_state, graphical, Some(&dependencies));
+                (
+                    frame_state.selected.borrow().buffer,
+                    frame_state.width,
+                    frame_state.height,
+                )
+            };
+            if dependencies.position.get() {
+                // Position text can change whether a following %@ fits. Settle
+                // the viewport before collecting the title's remote dependency.
+                let _ = render_frame_grid_with_input_cached(i, frame, width, height, None);
+                dependencies.remote.set(false);
+                let _ = frame_title(i, &frame.borrow(), graphical, Some(&dependencies));
+            }
+            if dependencies.remote.get() && i.buffer_live(buffer) && seen.insert(buffer) {
                 buffers.push(buffer);
             }
         }
@@ -2562,27 +2606,53 @@ fn mode_line_context(
 }
 
 fn mode_line_position(context: &ModeLineContext, specifier: char) -> String {
-    if context.window_end_offset >= context.buffer_size {
-        return if context.window_start_offset == 0 {
-            "All"
-        } else {
-            "Bottom"
+    buffer_position_indicator(
+        context.buffer_size,
+        context.window_start_offset,
+        context.window_end_offset,
+        specifier,
+    )
+}
+
+fn buffer_position_indicator(size: usize, start: usize, end: usize, specifier: char) -> String {
+    // GNU percent99 rounds upward; 100 is reserved for the ending bound of %q.
+    let percent99 = |position: usize, total: usize| {
+        ((position as u128 * 100 + total.max(1) as u128 - 1) / total.max(1) as u128).min(99)
+    };
+    if specifier == 'q' {
+        if start == 0 && end >= size {
+            return "All   ".to_owned();
         }
-        .to_owned();
+        let top = if start == 0 {
+            0
+        } else {
+            percent99(start, size)
+        };
+        let bottom = if end >= size {
+            100
+        } else {
+            percent99(end, size)
+        };
+        return if top == bottom {
+            format!("{top}%")
+        } else {
+            format!("{top}-{bottom}%")
+        };
     }
-    if specifier == 'p' && context.window_start_offset == 0 {
+    if end >= size {
+        return if start == 0 { "All" } else { "Bottom" }.to_owned();
+    }
+    if matches!(specifier, 'p' | 'o') && start == 0 {
         return "Top".to_owned();
     }
-    let offset = if specifier == 'P' {
-        context.window_end_offset
+    let percentage = if specifier == 'o' {
+        percent99(start, start.saturating_add(size.saturating_sub(end)))
+    } else if specifier == 'P' {
+        percent99(end, size)
     } else {
-        context.window_start_offset
+        percent99(start, size)
     };
-    // GNU percent99 rounds upward and reserves 100% for the end labels.
-    let percentage = ((offset as u128 * 100 + context.buffer_size as u128 - 1)
-        / context.buffer_size as u128)
-        .min(99);
-    let prefix = if specifier == 'P' && context.window_start_offset == 0 {
+    let prefix = if specifier == 'P' && start == 0 {
         "Top"
     } else {
         ""
@@ -2809,7 +2879,7 @@ fn format_mode_line_string(
             'C' => context.column.saturating_add(1).to_string(),
             'L' => context.line_count.to_string(),
             'I' => readable_mode_line_size(context.buffer_size),
-            'p' | 'P' => mode_line_position(context, specifier),
+            'p' | 'P' | 'o' | 'q' => mode_line_position(context, specifier),
             '@' => {
                 context.remote_used.set(true);
                 if context.remote { "@" } else { "-" }.to_owned()
@@ -7686,7 +7756,6 @@ fn render_grid_internal(
         .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame));
     let fb = frame.borrow();
     let graphical = crate::editor::frame_is_graphical(i, &frame);
-    let title = frame_title(i, &fb, graphical, None);
     let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let scroll_bar_style = if graphical {
         frame_scroll_bar_style(i, &mut fctx, &fb)
@@ -9870,7 +9939,9 @@ fn render_grid_internal(
         }
     }
     let mut grid = Grid {
-        title,
+        // Redisplay has now published each window's actual endpoint, including
+        // wrapping, narrowing, header rows and scrolling in inactive frames.
+        title: frame_title(i, &fb, graphical, None),
         font_families: fctx.font_families,
         default_style,
         internal_border_style,
