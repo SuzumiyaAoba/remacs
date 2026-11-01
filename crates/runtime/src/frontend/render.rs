@@ -2011,7 +2011,7 @@ fn frame_title_specifier(context: &FrameTitleContext<'_>, specifier: char) -> Op
         'Z' => title.push_str(&context.coding_with_eol),
         'i' => title.push_str(&context.buffer_size.to_string()),
         'I' => title.push_str(&readable_mode_line_size(context.buffer_size)),
-        'P' | 'o' | 'q' => {
+        'p' | 'P' | 'o' | 'q' => {
             if let Some(dependencies) = context.dependencies {
                 dependencies.position.set(true);
             }
