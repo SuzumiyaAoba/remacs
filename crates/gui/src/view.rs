@@ -50,6 +50,8 @@ mod pointer_tests;
 mod pointer_window_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod header_wheel_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod wheel_window_tests;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
