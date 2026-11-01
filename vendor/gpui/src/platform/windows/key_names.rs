@@ -22,6 +22,7 @@ fn immutable_name(vkey: u16) -> Option<&'static str> {
         0xa7 => "forward",   // VK_BROWSER_FORWARD
         0x1b => "escape",    // VK_ESCAPE
         0x2b => "execute",   // VK_EXECUTE
+        0x2a => "print",     // VK_PRINT
         0x2c => "print",     // VK_SNAPSHOT
         0x2d => "insert",    // VK_INSERT
         0x2e => "delete",    // VK_DELETE
@@ -150,6 +151,11 @@ mod tests {
     #[test]
     fn print_screen_virtual_key_is_named_non_text_and_preserves_modifiers() {
         assert_named_virtual_key(0x2c, "print");
+    }
+
+    #[test]
+    fn print_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        assert_named_virtual_key(0x2a, "print");
     }
 
     #[test]
@@ -305,5 +311,15 @@ mod event_tests {
             count, 2,
             "unhandled synthetic press must still deliver release"
         );
+    }
+    #[test]
+    fn dedicated_print_does_not_synthesize_or_clear_a_snapshot_press() {
+        let mut state = KeyEventState::default();
+        let release = state.normalize(0x2a, up("print"));
+        assert_eq!(release.len(), 1);
+        assert!(matches!(&release[0], PlatformInput::KeyUp(_)));
+        state.normalize(0x2c, down("print"));
+        assert_eq!(state.normalize(0x2a, up("print")).len(), 1);
+        assert_eq!(state.normalize(0x2c, up("print")).len(), 1);
     }
 }

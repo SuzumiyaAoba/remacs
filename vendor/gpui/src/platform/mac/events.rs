@@ -125,6 +125,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "find" => NSFindFunctionKey,
         "execute" => NSExecuteFunctionKey,
         "pause" => NSPauseFunctionKey,
+        "print" => NSPrintFunctionKey,
         "menu" => NSMenuFunctionKey,
         "f1" => NSF1FunctionKey,
         "f2" => NSF2FunctionKey,
@@ -446,6 +447,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSFindFunctionKey) => "find".to_string(),
             Some(NSExecuteFunctionKey) => "execute".to_string(),
             Some(NSPauseFunctionKey) => "pause".to_string(),
+            Some(NSPrintFunctionKey) => "print".to_string(),
             Some(NSMenuFunctionKey) => "menu".to_string(),
             Some(NSF1FunctionKey) => "f1".to_string(),
             Some(NSF2FunctionKey) => "f2".to_string(),
@@ -760,5 +762,15 @@ mod pause_key_tests {
     #[test]
     fn pause_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSPauseFunctionKey, "pause", 0);
+    }
+}
+
+#[cfg(test)]
+mod print_key_tests {
+    use super::*;
+    use cocoa::appkit::NSPrintFunctionKey;
+    #[test]
+    fn print_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSPrintFunctionKey, "print", 0);
     }
 }
