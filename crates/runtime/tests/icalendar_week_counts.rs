@@ -32,10 +32,38 @@ const CASES: &str = r##"
   t)
 "##;
 
-#[test]
-fn week_counts_follow_four_day_week_one_for_a_gregorian_cycle() {
-    let mut interp = Interp::new();
-    match interp.eval_str(CASES) {
+const NEGATIVE_CASES: &str = r##"
+(progn
+  (dolist (case '((2021 -1 (12 27 2021)) (2021 -2 (12 20 2021))
+                  (2021 -52 (1 4 2021)) (2020 -1 (12 28 2020))
+                  (2020 -53 (12 30 2019))))
+    (let ((actual (icalendar-start-of-weekno (cadr case) (car case))))
+      (unless (equal actual (caddr case))
+        (error "Wrong negative week start: %S returned %S" case actual))))
+  (dotimes (offset 400)
+    (let* ((year (+ 1900 offset))
+           (jan4 (calendar-absolute-from-gregorian (list 1 4 year)))
+           (next-jan4 (calendar-absolute-from-gregorian (list 1 4 (1+ year)))))
+      (dotimes (weekstart 7)
+        (let* ((first (calendar-dayname-on-or-before weekstart jan4))
+               (next (calendar-dayname-on-or-before weekstart next-jan4))
+               (weeks (/ (- next first) 7)))
+          (dolist (weekno (list -1 -2 (- weeks)))
+            (let* ((actual (icalendar-start-of-weekno weekno year weekstart))
+                   (expected (calendar-gregorian-from-absolute (+ next (* 7 weekno)))))
+              (unless (and (equal actual expected)
+                           (equal actual (icalendar-start-of-weekno
+                                          (+ weeks 1 weekno) year weekstart)))
+                (error "Wrong negative week start: year=%s WKST=%s week=%s got=%S expected=%S"
+                       year weekstart weekno actual expected))))))
+      (unless (equal (icalendar-start-of-weekno -1 year nil)
+                     (icalendar-start-of-weekno -1 year 1))
+        (error "Default WKST changed for negative weeks in %s" year))))
+  t)
+"##;
+
+fn check(interp: &mut Interp, source: &str) {
+    match interp.eval_str(source) {
         Ok(value) => assert!(value.truthy()),
         Err(Flow::Signal(signal)) => panic!(
             "{} {}",
@@ -44,4 +72,11 @@ fn week_counts_follow_four_day_week_one_for_a_gregorian_cycle() {
         ),
         Err(other) => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn week_counts_and_starts_follow_four_day_week_one_for_a_gregorian_cycle() {
+    let mut interp = Interp::new();
+    check(&mut interp, CASES);
+    check(&mut interp, NEGATIVE_CASES);
 }

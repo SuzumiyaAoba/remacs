@@ -745,7 +745,8 @@ the year: -1 is the last week of the year, -2 second to last, etc."
    (+
     (* 7 (if (< 0 weekno)
              (1- weekno)
-           (+ 1 weekno (icalendar-number-of-weeks year weekstart))))
+           ;; Remacs: -1 is zero-based offset WEEKS - 1.
+           (+ weekno (icalendar-number-of-weeks year weekstart))))
     (calendar-dayname-on-or-before
      (or weekstart 1)
      ;; Three days after Jan 1. gives us the nearest occurrence;
