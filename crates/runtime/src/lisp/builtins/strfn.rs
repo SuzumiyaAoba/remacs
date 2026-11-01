@@ -1739,36 +1739,52 @@ fn display_tab_width(i: &Interp) -> usize {
 /// Display column width under GNU strwidth rules: TAB contributes the
 /// sanitized tab-width (without tab-stop tracking), and newline is zero.
 fn gnu_char_width(i: &Interp, c: EmacsChar) -> usize {
+    gnu_char_width_in_buffer(i, c, i.current_buffer)
+}
+
+/// GNU strwidth for a character in BUFFER without switching buffers.
+pub(crate) fn gnu_char_width_in_buffer(i: &Interp, c: EmacsChar, buffer: usize) -> usize {
     if c == '\t' {
-        display_tab_width(i)
+        match i
+            .q_soft("tab-width")
+            .map(|id| i.symbol_value_in_buffer(id, buffer))
+        {
+            Some(Value::Int(width)) if (1..=1000).contains(&width) => width as usize,
+            _ => 8,
+        }
     } else {
         let code = lisp_char_code(c) as u32;
-        display_substitution_width(i, code).unwrap_or_else(|| gnu_char_code_width(i, code))
+        display_substitution_width_in_buffer(i, code, buffer)
+            .unwrap_or_else(|| gnu_char_code_width_in_buffer(i, code, buffer))
     }
 }
 
 fn display_substitution_width(i: &Interp, code: u32) -> Option<usize> {
+    display_substitution_width_in_buffer(i, code, i.current_buffer)
+}
+
+fn display_substitution_width_in_buffer(i: &Interp, code: u32, buffer: usize) -> Option<usize> {
     let buffer_table = i
         .q_soft("buffer-display-table")
-        .map(|id| i.symbol_value(id))
+        .map(|id| i.symbol_value_in_buffer(id, buffer))
         .filter(Value::truthy);
     let table = buffer_table.or_else(|| {
         i.q_soft("standard-display-table")
-            .map(|id| i.symbol_value(id))
+            .map(|id| i.symbol_value_in_buffer(id, buffer))
             .filter(Value::truthy)
     })?;
     match misc::char_table_ref(i, &table, code as usize) {
         Value::Str(text) => Some(
             text.borrow()
                 .chars()
-                .map(|ch| gnu_char_code_width(i, lisp_char_code(ch) as u32))
+                .map(|ch| gnu_char_code_width_in_buffer(i, lisp_char_code(ch) as u32, buffer))
                 .sum(),
         ),
         Value::Vec(text) => Some(
             text.borrow()
                 .iter()
                 .filter_map(Value::int)
-                .map(|ch| gnu_char_code_width(i, ch as u32))
+                .map(|ch| gnu_char_code_width_in_buffer(i, ch as u32, buffer))
                 .sum(),
         ),
         _ => None,
@@ -1786,6 +1802,10 @@ fn truncate_padding_char(i: &mut Interp, padding: &Value) -> Result<EmacsChar, F
 }
 
 fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
+    gnu_char_code_width_in_buffer(i, code, i.current_buffer)
+}
+
+fn gnu_char_code_width_in_buffer(i: &Interp, code: u32, buffer: usize) -> usize {
     // CHARACTER_WIDTH handles ASCII directly. For other characters,
     // consult the live table using the Lisp code rather than a Rust
     // proxy scalar (surrogates, high Mule codes, and eight-bit chars).
@@ -1796,7 +1816,9 @@ fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
         return match code {
             0x20..=0x7E => 1,
             0..=0x1F | 0x7F => {
-                if i.symbol_value(i.q_soft("ctl-arrow").unwrap_or(0)).truthy() {
+                if i.symbol_value_in_buffer(i.q_soft("ctl-arrow").unwrap_or(0), buffer)
+                    .truthy()
+                {
                     2
                 } else {
                     4
@@ -1806,7 +1828,9 @@ fn gnu_char_code_width(i: &Interp, code: u32) -> usize {
         };
     }
     if let Some(id) = i.q_soft("char-width-table") {
-        if let Value::Int(width) = misc::char_table_ref(i, &i.symbol_value(id), code as usize) {
+        if let Value::Int(width) =
+            misc::char_table_ref(i, &i.symbol_value_in_buffer(id, buffer), code as usize)
+        {
             if width >= 0 {
                 return width as usize;
             }

@@ -1973,43 +1973,172 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
     title
 }
 
+#[derive(Clone, Copy, Default)]
+struct FrameTitleField {
+    minimum: usize,
+    maximum: Option<usize>,
+}
+
+fn frame_title_prefix<'a>(
+    i: &Interp,
+    context: &FrameTitleContext<'_>,
+    text: &'a str,
+    maximum: Option<usize>,
+) -> (&'a str, usize) {
+    let mut columns = 0usize;
+    for (byte, ch) in text.char_indices() {
+        let width =
+            crate::lisp::builtins::strfn::gnu_char_width_in_buffer(i, ch.into(), context.buffer_id);
+        if ch == '\0' || maximum.is_some_and(|limit| width > limit.saturating_sub(columns)) {
+            return (&text[..byte], columns);
+        }
+        columns = columns.saturating_add(width);
+    }
+    (text, columns)
+}
+
+fn format_frame_title_string_field(
+    i: &Interp,
+    format: &str,
+    context: &FrameTitleContext<'_>,
+    maximum: Option<usize>,
+) -> String {
+    let mut output = String::new();
+    let mut columns = 0usize;
+    let mut offset = 0;
+    while offset < format.len() && maximum.is_none_or(|limit| columns < limit) {
+        let tail = &format[offset..];
+        let literal_end = tail.find(['%', '\0']).unwrap_or(tail.len());
+        let remaining = maximum.map(|limit| limit.saturating_sub(columns));
+        let (piece, width, next) = if literal_end > 0 {
+            let (_, width) = frame_title_prefix(i, context, &tail[..literal_end], remaining);
+            // xdisp.c first measures the literal span, then passes that width
+            // to store_mode_line_noprop. Zero means unbounded there, including
+            // when the next wide character did not fit the requested precision.
+            let (piece, width) = frame_title_prefix(i, context, tail, (width > 0).then_some(width));
+            (piece.to_owned(), width, offset + literal_end)
+        } else if tail.starts_with('\0') {
+            break;
+        } else {
+            let next = offset + 1 + tail[1..].chars().next().map_or(0, char::len_utf8);
+            let decoded = format_frame_title_string(&format[offset..next], context);
+            let (piece, width) = frame_title_prefix(i, context, &decoded, remaining);
+            (piece.to_owned(), width, next)
+        };
+        output.push_str(&piece);
+        columns = columns.saturating_add(width);
+        offset = next;
+    }
+    output
+}
+
 fn format_frame_title_value(
     i: &Interp,
     value: &Value,
     context: &FrameTitleContext<'_>,
     depth: usize,
 ) -> String {
+    format_frame_title_field(i, value, context, depth, None)
+}
+
+fn format_frame_title_field(
+    i: &Interp,
+    value: &Value,
+    context: &FrameTitleContext<'_>,
+    depth: usize,
+    field: Option<FrameTitleField>,
+) -> String {
     if depth >= 32 {
         return String::new();
     }
-    match value {
+    let mut output = match value {
         Value::Nil => String::new(),
         Value::Str(string) => {
-            format_frame_title_string(&string.borrow().to_unicode_lossy(), context)
+            let text = string.borrow().to_unicode_lossy();
+            if let Some(field) = field {
+                format_frame_title_string_field(i, &text, context, field.maximum)
+            } else {
+                format_frame_title_string(&text, context)
+            }
         }
         Value::Sym(symbol) => {
             if i.symbol_name(*symbol) == "t" {
-                return context.buffer_name.to_owned();
-            }
-            let symbol_value = i.symbol_value_in_buffer(*symbol, context.buffer_id);
-            if matches!(&symbol_value, Value::Sym(other) if other == symbol) {
-                i.symbol_name(*symbol).to_string()
+                if let Some(field) = field {
+                    frame_title_prefix(i, context, context.buffer_name, field.maximum)
+                        .0
+                        .to_owned()
+                } else {
+                    context.buffer_name.to_owned()
+                }
             } else {
-                format_frame_title_value(i, &symbol_value, context, depth + 1)
+                let symbol_value = i.symbol_value_in_buffer(*symbol, context.buffer_id);
+                if matches!(&symbol_value, Value::Sym(other) if other == symbol) {
+                    i.symbol_name(*symbol).to_string()
+                } else {
+                    format_frame_title_field(i, &symbol_value, context, depth + 1, field)
+                }
             }
         }
-        Value::Cons(_) => value
-            .list_to_vec()
-            .map(|elements| {
-                elements
-                    .iter()
-                    .map(|element| format_frame_title_value(i, element, context, depth + 1))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        Value::Cons(cell) => {
+            let (head, rest) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if let Value::Int(width) = head {
+                // GNU display_mode_element stores a fixnum width in a C int.
+                let width = width as i32;
+                let mut field = field.unwrap_or_default();
+                if width < 0 {
+                    let maximum = width.unsigned_abs() as usize;
+                    field.maximum = Some(field.maximum.map_or(maximum, |old| old.min(maximum)));
+                } else if width > 0 {
+                    let minimum = width as usize;
+                    field.minimum = field
+                        .minimum
+                        .max(field.maximum.map_or(minimum, |max| max.min(minimum)));
+                }
+                return format_frame_title_field(i, &rest, context, depth + 1, Some(field));
+            }
+            let Ok(elements) = value.list_to_vec() else {
+                return String::new();
+            };
+            let mut text = String::new();
+            let mut columns = 0usize;
+            for (index, element) in elements.iter().enumerate() {
+                if field
+                    .and_then(|f| f.maximum)
+                    .is_some_and(|maximum| columns >= maximum)
+                {
+                    break;
+                }
+                let child_field = field.map(|f| FrameTitleField {
+                    minimum: if index + 1 == elements.len() {
+                        f.minimum.saturating_sub(columns)
+                    } else {
+                        0
+                    },
+                    maximum: f.maximum.map(|max| max.saturating_sub(columns)),
+                });
+                let piece = format_frame_title_field(i, element, context, depth + 1, child_field);
+                if field.is_some() {
+                    columns =
+                        columns.saturating_add(frame_title_prefix(i, context, &piece, None).1);
+                }
+                text.push_str(&piece);
+            }
+            text
+        }
         Value::Int(number) => number.to_string(),
         _ => String::new(),
+    };
+    if let Some(field) = field {
+        let columns = frame_title_prefix(i, context, &output, None).1;
+        output.extend(std::iter::repeat_n(
+            ' ',
+            field.minimum.saturating_sub(columns),
+        ));
     }
+    output
 }
 
 fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
