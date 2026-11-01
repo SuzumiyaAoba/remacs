@@ -44,6 +44,8 @@ mod popup_navigation_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod button_release_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod insert_key_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
