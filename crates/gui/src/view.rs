@@ -46,6 +46,8 @@ mod tool_hit_tests;
 // The test platform uses window activation for cursor ownership on macOS.
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod pointer_window_tests;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).

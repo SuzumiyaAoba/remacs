@@ -8162,8 +8162,7 @@ fn render_grid_internal(
         if selected_window {
             default_row_height = frame_char_height.saturating_add(default_line_spacing);
         }
-        if selected_window
-            && let Some(position) = mouse_position
+        if let Some(position) = mouse_position
             && position.buffer_id == buf_id
         {
             hover_cursor = Some(grid_pointer_shape(
