@@ -56,7 +56,8 @@
   "Name of the etags program used by `etags-regen-mode'.
 
 If you only have `ctags' installed, you can also set this to
-\"ctags -e\".  Some features might not be supported this way."
+\"ctags -e\".  Some features might not be supported this way.
+An executable file name may contain spaces."
   ;; Always having our 'etags' here would be easier, but we can't
   ;; always rely on it being installed.  So it might be ctags's etags.
   :type 'file
@@ -326,7 +327,7 @@ is used in buffers that have no alternative completion configured."
                   #'file-relative-name #'file-local-name))
          (ctags-p (etags-regen--ctags-p))
          (command (format "%s %s %s - -o %s"
-                          etags-regen-program
+                          (etags-regen--program-command)
                           (mapconcat #'identity
                                      (etags-regen--build-program-options ctags-p)
                                      " ")
@@ -357,10 +358,19 @@ is used in buffers that have no alternative completion configured."
   (with-current-buffer (get-file-buffer tags-file)
     (add-hook 'kill-buffer-hook #'etags-regen--tags-cleanup nil t)))
 
+(defun etags-regen--program-command ()
+  "Return a shell command prefix for `etags-regen-program'.
+Quote an executable file name as one path.  Other values retain
+their command-line syntax, including the documented \"ctags -e\"."
+  (if (or (file-executable-p etags-regen-program)
+          (executable-find etags-regen-program))
+      (shell-quote-argument etags-regen-program)
+    etags-regen-program))
+
 (defun etags-regen--ctags-p ()
   (string-search "Ctags"
                  (shell-command-to-string
-                  (format "%s --version" etags-regen-program))))
+                  (format "%s --version" (etags-regen--program-command)))))
 
 (defun etags-regen--build-program-options (ctags-p)
   (when (and etags-regen-regexp-alist ctags-p)
@@ -442,7 +452,7 @@ is used in buffers that have no alternative completion configured."
       nil nil shell-file-name t etags-regen--errors-buffer-name
       shell-command-switch
       (format "%s %s -o - %s"
-              etags-regen-program (mapconcat #'identity options " ")
+              (etags-regen--program-command) (mapconcat #'identity options " ")
               (mapconcat fun file-names " ")))))
   ;; FIXME: Is there a better way to do this?
   ;; Completion table is the only remaining place where the
