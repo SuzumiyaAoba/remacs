@@ -156,25 +156,25 @@ in the current window."
 
 ;;;###autoload
 (defun animate-sequence (list-of-strings space)
-  "Display animation strings from LIST-OF-STRING with buffer *Animation*.
-Strings will be separated from each other by SPACE lines.
- When the variable `animation-buffer-name' is non-nil display
-animation in the buffer named by variable's value, creating the
-buffer if one does not exist."
-  (let ((vpos (/ (- (window-height)
-		    1 ;; For the mode-line
-		    (* (1- (length list-of-strings)) space)
-		    (length list-of-strings))
-		 2)))
-    (switch-to-buffer (get-buffer-create
-                       (or animation-buffer-name
-                           "*Animation*")))
-    (erase-buffer)
-    (sit-for 0)
-    (while list-of-strings
-      (animate-string (car list-of-strings) vpos)
-      (setq vpos (+ vpos space 1))
-      (setq list-of-strings (cdr list-of-strings)))))
+  "Display animation strings from LIST-OF-STRINGS in the animation buffer.
+Strings will be separated from each other by SPACE lines.  When
+`animation-buffer-name' is non-nil, use that buffer, creating it if needed;
+otherwise use `*Animation*'.  If LIST-OF-STRINGS is nil, do nothing."
+  (when list-of-strings
+    (let ((vpos (/ (- (window-height)
+		      1 ;; For the mode-line
+		      (* (1- (length list-of-strings)) space)
+		      (length list-of-strings))
+		   2)))
+      (switch-to-buffer (get-buffer-create
+                         (or animation-buffer-name
+                             "*Animation*")))
+      (erase-buffer)
+      (sit-for 0)
+      (while list-of-strings
+        (animate-string (car list-of-strings) vpos)
+        (setq vpos (+ vpos space 1))
+        (setq list-of-strings (cdr list-of-strings))))))
 
 ;;;###autoload
 (defun animate-birthday-present (&optional name)
