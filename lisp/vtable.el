@@ -344,17 +344,44 @@ This will also remove the displayed line."
             (inhibit-read-only t)
             (inhibit-modification-hooks t))
         (let* ((cache-lines (vtable--cache-lines cache))
-               (removed-line (assq object cache-lines))
+               (removed-lines
+                (cl-remove-if-not (lambda (line) (eq (car line) object))
+                                  cache-lines))
+               (remaining-lines
+                (cl-remove-if (lambda (line) (eq (car line) object))
+                              cache-lines))
                (columns-to-recompute
-                (cl-loop for cell in (cdr removed-line)
-                         for column in (vtable-columns table)
+                (cl-loop for column in (vtable-columns table)
                          for index from 0
                          when (and (not (vtable-column--numerical column))
-                                   (not (numberp (car cell))))
+                                   (cl-some
+                                    (lambda (line)
+                                      (not (numberp
+                                            (car (nth index (cdr line))))))
+                                    removed-lines))
                          collect index)))
-          (setcar cache (delq removed-line cache-lines))
-          (let ((result (when (vtable-goto-object object)
-                          (delete-line))))
+          (setcar cache remaining-lines)
+          (let ((positions nil)
+                (result nil))
+            ;; vtable-object can start after a column divider, and equal
+            ;; adjacent values can share one text-property run.  Find rows
+            ;; by inspecting each line's end before deleting any of them.
+            (save-excursion
+              (vtable-goto-table table)
+              (save-restriction
+                (narrow-to-region
+                 (point) (save-excursion (vtable-end-of-table)))
+                (while (< (point) (point-max))
+                  (when (eq (get-text-property (line-end-position)
+                                               'vtable-object)
+                            object)
+                    (push (line-beginning-position) positions))
+                  (forward-line 1))))
+            ;; Positions are collected top-to-bottom, so PUSH leaves them
+            ;; in the order needed to delete from bottom to top.
+            (dolist (position positions)
+              (goto-char position)
+              (setq result (delete-line)))
             ;; Removing a row can leave every value in a column numerical.
             (vtable--recompute-numerical-columns table columns-to-recompute)
             result))))))
