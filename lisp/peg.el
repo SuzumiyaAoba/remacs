@@ -890,8 +890,11 @@ input.  PATH is the list of rules that we have visited so far."
        (peg-detect-cycles e2 path)))
 
 (cl-defmethod peg--detect-cycles (path (_ (eql or)) e1 e2)
-  (or (peg-detect-cycles e1 path)
-      (peg-detect-cycles e2 path)))
+  ;; Check both branches: a nullable left branch must not hide a cycle on the
+  ;; right.  The expression is nullable if either checked branch is nullable.
+  (let* ((nullable-e1 (peg-detect-cycles e1 path))
+         (nullable-e2 (peg-detect-cycles e2 path)))
+    (or nullable-e1 nullable-e2)))
 
 (cl-defmethod peg--detect-cycles (path (_ (eql peg--plus)) e)
   (peg-detect-cycles e path))
