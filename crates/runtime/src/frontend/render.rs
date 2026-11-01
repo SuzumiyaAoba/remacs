@@ -1939,6 +1939,7 @@ struct FrameTitleContext<'a> {
     modified: bool,
     memory_full: bool,
     multiple_frames: bool,
+    recursion_depth: usize,
 }
 
 fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
@@ -1961,6 +1962,19 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
             'e' => {
                 if context.memory_full {
                     title.push_str(MEMORY_FULL_WARNING);
+                }
+            }
+            '[' | ']' => {
+                // GNU decode_mode_spec uses command_loop_level, excluding
+                // minibuffer depth, and abbreviates levels above five.
+                if context.recursion_depth > 5 {
+                    title.push_str(if specifier == '[' {
+                        "[[[... "
+                    } else {
+                        " ...]]]"
+                    });
+                } else {
+                    title.extend(std::iter::repeat_n(specifier, context.recursion_depth));
                 }
             }
             '*' | '+' => title.push(if context.modified { '*' } else { '-' }),
@@ -2218,6 +2232,7 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
         multiple_frames: frame_title_multiple_frames(i, frame),
+        recursion_depth: i.recursion_depth,
     };
     let Some(format) = i
         .q_soft("frame-title-format")
