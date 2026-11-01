@@ -152,6 +152,26 @@ pub(super) fn mode_line_mouse_position(
     })
 }
 
+pub(super) fn text_window_at_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+) -> Option<usize> {
+    let row = grid_row_at_y(grid, point.y);
+    let column = (f32::from(point.x) / f32::from(cell_width))
+        .floor()
+        .max(0.0) as usize;
+    grid.window_text_areas
+        .iter()
+        .find(|area| {
+            row >= area.top
+                && row < area.top.saturating_add(area.rows)
+                && column >= area.left
+                && column < area.left.saturating_add(area.width)
+        })
+        .map(|area| area.window_id)
+}
+
 pub(super) fn mouse_position_for_text_point_with_cell_width(
     grid: &Grid,
     point: Point<Pixels>,

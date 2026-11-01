@@ -28,6 +28,8 @@ mod input;
 mod fringe;
 #[cfg(test)]
 mod mouse_tests;
+#[cfg(test)]
+mod autoselect_tests;
 // The test platform uses window activation for cursor ownership on macOS.
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
@@ -1444,13 +1446,17 @@ impl Render for EditorView {
                             window,
                         )
                     });
-                    let target = position.map(|position| {
-                        (position.buffer_id, position.buffer_position)
+                    let text_window_id = point.and_then(|point| {
+                        input::text_window_at_point(&this.grid, point, cell_width)
                     });
+                    let target =
+                        position.map(|position| (position.buffer_id, position.buffer_position));
                     let _ = this.mouse_face_position.replace(target);
-                    let _ = this
-                        .tx
-                        .send_mouse_move(position, Some(absolute_position));
+                    let _ = this.tx.send_mouse_move_for_window(
+                        position,
+                        Some(absolute_position),
+                        text_window_id,
+                    );
                     if !event.dragging() {
                         return;
                     }

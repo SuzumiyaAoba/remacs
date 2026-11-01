@@ -331,6 +331,8 @@ pub enum InputEvent {
     /// Pointer movement outside a drag, including movement over blank areas.
     MouseMoved {
         frame_id: Option<usize>,
+        /// Window whose visible text rectangle contains the pointer, including blank space.
+        text_window_id: Option<usize>,
         /// Frame-relative character-cell coordinates for `mouse-position`.
         frame_position: Option<(i128, i128)>,
         /// Frame-relative pixel coordinates for `mouse-pixel-position`.
@@ -551,7 +553,7 @@ pub use render::{
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
     GridPointerRegion,
-    GridModeLine, GridVScroll,
+    GridModeLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, render_frame_grid_with_input_cached,
     render_frame_grid_with_mouse_position_cached, render_grid, render_grid_with_input_cached,

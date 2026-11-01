@@ -31711,6 +31711,64 @@ The enable predicate for a menu binding should check this variable.")
       (mouse-autoselect-window-cancel t))
      (window (mouse-autoselect-window-start mouse-position window)))))
 
+;Remacs: Restore GNU window.el handler instead of the no-op boot primitive.
+(defun handle-select-window (event)
+  "Handle select-window events."
+  (interactive "^e")
+  (let* ((window (posn-window (event-start event)))
+         (frame (and (window-live-p window) (window-frame window)))
+         (old-frame (selected-frame)))
+    (unless (or (not (window-live-p window))
+		;; Don't switch when autoselection shall be delayed.
+		(and (numberp mouse-autoselect-window)
+		     (not (eq mouse-autoselect-window-state 'select))
+		     (let ((position (mouse-position)))
+		       ;; Cancel any delayed autoselection.
+		       (mouse-autoselect-window-cancel t)
+		       ;; Start delayed autoselection from current mouse
+		       ;; position and window.
+		       (setq mouse-autoselect-window-position-1 position)
+		       (mouse-autoselect-window-start position window)
+		       ;; Executing a command cancels delayed autoselection.
+		       (add-hook
+			'pre-command-hook 'mouse-autoselect-window-cancel)))
+                ;; Don't switch to a `no-accept-focus' frame unless it's
+                ;; already selected.
+                (and (not (eq frame (selected-frame)))
+                     (frame-parameter frame 'no-accept-focus))
+                ;; Don't switch if window autoselection with mouse is active
+                ;; and minibuffer window is selected.
+                (and mouse-autoselect-window (window-minibuffer-p))
+                ;; Don't switch to minibuffer window unless it's active.
+                (and (window-minibuffer-p window)
+                     (not (minibuffer-window-active-p window))))
+      ;; Reset state of delayed autoselection.
+      (setq mouse-autoselect-window-state nil)
+      ;; Run `mouse-leave-buffer-hook' when autoselecting window.
+      (run-hooks 'mouse-leave-buffer-hook)
+      ;; Clear echo area.
+      (message nil)
+      ;; Select the window before giving the frame focus since otherwise
+      ;; we might get two windows with an active cursor.
+      (select-window window)
+      (cond
+       ((or (not (display-multi-frame-p))
+            (not focus-follows-mouse)
+            ;; Focus FRAME if it's either a child frame or an ancestor
+            ;; of the frame switched from.
+            (and (not (frame-parameter frame 'parent-frame))
+                 (not (frame-ancestor-p frame old-frame)))))
+       ((eq focus-follows-mouse 'auto-raise)
+        ;; Focus and auto-raise frame.
+        (x-focus-frame frame)
+        ;; This doesn't seem to work when we move from a normal frame
+        ;; right into the child frame of another frame - we should raise
+        ;; that child frame's ancestor frame first ...
+        (raise-frame frame))
+       (t
+        ;; Just focus frame.
+        (x-focus-frame frame t))))))
+
 (defun window-adjust-process-window-size (reducer windows)
   "Adjust the window sizes of a process.\nWINDOWS is a list of windows associated with that process.  REDUCER is\na two-argument function used to combine the widths and heights of\nthe given windows."
   (when windows

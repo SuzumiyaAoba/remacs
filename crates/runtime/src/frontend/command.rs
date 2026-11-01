@@ -396,12 +396,14 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             }
             InputEvent::MouseMoved {
                 frame_id,
+                text_window_id,
                 frame_position,
                 frame_pixel_position,
                 position,
             } => dispatch_gui_mouse_move(
                 i,
                 frame_id,
+                text_window_id,
                 frame_position,
                 frame_pixel_position,
                 position,
@@ -1116,6 +1118,7 @@ fn remember_gui_mouse_position(
 fn dispatch_gui_window_autoselect(
     i: &mut Interp,
     frame_id: Option<usize>,
+    text_window_id: Option<usize>,
     frame_position: Option<(i128, i128)>,
     frame_pixel_position: Option<(i128, i128)>,
     keys: &mut Vec<i128>,
@@ -1138,15 +1141,25 @@ fn dispatch_gui_window_autoselect(
     else {
         return Ok(());
     };
-    let window_at = Value::Sym(i.q("window-at"));
-    let Ok(Value::Window(window)) = i.apply(
-        &window_at,
-        vec![Value::Int(x), Value::Int(y), Value::Frame(frame.clone())],
-    ) else {
+    let window = text_window_id.and_then(|id| {
+        let frame = frame.borrow();
+        frame
+            .windows
+            .iter()
+            .chain(frame.minibuffer.iter())
+            .find(|window| {
+                let window = window.borrow();
+                window.id == id && !window.dead
+            })
+            .cloned()
+    });
+    let Some(window) = window else {
+        let cancel = Value::Sym(i.q("mouse-autoselect-window-cancel"));
+        let _ = i.apply(&cancel, vec![Value::t()]);
         return Ok(());
     };
-    if crate::editor::sel_window(i)
-        .is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, &window))
+
+    if crate::editor::sel_window(i).is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, &window))
     {
         return Ok(());
     }
@@ -1184,6 +1197,7 @@ fn mouse_movement_tracking_enabled(i: &Interp) -> bool {
 fn dispatch_gui_mouse_move(
     i: &mut Interp,
     frame_id: Option<usize>,
+    text_window_id: Option<usize>,
     frame_position: Option<(i128, i128)>,
     frame_pixel_position: Option<(i128, i128)>,
     position: Option<MousePosition>,
@@ -1191,12 +1205,7 @@ fn dispatch_gui_mouse_move(
     arg_mode: &mut bool,
 ) -> io::Result<()> {
     reveal_pointer_after_mouse_move(i, frame_id);
-    let frame_id = remember_gui_mouse_position(
-        i,
-        frame_id,
-        frame_position,
-        frame_pixel_position,
-    );
+    let frame_id = remember_gui_mouse_position(i, frame_id, frame_position, frame_pixel_position);
 
     // Lisp consumers such as mouse tracking modes observe ordinary pointer
     // motion through the same event used for a drag.
@@ -1206,6 +1215,7 @@ fn dispatch_gui_mouse_move(
     dispatch_gui_window_autoselect(
         i,
         frame_id,
+        text_window_id,
         frame_position,
         frame_pixel_position,
         keys,
@@ -2386,6 +2396,7 @@ fn minibuf_loop<T: KeyIo>(
             }
             InputEvent::MouseMoved {
                 frame_id,
+                text_window_id,
                 frame_position,
                 frame_pixel_position,
                 position,
@@ -2401,6 +2412,7 @@ fn minibuf_loop<T: KeyIo>(
                     if let Err(error) = dispatch_gui_window_autoselect(
                         i,
                         frame_id,
+                        text_window_id,
                         frame_position,
                         frame_pixel_position,
                         &mut keys,
@@ -2421,6 +2433,7 @@ fn minibuf_loop<T: KeyIo>(
                     if let Err(error) = dispatch_gui_window_autoselect(
                         i,
                         frame_id,
+                        text_window_id,
                         frame_position,
                         frame_pixel_position,
                         &mut keys,

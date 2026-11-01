@@ -85,6 +85,7 @@ pub(super) enum GuiEvent {
     Geometry(GuiGeometry),
     MouseMove {
         frame_id: Option<usize>,
+        text_window_id: Option<usize>,
         position: Option<MousePosition>,
         /// Native pixel coordinates in the frontend's global desktop space.
         absolute_position: Option<(i128, i128)>,
@@ -188,8 +189,18 @@ impl FrameEventSender {
         position: Option<MousePosition>,
         absolute_position: Option<(i128, i128)>,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.send_mouse_move_for_window(position, absolute_position, None)
+    }
+
+    pub(super) fn send_mouse_move_for_window(
+        &self,
+        position: Option<MousePosition>,
+        absolute_position: Option<(i128, i128)>,
+        text_window_id: Option<usize>,
+    ) -> Result<(), mpsc::SendError<GuiEvent>> {
         self.sender.send(GuiEvent::MouseMove {
             frame_id: self.frame_id.get(),
+            text_window_id,
             position,
             absolute_position,
         })
@@ -1162,7 +1173,7 @@ pub(super) struct ChanIo {
     mouse_absolute_position: Option<(i128, i128)>,
     /// Last frame-local mouse position, including transitions into and out of
     /// the frame content area.
-    mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>)>,
+    mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>, Option<usize>)>,
     /// Fractional smooth-scroll rows kept separately for each frame.
     pub(super) scroll_remainders: HashMap<Option<usize>, f32>,
     last_input_at: Instant,
@@ -1794,6 +1805,7 @@ impl KeyIo for ChanIo {
             }
             GuiEvent::MouseMove {
                 frame_id,
+                text_window_id,
                 position,
                 absolute_position,
             } => {
@@ -1815,8 +1827,8 @@ impl KeyIo for ChanIo {
                     ))
                 });
                 let frame_position_changed =
-                    self.mouse_frame_position != Some((frame_id, frame_position));
-                self.mouse_frame_position = Some((frame_id, frame_position));
+                    self.mouse_frame_position != Some((frame_id, frame_position, text_window_id));
+                self.mouse_frame_position = Some((frame_id, frame_position, text_window_id));
                 let moved = frame_position_changed
                     || absolute_position
                         .is_some_and(|position| self.mouse_absolute_position != Some(position));
@@ -1828,6 +1840,7 @@ impl KeyIo for ChanIo {
                     self.render_requested = true;
                     Ok(Some(InputEvent::MouseMoved {
                         frame_id,
+                        text_window_id,
                         frame_position,
                         frame_pixel_position,
                         position,

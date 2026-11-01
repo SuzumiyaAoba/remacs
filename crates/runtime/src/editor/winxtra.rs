@@ -573,7 +573,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("tty-find-type", 2, 2, f_tty_find_type, ""),
-    S!("handle-select-window", 1, 1, f_t, ""),
     S!(
         "innermost-minibuffer-p",
         0,

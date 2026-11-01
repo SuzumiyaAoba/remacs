@@ -297,6 +297,16 @@ pub struct GridModeLine {
     pub buffer_name_range: Option<(usize, usize)>,
 }
 
+/// A visible window text rectangle, including blank space and margins.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridWindowTextArea {
+    pub window_id: usize,
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub rows: usize,
+}
+
 /// A window body whose contents are raised by a pixel scroll offset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridVScroll {
@@ -518,6 +528,7 @@ pub struct Grid {
     pub scroll_bars: Vec<GridScrollBar>,
     pub bottom_dividers: Vec<GridBottomDivider>,
     pub mode_lines: Vec<GridModeLine>,
+    pub window_text_areas: Vec<GridWindowTextArea>,
     pub vscrolls: Vec<GridVScroll>,
     pub compositions: Vec<GridComposition>,
     /// Text ranges whose source buffers have `bidi-display-reordering` nil.
@@ -798,6 +809,7 @@ impl Grid {
             scroll_bars: Vec::new(),
             bottom_dividers: Vec::new(),
             mode_lines: Vec::new(),
+            window_text_areas: Vec::new(),
             vscrolls: Vec::new(),
             compositions: Vec::new(),
             bidi_disabled_ranges: Vec::new(),
@@ -7176,6 +7188,7 @@ fn render_grid_internal(
     let mut scroll_bars = Vec::new();
     let mut bottom_dividers = Vec::new();
     let mut mode_lines = Vec::new();
+    let mut window_text_areas = Vec::new();
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -7219,6 +7232,7 @@ fn render_grid_internal(
                 scroll_bars,
                 bottom_dividers,
                 mode_lines,
+                window_text_areas,
                 vscrolls,
                 compositions: Vec::new(),
                 attrs,
@@ -7677,6 +7691,16 @@ fn render_grid_internal(
         let text_rows = window_height
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
         let content_top = window_top + top_rows;
+        let content_bottom = content_top.saturating_add(text_rows);
+        if !minibuffer_window && text_rows > 0 && width_after_fringes > 0 {
+            window_text_areas.push(GridWindowTextArea {
+                window_id,
+                left: window_left.saturating_add(fringe_left_cells),
+                top: content_top,
+                width: width_after_fringes,
+                rows: text_rows,
+            });
+        }
         if let Some(menu) = &i.gui_popup_menu
             && menu.position.frame_id == fb.id
         {
@@ -8108,7 +8132,7 @@ fn render_grid_internal(
             last.saturating_sub(first).saturating_add(1)
         });
         for row in 0..logical_rows {
-            if screen_row >= body_height || screen_row >= window_top + text_rows {
+            if screen_row >= body_height || screen_row >= content_bottom {
                 break;
             }
             let (
@@ -8279,7 +8303,7 @@ fn render_grid_internal(
                 vec![0..line_len]
             };
             let max_rows = body_height
-                .min(window_top + text_rows)
+                .min(content_bottom)
                 .saturating_sub(screen_row);
             let mut plans = Vec::new();
             for mut range in ranges {
@@ -8307,7 +8331,7 @@ fn render_grid_internal(
                 {
                     continue;
                 }
-                if screen_row >= body_height || screen_row >= window_top + text_rows {
+                if screen_row >= body_height || screen_row >= content_bottom {
                     break;
                 }
                 let segment_start = range.start.max(start_offset);
@@ -8901,7 +8925,7 @@ fn render_grid_internal(
             }
         }
         if indicate_empty_lines && fringe_right_cells > 0 {
-            for row in screen_row..(window_top + text_rows).min(body_height) {
+            for row in screen_row..content_bottom.min(body_height) {
                 place_fringe_glyph(
                     &mut screen_rows,
                     row,
@@ -8965,7 +8989,7 @@ fn render_grid_internal(
             );
         }
         // Mode line.
-        let my = window_top + text_rows;
+        let my = content_bottom;
         if mode_line_enabled && my < body_height {
             // GNU draws mode lines under `mode-line-active' on the
             // selected window, `mode-line-inactive' elsewhere — both
@@ -9049,6 +9073,15 @@ fn render_grid_internal(
         .saturating_sub(mini_visible_rows.saturating_sub(1))
         .min(mini_rows.len().saturating_sub(mini_visible_rows));
     let mini_top = rows.len().saturating_sub(mini_height);
+    if i.minibuf_level > 0 && mini_height > 0 && let Some(minibuffer) = &fb.minibuffer {
+        window_text_areas.push(GridWindowTextArea {
+            window_id: minibuffer.borrow().id,
+            left: 0,
+            top: mini_top,
+            width,
+            rows: mini_height,
+        });
+    }
     if let Some(menu) = &i.gui_popup_menu
         && menu.position.frame_id == fb.id
         && let Some(minibuffer) = &fb.minibuffer
@@ -9397,6 +9430,7 @@ fn render_grid_internal(
         scroll_bars,
         bottom_dividers,
         mode_lines,
+        window_text_areas,
         vscrolls,
         compositions,
         bidi_disabled_ranges,
