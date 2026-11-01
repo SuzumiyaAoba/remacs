@@ -125,25 +125,45 @@ If COL is nil, return a region for the whole line."
   "Get Flymake diagnostics in the current buffer.
 When BEG and END are non-nil, return diagnostics overlapping that region.
 When only BEG is non-nil, return diagnostics at BEG."
-  (let ((start (or beg (point-min)))
-        (finish (or end (point-max)))
-        result)
-    (dolist (diag flymake--diagnostics (nreverse result))
-      (let ((diag-beg (flymake-diagnostic-beg diag))
-            (diag-end (flymake-diagnostic-end diag)))
-        (when (and (eq (flymake-diagnostic-buffer diag) (current-buffer))
-                   (cond
-                    ((and beg end)
-                     (or (and (= diag-beg diag-end)
-                              (<= start diag-beg) (<= diag-beg finish))
-                         (and (< diag-beg finish) (> diag-end start))))
-                    (beg (or (and (= diag-beg diag-end) (= beg diag-beg))
-                             (and (<= diag-beg beg) (< beg diag-end))))
-                    (end (or (and (= diag-beg diag-end)
-                                  (<= start diag-beg) (<= diag-beg end))
-                             (and (< diag-beg end) (> diag-end start))))
-                    (t t))
-          (push diag result)))))))
+  (if (save-restriction
+        (widen)
+        (catch 'found
+          (dolist (overlay (overlays-in (point-min) (point-max)))
+            (when (overlay-get overlay 'flymake-diagnostic)
+              (throw 'found t)))
+          nil))
+      ;; GNU stores the diagnostic object on each overlay.  Preserve the
+      ;; object identity and one result per matching overlay.
+      (save-restriction
+        (widen)
+        (delq nil
+              (mapcar (lambda (overlay)
+                        (overlay-get overlay 'flymake-diagnostic))
+                      (cond
+                       (end (overlays-in beg end))
+                       (beg (overlays-at beg))
+                       (t (overlays-in (point-min) (point-max)))))))
+    ;; Keep the old list-backed behavior only for buffers with no overlay
+    ;; diagnostics; this preserves existing Remacs callers and QA coverage.
+    (let ((start (or beg (point-min)))
+          (finish (or end (point-max)))
+          result)
+      (dolist (diag flymake--diagnostics (nreverse result))
+        (let ((diag-beg (flymake-diagnostic-beg diag))
+              (diag-end (flymake-diagnostic-end diag)))
+          (when (and (eq (flymake-diagnostic-buffer diag) (current-buffer))
+                     (cond
+                      ((and beg end)
+                       (or (and (= diag-beg diag-end)
+                                (<= start diag-beg) (<= diag-beg finish))
+                           (and (< diag-beg finish) (> diag-end start))))
+                      (beg (or (and (= diag-beg diag-end) (= beg diag-beg))
+                               (and (<= diag-beg beg) (< beg diag-end))))
+                      (end (or (and (= diag-beg diag-end)
+                                    (<= start diag-beg) (<= diag-beg end))
+                               (and (< diag-beg end) (> diag-end start))))
+                      (t t))
+            (push diag result))))))))
 
 (defun flymake-mode (&optional arg)
   "Toggle Flymake mode on or off (stub)."
