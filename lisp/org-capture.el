@@ -1361,7 +1361,7 @@ may have been stored before."
         (let ((prevs (org-list-prevs-alist struct)))
           (save-excursion
             (goto-char (car last-item))
-            (min 1 (org-list-separating-blank-lines-number pos struct prevs)))
+            (min 1 (org-list-separating-blank-lines-number pos struct prevs))))
       0)))
 
 (defun org-capture-place-item ()
@@ -1423,7 +1423,7 @@ may have been stored before."
                      (min 1 (or (org-capture-get :empty-lines-before)
                                 (org-capture-get :empty-lines)
                                 0))
-                   (min 1 (org-capture--list-item-empty-lines-before item)))))
+                   (min 1 (org-capture--list-item-empty-lines-before item))))))
       (unless (bolp) (insert "\n"))
       ;; When a new list is created, always obey to `:empty-lines' and
       ;; friends.

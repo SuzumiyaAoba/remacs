@@ -27866,6 +27866,7 @@ all RULES in total." (declare (debug (&rest &or symbolp (def-form &rest (numberp
 (defun elisp-mode-syntax-propertize (start end)
   ;; Port of GNU `elisp-mode-syntax-propertize' (elisp-mode.el): the
   ;; same four rules as its `syntax-propertize-rules' expansion.
+  ;; Remacs: capture each range before context lookup can replace match data.
   (save-excursion
     (goto-char start)
     (let ((case-fold-search nil))
@@ -27877,28 +27878,37 @@ all RULES in total." (declare (debug (&rest &or symbolp (def-form &rest (numberp
         (cond
        ;; Empty symbol.
        ((looking-at (string ?# ?#))
-        (unless (nth 8 (syntax-ppss))
-          (put-text-property (point) (match-end 0)
-                             'syntax-table (string-to-syntax "_")))
-        (goto-char (match-end 0)))
+        (let ((beg (match-beginning 0))
+              (finish (match-end 0)))
+          (unless (nth 8 (syntax-ppss))
+            (put-text-property beg finish
+                               'syntax-table (string-to-syntax "_")))
+          (goto-char finish)))
        ;; Prevent the @ from becoming part of a following symbol.
        ((looking-at ",@")
-        (unless (nth 8 (syntax-ppss))
-          (put-text-property (point) (match-end 0)
-                             'syntax-table (string-to-syntax "'")))
-        (goto-char (match-end 0)))
+        (let ((beg (match-beginning 0))
+              (finish (match-end 0)))
+          (unless (nth 8 (syntax-ppss))
+            (put-text-property beg finish
+                               'syntax-table (string-to-syntax "'")))
+          (goto-char finish)))
        ;; Unicode character names.
        ((looking-at "\\?\\\\N{[-A-Za-z0-9 ]\\{,100\\}}")
-        (unless (nth 8 (syntax-ppss))
-          (put-text-property (point) (match-end 0)
-                             'syntax-table (string-to-syntax "_")))
-        (goto-char (match-end 0)))
+        (let ((beg (match-beginning 0))
+              (finish (match-end 0)))
+          (unless (nth 8 (syntax-ppss))
+            (put-text-property beg finish
+                               'syntax-table (string-to-syntax "_")))
+          (goto-char finish)))
        ;; Bool-vectors, records, char-tables.
        ((looking-at (concat (string ?#) "\\(&[0-9]+\\|s\\|\\^+\\)\\(\"\\|(\\|\\[\\)"))
-        (unless (save-excursion (nth 8 (syntax-ppss (match-beginning 0))))
-          (put-text-property (match-beginning 1) (match-end 1)
-                             'syntax-table (string-to-syntax "'")))
-        (goto-char (match-end 1)))
+        (let ((beg (match-beginning 1))
+              (finish (match-end 1))
+              (context (match-beginning 0)))
+          (unless (save-excursion (nth 8 (syntax-ppss context)))
+            (put-text-property beg finish
+                               'syntax-table (string-to-syntax "'")))
+          (goto-char finish)))
        (t (forward-char 1)))))))
 
 (define-derived-mode special-mode nil "Special"
