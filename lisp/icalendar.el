@@ -2823,6 +2823,14 @@ END-T is the event's end time in diary format."
           ((string-equal frequency "MONTHLY")
            (icalendar--dmsg "monthly")
 	   (let* ((byday (cadr (assoc 'BYDAY rrule-props)))
+                  ;; Remacs: count calendar months from DTSTART, across years.
+                  (interval-clause
+                   (if (= interval 1) ""
+                     (format
+                      (concat "(zerop (mod (- (+ (* 12 (calendar-extract-year date)) "
+                              "(calendar-extract-month date)) %d) %d)) ")
+                      (+ (* 12 (nth 5 dtstart-dec)) (nth 4 dtstart-dec))
+                      interval)))
                   (count-weekday
                    (and byday
                         (save-match-data
@@ -2839,7 +2847,6 @@ END-T is the event's end time in diary format."
                        (let ((count (car count-weekday))
                              (weekdaynum (icalendar--get-weekday-number
                                           (cdr count-weekday))))
-                         ;; FIXME: this is valid only for interval==1
                          (format "(diary-float t %s %s)" weekdaynum count))
                      (format "(diary-date %s)"
                              (let ((day (nth 3 dtstart-dec)))
@@ -2851,8 +2858,8 @@ END-T is the event's end time in diary format."
                                       (format "t %d t" day))))))))
              (setq result
                    (format
-                    "%%%%(and %s (diary-block %s %s)) %s%s%s"
-                    rule-part
+                    "%%%%(and %s%s (diary-block %s %s)) %s%s%s"
+                    interval-clause rule-part
                     dtstart-conv
                     (if until
                         until-conv
