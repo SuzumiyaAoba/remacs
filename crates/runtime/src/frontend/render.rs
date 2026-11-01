@@ -1948,6 +1948,7 @@ struct FrameTitleContext<'a> {
     remote: bool,
     remote_used: Option<&'a std::cell::Cell<bool>>,
     global_mode_string: Value,
+    buffer_size: usize,
 }
 
 fn format_frame_title_string(
@@ -1975,6 +1976,8 @@ fn format_frame_title_string(
             's' => title.push_str(context.process_status),
             'z' => title.push_str(&context.coding),
             'Z' => title.push_str(&context.coding_with_eol),
+            'i' => title.push_str(&context.buffer_size.to_string()),
+            'I' => title.push_str(&readable_mode_line_size(context.buffer_size)),
             'M' => title.push_str(&format_frame_title_field(
                 i,
                 &context.global_mode_string,
@@ -2268,7 +2271,7 @@ fn frame_title(
     let Some(buffer) = i.buffers.get(buffer_id) else {
         return frame.name.borrow().to_unicode_lossy();
     };
-    let (buffer_name, file_name, modified) = {
+    let (buffer_name, file_name, modified, buffer_size) = {
         let buffer = buffer.borrow();
         (
             buffer.name.to_unicode_lossy(),
@@ -2277,6 +2280,7 @@ fn frame_title(
                 .as_ref()
                 .map(|name| name.to_unicode_lossy()),
             buffer.is_modified(),
+            buffer.zv.saturating_sub(buffer.begv),
         )
     };
     let frame_name = frame.name.borrow().to_unicode_lossy();
@@ -2324,6 +2328,7 @@ fn frame_title(
             .q_soft("global-mode-string")
             .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
             .unwrap_or(Value::Nil),
+        buffer_size,
     };
     let Some(format) = i
         .q_soft("frame-title-format")
