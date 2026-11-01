@@ -7325,6 +7325,10 @@ fn render_grid_internal(
             };
         }
     };
+    let selected_frame = i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame));
     let fb = frame.borrow();
     let title = frame_title(i, &fb);
     let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
@@ -9065,7 +9069,7 @@ fn render_grid_internal(
             // resolve through `mode-line' (inverse on a mono tty).
             // An unresolved (pre-faces.el) mode-line face falls back
             // to plain inverse so the row still reads as a divider.
-            let ml_name = if std::rc::Rc::ptr_eq(w, &fb.selected) {
+            let ml_name = if selected_frame && selected_window {
                 "mode-line-active"
             } else {
                 "mode-line-inactive"
