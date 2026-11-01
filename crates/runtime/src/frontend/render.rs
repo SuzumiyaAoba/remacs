@@ -1935,6 +1935,23 @@ fn blink_cursor_settings(i: &Interp) -> (bool, f64, f64, i128) {
 
 const MEMORY_FULL_WARNING: &str = "!MEM FULL! ";
 
+fn buffer_state_marker(read_only: bool, modified: bool, specifier: char) -> char {
+    if read_only && specifier == '*' {
+        '%'
+    } else if modified {
+        '*'
+    } else if read_only && specifier == '+' {
+        '%'
+    } else {
+        '-'
+    }
+}
+
+fn buffer_read_only(i: &Interp, buffer: usize) -> bool {
+    i.q_soft("buffer-read-only")
+        .is_some_and(|symbol| i.symbol_value_in_buffer(symbol, buffer).truthy())
+}
+
 #[derive(Default)]
 struct FrameTitleDependencies {
     remote: std::cell::Cell<bool>,
@@ -1947,6 +1964,7 @@ struct FrameTitleContext<'a> {
     file_name: Option<&'a str>,
     frame_name: &'a str,
     modified: bool,
+    read_only: bool,
     memory_full: bool,
     multiple_frames: bool,
     recursion_depth: usize,
@@ -2030,7 +2048,11 @@ fn format_frame_title_string(
                     title.extend(std::iter::repeat_n(specifier, context.recursion_depth));
                 }
             }
-            '*' | '+' => title.push(if context.modified { '*' } else { '-' }),
+            '*' | '+' | '&' => title.push(buffer_state_marker(
+                context.read_only,
+                context.modified,
+                specifier,
+            )),
             '-' => title.push('-'),
             other => {
                 title.push('%');
@@ -2343,6 +2365,7 @@ fn frame_title(
         file_name: file_name.as_deref(),
         frame_name: &frame_name,
         modified,
+        read_only: buffer_read_only(i, buffer_id),
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
         multiple_frames: frame_title_multiple_frames(i, frame),
@@ -2588,7 +2611,7 @@ fn mode_line_context(
             .unwrap_or_default(),
         mode_name,
         modified: buffer.is_modified(),
-        read_only: buffer_setting(i, "buffer-read-only", buffer_id).truthy(),
+        read_only: buffer_read_only(i, buffer_id),
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
         remote: mode_line_remote(i, buffer_id),
@@ -2893,16 +2916,9 @@ fn format_mode_line_string(
                     String::new()
                 }
             }
-            '*' => {
-                if context.read_only {
-                    "%".to_owned()
-                } else if context.modified {
-                    "*".to_owned()
-                } else {
-                    "-".to_owned()
-                }
+            '*' | '+' | '&' => {
+                buffer_state_marker(context.read_only, context.modified, specifier).to_string()
             }
-            '+' => if context.modified { "*" } else { "-" }.to_owned(),
             'e' => {
                 if context.memory_full {
                     MEMORY_FULL_WARNING.to_owned()
