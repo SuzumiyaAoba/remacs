@@ -709,6 +709,7 @@ UNIT-SECONDS is the nominal length of the component."
 (defun iso8601-parse-interval (string)
   "Parse ISO 8601 intervals."
   (let ((bits (split-string string "/"))
+        (case-fold-search t)
         start end duration)
     (if (not (= (length bits) 2))
         (signal 'wrong-type-argument (list string))
