@@ -1647,6 +1647,22 @@ This function is a fit for options like `gnus-button-alist'."
 
 (autoload 'rfc6068-parse-mailto-url "rfc6068")
 
+(defun browse-url--mailto-unsafe-header-p (name)
+  "Whether decoded mailto header NAME is unsafe to compose directly."
+  (let ((name (downcase name)))
+    (or (member name '("from" "sender" "reply-to" "date"
+                       "apparently-to" "received" "return-path"
+                       "mime-version"))
+        (string-prefix-p "resent-" name)
+        (string-prefix-p "content-" name))))
+
+(defun browse-url--mailto-safe-headers (headers)
+  "Return HEADERS without RFC 6068 originator, routing, trace, or MIME fields."
+  (let (safe)
+    (dolist (header headers (nreverse safe))
+      (unless (browse-url--mailto-unsafe-header-p (car header))
+        (push header safe)))))
+
 ;;;###autoload
 (defun browse-url-mail (url &optional new-window)
   "Open a new mail message buffer within Emacs for the RFC 2368 URL.
@@ -1668,7 +1684,8 @@ used instead of `browse-url-new-window-flag'."
 	   (to (assoc "To" alist))
 	   (subject (assoc "Subject" alist))
 	   (body (assoc "Body" alist))
-	   (rest (delq to (delq subject (delq body alist))))
+	   (rest (browse-url--mailto-safe-headers
+		  (delq to (delq subject (delq body alist)))))
 	   (to (cdr to))
 	   (subject (cdr subject))
 	   (body (cdr body))
