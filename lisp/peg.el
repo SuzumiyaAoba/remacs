@@ -250,7 +250,7 @@
 
 ;;;; Todo:
 
-;; - Fix the exponential blowup in `peg-translate-exp'.
+;; - Reduce the quadratic diagnostic quoting in `peg-translate-exp'.
 ;; - Add a proper debug-spec for PEXs.
 
 ;;; News:
@@ -550,10 +550,14 @@ rulesets defined previously with `define-peg-ruleset'."
 (cl-defmethod peg--macroexpand ((_ (eql *)) &rest args)
   `(* ,(peg-normalize `(and . ,args))))
 
-;; FIXME: this duplicates code; could use some loop to avoid that
+;; Keep the operand as one normalized node.  The translator runs the
+;; matcher more than once instead of embedding its code twice.
 (cl-defmethod peg--macroexpand ((_ (eql +)) &rest args)
-  (let ((e (peg-normalize `(and . ,args))))
-    `(and ,e (* ,e))))
+  `(peg--plus ,(peg-normalize `(and . ,args))))
+
+;; `peg-normalize' can be applied to its own normalized output.
+(cl-defmethod peg--macroexpand ((_ (eql peg--plus)) exp)
+  `(peg--plus ,(peg-normalize exp)))
 
 (cl-defmethod peg--macroexpand ((_ (eql opt)) &rest args)
   (let ((e (peg-normalize `(and . ,args))))
@@ -678,9 +682,9 @@ rulesets defined previously with `define-peg-ruleset'."
 ;; This is the main translation function.
 (defun peg-translate-exp (exp)
   "Return the Emacs Lisp code to match the PE EXP."
-  ;; FIXME: This expansion basically duplicates `exp' in the output, which is
-  ;; a serious problem because it's done recursively, so it makes the output
-  ;; code's size exponentially larger than the input!
+  ;; Failure recording still quotes EXP once at each ancestor, so deeply
+  ;; nested expressions can produce quadratic output.  In particular, the
+  ;; one-or-more translator keeps its repeated operand code in one matcher.
   `(or ,(apply #'peg--translate exp)
        (peg--record-failure ',exp))) ; for error reporting
 
@@ -744,6 +748,18 @@ rulesets defined previously with `define-peg-ruleset'."
      (when (zerop (length str))
        (error "Empty strings not allowed for ="))
      (search-forward str (+ (point) (length str)) t)))
+
+(cl-defmethod peg--translate ((_ (eql peg--plus)) e)
+  (let ((matcher (make-symbol "peg-plus-matcher")))
+    `(let ((,matcher (lambda () ,(peg-translate-exp e))))
+       (and (funcall ,matcher)
+            (progn
+              (while ,(peg--with-choicepoint cp
+                        `(if (funcall ,matcher)
+                             ,(peg--choicepoint-moved-p cp)
+                           ,(peg--choicepoint-restore cp)
+                           nil)))
+              t)))))
 
 (cl-defmethod peg--translate ((_ (eql *)) e)
   `(progn (while ,(peg--with-choicepoint cp
@@ -877,6 +893,9 @@ input.  PATH is the list of rules that we have visited so far."
   (or (peg-detect-cycles e1 path)
       (peg-detect-cycles e2 path)))
 
+(cl-defmethod peg--detect-cycles (path (_ (eql peg--plus)) e)
+  (peg-detect-cycles e path))
+
 (cl-defmethod peg--detect-cycles (path (_ (eql *)) e)
   (peg-detect-cycles e path)
   t)
@@ -944,6 +963,9 @@ input.  PATH is the list of rules that we have visited so far."
 
 (cl-defmethod peg--merge-error (merged (_ (eql range)) from to)
   (cl-adjoin (format "[%c-%c]" from to) merged :test #'equal))
+
+(cl-defmethod peg--merge-error (merged (_ (eql peg--plus)) exp)
+  (peg-merge-error exp merged))
 
 (cl-defmethod peg--merge-error (merged (_ (eql *)) exp)
   (peg-merge-error exp merged))
