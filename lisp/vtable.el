@@ -342,10 +342,21 @@ This will also remove the displayed line."
       (let ((cache (vtable--current-cache table))
             (inhibit-read-only t)
             (inhibit-modification-hooks t))
-        (setcar cache (delq (assq object (vtable--cache-lines cache))
-                            (vtable--cache-lines cache)))
-        (when (vtable-goto-object object)
-          (delete-line))))))
+        (let* ((cache-lines (vtable--cache-lines cache))
+               (removed-line (assq object cache-lines))
+               (columns-to-recompute
+                (cl-loop for cell in (cdr removed-line)
+                         for column in (vtable-columns table)
+                         for index from 0
+                         when (and (not (vtable-column--numerical column))
+                                   (not (numberp (car cell))))
+                         collect index)))
+          (setcar cache (delq removed-line cache-lines))
+          (let ((result (when (vtable-goto-object object)
+                          (delete-line))))
+            ;; Removing a row can leave every value in a column numerical.
+            (vtable--recompute-numerical-columns table columns-to-recompute)
+            result))))))
 
 ;; FIXME: The fact that the `location' argument of
 ;; `vtable-insert-object' can be an integer and is then interpreted as
@@ -857,6 +868,28 @@ If NEXT, do the next column."
      line)
     (when recompute
       (vtable--compute-columns table t))))
+
+(defun vtable--recompute-numerical-columns (table indices &optional new-line)
+  "Recompute numerical metadata for INDICES from the current cache.
+When non-nil, include NEW-LINE even if it is not in the cache yet.
+This avoids calling user getters again after a row has been rendered."
+  (let* ((cache (vtable--current-cache table))
+         (cache-lines (and cache (vtable--cache-lines cache)))
+         (lines (append cache-lines
+                        (and new-line (list (cons nil new-line)))))
+         (columns (vtable-columns table)))
+    (dolist (index indices)
+      (let* ((column (elt columns index))
+             (numerical
+              (seq-every-p (lambda (line)
+                             (numberp (car (nth index (cdr line)))))
+                           lines)))
+        (setf (vtable-column--numerical column) numerical)
+        (unless (vtable-column--aligned column)
+          (setf (vtable-column-align column)
+                (if numerical 'right 'left)))))
+    (when indices
+      (vtable-columns table))))
 
 (defun vtable--set-header-line (table widths spacer)
   (setq header-line-format
