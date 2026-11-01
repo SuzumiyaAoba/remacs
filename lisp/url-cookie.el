@@ -240,80 +240,129 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
               (t
                (setq url-cookie-storage (list (list domain tmp)))))))))
 
+(defconst url-cookie--cookie-date-months
+  '(("jan" . 1) ("feb" . 2) ("mar" . 3) ("apr" . 4)
+    ("may" . 5) ("jun" . 6) ("jul" . 7) ("aug" . 8)
+    ("sep" . 9) ("oct" . 10) ("nov" . 11) ("dec" . 12))
+  "Month names used by the RFC 6265 cookie-date grammar.")
+
+(defun url-cookie--cookie-date-delimiter-p (char)
+  "Return non-nil if CHAR is an RFC 6265 cookie-date delimiter."
+  (or (= char 9)
+      (<= 32 char 47)
+      (<= 59 char 64)
+      (<= 91 char 96)
+      (<= 123 char 126)))
+
+(defun url-cookie--cookie-date-tokens (date)
+  "Split DATE into tokens using RFC 6265's exact delimiter set."
+  (let ((length (length date))
+        (position 0)
+        tokens)
+    (while (< position length)
+      (while (and (< position length)
+                  (url-cookie--cookie-date-delimiter-p
+                   (aref date position)))
+        (setq position (1+ position)))
+      (let ((start position))
+        (while (and (< position length)
+                    (not (url-cookie--cookie-date-delimiter-p
+                          (aref date position))))
+          (setq position (1+ position)))
+        (when (< start position)
+          (push (substring date start position) tokens))))
+    (nreverse tokens)))
+
+(defun url-cookie--cookie-date-digit-p (char)
+  "Return non-nil if CHAR is an ASCII digit."
+  (<= ?0 char ?9))
+
+(defun url-cookie--cookie-date-number-token (token min-digits max-digits)
+  "Parse TOKEN as MIN-DIGITS to MAX-DIGITS digits plus a valid suffix."
+  (let ((length (length token))
+        (end 0))
+    (while (and (< end length)
+                (< end max-digits)
+                (url-cookie--cookie-date-digit-p (aref token end)))
+      (setq end (1+ end)))
+    (and (>= end min-digits)
+         (or (= end length)
+             (not (url-cookie--cookie-date-digit-p (aref token end))))
+         (string-to-number (substring token 0 end)))))
+
+(defun url-cookie--cookie-date-time-token (token)
+  "Parse TOKEN as an RFC 6265 time, returning (HOUR MINUTE SECOND)."
+  (when (string-match
+         "\\`\\([0-9][0-9]?\\):\\([0-9][0-9]?\\):\\([0-9][0-9]?\\)"
+         token)
+    (let ((end (match-end 0)))
+      (when (or (= end (length token))
+                (not (url-cookie--cookie-date-digit-p (aref token end))))
+        (list (string-to-number (match-string 1 token))
+              (string-to-number (match-string 2 token))
+              (string-to-number (match-string 3 token)))))))
+
+(defun url-cookie--cookie-date-month-token (token)
+  "Parse TOKEN as an RFC 6265 month name plus an arbitrary suffix."
+  (when (>= (length token) 3)
+    (let ((prefix (substring token 0 3)))
+      ;; RFC 6265's ALPHA production is ASCII; do not use Unicode case-folding.
+      (dotimes (index 3)
+        (let ((char (aref prefix index)))
+          (when (and (<= ?A char) (<= char ?Z))
+            (aset prefix index (+ char 32)))))
+      (cdr (assoc prefix url-cookie--cookie-date-months)))))
+
 (defun url-cookie--expires-date-to-time (date)
-  "Parse cookie DATE with RFC 6265's year rule."
-  (let* ((date-without-time
-          (replace-regexp-in-string
-           "[0-9]+:[0-9]+:[0-9]+"
-           (lambda (match) (make-string (length match) 32))
-           date t t))
-         (zone-regexp
-          "\\(?:^\\|[^[:alnum:]]\\)\\([+-][0-9][0-9]:?[0-9][0-9]\\)\\(?:$\\|[^0-9]\\)")
-         (date-without-zone
-          (replace-regexp-in-string
-           zone-regexp
-           (lambda (match) (make-string (length match) 32))
-           date-without-time t t))
-         (day-token
-          (and (string-match
-                "\\(?:^\\|[^0-9]\\)\\([0-9][0-9]?\\)\\(?:[^0-9]\\|$\\)"
-                date-without-zone)
-               (list (match-beginning 1)
-                     (match-end 1)
-                     (string-to-number (match-string 1 date-without-zone)))))
-         (date-with-hyphen-delimiters (copy-sequence date))
-         (start 0)
-         year-range)
-    ;; RFC 6265 processes the day-of-month token before considering a year.
-    ;; An out-of-range two-digit day must not be reinterpreted as a year.
-    (when (and day-token (not (<= 1 (nth 2 day-token) 31)))
+  "Parse cookie DATE according to RFC 6265 section 5.1.1."
+  (let ((time-value nil)
+        (day-value nil)
+        (month-value nil)
+        (year-value nil))
+    (dolist (token
+             (url-cookie--cookie-date-tokens date))
+      ;; Process each token in RFC order.  The first matching field consumes
+      ;; that token, even if the token has a non-digit suffix.
+      (cond ((and (null time-value)
+                  (setq time-value
+                        (url-cookie--cookie-date-time-token token))))
+            ((and (null day-value)
+                  (setq day-value
+                        (url-cookie--cookie-date-number-token token 1 2))))
+            ((and (null month-value)
+                  (setq month-value
+                        (url-cookie--cookie-date-month-token token))))
+            ((and (null year-value)
+                  (setq year-value
+                        (url-cookie--cookie-date-number-token token 2 4))))))
+    (unless (and time-value day-value month-value year-value)
       (error "Invalid cookie date: %s" date))
-    ;; Hyphen is an RFC 6265 date-token delimiter.  Leave signed numeric
-    ;; timezone offsets intact; they were blanked in DATE-WITHOUT-ZONE.
-    (while (string-match "-" date-without-zone start)
-      (aset date-with-hyphen-delimiters (match-beginning 0) 32)
-      (setq start (match-end 0)))
-    (setq start 0)
-    ;; RFC 6265 ignores timezone tokens and interprets the parsed fields in
-    ;; UTC.  Remove numeric offsets from the output using positions found
-    ;; after the time token has been masked.
-    (while (string-match zone-regexp date-without-time start)
-      (let ((offset (match-beginning 1))
-            (offset-end (match-end 1)))
-        (while (< offset offset-end)
-          (aset date-with-hyphen-delimiters offset 32)
-          (setq offset (1+ offset))))
-      (setq start (match-end 0)))
-    (setq start 0)
-    ;; RFC 6265 year tokens may have two to four digits; apply the mapping to
-    ;; their numeric value, not their textual width.
-    (while (and (not year-range)
-                (string-match
-                 "\\(?:^\\|[^0-9]\\)\\([0-9][0-9][0-9]?[0-9]?\\)\\(?:$\\|[^0-9]\\)"
-                 date-without-zone start))
-      (let ((year-start (match-beginning 1))
-            (year-end (match-end 1))
-            (year (string-to-number (match-string 1 date-without-zone))))
-        (cond
-         ((and day-token
-               (= year-start (nth 0 day-token))
-               (= year-end (nth 1 day-token)))
-          (setq start year-end))
-         ((<= 0 year 69)
-          (setq year-range (list year-start year-end year)))
-         (t (setq start year-end)))))
-    (let ((date-for-time
-           (if year-range
-               (concat (substring date-with-hyphen-delimiters
-                                  0 (nth 0 year-range))
-                       (number-to-string (+ 2000 (nth 2 year-range)))
-                       (substring date-with-hyphen-delimiters
-                                  (nth 1 year-range)))
-             date-with-hyphen-delimiters)))
-      ;; Ignore any trailing timezone name (for example, PST or GMT).
-      (when (string-match "[ \t]+[[:alpha:]]+[ \t]*\\'" date-for-time)
-        (setq date-for-time (substring date-for-time 0 (match-beginning 0))))
-      (date-to-time (concat date-for-time " GMT")))))
+    (setq year-value
+          (cond ((<= 0 year-value 69) (+ year-value 2000))
+                ((<= 70 year-value 99) (+ year-value 1900))
+                (t year-value)))
+    (let ((hour (nth 0 time-value))
+          (minute (nth 1 time-value))
+          (second (nth 2 time-value)))
+      (unless (and (<= 1 day-value 31)
+                   (>= year-value 1601)
+                   (<= hour 23)
+                   (<= minute 59)
+                   (<= second 59))
+        (error "Invalid cookie date: %s" date))
+      (let* ((parsed-time
+              (encode-time second minute hour day-value month-value year-value 0))
+             (decoded (decode-time parsed-time 0)))
+        ;; `encode-time' may normalize an impossible calendar date.  RFC 6265
+        ;; requires such dates to fail instead of rolling into another month.
+        (unless (and (= second (nth 0 decoded))
+                     (= minute (nth 1 decoded))
+                     (= hour (nth 2 decoded))
+                     (= day-value (nth 3 decoded))
+                     (= month-value (nth 4 decoded))
+                     (= year-value (nth 5 decoded)))
+          (error "Invalid cookie date: %s" date))
+        parsed-time))))
 
 (defun url-cookie-expired-p (cookie)
   "Return non-nil if COOKIE is expired."
