@@ -1949,6 +1949,10 @@ fn buffer_state_marker(read_only: bool, modified: bool, specifier: char) -> char
     }
 }
 
+fn narrowing_indicator(narrowed: bool) -> &'static str {
+    if narrowed { " Narrow" } else { "" }
+}
+
 fn buffer_read_only(i: &Interp, buffer: usize) -> bool {
     i.q_soft("buffer-read-only")
         .is_some_and(|symbol| i.symbol_value_in_buffer(symbol, buffer).truthy())
@@ -1967,6 +1971,7 @@ struct FrameTitleContext<'a> {
     frame_name: &'a str,
     modified: bool,
     read_only: bool,
+    narrowed: bool,
     memory_full: bool,
     multiple_frames: bool,
     recursion_depth: usize,
@@ -2000,6 +2005,7 @@ fn frame_title_specifier(context: &FrameTitleContext<'_>, specifier: char) -> Op
         'b' => title.push_str(context.buffer_name),
         'f' => title.push_str(context.file_name.unwrap_or_default()),
         'F' => title.push_str(context.frame_name),
+        'n' => title.push_str(narrowing_indicator(context.narrowed)),
         's' => title.push_str(context.process_status),
         'z' => title.push_str(&context.coding),
         'Z' => title.push_str(&context.coding_with_eol),
@@ -2347,7 +2353,7 @@ fn frame_title(
     let Some(buffer) = i.buffers.get(buffer_id) else {
         return frame.name.borrow().to_unicode_lossy();
     };
-    let (buffer_name, file_name, modified, buffer_size, window_start, window_end) = {
+    let (buffer_name, file_name, modified, narrowed, buffer_size, window_start, window_end) = {
         let buffer = buffer.borrow();
         let window = frame.selected.borrow();
         let end = window
@@ -2364,6 +2370,7 @@ fn frame_title(
                 .as_ref()
                 .map(|name| name.to_unicode_lossy()),
             buffer.is_modified(),
+            buffer.begv > 0 || buffer.zv < buffer.size(),
             buffer.zv.saturating_sub(buffer.begv),
             window.start.clamp(buffer.begv, buffer.zv) - buffer.begv,
             end.clamp(buffer.begv, buffer.zv) - buffer.begv,
@@ -2399,6 +2406,7 @@ fn frame_title(
         frame_name: &frame_name,
         modified,
         read_only: buffer_read_only(i, buffer_id),
+        narrowed,
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
         multiple_frames: frame_title_multiple_frames(i, frame),
@@ -2660,7 +2668,7 @@ fn mode_line_context(
         buffer_size: buffer.zv.saturating_sub(buffer.begv),
         window_start_offset: window_start.clamp(buffer.begv, buffer.zv) - buffer.begv,
         window_end_offset: window_end.clamp(buffer.begv, buffer.zv) - buffer.begv,
-        narrowed: buffer.begv > 0 || buffer.zv < buffer.text_len(),
+        narrowed: buffer.begv > 0 || buffer.zv < buffer.size(),
     }
 }
 
@@ -2943,13 +2951,7 @@ fn format_mode_line_string(
                 context.remote_used.set(true);
                 if context.remote { "@" } else { "-" }.to_owned()
             }
-            'n' => {
-                if context.narrowed {
-                    " Narrow".to_owned()
-                } else {
-                    String::new()
-                }
-            }
+            'n' => narrowing_indicator(context.narrowed).to_owned(),
             '*' | '+' | '&' => {
                 buffer_state_marker(context.read_only, context.modified, specifier).to_string()
             }
