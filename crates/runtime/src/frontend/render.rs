@@ -523,7 +523,7 @@ impl PartialEq for StyleMix {
 /// rows, and cursor positions for terminals and shaped GUI text.
 #[derive(Clone, PartialEq)]
 pub struct Grid {
-    /// Native frame title computed from `frame-title-format`.
+    /// Native frame title: explicit `title` before `frame-title-format`.
     pub title: String,
     /// Face family names referenced by styles in this snapshot.
     pub font_families: Vec<String>,
@@ -2009,6 +2009,11 @@ fn format_frame_title_value(
 }
 
 fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
+    if let Some(parameter) = i.q_soft("title")
+        && let Value::Str(title) = crate::lisp::eval::plist_get(&frame.params, parameter)
+    {
+        return title.borrow().to_unicode_lossy();
+    }
     let buffer_id = frame.selected.borrow().buffer;
     let Some(buffer) = i.buffers.get(buffer_id) else {
         return frame.name.borrow().to_unicode_lossy();
