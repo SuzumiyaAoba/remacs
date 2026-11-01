@@ -1918,11 +1918,14 @@ fn blink_cursor_settings(i: &Interp) -> (bool, f64, f64, i128) {
     )
 }
 
+const MEMORY_FULL_WARNING: &str = "!MEM FULL! ";
+
 struct FrameTitleContext<'a> {
     buffer_name: &'a str,
     file_name: Option<&'a str>,
     frame_name: &'a str,
     modified: bool,
+    memory_full: bool,
 }
 
 fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
@@ -1942,6 +1945,11 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
             'b' => title.push_str(context.buffer_name),
             'f' => title.push_str(context.file_name.unwrap_or(context.buffer_name)),
             'F' => title.push_str(context.frame_name),
+            'e' => {
+                if context.memory_full {
+                    title.push_str(MEMORY_FULL_WARNING);
+                }
+            }
             '*' | '+' => title.push(if context.modified { '*' } else { '-' }),
             '-' => title.push('-'),
             other => {
@@ -2014,6 +2022,8 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
         file_name: file_name.as_deref(),
         frame_name: &frame_name,
         modified,
+        memory_full: mode_line_variable(i, buffer_id, "memory-full")
+            .is_some_and(|value| value.truthy()),
     };
     let Some(format) = i
         .q_soft("frame-title-format")
@@ -2478,7 +2488,7 @@ fn format_mode_line_string(
             '+' => if context.modified { "*" } else { "-" }.to_owned(),
             'e' => {
                 if context.memory_full {
-                    "!MEM FULL! ".to_owned()
+                    MEMORY_FULL_WARNING.to_owned()
                 } else {
                     String::new()
                 }
