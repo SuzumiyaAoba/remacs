@@ -28,7 +28,7 @@ const CASES: &str = r##"(progn
       (let ((inhibit-read-only t))
         (erase-buffer))
       (cl-letf (((symbol-function 'vtable--cache-key)
-                 (lambda () key)))
+                 (lambda (&optional _table) key)))
         (vtable-insert table))))
   (defun remacs-vtable-crossreview-update-shared-cache ()
     (with-temp-buffer
@@ -40,7 +40,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (current-cache (gethash key cache-table))
              (columns (vtable-columns table))
@@ -110,7 +110,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (current-cache (gethash key cache-table))
              (calls-before remacs-vtable-crossreview-getter-calls))
@@ -149,7 +149,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (column (car (vtable-columns table)))
              (sort-before (vtable-sort-by table))
@@ -216,7 +216,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (sort-before (vtable-sort-by table))
              (calls-before remacs-vtable-crossreview-getter-calls))
@@ -269,7 +269,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (column (car (vtable-columns table)))
              (empty-cache (gethash key cache-table))
@@ -324,7 +324,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (current-cache (gethash key cache-table))
              (calls-before remacs-vtable-crossreview-getter-calls))
@@ -365,7 +365,7 @@ const CASES: &str = r##"(progn
                                  :use-header-line nil
                                  :getter #'remacs-vtable-crossreview-getter))
              (cache-table (slot-value table '-cache))
-             (key (vtable--cache-key))
+             (key (vtable--cache-key table))
              (other-key (cons (car key) (1+ (cdr key))))
              (current-cache (gethash key cache-table))
              (columns (vtable-columns table))

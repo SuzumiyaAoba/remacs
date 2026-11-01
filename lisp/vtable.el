@@ -645,7 +645,7 @@ recompute the column specs when the table data has changed."
          ;; We maintain a cache per screen/window width, so that we render
          ;; correctly if Emacs is open on two different screens (or the
          ;; user resizes the frame).
-         (cache-key (vtable--cache-key))
+         (cache-key (vtable--cache-key table))
          (cache (or (gethash cache-key (slot-value table '-cache))
                     (let* ((data (vtable--compute-cache table))
                            (widths (vtable--compute-widths table data)))
@@ -801,11 +801,61 @@ itself in the new buffer."
          start (point)
          (elt row-colors (mod line-number (length row-colors))))))))
 
-(defun vtable--cache-key ()
-  (cons (frame-terminal) (window-width)))
+(defun vtable--cache-key-snapshot (object)
+  "Return a detached, complete snapshot of OBJECT for a cache key."
+  (let ((print-level nil)
+        (print-length nil)
+        (print-circle t))
+    (prin1-to-string object)))
+
+(defun vtable--buffer-pixel-context (buffer)
+  "Return a detached snapshot of BUFFER's display-property context."
+  (let ((buffer (cond ((bufferp buffer) buffer)
+                      ((stringp buffer) (get-buffer buffer)))))
+    (when (and buffer (buffer-live-p buffer))
+      (with-current-buffer buffer
+        (vtable--cache-key-snapshot
+         (mapcar (lambda (variable)
+                   (list variable
+                         (local-variable-p variable buffer)
+                         (if (boundp variable)
+                             (symbol-value variable)
+                           :unbound)))
+                 '(face-remapping-alist
+                   char-property-alias-alist
+                   default-text-properties)))))))
+
+(defun vtable--cache-key (&optional table)
+  "Return the selected frame's layout key for TABLE.
+The cdr retains the character-column width for compatibility with callers
+that derive alternate width keys from it."
+  (let* ((window (selected-window))
+         (frame (window-frame window))
+         (face (if table (vtable-face table) 'default))
+         (character-pixel-width
+          (if table
+              (vtable--char-width table)
+            (string-pixel-width "x")))
+         (layout (list (frame-terminal frame)
+                       frame
+                       (window-width window t)
+                       (display-graphic-p frame)
+                       vtable-tty-char-pixel-width
+                       character-pixel-width
+                       (vtable--cache-key-snapshot face)
+                       (vtable--cache-key-snapshot
+                        (frame-parameter frame 'font))
+                       (vtable--cache-key-snapshot
+                        (frame-parameter frame 'fontset))
+                       (frame-parameter frame 'scale-factor)
+                       (and table
+                            (vtable--buffer-pixel-context
+                             (vtable-buffer table))))))
+    (cons (list 'vtable-cache-key layout)
+          (window-width window))))
 
 (defun vtable--clear-cache (table)
-  (setf (gethash (vtable--cache-key) (slot-value table '-cache)) nil))
+  (setf (gethash (vtable--cache-key table) (slot-value table '-cache)) nil))
 
 (defun vtable--clear-other-caches (table keep-key)
   "Discard cached layouts of TABLE except KEEP-KEY.
@@ -1183,7 +1233,7 @@ CACHE is TABLE's cache data as returned by `vtable--compute-cache'."
       (let* ((bounds (vtable--accessible-table-bounds table))
              (start (car bounds))
              (end (cdr bounds)))
-        (let* ((key (vtable--cache-key))
+        (let* ((key (vtable--cache-key table))
                (keep-key (and (gethash key (slot-value table '-cache)) key)))
           (vtable--clear-other-caches table keep-key))
         (delete-region start end)
