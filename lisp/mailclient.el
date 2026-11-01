@@ -80,6 +80,10 @@ supported.  Defaults to non-nil on Windows, nil otherwise."
 
 (defun mailclient-gather-addresses (str &optional drop-first-name)
   (let ((field (mail-fetch-field str nil t)))
+    (when field
+      ;; Unfold RFC 5322 continuations before splitting recipient addresses.
+      ;; Keep following WSP, which can be significant in quoted local-parts.
+      (setq field (replace-regexp-in-string "\r?\n\\([ \t]+\\)" "\\1" field)))
     (if field
 	(save-excursion
 	  (let ((first t)
@@ -97,7 +101,7 @@ supported.  Defaults to non-nil on Windows, nil otherwise."
 		       recp)))
 	       (setq first nil))
 	     (split-string
-	      (mail-strip-quoted-names field) ", *"))
+	      (mail-strip-quoted-names field) ",[ \t]*"))
 	    result)))))
 
 (declare-function clipboard-kill-ring-save "menu-bar.el"
