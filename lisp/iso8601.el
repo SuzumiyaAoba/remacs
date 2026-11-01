@@ -506,6 +506,54 @@ Return the number of minutes."
         53
       52)))
 
+(defun iso8601--date-format (date)
+  "Return DATE's explicit basic/extended notation, or nil if unmarked."
+  (cond
+   ;; A signed compact numeric token remains an expanded year because its
+   ;; intended year width is not available here.
+   ((iso8601--signed-expanded-year-token-p date) nil)
+   ((iso8601--match iso8601--full-date-match date)
+    (if (match-string 3 date) 'extended 'basic))
+   ((iso8601--match iso8601--without-day-match date)
+    'extended)
+   ((iso8601--match iso8601--week-date-match date)
+    (if (match-string 3 date) 'extended 'basic))
+   ((iso8601--match iso8601--ordinal-date-match date)
+    (let ((year (match-string 1 date))
+          (ordinal (match-string 2 date)))
+      (if (= (length date) (+ (length year) (length ordinal)))
+          'basic
+        'extended)))
+   ((or (iso8601--match iso8601--outdated-date-match date)
+        (iso8601--match iso8601--outdated-reduced-precision-date-match date))
+    'extended)
+   (t nil)))
+
+(defun iso8601--time-format (time)
+  "Return TIME's explicit basic/extended notation, or nil if unmarked."
+  (when (and (iso8601--match iso8601--time-match time)
+             (match-string 2 time))
+    (if (string-match-p ":" time) 'extended 'basic)))
+
+(defun iso8601--zone-format (zone)
+  "Return ZONE's explicit basic/extended notation, or nil if unmarked."
+  (when zone
+    (cond ((string-match-p ":" zone) 'extended)
+          ((memq (length zone) '(1 3)) nil)
+          (t 'basic))))
+
+(defun iso8601--date-time-format-consistent-p (date time zone)
+  "Return non-nil when DATE, TIME, and ZONE do not mix explicit formats."
+  (let ((date-format (iso8601--date-format date))
+        (time-format (iso8601--time-format time))
+        (zone-format (iso8601--zone-format zone)))
+    (and (or (null date-format) (null time-format)
+             (eq date-format time-format))
+         (or (null date-format) (null zone-format)
+             (eq date-format zone-format))
+         (or (null time-format) (null zone-format)
+             (eq time-format zone-format)))))
+
 (defun iso8601-valid-p (string)
   "Say whether STRING is a valid ISO 8601 representation."
   (let ((valid (iso8601--match iso8601--combined-match string)))
@@ -519,6 +567,8 @@ Return the number of minutes."
                       (save-match-data (iso8601--time-in-range-p time)))
                   (or (null zone)
                       (save-match-data (iso8601--zone-in-range-p zone)))
+                  (or (null time)
+                      (iso8601--date-time-format-consistent-p date time zone))
                   (cond
                     ;; Preserve a compact signed numeric token as an
                     ;; expanded year when its width is not otherwise known.
