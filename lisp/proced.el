@@ -1474,11 +1474,17 @@ Return `equal' if T1 equals T2.  Return nil otherwise."
         (while (setq sorter (pop sort-list))
           (setq k1 (cdr (assq (car sorter) (cdr p1)))
                 k2 (cdr (assq (car sorter) (cdr p2)))
-                predicate
-                (if (and k1 k2)
-                    (funcall (nth 1 sorter) k1 k2)))
-          (if (not (eq predicate 'equal))
+                predicate nil)
+          ;; If both values are missing, they tie on this key and sorting
+          ;; proceeds to the next attribute.
+          (cond
+           ((and k1 k2)
+            (setq predicate (funcall (nth 1 sorter) k1 k2))
+            (unless (eq predicate 'equal)
               (throw 'done (xor predicate (nth 2 sorter)))))
+           ((or k1 k2)
+            ;; A one-sided missing attribute keeps the single-key policy.
+            (throw 'done nil))))
         (eq t predicate)))))
 
 (defun proced-sort (process-alist sorter descend)
