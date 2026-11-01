@@ -171,7 +171,14 @@ When only BEG is non-nil, return diagnostics at BEG."
   (setq flymake-mode
         (if (null arg)
             (not flymake-mode)
-          (> (prefix-numeric-value arg) 0))))
+          (> (prefix-numeric-value arg) 0)))
+  (unless flymake-mode
+    (save-restriction
+      (widen)
+      (dolist (overlay (overlays-in (point-min) (point-max)))
+        (when (overlay-get overlay 'flymake-overlay)
+          (delete-overlay overlay)))))
+  flymake-mode)
 
 (defun flymake-mode-on ()
   "Turn Flymake mode on."
