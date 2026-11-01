@@ -59,10 +59,20 @@ pub enum MenuItem {
         name: SharedString,
         /// Whether this item displays a checkmark.
         checked: bool,
+        /// A display-only keyboard hint, independent of native shortcuts.
+        key_hint: Option<SharedString>,
     },
 
     /// A submenu
     Submenu(Menu),
+
+    /// A submenu with a display-only keyboard hint.
+    SubmenuWithKeyHint {
+        /// The submenu and its items.
+        menu: Menu,
+        /// The displayed keyboard hint.
+        key_hint: SharedString,
+    },
 
     /// A menu, managed by the system (for example, the Services menu on macOS)
     SystemMenu(OsMenu),
@@ -80,6 +90,8 @@ pub enum MenuItem {
         os_action: Option<OsAction>,
         /// Whether this item displays a checkmark.
         checked: bool,
+        /// A display-only keyboard hint, independent of native shortcuts.
+        key_hint: Option<SharedString>,
     },
 }
 
@@ -89,6 +101,7 @@ impl MenuItem {
         Self::Disabled {
             name: name.into(),
             checked: false,
+            key_hint: None,
         }
     }
 
@@ -100,6 +113,25 @@ impl MenuItem {
             *state = checked;
         }
         self
+    }
+
+    /// Display a keyboard hint without registering a native shortcut.
+    pub fn key_hint(self, hint: impl Into<SharedString>) -> Self {
+        let hint = hint.into();
+        match self {
+            Self::Submenu(menu) | Self::SubmenuWithKeyHint { menu, .. } => {
+                Self::SubmenuWithKeyHint {
+                    menu,
+                    key_hint: hint,
+                }
+            }
+            mut item => {
+                if let Self::Action { key_hint, .. } | Self::Disabled { key_hint, .. } = &mut item {
+                    *key_hint = Some(hint);
+                }
+                item
+            }
+        }
     }
     /// Creates a new menu item that is a separator
     pub fn separator() -> Self {
@@ -126,6 +158,7 @@ impl MenuItem {
             action: Box::new(action),
             os_action: None,
             checked: false,
+            key_hint: None,
         }
     }
 
@@ -140,6 +173,7 @@ impl MenuItem {
             action: Box::new(action),
             os_action: Some(os_action),
             checked: false,
+            key_hint: None,
         }
     }
 
@@ -147,21 +181,32 @@ impl MenuItem {
     pub fn owned(self) -> OwnedMenuItem {
         match self {
             MenuItem::Separator => OwnedMenuItem::Separator,
-            MenuItem::Disabled { name, checked } => OwnedMenuItem::Disabled {
+            MenuItem::Disabled {
+                name,
+                checked,
+                key_hint,
+            } => OwnedMenuItem::Disabled {
                 name: name.into(),
                 checked,
+                key_hint: key_hint.map(Into::into),
             },
             MenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.owned()),
+            MenuItem::SubmenuWithKeyHint { menu, key_hint } => OwnedMenuItem::SubmenuWithKeyHint {
+                menu: menu.owned(),
+                key_hint: key_hint.into(),
+            },
             MenuItem::Action {
                 name,
                 action,
                 os_action,
                 checked,
+                key_hint,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
                 checked,
+                key_hint: key_hint.map(Into::into),
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
@@ -200,10 +245,20 @@ pub enum OwnedMenuItem {
         name: String,
         /// Whether this item displays a checkmark.
         checked: bool,
+        /// A display-only keyboard hint, independent of native shortcuts.
+        key_hint: Option<String>,
     },
 
     /// A submenu
     Submenu(OwnedMenu),
+
+    /// A submenu with a display-only keyboard hint.
+    SubmenuWithKeyHint {
+        /// The submenu and its items.
+        menu: OwnedMenu,
+        /// The displayed keyboard hint.
+        key_hint: String,
+    },
 
     /// A menu, managed by the system (for example, the Services menu on macOS)
     SystemMenu(OwnedOsMenu),
@@ -221,6 +276,8 @@ pub enum OwnedMenuItem {
         os_action: Option<OsAction>,
         /// Whether this item displays a checkmark.
         checked: bool,
+        /// A display-only keyboard hint, independent of native shortcuts.
+        key_hint: Option<String>,
     },
 }
 
@@ -228,21 +285,34 @@ impl Clone for OwnedMenuItem {
     fn clone(&self) -> Self {
         match self {
             OwnedMenuItem::Separator => OwnedMenuItem::Separator,
-            OwnedMenuItem::Disabled { name, checked } => OwnedMenuItem::Disabled {
+            OwnedMenuItem::Disabled {
+                name,
+                checked,
+                key_hint,
+            } => OwnedMenuItem::Disabled {
                 name: name.clone(),
                 checked: *checked,
+                key_hint: key_hint.clone(),
             },
             OwnedMenuItem::Submenu(submenu) => OwnedMenuItem::Submenu(submenu.clone()),
+            OwnedMenuItem::SubmenuWithKeyHint { menu, key_hint } => {
+                OwnedMenuItem::SubmenuWithKeyHint {
+                    menu: menu.clone(),
+                    key_hint: key_hint.clone(),
+                }
+            }
             OwnedMenuItem::Action {
                 name,
                 action,
                 os_action,
                 checked,
+                key_hint,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
                 checked: *checked,
+                key_hint: key_hint.clone(),
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }

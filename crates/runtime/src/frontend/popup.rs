@@ -87,6 +87,8 @@ struct MenuProperties {
     /// Retain the value cell, since a dynamic name can replace its function.
     filter: Option<Value>,
     selected: Value,
+    keys: Value,
+    key_sequence: Option<Value>,
 }
 
 /// Check :visible in source order and retain the final property fields.
@@ -97,10 +99,14 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     let button = i.q(":button");
     let toggle = i.q(":toggle");
     let radio = i.q(":radio");
+    let keys_property = i.q(":keys");
+    let sequence_property = i.q(":key-sequence");
     let force = i.q("enable-disabled-menus-and-buttons");
     let mut enable_form = Value::t();
     let mut filter_cell = None;
     let mut selected = Value::Nil;
+    let mut keys = Value::Nil;
+    let mut key_sequence = None;
     let cache_tail = if let Value::Cons(cell) = &properties {
         let cell = cell.borrow();
         matches!(cell.car, Value::Cons(_)).then(|| cell.cdr.clone())
@@ -138,6 +144,22 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
             return Ok(None);
         } else if matches!(property, Value::Sym(symbol) if symbol == filter) {
             filter_cell = Some(Value::Cons(value.clone()));
+        } else if matches!(property, Value::Sym(symbol) if symbol == keys_property) {
+            if crate::lisp::builtins::data::functionp_checked(i, &form)? {
+                // Unlike evaluated menu forms, GNU calls this callback directly:
+                // errors propagate, and no inhibit-redisplay binding is added.
+                keys = i.apply(&form, Vec::new())?;
+            } else if matches!(form, Value::Cons(_) | Value::Str(_)) {
+                keys = form;
+            }
+        } else if matches!(property, Value::Sym(symbol) if symbol == sequence_property)
+            && matches!(
+                form,
+                Value::Nil | Value::Sym(_) | Value::Str(_) | Value::Vec(_)
+            )
+        {
+            // A dynamic label or filter may replace this cell's value later.
+            key_sequence = Some(Value::Cons(value.clone()));
         } else if matches!(property, Value::Sym(symbol) if symbol == button)
             && let Value::Cons(button) = form
         {
@@ -154,6 +176,8 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
         enable: enable_form,
         filter: filter_cell,
         selected,
+        keys,
+        key_sequence,
     }))
 }
 
@@ -163,9 +187,82 @@ pub(super) struct ParsedMenuItem {
     pub(super) separator: bool,
     pub(super) enabled: bool,
     selected: Value,
+    keys: Value,
+    key_sequence: Option<Value>,
 }
 
 impl ParsedMenuItem {
+    /// Resolve the keyboard equivalent after name/filter/enable processing.
+    /// Submenus and nonselectable text retain only an explicit string hint.
+    pub(super) fn keyboard_equivalent(
+        &self,
+        i: &mut Interp,
+        leaf_command: bool,
+    ) -> Result<Option<String>, Flow> {
+        let result = if !leaf_command {
+            self.keys.clone()
+        } else if matches!(self.keys, Value::Str(_)) && self.key_sequence.is_none() {
+            let substitute = Value::Sym(i.q("substitute-command-keys"));
+            let text = i.apply(&substitute, vec![self.keys.clone()])?;
+            // concat checks a redefined substitute-command-keys result just as
+            // GNU does. Leading padding is supplied by the native column layout.
+            crate::lisp::builtins::strfn::f_concat(i, vec![Value::string(""), text].into())?
+        } else {
+            let (definition, prefix) = if let Value::Cons(cell) = &self.keys {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            } else {
+                (self.definition.clone(), self.keys.clone())
+            };
+            let mut keys = if let Some(Value::Cons(cell)) = &self.key_sequence {
+                cell.borrow().car.clone()
+            } else {
+                Value::Nil
+            };
+            if !keys.is_nil() {
+                let binding = crate::editor::f_key_binding(
+                    i,
+                    vec![keys.clone(), Value::Nil, Value::Nil, Value::Nil].into(),
+                )?;
+                let same = crate::lisp::builtins::eq_values_with_interp;
+                let alias = match &definition {
+                    Value::Sym(symbol) => same(i, &binding, &i.symbol_function(*symbol)),
+                    _ => false,
+                };
+                if binding.is_nil() || !(same(i, &binding, &definition) || alias) {
+                    keys = Value::Nil;
+                }
+            }
+            if keys.is_nil() {
+                keys = crate::editor::f_where_is_internal(
+                    i,
+                    vec![definition, Value::Nil, Value::t(), Value::Nil, Value::Nil].into(),
+                )?;
+            }
+            if keys.is_nil() {
+                return Ok(None);
+            }
+            let mut text = crate::editor::f_key_description(i, vec![keys, Value::Nil].into())?;
+            if let Value::Cons(prefix) = prefix {
+                let (before, after) = {
+                    let prefix = prefix.borrow();
+                    (prefix.car.clone(), prefix.cdr.clone())
+                };
+                if matches!(before, Value::Str(_)) {
+                    text = crate::lisp::builtins::strfn::f_concat(i, vec![before, text].into())?;
+                }
+                if matches!(after, Value::Str(_)) {
+                    text = crate::lisp::builtins::strfn::f_concat(i, vec![text, after].into())?;
+                }
+            }
+            text
+        };
+        Ok(match result {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        })
+    }
+
     // GNU evaluates the selected form only for leaf commands, after the name,
     // filter and enable properties. Submenus and plain text skip this step.
     pub(super) fn button_selected(&self, i: &mut Interp) -> Result<bool, Flow> {
@@ -226,6 +323,8 @@ pub(super) fn keymap_item(
                 separator,
                 enabled,
                 selected: properties.selected,
+                keys: properties.keys,
+                key_sequence: properties.key_sequence,
             }));
         }
     }
@@ -236,6 +335,8 @@ pub(super) fn keymap_item(
         separator,
         enabled: true,
         selected: Value::Nil,
+        keys: Value::Nil,
+        key_sequence: None,
     }))
 }
 

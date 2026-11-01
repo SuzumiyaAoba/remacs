@@ -2579,24 +2579,31 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
         return Some(MenuItem::separator());
     }
     if !item.items.is_empty() {
-        return Some(MenuItem::submenu(Menu {
+        let submenu = MenuItem::submenu(Menu {
             name: item.label.clone().into(),
             items: item.items.iter().filter_map(gpui_menu_item).collect(),
-        }));
-    }
-    Some(
-        if let Some(command) = &item.command {
-            MenuItem::action(
-                item.label.clone(),
-                RunMenuCommand {
-                    command: command.clone(),
-                },
-            )
+        });
+        return Some(if let Some(hint) = &item.key_hint {
+            submenu.key_hint(hint.clone())
         } else {
-            MenuItem::disabled(item.label.clone())
-        }
-        .checked(item.checked),
-    )
+            submenu
+        });
+    }
+    let mut result = if let Some(command) = &item.command {
+        MenuItem::action(
+            item.label.clone(),
+            RunMenuCommand {
+                command: command.clone(),
+            },
+        )
+    } else {
+        MenuItem::disabled(item.label.clone())
+    }
+    .checked(item.checked);
+    if let Some(hint) = &item.key_hint {
+        result = result.key_hint(hint.clone());
+    }
+    Some(result)
 }
 
 #[cfg(test)]
@@ -2611,13 +2618,14 @@ mod native_menu_tests {
             items: Vec::new(),
             separator: false,
             checked: false,
+            key_hint: None,
         };
         let converted = gpui_menu_item(&item).unwrap();
         assert!(
-            matches!(&converted, MenuItem::Disabled { name, checked: false } if name.as_str() == "Disabled")
+            matches!(&converted, MenuItem::Disabled { name, checked: false, key_hint: None } if name.as_str() == "Disabled")
         );
         assert!(
-            matches!(converted.owned().clone(), gpui::OwnedMenuItem::Disabled { name, checked: false } if name == "Disabled")
+            matches!(converted.owned().clone(), gpui::OwnedMenuItem::Disabled { name, checked: false, key_hint: None } if name == "Disabled")
         );
         let enabled = GridMenuItem {
             command: Some("ignore".into()),
@@ -2639,6 +2647,7 @@ mod native_menu_tests {
                     items: Vec::new(),
                     separator: false,
                     checked,
+                    key_hint: None,
                 };
                 let owned = gpui_menu_item(&item).unwrap().owned().clone();
                 match (owned, command) {
@@ -2650,6 +2659,67 @@ mod native_menu_tests {
                 }
             }
         }
+    }
+
+    #[::core::prelude::v1::test]
+    fn native_keyboard_hints_survive_conversion_without_changing_actions() {
+        for command in [None, Some("ignore".into())] {
+            let item = GridMenuItem {
+                label: "Run".into(),
+                command: command.clone(),
+                items: Vec::new(),
+                separator: false,
+                checked: true,
+                key_hint: Some("C-c z".into()),
+            };
+            let owned = gpui_menu_item(&item).unwrap().owned().clone();
+            let hint = match (owned, command) {
+                (
+                    gpui::OwnedMenuItem::Disabled {
+                        key_hint,
+                        checked: true,
+                        ..
+                    },
+                    None,
+                )
+                | (
+                    gpui::OwnedMenuItem::Action {
+                        key_hint,
+                        checked: true,
+                        ..
+                    },
+                    Some(_),
+                ) => key_hint,
+                _ => panic!("keyboard hints must preserve the item's action and state"),
+            };
+            assert_eq!(hint.as_deref(), Some("C-c z"));
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn native_submenu_hints_keep_children_and_survive_owned_clones() {
+        let item = GridMenuItem {
+            label: "Branch".into(),
+            command: None,
+            items: vec![GridMenuItem {
+                label: "Run".into(),
+                command: Some("ignore".into()),
+                items: Vec::new(),
+                separator: false,
+                checked: false,
+                key_hint: None,
+            }],
+            separator: false,
+            checked: false,
+            key_hint: Some("C-x 4".into()),
+        };
+        let owned = gpui_menu_item(&item).unwrap().owned().clone();
+        let gpui::OwnedMenuItem::SubmenuWithKeyHint { menu, key_hint } = owned else {
+            panic!("a submenu with a keyboard hint must remain a submenu");
+        };
+        assert_eq!(menu.name.as_str(), "Branch");
+        assert_eq!(key_hint, "C-x 4");
+        assert!(matches!(&menu.items[0], gpui::OwnedMenuItem::Action { .. }));
     }
 }
 

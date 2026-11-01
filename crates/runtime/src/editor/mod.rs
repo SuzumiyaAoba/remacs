@@ -9328,7 +9328,7 @@ fn f_minor_mode_key_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     Ok(Value::list(out))
 }
 
-fn f_key_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_key_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (key-binding KEY &optional accept-defaults no-remap position)
     // GNU: KEY must be an array (string or vector) — bare symbols,
     // ints, nil all signal `arrayp' before any keymap lookup; then
@@ -9905,7 +9905,7 @@ fn where_is_collect(
     Ok(sequences)
 }
 
-fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_where_is_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut definition = a[0].clone();
     let keymap_arg = a.get(1).cloned().unwrap_or(Value::Nil);
     let firstonly = a.get(2).cloned().unwrap_or(Value::Nil);
@@ -10436,7 +10436,7 @@ pub(crate) fn apply_mods_ev(mut c: i128, mut mods: i128) -> i128 {
     (mods & !CHAR_CTL) | c
 }
 
-fn f_key_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_key_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fkey_description:
     // KEYS (and PREFIX) must be sequences; non-sequence signals
     // `sequencep'.

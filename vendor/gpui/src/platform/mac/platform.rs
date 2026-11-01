@@ -24,7 +24,7 @@ use cocoa::{
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSSize, NSString,
         NSUInteger, NSURL,
     },
 };
@@ -274,12 +274,14 @@ impl MacPlatform {
                 menu.setTitle_(menu_title);
                 menu.setDelegate_(delegate);
 
+                let key_hint_attributes = Self::menu_key_hint_attributes(&menu_config.items);
                 for item_config in &menu_config.items {
                     menu.addItem_(Self::create_menu_item(
                         item_config,
                         delegate,
                         actions,
                         keymap,
+                        key_hint_attributes,
                     ));
                 }
 
@@ -308,16 +310,125 @@ impl MacPlatform {
         unsafe {
             let dock_menu = NSMenu::new(nil);
             dock_menu.setDelegate_(delegate);
+            let key_hint_attributes = Self::menu_key_hint_attributes(&menu_items);
             for item_config in menu_items {
                 dock_menu.addItem_(Self::create_menu_item(
                     &item_config,
                     delegate,
                     actions,
                     keymap,
+                    key_hint_attributes,
                 ));
             }
 
             dock_menu
+        }
+    }
+
+    fn pretty_menu_key_hint(hint: &str) -> String {
+        let mut hint = hint
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches(' ')
+            .to_owned();
+        // GNU's Cocoa menu uses these symbols for named keys. Modifier names
+        // and multi-stroke sequences remain ordinary Emacs key descriptions.
+        for (from, to) in [
+            ("<backspace>", "⌫"),
+            ("DEL", "⌫"),
+            ("<deletechar>", "⌦"),
+            ("<return>", "↩"),
+            ("RET", "↩"),
+            ("<left>", "←"),
+            ("<right>", "→"),
+            ("<up>", "↑"),
+            ("<down>", "↓"),
+            ("<prior>", "⇞"),
+            ("<next>", "⇟"),
+            ("<home>", "↖"),
+            ("<end>", "↘"),
+            ("<tab>", "⇥"),
+            ("TAB", "⇥"),
+            ("<backtab>", "⇤"),
+        ] {
+            hint = hint.replace(from, to);
+        }
+        hint
+    }
+
+    unsafe fn menu_key_hint_attributes(items: &[MenuItem]) -> id {
+        if !items.iter().any(|item| {
+            matches!(
+                item,
+                MenuItem::Action {
+                    key_hint: Some(_),
+                    ..
+                } | MenuItem::Disabled {
+                    key_hint: Some(_),
+                    ..
+                } | MenuItem::SubmenuWithKeyHint { .. }
+            )
+        }) {
+            return nil;
+        }
+        unsafe {
+            let font: id = msg_send![class!(NSFont), menuFontOfSize: 0.0f64];
+            let font_attributes: id = msg_send![class!(NSDictionary),
+                dictionaryWithObject: font forKey: ns_string("NSFont")];
+            let mut max_name_width = 0.0f64;
+            let mut max_hint_width = 0.0f64;
+            for item in items {
+                let (name, hint) = match item {
+                    MenuItem::Action { name, key_hint, .. }
+                    | MenuItem::Disabled { name, key_hint, .. } => {
+                        (name, key_hint.as_ref().map(|hint| hint.as_str()))
+                    }
+                    MenuItem::Submenu(menu) => (&menu.name, None),
+                    MenuItem::SubmenuWithKeyHint { menu, key_hint } => {
+                        (&menu.name, Some(key_hint.as_str()))
+                    }
+                    MenuItem::SystemMenu(menu) => (&menu.name, None),
+                    MenuItem::Separator => continue,
+                };
+                let size: NSSize = msg_send![ns_string(name), sizeWithAttributes: font_attributes];
+                max_name_width = max_name_width.max(size.width);
+                if let Some(hint) = hint {
+                    let hint = ns_string(&Self::pretty_menu_key_hint(hint));
+                    let size: NSSize = msg_send![hint, sizeWithAttributes: font_attributes];
+                    max_hint_width = max_hint_width.max(size.width);
+                }
+            }
+            let options: id = msg_send![class!(NSDictionary), dictionary];
+            let tab: id = msg_send![class!(NSTextTab), alloc];
+            // NSTextAlignmentRight is 1 on macOS (the iOS ABI uses 2).
+            let tab: id = msg_send![tab,
+                initWithTextAlignment: 1 as NSInteger
+                location: max_name_width + max_hint_width + 40.0
+                options: options];
+            let _: id = msg_send![tab, autorelease];
+            let tabs: id = msg_send![class!(NSArray), arrayWithObject: tab];
+            let style: id = msg_send![class!(NSMutableParagraphStyle), new];
+            let _: id = msg_send![style, autorelease];
+            let _: () = msg_send![style, setTabStops: tabs];
+            msg_send![class!(NSDictionary),
+                dictionaryWithObject: style forKey: ns_string("NSParagraphStyle")]
+        }
+    }
+
+    unsafe fn set_menu_key_hint(item: id, name: &str, hint: Option<&str>, attributes: id) {
+        let Some(hint) = hint else {
+            return;
+        };
+        unsafe {
+            // Cocoa keyEquivalent cannot represent a multi-stroke sequence.
+            // Like GNU, render it in an attributed title's aligned tab column.
+            let title = ns_string(&format!("{name}\t{}", Self::pretty_menu_key_hint(hint)));
+            let attributed: id = msg_send![class!(NSAttributedString), alloc];
+            let attributed: id =
+                msg_send![attributed, initWithString: title attributes: attributes];
+            let _: id = msg_send![attributed, autorelease];
+            let _: () = msg_send![item, setAttributedTitle: attributed];
         }
     }
 
@@ -326,18 +437,29 @@ impl MacPlatform {
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
+        key_hint_attributes: id,
     ) -> id {
         static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
 
         unsafe {
             match item {
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
-                MenuItem::Disabled { name, checked } => {
+                MenuItem::Disabled {
+                    name,
+                    checked,
+                    key_hint,
+                } => {
                     let item = NSMenuItem::new(nil).autorelease();
                     item.setTitle_(ns_string(name));
                     let _: () = msg_send![item, setEnabled: NO];
                     let _: () = msg_send![item, setTag: -1 as NSInteger];
                     let _: () = msg_send![item, setState: *checked as NSInteger];
+                    Self::set_menu_key_hint(
+                        item,
+                        name,
+                        key_hint.as_ref().map(|hint| hint.as_str()),
+                        key_hint_attributes,
+                    );
                     item
                 }
                 MenuItem::Action {
@@ -345,6 +467,7 @@ impl MacPlatform {
                     action,
                     os_action,
                     checked,
+                    key_hint,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -367,6 +490,7 @@ impl MacPlatform {
                                 }))
                             })
                         })
+                        .filter(|_| key_hint.is_none())
                         .map(|binding| binding.keystrokes());
 
                     let selector = match os_action {
@@ -442,18 +566,37 @@ impl MacPlatform {
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     let _: () = msg_send![item, setState: *checked as NSInteger];
+                    Self::set_menu_key_hint(
+                        item,
+                        name,
+                        key_hint.as_ref().map(|hint| hint.as_str()),
+                        key_hint_attributes,
+                    );
                     actions.push(action.boxed_clone());
                     item
                 }
-                MenuItem::Submenu(Menu { name, items }) => {
+                MenuItem::Submenu(menu) | MenuItem::SubmenuWithKeyHint { menu, .. } => {
+                    let Menu { name, items } = menu;
+                    let hint = match item {
+                        MenuItem::SubmenuWithKeyHint { key_hint, .. } => Some(key_hint.as_str()),
+                        _ => None,
+                    };
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
+                    let child_key_hint_attributes = Self::menu_key_hint_attributes(items);
                     for item in items {
-                        submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
+                        submenu.addItem_(Self::create_menu_item(
+                            item,
+                            delegate,
+                            actions,
+                            keymap,
+                            child_key_hint_attributes,
+                        ));
                     }
                     item.setSubmenu_(submenu);
                     item.setTitle_(ns_string(name));
+                    Self::set_menu_key_hint(item, name, hint, key_hint_attributes);
                     item
                 }
                 MenuItem::SystemMenu(OsMenu { name, menu_type }) => {

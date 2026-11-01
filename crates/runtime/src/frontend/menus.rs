@@ -16,6 +16,11 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
         if depth == 0 && !item.enabled {
             continue;
         }
+        let definition = crate::editor::keymap_def(i, item.definition.clone())?;
+        let submenu = menu_keymap_from_definition(i, &definition, depth + 1);
+        let leaf_command = depth > 0 && !definition.is_nil() && submenu.is_none();
+        let key_hint = item.keyboard_equivalent(i, leaf_command)?;
+        let checked = leaf_command && item.button_selected(i)?;
         if item.separator {
             items.push(GridMenuItem {
                 label: item.label,
@@ -23,11 +28,11 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
                 items: Vec::new(),
                 separator: true,
                 checked: false,
+                key_hint: None,
             });
             continue;
         }
-        let definition = crate::editor::keymap_def(i, item.definition.clone())?;
-        if let Some(map) = menu_keymap_from_definition(i, &definition, depth + 1) {
+        if let Some(map) = submenu {
             let children = if item.enabled {
                 menu_items(i, &map, depth + 1)?
             } else {
@@ -39,9 +44,9 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
                 items: children,
                 separator: false,
                 checked: false,
+                key_hint,
             });
         } else {
-            let checked = depth > 0 && !definition.is_nil() && item.button_selected(i)?;
             let command = match definition {
                 Value::Sym(command) if item.enabled && i.fbound_p(command) => {
                     Some(i.symbol_name(command))
@@ -54,6 +59,7 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
                 items: Vec::new(),
                 separator: false,
                 checked,
+                key_hint,
             });
         }
     }

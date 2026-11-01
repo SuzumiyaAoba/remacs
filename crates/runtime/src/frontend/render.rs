@@ -191,6 +191,8 @@ pub struct GridMenuItem {
     pub separator: bool,
     /// Selected state of a toggle or radio leaf item.
     pub checked: bool,
+    /// Display-only equivalent key sequence or explicit menu hint.
+    pub key_hint: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
