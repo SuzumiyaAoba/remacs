@@ -36128,82 +36128,500 @@ position is not a literal closing bracket."
           'wildcard--empty-class
         body))))
 
+;; Call-time snapshot helpers for a shell glob translated to an Emacs regexp.
+(defconst wildcard--glob-max-char #x3fffff)
+(defconst wildcard--glob-byte8-start #x3fff80)
+
+(defun wildcard--glob-char-table-boundaries (table boundaries)
+  "Add the sparse change points of TABLE and its parents to BOUNDARIES."
+  (let ((seen nil))
+    (while (and (char-table-p table) (not (memq table seen)))
+      (push table seen)
+      (map-char-table
+       (lambda (range value)
+         (let ((from (if (consp range) (car range) range))
+               (to (if (consp range) (cdr range) range)))
+           (when (and (integerp from) (integerp to)
+                      (<= 0 from) (<= from to)
+                      (<= to wildcard--glob-max-char))
+             (push from boundaries)
+             (push (1+ to) boundaries))
+           ;; Case-table mappings are constant over a run, except for
+           ;; the point where a mapping target equals the input code.
+           (when (and (integerp value)
+                      (<= 0 value) (<= value wildcard--glob-max-char))
+             (push value boundaries)
+             (push (1+ value) boundaries))))
+       table)
+      (setq table (char-table-parent table)))
+    boundaries))
+
+(defun wildcard--glob-context-boundaries (tokens)
+  "Return sparse character change points needed by TOKENS."
+  (let ((points (list 0 1 32 33 47 48 58 65 91 97 123 127 128 160
+                      256 #xd800 #xe000 #x10000 #x110000 #x200000
+                      #x3fff7f #x3fff80 #x400000))
+        (has-class nil)
+        (has-dynamic-class nil)
+        (tables nil)
+        (code 0))
+    ;; Fixed ASCII POSIX-class transitions are cheap and useful even when
+    ;; the current table has no ASCII overrides.
+    (while (<= code 128)
+      (push code points)
+      (setq code (1+ code)))
+    (dolist (token tokens)
+      (when (eq (car-safe token) 'class)
+        (setq has-class t)
+        (when (nth 3 token)
+          (setq has-dynamic-class t))))
+    (when has-dynamic-class
+      (push (syntax-table) tables)
+      (when (boundp 'unicode-category-table)
+        (push (symbol-value 'unicode-category-table) tables)))
+    (when (or has-dynamic-class
+              (and has-class case-fold-search))
+      (let ((case-table (current-case-table)))
+        (push case-table tables)
+        (when (char-table-p case-table)
+          (dotimes (slot 3)
+            (push (char-table-extra-slot case-table slot) tables)))))
+    (dolist (table tables)
+      (setq points (wildcard--glob-char-table-boundaries table points)))
+    (sort (delete-dups points) #'<)))
+
+(defun wildcard--glob-class-regexp-info (wildcard open)
+  "Return class info at OPEN if its closing bracket is in this path component."
+  (let* ((close (wildcard--class-end wildcard (1+ open)))
+         (slash (and close (string-search "/" wildcard (1+ open))))
+         ;; A bracket expression cannot span a pathname separator.  This
+         ;; also handles a slash quoted inside the class: slash stays a
+         ;; component delimiter in shell filename patterns.
+         (component-close (and close (or (null slash) (>= slash close)))))
+    (when component-close
+      (let ((index (1+ open))
+            (prefix "[")
+            negative prefix-member prefix-close)
+        (cond
+         ((eq (aref wildcard index) ?!)
+          (setq index (1+ index)
+                prefix "[^"
+                negative t)
+          (when (and (< index (length wildcard))
+                     (eq (aref wildcard index) ?\]))
+            (setq index (1+ index)
+                  prefix "[^]"
+                  prefix-member t
+                  prefix-close t)))
+         ((eq (aref wildcard index) ?^)
+          (setq index (1+ index)
+                prefix "[\000^"
+                prefix-member t))
+         ((eq (aref wildcard index) ?\])
+          (setq index (1+ index)
+                prefix "[]"
+                prefix-member t
+                prefix-close t)))
+        (setq close (wildcard--class-end wildcard index t))
+        (let* ((tokens (wildcard--class-tokens wildcard index close))
+               (dynamic (catch 'raw
+                          (dolist (token tokens)
+                            (when (eq (car token) 'raw)
+                              (throw 'raw t)))
+                          nil))
+               (content (wildcard--class-content
+                         wildcard index close prefix-close prefix-member))
+               (regexp
+                (if (eq content 'wildcard--empty-class)
+                    (cond
+                     (prefix-member (concat prefix "]"))
+                     (negative (concat prefix "\000]"))
+                     (t "\\b\\B"))
+                  (concat prefix content "]"))))
+          (list 'class regexp
+                (substring wildcard open (1+ close))
+                dynamic negative (1+ close)))))))
+
+(defun wildcard--glob-tokenize (wildcard)
+  "Parse WILDCARD into literal, star, any, slash, and class tokens."
+  (let ((index 0)
+        (limit (length wildcard))
+        tokens)
+    (while (< index limit)
+      (let ((character (aref wildcard index)))
+        (cond
+         ((eq character ?\\)
+          (if (< (1+ index) limit)
+              (let ((quoted (aref wildcard (1+ index))))
+                (push (if (eq quoted ?/)
+                          'slash
+                        (list 'literal quoted))
+                      tokens)
+                (setq index (+ index 2)))
+            (push (list 'literal character) tokens)
+            (setq index (1+ index))))
+         ((eq character ?\[)
+          (let ((info (wildcard--glob-class-regexp-info wildcard index)))
+            (if info
+                (progn
+                  (push (list 'class (nth 1 info) (nth 2 info)
+                              (nth 3 info) (nth 4 info))
+                        tokens)
+                  (setq index (nth 5 info)))
+              (push (list 'literal character) tokens)
+              (setq index (1+ index)))))
+         ((eq character ?*)
+          (push 'star tokens)
+          (setq index (1+ index)))
+         ((eq character ??)
+          (push 'any tokens)
+          (setq index (1+ index)))
+         ((eq character ?/)
+          (push 'slash tokens)
+          (setq index (1+ index)))
+         (t
+          (push (list 'literal character) tokens)
+          (setq index (1+ index))))))
+    ;; `while' returns nil; reverse only after its body has finished.
+    (nreverse tokens)))
+
+(defun wildcard--glob-has-class-p (tokens)
+  "Return non-nil if TOKENS contains a bracket class."
+  (let (found)
+    (while (and tokens (not found))
+      (setq found (eq (car-safe (car tokens)) 'class)
+            tokens (cdr tokens)))
+    found))
+
+(defun wildcard--glob-probe-bitmap (regexp probe)
+  "Return a bitmap of character positions in PROBE matched by REGEXP."
+  (let ((bitmap (make-vector (length probe) nil))
+        (start 0)
+        beginning end)
+    (save-match-data
+      (while (and (< start (length probe))
+                  (string-match regexp probe start))
+        (setq beginning (match-beginning 0)
+              end (match-end 0))
+        (when (= end (1+ beginning))
+          (aset bitmap beginning t))
+        (setq start (max (1+ beginning) end))))
+    bitmap))
+
+(defun wildcard--glob-probe-data (boundaries)
+  "Return (INTERVALS . PROBE) for the representative of each range."
+  (let ((rest boundaries)
+        intervals characters)
+    (while (cdr rest)
+      (let ((from (car rest))
+            (next (cadr rest)))
+        (when (< from next)
+          (push (cons from (1- next)) intervals)
+          (push (char-to-string from) characters)))
+      (setq rest (cdr rest)))
+    (cons (nreverse intervals)
+          (mapconcat #'identity (nreverse characters) ""))))
+
+(defun wildcard--glob-append-range (ranges from to)
+  "Append the ascending inclusive range FROM..TO to reverse RANGES."
+  (if (and ranges (= from (1+ (cdr (car ranges)))))
+      (setcdr (car ranges) to)
+    (push (cons from to) ranges))
+  ranges)
+
+(defun wildcard--glob-class-ranges (regexp source exclude-dot boundaries)
+  "Snapshot REGEXP's no-fold character set, excluding slash and optionally dot.
+Case folding is left to regexp matching; separator exclusions use the current
+`case-fold-search' setting."
+  (let ((points (copy-sequence boundaries))
+        (index 0))
+    ;; Source literals and range endpoints can change membership between
+    ;; table runs, so split around every source character.
+    (while (< index (length source))
+      (let ((code (aref source index)))
+        (push code points)
+        (push (1+ code) points))
+      (setq index (1+ index)))
+    (setq points (sort (delete-dups points) #'<))
+    (let* ((probe-data (wildcard--glob-probe-data points))
+           (intervals (car probe-data))
+           (probe (cdr probe-data))
+           ;; Freeze only the class predicate itself.  Case folding is a
+           ;; matching-time regexp setting, as it was before range conversion.
+           (members (let ((case-fold-search nil))
+                      (wildcard--glob-probe-bitmap regexp probe)))
+           ;; Exclude the current equivalence sets of path separators so
+           ;; case folding cannot turn them into class members.
+           (slash (wildcard--glob-probe-bitmap (regexp-quote "/") probe))
+           (dot (and exclude-dot
+                     (wildcard--glob-probe-bitmap (regexp-quote ".") probe)))
+           (at 0)
+           allowed)
+      (dolist (range intervals)
+        (when (and (aref members at)
+                   (not (aref slash at))
+                   (or (not exclude-dot) (not (aref dot at))))
+          (setq allowed
+                (wildcard--glob-append-range allowed (car range) (cdr range))))
+        (setq at (1+ at)))
+      (nreverse allowed))))
+
+(defun wildcard--glob-split-special-ranges (ranges)
+  "Split RANGES at regexp-class punctuation that needs special placement."
+  (let (ordinary special)
+    (dolist (range ranges)
+      (let ((from (car range))
+            (to (cdr range)))
+        (dolist (code '(45 91 92 93 94))
+          (when (and (<= from code) (<= code to))
+            (when (< from code)
+              (push (cons from (1- code)) ordinary))
+            (push code special)
+            (setq from (1+ code))))
+        (when (<= from to)
+          (push (cons from to) ordinary))))
+    (list (nreverse ordinary) (nreverse special))))
+
+(defun wildcard--glob-range-spec (range)
+  (if (= (car range) (cdr range))
+      (char-to-string (car range))
+    (concat (char-to-string (car range)) "-"
+            (char-to-string (cdr range)))))
+
+(defun wildcard--glob-byte8-members (ranges)
+  "Return byte8 codes contained in RANGES; at most 128 codes are enumerated."
+  (let (members)
+    (dolist (range ranges)
+      (let ((code (max wildcard--glob-byte8-start (car range)))
+            (end (min wildcard--glob-max-char (cdr range))))
+        (while (<= code end)
+          (push code members)
+          (setq code (1+ code)))))
+    (nreverse members)))
+
+(defun wildcard--glob-non-byte8-ranges (ranges)
+  "Split RANGES around the byte8 character block."
+  (let (result)
+    (dolist (range ranges)
+      (let ((from (car range))
+            (to (cdr range)))
+        (if (or (< to wildcard--glob-byte8-start)
+                (> from wildcard--glob-max-char))
+            (push range result)
+          (when (< from wildcard--glob-byte8-start)
+            (push (cons from (1- wildcard--glob-byte8-start)) result))
+          (when (> to wildcard--glob-max-char)
+            (push (cons (1+ wildcard--glob-max-char) to) result)))))
+    (nreverse result)))
+
+(defun wildcard--glob-positive-ranges-regexp (ranges)
+  (let* ((byte8 (wildcard--glob-byte8-members ranges))
+         (ordinary-ranges (wildcard--glob-non-byte8-ranges ranges))
+         (split (wildcard--glob-split-special-ranges ordinary-ranges))
+         (ordinary (car split))
+         (special (cadr split))
+         (normal-class
+          (and ordinary
+               (concat "["
+                       (mapconcat #'wildcard--glob-range-spec ordinary "")
+                       "]")))
+         (parts (append (and normal-class (list normal-class))
+                        (mapcar (lambda (code)
+                                  (regexp-quote (char-to-string code)))
+                                special)
+                        (mapcar (lambda (code)
+                                  (regexp-quote (char-to-string code)))
+                                byte8))))
+    (wildcard--glob-alternation parts)))
+
+(defun wildcard--glob-negative-ranges-regexp (ranges)
+  (let* ((byte8 (wildcard--glob-byte8-members ranges))
+         (ordinary-ranges (wildcard--glob-non-byte8-ranges ranges))
+         (split (wildcard--glob-split-special-ranges ordinary-ranges))
+         (ordinary (car split))
+         (special (cadr split))
+         (body (concat (if (memq 93 special) "]" "")
+                       (mapconcat #'wildcard--glob-range-spec ordinary "")
+                       ;; Byte8 members are literals, never range endpoints.
+                       (mapconcat #'char-to-string byte8 "")
+                       (if (memq 94 special) "^" "")
+                       (if (memq 91 special) "[" "")
+                       ;; A backslash is literal in GNU bracket classes;
+                       ;; keep it before the final literal hyphen.
+                       (if (memq 92 special) "\\" "")
+                       (if (memq 45 special) "-" ""))))
+    (concat "[^" body "]")))
+
+(defun wildcard--glob-complement-ranges (ranges)
+  (let ((next 0)
+        result)
+    (dolist (range ranges)
+      (when (< next (car range))
+        (push (cons next (1- (car range))) result))
+      (setq next (1+ (cdr range))))
+    (when (<= next wildcard--glob-max-char)
+      (push (cons next wildcard--glob-max-char) result))
+    (nreverse result)))
+
+(defun wildcard--glob-alternation (parts)
+  (cond
+   ((null parts) "\\b\\B")
+   ((null (cdr parts)) (car parts))
+   (t (concat "\\(?:" (mapconcat #'identity parts "\\|") "\\)"))))
+
+(defun wildcard--glob-ranges-regexp (ranges negative)
+  ;; Preserve the source class polarity: case-folding does not commute with
+  ;; complementing a precomputed character set.
+  (if (null ranges)
+      "\\b\\B"
+    (if negative
+        (wildcard--glob-negative-ranges-regexp
+         (wildcard--glob-complement-ranges ranges))
+      (wildcard--glob-positive-ranges-regexp ranges))))
+
+(defun wildcard--glob-snapshot-class (token exclude-dot boundaries cache)
+  (let* ((source (nth 2 token))
+         (key (list source exclude-dot case-fold-search)))
+    (or (gethash key cache)
+        (let* ((regexp (nth 1 token))
+               (ranges (condition-case nil
+                           (cons t (wildcard--glob-class-ranges
+                                    regexp source exclude-dot boundaries))
+                         (invalid-regexp nil)))
+               (result (if ranges
+                           (wildcard--glob-ranges-regexp
+                            (cdr ranges) (nth 4 token))
+                         ;; Keep the old deferred invalid-regexp behavior.
+                         regexp)))
+          (puthash key result cache)
+          result))))
+
+(defun wildcard--glob-normal-token (token boundaries cache)
+  (cond
+   ((eq token 'star) "[^\000/]*")
+   ((eq token 'any) "[^\000/]")
+   ((eq (car-safe token) 'literal)
+    (regexp-quote (char-to-string (cadr token))))
+   ((eq (car-safe token) 'class)
+    (wildcard--glob-snapshot-class token nil boundaries cache))
+   (t "")))
+
+(defun wildcard--glob-normal-regexp (tokens boundaries cache)
+  (mapconcat (lambda (token)
+               (wildcard--glob-normal-token token boundaries cache))
+             tokens ""))
+
+(defun wildcard--glob-first-token (token boundaries cache)
+  (cond
+   ((eq token 'any) "[^\000./]")
+   ((eq (car-safe token) 'literal)
+    (unless (memq (cadr token) '(46 47))
+      (regexp-quote (char-to-string (cadr token)))))
+   ((eq (car-safe token) 'class)
+    (wildcard--glob-snapshot-class token t boundaries cache))
+   (t nil)))
+
+(defun wildcard--glob-component-regexp (tokens boundaries cache)
+  (cond
+   ((null tokens) "")
+   ;; Only a literal dot at the component's source start exempts the
+   ;; component from Bash's leading-period rule.
+   ((and (eq (car-safe (car tokens)) 'literal)
+         (eq (cadr (car tokens)) 46))
+    (wildcard--glob-normal-regexp tokens boundaries cache))
+   (t
+    (let ((rest tokens)
+          (leading-star nil)
+          branches)
+      (while (eq (car rest) 'star)
+        (setq leading-star t
+              rest (cdr rest)))
+      ;; A leading star may consume the first character, but that
+      ;; character must not be a period or slash.
+      (when leading-star
+        (push (concat "[^\000./][^\000/]*"
+                      (wildcard--glob-normal-regexp rest boundaries cache))
+              branches))
+      ;; Or it may consume nothing.  Derive the remainder's first atom
+      ;; under the same first-character restriction.
+      (when rest
+        (let ((first (wildcard--glob-first-token (car rest)
+                                                 boundaries cache)))
+          (when first
+            (push (concat first
+                          (wildcard--glob-normal-regexp (cdr rest)
+                                                        boundaries cache))
+                  branches))))
+      (when (and leading-star (null rest))
+        (push "" branches))
+      (wildcard--glob-alternation (nreverse branches))))))
+
+(defun wildcard--glob-components (tokens)
+  (let (components current)
+    (dolist (token tokens)
+      (if (eq token 'slash)
+          (setq components (cons (nreverse current) components)
+                current nil)
+        (push token current)))
+    (nreverse (cons (nreverse current) components))))
+
+(defun wildcard--glob-unquote-path-separators (pattern)
+  "Remove the quoting backslash before a glob path separator."
+  ;; Strip one quoting backslash only for an odd-length run; pairs still
+  ;; denote literal backslashes in the preceding file-name component.
+  (string-match "" pattern)
+  (let ((index 0)
+        (start 0)
+        (limit (length pattern))
+        (changed nil)
+        parts)
+    (while (< index limit)
+      (if (eq (aref pattern index) ?\\)
+          (let ((run-start index))
+            (while (and (< index limit)
+                        (eq (aref pattern index) ?\\))
+              (setq index (1+ index)))
+            (when (and (< index limit)
+                       (eq (aref pattern index) ?/)
+                       (oddp (- index run-start)))
+              (let ((quoted-slash (1- index)))
+                (when (< start quoted-slash)
+                  (push (substring pattern start quoted-slash) parts))
+                ;; Keep the slash for path splitting, discard its quote.
+                (setq start index
+                      changed t))))
+        (setq index (1+ index))))
+    (if changed
+        (progn
+          (when (< start limit)
+            (push (substring pattern start limit) parts))
+          (apply #'concat (nreverse parts)))
+      pattern)))
+
 (defun wildcard-to-regexp (wildcard)
-  "Given a shell file name pattern WILDCARD, return an equivalent regexp.
-The generated regexp will match a file name only if the file name
-matches that wildcard according to shell rules.  Only wildcards known
-by `sh' are supported."
-  (let* ((i (string-match "[[.*+\\^$?]" wildcard))
-	 ;; Copy the initial run of non-special characters.
-	 (result (substring wildcard 0 i))
-	 (len (length wildcard)))
-    ;; If no special characters, we're almost done.
-    (if i
-	(while (< i len)
-	  (let ((ch (aref wildcard i))
-		j)
-	    (setq
-	     result
-	     (concat result
-		     (cond
-		      ((and (eq ch ?\[)
-			    (not (wildcard--class-end wildcard (1+ i))))
-		       (regexp-quote "["))
-		      ((eq ch ?\[)
-  (let ((prefix "[")
-        negative prefix-member prefix-close)
-    (setq i (1+ i))
-    (cond
-     ((eq (aref wildcard i) ?!)
-      (setq i (1+ i)
-            prefix "[^"
-            negative t)
-      (when (and (< i len) (eq (aref wildcard i) ?\]))
-        (setq i (1+ i)
-              prefix "[^]"
-              prefix-member t
-              prefix-close t)))
-     ((eq (aref wildcard i) ?^)
-      (setq i (1+ i)
-            prefix "[\000^"
-            prefix-member t))
-     ((eq (aref wildcard i) ?\])
-      (setq i (1+ i)
-            prefix "[]"
-            prefix-member t
-            prefix-close t)))
-    (setq j (wildcard--class-end wildcard i t))
-    (let ((content
-           (wildcard--class-content wildcard i j prefix-close prefix-member)))
-      (if (eq content 'wildcard--empty-class)
-          (cond
-           (prefix-member
-            (setq i (if j (1- j) (1- len)))
-            prefix)
-           (negative
-            (setq i (if j (1- j) (1- len)))
-            (concat prefix "\000"))
-           (t
-            (setq i (or j (1- len)))
-            "\\b\\B"))
-        (prog1 (concat prefix content)
-          (setq i (if j (1- j) (1- len))))))))
-		      ((eq ch ?.)  "\\.")
-		      ((eq ch ?*)  "[^\000]*")
-		      ((eq ch ?+)  "\\+")
-		      ((eq ch ?^)  "\\^")
-		      ((eq ch ?$)  "\\$")
-		      ((eq ch ?\\)
-		       (if (< (1+ i) len)
-		           (prog1 (regexp-quote (char-to-string (aref wildcard (1+ i))))
-		             (setq i (1+ i)))
-		         (regexp-quote "\\")))
-		      ((eq ch ??)  "[^\000]")
-		      (t (char-to-string ch)))))
-	    (setq i (1+ i)))))
-    ;; Shell wildcards should match the entire filename,
-    ;; not its part.  Make the regexp say so.
-    (concat "\\`" result "\\'")))
+  "Return a shell-glob regexp for WILDCARD.
+POSIX syntax/category/case-table membership in bracket classes is
+snapshotted from the current regexp context when called.  Literal/range
+membership is materialized without case folding, so normal `case-fold-search'
+behavior remains a matching-time regexp setting.
+A literal (possibly backslash-quoted) period at the start of each pattern
+component is required to match a leading file-name period; a bracket class
+containing period does not count."
+  ;; Preserve the old type check and match-data side effect.
+  (string-match "[[.*+\\^$?]" wildcard)
+  (let* ((tokens (wildcard--glob-tokenize wildcard))
+         (context (and (wildcard--glob-has-class-p tokens)
+                       (wildcard--glob-context-boundaries tokens)))
+         (cache (make-hash-table :test 'equal))
+         (components (wildcard--glob-components tokens)))
+    (concat "\\`"
+            (mapconcat (lambda (component)
+                         (wildcard--glob-component-regexp
+                          component context cache))
+                       components "/")
+            "\\'")))
+
+
 (defun file-expand-wildcards (pattern &optional full regexp)
   "Expand (a.k.a. \"glob\") file-name wildcard pattern PATTERN.
 This returns a list of file names that match PATTERN.
@@ -36226,13 +36644,16 @@ relative to the current `default-directory'.
 The file names returned are normally also relative to the current
 default directory.  However, if FULL is non-nil, they are absolute."
   (save-match-data
-    (let* ((nondir (file-name-nondirectory pattern))
+    (let* ((pattern (if regexp pattern
+                      (wildcard--glob-unquote-path-separators pattern)))
+           (nondir (file-name-nondirectory pattern))
 	   (dirpart (file-name-directory pattern))
 	   ;; A list of all dirs that DIRPART specifies.
 	   ;; This can be more than one dir
 	   ;; if DIRPART contains wildcards.
 	   (dirs (if (and dirpart
-			  (string-match "[[*?]" (file-local-name dirpart)))
+			  (string-match (if regexp "[[*?]" "[[*?\\\\]")
+                                        (file-local-name dirpart)))
 		     (mapcar #'file-name-as-directory
 			     (file-expand-wildcards
                               (directory-file-name dirpart) nil regexp))
