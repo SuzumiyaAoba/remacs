@@ -36,6 +36,8 @@ mod autoselect_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod popup_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod popup_dismiss_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
@@ -743,7 +745,7 @@ pub(super) struct EditorView {
     scroll_bar_drag: Option<ScrollBarDrag>,
     follow_tooltip_drag: bool,
     mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
-    toolbar_pressed: bool,
+    consumed_mouse_buttons: HashSet<MouseButton>,
     bell_flash: bool,
     bell_flash_generation: u64,
     focus_subscriptions: Vec<Subscription>,
@@ -815,7 +817,7 @@ impl EditorView {
             scroll_bar_drag: None,
             follow_tooltip_drag: false,
             mouse_down_position: None,
-            toolbar_pressed: false,
+            consumed_mouse_buttons: HashSet::new(),
             bell_flash: false,
             bell_flash_generation: 0,
             focus_subscriptions: Vec::new(),
@@ -1459,7 +1461,7 @@ impl Render for EditorView {
                         );
                         let _ = this.tx.send_mouse_move(None, Some(absolute_position));
                         if !left_mouse_down_grid.popup_menu_items.is_empty() {
-                            this.toolbar_pressed = true;
+                            this.consumed_mouse_buttons.insert(MouseButton::Left);
                             if let Some(event) = popup_menu_event_at(
                                 &popup_hit_for_input.borrow(),
                                 point,
@@ -1474,7 +1476,7 @@ impl Render for EditorView {
                             &tool_hit_for_input.borrow(),
                             point,
                         ) {
-                            this.toolbar_pressed = true;
+                            this.consumed_mouse_buttons.insert(MouseButton::Left);
                             let _ = left_mouse_down_tx.send(GuiEvent::MenuCommand(command));
                             window.prevent_default();
                             cx.stop_propagation();
@@ -1484,7 +1486,7 @@ impl Render for EditorView {
                             &tab_hit_for_input.borrow(),
                             point,
                         ) {
-                            this.toolbar_pressed = true;
+                            this.consumed_mouse_buttons.insert(MouseButton::Left);
                             let _ = left_mouse_down_tx.send(GuiEvent::CommandArgs { command, args });
                             window.prevent_default();
                             cx.stop_propagation();
@@ -1571,6 +1573,12 @@ impl Render for EditorView {
                     if !event.dragging() {
                         return;
                     }
+                    if event
+                        .pressed_button
+                        .is_some_and(|button| this.consumed_mouse_buttons.contains(&button))
+                    {
+                        return;
+                    }
                     if let Some(drag) = this.scroll_bar_drag {
                         let Some(point) = point else {
                             return;
@@ -1596,8 +1604,7 @@ impl Render for EditorView {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
-                    if this.toolbar_pressed {
-                        this.toolbar_pressed = false;
+                    if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
                         window.prevent_default();
                         cx.stop_propagation();
                         return;
@@ -1668,55 +1675,76 @@ impl Render for EditorView {
                     let down_tx = extra_mouse_tx.clone();
                     let down_grid = extra_mouse_grid.clone();
                     let down_modifiers = extra_mouse_modifiers.clone();
-                    element = element.on_mouse_down(button, move |event, window, _cx| {
-                        let point =
-                            frame_content_point(event.position, window.viewport_size(), border);
-                        if let Some(position) = point.and_then(|point| {
-                            input::mouse_position_for_point_with_cell_width(
-                                &down_grid, point, cell_width, window,
-                            )
-                            .or_else(|| {
-                                input::mode_line_mouse_position(&down_grid, point, cell_width)
-                            })
-                        }) {
-                            let _ = down_tx.send(GuiEvent::MouseDown {
-                                button: remacs_button,
-                                click_count: event.click_count,
-                                modifiers: mouse_modifier_bits(
-                                    &event.modifiers,
-                                    modifier_mapping,
-                                    down_modifiers.get(),
-                                ),
-                                position,
-                            });
-                        }
-                    });
+                    element = element.on_mouse_down(
+                        button,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            if let Some(menu) = down_grid.popup_menu_items.first() {
+                                this.consumed_mouse_buttons.insert(button);
+                                let _ = down_tx.send(GuiEvent::PopupMenuSelection {
+                                    menu_id: menu.menu_id,
+                                    index: None,
+                                });
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                return;
+                            }
+                            let point =
+                                frame_content_point(event.position, window.viewport_size(), border);
+                            if let Some(position) = point.and_then(|point| {
+                                input::mouse_position_for_point_with_cell_width(
+                                    &down_grid, point, cell_width, window,
+                                )
+                                .or_else(|| {
+                                    input::mode_line_mouse_position(&down_grid, point, cell_width)
+                                })
+                            }) {
+                                let _ = down_tx.send(GuiEvent::MouseDown {
+                                    button: remacs_button,
+                                    click_count: event.click_count,
+                                    modifiers: mouse_modifier_bits(
+                                        &event.modifiers,
+                                        modifier_mapping,
+                                        down_modifiers.get(),
+                                    ),
+                                    position,
+                                });
+                            }
+                        }),
+                    );
                     let up_tx = extra_mouse_tx.clone();
                     let up_grid = extra_mouse_grid.clone();
                     let up_modifiers = extra_mouse_modifiers.clone();
-                    element = element.on_mouse_up(button, move |event, window, _cx| {
-                        let point =
-                            frame_content_point(event.position, window.viewport_size(), border);
-                        if let Some(position) = point.and_then(|point| {
-                            input::mouse_position_for_point_with_cell_width(
-                                &up_grid, point, cell_width, window,
-                            )
-                            .or_else(|| {
-                                input::mode_line_mouse_position(&up_grid, point, cell_width)
-                            })
-                        }) {
-                            let _ = up_tx.send(GuiEvent::MouseUp {
-                                button: remacs_button,
-                                click_count: event.click_count,
-                                modifiers: mouse_modifier_bits(
-                                    &event.modifiers,
-                                    modifier_mapping,
-                                    up_modifiers.get(),
-                                ),
-                                position,
-                            });
-                        }
-                    });
+                    element = element.on_mouse_up(
+                        button,
+                        cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                            if this.consumed_mouse_buttons.remove(&button) {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                return;
+                            }
+                            let point =
+                                frame_content_point(event.position, window.viewport_size(), border);
+                            if let Some(position) = point.and_then(|point| {
+                                input::mouse_position_for_point_with_cell_width(
+                                    &up_grid, point, cell_width, window,
+                                )
+                                .or_else(|| {
+                                    input::mode_line_mouse_position(&up_grid, point, cell_width)
+                                })
+                            }) {
+                                let _ = up_tx.send(GuiEvent::MouseUp {
+                                    button: remacs_button,
+                                    click_count: event.click_count,
+                                    modifiers: mouse_modifier_bits(
+                                        &event.modifiers,
+                                        modifier_mapping,
+                                        up_modifiers.get(),
+                                    ),
+                                    position,
+                                });
+                            }
+                        }),
+                    );
                 }
                 element
             })
