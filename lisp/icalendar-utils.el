@@ -722,13 +722,12 @@ RFC5545 defines week 1 as the first week to include at least four days
 in the year.  Weeks are assumed to start on Monday (= 1) unless WEEKSTART
 is specified, in which case it should be an integer between 0 (= Sunday)
 and 6 (= Saturday)."
-  ;; There are 53 weeks in a year if Jan 1 is the fourth day after
-  ;; WEEKSTART, e.g. if the week starts on Monday and Jan 1 is a
-  ;; Thursday, or in a leap year if Jan 1 is the third day after WEEKSTART
+  ;; Remacs: Jan 1 must be the fourth weekday, or the third in a leap
+  ;; year.  DELTA is a zero-based offset from WEEKSTART.
   (let* ((jan1wd (calendar-day-of-week (list 1 1 year)))
          (delta (mod (- jan1wd (or weekstart 1)) 7)))
-    (if (or (= 4 delta)
-            (and (= 3 delta) (calendar-leap-year-p year)))
+    (if (or (= 3 delta)
+            (and (= 2 delta) (calendar-leap-year-p year)))
         53
       52)))
 
