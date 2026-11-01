@@ -1466,7 +1466,7 @@ the period."
                      (seq-filter
                       (lambda (node)
                         (eq 'icalendar-period (icalendar-ast-node-type node)))
-                      rdate-values))))
+                      rdate-values)))))
       (when (or starts periods)
         (seq-uniq
          (nconc (mapcar
