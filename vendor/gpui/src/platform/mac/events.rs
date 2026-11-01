@@ -119,6 +119,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "end" => NSEndFunctionKey,
         "delete" => NSDeleteFunctionKey,
         "insert" => NSInsertFunctionKey,
+        "help" => NSHelpFunctionKey,
         "undo" => NSUndoFunctionKey,
         "redo" => NSRedoFunctionKey,
         "find" => NSFindFunctionKey,
@@ -437,8 +438,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSEndFunctionKey) => "end".to_string(),
             Some(NSDeleteFunctionKey) => "delete".to_string(),
             Some(NSInsertFunctionKey) => "insert".to_string(),
-            // Preserve the existing Help-key alias separately from dedicated Insert.
-            Some(NSHelpFunctionKey) => "insert".to_string(),
+            Some(NSHelpFunctionKey) => "help".to_string(),
             Some(NSUndoFunctionKey) => "undo".to_string(),
             Some(NSRedoFunctionKey) => "redo".to_string(),
             Some(NSFindFunctionKey) => "find".to_string(),
@@ -727,5 +727,14 @@ mod begin_key_tests {
     #[test]
     fn begin_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSBeginFunctionKey, "begin", 0);
+    }
+}
+
+#[cfg(test)]
+mod help_key_tests {
+    use super::*;
+    #[test]
+    fn help_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSHelpFunctionKey, "help", 0x72);
     }
 }

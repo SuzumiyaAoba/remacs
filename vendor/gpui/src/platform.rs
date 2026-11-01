@@ -23,6 +23,10 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(any(target_os = "windows", test))]
+#[path = "platform/windows/key_names.rs"]
+mod windows_key_names;
+
 #[cfg(all(
     feature = "screen-capture",
     any(

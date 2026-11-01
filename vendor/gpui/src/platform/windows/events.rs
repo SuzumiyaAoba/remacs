@@ -1410,74 +1410,23 @@ where
     }
 }
 
-fn parse_immutable(vkey: VIRTUAL_KEY) -> Option<String> {
-    Some(
-        match vkey {
-            VK_SPACE => "space",
-            VK_BACK => "backspace",
-            VK_RETURN => "enter",
-            VK_TAB => "tab",
-            VK_UP => "up",
-            VK_DOWN => "down",
-            VK_RIGHT => "right",
-            VK_LEFT => "left",
-            VK_HOME => "home",
-            VK_END => "end",
-            VK_PRIOR => "pageup",
-            VK_NEXT => "pagedown",
-            VK_BROWSER_BACK => "back",
-            VK_BROWSER_FORWARD => "forward",
-            VK_ESCAPE => "escape",
-            VK_INSERT => "insert",
-            VK_DELETE => "delete",
-            VK_APPS => "menu",
-            VK_F1 => "f1",
-            VK_F2 => "f2",
-            VK_F3 => "f3",
-            VK_F4 => "f4",
-            VK_F5 => "f5",
-            VK_F6 => "f6",
-            VK_F7 => "f7",
-            VK_F8 => "f8",
-            VK_F9 => "f9",
-            VK_F10 => "f10",
-            VK_F11 => "f11",
-            VK_F12 => "f12",
-            VK_F13 => "f13",
-            VK_F14 => "f14",
-            VK_F15 => "f15",
-            VK_F16 => "f16",
-            VK_F17 => "f17",
-            VK_F18 => "f18",
-            VK_F19 => "f19",
-            VK_F20 => "f20",
-            VK_F21 => "f21",
-            VK_F22 => "f22",
-            VK_F23 => "f23",
-            VK_F24 => "f24",
-            _ => return None,
-        }
-        .to_string(),
-    )
-}
-
 fn parse_normal_key(
     vkey: VIRTUAL_KEY,
     lparam: LPARAM,
     mut modifiers: Modifiers,
 ) -> Option<Keystroke> {
-    let mut key_char = None;
-    let key = parse_immutable(vkey).or_else(|| {
-        let scan_code = lparam.hiword() & 0xFF;
-        key_char = generate_key_char(
-            vkey,
-            scan_code as u32,
-            modifiers.control,
-            modifiers.shift,
-            modifiers.alt,
-        );
-        get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
-    })?;
+    if let Some(key) = crate::platform::windows_key_names::immutable_keystroke(vkey.0, modifiers) {
+        return Some(key);
+    }
+    let scan_code = lparam.hiword() & 0xFF;
+    let key_char = generate_key_char(
+        vkey,
+        scan_code as u32,
+        modifiers.control,
+        modifiers.shift,
+        modifiers.alt,
+    );
+    let key = get_keystroke_key(vkey, scan_code as u32, &mut modifiers)?;
     Some(Keystroke {
         modifiers,
         key,
@@ -1616,5 +1565,26 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+#[cfg(test)]
+mod help_key_tests {
+    use super::*;
+    #[test]
+    fn help_virtual_key_reaches_normal_key_parser_without_text() {
+        for modified in [false, true] {
+            let modifiers = Modifiers {
+                control: modified,
+                alt: modified,
+                shift: modified,
+                platform: modified,
+                function: false,
+            };
+            let key = parse_normal_key(VK_HELP, LPARAM(0), modifiers).expect("Help key");
+            assert_eq!(key.key, "help");
+            assert!(key.key_char.is_none());
+            assert_eq!(key.modifiers, modifiers);
+        }
     }
 }
