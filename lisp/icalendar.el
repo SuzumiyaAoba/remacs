@@ -2690,13 +2690,25 @@ END-T is the event's end time in diary format."
           ))
       )
     (cond ((string-equal frequency "WEEKLY")
-	   (let* ((byday (cadr (assoc 'BYDAY rrule-props)))
-		  (weekdays
-		   (icalendar--get-weekday-numbers byday))
-		  (weekday-clause
-		   (when (> (length weekdays) 1)
-		     (format "(memq (calendar-day-of-week date) '%s) "
-			     weekdays))))
+           (let* ((byday (cadr (assoc 'BYDAY rrule-props)))
+                  (weekdays (delete-dups (icalendar--get-weekday-numbers byday)))
+                  (start-date (list (nth 4 dtstart-dec) (nth 3 dtstart-dec)
+                                    (nth 5 dtstart-dec)))
+                  (weekday-clause
+                   (when (and weekdays
+                              (or (> (length weekdays) 1)
+                                  (/= (car weekdays) (calendar-day-of-week start-date))))
+                     ;; Remacs: INTERVAL counts WKST-aligned weeks.
+                     (let* ((week-start-day
+                             (icalendar--get-weekday-number
+                              (or (cadr (assoc 'WKST rrule-props)) "MO")))
+                            (week-start
+                             (- (calendar-absolute-from-gregorian start-date)
+                                (mod (- (calendar-day-of-week start-date) week-start-day) 7))))
+                       (format
+                        (concat "(and (memq (calendar-day-of-week date) '%S) "
+                                "(< (mod (- (calendar-absolute-from-gregorian date) %d) %d) 7)) ")
+                        weekdays week-start (* interval 7))))))
 	     (if (not start-t)
 		 (progn
 		   ;; weekly and all-day
