@@ -1941,6 +1941,8 @@ struct FrameTitleContext<'a> {
     multiple_frames: bool,
     recursion_depth: usize,
     process_status: &'static str,
+    coding: String,
+    coding_with_eol: String,
 }
 
 fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
@@ -1961,6 +1963,8 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
             'f' => title.push_str(context.file_name.unwrap_or(context.buffer_name)),
             'F' => title.push_str(context.frame_name),
             's' => title.push_str(context.process_status),
+            'z' => title.push_str(&context.coding),
+            'Z' => title.push_str(&context.coding_with_eol),
             'e' => {
                 if context.memory_full {
                     title.push_str(MEMORY_FULL_WARNING);
@@ -2203,7 +2207,7 @@ fn frame_title_multiple_frames(i: &Interp, frame: &crate::editor::Frame) -> bool
     })
 }
 
-fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
+fn frame_title(i: &Interp, frame: &crate::editor::Frame, graphical: bool) -> String {
     if let Some(parameter) = i.q_soft("title")
         && let Value::Str(title) = crate::lisp::eval::plist_get(&frame.params, parameter)
     {
@@ -2225,6 +2229,28 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
         )
     };
     let frame_name = frame.name.borrow().to_unicode_lossy();
+    let multibyte = i
+        .q_soft("enable-multibyte-characters")
+        .is_none_or(|symbol| i.symbol_value_in_buffer(symbol, buffer_id).truthy());
+    let coding = i
+        .q_soft("buffer-file-coding-system")
+        .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
+        .unwrap_or(Value::Nil);
+    let decode_coding = |include_eol| {
+        crate::lisp::builtins::misc::coding_mode_line(i, &coding, buffer_id, multibyte, include_eol)
+    };
+    let terminal_prefix = if graphical {
+        String::new()
+    } else {
+        [&i.keyboard_coding, &i.terminal_coding]
+            .into_iter()
+            .map(|coding| {
+                crate::lisp::builtins::misc::coding_mode_line(
+                    i, coding, buffer_id, multibyte, false,
+                )
+            })
+            .collect::<String>()
+    };
     let context = FrameTitleContext {
         buffer_id,
         buffer_name: &buffer_name,
@@ -2237,6 +2263,8 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
         recursion_depth: i.recursion_depth,
         process_status: crate::lisp::process::buffer_process(i, buffer_id)
             .map_or("no process", |process| process.borrow().status),
+        coding: terminal_prefix.clone() + &decode_coding(false),
+        coding_with_eol: terminal_prefix + &decode_coding(true),
     };
     let Some(format) = i
         .q_soft("frame-title-format")
@@ -7553,9 +7581,9 @@ fn render_grid_internal(
         .as_ref()
         .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame));
     let fb = frame.borrow();
-    let title = frame_title(i, &fb);
-    let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let title = frame_title(i, &fb, graphical);
+    let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let scroll_bar_style = if graphical {
         frame_scroll_bar_style(i, &mut fctx, &fb)
     } else {

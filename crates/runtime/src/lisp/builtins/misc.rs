@@ -138,7 +138,7 @@ mod coding;
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use coding::{
     CODING_ALIASES, CODING_SYSTEMS, add_to_coding_system_list, check_coding, coding_alias_group,
-    coding_known, f_coding_system_plist,
+    coding_known, coding_mode_line, f_coding_system_plist,
 };
 use coding::{
     f_check_coding_system, f_coding_system_aliases, f_coding_system_base, f_coding_system_eol_type,

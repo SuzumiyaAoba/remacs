@@ -1131,6 +1131,100 @@ pub(crate) fn coding_alias_group(i: &Interp, v: &Value) -> Option<Vec<String>> {
     Some(g)
 }
 
+/// Decode a coding-system mode-line construct without evaluating Lisp or
+/// changing the current buffer. Titles use the same coding metadata as %z/%Z.
+pub(crate) fn coding_mode_line(
+    i: &Interp,
+    coding: &Value,
+    buffer: usize,
+    multibyte: bool,
+    include_eol: bool,
+) -> String {
+    let attributes = coding_known(i, coding).and_then(|_| {
+        let table = i.symbol_value(i.q_soft("remacs-coding-system-plists")?);
+        let key = Value::Sym(i.q_soft(&coding_canonical(i, coding))?);
+        let Value::Cons(entry) = assq(&table, &key)? else {
+            return None;
+        };
+        let attributes = entry.borrow().cdr.clone();
+        Some(attributes)
+    });
+    let attribute = |name: &str| {
+        attributes
+            .as_ref()
+            .and_then(|attrs| {
+                i.q_soft(name)
+                    .map(|key| crate::lisp::eval::plist_get(attrs, key))
+            })
+            .unwrap_or(Value::Nil)
+    };
+    let character = |value: &Value| match value {
+        Value::Int(code) => u32::try_from(*code)
+            .ok()
+            .and_then(crate::lisp::text::EmacsChar::new)
+            .map(|ch| {
+                let mut text = crate::lisp::text::EmacsText::new();
+                text.push(ch);
+                text.to_unicode_lossy()
+            }),
+        Value::Str(text) => text.borrow().chars().next().map(|ch| {
+            let mut text = crate::lisp::text::EmacsText::new();
+            text.push(ch);
+            text.to_unicode_lossy()
+        }),
+        _ => None,
+    };
+    let mut output = if multibyte {
+        character(&attribute(":mnemonic")).unwrap_or_else(|| "-".to_owned())
+    } else {
+        " ".to_owned()
+    };
+    if include_eol {
+        let fixed = attributes.as_ref().and_then(|_| {
+            coding_fixed_eol(i, coding).or_else(|| {
+                let stored = i
+                    .q_soft(&coding_canonical(i, coding))
+                    .zip(i.q_soft("remacs--coding-eol-type"))
+                    .map(|(symbol, property)| i.get_prop(symbol, property))
+                    .unwrap_or(Value::Nil);
+                let eol = if stored.is_nil() {
+                    attribute(":eol-type")
+                } else {
+                    stored
+                };
+                match eol {
+                    Value::Sym(symbol) => match i.symbol_name(symbol).as_str() {
+                        "unix" => Some(0),
+                        "dos" => Some(1),
+                        "mac" => Some(2),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            })
+        });
+        let name = match fixed {
+            Some(0) => "eol-mnemonic-unix",
+            Some(1) => "eol-mnemonic-dos",
+            Some(2) => "eol-mnemonic-mac",
+            _ => "eol-mnemonic-undecided",
+        };
+        let value = i
+            .q_soft(name)
+            .map(|symbol| i.symbol_value_in_buffer(symbol, buffer))
+            .unwrap_or(Value::Nil);
+        let text = match &value {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => character(&value),
+        };
+        output.push_str(text.as_deref().unwrap_or("(*invalid*)"));
+    }
+    if let Some(end) = output.find('\0') {
+        output.truncate(end);
+    }
+    output
+}
+
 pub(super) fn f_coding_system_eol_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: nil means the default (unix ⇒ 0); a non-coding-system or
     // non-symbol argument returns nil rather than signaling.
@@ -1398,12 +1492,24 @@ pub(super) fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         return Err(i.signal_data(s, vec![cs]));
     }
     let table_id = i.q("remacs-coding-system-plists");
-    let key = {
-        let sid = i.sym_id(&a[0]).unwrap();
-        let resolved = coding_base_extra(i, &i.symbol_name(sid).to_string());
-        let (base, _) = eol_split(&resolved);
-        Value::Sym(i.intern(base))
-    };
+    let base = coding_canonical(i, &a[0]);
+    let base_symbol = i.intern(&base);
+    let key = Value::Sym(base_symbol);
+    // EOL is a spec field, not an attribute overridden by coding-system-put.
+    // Retain the original field independently of the public property list.
+    if Some(i.q(":eol-type")) == i.sym_id(&a[1]) {
+        let property = i.q("remacs--coding-eol-type");
+        if i.get_prop(base_symbol, property).is_nil() {
+            let plist = f_coding_system_plist(i, vec![a[0].clone()].into())?;
+            let eol = crate::lisp::eval::plist_get(&plist, i.q(":eol-type"));
+            let eol = if eol.is_nil() {
+                Value::Sym(i.q("undecided"))
+            } else {
+                eol
+            };
+            i.put_prop(base_symbol, property, eol);
+        }
+    }
     let mut cur = i.symbol_value(table_id);
     loop {
         let (car, cdr) = match &cur {

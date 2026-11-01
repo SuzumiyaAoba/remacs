@@ -4262,6 +4262,45 @@ fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         }
     }
     let name = i.symbol_name(sid);
+    // Preserve the definition's display metadata. EOL belongs to the
+    // coding spec, so later coding-system-put :eol-type must not change it.
+    let table_id = i.q("remacs-coding-system-plists");
+    let mut attributes = arg(&a, 11);
+    attributes = crate::lisp::eval::plist_put(&attributes, i.q(":mnemonic"), a[1].clone());
+    let eol = arg(&a, 12);
+    let eol = if eol.is_nil() {
+        Value::Sym(i.q("undecided"))
+    } else {
+        eol
+    };
+    let eol_property = i.q("remacs--coding-eol-type");
+    let mut cursor = i.symbol_value(table_id);
+    let mut updated = false;
+    while let Value::Cons(cell) = cursor {
+        let (entry, rest) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        if let Value::Cons(entry) = entry
+            && matches!(entry.borrow().car, Value::Sym(symbol) if symbol == sid)
+        {
+            // The bootstrap snapshot includes attributes normalized by GNU C,
+            // such as ASCII compatibility. Keep it for shipped definitions.
+            if !i.boot_loading {
+                entry.borrow_mut().cdr = attributes.clone();
+            }
+            updated = true;
+            break;
+        }
+        cursor = rest;
+    }
+    if !updated {
+        let entry = Value::cons(Value::Sym(sid), attributes);
+        i.set_symbol(table_id, Value::cons(entry, i.symbol_value(table_id)))?;
+    }
+    if !i.boot_loading || !updated {
+        i.put_prop(sid, eol_property, eol);
+    }
     if !i.extra_coding_systems.iter().any(|n| *n == name) {
         i.extra_coding_systems.push(name.clone());
     }
