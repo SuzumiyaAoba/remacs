@@ -31,9 +31,9 @@ const CASES: &str = r##"
         (error "Wrong daily occurrences: %S expected %S, generated %S"
                hits expected (car generated)))
       generated))
-  (defun remacs-test-ical-daily-probes (rule start candidates expected)
+  (defun remacs-test-ical-daily-probes (rule start candidates expected &optional start-time end-time extras)
     (let* ((calendar-debug-sexp t)
-           (generated (remacs-test-ical-daily-format rule start))
+           (generated (remacs-test-ical-daily-format rule start start-time end-time extras))
            hits)
       (dolist (day candidates)
         (when (diary-sexp-entry (cdr generated) "event" day) (push day hits)))
@@ -57,6 +57,86 @@ const CASES: &str = r##"
        "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=6" '(1 6 2025) '(1 1 2025) '(1 20 2025)
        '((1 6 2025) (1 7 2025) (1 8 2025) (1 9 2025) (1 10 2025) (1 13 2025))
        (car times) (cadr times))))
+  ;; DAILY BYMONTH limits months while preserving all eligible dates within them (#1569).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-daily-hits
+       "FREQ=DAILY;BYMONTH=1" '(1 1 2025) '(1 1 2025) '(2 3 2025)
+       (mapcar (lambda (day) (list 1 day 2025)) (number-sequence 1 31)) (car times) (cadr times))
+      (remacs-test-ical-daily-hits
+       (concat "FREQ=DAILY;BYMONTH=1;UNTIL=" (if (car times) "20250117T235959" "20250117"))
+       '(1 15 2025) '(1 1 2025) '(2 3 2025) '((1 15 2025) (1 16 2025) (1 17 2025))
+       (car times) (cadr times))
+      (remacs-test-ical-daily-probes
+       "FREQ=DAILY;BYMONTH=1;COUNT=33" '(1 1 2025)
+       '((1 1 2025) (1 31 2025) (2 1 2025) (1 1 2026) (1 2 2026) (1 3 2026))
+       '((1 1 2025) (1 31 2025) (1 1 2026) (1 2 2026)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=7,1,7;COUNT=33" '(6 30 2025)
+     '((6 30 2025) (7 1 2025) (7 31 2025) (8 1 2025) (1 1 2026) (1 2 2026))
+     '((6 30 2025) (7 1 2025) (7 31 2025) (1 1 2026)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;BYDAY=MO;COUNT=5" '(1 6 2025)
+     '((1 6 2025) (1 13 2025) (2 1 2025) (2 3 2025) (2 10 2025) (2 17 2025) (2 24 2025) (2 2 2026))
+     '((1 6 2025) (2 3 2025) (2 10 2025) (2 17 2025) (2 24 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;BYMONTHDAY=-1;COUNT=5" '(1 10 2025)
+     '((1 10 2025) (2 28 2025) (3 31 2025) (2 28 2026) (2 28 2027) (2 29 2028) (2 28 2029))
+     '((1 10 2025) (2 28 2025) (2 28 2026) (2 28 2027) (2 29 2028)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;BYMONTHDAY=1,15;BYDAY=MO,WE;COUNT=3" '(1 10 2025)
+     '((1 10 2025) (1 15 2025) (2 1 2025) (2 1 2026) (2 1 2027) (2 15 2027) (2 1 2034))
+     '((1 10 2025) (2 1 2027) (2 15 2027)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=1;INTERVAL=2;COUNT=18" '(1 1 2025)
+     '((1 1 2025) (1 3 2025) (1 31 2025) (2 2 2025) (1 1 2026) (1 2 2026) (1 4 2026) (1 6 2026))
+     '((1 1 2025) (1 3 2025) (1 31 2025) (1 2 2026) (1 4 2026)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;BYMONTHDAY=1,15;INTERVAL=5;COUNT=4" '(1 1 2025)
+     '((1 1 2025) (2 1 2025) (2 15 2025) (2 15 2026) (2 15 2027) (2 15 2028))
+     '((1 1 2025) (2 15 2025) (2 15 2026) (2 15 2027)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;BYMONTHDAY=31;INTERVAL=2;COUNT=100" '(1 31 2025)
+     '((1 31 2025) (2 28 2025) (3 3 2025) (1 31 2026)) '((1 31 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;INTERVAL=146097;COUNT=100" '(1 1 2025)
+     '((1 1 2025) (1 1 2425) (2 1 2425)) '((1 1 2025)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=2;INTERVAL=146097;COUNT=3" '(2 1 2025)
+     '((2 1 2025) (2 1 2425) (2 1 2825) (2 1 3225))
+     '((2 1 2025) (2 1 2425) (2 1 2825)))
+    ;; Independent enumeration covers the selected months as well as daily phase.
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=1,7;BYMONTHDAY=1,15;COUNT=1000000" '(1 1 2025)
+     '((1 1 2025) (7 15 252024) (1 1 252025)) '((1 1 2025) (7 15 252024)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=1,7;BYMONTHDAY=1,15;INTERVAL=2;COUNT=1000000" '(1 1 2025)
+     '((1 1 2025) (7 15 502024) (1 1 502025)) '((1 1 2025) (7 15 502024)))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=1;COUNT=34" '(1 1 2025)
+     '((1 1 2025) (1 31 2025) (1 1 2026) (1 2 2026) (1 3 2026) (1 4 2026))
+     '((1 31 2025) (1 1 2026) (1 2 2026)) nil nil '((EXDATE nil "20250101") (EXDATE nil "20260103")))
+    (let* ((calendar-debug-sexp t)
+           (generated (remacs-test-ical-daily-format "FREQ=DAILY;BYMONTH=1;INTERVAL=2" '(1 1 2025)))
+           (entry (diary-sexp-entry (cdr generated) "repeat %d" '(1 2 2026))))
+      (unless (equal (if (consp entry) (cdr entry) entry) "repeat 183")
+        (error "The month filter reset the cyclic phase or lost its formatted entry")))
+    (remacs-test-ical-daily-probes
+     "FREQ=DAILY;BYMONTH=1,7" '(1 1 2025)
+     '((1 1 10001) (2 1 10001) (7 1 10001)) '((1 1 10001) (7 1 10001)))
+    (let* ((start '(0 0 9 1 1 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=DAILY;BYMONTH=7,1,7;BYMONTHDAY=1,15;BYDAY=MO,WE;COUNT=4"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "Daily month conversion mutated its inputs")))
+    (dolist (rule '("FREQ=DAILY;BYMONTH=0" "FREQ=DAILY;BYMONTH=13" "FREQ=DAILY;BYMONTH=1,NO"
+                     "FREQ=DAILY;BYMONTH=1;COUNT=0" "FREQ=DAILY;BYMONTH=1;COUNT=1.5"
+                     "FREQ=DAILY;BYMONTH=1;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-daily-format rule '(1 1 2025)) nil)
+                (error t))
+        (error "An invalid daily month/count/interval was accepted: %S" rule))))
   ;; Daily BYMONTHDAY limits calendar dates without resetting the day-step phase (#1568).
   (dolist (calendar-date-style '(american european iso))
     (dolist (times '((nil nil) ("09:00" "10:00")))
