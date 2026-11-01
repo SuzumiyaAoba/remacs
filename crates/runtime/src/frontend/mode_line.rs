@@ -141,14 +141,42 @@ fn with_window<T>(
 }
 
 fn evaluate(i: &mut Interp, form: &Value) -> Result<Value, Flow> {
+    evaluate_with_quit(i, form, true)
+}
+
+pub(super) fn call_for_redisplay(
+    i: &mut Interp,
+    function: Value,
+    args: Vec<Value>,
+) -> Result<Value, Flow> {
+    if i.q_soft("inhibit-eval-during-redisplay")
+        .is_some_and(|symbol| {
+            let value = i.symbol_value(symbol);
+            value.truthy() && !matches!(value, Value::Sym(crate::lisp::obarray::sym::UNBOUND))
+        })
+    {
+        return Ok(Value::Nil);
+    }
+    let quote = Value::Sym(i.q("quote"));
+    let form = Value::list(
+        std::iter::once(function)
+            .chain(
+                args.into_iter()
+                    .map(|arg| Value::list(vec![quote.clone(), arg])),
+            )
+            .collect(),
+    );
+    evaluate_with_quit(i, &form, false)
+}
+
+fn evaluate_with_quit(i: &mut Interp, form: &Value, inhibit_quit: bool) -> Result<Value, Flow> {
     let mark = i.specbind_depth();
     let result = (|| {
-        for (name, value) in [
-            ("inhibit-redisplay", Value::t()),
-            ("inhibit-quit", Value::t()),
-        ] {
-            let symbol = i.q(name);
-            i.specbind(symbol, value)?;
+        let redisplay = i.q("inhibit-redisplay");
+        i.specbind(redisplay, Value::t())?;
+        if inhibit_quit {
+            let quit = i.q("inhibit-quit");
+            i.specbind(quit, Value::t())?;
         }
         let eval = Value::Sym(i.q("eval"));
         let quote = Value::Sym(i.q("quote"));

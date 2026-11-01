@@ -1943,6 +1943,8 @@ struct FrameTitleContext<'a> {
     process_status: &'static str,
     coding: String,
     coding_with_eol: String,
+    remote: bool,
+    remote_used: Option<&'a std::cell::Cell<bool>>,
 }
 
 fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
@@ -1965,6 +1967,12 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
             's' => title.push_str(context.process_status),
             'z' => title.push_str(&context.coding),
             'Z' => title.push_str(&context.coding_with_eol),
+            '@' => {
+                if let Some(used) = context.remote_used {
+                    used.set(true);
+                }
+                title.push(if context.remote { '@' } else { '-' });
+            }
             'e' => {
                 if context.memory_full {
                     title.push_str(MEMORY_FULL_WARNING);
@@ -2207,7 +2215,12 @@ fn frame_title_multiple_frames(i: &Interp, frame: &crate::editor::Frame) -> bool
     })
 }
 
-fn frame_title(i: &Interp, frame: &crate::editor::Frame, graphical: bool) -> String {
+fn frame_title(
+    i: &Interp,
+    frame: &crate::editor::Frame,
+    graphical: bool,
+    remote_used: Option<&std::cell::Cell<bool>>,
+) -> String {
     if let Some(parameter) = i.q_soft("title")
         && let Value::Str(title) = crate::lisp::eval::plist_get(&frame.params, parameter)
     {
@@ -2265,6 +2278,10 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame, graphical: bool) -> Str
             .map_or("no process", |process| process.borrow().status),
         coding: terminal_prefix.clone() + &decode_coding(false),
         coding_with_eol: terminal_prefix + &decode_coding(true),
+        remote: i.q_soft("default-directory").is_some_and(|symbol| {
+            buffer_directory_remote(i, buffer_id, &i.symbol_value_in_buffer(symbol, buffer_id))
+        }),
+        remote_used,
     };
     let Some(format) = i
         .q_soft("frame-title-format")
@@ -2325,7 +2342,31 @@ pub(super) fn prepare_mode_line_remote(
     let match_data = i.match_data.clone();
     let result = (|| {
         let mut seen = HashSet::new();
-        for window in windows {
+        let mut buffers = Vec::new();
+        let window_ids: HashSet<_> = windows
+            .iter()
+            .filter_map(|window| {
+                let window = window.borrow();
+                (!window.dead).then_some(window.id)
+            })
+            .collect();
+        // Native titles use the frame-selected window, even when mode-line
+        // formats contain no remote construct. Probe the actual formatter so
+        // escaped percents, field limits and inactive branches stay inert.
+        for frame in &i.frames {
+            let frame_state = frame.borrow();
+            if frame_state.dead || !window_ids.contains(&frame_state.selected.borrow().id) {
+                continue;
+            }
+            let used = std::cell::Cell::new(false);
+            let graphical = crate::editor::frame_is_graphical(i, frame);
+            let _ = frame_title(i, &frame_state, graphical, Some(&used));
+            let buffer = frame_state.selected.borrow().buffer;
+            if used.get() && i.buffer_live(buffer) && seen.insert(buffer) {
+                buffers.push(buffer);
+            }
+        }
+        for window in &windows {
             let (buffer, skip) = {
                 let window = window.borrow();
                 (window.buffer, window.dead || window.minibuffer)
@@ -2343,6 +2384,9 @@ pub(super) fn prepare_mode_line_remote(
             if !probe.remote_used.get() || !seen.insert(buffer) {
                 continue;
             }
+            buffers.push(buffer);
+        }
+        for buffer in buffers {
             i.set_current_buffer(buffer);
             let directory_symbol = i.q("default-directory");
             let directory = i.symbol_value(directory_symbol);
@@ -2352,7 +2396,7 @@ pub(super) fn prepare_mode_line_remote(
             };
             let remote = if matches!(directory, Value::Str(_)) {
                 let function = Value::Sym(i.q("file-remote-p"));
-                i.apply(&function, vec![directory])
+                super::mode_line::call_for_redisplay(i, function, vec![directory])
             } else {
                 Ok(Value::Nil)
             };
@@ -2362,7 +2406,12 @@ pub(super) fn prepare_mode_line_remote(
                     snapshot,
                     Value::from_bool(remote.as_ref().is_ok_and(Value::truthy)),
                 );
-                i.buffers.get(buffer).unwrap().borrow_mut().locals.insert(cache, value);
+                i.buffers
+                    .get(buffer)
+                    .unwrap()
+                    .borrow_mut()
+                    .locals
+                    .insert(cache, value);
             }
             remote?;
         }
@@ -2376,16 +2425,22 @@ pub(super) fn prepare_mode_line_remote(
 }
 
 fn mode_line_remote(i: &Interp, buffer: usize) -> bool {
-    let Some(Value::Cons(cache)) = mode_line_variable(i, buffer, "remacs--mode-line-remote-cache") else {
+    let directory = mode_line_variable(i, buffer, "default-directory").unwrap_or(Value::Nil);
+    buffer_directory_remote(i, buffer, &directory)
+}
+
+fn buffer_directory_remote(i: &Interp, buffer: usize, current: &Value) -> bool {
+    let Some(Value::Cons(cache)) = mode_line_variable(i, buffer, "remacs--mode-line-remote-cache")
+    else {
         return false;
     };
     let (directory, remote) = {
         let cache = cache.borrow();
         (cache.car.clone(), cache.cdr.truthy())
     };
-    let (Some(Value::Str(current)), Value::Str(saved)) =
-        (mode_line_variable(i, buffer, "default-directory"), directory)
-    else { return false; };
+    let (Value::Str(current), Value::Str(saved)) = (current, directory) else {
+        return false;
+    };
     let same_directory = *current.borrow() == *saved.borrow();
     same_directory && remote
 }
@@ -7582,7 +7637,7 @@ fn render_grid_internal(
         .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame));
     let fb = frame.borrow();
     let graphical = crate::editor::frame_is_graphical(i, &frame);
-    let title = frame_title(i, &fb, graphical);
+    let title = frame_title(i, &fb, graphical, None);
     let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
     let scroll_bar_style = if graphical {
         frame_scroll_bar_style(i, &mut fctx, &fb)
