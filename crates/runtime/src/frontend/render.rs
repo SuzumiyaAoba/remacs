@@ -1975,6 +1975,7 @@ struct FrameTitleContext<'a> {
     dependencies: Option<&'a FrameTitleDependencies>,
     global_mode_string: Value,
     buffer_size: usize,
+    numeric_field_limit: usize,
     window_start_offset: usize,
     window_end_offset: usize,
 }
@@ -1985,82 +1986,85 @@ fn format_frame_title_string(
     context: &FrameTitleContext<'_>,
     depth: usize,
 ) -> String {
-    let mut title = String::with_capacity(format.len());
-    let mut chars = format.chars();
-    while let Some(character) = chars.next() {
-        if character != '%' {
-            title.push(character);
-            continue;
-        }
-        let Some(specifier) = chars.next() else {
-            title.push('%');
-            break;
-        };
-        match specifier {
-            '%' => title.push('%'),
-            'b' => title.push_str(context.buffer_name),
-            'f' => title.push_str(context.file_name.unwrap_or(context.buffer_name)),
-            'F' => title.push_str(context.frame_name),
-            's' => title.push_str(context.process_status),
-            'z' => title.push_str(&context.coding),
-            'Z' => title.push_str(&context.coding_with_eol),
-            'i' => title.push_str(&context.buffer_size.to_string()),
-            'I' => title.push_str(&readable_mode_line_size(context.buffer_size)),
-            'P' | 'o' | 'q' => {
-                if let Some(dependencies) = context.dependencies {
-                    dependencies.position.set(true);
-                }
-                title.push_str(&buffer_position_indicator(
-                    context.buffer_size,
-                    context.window_start_offset,
-                    context.window_end_offset,
-                    specifier,
-                ));
+    format_frame_title_string_field(i, format, context, FrameTitleField::default(), depth)
+}
+
+fn frame_title_specifier(context: &FrameTitleContext<'_>, specifier: char) -> Option<String> {
+    let mut title = String::new();
+    match specifier {
+        '%' => title.push('%'),
+        'b' => title.push_str(context.buffer_name),
+        'f' => title.push_str(context.file_name.unwrap_or_default()),
+        'F' => title.push_str(context.frame_name),
+        's' => title.push_str(context.process_status),
+        'z' => title.push_str(&context.coding),
+        'Z' => title.push_str(&context.coding_with_eol),
+        'i' => title.push_str(&context.buffer_size.to_string()),
+        'I' => title.push_str(&readable_mode_line_size(context.buffer_size)),
+        'P' | 'o' | 'q' => {
+            if let Some(dependencies) = context.dependencies {
+                dependencies.position.set(true);
             }
-            'M' => title.push_str(&format_frame_title_field(
-                i,
-                &context.global_mode_string,
-                context,
-                depth + 1,
-                None,
-            )),
-            '@' => {
-                if let Some(dependencies) = context.dependencies {
-                    dependencies.remote.set(true);
-                }
-                title.push(if context.remote { '@' } else { '-' });
-            }
-            'e' => {
-                if context.memory_full {
-                    title.push_str(MEMORY_FULL_WARNING);
-                }
-            }
-            '[' | ']' => {
-                // GNU decode_mode_spec uses command_loop_level, excluding
-                // minibuffer depth, and abbreviates levels above five.
-                if context.recursion_depth > 5 {
-                    title.push_str(if specifier == '[' {
-                        "[[[... "
-                    } else {
-                        " ...]]]"
-                    });
-                } else {
-                    title.extend(std::iter::repeat_n(specifier, context.recursion_depth));
-                }
-            }
-            '*' | '+' | '&' => title.push(buffer_state_marker(
-                context.read_only,
-                context.modified,
+            title.push_str(&buffer_position_indicator(
+                context.buffer_size,
+                context.window_start_offset,
+                context.window_end_offset,
                 specifier,
-            )),
-            '-' => title.push('-'),
-            other => {
-                title.push('%');
-                title.push(other);
+            ));
+        }
+        '@' => {
+            if let Some(dependencies) = context.dependencies {
+                dependencies.remote.set(true);
+            }
+            title.push(if context.remote { '@' } else { '-' });
+        }
+        'e' => {
+            if context.memory_full {
+                title.push_str(MEMORY_FULL_WARNING);
             }
         }
+        '[' | ']' => {
+            // GNU decode_mode_spec uses command_loop_level, excluding
+            // minibuffer depth, and abbreviates levels above five.
+            if context.recursion_depth > 5 {
+                title.push_str(if specifier == '[' {
+                    "[[[... "
+                } else {
+                    " ...]]]"
+                });
+            } else {
+                title.extend(std::iter::repeat_n(specifier, context.recursion_depth));
+            }
+        }
+        '*' | '+' | '&' => title.push(buffer_state_marker(
+            context.read_only,
+            context.modified,
+            specifier,
+        )),
+        '-' => title.push('-'),
+        _ => return None,
     }
-    title
+    Some(title)
+}
+
+fn frame_title_percent(tail: &str) -> (Option<char>, usize, usize, bool) {
+    let mut offset = 1;
+    let mut width = 0i32;
+    while let Some(digit) = tail
+        .as_bytes()
+        .get(offset)
+        .filter(|digit| digit.is_ascii_digit())
+    {
+        // GNU stores the decimal modifier in a C int.
+        width = width
+            .wrapping_mul(10)
+            .wrapping_add(i32::from(*digit - b'0'));
+        offset += 1;
+    }
+    let has_width = offset > 1;
+    let specifier = tail[offset..].chars().next().filter(|ch| *ch != '\0');
+    let next = offset + specifier.map_or(0, char::len_utf8);
+    (specifier, width.max(0) as usize, next, has_width)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -2091,46 +2095,71 @@ fn format_frame_title_string_field(
     i: &Interp,
     format: &str,
     context: &FrameTitleContext<'_>,
-    maximum: Option<usize>,
+    field: FrameTitleField,
     depth: usize,
 ) -> String {
     let mut output = String::new();
     let mut columns = 0usize;
     let mut offset = 0;
-    while offset < format.len() && maximum.is_none_or(|limit| columns < limit) {
+    while offset < format.len() && field.maximum.is_none_or(|limit| columns < limit) {
         let tail = &format[offset..];
         let literal_end = tail.find(['%', '\0']).unwrap_or(tail.len());
-        let remaining = maximum.map(|limit| limit.saturating_sub(columns));
+        let remaining = field.maximum.map(|limit| limit.saturating_sub(columns));
         let (piece, width, next) = if literal_end > 0 {
             let (_, width) = frame_title_prefix(i, context, &tail[..literal_end], remaining);
-            // xdisp.c first measures the literal span, then passes that width
-            // to store_mode_line_noprop. Zero means unbounded there, including
-            // when the next wide character did not fit the requested precision.
+            // A measured zero precision is unbounded in GNU's string sink.
             let (piece, width) = frame_title_prefix(i, context, tail, (width > 0).then_some(width));
             (piece.to_owned(), width, offset + literal_end)
         } else if tail.starts_with('\0') {
             break;
         } else {
-            let next = offset + 1 + tail[1..].chars().next().map_or(0, char::len_utf8);
-            if tail.starts_with("%M") {
-                // %M is another mode-line element, not a flat decoded string:
-                // apply the remaining precision while formatting its contents.
+            let (Some(specifier), mut minimum, consumed, has_width) = frame_title_percent(tail)
+            else {
+                break;
+            };
+            let next = offset + consumed;
+            let outer_padding = field.minimum.saturating_sub(columns);
+            if outer_padding > 0 {
+                minimum = minimum.min(outer_padding);
+            }
+            if specifier == 'M' {
                 let piece = format_frame_title_field(
                     i,
                     &context.global_mode_string,
                     context,
                     depth + 1,
                     Some(FrameTitleField {
-                        minimum: 0,
+                        minimum,
                         maximum: remaining,
                     }),
                 );
                 let width = frame_title_prefix(i, context, &piece, None).1;
                 (piece, width, next)
             } else {
-                let decoded = format_frame_title_string(i, &format[offset..next], context, depth);
-                let (piece, width) = frame_title_prefix(i, context, &decoded, remaining);
-                (piece.to_owned(), width, next)
+                let mut decoded = frame_title_specifier(context, specifier).unwrap_or_else(|| {
+                    if has_width {
+                        String::new()
+                    } else {
+                        format!("%{specifier}")
+                    }
+                });
+                if matches!(specifier, 'i' | 'I') {
+                    // Numeric decoders justify the number before the common
+                    // sink pads the whole field. %I's unit is outside that width.
+                    let digits = decoded.len().saturating_sub(usize::from(
+                        specifier == 'I' && context.buffer_size >= 1000,
+                    ));
+                    let padding = minimum
+                        .min(context.numeric_field_limit)
+                        .saturating_sub(digits);
+                    decoded = " ".repeat(padding) + &decoded;
+                }
+                let (prefix, width) = frame_title_prefix(i, context, &decoded, remaining);
+                let padding = minimum.saturating_sub(width);
+                let mut piece = prefix.to_owned();
+                piece.extend(std::iter::repeat_n(' ', padding));
+                // GNU pads even when the specified minimum exceeds precision.
+                (piece, width.saturating_add(padding), next)
             }
         };
         output.push_str(&piece);
@@ -2164,7 +2193,7 @@ fn format_frame_title_field(
         Value::Str(string) => {
             let text = string.borrow().to_unicode_lossy();
             if let Some(field) = field {
-                format_frame_title_string_field(i, &text, context, field.maximum, depth)
+                format_frame_title_string_field(i, &text, context, field, depth)
             } else {
                 format_frame_title_string(i, &text, context, depth)
             }
@@ -2383,6 +2412,7 @@ fn frame_title(
             .map(|symbol| i.symbol_value_in_buffer(symbol, buffer_id))
             .unwrap_or(Value::Nil),
         buffer_size,
+        numeric_field_limit: frame.width.saturating_mul(4),
         window_start_offset: window_start,
         window_end_offset: window_end,
     };
