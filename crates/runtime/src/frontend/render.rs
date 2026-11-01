@@ -1825,11 +1825,16 @@ fn cursor_type_for_window(
         return None;
     }
     if symbol_is(i, &nonselected, "t") {
-        Some(CursorStyle {
-            shape: GridCursorShape::Hollow,
-            thickness: 0,
-            box_size: None,
-        })
+        let mut style = parse_cursor_type(i, &effective_type)?;
+        match style.shape {
+            GridCursorShape::Block => {
+                style.shape = GridCursorShape::Hollow;
+                style.box_size = None;
+            }
+            GridCursorShape::Bar if style.thickness > 1 => style.thickness -= 1,
+            _ => {}
+        }
+        Some(style)
     } else {
         parse_cursor_type(i, &nonselected)
     }
@@ -7708,7 +7713,7 @@ fn render_grid_internal(
             position.buffer_id == buf_id
                 && position.window_id.map_or(selected_window, |id| id == window_id)
         });
-        let cursor_style = cursor_type_for_window(i, w, buf_id, selected_window);
+        let cursor_style = cursor_type_for_window(i, w, buf_id, selected_frame && selected_window);
         let bidi_display_reordering =
             buffer_setting(i, "bidi-display-reordering", buf_id).truthy();
         let bidi_paragraph_direction = match buffer_setting(i, "bidi-paragraph-direction", buf_id)
@@ -8876,7 +8881,7 @@ fn render_grid_internal(
                     let point_visible = point_col >= row_hscroll
                         && point_col.saturating_sub(row_hscroll) < content_width;
                     let hide_cursor = hide_offscreen_cursor && !point_visible;
-                    if selected_window && !hide_cursor {
+                    if selected_frame && selected_window && !hide_cursor {
                         selected_cursor = Some((y, content_left, col, byte_index));
                     }
                     if !hide_cursor
@@ -8928,7 +8933,7 @@ fn render_grid_internal(
                                 shape,
                                 thickness: cursor_style.thickness,
                                 color: cursor_color,
-                                selected: selected_window,
+                                selected: selected_frame && selected_window,
                             },
                         content_left,
                         ));
