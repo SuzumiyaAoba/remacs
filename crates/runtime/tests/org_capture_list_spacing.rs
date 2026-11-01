@@ -6,7 +6,24 @@ const SETUP: &str = r##"
   (with-temp-buffer
     (insert-file-contents (locate-library "org-capture.el"))
     (emacs-lisp-mode)
-    (check-parens))
+    (check-parens)
+    (goto-char (point-min))
+    (let (definitions)
+      (while (progn (forward-comment (point-max)) (not (eobp)))
+        (let ((form (read (current-buffer))))
+          (when (and (eq (car-safe form) 'defun)
+                     (memq (car-safe (cdr-safe form))
+                           '(org-capture--list-item-empty-lines-before
+                             org-capture-place-item org-capture-place-table-line
+                             org-capture-fill-template)))
+            (push (car-safe (cdr-safe form)) definitions))
+          (when (equal form '(provide 'org-capture))
+            (push 'provide definitions))))
+      (unless (equal (nreverse definitions)
+                     '(org-capture--list-item-empty-lines-before
+                       org-capture-place-item org-capture-place-table-line
+                       org-capture-fill-template provide))
+        (error "The capture list helper swallowed later top-level forms"))))
   (load "org-capture.el" nil t)
   (require 'org-capture)
   (unless (and (featurep 'org-capture)
