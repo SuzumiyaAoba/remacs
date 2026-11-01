@@ -131,6 +131,8 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "pause" => NSPauseFunctionKey,
         "print" => NSPrintFunctionKey,
         "select" => NSSelectFunctionKey,
+        "break" => NSBreakFunctionKey,
+        "clear" => NSClearLineFunctionKey,
         "menu" => NSMenuFunctionKey,
         "f1" => NSF1FunctionKey,
         "f2" => NSF2FunctionKey,
@@ -458,6 +460,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSPauseFunctionKey) => "pause".to_string(),
             Some(NSPrintFunctionKey) => "print".to_string(),
             Some(NSSelectFunctionKey) => "select".to_string(),
+            Some(NSBreakFunctionKey) => "break".to_string(),
+            Some(NSClearLineFunctionKey) => "clear".to_string(),
             Some(NSMenuFunctionKey) => "menu".to_string(),
             Some(NSF1FunctionKey) => "f1".to_string(),
             Some(NSF2FunctionKey) => "f2".to_string(),
@@ -558,7 +562,9 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             }
         };
 
-        if let Some(keypad_key) = keypad_key_name(native_event.keyCode(), first_char) {
+        if first_char != Some(NSClearLineFunctionKey)
+            && let Some(keypad_key) = keypad_key_name(native_event.keyCode(), first_char)
+        {
             key = keypad_key.to_string();
             key_char = None;
         }
@@ -817,5 +823,27 @@ mod char_line_key_tests {
     #[test]
     fn deleteline_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSDeleteLineFunctionKey, "deleteline", 0);
+    }
+}
+
+#[cfg(test)]
+mod break_key_tests {
+    use super::*;
+    use cocoa::appkit::NSBreakFunctionKey;
+    #[test]
+    fn break_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSBreakFunctionKey, "break", 0);
+    }
+}
+
+#[cfg(test)]
+mod clear_line_key_tests {
+    use super::*;
+    use cocoa::appkit::NSClearLineFunctionKey;
+    #[test]
+    fn clear_line_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSClearLineFunctionKey, "clear", 0);
+        assert_named_function_key(NSClearLineFunctionKey, "clear", 0x47);
+        assert_named_function_key(NSClearLineFunctionKey, "clear", 0x57);
     }
 }

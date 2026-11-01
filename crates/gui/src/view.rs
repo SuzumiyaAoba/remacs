@@ -64,6 +64,10 @@ mod select_key_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod char_line_key_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod break_key_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod clear_line_key_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
