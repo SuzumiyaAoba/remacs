@@ -8,7 +8,7 @@ const CASES: &str = r##"
             "BEGIN:VEVENT\r\nUID:coding@example.test\r\nDTSTAMP:20250101T000000Z\r\n"
             "DTSTART;VALUE=DATE:20250101\r\nSUMMARY:Alpha\r\n beta\r\n"
             "END:VEVENT\r\nEND:VCALENDAR\r\n"))
-  (defun remacs-test-unfolded-file (source write-coding summary prefer-utf8)
+  (defun remacs-test-unfolded-file (source write-coding summary prefer-utf8 &optional visit)
     (let ((file (make-temp-file "remacs-ical-coding-" nil ".ics"))
           (output (make-temp-file "remacs-ical-output-" nil ".ics"))
           buffer)
@@ -17,7 +17,7 @@ const CASES: &str = r##"
             (let ((coding-system-for-write write-coding))
               (write-region source nil file nil 'silent))
             (let ((coding-system-for-read nil))
-              (setq buffer (icalendar-unfolded-buffer-from-file file)))
+              (setq buffer (icalendar-unfolded-buffer-from-file file visit)))
             (with-current-buffer buffer
               (unless (if prefer-utf8
                           (eq buffer-file-coding-system 'prefer-utf-8-dos)
@@ -73,10 +73,20 @@ const CASES: &str = r##"
   t)
 "##;
 
-#[test]
-fn unfolding_prefers_utf8_for_undecided_input_and_keeps_detected_encodings() {
-    let mut interp = Interp::new();
-    match interp.eval_str(CASES) {
+const FILE_VARIANTS: &str = r##"
+(progn
+  (dolist (unix-eol '(nil t))
+    (dolist (visit '(nil t))
+      (let ((source (if unix-eol
+                        (replace-regexp-in-string "\r" "" remacs-test-ascii-calendar t t)
+                      remacs-test-ascii-calendar))
+            (icalendar-parse-strictly nil))
+        (remacs-test-unfolded-file source 'no-conversion "Alphabeta" t visit))))
+  t)
+"##;
+
+fn check(interp: &mut Interp, source: &str) {
+    match interp.eval_str(source) {
         Ok(value) => assert!(value.truthy()),
         Err(Flow::Signal(signal)) => panic!(
             "{} {}",
@@ -85,4 +95,11 @@ fn unfolding_prefers_utf8_for_undecided_input_and_keeps_detected_encodings() {
         ),
         Err(other) => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn unfolding_prefers_utf8_for_undecided_input_and_keeps_detected_encodings() {
+    let mut interp = Interp::new();
+    check(&mut interp, CASES);
+    check(&mut interp, FILE_VARIANTS);
 }
