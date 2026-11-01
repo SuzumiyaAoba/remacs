@@ -3304,13 +3304,14 @@ instead removed from the current item list."
                          (unless (ido-ignore-item-p name ido-ignore-files t)
                            name))
                        (split-string
-                        (shell-command-to-string
-                         (concat find-program " "
-                                 (shell-quote-argument dir)
-                                 (if ido-case-fold " -iname " " -name ")
-                                 (shell-quote-argument
-                                  (concat (if prefix "" "*") file "*"))
-                                 " -type " (if finddir "d" "f") " -print"))))))
+                        (with-temp-buffer
+                          (process-file find-program nil t nil
+                                        dir
+                                        (if ido-case-fold "-iname" "-name")
+                                        (concat (if prefix "" "*") file "*")
+                                        "-type" (if finddir "d" "f")
+                                        "-print")
+                          (buffer-string))))))
 	filename d f
 	res)
     (while filenames
