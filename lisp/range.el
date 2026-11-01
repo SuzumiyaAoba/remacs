@@ -250,9 +250,9 @@ Note: LIST has to be sorted over `<'."
 ;;Remacs: equality checks below must compare bignum endpoints numerically.
 (defun range-remove (range1 range2)
   "Return a range that has all numbers from RANGE2 removed from RANGE1.
-The returned range is always a list.  RANGE2 can also be a unsorted
-list of numbers.  RANGE1 is modified by side effects, RANGE2 is not
-modified."
+The returned range is always a list.  RANGE2 can also be an unsorted
+list of numbers.  Neither RANGE1 nor RANGE2 is modified.  In no-op
+cases, the returned range may be the same list object as RANGE1."
   (if (or (null range1) (null range2))
       ;;Remacs: keep single-range shorthand normalized even on no-op.
       (range-normalize range1)
