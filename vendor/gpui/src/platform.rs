@@ -237,6 +237,25 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn set_menu_bar_items(&self, items: Vec<MenuItem>, keymap: &Keymap) {
+        self.set_menus(
+            items
+                .into_iter()
+                .filter_map(|item| match item {
+                    MenuItem::Submenu(menu) | MenuItem::SubmenuWithKeyHint { menu, .. } => {
+                        Some(menu)
+                    }
+                    _ => None,
+                })
+                .collect(),
+            keymap,
+        );
+    }
+    fn get_menu_bar_items(&self) -> Option<Vec<OwnedMenuItem>> {
+        self.get_menus()
+            .map(|menus| menus.into_iter().map(OwnedMenuItem::Submenu).collect())
+    }
+
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}

@@ -347,6 +347,18 @@ pub enum OsAction {
     Redo,
 }
 
+pub(crate) fn menu_bar_submenus(items: &[OwnedMenuItem]) -> Vec<OwnedMenu> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            OwnedMenuItem::Submenu(menu) | OwnedMenuItem::SubmenuWithKeyHint { menu, .. } => {
+                Some(menu.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
     platform.on_will_open_app_menu(Box::new({
         let cx = cx.to_async();

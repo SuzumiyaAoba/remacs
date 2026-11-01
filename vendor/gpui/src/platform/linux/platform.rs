@@ -24,7 +24,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, OwnedMenuItem,
+    PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
 };
@@ -101,7 +102,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
-    pub(crate) menus: Vec<OwnedMenu>,
+    pub(crate) menu_bar_items: Vec<OwnedMenuItem>,
 }
 
 impl LinuxCommon {
@@ -127,7 +128,7 @@ impl LinuxCommon {
             auto_hide_scrollbars: false,
             callbacks,
             signal,
-            menus: Vec::new(),
+            menu_bar_items: Vec::new(),
         };
 
         (common, main_receiver)
@@ -485,14 +486,22 @@ impl<P: LinuxClient + 'static> Platform for P {
         Ok(app_path)
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.with_common(|common| {
-            common.menus = menus.into_iter().map(|menu| menu.owned()).collect();
-        })
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+        self.set_menu_bar_items(menus.into_iter().map(MenuItem::submenu).collect(), keymap);
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        self.with_common(|common| Some(common.menus.clone()))
+        self.with_common(|common| Some(crate::platform::menu_bar_submenus(&common.menu_bar_items)))
+    }
+
+    fn set_menu_bar_items(&self, items: Vec<MenuItem>, _keymap: &Keymap) {
+        self.with_common(|common| {
+            common.menu_bar_items = items.into_iter().map(MenuItem::owned).collect();
+        })
+    }
+
+    fn get_menu_bar_items(&self) -> Option<Vec<OwnedMenuItem>> {
+        self.with_common(|common| Some(common.menu_bar_items.clone()))
     }
 
     fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {

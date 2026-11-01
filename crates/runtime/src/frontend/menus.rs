@@ -208,6 +208,10 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
     }
     let mut pending = Vec::new();
     for entry in collect_menu_bar(i)? {
+        let command = match entry.definitions.first() {
+            Some(Value::Sym(symbol)) => Some(i.symbol_name(*symbol)),
+            _ => None,
+        };
         let mut panes = Vec::new();
         for map in entry.definitions {
             if !crate::editor::is_keymap(i, &map) {
@@ -224,13 +228,13 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
                 items: menu_items(i, &map, 1)?,
             });
         }
-        pending.push((entry.name, panes));
+        pending.push((entry.name, command, panes));
     }
     // Keep Lisp name objects until every callback has run, then publish only
     // value-free strings and rows to the rendering thread.
     Ok(pending
         .into_iter()
-        .filter_map(|(name, panes)| {
+        .filter_map(|(name, command, panes)| {
             let multiple = panes.len() > 1;
             let mut items = Vec::new();
             for pane in panes {
@@ -248,9 +252,10 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
                     items.extend(pane.items);
                 }
             }
-            (!items.is_empty()).then(|| GridMenu {
+            (!items.is_empty() || command.is_some()).then(|| GridMenu {
                 label: menu_name(&name),
                 items,
+                command,
             })
         })
         .collect())

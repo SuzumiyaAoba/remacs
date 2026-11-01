@@ -1085,7 +1085,7 @@ impl Render for EditorView {
             self.window_title = Some(self.grid.title.clone());
         }
         if self.installed_menus != self.grid.menus {
-            cx.set_menus(gpui_menus(&self.grid.menus));
+            cx.set_menu_bar_items(gpui_menus(&self.grid.menus));
             self.installed_menus = self.grid.menus.clone();
         }
 
@@ -2688,14 +2688,39 @@ impl Render for EditorView {
     }
 }
 
-fn gpui_menus(menus: &[GridMenu]) -> Vec<Menu> {
-    menus
-        .iter()
-        .map(|menu| Menu {
-            name: menu.label.clone().into(),
-            items: menu.items.iter().filter_map(gpui_menu_item).collect(),
-        })
-        .collect()
+fn gpui_menus(menus: &[GridMenu]) -> Vec<MenuItem> {
+    let roots = menus.iter().map(|menu| {
+        if let Some(command) = &menu.command {
+            MenuItem::action(
+                menu.label.clone(),
+                RunMenuCommand {
+                    command: command.clone(),
+                },
+            )
+        } else {
+            MenuItem::submenu(Menu {
+                name: menu.label.clone().into(),
+                items: menu.items.iter().filter_map(gpui_menu_item).collect(),
+            })
+        }
+    });
+    #[cfg(target_os = "macos")]
+    {
+        // AppKit reserves the first root for the application menu. Keep Lisp's
+        // first command/menu outside that slot, like GNU's NS frontend.
+        let application = MenuItem::submenu(Menu {
+            name: "REmacs".into(),
+            items: vec![MenuItem::action(
+                "Quit REmacs",
+                RunMenuCommand {
+                    command: "save-buffers-kill-terminal".into(),
+                },
+            )],
+        });
+        std::iter::once(application).chain(roots).collect()
+    }
+    #[cfg(not(target_os = "macos"))]
+    roots.collect()
 }
 
 fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
@@ -2733,6 +2758,49 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
 #[cfg(test)]
 mod native_menu_tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn root_commands_are_actions_and_single_item_menus_remain_submenus() {
+        let roots = vec![
+            GridMenu {
+                label: "Run now".into(),
+                command: Some("ignore".into()),
+                items: Vec::new(),
+            },
+            GridMenu {
+                label: "One item".into(),
+                command: None,
+                items: vec![GridMenuItem {
+                    label: "Child".into(),
+                    command: Some("ignore".into()),
+                    items: Vec::new(),
+                    separator: false,
+                    checked: false,
+                    key_hint: None,
+                }],
+            },
+        ];
+        let app = gpui::TestAppContext::single();
+        app.update(|cx| {
+            cx.set_menu_bar_items(gpui_menus(&roots));
+            let items = cx.get_menu_bar_items().unwrap();
+            let offset = usize::from(cfg!(target_os = "macos"));
+            let MenuItem::Action { action, .. } = gpui_menus(&roots).remove(offset) else {
+                panic!("a root command must be a direct action");
+            };
+            assert_eq!(action.as_any().downcast_ref::<RunMenuCommand>().unwrap().command, "ignore");
+            assert!(matches!(&items[offset], gpui::OwnedMenuItem::Action { name, .. } if name == "Run now"));
+            assert!(matches!(&items[offset + 1], gpui::OwnedMenuItem::Submenu(menu) if menu.name.as_str() == "One item" && menu.items.len() == 1));
+            let legacy = cx.get_menus().unwrap();
+            assert_eq!(legacy.len(), offset + 1);
+            assert_eq!(legacy[offset].name.as_str(), "One item");
+            if offset != 0 {
+                assert_eq!(legacy[0].name.as_str(), "REmacs");
+            }
+            cx.set_menus(vec![Menu { name: "Legacy".into(), items: Vec::new() }]);
+            assert!(matches!(&cx.get_menu_bar_items().unwrap()[0], gpui::OwnedMenuItem::Submenu(menu) if menu.name.as_str() == "Legacy"));
+        });
+    }
 
     #[::core::prelude::v1::test]
     fn nonselectable_native_rows_keep_their_label_without_an_action() {

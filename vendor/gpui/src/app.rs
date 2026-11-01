@@ -37,7 +37,8 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, OwnedMenuItem, PathPromptOptions, Pixels,
+    Platform,
     OpenFileRequest, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
     PromptBuilder,
     PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
@@ -1851,9 +1852,20 @@ impl App {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
-    /// Gets the menu bar for this application.
+    /// Gets submenu sections of the menu bar. Use [`Self::get_menu_bar_items`]
+    /// to include direct top-level commands.
     pub fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         self.platform.get_menus()
+    }
+
+    /// Replace the menu bar with submenu, action, or other top-level items.
+    pub fn set_menu_bar_items(&self, items: Vec<MenuItem>) {
+        self.platform.set_menu_bar_items(items, &self.keymap.borrow());
+    }
+
+    /// Return every top-level item, including commands without submenus.
+    pub fn get_menu_bar_items(&self) -> Option<Vec<OwnedMenuItem>> {
+        self.platform.get_menu_bar_items()
     }
 
     /// Sets the right click menu for the app icon in the dock

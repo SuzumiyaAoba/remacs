@@ -52,7 +52,7 @@ struct WindowsPlatformInner {
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
-    menus: Vec<OwnedMenu>,
+    menu_bar_items: Vec<OwnedMenuItem>,
     jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
@@ -82,7 +82,7 @@ impl WindowsPlatformState {
             jump_list,
             current_cursor,
             directx_devices,
-            menus: Vec::new(),
+            menu_bar_items: Vec::new(),
         }
     }
 }
@@ -513,12 +513,23 @@ impl Platform for WindowsPlatform {
         self.inner.state.borrow_mut().callbacks.reopen = Some(callback);
     }
 
-    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.inner.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
+    fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+        self.set_menu_bar_items(menus.into_iter().map(MenuItem::submenu).collect(), keymap);
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        Some(self.inner.state.borrow().menus.clone())
+        Some(crate::platform::menu_bar_submenus(
+            &self.inner.state.borrow().menu_bar_items,
+        ))
+    }
+
+    fn set_menu_bar_items(&self, items: Vec<MenuItem>, _keymap: &Keymap) {
+        self.inner.state.borrow_mut().menu_bar_items =
+            items.into_iter().map(MenuItem::owned).collect();
+    }
+
+    fn get_menu_bar_items(&self) -> Option<Vec<OwnedMenuItem>> {
+        Some(self.inner.state.borrow().menu_bar_items.clone())
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {

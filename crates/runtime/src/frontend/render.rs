@@ -181,6 +181,8 @@ pub enum GridImageSource {
 pub struct GridMenu {
     pub label: String,
     pub items: Vec<GridMenuItem>,
+    /// Direct top-level command; submenu roots use None.
+    pub command: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

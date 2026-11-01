@@ -36,6 +36,7 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
+    menu_bar_items: RefCell<Option<Vec<crate::OwnedMenuItem>>>,
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
@@ -130,6 +131,7 @@ impl TestPlatform {
             #[cfg(target_os = "windows")]
             bitmap_factory,
             text_system,
+            menu_bar_items: RefCell::new(None),
         })
     }
 
@@ -377,7 +379,26 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
+    fn set_menus(&self, menus: Vec<crate::Menu>, keymap: &Keymap) {
+        self.set_menu_bar_items(
+            menus.into_iter().map(crate::MenuItem::submenu).collect(),
+            keymap,
+        );
+    }
+    fn get_menus(&self) -> Option<Vec<crate::OwnedMenu>> {
+        self.menu_bar_items
+            .borrow()
+            .as_ref()
+            .map(|items| crate::platform::menu_bar_submenus(items))
+    }
+    fn set_menu_bar_items(&self, items: Vec<crate::MenuItem>, _keymap: &Keymap) {
+        *self.menu_bar_items.borrow_mut() =
+            Some(items.into_iter().map(crate::MenuItem::owned).collect());
+    }
+    fn get_menu_bar_items(&self) -> Option<Vec<crate::OwnedMenuItem>> {
+        self.menu_bar_items.borrow().clone()
+    }
+
     fn set_dock_menu(&self, _menu: Vec<crate::MenuItem>, _keymap: &Keymap) {}
 
     fn add_recent_document(&self, _paths: &Path) {}

@@ -7,7 +7,8 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, OwnedMenuItem, PathPromptOptions,
+    Platform,
     OpenFileRequest, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem,
     PlatformWindow, Result, SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams,
@@ -194,7 +195,7 @@ pub(crate) struct MacPlatformState {
     pending_open_files: Vec<OpenFileRequest>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
-    menus: Option<Vec<OwnedMenu>>,
+    menu_bar_items: Option<Vec<OwnedMenuItem>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
 }
 
@@ -238,7 +239,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
-            menus: None,
+            menu_bar_items: None,
             keyboard_mapper,
         }))
     }
@@ -259,7 +260,7 @@ impl MacPlatform {
 
     unsafe fn create_menu_bar(
         &self,
-        menus: &Vec<Menu>,
+        items: &[MenuItem],
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
@@ -268,30 +269,14 @@ impl MacPlatform {
             let application_menu = NSMenu::new(nil).autorelease();
             application_menu.setDelegate_(delegate);
 
-            for menu_config in menus {
-                let menu = NSMenu::new(nil).autorelease();
-                let menu_title = ns_string(&menu_config.name);
-                menu.setTitle_(menu_title);
-                menu.setDelegate_(delegate);
-
-                let key_hint_attributes = Self::menu_key_hint_attributes(&menu_config.items);
-                for item_config in &menu_config.items {
-                    menu.addItem_(Self::create_menu_item(
-                        item_config,
-                        delegate,
-                        actions,
-                        keymap,
-                        key_hint_attributes,
-                    ));
-                }
-
-                let menu_item = NSMenuItem::new(nil).autorelease();
-                menu_item.setTitle_(menu_title);
-                menu_item.setSubmenu_(menu);
+            let attributes = Self::menu_key_hint_attributes(items);
+            for item in items {
+                let menu_item = Self::create_menu_item(item, delegate, actions, keymap, attributes);
                 application_menu.addItem_(menu_item);
-
-                if menu_config.name == "Window" {
+                if matches!(item, MenuItem::Submenu(menu) | MenuItem::SubmenuWithKeyHint { menu, .. } if menu.name == "Window")
+                {
                     let app: id = msg_send![APP_CLASS, sharedApplication];
+                    let menu: id = msg_send![menu_item, submenu];
                     app.setWindowsMenu_(menu);
                 }
             }
@@ -583,6 +568,7 @@ impl MacPlatform {
                     };
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
+                    submenu.setTitle_(ns_string(name));
                     submenu.setDelegate_(delegate);
                     let child_key_hint_attributes = Self::menu_key_hint_attributes(items);
                     for item in items {
@@ -1106,19 +1092,31 @@ impl Platform for MacPlatform {
     }
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
+        self.set_menu_bar_items(menus.into_iter().map(MenuItem::submenu).collect(), keymap);
+    }
+
+    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
+        self.0
+            .lock()
+            .menu_bar_items
+            .as_ref()
+            .map(|items| crate::platform::menu_bar_submenus(items))
+    }
+
+    fn set_menu_bar_items(&self, items: Vec<MenuItem>, keymap: &Keymap) {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            let menu = self.create_menu_bar(&menus, NSWindow::delegate(app), actions, keymap);
+            let menu = self.create_menu_bar(&items, NSWindow::delegate(app), actions, keymap);
             drop(state);
             app.setMainMenu_(menu);
         }
-        self.0.lock().menus = Some(menus.into_iter().map(|menu| menu.owned()).collect());
+        self.0.lock().menu_bar_items = Some(items.into_iter().map(MenuItem::owned).collect());
     }
 
-    fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        self.0.lock().menus.clone()
+    fn get_menu_bar_items(&self) -> Option<Vec<OwnedMenuItem>> {
+        self.0.lock().menu_bar_items.clone()
     }
 
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {
