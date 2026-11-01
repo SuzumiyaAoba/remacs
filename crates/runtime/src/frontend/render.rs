@@ -1969,6 +1969,7 @@ struct FrameTitleContext<'a> {
     buffer_name: &'a str,
     file_name: Option<&'a str>,
     frame_name: &'a str,
+    mode_name: String,
     modified: bool,
     read_only: bool,
     narrowed: bool,
@@ -2005,6 +2006,7 @@ fn frame_title_specifier(context: &FrameTitleContext<'_>, specifier: char) -> Op
         'b' => title.push_str(context.buffer_name),
         'f' => title.push_str(context.file_name.unwrap_or_default()),
         'F' => title.push_str(context.frame_name),
+        'm' => title.push_str(&context.mode_name),
         'n' => title.push_str(narrowing_indicator(context.narrowed)),
         's' => title.push_str(context.process_status),
         'z' => title.push_str(&context.coding),
@@ -2404,6 +2406,13 @@ fn frame_title(
         buffer_name: &buffer_name,
         file_name: file_name.as_deref(),
         frame_name: &frame_name,
+        mode_name: i
+            .q_soft("mode-name")
+            .and_then(|symbol| match i.symbol_value_in_buffer(symbol, buffer_id) {
+                Value::Str(name) => Some(name.borrow().to_unicode_lossy()),
+                _ => None,
+            })
+            .unwrap_or_default(),
         modified,
         read_only: buffer_read_only(i, buffer_id),
         narrowed,
