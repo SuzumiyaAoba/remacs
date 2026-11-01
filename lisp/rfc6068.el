@@ -62,16 +62,24 @@ calling this function."
 		(mapcar
 		 (lambda (x)
 		   (let* ((pair (split-string x "="))
-			  (name (car pair))
-			  (value (cadr pair)))
+			  (name (capitalize
+				 (rfc6068-unhexify-string (car pair))))
+			  (value (rfc6068-unhexify-string (cadr pair))))
+		     ;; A decoded field name must not split into another header.
+		     (when (string-match-p "[\r\n]" name)
+		       (error "Line break in mailto header name"))
+		     ;; Body is the sole header-like field that can contain lines.
+		     (unless (equal name "Body")
+		       (when (string-match-p "[\r\n]" value)
+			 (error "Line break in non-Body mailto header value")))
 		     ;; Return ("Header-Name" . "header-value").
-		     (cons
-		      (capitalize (rfc6068-unhexify-string name))
-		      (rfc6068-unhexify-string value))))
+		     (cons name value)))
 		 (split-string query "&"))))
 
 	(when address
 	  (setq address (rfc6068-unhexify-string address))
+	  (when (string-match-p "[\r\n]" address)
+	    (error "Line break in mailto address"))
 	  ;; Deal with multiple 'To' recipients.
 	  (if-let* ((elem (assoc "To" headers-alist)))
 	      (setcdr elem (concat address ", " (cdr elem)))
