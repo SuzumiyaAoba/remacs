@@ -33,10 +33,74 @@ const CASES: &str = r##"
   t)
 "##;
 
-#[test]
-fn value_node_period_reader_uses_its_argument_without_match_data() {
-    let mut interp = Interp::new();
-    match interp.eval_str(CASES) {
+const AMBIENT_CASES: &str = r##"
+(progn
+  (require 'icalendar-parser)
+  (require 'icalendar-utils)
+  (defun remacs-test-read-period-node (source)
+    (icalendar-ast-node-value (icalendar-read-value-node 'icalendar-period source)))
+  (defun remacs-test-period-is-second (period)
+    (unless (and (equal (icalendar-print-date-time (icalendar-period-start period))
+                        "20250102T090000")
+                 (equal (icalendar-print-date-time (icalendar-period-end period))
+                        "20250102T110000"))
+      (error "The period reader used an ambient period")))
+  (let ((one "20250101T090000/20250101T100000")
+        (two "20250102T090000/20250102T110000"))
+    (dolist (reader '(icalendar-read-period remacs-test-read-period-node))
+      (with-temp-buffer
+        (insert "prefix\n" one "\nsuffix")
+        (narrow-to-region 8 (+ 8 (length one)))
+        (goto-char (point-min))
+        (re-search-forward (rx-to-string 'icalendar-period))
+        (let ((before (match-data)) (position (point))
+              (low (point-min)) (high (point-max)) (text (buffer-string)))
+          (remacs-test-period-is-second (funcall reader two))
+          (unless (and (equal before (match-data)) (= position (point))
+                       (= low (point-min)) (= high (point-max))
+                       (equal text (buffer-string)))
+            (error "A string period read changed its caller's buffer or match data"))))
+      (with-temp-buffer
+        (insert "!")
+        (string-match (rx-to-string 'icalendar-period) one)
+        (let ((before (match-data)))
+          (remacs-test-period-is-second (funcall reader two))
+          (unless (and (equal before (match-data))
+                       (equal (match-string 11 one) "20250101T090000"))
+            (error "A period read replaced the caller's string match data"))))
+      (with-temp-buffer
+        (insert "ambient")
+        (goto-char (point-min))
+        (re-search-forward "\\(am\\)b")
+        (let* ((before (match-data))
+               (period (funcall reader "20250103T120000/PT90M"))
+               (failed nil))
+          (unless (and (equal (icalendar-print-date-time (icalendar-period-start period))
+                              "20250103T120000")
+                       (= (decoded-time-minute (icalendar-period-dur-value period)) 90)
+                       (equal before (match-data)))
+            (error "A duration period read depended on unrelated match data"))
+          (condition-case nil
+              (funcall reader "invalid-period")
+            (error (setq failed t)))
+          (unless (and failed (equal before (match-data)))
+            (error "A failing period read did not restore caller match data")))))
+    ;; The buffer parser still consumes the value and records its real bounds.
+    (with-temp-buffer
+      (insert two)
+      (goto-char (point-min))
+      (let ((node (icalendar-parse-value-node 'icalendar-period (point-max))))
+        (remacs-test-period-is-second (icalendar-ast-node-value node))
+        (unless (and (= (point) (point-max))
+                     (eq (icalendar-ast-node-meta-get :buffer node) (current-buffer))
+                     (= (icalendar-ast-node-meta-get :begin node) (point-min))
+                     (= (icalendar-ast-node-meta-get :end node) (point-max)))
+          (error "Buffer period parsing lost its consumed bounds")))))
+  t)
+"##;
+
+fn check(interp: &mut Interp, source: &str) {
+    match interp.eval_str(source) {
         Ok(value) => assert!(value.truthy()),
         Err(Flow::Signal(signal)) => panic!(
             "{} {}",
@@ -45,4 +109,11 @@ fn value_node_period_reader_uses_its_argument_without_match_data() {
         ),
         Err(other) => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn period_readers_use_their_argument_and_preserve_caller_match_data() {
+    let mut interp = Interp::new();
+    check(&mut interp, CASES);
+    check(&mut interp, AMBIENT_CASES);
 }
