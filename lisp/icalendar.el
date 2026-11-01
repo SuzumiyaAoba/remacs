@@ -2708,32 +2708,33 @@ With STRICT-MONTH, ordinal weekdays must belong to the current month."
            "(calendar-extract-year date)) 1) '%S))")
    month-days month-days))
 
-(defun icalendar--monthly-selected-days (month year month-days weekdays)
-  "Return valid days in MONTH YEAR matching MONTH-DAYS and WEEKDAYS."
-  (let* ((last (calendar-last-day-of-month month year))
-         (days (sort (delete-dups
-                      (delq nil (mapcar
-                                 (lambda (value)
-                                   (let ((day (if (> value 0) value (+ last value 1))))
-                                     (when (<= 1 day last) day))) month-days))) #'<))
-         (first-weekday (and weekdays (calendar-day-of-week (list month 1 year))))
-         result)
-    (dolist (day days)
-      (when (or (null weekdays)
-                (catch 'matching-weekday
-                  (dolist (selector weekdays)
-                    (let ((ordinal (car selector)))
-                      (when (and (= (cdr selector) (mod (+ first-weekday day -1) 7))
-                                 (or (null ordinal)
-                                     (if (> ordinal 0)
-                                         (= ordinal (1+ (/ (1- day) 7)))
-                                       (= (- ordinal) (1+ (/ (- last day) 7))))))
-                        (throw 'matching-weekday t))))))
-        (push day result)))
-    (nreverse result)))
+(defun icalendar--monthly-selected-days (month year month-days weekdays &optional months)
+  "Return days in MONTH YEAR matching MONTH-DAYS, WEEKDAYS and MONTHS."
+  (when (or (null months) (memq month months))
+    (let* ((last (calendar-last-day-of-month month year))
+           (days (sort (delete-dups
+                        (delq nil (mapcar
+                                   (lambda (value)
+                                     (let ((day (if (> value 0) value (+ last value 1))))
+                                       (when (<= 1 day last) day))) month-days))) #'<))
+           (first-weekday (and weekdays (calendar-day-of-week (list month 1 year))))
+           result)
+      (dolist (day days)
+        (when (or (null weekdays)
+                  (catch 'matching-weekday
+                    (dolist (selector weekdays)
+                      (let ((ordinal (car selector)))
+                        (when (and (= (cdr selector) (mod (+ first-weekday day -1) 7))
+                                   (or (null ordinal)
+                                       (if (> ordinal 0)
+                                           (= ordinal (1+ (/ (1- day) 7)))
+                                         (= (- ordinal) (1+ (/ (- last day) 7))))))
+                          (throw 'matching-weekday t))))))
+          (push day result)))
+      (nreverse result))))
 
-(defun icalendar--monthly-last-date (dtstart-dec month-days byday interval count)
-  "Return the COUNT endpoint for monthly MONTH-DAYS limited by BYDAY."
+(defun icalendar--monthly-last-date (dtstart-dec month-days byday interval count &optional months)
+  "Return the COUNT endpoint for MONTH-DAYS limited by BYDAY and MONTHS."
   (unless (and (integerp count) (> count 0)
                (integerp interval) (> interval 0))
     (error "Invalid monthly COUNT/INTERVAL: %S/%S" count interval))
@@ -2742,7 +2743,7 @@ With STRICT-MONTH, ordinal weekdays must belong to the current month."
          (weekdays (icalendar--rrule-weekdays byday))
          (first (cons day (delq nil (mapcar (lambda (candidate)
                                               (when (> candidate day) candidate))
-                                            (icalendar--monthly-selected-days month year month-days weekdays))))))
+                                            (icalendar--monthly-selected-days month year month-days weekdays months))))))
     (if (<= count (length first))
         (list month (nth (1- count) first) year)
       (catch 'last-date
@@ -2756,7 +2757,7 @@ With STRICT-MONTH, ordinal weekdays must belong to the current month."
             (dotimes (_ periods)
               (setq cursor (+ cursor interval))
               (let* ((month (1+ (mod cursor 12))) (year (/ cursor 12))
-                     (valid (icalendar--monthly-selected-days month year month-days weekdays)))
+                     (valid (icalendar--monthly-selected-days month year month-days weekdays months)))
                 (when (<= left (length valid))
                   (throw 'last-date (list month (nth (1- left) valid) year)))
                 (setq left (- left (length valid)) total (+ total (length valid)))
@@ -2847,6 +2848,9 @@ END-T is the event's end time in diary format."
          (year-months  (let ((value (and (string-equal frequency "YEARLY")
                                         (cadr (assoc 'BYMONTH rrule-props)))))
                          (when value (icalendar--rrule-months value))))
+         (month-months (let ((value (and (string-equal frequency "MONTHLY")
+                                        (cadr (assoc 'BYMONTH rrule-props)))))
+                         (when value (icalendar--rrule-months value))))
          (month-days   (let ((value (and (string-equal frequency "MONTHLY")
                                         (cadr (assoc 'BYMONTHDAY rrule-props)))))
                          (when value (icalendar--rrule-monthdays value))))
@@ -2879,10 +2883,12 @@ END-T is the event's end time in diary format."
                                      (car last-date) (nth 2 last-date))
                          until-1 until)))
                 ((string-equal frequency "MONTHLY")
-                 (if month-days
-                     (let ((last-date (icalendar--monthly-last-date
-                                       dtstart-dec month-days (cadr (assoc 'BYDAY rrule-props))
-                                       interval (read count))))
+                 (if (or month-days month-months)
+                     (let* ((byday (cadr (assoc 'BYDAY rrule-props)))
+                            (days (or month-days (if byday (number-sequence 1 31)
+                                                  (list (nth 3 dtstart-dec)))))
+                            (last-date (icalendar--monthly-last-date
+                                        dtstart-dec days byday interval (read count) month-months)))
                        (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
                                          (nth 2 dtstart-dec) (cadr last-date)
                                          (car last-date) (nth 2 last-date))
@@ -3042,12 +3048,10 @@ END-T is the event's end time in diary format."
                               "(calendar-extract-month date)) %d) %d)) ")
                       (+ (* 12 (nth 5 dtstart-dec)) (nth 4 dtstart-dec))
                       interval)))
-                  (weekday-clause (icalendar--monthly-weekday-clause byday month-days))
-                  (rule-part
+                  (weekday-clause (icalendar--monthly-weekday-clause byday (or month-days month-months)))
+                  (selected-rule
                    (if month-days
-                       ;; Remacs: BYDAY limits BYMONTHDAY, while DTSTART remains an instance.
-                       (format "(or (diary-date %s) (and %s%s))" dtstart-conv
-                               (icalendar--monthly-monthday-clause month-days)
+                       (format "(and %s%s)" (icalendar--monthly-monthday-clause month-days)
                                (if weekday-clause (concat " " weekday-clause) ""))
                      (or weekday-clause
                          (format "(diary-date %s)"
@@ -3058,9 +3062,18 @@ END-T is the event's end time in diary format."
                                           (format "%d t t" day))
                                          ((eq calendar-date-style 'american)
                                           (format "t %d t" day))))))))
+                  (rule-part
+                   (if (or month-days month-months)
+                       ;; Remacs: month/day selectors intersect; DTSTART remains an instance.
+                       (format "(or (diary-date %s) %s)" dtstart-conv
+                               (if month-months
+                                   (format "(and (memq (calendar-extract-month date) '%S) %s)"
+                                           month-months selected-rule)
+                                 selected-rule))
+                     selected-rule))
                   (bound
                    (cond (until (format "(diary-block %s %s)" dtstart-conv until-conv))
-                         (month-days
+                         ((or month-days month-months)
                           (format "(<= %d (calendar-absolute-from-gregorian date))"
                                   (calendar-absolute-from-gregorian
                                    (list (nth 4 dtstart-dec) (nth 3 dtstart-dec) (nth 5 dtstart-dec)))))

@@ -117,15 +117,85 @@ const CASES: &str = r##"
     (remacs-test-ical-monthly-hits
      "FREQ=MONTHLY;INTERVAL=2;BYDAY=MO" '(1 20 2025) '(1 1 2025) '(3 10 2025)
      '((1 20 2025) (1 27 2025) (3 3 2025) (3 10 2025)) "09:00" nil))
-  (defun remacs-test-ical-monthly-probes (rule start candidates expected)
+  (defun remacs-test-ical-monthly-probes (rule start candidates expected &optional start-time end-time extras)
     (let* ((calendar-debug-sexp t)
-           (generated (remacs-test-ical-monthly-format rule start))
+           (generated (remacs-test-ical-monthly-format rule start start-time end-time extras))
            hits)
       (dolist (day candidates)
         (when (diary-sexp-entry (cdr generated) "event" day) (push day hits)))
       (setq hits (nreverse hits))
       (unless (equal hits expected)
         (error "Wrong monthly probes: %S expected %S, generated %S" hits expected (car generated)))))
+  ;; BYMONTH limits monthly instances, without resetting the INTERVAL phase (#1576).
+  (dolist (calendar-date-style '(american european iso))
+    (dolist (times '((nil nil) ("09:00" "10:00")))
+      (remacs-test-ical-monthly-hits
+       "FREQ=MONTHLY;BYMONTH=1" '(1 10 2025) '(1 1 2025) '(4 1 2025)
+       '((1 10 2025)) (car times) (cadr times))
+      (remacs-test-ical-monthly-hits
+       (concat "FREQ=MONTHLY;BYMONTH=7,1,7;UNTIL="
+               (if (car times) "20260110T235959" "20260110"))
+       '(6 10 2025) '(6 1 2025) '(2 1 2026)
+       '((6 10 2025) (7 10 2025) (1 10 2026)) (car times) (cadr times))
+      (remacs-test-ical-monthly-probes
+       "FREQ=MONTHLY;BYMONTH=1;COUNT=3" '(1 10 2025)
+       '((1 9 2025) (1 10 2025) (2 10 2025) (3 10 2025)
+         (1 10 2026) (1 10 2027) (1 10 2028))
+       '((1 10 2025) (1 10 2026) (1 10 2027)) (car times) (cadr times))))
+  (let ((calendar-date-style 'american))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=7,1,7;COUNT=4" '(6 10 2025)
+     '((1 10 2025) (6 10 2025) (7 10 2025) (8 10 2025) (1 10 2026) (7 10 2026) (1 10 2027))
+     '((6 10 2025) (7 10 2025) (1 10 2026) (7 10 2026)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;INTERVAL=5;BYMONTH=2;COUNT=3" '(1 10 2025)
+     '((1 10 2025) (2 10 2025) (6 10 2025) (2 10 2026) (2 10 2027) (2 10 2032) (2 10 2037))
+     '((1 10 2025) (2 10 2027) (2 10 2032)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;INTERVAL=2;BYMONTH=2;COUNT=100" '(1 10 2025)
+     '((1 10 2025) (2 10 2025) (1 10 2026) (2 10 2026) (1 10 2027)) '((1 10 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=2;BYDAY=MO;COUNT=4" '(2 3 2025)
+     '((2 3 2025) (2 10 2025) (2 17 2025) (2 24 2025) (3 3 2025) (2 2 2026))
+     '((2 3 2025) (2 10 2025) (2 17 2025) (2 24 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=1;BYDAY=2MO;COUNT=3" '(1 10 2025)
+     '((1 6 2025) (1 10 2025) (1 13 2025) (2 10 2025) (1 12 2026) (1 11 2027))
+     '((1 10 2025) (1 13 2025) (1 12 2026)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=-1;COUNT=5" '(1 10 2025)
+     '((1 10 2025) (2 28 2025) (3 31 2025) (2 28 2026) (2 28 2027) (2 29 2028) (2 28 2029))
+     '((1 10 2025) (2 28 2025) (2 28 2026) (2 28 2027) (2 29 2028)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=1,15;BYDAY=MO,WE;COUNT=3" '(1 10 2025)
+     '((1 10 2025) (1 15 2025) (2 1 2025) (2 1 2026) (2 1 2027) (2 15 2027) (2 1 2034))
+     '((1 10 2025) (2 1 2027) (2 15 2027)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=31;COUNT=20" '(1 31 2025)
+     '((1 31 2025) (2 28 2025) (3 3 2025) (1 31 2026)) '((1 31 2025)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=1,7;BYMONTHDAY=1,15;COUNT=1000000" '(1 1 2025)
+     '((1 1 2025) (1 1 252024) (1 15 252024) (7 1 252024) (7 15 252024) (1 1 252025))
+     '((1 1 2025) (1 1 252024) (1 15 252024) (7 1 252024) (7 15 252024)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=1,7" '(6 10 2025)
+     '((1 10 10001) (6 10 10001) (7 10 10001)) '((1 10 10001) (7 10 10001)))
+    (remacs-test-ical-monthly-probes
+     "FREQ=MONTHLY;BYMONTH=1,7;COUNT=3" '(1 10 2025)
+     '((1 10 2025) (7 10 2025) (1 10 2026) (7 10 2026)) '((7 10 2025)) nil nil
+     '((EXDATE nil "20250110") (EXDATE nil "20260110")))
+    (let* ((start '(0 0 9 10 1 2025 nil -1 nil))
+           (event '(VEVENT nil ((RRULE nil "FREQ=MONTHLY;BYMONTH=7,1,7;BYMONTHDAY=1,15;COUNT=3"))))
+           (before (copy-tree (list event start))))
+      (icalendar--convert-recurring-to-diary event start nil nil)
+      (unless (equal (list event start) before) (error "Monthly BYMONTH conversion mutated its inputs")))
+    (dolist (rule '("FREQ=MONTHLY;BYMONTH=0" "FREQ=MONTHLY;BYMONTH=13"
+                     "FREQ=MONTHLY;BYMONTH=1,NO" "FREQ=MONTHLY;BYMONTH=1;COUNT=0"
+                     "FREQ=MONTHLY;BYMONTH=1;COUNT=2;INTERVAL=0"))
+      (unless (condition-case nil
+                  (progn (remacs-test-ical-monthly-format rule '(1 10 2025)) nil)
+                (error t))
+        (error "An invalid monthly month/count/interval was accepted: %S" rule))))
   ;; BYMONTHDAY selects a set of days and retains the initial DTSTART (#1566).
   (dolist (calendar-date-style '(american european iso))
     (dolist (times '((nil nil) ("09:00" "10:00")))
