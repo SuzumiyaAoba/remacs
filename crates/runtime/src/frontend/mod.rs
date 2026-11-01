@@ -306,6 +306,8 @@ pub enum InputEvent {
     Command(String),
     /// A choice or dismissal of a specific popup, never a command dispatch.
     PopupMenuSelection { menu_id: usize, index: Option<usize> },
+    /// Scroll a specific popup without dispatching a buffer wheel command.
+    PopupMenuScroll { menu_id: usize, delta_lines: f32 },
     /// Execute a GUI action with pre-supplied interactive arguments.
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },

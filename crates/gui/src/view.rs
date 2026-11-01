@@ -38,6 +38,8 @@ mod popup_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod popup_dismiss_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod popup_scroll_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
@@ -1749,6 +1751,19 @@ impl Render for EditorView {
                 element
             })
             .on_scroll_wheel(move |event, window, cx| {
+                if let Some(menu) = scroll_grid.popup_menu_items.first() {
+                    let delta = event.delta.pixel_delta(line_height);
+                    let delta_lines = -f32::from(delta.y) / f32::from(line_height);
+                    if delta_lines != 0.0 {
+                        let _ = scroll_tx.send(GuiEvent::PopupMenuScroll {
+                            menu_id: menu.menu_id,
+                            delta_lines,
+                        });
+                    }
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    return;
+                }
                 let point = frame_content_point(event.position, window.viewport_size(), border);
                 if let Some(position) = point.and_then(|point| {
                     input::mouse_position_for_point_with_cell_width(

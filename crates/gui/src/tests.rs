@@ -1301,6 +1301,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::MenuCommand(_)
             | GuiEvent::PopupMenuSelection { .. }
+            | GuiEvent::PopupMenuScroll { .. }
             | GuiEvent::OpenFiles(_)
             | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
@@ -1332,6 +1333,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
         .filter_map(|event| match event {
             GuiEvent::MenuCommand(_)
             | GuiEvent::PopupMenuSelection { .. }
+            | GuiEvent::PopupMenuScroll { .. }
             | GuiEvent::OpenFiles(_)
             | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,

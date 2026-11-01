@@ -179,6 +179,7 @@ fn popup_loop<T: KeyIo>(
         return Ok(None);
     }
     let mut render_needed = true;
+    let mut scroll_remainder = 0.0f32;
     loop {
         i.maybe_quit()?;
         render_needed |= crate::lisp::eval::threads::yield_now(i)?;
@@ -218,7 +219,20 @@ fn popup_loop<T: KeyIo>(
                     _ => {}
                 }
             }
-            Some(InputEvent::PopupMenuSelection { .. }) | None => {}
+            Some(InputEvent::PopupMenuScroll {
+                menu_id,
+                delta_lines,
+            }) if menu_id == menu.id => {
+                if delta_lines.is_finite() {
+                    let limit = menu.entries.len() as f32;
+                    scroll_remainder += delta_lines.clamp(-limit, limit);
+                    let rows = scroll_remainder.trunc() as isize;
+                    scroll_remainder -= rows as f32;
+                    render_needed |= menu.scroll_by(rows);
+                }
+            }
+            Some(InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. })
+            | None => {}
             Some(InputEvent::Key(7)) => return Err(Flow::Quit),
             Some(InputEvent::MouseMoved {
                 frame_id,
@@ -353,7 +367,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::Text(text) => {
                 dispatch_text(&term, i, &text, &mut keys, &mut arg_mode)?
             }
-            InputEvent::PopupMenuSelection { .. } => {}
+            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
@@ -2486,7 +2500,7 @@ fn minibuf_loop<T: KeyIo>(
                     return Err(i.error(format!("minibuffer input: {e}")));
                 }
             }
-            InputEvent::PopupMenuSelection { .. } => {}
+            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }

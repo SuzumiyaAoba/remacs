@@ -20,6 +20,8 @@ fn popup_item_ranges_identify_the_composed_unicode_text() {
     i.gui_popup_menu = Some(
         PopupMenu {
             id: 29,
+            scroll_offset: Default::default(),
+            visible_rows: Default::default(),
             position: PopupMenuPosition {
                 frame_id,
                 anchor: PopupMenuAnchor::Frame,

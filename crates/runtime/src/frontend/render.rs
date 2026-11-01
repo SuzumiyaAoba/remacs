@@ -3236,6 +3236,13 @@ fn render_popup_menu(
     if menu_height < 3 || menu_width < 3 {
         return Vec::new();
     }
+    let visible_rows = menu_height.saturating_sub(2);
+    menu.visible_rows.set(visible_rows);
+    let offset = menu
+        .scroll_offset
+        .get()
+        .min(flat_items.len().saturating_sub(visible_rows));
+    menu.scroll_offset.set(offset);
     let left = usize::try_from(pixel_position.0.max(0))
         .unwrap_or(usize::MAX)
         .checked_div(cell_width.max(1))
@@ -3274,10 +3281,11 @@ fn render_popup_menu(
     let mut hit_items = Vec::new();
     for (index, item) in flat_items
         .iter()
-        .take(menu_height.saturating_sub(2))
         .enumerate()
+        .skip(offset)
+        .take(visible_rows)
     {
-        let item_row = top.saturating_add(index).saturating_add(1);
+        let item_row = top.saturating_add(index - offset).saturating_add(1);
         let text = if item.separator {
             "─".repeat(menu_width.saturating_sub(2))
         } else {

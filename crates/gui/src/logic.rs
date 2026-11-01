@@ -73,6 +73,7 @@ pub(super) enum GuiEvent {
     Text(String),
     MenuCommand(String),
     PopupMenuSelection { menu_id: usize, index: Option<usize> },
+    PopupMenuScroll { menu_id: usize, delta_lines: f32 },
     CommandArgs { command: String, args: Vec<i128> },
     ReplaceText { range: Range<usize>, text: String },
     Drop {
@@ -1754,6 +1755,9 @@ impl KeyIo for ChanIo {
             GuiEvent::PopupMenuSelection { menu_id, index } => {
                 Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
             }
+            GuiEvent::PopupMenuScroll { menu_id, delta_lines } => {
+                Ok(Some(InputEvent::PopupMenuScroll { menu_id, delta_lines }))
+            }
             GuiEvent::CommandArgs { command, args } => {
                 Ok(Some(InputEvent::CommandArgs { command, args }))
             }
@@ -1975,6 +1979,9 @@ impl KeyIo for ChanIo {
             GuiEvent::MenuCommand(_) => Ok(None),
             GuiEvent::PopupMenuSelection { menu_id, index } => {
                 Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
+            }
+            GuiEvent::PopupMenuScroll { menu_id, delta_lines } => {
+                Ok(Some(InputEvent::PopupMenuScroll { menu_id, delta_lines }))
             }
             GuiEvent::CommandArgs { .. } => Ok(None),
             GuiEvent::ReplaceText { text, .. } => {

@@ -8,6 +8,7 @@ use crate::lisp::{
     obarray::sym,
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
@@ -28,6 +29,24 @@ pub struct PopupMenu {
     pub id: usize,
     pub position: PopupMenuPosition,
     pub entries: Vec<PopupMenuEntry>,
+    /// First entry in the current scroll viewport.
+    pub scroll_offset: Cell<usize>,
+    /// Entry rows available in the most recently rendered viewport.
+    pub visible_rows: Cell<usize>,
+}
+
+impl PopupMenu {
+    /// Scroll the menu while keeping its final page filled when possible.
+    pub fn scroll_by(&self, rows: isize) -> bool {
+        let previous = self.scroll_offset.get();
+        let maximum = self
+            .entries
+            .len()
+            .saturating_sub(self.visible_rows.get().max(1));
+        let next = previous.saturating_add_signed(rows).min(maximum);
+        self.scroll_offset.set(next);
+        next != previous
+    }
 }
 
 impl PopupMenuEntry {
@@ -517,6 +536,8 @@ pub(crate) fn show_popup_menu(
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         position,
         entries: menu_entries(i, menu)?,
+        scroll_offset: Cell::new(0),
+        visible_rows: Cell::new(0),
     });
     let Some(reader) = i.popup_menu_reader.clone() else {
         // A headless host can inspect the snapshot without an input service.
