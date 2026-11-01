@@ -409,7 +409,7 @@ translation is found for PATTERN."
               (let ((parsed
                      (editorconfig-fnmatch--parse-bracket-expression
                       pattern (1- index) t)))
-                (if (and parsed (aref parsed 2))
+                (if parsed
                     (progn
                       (setq index (aref parsed 1))
                       (aref parsed 0))
