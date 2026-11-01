@@ -131,6 +131,15 @@ letters, digits, plus or minus signs or colons."
       (setq index (1+ index)))
     result))
 
+(defun parse-time--numeric-zone-p (zone)
+  "Return non-nil if ZONE is a valid RFC 5322 numeric time zone.
+RFC 5322 explicitly limits the minute field to 00 through 59, but does not
+state an upper bound for the two-digit hour field."
+  (and (stringp zone)
+       (= (length zone) 5)
+       (string-match-p "\\`[+-][0-9][0-9][0-9][0-9]\\'" zone)
+       (<= (cl-parse-integer zone :start 3 :end 5) 59)))
+
 (defvar parse-time-rules
   `(((6) parse-time-weekdays)
     ((3) (1 31))
@@ -159,11 +168,7 @@ letters, digits, plus or minus signs or colons."
      ,(lambda () (car parse-time-val))
      ,(lambda () (cadr parse-time-val)))
     ((8)
-     ,(lambda ()
-        (and (stringp parse-time-elt)
-             (= 5 (length parse-time-elt))
-             (or (= (aref parse-time-elt 0) ?+)
-                 (= (aref parse-time-elt 0) ?-))))
+     ,(lambda () (parse-time--numeric-zone-p parse-time-elt))
      ,(lambda () (* 60 (+ (cl-parse-integer parse-time-elt :start 3 :end 5)
                           (* 60 (cl-parse-integer parse-time-elt :start 1 :end 3)))
                     (if (= (aref parse-time-elt 0) ?-) -1 1))))
