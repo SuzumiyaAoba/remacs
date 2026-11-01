@@ -1291,9 +1291,28 @@ Environment variables are expanded, see function `substitute-in-file-name'."
       (while (and (< idx (length string))
 		  (setq next (string-match quote-chars string next)))
 	(cond ((= (aref string next) ?\\)
-	       (setq string (replace-match "" nil nil string))
-	       (setq next (1+ next)))
-	      ((and inside (= (aref string next) inside))
+             (cond
+              ;; A backslash is literal inside single quotes.
+              ((eq inside ?')
+               (setq next (1+ next)))
+              ;; POSIX line continuation removes both characters outside
+              ;; single quotes, including inside double quotes.
+              ((and (< (1+ next) (length string))
+                    (= (aref string (1+ next)) ?\n))
+               (setq string (concat (substring string 0 next)
+                                    (substring string (+ next 2)))))
+              ;; In double quotes, only $, backquote, double quote,
+              ;; backslash, and newline are escaped by a backslash.
+              ((and (eq inside ?\")
+                    (or (>= (1+ next) (length string))
+                        (not (memq (aref string (1+ next))
+                                   '(?$ ?` ?\" ?\\)))))
+               (setq next (1+ next)))
+              ;; Outside quotes, preserve the existing backslash-escape rule.
+              (t
+               (setq string (replace-match "" nil nil string))
+               (setq next (1+ next)))))
+            ((and inside (= (aref string next) inside))
 	       (setq string (replace-match "" nil nil string))
 	       (setq inside nil))
 	      (inside
