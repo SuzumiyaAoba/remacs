@@ -181,14 +181,18 @@ pub enum GridImageSource {
 pub struct GridMenu {
     pub label: String,
     pub items: Vec<GridMenuItem>,
-    /// Direct top-level command; submenu roots use None.
+    /// Direct top-level command by symbol name.
     pub command: Option<String>,
+    /// Runtime-owned command object, used instead of a symbol name.
+    pub command_id: Option<super::NativeMenuCommandId>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridMenuItem {
     pub label: String,
     pub command: Option<String>,
+    /// Runtime-owned command object, used instead of a symbol name.
+    pub command_id: Option<super::NativeMenuCommandId>,
     pub items: Vec<GridMenuItem>,
     pub separator: bool,
     /// Selected state of a toggle or radio leaf item.

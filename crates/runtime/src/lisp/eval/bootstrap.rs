@@ -97,6 +97,7 @@ impl Interp {
             gui_tip: None,
             gui_popup_menu: None,
             native_menus: Vec::new(),
+            native_menu_commands: Default::default(),
             preparing_native_menus: false,
             popup_menu_reader: None,
             gui_mouse_position: None,

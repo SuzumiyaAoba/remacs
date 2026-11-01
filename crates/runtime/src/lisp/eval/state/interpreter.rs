@@ -56,6 +56,7 @@ pub struct Interp {
     /// Popup menu requested by `x-popup-menu' for the GUI frontend.
     pub gui_popup_menu: Option<Rc<crate::frontend::PopupMenu>>,
     pub(crate) native_menus: Vec<crate::frontend::GridMenu>,
+    pub(crate) native_menu_commands: crate::frontend::NativeMenuCommands,
     pub(crate) preparing_native_menus: bool,
     pub(crate) popup_menu_reader: Option<
         Rc<dyn Fn(&mut Interp, Rc<crate::frontend::PopupMenu>) -> Result<Option<usize>, Flow>>,

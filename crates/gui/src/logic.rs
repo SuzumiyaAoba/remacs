@@ -3,8 +3,8 @@ use remacs_runtime::{
     frontend::{
         AppleScriptResult, DragAction, FrameVisibility, Grid, GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
-        MousePosition, QuitRequest, fit_text_to_cells, render_frame_grid_with_mouse_position_cached,
-        render_grid_with_mouse_position_cached,
+        MousePosition, NativeMenuCommandId, QuitRequest, fit_text_to_cells,
+        render_frame_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
 };
@@ -72,6 +72,7 @@ pub(super) enum GuiEvent {
     Key(i128),
     Text(String),
     MenuCommand(String),
+    NativeMenuCommand(NativeMenuCommandId),
     PopupMenuSelection { menu_id: usize, index: Option<usize> },
     PopupMenuScroll { menu_id: usize, delta_lines: f32 },
     CommandArgs { command: String, args: Vec<i128> },
@@ -1752,6 +1753,9 @@ impl KeyIo for ChanIo {
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
             GuiEvent::MenuCommand(command) => Ok(Some(InputEvent::Command(command))),
+            GuiEvent::NativeMenuCommand(command) => {
+                Ok(Some(InputEvent::NativeMenuCommand(command)))
+            }
             GuiEvent::PopupMenuSelection { menu_id, index } => {
                 Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
             }
@@ -1976,7 +1980,7 @@ impl KeyIo for ChanIo {
                 self.pending.extend(chars.rev());
                 Ok(first.map(InputEvent::Key))
             }
-            GuiEvent::MenuCommand(_) => Ok(None),
+            GuiEvent::MenuCommand(_) | GuiEvent::NativeMenuCommand(_) => Ok(None),
             GuiEvent::PopupMenuSelection { menu_id, index } => {
                 Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
             }

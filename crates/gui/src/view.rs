@@ -15,7 +15,7 @@ use remacs_runtime::frontend::{
     GridImageSource,
     GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridVScroll,
-    MouseButton as RemacsMouseButton, QuitRequest,
+    MouseButton as RemacsMouseButton, NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{
@@ -720,7 +720,31 @@ mod popup_selection_tests {
 #[derive(Clone, PartialEq, gpui::Action)]
 #[action(namespace = remacs, no_json)]
 struct RunMenuCommand {
-    command: String,
+    command: NativeMenuAction,
+}
+
+#[derive(Clone, PartialEq)]
+enum NativeMenuAction {
+    Named(String),
+    Object(WeakNativeMenuCommandId),
+}
+
+impl RunMenuCommand {
+    fn from_binding(name: Option<&str>, token: Option<&NativeMenuCommandId>) -> Option<Self> {
+        let command = if let Some(token) = token {
+            NativeMenuAction::Object(token.downgrade())
+        } else {
+            NativeMenuAction::Named(name?.to_owned())
+        };
+        Some(Self { command })
+    }
+
+    fn event(&self) -> Option<GuiEvent> {
+        match &self.command {
+            NativeMenuAction::Named(name) => Some(GuiEvent::MenuCommand(name.clone())),
+            NativeMenuAction::Object(token) => token.upgrade().map(GuiEvent::NativeMenuCommand),
+        }
+    }
 }
 
 pub(super) struct EditorView {
@@ -1444,9 +1468,9 @@ impl Render for EditorView {
             ))
             .on_action(cx.listener(
                 |this: &mut EditorView, action: &RunMenuCommand, _window, _cx| {
-                    let _ = this
-                        .tx
-                        .send(GuiEvent::MenuCommand(action.command.clone()));
+                    if let Some(event) = action.event() {
+                        let _ = this.tx.send(event);
+                    }
                 },
             ))
             .on_mouse_down(
@@ -2690,13 +2714,10 @@ impl Render for EditorView {
 
 fn gpui_menus(menus: &[GridMenu]) -> Vec<MenuItem> {
     let roots = menus.iter().map(|menu| {
-        if let Some(command) = &menu.command {
-            MenuItem::action(
-                menu.label.clone(),
-                RunMenuCommand {
-                    command: command.clone(),
-                },
-            )
+        if let Some(action) =
+            RunMenuCommand::from_binding(menu.command.as_deref(), menu.command_id.as_ref())
+        {
+            MenuItem::action(menu.label.clone(), action)
         } else {
             MenuItem::submenu(Menu {
                 name: menu.label.clone().into(),
@@ -2713,7 +2734,7 @@ fn gpui_menus(menus: &[GridMenu]) -> Vec<MenuItem> {
             items: vec![MenuItem::action(
                 "Quit REmacs",
                 RunMenuCommand {
-                    command: "save-buffers-kill-terminal".into(),
+                    command: NativeMenuAction::Named("save-buffers-kill-terminal".into()),
                 },
             )],
         });
@@ -2738,13 +2759,10 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
             submenu
         });
     }
-    let mut result = if let Some(command) = &item.command {
-        MenuItem::action(
-            item.label.clone(),
-            RunMenuCommand {
-                command: command.clone(),
-            },
-        )
+    let mut result = if let Some(action) =
+        RunMenuCommand::from_binding(item.command.as_deref(), item.command_id.as_ref())
+    {
+        MenuItem::action(item.label.clone(), action)
     } else {
         MenuItem::disabled(item.label.clone())
     }
@@ -2760,19 +2778,89 @@ mod native_menu_tests {
     use super::*;
 
     #[::core::prelude::v1::test]
+    fn lambda_menu_bindings_become_selectable_native_actions() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str(
+                r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (setq global-map (make-sparse-keymap) menu-bar-update-hook nil
+                pre-redisplay-function nil qa-native-runs 0)
+          (setq-local fontification-functions nil)
+          (let ((map (make-sparse-keymap)))
+            (define-key map [run]
+              '(menu-item "Run lambda" (lambda () (interactive)
+                                         (setq qa-native-runs (1+ qa-native-runs))
+                                         (message "ran"))))
+            (define-key global-map [menu-bar qa-lambda] (cons "QA Lambda" map)))
+          (menu-bar-mode 1))"#,
+            )
+            .unwrap();
+        remacs_runtime::frontend::prepare_native_menus(&mut interp).unwrap();
+        let grid = remacs_runtime::frontend::render_grid(&interp, 80, 24);
+        let menu = grid
+            .menus
+            .iter()
+            .find(|menu| menu.label == "QA Lambda")
+            .unwrap();
+        let item = menu
+            .items
+            .iter()
+            .find(|item| item.label == "Run lambda")
+            .unwrap();
+        assert!(
+            matches!(gpui_menu_item(item), Some(MenuItem::Action { .. })),
+            "an interactive lambda must produce a selectable native action"
+        );
+        let MenuItem::Action { action, .. } = gpui_menu_item(item).unwrap() else {
+            unreachable!()
+        };
+        let action = action
+            .as_any()
+            .downcast_ref::<RunMenuCommand>()
+            .unwrap()
+            .clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let (grids, _received_grids) = smol::channel::bounded(1);
+        send.send(action.event().expect("the displayed command is live"))
+            .unwrap();
+        drop(send);
+        drop(grid);
+        interp
+            .eval_str("(setq global-map (make-sparse-keymap))")
+            .unwrap();
+        remacs_runtime::frontend::prepare_native_menus(&mut interp).unwrap();
+        let frontend = Rc::new(RefCell::new(crate::logic::ChanIo::new_for_test(
+            receive, grids,
+        )));
+        let error =
+            remacs_runtime::frontend::run_editor_with_shared(frontend, &mut interp).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert!(interp.eval_str("(= qa-native-runs 1)").unwrap().truthy());
+        assert_eq!(interp.echo_message, "ran");
+        assert!(
+            action.event().is_none(),
+            "retired native actions must release their command tokens"
+        );
+    }
+
+    #[::core::prelude::v1::test]
     fn root_commands_are_actions_and_single_item_menus_remain_submenus() {
         let roots = vec![
             GridMenu {
                 label: "Run now".into(),
                 command: Some("ignore".into()),
+                command_id: None,
                 items: Vec::new(),
             },
             GridMenu {
                 label: "One item".into(),
                 command: None,
+                command_id: None,
                 items: vec![GridMenuItem {
                     label: "Child".into(),
                     command: Some("ignore".into()),
+                    command_id: None,
                     items: Vec::new(),
                     separator: false,
                     checked: false,
@@ -2788,7 +2876,8 @@ mod native_menu_tests {
             let MenuItem::Action { action, .. } = gpui_menus(&roots).remove(offset) else {
                 panic!("a root command must be a direct action");
             };
-            assert_eq!(action.as_any().downcast_ref::<RunMenuCommand>().unwrap().command, "ignore");
+            assert!(matches!(&action.as_any().downcast_ref::<RunMenuCommand>().unwrap().command,
+                NativeMenuAction::Named(name) if name == "ignore"));
             assert!(matches!(&items[offset], gpui::OwnedMenuItem::Action { name, .. } if name == "Run now"));
             assert!(matches!(&items[offset + 1], gpui::OwnedMenuItem::Submenu(menu) if menu.name.as_str() == "One item" && menu.items.len() == 1));
             let legacy = cx.get_menus().unwrap();
@@ -2807,6 +2896,7 @@ mod native_menu_tests {
         let item = GridMenuItem {
             label: "Disabled".into(),
             command: None,
+            command_id: None,
             items: Vec::new(),
             separator: false,
             checked: false,
@@ -2821,6 +2911,7 @@ mod native_menu_tests {
         );
         let enabled = GridMenuItem {
             command: Some("ignore".into()),
+            command_id: None,
             ..item
         };
         assert!(matches!(
@@ -2836,6 +2927,7 @@ mod native_menu_tests {
                 let item = GridMenuItem {
                     label: "Toggle".into(),
                     command: command.clone(),
+                    command_id: None,
                     items: Vec::new(),
                     separator: false,
                     checked,
@@ -2859,6 +2951,7 @@ mod native_menu_tests {
             let item = GridMenuItem {
                 label: "Run".into(),
                 command: command.clone(),
+                command_id: None,
                 items: Vec::new(),
                 separator: false,
                 checked: true,
@@ -2893,9 +2986,11 @@ mod native_menu_tests {
         let item = GridMenuItem {
             label: "Branch".into(),
             command: None,
+            command_id: None,
             items: vec![GridMenuItem {
                 label: "Run".into(),
                 command: Some("ignore".into()),
+                command_id: None,
                 items: Vec::new(),
                 separator: false,
                 checked: false,

@@ -371,6 +371,9 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
+            InputEvent::NativeMenuCommand(command) => {
+                dispatch_native_menu_command(i, &command, &mut keys, &mut arg_mode)
+            }
             InputEvent::CommandArgs { command, args } => {
                 dispatch_frontend_command_with_args(i, &command, &args, &mut keys, &mut arg_mode)
             }
@@ -1031,6 +1034,17 @@ fn dispatch_frontend_command(
     dispatch_frontend_command_with_args(i, command, &[], keys, arg_mode);
 }
 
+fn dispatch_native_menu_command(
+    i: &mut Interp,
+    token: &super::NativeMenuCommandId,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
+    if let Some(command) = i.native_menu_commands.resolve(token) {
+        dispatch_frontend_command_value(i, command, &[], keys, arg_mode);
+    }
+}
+
 fn dispatch_ns_open_files(
     i: &mut Interp,
     files: Vec<(String, Option<usize>)>,
@@ -1261,10 +1275,20 @@ fn dispatch_frontend_command_with_args(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) {
+    let command = Value::Sym(i.intern(command));
+    dispatch_frontend_command_value(i, command, args, keys, arg_mode);
+}
+
+fn dispatch_frontend_command_value(
+    i: &mut Interp,
+    command: Value,
+    args: &[i128],
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) {
     keys.clear();
     *arg_mode = false;
     i.gui_popup_menu = None;
-    let command = Value::Sym(i.intern(command));
     crate::editor::record_recent_command(i, command.clone());
     let saved_args = std::mem::replace(
         &mut i.command_args,
@@ -2508,6 +2532,9 @@ fn minibuf_loop<T: KeyIo>(
             InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
+            }
+            InputEvent::NativeMenuCommand(command) => {
+                dispatch_native_menu_command(i, &command, &mut keys, &mut arg_mode)
             }
             InputEvent::CommandArgs { command, args } => {
                 dispatch_frontend_command_with_args(i, &command, &args, &mut keys, &mut arg_mode)

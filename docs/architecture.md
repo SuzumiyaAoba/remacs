@@ -178,6 +178,8 @@ Lisp の face 解決やメニュー属性の評価は runtime が所有する。
 native menu は共通コマンドループの描画準備で、選択中フレームのバッファを参照して計算する。
 この計算中はフロントエンドを借用せず、終了時に元のバッファと match data を戻す。
 読み取り専用の描画処理と GUI スレッドには、評価済みのラベル・コマンド・サブメニュー・チェック状態・キー表示を渡す。
+lambda などの command object は runtime に保持し、GUI には寿命を追跡する参照 ID だけを渡す。
+表示中の snapshot と選択済み入力が値を保持し、native action table は弱い参照 ID を使う。
 無効な項目は action を持たないメニュー項目へ変換し、OS に無効状態を明示する。
 キー割り当ての検証と検索は runtime で行い、Cocoa の複数キー列は右寄せのタブ列に描画する。
 メニューバー直下の command と submenu は区別して保持し、GPUI の root item API へ渡す。

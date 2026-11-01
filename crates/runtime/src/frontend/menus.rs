@@ -5,6 +5,23 @@ use super::{
 };
 use crate::lisp::{Interp, Value, error::Flow};
 
+fn command_binding(
+    i: &mut Interp,
+    definition: &Value,
+    enabled: bool,
+) -> (Option<String>, Option<super::NativeMenuCommandId>) {
+    if !enabled || definition.is_nil() || crate::editor::is_keymap(i, definition) {
+        return (None, None);
+    }
+    if let Value::Sym(symbol) = definition {
+        let name = i.symbol_name(*symbol);
+        if i.obarray.intern_soft(&name) == Some(*symbol) {
+            return (Some(name), None);
+        }
+    }
+    (None, Some(i.native_menu_commands.register(definition)))
+}
+
 fn canonical_bindings(i: &mut Interp, map: &Value) -> Result<Vec<(Value, Value)>, Flow> {
     let function = Value::Sym(i.q("keymap-canonicalize"));
     let canonical = safe_menu_call(i, function, vec![map.clone()])?;
@@ -43,6 +60,7 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
             items.push(GridMenuItem {
                 label,
                 command: None,
+                command_id: None,
                 items: Vec::new(),
                 separator: true,
                 checked: false,
@@ -59,21 +77,18 @@ fn menu_items(i: &mut Interp, map: &Value, depth: usize) -> Result<Vec<GridMenuI
             items.push(GridMenuItem {
                 label,
                 command: None,
+                command_id: None,
                 items: children,
                 separator: false,
                 checked: false,
                 key_hint,
             });
         } else {
-            let command = match definition {
-                Value::Sym(command) if item.enabled && i.fbound_p(command) => {
-                    Some(i.symbol_name(command))
-                }
-                _ => None,
-            };
+            let (command, command_id) = command_binding(i, &definition, item.enabled);
             items.push(GridMenuItem {
                 label,
                 command,
+                command_id,
                 items: Vec::new(),
                 separator: false,
                 checked,
@@ -213,10 +228,11 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
     }
     let mut pending = Vec::new();
     for entry in collect_menu_bar(i)? {
-        let command = match entry.definitions.first() {
-            Some(Value::Sym(symbol)) => Some(i.symbol_name(*symbol)),
-            _ => None,
-        };
+        let (command, command_id) = entry
+            .definitions
+            .first()
+            .map(|definition| command_binding(i, definition, true))
+            .unwrap_or_default();
         let mut panes = Vec::new();
         for map in entry.definitions {
             if !crate::editor::is_keymap(i, &map) {
@@ -233,13 +249,13 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
                 items: menu_items(i, &map, 1)?,
             });
         }
-        pending.push((entry.name, command, panes));
+        pending.push((entry.name, command, command_id, panes));
     }
     // Keep Lisp name objects until every callback has run, then publish only
-    // value-free strings and rows to the rendering thread.
+    // a value-free snapshot to the rendering thread.
     Ok(pending
         .into_iter()
-        .filter_map(|(name, command, panes)| {
+        .filter_map(|(name, command, command_id, panes)| {
             let multiple = panes.len() > 1;
             let mut items = Vec::new();
             for pane in panes {
@@ -248,6 +264,7 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
                     items.push(GridMenuItem {
                         label: name,
                         command: None,
+                        command_id: None,
                         items: pane.items,
                         separator: false,
                         checked: false,
@@ -257,10 +274,11 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
                     items.extend(pane.items);
                 }
             }
-            (!items.is_empty() || command.is_some()).then(|| GridMenu {
+            (!items.is_empty() || command.is_some() || command_id.is_some()).then(|| GridMenu {
                 label: menu_name(&name),
                 items,
                 command,
+                command_id,
             })
         })
         .collect())
@@ -272,12 +290,14 @@ pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
     if i.preparing_native_menus {
         return Ok(());
     }
+    i.native_menu_commands.prune();
     let Some(frame) = i
         .selected_frame
         .clone()
         .filter(|frame| !frame.borrow().dead && crate::editor::frame_is_graphical(i, frame))
     else {
         i.native_menus.clear();
+        i.native_menu_commands.prune();
         return Ok(());
     };
     let buffer = frame.borrow().selected.borrow().buffer;
@@ -313,5 +333,6 @@ pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
     i.preparing_native_menus = false;
     restored?;
     i.native_menus = result?;
+    i.native_menu_commands.prune();
     Ok(())
 }

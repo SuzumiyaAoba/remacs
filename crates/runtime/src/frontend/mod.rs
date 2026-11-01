@@ -304,6 +304,8 @@ pub enum InputEvent {
     Text(String),
     /// Execute a command selected from a native GUI menu.
     Command(String),
+    /// Execute the command object retained by a native menu snapshot.
+    NativeMenuCommand(NativeMenuCommandId),
     /// A choice or dismissal of a specific popup, never a command dispatch.
     PopupMenuSelection { menu_id: usize, index: Option<usize> },
     /// Scroll a specific popup without dispatching a buffer wheel command.
@@ -540,6 +542,9 @@ mod command;
 mod render;
 mod popup;
 mod menus;
+mod menu_commands;
+pub use menu_commands::{NativeMenuCommandId, WeakNativeMenuCommandId};
+pub(crate) use menu_commands::NativeMenuCommands;
 pub use menus::prepare_native_menus;
 pub use popup::{PopupMenu, PopupMenuEntry};
 pub(crate) use popup::show_popup_menu;

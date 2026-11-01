@@ -91,6 +91,14 @@ impl Interp {
     }
 
     pub(crate) fn call_interactively_with_keys(&mut self, cmd: &Value, keys: &Value) -> EvalResult {
+        // GNU callint.c restores command identity after argument reading and
+        // before the body runs. Recursive minibuffer commands may replace it.
+        let saved_commands = [
+            "this-command", "this-original-command", "real-this-command", "last-command",
+        ].map(|name| {
+            let symbol = self.q(name);
+            (symbol, self.symbol_value(symbol))
+        });
         let spec = crate::lisp::builtins::data::f_interactive_form(self, vec![cmd.clone()].into())?;
         if !matches!(spec, Value::Cons(_)) {
             return Err(self.wrong_type_mut("commandp", cmd));
@@ -102,6 +110,9 @@ impl Interp {
                 _ => Vec::new(),
             };
             let argv = self.eval_interactive_spec_for(&spec, cmd, &events)?;
+            for (symbol, value) in saved_commands {
+                self.store_internal_value(symbol, value);
+            }
             // GNU dispatches through this symbol, preserving its real frame
             // and honoring a function-cell redefinition.
             let mut arguments = Vec::with_capacity(argv.len() + 1);
