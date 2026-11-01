@@ -690,6 +690,41 @@ fn menu_keysym_reaches_the_named_menu_binding() {
         keystroke_to_code(&modified),
         Some(event_code_for("menu") | CHAR_META | CHAR_SHIFT)
     );
+    let mut interp = Interp::new();
+    let binding = interp.eval_str("(lookup-key global-map [menu])").unwrap();
+    assert_eq!(interp.prin1_to_string(&binding), "execute-extended-command");
+    interp
+        .eval_str(
+            r#"(progn
+      (defun qa-menu-key-received () (interactive) (insert "menu"))
+      (global-set-key [M-S-menu] (lambda () (interactive) (insert " modified"))))"#,
+        )
+        .unwrap();
+    let answered = std::cell::Cell::new(false);
+    interp.minibuf_reader = Some(std::rc::Rc::new(move |_, _, _| {
+        if answered.replace(true) {
+            Err(remacs_runtime::lisp::Flow::Quit)
+        } else {
+            Ok(remacs_runtime::lisp::MinibufInput::Text(
+                "qa-menu-key-received".into(),
+            ))
+        }
+    }));
+    let mut keys = Vec::new();
+    let mut argument = false;
+    for event in [&key, &modified] {
+        remacs_runtime::frontend::dispatch_key_core(
+            &mut interp,
+            keystroke_to_code(event).unwrap(),
+            &mut keys,
+            &mut argument,
+            None,
+        )
+        .unwrap();
+    }
+    let text = interp.eval_str("(buffer-string)").unwrap();
+    assert_eq!(interp.princ_to_string(&text), "menu modified");
+    assert!(keys.is_empty());
 }
 
 #[test]

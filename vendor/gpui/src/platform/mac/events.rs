@@ -118,6 +118,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "end" => NSEndFunctionKey,
         "delete" => NSDeleteFunctionKey,
         "insert" => NSHelpFunctionKey,
+        "menu" => NSMenuFunctionKey,
         "f1" => NSF1FunctionKey,
         "f2" => NSF2FunctionKey,
         "f3" => NSF3FunctionKey,
@@ -432,6 +433,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSDeleteFunctionKey) => "delete".to_string(),
             // Observed Insert==NSHelpFunctionKey not NSInsertFunctionKey.
             Some(NSHelpFunctionKey) => "insert".to_string(),
+            Some(NSMenuFunctionKey) => "menu".to_string(),
             Some(NSF1FunctionKey) => "f1".to_string(),
             Some(NSF2FunctionKey) => "f2".to_string(),
             Some(NSF3FunctionKey) => "f3".to_string(),
@@ -625,4 +627,53 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
         let _: () = msg_send![keyboard, release];
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod menu_key_tests {
+    use super::*;
+    use cocoa::{
+        appkit::NSMenuFunctionKey,
+        base::{NO, nil},
+        foundation::{NSPoint, NSString},
+    };
+
+    #[test]
+    fn menu_function_key_is_a_named_non_text_event() {
+        let characters = String::from_utf16(&[NSMenuFunctionKey]).unwrap();
+        assert_eq!(key_to_native("menu").as_ref(), characters);
+        objc::rc::autoreleasepool(|| unsafe {
+            for event_type in [NSEventType::NSKeyDown, NSEventType::NSKeyUp] {
+                for modified in [false, true] {
+                    let mut flags = NSEventModifierFlags::NSFunctionKeyMask;
+                    if modified {
+                        flags |= NSEventModifierFlags::NSControlKeyMask
+                            | NSEventModifierFlags::NSAlternateKeyMask
+                            | NSEventModifierFlags::NSShiftKeyMask
+                            | NSEventModifierFlags::NSCommandKeyMask;
+                    }
+                    let text = NSString::alloc(nil).init_str(&characters);
+                    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode_(
+                        nil, event_type, NSPoint::new(0.0, 0.0), flags, 0.0, 0,
+                        nil, text, text, NO, 0,
+                    );
+                    let _: () = msg_send![text, release];
+                    assert_ne!(event, nil);
+                    let input = PlatformInput::from_native(event, None).unwrap();
+                    let key = match input {
+                        PlatformInput::KeyDown(event) => event.keystroke,
+                        PlatformInput::KeyUp(event) => event.keystroke,
+                        _ => panic!("expected a key event"),
+                    };
+                    assert_eq!(key.key, "menu");
+                    assert!(key.key_char.is_none());
+                    assert_eq!(key.modifiers.control, modified);
+                    assert_eq!(key.modifiers.alt, modified);
+                    assert_eq!(key.modifiers.shift, modified);
+                    assert_eq!(key.modifiers.platform, modified);
+                    assert!(!key.modifiers.function);
+                }
+            }
+        });
+    }
 }
