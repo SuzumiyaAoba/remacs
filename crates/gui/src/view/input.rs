@@ -152,6 +152,34 @@ pub(super) fn mode_line_mouse_position(
     })
 }
 
+pub(super) fn header_line_mouse_position(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+) -> Option<MousePosition> {
+    let row = grid_row_at_y(grid, point.y);
+    let column = (f32::from(point.x) / f32::from(cell_width))
+        .floor()
+        .max(0.0) as usize;
+    let header = grid.header_lines.iter().find(|header| {
+        row == header.row
+            && column >= header.left
+            && column < header.left.saturating_add(header.width)
+    })?;
+    Some(MousePosition {
+        buffer_id: header.buffer_id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: f32::from(point.x).round() as i128,
+        y: f32::from(point.y).round() as i128,
+        row,
+        column: column.saturating_sub(header.left),
+        window_id: Some(header.window_id),
+        area: Some(MouseArea::HeaderLine),
+        mode_line_buffer_name: false,
+    })
+}
+
 pub(super) fn text_window_at_point(
     grid: &Grid,
     point: Point<Pixels>,

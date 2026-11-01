@@ -1442,6 +1442,9 @@ fn dispatch_mouse_wheel<T: KeyIo>(
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
+    if position.area == Some(super::MouseArea::HeaderLine) && keys.is_empty() {
+        keys.push(crate::editor::event_code_for("header-line"));
+    }
     dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
 }
 
@@ -1793,10 +1796,9 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
     };
     let window = window?;
     let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
-    if let Some(crate::frontend::MouseArea::ModeLine) = position.area {
+    if let Some(area) = position.area {
         let buffer_id = window.borrow().buffer;
-        let mode_line_string = position
-            .mode_line_buffer_name
+        let mode_line_string = (position.mode_line_buffer_name && area == super::MouseArea::ModeLine)
             .then(|| i.q_soft("mode-line-buffer-identification"))
             .flatten()
             .and_then(|id| {
@@ -1813,7 +1815,10 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             .unwrap_or(Value::Nil);
         Some(Value::list(vec![
             Value::Window(window),
-            Value::Sym(i.intern("mode-line")),
+            Value::Sym(i.intern(match area {
+                super::MouseArea::ModeLine => "mode-line",
+                super::MouseArea::HeaderLine => "header-line",
+            })),
             coordinates,
             Value::Int(0),
             mode_line_string,

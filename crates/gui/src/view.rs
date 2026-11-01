@@ -48,6 +48,8 @@ mod tool_hit_tests;
 mod pointer_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_window_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod header_wheel_tests;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
@@ -1774,6 +1776,7 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
+                    .or_else(|| input::header_line_mouse_position(&scroll_grid, point, cell_width))
                 }) {
                     let delta = event.delta.pixel_delta(line_height);
                     let delta_lines = -f32::from(delta.y) / f32::from(line_height);

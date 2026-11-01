@@ -307,6 +307,16 @@ pub struct GridModeLine {
     pub buffer_name_range: Option<(usize, usize)>,
 }
 
+/// A window's visible header-line hit area.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridHeaderLine {
+    pub window_id: usize,
+    pub buffer_id: usize,
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+}
+
 /// A visible window text rectangle, including blank space and margins.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridWindowTextArea {
@@ -538,6 +548,7 @@ pub struct Grid {
     pub scroll_bars: Vec<GridScrollBar>,
     pub bottom_dividers: Vec<GridBottomDivider>,
     pub mode_lines: Vec<GridModeLine>,
+    pub header_lines: Vec<GridHeaderLine>,
     pub window_text_areas: Vec<GridWindowTextArea>,
     pub vscrolls: Vec<GridVScroll>,
     pub compositions: Vec<GridComposition>,
@@ -820,6 +831,7 @@ impl Grid {
             scroll_bars: Vec::new(),
             bottom_dividers: Vec::new(),
             mode_lines: Vec::new(),
+            header_lines: Vec::new(),
             window_text_areas: Vec::new(),
             vscrolls: Vec::new(),
             compositions: Vec::new(),
@@ -7237,6 +7249,7 @@ fn render_grid_internal(
     let mut scroll_bars = Vec::new();
     let mut bottom_dividers = Vec::new();
     let mut mode_lines = Vec::new();
+    let mut header_lines = Vec::new();
     let mut window_text_areas = Vec::new();
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
@@ -7281,6 +7294,7 @@ fn render_grid_internal(
                 scroll_bars,
                 bottom_dividers,
                 mode_lines,
+                header_lines,
                 window_text_areas,
                 vscrolls,
                 compositions: Vec::new(),
@@ -9035,6 +9049,13 @@ fn render_grid_internal(
                 &mut help_echoes,
                 &mut pointer_regions,
             );
+            header_lines.push(GridHeaderLine {
+                window_id,
+                buffer_id: buf_id,
+                row: auxiliary_row,
+                left: window_left,
+                width: window_width,
+            });
         }
         // Mode line.
         let my = content_bottom;
@@ -9508,6 +9529,7 @@ fn render_grid_internal(
         scroll_bars,
         bottom_dividers,
         mode_lines,
+        header_lines,
         window_text_areas,
         vscrolls,
         compositions,
