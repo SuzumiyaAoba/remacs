@@ -118,7 +118,11 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "begin" => NSBeginFunctionKey,
         "end" => NSEndFunctionKey,
         "delete" => NSDeleteFunctionKey,
+        "deletechar" => NSDeleteCharFunctionKey,
+        "deleteline" => NSDeleteLineFunctionKey,
         "insert" => NSInsertFunctionKey,
+        "insertchar" => NSInsertCharFunctionKey,
+        "insertline" => NSInsertLineFunctionKey,
         "help" => NSHelpFunctionKey,
         "undo" => NSUndoFunctionKey,
         "redo" => NSRedoFunctionKey,
@@ -441,7 +445,11 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSBeginFunctionKey) => "begin".to_string(),
             Some(NSEndFunctionKey) => "end".to_string(),
             Some(NSDeleteFunctionKey) => "delete".to_string(),
+            Some(NSDeleteCharFunctionKey) => "deletechar".to_string(),
+            Some(NSDeleteLineFunctionKey) => "deleteline".to_string(),
             Some(NSInsertFunctionKey) => "insert".to_string(),
+            Some(NSInsertCharFunctionKey) => "insertchar".to_string(),
+            Some(NSInsertLineFunctionKey) => "insertline".to_string(),
             Some(NSHelpFunctionKey) => "help".to_string(),
             Some(NSUndoFunctionKey) => "undo".to_string(),
             Some(NSRedoFunctionKey) => "redo".to_string(),
@@ -784,5 +792,30 @@ mod select_key_tests {
     #[test]
     fn select_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSSelectFunctionKey, "select", 0);
+    }
+}
+
+#[cfg(test)]
+mod char_line_key_tests {
+    use super::*;
+    use cocoa::appkit::{
+        NSDeleteCharFunctionKey, NSDeleteLineFunctionKey, NSInsertCharFunctionKey,
+        NSInsertLineFunctionKey,
+    };
+    #[test]
+    fn insertchar_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSInsertCharFunctionKey, "insertchar", 0);
+    }
+    #[test]
+    fn insertline_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSInsertLineFunctionKey, "insertline", 0);
+    }
+    #[test]
+    fn deletechar_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSDeleteCharFunctionKey, "deletechar", 0);
+    }
+    #[test]
+    fn deleteline_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSDeleteLineFunctionKey, "deleteline", 0);
     }
 }
