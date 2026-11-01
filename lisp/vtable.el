@@ -72,6 +72,7 @@
    (-cache :initform (make-hash-table :test #'equal))
    (-current-cache :initform nil :accessor vtable--current-cache)
    (-current-cache-key :initform nil)
+   (-start-marker :initform nil)
    (-cached-keymap :initform nil)
    (-has-column-spec :initform nil))
   "An object to hold the data for a table.")
@@ -236,18 +237,56 @@ See info node `(vtable)Top' for vtable documentation."
   "Return the index of the column under point."
   (get-text-property (point) 'vtable-column))
 
-(defun vtable-beginning-of-table ()
-  "Go to the start of the current table."
-  (if (or (text-property-search-backward 'vtable (vtable-current-table) #'eq)
+(defun vtable--start-marker-position (table)
+  "Return TABLE's accessible start marker position in the current buffer."
+  (let* ((marker (slot-value table '-start-marker))
+         (position (and (markerp marker)
+                        (eq (marker-buffer marker) (current-buffer))
+                        (marker-position marker))))
+    (and position
+         (<= (point-min) position)
+         (<= position (point-max))
+         position)))
+
+(defun vtable--set-start-marker (table position &optional buffer)
+  "Set TABLE's start marker to POSITION in BUFFER, preserving its identity."
+  (let ((marker (slot-value table '-start-marker)))
+    (unless (markerp marker)
+      (setq marker (make-marker))
+      (setf (slot-value table '-start-marker) marker))
+    (if position
+        (set-marker marker position (or buffer (current-buffer)))
+      (set-marker marker nil))
+    (set-marker-insertion-type marker t)
+    marker))
+
+(defun vtable--beginning-of-table (table)
+  (if (or (text-property-search-backward 'vtable table #'eq)
           (get-text-property (point) 'vtable))
       (point)
-    (goto-char (point-min))))
+    (if table
+        (if-let* ((marker (vtable--start-marker-position table)))
+            (goto-char marker)
+          (user-error "No table insertion boundary"))
+      (goto-char (point-min)))))
+
+(defun vtable-beginning-of-table ()
+  "Go to the start of the current table."
+  (vtable--beginning-of-table (vtable-current-table)))
+
+(defun vtable--end-of-table (table)
+  (if (or (text-property-search-forward 'vtable table #'eq)
+          (get-text-property (point) 'vtable))
+      (point)
+    (if table
+        (if-let* ((marker (vtable--start-marker-position table)))
+            (goto-char marker)
+          (user-error "No table insertion boundary"))
+      (goto-char (point-max)))))
 
 (defun vtable-end-of-table ()
   "Go to the end of the current table."
-  (if (text-property-search-forward 'vtable (vtable-current-table) #'eq)
-      (point)
-    (goto-char (point-max))))
+  (vtable--end-of-table (vtable-current-table)))
 
 (defun vtable-goto-object (object)
   "Go to OBJECT in the current table.
@@ -266,13 +305,16 @@ Return the position of the object if found, and nil if not."
 (defun vtable-goto-table (table)
   "Go to TABLE in the current buffer.
 If TABLE is found, return the position of the start of the table.
-If it can't be found, return nil and don't move point."
+For a zero-width, empty table, use its recorded insertion marker.
+If TABLE can't be found, return nil and don't move point."
   (let ((start (point)))
     (goto-char (point-min))
     (if-let* ((match (text-property-search-forward 'vtable table t)))
         (goto-char (prop-match-beginning match))
-      (goto-char start)
-      nil)))
+      (if-let* ((marker (vtable--start-marker-position table)))
+          (goto-char marker)
+        (goto-char start)
+        nil))))
 
 (defun vtable-goto-column (column)
   "Go to COLUMN on the current line."
@@ -398,6 +440,25 @@ This will also remove the displayed line."
 ;; an index precludes the use of integers as objects.  This seems a very
 ;; unlikely use-case, so let's just accept this limitation.
 
+(defun vtable--insert-object-in-list (table object location before)
+  "Add OBJECT to TABLE's backing object list at LOCATION."
+  (let ((objects (vtable-objects table)))
+    (if (null objects)
+        (setf (vtable-objects table) (list object))
+      (let ((pos (if location
+                     (if (integerp location)
+                         (nthcdr location objects)
+                       (or (memq location objects)
+                           (and before objects)))
+                   (if before objects))))
+        (if (or before (and pos (integerp location)))
+            (let ((old-object (car pos)))
+              (setcar pos object)
+              (setcdr pos (cons old-object (cdr pos))))
+          (if pos
+              (setcdr pos (cons object (cdr pos)))
+            (nconc objects (list object))))))))
+
 (defun vtable-insert-object (table object &optional location before)
   "Insert OBJECT into TABLE at LOCATION.
 LOCATION is an object in TABLE.  OBJECT is inserted after LOCATION,
@@ -412,42 +473,36 @@ OBJECT is inserted at the beginning (if the index is less than 0) or
 end (if the index is too large) of the table.  BEFORE is ignored in this
 case.
 
-This also updates the displayed table."
-  ;; If the vtable is empty, just add the object and regenerate the
-  ;; table.
-  (if (null (vtable-objects table))
+This also updates the displayed table, if TABLE has already been inserted."
+  ;; Refuse to change TABLE until its complete display is accessible.
+  (when (vtable-buffer table)
+    (with-current-buffer (vtable-buffer table)
+      (vtable--accessible-table-bounds table)))
+  ;; Integer LOCATION determines the insertion side; BEFORE applies only
+  ;; to object locations and nil LOCATION.
+  (when (integerp location)
+    (setq before nil))
+  ;; When INSERT was nil, update the model only.  vtable-insert will
+  ;; create the display cache when the caller chooses an insertion point.
+  (if (null (vtable-buffer table))
       (progn
-        (setf (vtable-objects table) (list object))
+        (vtable--insert-object-in-list table object location before)
+        (vtable--recompute-numerical
+         table (vtable--compute-cached-line table object)))
+    ;; If the vtable is empty, add its first object and regenerate the
+    ;; table at the recorded insertion boundary.
+    (if (null (vtable-objects table))
+      (progn
+        (vtable--insert-object-in-list table object location before)
         (vtable--recompute-numerical table (vtable--compute-cached-line table object))
         (with-current-buffer (vtable-buffer table)
           (vtable-goto-table table)
-          (vtable-revert-command)))
-    ;; First insert into the objects.
-    (let ((pos (if location
-                   (if (integerp location)
-                       (prog1
-                           (nthcdr location (vtable-objects table))
-                         ;; Do not prepend if index is too large:
-                         (setq before nil))
-                     (or (memq location (vtable-objects table))
-                         ;; Prepend if `location' is not found and
-                         ;; `before' is non-nil:
-                         (and before (vtable-objects table))))
-                 ;; If `location' is nil and `before' is non-nil, we
-                 ;; prepend the new object.
-                 (if before (vtable-objects table)))))
-      (if (or before  ; If `before' is non-nil, `pos' should be, as well.
-              (and pos (integerp location)))
-          ;; Add the new object before.
-          (let ((old-object (car pos)))
-            (setcar pos object)
-            (setcdr pos (cons old-object (cdr pos))))
-        ;; Otherwise, add the object after.
-        (if pos
-            ;; Splice the object into the list.
-            (setcdr pos (cons object (cdr pos)))
-          ;; Otherwise, append the object.
-          (nconc (vtable-objects table) (list object)))))
+          ;; Insertion changes the model directly.  Re-querying an
+          ;; objects-function here would discard the newly inserted row.
+          (vtable--clear-cache table)
+          (vtable-revert table)))
+    ;; First update the backing object list.
+    (vtable--insert-object-in-list table object location before)
     ;; Then adjust the cache and display.
     (let* ((cache (vtable--current-cache table))
            (lines (vtable--cache-lines cache))
@@ -500,7 +555,7 @@ This also updates the displayed table."
             (let ((result (vtable--recompute-numerical table (cdr line))))
               (vtable--clear-other-caches
                table (slot-value table '-current-cache-key))
-              result)))))))
+              result))))))))
 
 (defun vtable-column (table index)
   "Return the name of the INDEXth column in TABLE."
@@ -581,7 +636,8 @@ recompute the column specs when the table data has changed."
   (car cache))
 
 (defun vtable--insert (table)
-  (let* ((spacer (vtable--spacer table))
+  (let* ((table-start (point))
+         (spacer (vtable--spacer table))
          (start (point))
          (ellipsis (propertize (vtable--ellipsis table)
                                'face (vtable-face table)))
@@ -622,6 +678,7 @@ recompute the column specs when the table data has changed."
                                'vtable table))
     (setf (vtable--current-cache table) cache
           (slot-value table '-current-cache-key) cache-key)
+    (vtable--set-start-marker table table-start (current-buffer))
     (goto-char start)))
 
 (defun vtable-insert (table)
@@ -635,6 +692,7 @@ caller."
       (when (not (eq table-buffer (current-buffer)))
         (error "A vtable cannot be inserted into more than one buffer")))
   (setf (vtable-buffer table) (current-buffer))
+  (vtable--set-start-marker table (point) (current-buffer))
   (let ((inhibit-read-only t)
         (inhibit-modification-hooks t))
     (vtable--insert table)))
@@ -643,7 +701,12 @@ caller."
   "Associate BUFFER with TABLE.
 Use this function with care, and ensure your vtable instance renders
 itself in the new buffer."
-  (setf (vtable-buffer table) buffer))
+  (let ((buffer-object (and buffer (get-buffer buffer))))
+    (setf (vtable-buffer table) buffer)
+    (if buffer-object
+        (with-current-buffer buffer-object
+          (vtable--set-start-marker table (point) buffer-object))
+      (vtable--set-start-marker table nil))))
 
 (defun vtable--insert-line (table line line-number widths spacer
                                   &optional ellipsis ellipsis-width)
@@ -1083,26 +1146,53 @@ CACHE is TABLE's cache data as returned by `vtable--compute-cache'."
           (vtable-keymap table))
       map)))
 
+(defun vtable--table-bounds (table)
+  "Return TABLE's full-buffer bounds as (START . END)."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (unless (vtable-goto-table table)
+        (user-error "No table insertion boundary"))
+      (let* ((start (vtable--beginning-of-table table))
+             (end (vtable--end-of-table table)))
+        (cons start end)))))
+
+(defun vtable--accessible-table-bounds (table)
+  "Return TABLE's bounds if it lies wholly inside the accessible region."
+  (let* ((accessible-min (point-min))
+         (accessible-max (point-max))
+         (bounds (vtable--table-bounds table))
+         (start (car bounds))
+         (end (cdr bounds)))
+    (unless (and (<= accessible-min start) (<= end accessible-max))
+      (user-error "Table is not fully accessible"))
+    bounds))
+
 (defun vtable-revert (&optional table)
   "Regenerate TABLE, defaulting to the table under point."
   (setq table (or table (vtable-current-table)))
   (unless table
     (user-error "No table under point"))
+  (unless (vtable-buffer table)
+    (user-error "Table not inserted"))
   (with-current-buffer (vtable-buffer table)
-    (let* ((key (vtable--cache-key))
-           (keep-key (and (gethash key (slot-value table '-cache)) key)))
-      (vtable--clear-other-caches table keep-key))
     (let ((object (vtable-current-object))
           (column (vtable-current-column))
           (inhibit-read-only t)
           (inhibit-modification-hooks t))
-      (delete-region (vtable-beginning-of-table) (vtable-end-of-table))
-      (vtable--insert table)
+      (let* ((bounds (vtable--accessible-table-bounds table))
+             (start (car bounds))
+             (end (cdr bounds)))
+        (let* ((key (vtable--cache-key))
+               (keep-key (and (gethash key (slot-value table '-cache)) key)))
+          (vtable--clear-other-caches table keep-key))
+        (delete-region start end)
+        (goto-char start)
+        (vtable--insert table))
       (when object
         (vtable-goto-object object))
       (when column
         (vtable-goto-column column)))))
-
 ;;; Commands.
 
 (defvar-keymap vtable-header-mode-map
@@ -1170,6 +1260,10 @@ If TABLE is nil, use the table under point."
   (setq table (or table (vtable-current-table)))
   (unless table
     (user-error "No table found"))
+  (unless (vtable-buffer table)
+    (user-error "Table not inserted"))
+  (with-current-buffer (vtable-buffer table)
+    (vtable--accessible-table-bounds table))
   (when (vtable-objects-function table)
     (setf (vtable-objects table) (funcall (vtable-objects-function table))))
   (vtable--clear-cache table)
