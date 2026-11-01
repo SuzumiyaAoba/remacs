@@ -1938,6 +1938,7 @@ struct FrameTitleContext<'a> {
     frame_name: &'a str,
     modified: bool,
     memory_full: bool,
+    multiple_frames: bool,
 }
 
 fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
@@ -2102,6 +2103,29 @@ fn format_frame_title_field(
             let Ok(elements) = value.list_to_vec() else {
                 return String::new();
             };
+            let condition = match &head {
+                Value::Nil => Some(false),
+                Value::Sym(symbol)
+                    if !matches!(i.symbol_name(*symbol).as_str(), ":eval" | ":propertize") =>
+                {
+                    let target = i.var_alias_target(*symbol);
+                    Some(if Some(target) == i.q_soft("multiple-frames") {
+                        context.multiple_frames
+                    } else {
+                        let value = i.symbol_value_in_buffer(*symbol, context.buffer_id);
+                        value.truthy()
+                            && !matches!(value, Value::Sym(id) if id == crate::lisp::obarray::sym::UNBOUND)
+                    })
+                }
+                _ => None,
+            };
+            if let Some(condition) = condition {
+                let branch = elements
+                    .get(if condition { 1 } else { 2 })
+                    .cloned()
+                    .unwrap_or(Value::Nil);
+                return format_frame_title_field(i, &branch, context, depth + 1, field);
+            }
             let mut text = String::new();
             let mut columns = 0usize;
             for (index, element) in elements.iter().enumerate() {
@@ -2141,6 +2165,28 @@ fn format_frame_title_field(
     output
 }
 
+fn frame_title_multiple_frames(i: &Interp, frame: &crate::editor::Frame) -> bool {
+    // Frames currently share one runtime terminal. Match GNU's other-frame
+    // test, including iconified frames and excluding child/tooltip/mini-only.
+    i.frames.iter().any(|candidate| {
+        let other = candidate.borrow();
+        if other.dead || other.id == frame.id {
+            return false;
+        }
+        let parameter = |name: &str| {
+            i.q_soft(name)
+                .map(|id| crate::lisp::eval::plist_get(&other.params, id))
+                .unwrap_or(Value::Nil)
+        };
+        let mini_only =
+            matches!(parameter("minibuffer"), Value::Sym(id) if Some(id) == i.q_soft("only"));
+        !mini_only
+            && parameter("parent-frame").is_nil()
+            && parameter("tooltip").is_nil()
+            && crate::editor::frame_visibility(i, candidate) != super::FrameVisibility::Hidden
+    })
+}
+
 fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
     if let Some(parameter) = i.q_soft("title")
         && let Value::Str(title) = crate::lisp::eval::plist_get(&frame.params, parameter)
@@ -2171,6 +2217,7 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
         modified,
         memory_full: mode_line_variable(i, buffer_id, "memory-full")
             .is_some_and(|value| value.truthy()),
+        multiple_frames: frame_title_multiple_frames(i, frame),
     };
     let Some(format) = i
         .q_soft("frame-title-format")
