@@ -70,6 +70,66 @@ const CASES: &str = r##"
              (entry (diary-sexp-entry (cdr generated) "anniversary %d%s" '(1 6 2027))))
         (unless (equal (if (consp entry) (cdr entry) entry) "anniversary 3rd")
           (error "The yearly interval filter lost the anniversary's formatted entry")))))
+  ;; February 29 instances disappear in common years; they never shift (#1580).
+  (let (candidates)
+    (dotimes (i 17)
+      (let ((year (+ 2020 i)))
+        (push (list 2 28 year) candidates)
+        (when (calendar-leap-year-p year) (push (list 2 29 year) candidates))
+        (push (list 3 1 year) candidates)
+        (push (list 3 2 year) candidates)))
+    (setq candidates (nreverse candidates))
+    (dolist (calendar-date-style '(american european iso))
+      (dolist (times '((nil nil) ("09:00" "10:00")))
+        (remacs-test-ical-yearly-hits
+         "FREQ=YEARLY" '(2 29 2024) candidates
+         '((2 29 2024) (2 29 2028) (2 29 2032) (2 29 2036)) (car times) (cadr times))
+        (remacs-test-ical-yearly-hits
+         (concat "FREQ=YEARLY;UNTIL=" (if (car times) "20280229T235959" "20280229"))
+         '(2 29 2024) candidates '((2 29 2024) (2 29 2028)) (car times) (cadr times))
+        (remacs-test-ical-yearly-hits
+         "FREQ=YEARLY;COUNT=2" '(2 29 2024) candidates
+         '((2 29 2024) (2 29 2028)) (car times) (cadr times))))
+    (let ((calendar-date-style 'american))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;COUNT=1" '(2 29 2024) candidates '((2 29 2024)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;INTERVAL=2" '(2 29 2024) candidates
+       '((2 29 2024) (2 29 2028) (2 29 2032) (2 29 2036)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;INTERVAL=3;COUNT=2" '(2 29 2024) candidates
+       '((2 29 2024) (2 29 2036)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;UNTIL=20280228" '(2 29 2024) candidates '((2 29 2024)))
+      (remacs-test-ical-yearly-hits
+       "FREQ=YEARLY;COUNT=3" '(2 29 2024) candidates '((2 29 2032)) nil nil
+       '((EXDATE nil "20240229") (EXDATE nil "20280229")))
+      (let* ((calendar-debug-sexp t)
+             (generated (remacs-test-ical-yearly-format "FREQ=YEARLY" '(2 29 2024)))
+             (entry (diary-sexp-entry (cdr generated) "anniversary %d%s" '(2 29 2028))))
+        (unless (equal (if (consp entry) (cdr entry) entry) "anniversary 5th")
+          (error "The leap-year guard lost the formatted anniversary entry")))))
+  (let ((calendar-date-style 'iso))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;COUNT=3" '(2 29 2096)
+     '((2 29 2096) (3 1 2100) (2 29 2104) (2 29 2108) (2 29 2112))
+     '((2 29 2096) (2 29 2104) (2 29 2108)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;COUNT=2;INTERVAL=100" '(2 29 2000)
+     '((2 29 2000) (3 1 2100) (3 1 2200) (3 1 2300) (2 29 2400) (2 29 2800))
+     '((2 29 2000) (2 29 2400)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY" '(2 29 2396)
+     '((2 29 2396) (3 1 2397) (3 1 2398) (3 1 2399) (2 29 2400) (2 29 2404))
+     '((2 29 2396) (2 29 2400) (2 29 2404)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY;COUNT=3" '(2 28 2024)
+     '((2 28 2024) (2 29 2024) (2 28 2025) (3 1 2025) (2 28 2026) (2 28 2027))
+     '((2 28 2024) (2 28 2025) (2 28 2026)))
+    (remacs-test-ical-yearly-hits
+     "FREQ=YEARLY" '(3 1 2024)
+     '((2 29 2024) (3 1 2024) (3 1 2025) (3 1 2026) (3 1 2027) (2 29 2028) (3 1 2028))
+     '((3 1 2024) (3 1 2025) (3 1 2026) (3 1 2027) (3 1 2028))))
   ;; BYMONTH expands a year into selected months while retaining DTSTART (#1564).
   (let (candidates)
     (dotimes (i 6)

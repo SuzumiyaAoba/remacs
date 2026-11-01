@@ -2788,20 +2788,13 @@ END-T is the event's end time in diary format."
                                                              interval) 0)))
                  )
                 ((string-equal frequency "YEARLY")
-                 (if year-months
-                     (let ((last-date (icalendar--yearly-last-date
-                                       dtstart-dec year-months interval (read count))))
-                       (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
-                                         (nth 2 dtstart-dec) (cadr last-date)
-                                         (car last-date) (nth 2 last-date))
-                             until-1 until))
-                   (setq until (icalendar--add-decoded-times
-                                dtstart-dec (list 0 0 0 0 0 (* (- (read count) 1)
-                                                               interval))))
-                   (setq until-1 (icalendar--add-decoded-times
-                                  dtstart-dec
-                                  (list 0 0 0 0 0 (* (- (read count) 1)
-                                                     interval))))))
+                 (let ((last-date (icalendar--yearly-last-date
+                                   dtstart-dec (or year-months (list (nth 4 dtstart-dec)))
+                                   interval (read count))))
+                   (setq until (list (nth 0 dtstart-dec) (nth 1 dtstart-dec)
+                                     (nth 2 dtstart-dec) (cadr last-date)
+                                     (car last-date) (nth 2 last-date))
+                         until-1 until)))
                 (t
                  (message "Cannot handle COUNT attribute for `%s' events."
                           frequency)))
@@ -2917,6 +2910,12 @@ END-T is the event's end time in diary format."
                       (setf (nth 5 dtstart-1y-dec) (1- year))
                       (format "(diary-anniversary %s)"
                               (icalendar--datetime-to-diary-date dtstart-1y-dec)))))))
+             ;; Remacs: invalid February 29 instances must not shift to March 1.
+             (when (and (not until) (null year-months)
+                        (= (nth 4 dtstart-dec) 2) (= (nth 3 dtstart-dec) 29))
+               (setq rule
+                     (format "(and (calendar-leap-year-p (calendar-extract-year date)) %s)"
+                             rule)))
              ;; Remacs: INTERVAL selects years relative to DTSTART.
              (unless (= interval 1)
                (setq rule
