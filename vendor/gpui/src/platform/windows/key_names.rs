@@ -23,6 +23,7 @@ fn immutable_name(vkey: u16) -> Option<&'static str> {
         0x1b => "escape",    // VK_ESCAPE
         0x2b => "execute",   // VK_EXECUTE
         0x2a => "print",     // VK_PRINT
+        0x29 => "select",    // VK_SELECT
         0x2c => "print",     // VK_SNAPSHOT
         0x2d => "insert",    // VK_INSERT
         0x2e => "delete",    // VK_DELETE
@@ -156,6 +157,11 @@ mod tests {
     #[test]
     fn print_virtual_key_is_named_non_text_and_preserves_modifiers() {
         assert_named_virtual_key(0x2a, "print");
+    }
+
+    #[test]
+    fn select_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        assert_named_virtual_key(0x29, "select");
     }
 
     #[test]

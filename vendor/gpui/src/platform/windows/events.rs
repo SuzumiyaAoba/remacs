@@ -1673,3 +1673,24 @@ mod print_key_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod select_key_tests {
+    use super::*;
+    #[test]
+    fn select_virtual_key_reaches_normal_key_parser_without_text() {
+        for modified in [false, true] {
+            let modifiers = Modifiers {
+                control: modified,
+                alt: modified,
+                shift: modified,
+                platform: modified,
+                function: false,
+            };
+            let key = parse_normal_key(VK_SELECT, LPARAM(0), modifiers).expect("Select key");
+            assert_eq!(key.key, "select");
+            assert!(key.key_char.is_none());
+            assert_eq!(key.modifiers, modifiers);
+        }
+    }
+}

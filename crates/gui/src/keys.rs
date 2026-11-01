@@ -202,7 +202,7 @@ fn function_key_name(key: &str) -> Option<&str> {
         "scroll_lock" | "Scroll_Lock" => Some("Scroll_Lock"),
         key if key.starts_with("XF86Audio") => Some(key),
         "up" | "down" | "left" | "right" | "home" | "end" | "begin" | "help" | "break"
-        | "pause" | "print" | "delete" | "insert" | "undo" | "redo" | "insertline"
+        | "pause" | "print" | "select" | "delete" | "insert" | "undo" | "redo" | "insertline"
         | "deleteline" | "insertchar" | "deletechar" | "execute" | "find" | "menu" => Some(key),
         key if key.starts_with("kp-") => Some(key),
         key if key.starts_with('f') && key[1..].parse::<u32>().is_ok() => Some(key),
