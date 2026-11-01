@@ -1940,6 +1940,7 @@ struct FrameTitleContext<'a> {
     memory_full: bool,
     multiple_frames: bool,
     recursion_depth: usize,
+    process_status: &'static str,
 }
 
 fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> String {
@@ -1959,6 +1960,7 @@ fn format_frame_title_string(format: &str, context: &FrameTitleContext<'_>) -> S
             'b' => title.push_str(context.buffer_name),
             'f' => title.push_str(context.file_name.unwrap_or(context.buffer_name)),
             'F' => title.push_str(context.frame_name),
+            's' => title.push_str(context.process_status),
             'e' => {
                 if context.memory_full {
                     title.push_str(MEMORY_FULL_WARNING);
@@ -2233,6 +2235,8 @@ fn frame_title(i: &Interp, frame: &crate::editor::Frame) -> String {
             .is_some_and(|value| value.truthy()),
         multiple_frames: frame_title_multiple_frames(i, frame),
         recursion_depth: i.recursion_depth,
+        process_status: crate::lisp::process::buffer_process(i, buffer_id)
+            .map_or("no process", |process| process.borrow().status),
     };
     let Some(format) = i
         .q_soft("frame-title-format")

@@ -1100,6 +1100,18 @@ impl From<bool> for PollOutput {
     }
 }
 
+/// Deactivate the transport and honor status_notify's removal policy before
+/// running the sentinel, including when the finished object is retained.
+fn deactivate_exited_process(i: &mut Interp, process: &ProcessRef) {
+    process.borrow_mut().io = ProcIo::None;
+    if i.q_soft("delete-exited-processes")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+        && let Some(position) = i.processes.iter().position(|p| Rc::ptr_eq(p, process))
+    {
+        i.processes.remove(position);
+    }
+}
+
 /// A separate stderr pipe advances global I/O but does not satisfy a
 /// wait specifically for the child's stdout.
 fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<PollOutput, Flow> {
@@ -1414,14 +1426,12 @@ fn poll_proc_once(
 
                 // GNU's status_notify: a process reaching `exit',
                 // `signal' or `closed' is removed from the process list
-                // (delete-exited-processes defaults to t) BEFORE the
+                // when delete-exited-processes is non-nil, BEFORE the
                 // sentinel runs — the sentinel already sees it gone.
                 // Only the oldest alist cell goes, matching
                 // remove_process on Vprocess_alist.
                 if matches!(pref.borrow().status, "exit" | "signal" | "closed") {
-                    if let Some(pos) = i.processes.iter().position(|q| Rc::ptr_eq(q, pref)) {
-                        i.processes.remove(pos);
-                    }
+                    deactivate_exited_process(i, pref);
                 }
                 if !pref.borrow().reported {
                     pref.borrow_mut().reported = true;
@@ -1690,9 +1700,7 @@ fn poll_datagram(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     p.exit_status = 256;
                     p.reported = true;
                 }
-                if let Some(pos) = i.processes.iter().position(|p| Rc::ptr_eq(p, pref)) {
-                    i.processes.remove(pos);
-                }
+                deactivate_exited_process(i, pref);
                 run_sentinel(i, pref, "closed", 256)?;
                 break;
             }
@@ -3203,6 +3211,19 @@ fn f_set_process_datagram_address(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     Ok(Value::Nil)
 }
 
+/// The same first registered, non-deleted process used by get-buffer-process.
+/// Finished processes can remain associated until status notification removes
+/// them; redisplay must read that cached status without polling or callbacks.
+pub(crate) fn buffer_process(i: &Interp, buffer: usize) -> Option<ProcessRef> {
+    i.processes
+        .iter()
+        .find(|process| {
+            let process = process.borrow();
+            !process.dead && process.buffer == Some(buffer)
+        })
+        .cloned()
+}
+
 fn f_get_buffer_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let bid = match &a[0] {
         Value::Nil => Some(i.current_buffer),
@@ -3214,13 +3235,9 @@ fn f_get_buffer_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Some(bid) = bid else {
         return Ok(Value::Nil);
     };
-    for p in &i.processes {
-        let pb = p.borrow();
-        if !pb.dead && pb.buffer == Some(bid) {
-            return Ok(Value::Process(p.clone()));
-        }
-    }
-    Ok(Value::Nil)
+    Ok(buffer_process(i, bid)
+        .map(Value::Process)
+        .unwrap_or(Value::Nil))
 }
 
 // ---------- I/O ----------
