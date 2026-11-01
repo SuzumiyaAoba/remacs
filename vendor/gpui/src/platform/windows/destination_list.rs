@@ -44,7 +44,7 @@ pub(crate) struct DockMenuItem {
 
 impl DockMenuItem {
     pub(crate) fn new(item: MenuItem) -> anyhow::Result<Self> {
-        match item {
+        match item.into_content() {
             MenuItem::Action { name, action, .. } => Ok(Self {
                 name: name.clone().into(),
                 description: if name == "New Window" {

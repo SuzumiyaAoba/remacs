@@ -190,6 +190,8 @@ pub struct GridMenu {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridMenuItem {
     pub label: String,
+    /// Prepared constant help text for the native menu tooltip.
+    pub help: Option<String>,
     pub command: Option<String>,
     /// Runtime-owned command object, used instead of a symbol name.
     pub command_id: Option<super::NativeMenuCommandId>,

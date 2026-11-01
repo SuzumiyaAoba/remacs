@@ -241,12 +241,7 @@ pub(crate) trait Platform: 'static {
         self.set_menus(
             items
                 .into_iter()
-                .filter_map(|item| match item {
-                    MenuItem::Submenu(menu) | MenuItem::SubmenuWithKeyHint { menu, .. } => {
-                        Some(menu)
-                    }
-                    _ => None,
-                })
+                .filter_map(MenuItem::into_submenu)
                 .collect(),
             keymap,
         );

@@ -2753,8 +2753,13 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
             name: item.label.clone().into(),
             items: item.items.iter().filter_map(gpui_menu_item).collect(),
         });
-        return Some(if let Some(hint) = &item.key_hint {
+        let submenu = if let Some(hint) = &item.key_hint {
             submenu.key_hint(hint.clone())
+        } else {
+            submenu
+        };
+        return Some(if let Some(help) = &item.help {
+            submenu.tooltip(help.clone())
         } else {
             submenu
         });
@@ -2770,12 +2775,72 @@ fn gpui_menu_item(item: &GridMenuItem) -> Option<MenuItem> {
     if let Some(hint) = &item.key_hint {
         result = result.key_hint(hint.clone());
     }
+    if let Some(help) = &item.help {
+        result = result.tooltip(help.clone());
+    }
     Some(result)
 }
 
 #[cfg(test)]
 mod native_menu_tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn native_help_keeps_actions_disabled_state_hints_and_submenus() {
+        let row = GridMenuItem {
+            label: "Run".into(),
+            help: Some("Runs the test command".into()),
+            command: Some("ignore".into()),
+            command_id: None,
+            items: Vec::new(),
+            separator: false,
+            checked: true,
+            key_hint: Some("C-c h".into()),
+        };
+        let item = gpui_menu_item(&row).unwrap().owned().clone();
+        let gpui::OwnedMenuItem::WithTooltip { item, tooltip } = item else {
+            panic!("help missing")
+        };
+        assert_eq!(tooltip, "Runs the test command");
+        assert!(
+            matches!(*item, gpui::OwnedMenuItem::Action { checked: true, key_hint: Some(ref hint), .. } if hint == "C-c h")
+        );
+        let disabled = GridMenuItem {
+            command: None,
+            ..row.clone()
+        };
+        let gpui::OwnedMenuItem::WithTooltip { item, .. } = gpui_menu_item(&disabled).unwrap().owned()
+        else {
+            panic!("help missing")
+        };
+        assert!(matches!(
+            *item,
+            gpui::OwnedMenuItem::Disabled { checked: true, .. }
+        ));
+        let submenu = GridMenuItem {
+            label: "More".into(),
+            help: Some("Submenu help".into()),
+            command: None,
+            command_id: None,
+            items: vec![row],
+            separator: false,
+            checked: false,
+            key_hint: Some("C-x 4".into()),
+        };
+        let gpui::OwnedMenuItem::WithTooltip { item, tooltip } =
+            gpui_menu_item(&submenu).unwrap().owned().clone()
+        else {
+            panic!("help missing")
+        };
+        assert_eq!(tooltip, "Submenu help");
+        let gpui::OwnedMenuItem::SubmenuWithKeyHint { menu, key_hint } = *item else {
+            panic!("submenu missing")
+        };
+        assert_eq!(key_hint, "C-x 4");
+        assert!(
+            matches!(&menu.items[0], gpui::OwnedMenuItem::WithTooltip { tooltip, .. } if tooltip == "Runs the test command")
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn lambda_menu_bindings_become_selectable_native_actions() {
@@ -2883,6 +2948,7 @@ mod native_menu_tests {
                 command: None,
                 command_id: None,
                 items: vec![GridMenuItem {
+                    help: None,
                     label: "Child".into(),
                     command: Some("ignore".into()),
                     command_id: None,
@@ -2919,6 +2985,7 @@ mod native_menu_tests {
     #[::core::prelude::v1::test]
     fn nonselectable_native_rows_keep_their_label_without_an_action() {
         let item = GridMenuItem {
+            help: None,
             label: "Disabled".into(),
             command: None,
             command_id: None,
@@ -2935,6 +3002,7 @@ mod native_menu_tests {
             matches!(converted.owned().clone(), gpui::OwnedMenuItem::Disabled { name, checked: false, key_hint: None } if name == "Disabled")
         );
         let enabled = GridMenuItem {
+            help: None,
             command: Some("ignore".into()),
             command_id: None,
             ..item
@@ -2950,6 +3018,7 @@ mod native_menu_tests {
         for checked in [true, false] {
             for command in [None, Some("ignore".into())] {
                 let item = GridMenuItem {
+                    help: None,
                     label: "Toggle".into(),
                     command: command.clone(),
                     command_id: None,
@@ -2974,6 +3043,7 @@ mod native_menu_tests {
     fn native_keyboard_hints_survive_conversion_without_changing_actions() {
         for command in [None, Some("ignore".into())] {
             let item = GridMenuItem {
+                help: None,
                 label: "Run".into(),
                 command: command.clone(),
                 command_id: None,
@@ -3009,10 +3079,12 @@ mod native_menu_tests {
     #[::core::prelude::v1::test]
     fn native_submenu_hints_keep_children_and_survive_owned_clones() {
         let item = GridMenuItem {
+            help: None,
             label: "Branch".into(),
             command: None,
             command_id: None,
             items: vec![GridMenuItem {
+                help: None,
                 label: "Run".into(),
                 command: Some("ignore".into()),
                 command_id: None,

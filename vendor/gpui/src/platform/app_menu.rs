@@ -50,6 +50,13 @@ pub enum SystemMenuType {
 
 /// The different kinds of items that can be in a menu
 pub enum MenuItem {
+    /// A menu item with native hover help.
+    WithTooltip {
+        /// The item whose action, state and keyboard hint are retained.
+        item: Box<MenuItem>,
+        /// The text displayed while hovering over the item.
+        tooltip: SharedString,
+    },
     /// A separator between items
     Separator,
 
@@ -107,6 +114,9 @@ impl MenuItem {
 
     /// Set the checkmark of an action or disabled item.
     pub fn checked(mut self, checked: bool) -> Self {
+        if let Self::WithTooltip { item, tooltip } = self {
+            return (*item).checked(checked).tooltip(tooltip);
+        }
         if let Self::Action { checked: state, .. } | Self::Disabled { checked: state, .. } =
             &mut self
         {
@@ -119,6 +129,7 @@ impl MenuItem {
     pub fn key_hint(self, hint: impl Into<SharedString>) -> Self {
         let hint = hint.into();
         match self {
+            Self::WithTooltip { item, tooltip } => (*item).key_hint(hint).tooltip(tooltip),
             Self::Submenu(menu) | Self::SubmenuWithKeyHint { menu, .. } => {
                 Self::SubmenuWithKeyHint {
                     menu,
@@ -131,6 +142,40 @@ impl MenuItem {
                 }
                 item
             }
+        }
+    }
+
+    /// Attach hover help without changing the action or keyboard equivalent.
+    pub fn tooltip(self, tooltip: impl Into<SharedString>) -> Self {
+        let item = match self {
+            Self::WithTooltip { item, .. } => item,
+            item => Box::new(item),
+        };
+        Self::WithTooltip {
+            item,
+            tooltip: tooltip.into(),
+        }
+    }
+
+    pub(crate) fn as_submenu(&self) -> Option<&Menu> {
+        match self {
+            Self::Submenu(menu) | Self::SubmenuWithKeyHint { menu, .. } => Some(menu),
+            Self::WithTooltip { item, .. } => item.as_submenu(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn into_content(self) -> Self {
+        match self {
+            Self::WithTooltip { item, .. } => (*item).into_content(),
+            item => item,
+        }
+    }
+
+    pub(crate) fn into_submenu(self) -> Option<Menu> {
+        match self.into_content() {
+            Self::Submenu(menu) | Self::SubmenuWithKeyHint { menu, .. } => Some(menu),
+            _ => None,
         }
     }
     /// Creates a new menu item that is a separator
@@ -180,6 +225,10 @@ impl MenuItem {
     /// Create an OwnedMenuItem from this MenuItem
     pub fn owned(self) -> OwnedMenuItem {
         match self {
+            MenuItem::WithTooltip { item, tooltip } => OwnedMenuItem::WithTooltip {
+                item: Box::new((*item).owned()),
+                tooltip: tooltip.into(),
+            },
             MenuItem::Separator => OwnedMenuItem::Separator,
             MenuItem::Disabled {
                 name,
@@ -237,6 +286,13 @@ pub struct OwnedMenu {
 
 /// The different kinds of items that can be in a menu
 pub enum OwnedMenuItem {
+    /// A menu item with native hover help.
+    WithTooltip {
+        /// The original item, including its state and action.
+        item: Box<OwnedMenuItem>,
+        /// The hover help text.
+        tooltip: String,
+    },
     /// A separator between items
     Separator,
     /// A visible label with no action or keyboard equivalent.
@@ -284,6 +340,10 @@ pub enum OwnedMenuItem {
 impl Clone for OwnedMenuItem {
     fn clone(&self) -> Self {
         match self {
+            OwnedMenuItem::WithTooltip { item, tooltip } => OwnedMenuItem::WithTooltip {
+                item: item.clone(),
+                tooltip: tooltip.clone(),
+            },
             OwnedMenuItem::Separator => OwnedMenuItem::Separator,
             OwnedMenuItem::Disabled {
                 name,
@@ -319,6 +379,16 @@ impl Clone for OwnedMenuItem {
     }
 }
 
+impl OwnedMenuItem {
+    fn as_submenu(&self) -> Option<&OwnedMenu> {
+        match self {
+            Self::Submenu(menu) | Self::SubmenuWithKeyHint { menu, .. } => Some(menu),
+            Self::WithTooltip { item, .. } => item.as_submenu(),
+            _ => None,
+        }
+    }
+}
+
 // TODO: As part of the global selections refactor, these should
 // be moved to GPUI-provided actions that make this association
 // without leaking the platform details to GPUI users
@@ -350,12 +420,7 @@ pub enum OsAction {
 pub(crate) fn menu_bar_submenus(items: &[OwnedMenuItem]) -> Vec<OwnedMenu> {
     items
         .iter()
-        .filter_map(|item| match item {
-            OwnedMenuItem::Submenu(menu) | OwnedMenuItem::SubmenuWithKeyHint { menu, .. } => {
-                Some(menu.clone())
-            }
-            _ => None,
-        })
+        .filter_map(|item| item.as_submenu().cloned())
         .collect()
 }
 
@@ -381,4 +446,54 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
             cx.update(|cx| cx.dispatch_action(action)).log_err();
         }
     }));
+}
+
+#[cfg(test)]
+mod tooltip_tests {
+    use super::*;
+
+    #[test]
+    fn tooltips_preserve_builder_state_owned_clones_and_legacy_submenus() {
+        let item = MenuItem::disabled("Description")
+            .tooltip("Old")
+            .key_hint("C-c h")
+            .checked(true)
+            .tooltip("New")
+            .owned()
+            .clone();
+        let OwnedMenuItem::WithTooltip { item, tooltip } = item else {
+            panic!("tooltip missing")
+        };
+        assert_eq!(tooltip, "New");
+        assert!(
+            matches!(*item, OwnedMenuItem::Disabled { checked: true, key_hint: Some(ref hint), .. } if hint == "C-c h")
+        );
+
+        let item = MenuItem::submenu(Menu {
+            name: "Window".into(),
+            items: Vec::new(),
+        })
+        .tooltip("Window help")
+        .key_hint("C-x 5");
+        assert_eq!(item.as_submenu().unwrap().name.as_str(), "Window");
+        let item = item.owned().clone();
+        let menus = menu_bar_submenus(&[item.clone()]);
+        assert_eq!(menus[0].name.as_str(), "Window");
+        let OwnedMenuItem::WithTooltip { item, tooltip } = item else {
+            panic!("tooltip missing")
+        };
+        assert_eq!(tooltip, "Window help");
+        assert!(
+            matches!(*item, OwnedMenuItem::SubmenuWithKeyHint { ref key_hint, .. } if key_hint == "C-x 5")
+        );
+        assert!(
+            MenuItem::submenu(Menu {
+                name: "Legacy".into(),
+                items: Vec::new()
+            })
+            .tooltip("Help")
+            .into_submenu()
+            .is_some()
+        );
+    }
 }

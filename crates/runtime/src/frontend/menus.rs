@@ -83,6 +83,7 @@ fn menu_items(
         if menu_separator_name_p(&label) {
             items.push(GridMenuItem {
                 label,
+                help: None,
                 command: None,
                 command_id: None,
                 items: Vec::new(),
@@ -100,6 +101,7 @@ fn menu_items(
             };
             items.push(GridMenuItem {
                 label,
+                help: item.help_text(),
                 command: None,
                 command_id: None,
                 items: children,
@@ -111,6 +113,7 @@ fn menu_items(
             let (command, command_id) = command_binding(i, &definition, item.enabled, &keys);
             items.push(GridMenuItem {
                 label,
+                help: item.help_text(),
                 command,
                 command_id,
                 items: Vec::new(),
@@ -289,6 +292,7 @@ fn compute(i: &mut Interp) -> Result<Vec<GridMenu>, Flow> {
                 if multiple && !name.is_empty() {
                     items.push(GridMenuItem {
                         label: name,
+                        help: None,
                         command: None,
                         command_id: None,
                         items: pane.items,

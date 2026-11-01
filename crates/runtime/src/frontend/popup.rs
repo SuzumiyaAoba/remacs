@@ -137,6 +137,7 @@ fn protected_menu_eval(
 }
 
 struct MenuProperties {
+    help: Value,
     enable: Value,
     /// Retain the value cell, since a dynamic name can replace its function.
     filter: Option<Value>,
@@ -147,6 +148,7 @@ struct MenuProperties {
 
 /// Check :visible in source order and retain the final property fields.
 fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuProperties>, Flow> {
+    let help_property = i.q(":help");
     let enable = i.q(":enable");
     let visible = i.q(":visible");
     let filter = i.q(":filter");
@@ -157,6 +159,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     let sequence_property = i.q(":key-sequence");
     let force = i.q("enable-disabled-menus-and-buttons");
     let mut enable_form = Value::t();
+    let mut help = Value::Nil;
     let mut filter_cell = None;
     let mut selected = Value::Nil;
     let mut keys = Value::Nil;
@@ -196,6 +199,8 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
             && eval_property(i, &form)?.is_nil()
         {
             return Ok(None);
+        } else if matches!(property, Value::Sym(symbol) if symbol == help_property) {
+            help = substitute_help(i, form)?;
         } else if matches!(property, Value::Sym(symbol) if symbol == filter) {
             filter_cell = Some(Value::Cons(value.clone()));
         } else if matches!(property, Value::Sym(symbol) if symbol == keys_property) {
@@ -227,6 +232,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
         properties = value.borrow().cdr.clone();
     }
     Ok(Some(MenuProperties {
+        help,
         enable: enable_form,
         filter: filter_cell,
         selected,
@@ -235,7 +241,29 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     }))
 }
 
+/// GNU keyboard.c substitutes constant help strings while walking the plist.
+/// Forms/functions are retained but never evaluated as menu help.
+fn substitute_help(i: &mut Interp, help: Value) -> Result<Value, Flow> {
+    let Value::Str(text) = &help else {
+        return Ok(help);
+    };
+    let nonempty = !text.borrow().is_empty();
+    let property = i.q("help-echo-inhibit-substitution");
+    if nonempty
+        && crate::buffer::primitives::f_get_text_property(
+            i,
+            vec![Value::Int(0), Value::Sym(property), help.clone()].into(),
+        )?
+        .truthy()
+    {
+        return Ok(help);
+    }
+    let substitute = Value::Sym(i.q("substitute-command-keys"));
+    i.apply(&substitute, vec![help])
+}
+
 pub(super) struct ParsedMenuItem {
+    help: Value,
     pub(super) label: String,
     pub(super) name: Value,
     pub(super) definition: Value,
@@ -247,6 +275,13 @@ pub(super) struct ParsedMenuItem {
 }
 
 impl ParsedMenuItem {
+    pub(super) fn help_text(&self) -> Option<String> {
+        match &self.help {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        }
+    }
+
     /// Resolve the keyboard equivalent after name/filter/enable processing.
     /// Submenus and nonselectable text retain only an explicit string hint.
     pub(super) fn keyboard_equivalent(
@@ -373,6 +408,7 @@ pub(super) fn keymap_item(
             let label = name.borrow().to_unicode_lossy();
             let separator = menu_separator_name_p(&label);
             return Ok(Some(ParsedMenuItem {
+                help: properties.help,
                 label,
                 name: Value::Str(name),
                 definition,
@@ -384,12 +420,35 @@ pub(super) fn keymap_item(
             }));
         }
     }
+    let help = if let Value::Cons(cell) = binding {
+        let cell = cell.borrow();
+        if matches!(cell.car, Value::Str(_)) {
+            if let Value::Cons(tail) = &cell.cdr {
+                let value = tail.borrow().car.clone();
+                if matches!(value, Value::Str(_)) {
+                    value
+                } else {
+                    Value::Nil
+                }
+            } else {
+                Value::Nil
+            }
+        } else {
+            Value::Nil
+        }
+    } else {
+        Value::Nil
+    };
+    let help = substitute_help(i, help)?;
     let (label, definition, separator) = menu_label_and_definition(i, key, binding);
     let name = match binding {
-        Value::Cons(cell) if matches!(cell.borrow().car, Value::Str(_)) => cell.borrow().car.clone(),
+        Value::Cons(cell) if matches!(cell.borrow().car, Value::Str(_)) => {
+            cell.borrow().car.clone()
+        }
         _ => Value::string(label.clone()),
     };
     Ok(Some(ParsedMenuItem {
+        help,
         label,
         name,
         definition,

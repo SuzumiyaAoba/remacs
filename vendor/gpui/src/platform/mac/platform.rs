@@ -273,7 +273,7 @@ impl MacPlatform {
             for item in items {
                 let menu_item = Self::create_menu_item(item, delegate, actions, keymap, attributes);
                 application_menu.addItem_(menu_item);
-                if matches!(item, MenuItem::Submenu(menu) | MenuItem::SubmenuWithKeyHint { menu, .. } if menu.name == "Window")
+                if item.as_submenu().is_some_and(|menu| menu.name == "Window")
                 {
                     let app: id = msg_send![APP_CLASS, sharedApplication];
                     let menu: id = msg_send![menu_item, submenu];
@@ -342,19 +342,24 @@ impl MacPlatform {
         hint
     }
 
+    fn menu_caption_and_hint(item: &MenuItem) -> Option<(&str, Option<&str>)> {
+        match item {
+            MenuItem::WithTooltip { item, .. } => Self::menu_caption_and_hint(item),
+            MenuItem::Action { name, key_hint, .. } | MenuItem::Disabled { name, key_hint, .. } => {
+                Some((name.as_str(), key_hint.as_ref().map(|hint| hint.as_str())))
+            }
+            MenuItem::Submenu(menu) => Some((menu.name.as_str(), None)),
+            MenuItem::SubmenuWithKeyHint { menu, key_hint } => {
+                Some((menu.name.as_str(), Some(key_hint.as_str())))
+            }
+            MenuItem::SystemMenu(menu) => Some((menu.name.as_str(), None)),
+            MenuItem::Separator => None,
+        }
+    }
+
     unsafe fn menu_key_hint_attributes(items: &[MenuItem]) -> id {
-        if !items.iter().any(|item| {
-            matches!(
-                item,
-                MenuItem::Action {
-                    key_hint: Some(_),
-                    ..
-                } | MenuItem::Disabled {
-                    key_hint: Some(_),
-                    ..
-                } | MenuItem::SubmenuWithKeyHint { .. }
-            )
-        }) {
+        let captions = items.iter().filter_map(Self::menu_caption_and_hint);
+        if !captions.clone().any(|(_, hint)| hint.is_some()) {
             return nil;
         }
         unsafe {
@@ -363,19 +368,7 @@ impl MacPlatform {
                 dictionaryWithObject: font forKey: ns_string("NSFont")];
             let mut max_name_width = 0.0f64;
             let mut max_hint_width = 0.0f64;
-            for item in items {
-                let (name, hint) = match item {
-                    MenuItem::Action { name, key_hint, .. }
-                    | MenuItem::Disabled { name, key_hint, .. } => {
-                        (name, key_hint.as_ref().map(|hint| hint.as_str()))
-                    }
-                    MenuItem::Submenu(menu) => (&menu.name, None),
-                    MenuItem::SubmenuWithKeyHint { menu, key_hint } => {
-                        (&menu.name, Some(key_hint.as_str()))
-                    }
-                    MenuItem::SystemMenu(menu) => (&menu.name, None),
-                    MenuItem::Separator => continue,
-                };
+            for (name, hint) in captions {
                 let size: NSSize = msg_send![ns_string(name), sizeWithAttributes: font_attributes];
                 max_name_width = max_name_width.max(size.width);
                 if let Some(hint) = hint {
@@ -428,6 +421,11 @@ impl MacPlatform {
 
         unsafe {
             match item {
+                MenuItem::WithTooltip { item, tooltip } => {
+                    let item = Self::create_menu_item(item, delegate, actions, keymap, key_hint_attributes);
+                    let _: () = msg_send![item, setToolTip: ns_string(tooltip)];
+                    item
+                }
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
                 MenuItem::Disabled {
                     name,
