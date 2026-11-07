@@ -43,6 +43,30 @@ fn test_term(width: usize, height: usize) -> (TestFrontend, Rc<RefCell<Vec<u8>>>
         out,
     )
 }
+
+#[test]
+fn sit_for_redisplays_and_returns_early_without_consuming_input() {
+    let mut i = interp_with_frame("");
+    let (mut frontend, out) = test_term(80, 25);
+    frontend.pending.push('x' as i128);
+    let term = Rc::new(RefCell::new(frontend));
+    install_minibuf_reader(&term, &mut i);
+
+    let result = i.eval_str(r#"(progn (insert "X") (sit-for 10))"#).unwrap();
+
+    assert!(result.is_nil(), "input should make sit-for return nil");
+    assert!(
+        String::from_utf8_lossy(&out.borrow()).contains('X'),
+        "sit-for should render edits made before it starts waiting"
+    );
+    assert!(matches!(
+        i.pending_frontend_input.pop_front(),
+        Some(InputEvent::Key(key)) if key == 'x' as i128
+    ));
+    let timed_out = i.eval_str("(sit-for 0.001)").unwrap();
+    assert!(timed_out.truthy(), "sit-for should return t after its timeout");
+}
+
 fn interp_with_frame(text: &str) -> crate::lisp::Interp {
     let mut i = crate::lisp::Interp::new();
     let buf_id = i.create_buffer("test-buf");

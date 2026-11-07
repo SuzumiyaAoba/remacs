@@ -166,6 +166,8 @@ impl Interp {
             quit_editor: false,
             exit_status: None,
             minibuf_reader: None,
+            sit_for_waiter: None,
+            pending_frontend_input: Default::default(),
             clipboard_backend: None,
             bell_backend: None,
             about_panel_backend: None,

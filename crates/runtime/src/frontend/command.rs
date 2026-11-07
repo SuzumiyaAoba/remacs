@@ -168,6 +168,54 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
         interp.command_key_capture_active = saved_capture;
         result
     }));
+
+    let t = term.clone();
+    i.sit_for_waiter = Some(std::rc::Rc::new(move |interp, duration| {
+        let deadline = Instant::now() + duration;
+        let mut render_needed = true;
+        loop {
+            let thread_activity = crate::lisp::eval::threads::yield_now(interp)?;
+            let event_activity = crate::lisp::builtins::evalfn::thread_wait_events(interp)?;
+            let window_activity = crate::editor::changes::run(interp)?;
+            let render_requested = t.borrow_mut().take_render_request();
+            render_needed |= thread_activity || event_activity || window_activity || render_requested;
+            if render_needed {
+                if let Err(flow) = t.borrow_mut().run_pre_redisplay_functions(interp) {
+                    return Err(flow);
+                }
+                crate::editor::changes::run(interp)?;
+                super::prepare_native_menus(interp)?;
+                t.borrow_mut()
+                    .render(interp)
+                    .map_err(|error| interp.error(format!("sit-for redisplay: {error}")))?;
+                render_needed = false;
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let timeout = remaining.min(Duration::from_millis(20));
+            let polled = t
+                .borrow_mut()
+                .poll_input(timeout)
+                .map_err(|error| interp.error(format!("sit-for input: {error}")))?;
+            apply_frame_selection(&t, interp);
+            sync_mouse_absolute_pixel_position(&t, interp);
+            if let Some((frame_id, left, top)) = t.borrow_mut().take_frame_moved()
+                && let Err(flow) = dispatch_frame_moved(interp, frame_id, left, top)
+            {
+                return Err(flow);
+            }
+            if let Some(input) = polled {
+                interp.pending_frontend_input.push_back(input);
+                return Ok(true);
+            }
+            if t.borrow_mut().take_render_request() {
+                render_needed = true;
+            }
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+        }
+    }));
 }
 
 fn scroll_popup(
@@ -406,19 +454,23 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 if i.symbol_value(ek).truthy() {
                     let _ = i.set_symbol(ek, Value::Nil);
                 }
-                // Poll input. Sleep deadlines keep the UI responsive.
-                let timeout = Duration::from_millis(50);
-                let polled = term.borrow_mut().poll_input(timeout)?;
-                apply_frame_selection(&term, i);
-                sync_mouse_absolute_pixel_position(&term, i);
-                if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved()
-                    && let Err(flow) = dispatch_frame_moved(i, frame_id, left, top)
-                {
-                    report_flow(i, flow);
-                }
-                match polled {
-                    Some(input) => input,
-                    None => continue,
+                if let Some(input) = i.pending_frontend_input.pop_front() {
+                    input
+                } else {
+                    // Poll input. Sleep deadlines keep the UI responsive.
+                    let timeout = Duration::from_millis(50);
+                    let polled = term.borrow_mut().poll_input(timeout)?;
+                    apply_frame_selection(&term, i);
+                    sync_mouse_absolute_pixel_position(&term, i);
+                    if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved()
+                        && let Err(flow) = dispatch_frame_moved(i, frame_id, left, top)
+                    {
+                        report_flow(i, flow);
+                    }
+                    match polled {
+                        Some(input) => input,
+                        None => continue,
+                    }
                 }
             }
         };
@@ -2547,6 +2599,8 @@ fn minibuf_loop<T: KeyIo>(
         // infinite poll loop on a dead input source.
         let polled = if i.macro_replaying && !i.macro_replay.is_empty() {
             Ok(i.macro_replay.pop_front().map(InputEvent::Key))
+        } else if let Some(input) = i.pending_frontend_input.pop_front() {
+            Ok(Some(input))
         } else {
             term.borrow_mut().poll_input(Duration::from_millis(50))
         };

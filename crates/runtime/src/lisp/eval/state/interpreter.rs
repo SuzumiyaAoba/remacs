@@ -268,6 +268,15 @@ pub struct Interp {
             dyn Fn(&mut Interp, &crate::lisp::text::EmacsStr, bool) -> Result<MinibufInput, Flow>,
         >,
     >,
+    /// Frontend wait hook for `sit-for'. It redisplays while waiting and
+    /// queues any input it observes for the command loop to handle later.
+    pub(crate) sit_for_waiter: Option<
+        Rc<dyn Fn(&mut Interp, std::time::Duration) -> Result<bool, Flow>>,
+    >,
+    /// Input read while a Lisp primitive is waiting, but not consumed by it.
+    pub(crate) pending_frontend_input: std::collections::VecDeque<
+        crate::frontend::InputEvent,
+    >,
     /// Host clipboard bridge, installed by a GUI front-end.
     pub(crate) clipboard_backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
     /// Host bell bridge, installed by a GUI front-end.

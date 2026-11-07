@@ -4710,14 +4710,24 @@ pub(crate) fn f_sleep_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
     sleep_firing_timers(i, secs)
 }
 fn f_sit_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // Batch: no input to wait for — GNU sleeps the full time, firing
-    // timers.  Arg is CHECK_NUMBER'd the same as `sleep-for'.
+    // Arg is CHECK_NUMBER'd the same as `sleep-for'.
     let secs = match args.get(0) {
         Some(Value::Int(n)) => *n as f64,
         Some(Value::Float(f)) => **f,
         Some(other) => return Err(i.wrong_type_mut("numberp", other)),
         None => 0.0,
     };
+    if let Some(waiter) = i.sit_for_waiter.clone() {
+        let duration = if secs.is_finite() && secs > 0.0 {
+            std::time::Duration::from_secs_f64(secs.min(3600.0))
+        } else {
+            std::time::Duration::ZERO
+        };
+        let input_pending = waiter(i, duration)?;
+        return Ok(Value::from_bool(!input_pending));
+    }
+    // Batch has no interactive frontend to poll, so it waits the full time
+    // while still servicing timers, subprocesses, and other runtime events.
     sleep_firing_timers(i, secs)?;
     Ok(Value::t())
 }
