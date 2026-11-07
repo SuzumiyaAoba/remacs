@@ -769,7 +769,6 @@ pub fn run_gui_with_dump(
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
-                                    view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
                                     view.set_image_cache_metrics(
                                         initial_image_cache_entries,
                                         initial_image_cache_size,
@@ -777,6 +776,11 @@ pub fn run_gui_with_dump(
                                     view.set_grid(grid, window);
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
+                                    view.apply_minimum_cells(
+                                        window,
+                                        minimum_cells.0,
+                                        minimum_cells.1,
+                                    );
                                     view.set_alpha_background(initial_alpha_background);
                                     window.set_opacity(frame_opacity(
                                         initial_alpha_active,

@@ -34,6 +34,8 @@ mod mouse_tests;
 #[cfg(test)]
 mod icon_title_tests;
 #[cfg(test)]
+mod minimum_cells_tests;
+#[cfg(test)]
 mod autoselect_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod popup_hit_tests;
@@ -1164,6 +1166,16 @@ impl EditorView {
         self.minimum_cells = cells;
         self.native_minimum_size = None;
         true
+    }
+
+    pub(super) fn apply_minimum_cells(
+        &mut self,
+        window: &Window,
+        width: Option<usize>,
+        height: Option<usize>,
+    ) {
+        self.set_minimum_cells(width, height);
+        self.update_minimum_size(window, self.cell_width, self.line_height);
     }
 
     pub(super) fn update_minimum_size(
