@@ -174,6 +174,8 @@ live な値を取り出す。operand の Lisp 文字列と処理前のキュー�
 タイトルは runtime が表示状態に応じて `frame-title-format`／`icon-title-format` から計算する。
 GUI は snapshot の受信時に native title を反映し、最小化中も描画を待たずに更新する。
 X11 は通常の window name と icon name の両方を、UTF-8 の EWMH property と共に更新する。
+Windows GUI の resource lookup は logic thread から registry backend を使い、runtime は
+共通の window-system resource interface を呼び出す。
 `view.rs` が GPUI のレイアウトと描画を行い、`view/input.rs` が IME と UTF-16 の
 OS テキスト入力を扱う。確定前の入力は view、確定したテキストは評価スレッドが所有する。
 `gpui` は workspace の `vendor/gpui` パッチを使い、Font stretch を各 OS の font selector に渡す。

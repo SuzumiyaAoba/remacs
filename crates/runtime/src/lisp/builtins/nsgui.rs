@@ -475,7 +475,7 @@ fn ns_window_system_in_use(i: &Interp) -> bool {
             })
 }
 
-fn f_ns_get_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+pub(super) fn f_ns_get_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !ns_window_system_in_use(i) {
         return Err(winsys(i));
     }

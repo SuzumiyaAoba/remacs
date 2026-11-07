@@ -298,6 +298,11 @@ pub trait NativeServiceBackend {
     fn perform_service(&self, service: &str, send: Option<&str>) -> Result<Option<String>, String>;
 }
 
+/// Host GUI resource database used by `x-get-resource`.
+pub trait XResourceBackend {
+    fn get_string_resource(&self, name: &str, class: &str) -> Result<Option<String>, String>;
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),

@@ -96,6 +96,14 @@ impl Interp {
         self.native_service_backend = backend;
     }
 
+    /// Install or remove the GUI window-system resource database.
+    pub fn set_x_resource_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::XResourceBackend>>,
+    ) {
+        self.x_resource_backend = backend;
+    }
+
     pub(crate) fn reset_dump_execution(&mut self) {
         self.specbind.clear();
         self.lexenv = None;

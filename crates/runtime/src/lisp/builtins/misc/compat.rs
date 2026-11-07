@@ -194,9 +194,95 @@ pub(super) fn f_gnutls_available_p(i: &mut Interp, _a: crate::lisp::Argv) -> Eva
     Ok(Value::list(vals))
 }
 
-/// `x-get-resource' / `x-list-fonts' — no X display in batch.
-pub(super) fn f_x_get_resource(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Err(i.error("Window system is not in use or not initialized"))
+/// `x-get-resource' — query the selected GUI terminal's resource database.
+pub(super) fn f_x_get_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let Some(frame) = i
+        .selected_frame
+        .clone()
+        .filter(|frame| !frame.borrow().dead)
+    else {
+        return Err(i.error("Window system is not in use or not initialized"));
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system is not in use or not initialized"));
+    }
+    let attribute = want_string(i, &a[0])?.to_unicode_lossy();
+    let class = want_string(i, &a[1])?.to_unicode_lossy();
+    let component = match a.get(2).filter(|value| !value.is_nil()) {
+        Some(value) => Some(want_string(i, value)?.to_unicode_lossy()),
+        None => None,
+    };
+    let subclass = match a.get(3).filter(|value| !value.is_nil()) {
+        Some(value) => Some(want_string(i, value)?.to_unicode_lossy()),
+        None => None,
+    };
+    if component.is_some() != subclass.is_some() {
+        return Err(i.error("x-get-resource: must specify both COMPONENT and SUBCLASS or neither"));
+    }
+    if i.q_soft("inhibit-x-resources")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+    {
+        return Ok(Value::Nil);
+    }
+    let app = i
+        .q_soft("invocation-name")
+        .and_then(|symbol| match i.symbol_value(symbol) {
+            Value::Str(name) => Some(name.borrow().to_unicode_lossy()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "remacs".to_owned());
+    let name = match component {
+        Some(component) => format!("{app}.{component}.{attribute}"),
+        None => format!("{app}.{attribute}"),
+    };
+    let class = match subclass {
+        Some(subclass) => format!("Emacs.{class}.{subclass}"),
+        None => format!("Emacs.{class}"),
+    };
+    let window_system = i
+        .q_soft("window-system")
+        .map(|symbol| crate::lisp::eval::plist_get(&frame.borrow().params, symbol))
+        .unwrap_or(Value::Nil);
+    #[cfg(target_os = "macos")]
+    if matches!(&window_system, Value::Sym(symbol) if i.symbol_name(*symbol) == "ns") {
+        let resource = class.strip_prefix("Emacs.").unwrap_or(&class);
+        let value = crate::lisp::builtins::nsgui::f_ns_get_resource(
+            i,
+            crate::lisp::Argv::new(vec![Value::Nil, Value::string(resource)]),
+        )?;
+        return Ok(match value {
+            Value::Str(value) => {
+                let value = value.borrow().to_unicode_lossy();
+                if value
+                    .get(..3)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("YES"))
+                {
+                    Value::string("true")
+                } else if value
+                    .get(..2)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("NO"))
+                {
+                    Value::string("false")
+                } else if value.is_empty() {
+                    Value::Nil
+                } else {
+                    Value::string(value)
+                }
+            }
+            value => value,
+        });
+    }
+    let _ = window_system;
+    let Some(backend) = i.x_resource_backend.clone() else {
+        return Ok(Value::Nil);
+    };
+    let value = backend
+        .get_string_resource(&name, &class)
+        .map_err(|error| i.error(error))?;
+    Ok(value
+        .filter(|value| !value.is_empty())
+        .map(Value::string)
+        .unwrap_or(Value::Nil))
 }
 
 /// window-scroll-bar-*: decode_live_window → `window-live-p', 0 in batch.

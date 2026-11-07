@@ -1057,6 +1057,50 @@ struct GuiNativeServiceBackend {
     requests: smol::channel::Sender<GuiRequest>,
 }
 
+#[cfg(target_os = "windows")]
+struct GuiXResourceBackend;
+
+#[cfg(target_os = "windows")]
+impl remacs_runtime::frontend::XResourceBackend for GuiXResourceBackend {
+    fn get_string_resource(&self, name: &str, class: &str) -> Result<Option<String>, String> {
+        use windows_registry::{CURRENT_USER, LOCAL_MACHINE};
+
+        const KEY: &str = "SOFTWARE\\GNU\\Emacs";
+        for root in [CURRENT_USER, LOCAL_MACHINE] {
+            if let Ok(key) = root.open(KEY) {
+                for candidate in [name, class] {
+                    if let Ok(value) = key.get_string(candidate) {
+                        return Ok(Some(value));
+                    }
+                }
+            }
+        }
+
+        // w32reg.c provides these system-color resources when no user or
+        // machine resource overrides them.
+        let remacs_default_name = name
+            .strip_prefix("remacs.")
+            .map(|resource| format!("emacs.{resource}"));
+        let system_default = match remacs_default_name.as_deref().unwrap_or(name) {
+            "emacs.foreground" => Some("SystemWindowText"),
+            "emacs.background" => Some("SystemWindow"),
+            "emacs.tooltip.attributeForeground" => Some("SystemInfoText"),
+            "emacs.tooltip.attributeBackground" => Some("SystemInfoWindow"),
+            "emacs.tool-bar.attributeForeground" | "emacs.tab-bar.attributeForeground" => {
+                Some("SystemButtonText")
+            }
+            "emacs.tool-bar.attributeBackground" | "emacs.tab-bar.attributeBackground" => {
+                Some("SystemButtonFace")
+            }
+            "emacs.menu.attributeForeground" => Some("SystemMenuText"),
+            "emacs.menu.attributeBackground" => Some("SystemMenu"),
+            "emacs.scroll-bar.attributeForeground" => Some("SystemScrollbar"),
+            _ => None,
+        };
+        Ok(system_default.map(str::to_owned))
+    }
+}
+
 #[cfg(target_os = "macos")]
 impl remacs_runtime::frontend::NativeServiceBackend for GuiNativeServiceBackend {
     fn perform_service(
@@ -2626,6 +2670,10 @@ fn start_logic_inner(
                     requests: clipboard_tx,
                     ready: clipboard_ready,
                 })));
+            }
+            #[cfg(target_os = "windows")]
+            if enable_gui_selections {
+                i.set_x_resource_backend(Some(Rc::new(GuiXResourceBackend)));
             }
             if enable_gui_selections {
                 configure_gui_window_system(&mut i);

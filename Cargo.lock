@@ -4725,6 +4725,7 @@ dependencies = [
  "remacs-runtime",
  "smol",
  "unicode-width",
+ "windows-registry 0.5.3",
  "xcb",
 ]
 

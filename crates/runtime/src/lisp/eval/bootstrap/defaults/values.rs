@@ -629,9 +629,9 @@ impl Interp {
                 }),
             ),
             ("dynamic-library-alist", Value::Nil),
-            // GNU xdisp.c/xfaces.c defaults verified -Q: t /
-            // `completions-highlight' (not nil / t).
-            ("inhibit-x-resources", Value::Sym(sym::T)),
+            // GNU's default is nil; -Q and --no-x-resources bind this at
+            // startup before GUI frame resource lookups.
+            ("inhibit-x-resources", Value::Nil),
             (
                 "completions-highlight-face",
                 Value::Sym(self.q("completions-highlight")),

@@ -57,11 +57,17 @@ pub fn prepare_gui_startup(i: &mut Interp, args: &[String]) -> EvalResult {
 
     let skip_init = arguments::options(args)
         .any(|option| matches!(option, "-Q" | "--quick" | "-q" | "--no-init"));
-    if arguments::options(args)
-        .any(|option| matches!(option, "-Q" | "--quick" | "--no-x-resources"))
-    {
-        set(i, "inhibit-x-resources", Value::t())?;
-    }
+    let inhibit_x_resources = arguments::options(args)
+        .any(|option| matches!(option, "-Q" | "--quick" | "--no-x-resources"));
+    set(
+        i,
+        "inhibit-x-resources",
+        if inhibit_x_resources {
+            Value::t()
+        } else {
+            Value::Nil
+        },
+    )?;
     let mut explicit_directory = None;
     let mut consumed = HashSet::new();
     for argument in arguments::arguments(args) {
@@ -171,4 +177,53 @@ pub fn finish_gui_startup(i: &mut Interp) -> EvalResult {
     call(i, "frame-notice-user-settings", vec![])?;
     let setup = Value::Sym(host::symbol(i, "window-setup-hook"));
     call(i, "run-hooks", vec![setup])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempInit(std::path::PathBuf);
+    impl Drop for TempInit {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn gui_startup_enables_x_resources_unless_requested_off() {
+        let directory = std::env::temp_dir().join(format!(
+            "remacs-x-resources-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let _temp = TempInit(directory.clone());
+        let mut i = Interp::new_with_noninteractive(false);
+        let inhibit = host::symbol(&mut i, "inhibit-x-resources");
+        for (flag, expected) in [
+            (None, Value::Nil),
+            (Some("-Q"), Value::t()),
+            (Some("--no-x-resources"), Value::t()),
+            (Some("-q"), Value::Nil),
+        ] {
+            let mut args = vec![
+                "--init-directory".to_owned(),
+                directory.to_string_lossy().into_owned(),
+            ];
+            if let Some(flag) = flag {
+                args.push(flag.to_owned());
+            }
+            prepare_gui_startup(&mut i, &args).unwrap();
+            let actual = i
+                .prin1_to_string(&i.symbol_value(inhibit))
+                .to_unicode_lossy();
+            let expected = i.prin1_to_string(&expected).to_unicode_lossy();
+            assert_eq!(actual, expected, "flag={flag:?}");
+        }
+    }
 }
