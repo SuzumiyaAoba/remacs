@@ -89,10 +89,13 @@ impl Default for ModifierMapping {
 
 impl ModifierMapping {
     pub(super) fn from_interp(i: &Interp) -> Self {
-        if !cfg!(target_os = "macos") {
-            return ModifierMapping::default();
-        }
         let defaults = ModifierMapping::default();
+        if cfg!(target_os = "windows") {
+            return windows_modifier_mapping(i, defaults);
+        }
+        if !cfg!(target_os = "macos") {
+            return defaults;
+        }
         let left_control = modifier_setting(i, "ns-control-modifier", defaults.left_control);
         let left_alternate = modifier_setting(i, "ns-alternate-modifier", defaults.left_alternate);
         let left_command = modifier_setting(i, "ns-command-modifier", defaults.left_command);
@@ -109,6 +112,23 @@ impl ModifierMapping {
             right_command: right_modifier_setting(i, "ns-right-command-modifier", left_command),
             function: modifier_setting(i, "ns-function-modifier", defaults.function),
         }
+    }
+}
+
+fn windows_modifier_mapping(i: &Interp, defaults: ModifierMapping) -> ModifierMapping {
+    let alt = i
+        .intern_soft("w32-alt-is-meta")
+        .map(|symbol| !i.bound_p(symbol) || i.symbol_value(symbol).truthy())
+        .unwrap_or(true);
+    let alternate = ModifierSetting::all(Some(if alt {
+        EmacsModifier::Meta
+    } else {
+        EmacsModifier::Alt
+    }));
+    ModifierMapping {
+        left_alternate: alternate,
+        right_alternate: alternate,
+        ..defaults
     }
 }
 
@@ -489,6 +509,43 @@ mod tests {
                 assert_eq!(unicode_key_text(&event), Some(text));
             }
         }
+    }
+
+    #[test]
+    fn w32_alt_is_meta_selects_meta_or_alt_for_named_keys() {
+        let mut interp = Interp::new();
+        let key = Keystroke {
+            key: "f12".into(),
+            key_char: None,
+            modifiers: Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+        };
+
+        let default = ModifierMapping::default();
+        let meta = windows_modifier_mapping(&interp, default);
+        assert_eq!(
+            keystroke_to_code_with_mapping(&key, meta, PhysicalModifierState::default()),
+            Some(remacs_runtime::editor::event_code_for("f12") | CHAR_META)
+        );
+
+        interp.eval_str("(setq w32-alt-is-meta nil)").unwrap();
+        let alt = windows_modifier_mapping(&interp, default);
+        assert_eq!(
+            keystroke_to_code_with_mapping(&key, alt, PhysicalModifierState::default()),
+            Some(remacs_runtime::editor::event_code_for("f12") | CHAR_ALT)
+        );
+        assert_ne!(
+            keystroke_to_code_with_mapping(&key, alt, PhysicalModifierState::default()).unwrap()
+                & CHAR_META,
+            CHAR_META
+        );
+        assert!(command_keystroke_with_mapping(
+            &key,
+            alt,
+            PhysicalModifierState::default()
+        ));
     }
 
     #[test]
