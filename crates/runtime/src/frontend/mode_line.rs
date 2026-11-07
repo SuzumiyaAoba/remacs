@@ -140,7 +140,7 @@ pub(super) fn with_window<T>(
     Ok(result)
 }
 
-fn evaluate(i: &mut Interp, form: &Value) -> Result<Value, Flow> {
+pub(super) fn evaluate(i: &mut Interp, form: &Value) -> Result<Value, Flow> {
     evaluate_with_quit(i, form, true)
 }
 

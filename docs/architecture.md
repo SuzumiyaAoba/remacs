@@ -131,6 +131,8 @@ source root とビルド情報の設定はルートの `build.rs` と共有す�
 
 - `mod.rs`: `KeyIo` 入出力契約と公開 API。
 - `render.rs`: face 解決と `Grid` / `CellStyle` による画面スナップショット。
+- `render/frame_title.rs`: window/icon title の共通書式処理。描画準備で対象フレームの
+  `:eval` を評価し、呼び出し元の選択状態を戻して、読み取り専用の描画へ文字列を渡す。
 - `command.rs`: コマンド実行、バッチループ、minibuffer の入力ループ。
 - `command/isearch.rs`: インクリメンタル検索の状態と overlay。
 - `tests.rs`: 実デバイスを使わない入力ループの回帰テスト。
