@@ -1101,6 +1101,7 @@ impl remacs_runtime::frontend::XResourceBackend for GuiXResourceBackend {
     }
 }
 
+
 #[cfg(target_os = "macos")]
 impl remacs_runtime::frontend::NativeServiceBackend for GuiNativeServiceBackend {
     fn perform_service(

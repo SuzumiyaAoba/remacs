@@ -8,14 +8,13 @@ use super::{
     logic::{COLOR_DROP_PREFIX, FrameEventSender, GuiEvent, GuiGeometry},
     monitor::monitor_geometry,
 };
-use gpui::*;
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
+use gpui::*;
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridCursor, GridImage,
-    GridImageSource,
-    GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
-    GridScrollBarOrientation, GridStipple, GridVScroll,
-    MouseButton as RemacsMouseButton, NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
+    GridImageSource, GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
+    GridScrollBarOrientation, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
+    NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{
@@ -27,61 +26,61 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
-mod input;
-mod fringe;
-#[cfg(test)]
-mod mouse_tests;
-#[cfg(test)]
-mod icon_title_tests;
-#[cfg(test)]
-mod minimum_cells_tests;
 #[cfg(test)]
 mod autoselect_tests;
 #[cfg(all(test, target_os = "macos"))]
-mod popup_hit_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod popup_dismiss_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod popup_scroll_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod popup_navigation_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod button_release_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod insert_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod undo_redo_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod find_key_tests;
-#[cfg(all(test, target_os = "macos"))]
 mod begin_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod help_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod execute_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod pause_print_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod select_key_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod char_line_key_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod break_key_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod button_release_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod char_line_key_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod clear_line_key_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod execute_key_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod find_key_tests;
+mod fringe;
+#[cfg(all(test, target_os = "macos"))]
+mod help_key_tests;
+#[cfg(test)]
+mod icon_title_tests;
+mod input;
+#[cfg(all(test, target_os = "macos"))]
+mod insert_key_tests;
+#[cfg(test)]
+mod minimum_cells_tests;
+#[cfg(test)]
+mod mouse_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod pause_print_key_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod popup_dismiss_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod popup_hit_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod popup_navigation_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod popup_scroll_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod select_key_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod tab_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
+mod tool_command_object_tests;
+#[cfg(all(test, target_os = "macos"))]
 mod tool_hit_tests;
 #[cfg(all(test, target_os = "macos"))]
-mod tool_command_object_tests;
+mod undo_redo_key_tests;
 // The test platform uses window activation for cursor ownership on macOS.
+#[cfg(all(test, target_os = "macos"))]
+mod header_wheel_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod pointer_window_tests;
-#[cfg(all(test, target_os = "macos"))]
-mod header_wheel_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod wheel_window_tests;
 use input::TextInputState;
@@ -112,7 +111,14 @@ pub(super) fn font_family(window: &mut Window, requested: Option<String>) -> Str
     }
 
     let candidates: &[&str] = if cfg!(target_os = "macos") {
-        &["Menlo", "SF Mono", "Monaco", "Courier New", "Lilex", "DejaVu Sans Mono"]
+        &[
+            "Menlo",
+            "SF Mono",
+            "Monaco",
+            "Courier New",
+            "Lilex",
+            "DejaVu Sans Mono",
+        ]
     } else if cfg!(target_os = "windows") {
         &[
             "Consolas",
@@ -213,21 +219,11 @@ fn grid_line_x(grid: &Grid, row: usize, line: &ShapedLine, byte_index: usize) ->
 }
 
 pub(super) fn grid_row_top(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
-    row_top_from_heights(
-        &grid.row_heights,
-        grid.default_line_height,
-        row,
-        fallback,
-    )
+    row_top_from_heights(&grid.row_heights, grid.default_line_height, row, fallback)
 }
 
 pub(super) fn grid_row_height(grid: &Grid, row: usize, fallback: Pixels) -> Pixels {
-    row_height_from_heights(
-        &grid.row_heights,
-        grid.default_line_height,
-        row,
-        fallback,
-    )
+    row_height_from_heights(&grid.row_heights, grid.default_line_height, row, fallback)
 }
 
 fn adjusted_row_height(height: usize, default_line_height: usize, fallback: Pixels) -> Pixels {
@@ -368,9 +364,7 @@ fn unscrolled_row_clips(
     let mut covered = grid
         .vscrolls
         .iter()
-        .filter(|scroll| {
-            row >= scroll.top && row < scroll.top.saturating_add(scroll.rows)
-        })
+        .filter(|scroll| row >= scroll.top && row < scroll.top.saturating_add(scroll.rows))
         .filter_map(|scroll| {
             let left = scroll.left.min(width);
             let right = scroll.left.saturating_add(scroll.width).min(width);
@@ -390,7 +384,10 @@ fn unscrolled_row_clips(
         if covered_left > left {
             clips.push(Bounds {
                 origin: point(bounds.left() + cell_width * left as f32, row_top),
-                size: size(cell_width * (covered_left - left) as f32, row_bottom - row_top),
+                size: size(
+                    cell_width * (covered_left - left) as f32,
+                    row_bottom - row_top,
+                ),
             });
         }
         left = left.max(covered_right);
@@ -537,9 +534,7 @@ fn file_drop_uri(path: &std::path::Path) -> String {
     };
     let mut uri = String::from("file://");
     for byte in absolute.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric()
-            || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':')
-        {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':') {
             uri.push(byte as char);
         } else {
             uri.push_str(&format!("%{byte:02X}"));
@@ -1042,10 +1037,7 @@ impl EditorView {
         self.image_cache_size = size;
     }
 
-    pub(super) fn set_modifier_mapping(
-        &mut self,
-        mapping: ModifierMapping,
-    ) -> bool {
+    pub(super) fn set_modifier_mapping(&mut self, mapping: ModifierMapping) -> bool {
         if self.modifier_mapping == mapping {
             return false;
         }
@@ -1112,12 +1104,7 @@ impl EditorView {
         changed
     }
 
-    pub(super) fn resize_to_cells(
-        &mut self,
-        width: usize,
-        height: usize,
-        window: &mut Window,
-    ) {
+    pub(super) fn resize_to_cells(&mut self, width: usize, height: usize, window: &mut Window) {
         let width = width.max(super::MIN_FRAME_COLUMNS);
         let height = height.max(3);
         let default_style = self.grid.default_style;
@@ -1146,7 +1133,13 @@ impl EditorView {
         let viewport = window.viewport_size();
         let border = self.internal_border_width as f32 * 2.0;
         let pixel_height = (0..height)
-            .map(|row| f32::from(grid_row_height(&self.grid, row, px(self.grid.default_row_height.max(1) as f32))))
+            .map(|row| {
+                f32::from(grid_row_height(
+                    &self.grid,
+                    row,
+                    px(self.grid.default_row_height.max(1) as f32),
+                ))
+            })
             .sum::<f32>();
         let desired_width = (self.cell_width * width as f32 + px(border)).max(minimum.width);
         let desired_height = px(pixel_height + border).max(minimum.height);
@@ -1158,7 +1151,11 @@ impl EditorView {
         window.resize(size(desired_width, desired_height));
     }
 
-    pub(super) fn set_minimum_cells(&mut self, width: Option<usize>, height: Option<usize>) -> bool {
+    pub(super) fn set_minimum_cells(
+        &mut self,
+        width: Option<usize>,
+        height: Option<usize>,
+    ) -> bool {
         let cells = (width, height);
         if self.minimum_cells == cells {
             return false;
@@ -1190,7 +1187,8 @@ impl EditorView {
             f32::from(cell_width),
             f32::from(line_height),
             self.internal_border_width as f32 * 2.0,
-        ).expect("minimum grid width");
+        )
+        .expect("minimum grid width");
         let state = (minimum, window.scale_factor());
         if self.native_minimum_size != Some(state) {
             window.set_minimum_size(Some(minimum));
@@ -1243,14 +1241,12 @@ impl EditorView {
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.button_activation_subscription.is_none() {
-            self.button_activation_subscription = Some(cx.observe_window_activation(
-                window,
-                |view, window, _cx| {
+            self.button_activation_subscription =
+                Some(cx.observe_window_activation(window, |view, window, _cx| {
                     if !window.is_window_active() {
                         view.pressed_button = None;
                     }
-                },
-            ));
+                }));
         }
         window.set_cursor_style_frozen(self.grid.freeze_pointer_shape);
         if self.grid.tooltip.is_none() {
@@ -1315,10 +1311,7 @@ impl Render for EditorView {
             )
         };
         if self.resize_increments != Some(resize_increments) {
-            window.set_resize_increments(size(
-                px(resize_increments.0),
-                px(resize_increments.1),
-            ));
+            window.set_resize_increments(size(px(resize_increments.0), px(resize_increments.1)));
             self.resize_increments = Some(resize_increments);
         }
 
@@ -1327,7 +1320,10 @@ impl Render for EditorView {
         if vp.width < minimum.width || vp.height < minimum.height {
             // Minimum hints constrain interactive resizing, but a font change
             // or programmatic resize can also leave an existing window too small.
-            window.resize(size(vp.width.max(minimum.width), vp.height.max(minimum.height)));
+            window.resize(size(
+                vp.width.max(minimum.width),
+                vp.height.max(minimum.height),
+            ));
         }
         let border = px(self.internal_border_width as f32);
         let border_total = border * 2.0;
@@ -1459,13 +1455,15 @@ impl Render for EditorView {
         );
         let background_alpha = ((self.alpha_background as u32 * 255 + 50) / 100) as u8;
         let default_background_fill = rgba((default_background << 8) | u32::from(background_alpha));
-        let internal_border_background = self.grid.internal_border_style.bg.map_or(
-            default_background,
-            |color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32,
-        );
-        let internal_border_fill = rgba(
-            (internal_border_background << 8) | u32::from(background_alpha),
-        );
+        let internal_border_background = self
+            .grid
+            .internal_border_style
+            .bg
+            .map_or(default_background, |color| {
+                ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
+            });
+        let internal_border_fill =
+            rgba((internal_border_background << 8) | u32::from(background_alpha));
         let modifier_mapping = self.modifier_mapping;
         let physical_modifier_state = self.physical_modifier_state.clone();
         let key_modifier_state = physical_modifier_state.clone();
@@ -1543,95 +1541,71 @@ impl Render for EditorView {
             .track_focus(&self.focus)
             .key_context("remacs")
             .id("remacs-editor-drop-target")
-            .on_drop(cx.listener(
-                move |this, paths: &ExternalPaths, window, cx| {
-                    let urls = paths
-                        .paths()
-                        .iter()
-                        .map(|path| file_drop_uri(path))
-                        .collect::<Vec<_>>();
-                    let position = frame_content_point(
-                        window.mouse_position(),
-                        window.viewport_size(),
-                        border,
-                    )
-                    .and_then(|point| {
-                        input::mouse_position_for_point_with_cell_width(
-                            &this.grid,
-                            point,
-                            cell_width,
-                            window,
-                        )
-                    });
-                    let _ = file_drop_tx.send(GuiEvent::Drop {
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                let urls = paths
+                    .paths()
+                    .iter()
+                    .map(|path| file_drop_uri(path))
+                    .collect::<Vec<_>>();
+                let position =
+                    frame_content_point(window.mouse_position(), window.viewport_size(), border)
+                        .and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &this.grid, point, cell_width, window,
+                            )
+                        });
+                let _ = file_drop_tx.send(GuiEvent::Drop {
+                    position,
+                    urls,
+                    action: "copy".to_owned(),
+                });
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
+            .on_drop(cx.listener(move |this, text: &String, window, cx| {
+                let position =
+                    frame_content_point(window.mouse_position(), window.viewport_size(), border)
+                        .and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &this.grid, point, cell_width, window,
+                            )
+                        });
+                let _ = text_drop_tx.send(GuiEvent::Drop {
+                    position,
+                    urls: vec![text.clone()],
+                    action: "copy".to_owned(),
+                });
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
+            .on_drop(cx.listener(move |this, text: &ExternalText, window, cx| {
+                let position =
+                    frame_content_point(window.mouse_position(), window.viewport_size(), border)
+                        .and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &this.grid, point, cell_width, window,
+                            )
+                        });
+                if let Some((kind, color)) = text
+                    .0
+                    .strip_prefix(COLOR_DROP_PREFIX)
+                    .and_then(|color| color.split_once(':'))
+                {
+                    let _ = external_text_drop_tx.send(GuiEvent::ColorDrop {
                         position,
-                        urls,
+                        color: color.to_owned(),
+                        background: kind == "background",
+                    });
+                } else {
+                    let _ = external_text_drop_tx.send(GuiEvent::Drop {
+                        position,
+                        urls: vec![text.0.clone()],
                         action: "copy".to_owned(),
                     });
-                    window.prevent_default();
-                    cx.stop_propagation();
-                },
-            ))
-            .on_drop(cx.listener(
-                move |this, text: &String, window, cx| {
-                    let position = frame_content_point(
-                        window.mouse_position(),
-                        window.viewport_size(),
-                        border,
-                    )
-                    .and_then(|point| {
-                        input::mouse_position_for_point_with_cell_width(
-                            &this.grid,
-                            point,
-                            cell_width,
-                            window,
-                        )
-                    });
-                    let _ = text_drop_tx.send(GuiEvent::Drop {
-                        position,
-                        urls: vec![text.clone()],
-                        action: "copy".to_owned(),
-                    });
-                    window.prevent_default();
-                    cx.stop_propagation();
-                },
-            ))
-            .on_drop(cx.listener(
-                move |this, text: &ExternalText, window, cx| {
-                    let position = frame_content_point(
-                        window.mouse_position(),
-                        window.viewport_size(),
-                        border,
-                    )
-                    .and_then(|point| {
-                        input::mouse_position_for_point_with_cell_width(
-                            &this.grid,
-                            point,
-                            cell_width,
-                            window,
-                        )
-                    });
-                    if let Some((kind, color)) = text
-                        .0
-                        .strip_prefix(COLOR_DROP_PREFIX)
-                        .and_then(|color| color.split_once(':'))
-                    {
-                        let _ = external_text_drop_tx.send(GuiEvent::ColorDrop {
-                            position,
-                            color: color.to_owned(),
-                            background: kind == "background",
-                        });
-                    } else {
-                        let _ = external_text_drop_tx.send(GuiEvent::Drop {
-                            position,
-                            urls: vec![text.0.clone()],
-                            action: "copy".to_owned(),
-                        });
-                    }
-                    window.prevent_default();
-                    cx.stop_propagation();
-                },
-            ))
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
             .on_action(cx.listener(
                 |this: &mut EditorView, action: &RunMenuCommand, _window, _cx| {
                     if let Some(event) = action.event() {
@@ -1641,109 +1615,89 @@ impl Render for EditorView {
             ))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(
-                    move |this, event: &MouseDownEvent, window, cx| {
-                        this.mouse_down_position = None;
-                        this.pressed_button = None;
-                        this.consumed_mouse_buttons.remove(&MouseButton::Left);
-                        let Some(point) = frame_content_point(
-                            event.position,
-                            window.viewport_size(),
-                            border,
-                        ) else {
-                            return;
-                        };
-                        let absolute_position = absolute_mouse_pixel_position(
-                            event.position,
-                            pointer_screen_left,
-                            pointer_screen_top,
-                            content_top_offset,
-                        );
-                        let _ = this.tx.send_mouse_move(None, Some(absolute_position));
-                        if !left_mouse_down_grid.popup_menu_items.is_empty() {
-                            this.consumed_mouse_buttons.insert(MouseButton::Left);
-                            this.pressed_button = this.button_at(point);
-                            if let Some(event @ GuiEvent::PopupMenuSelection { index: None, .. }) =
-                                popup_menu_event_at(&popup_hit_for_input.borrow(), point)
-                            {
-                                let _ = left_mouse_down_tx.send(event);
-                            }
-                            window.prevent_default();
-                            cx.stop_propagation();
-                            return;
-                        }
-                        if let Some(button) = this.button_at(point) {
-                            this.consumed_mouse_buttons.insert(MouseButton::Left);
-                            this.pressed_button = Some(button);
-                            window.prevent_default();
-                            cx.stop_propagation();
-                            return;
-                        }
-                        if let Some((bar, pointer_offset)) =
-                            scroll_bar_hit(&left_mouse_down_grid, point)
-                        {
-                            this.scroll_bar_drag = Some(ScrollBarDrag {
-                                window_id: bar.window_id,
-                                orientation: bar.orientation,
-                                pointer_offset,
-                            });
-                            send_scroll_bar_event(
-                                &left_mouse_down_tx,
-                                &bar,
-                                point,
-                                pointer_offset,
-                            );
-                            window.prevent_default();
-                            cx.stop_propagation();
-                            return;
-                        }
-                        if let Some(position) = input::mouse_position_for_point_with_cell_width(
-                            &left_mouse_down_grid,
-                            point,
-                            cell_width,
-                            window,
-                        )
-                        .or_else(|| {
-                            input::mode_line_mouse_position(
-                                &left_mouse_down_grid,
-                                point,
-                                cell_width,
-                            )
-                        }) {
-                            this.mouse_down_position = Some(position);
-                            let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
-                                button: RemacsMouseButton::Left,
-                                click_count: event.click_count,
-                                modifiers: mouse_modifier_bits(
-                                    &event.modifiers,
-                                    modifier_mapping,
-                                    left_mouse_down_modifiers.get(),
-                                ),
-                                position,
-                            });
-                        }
-                    },
-                ),
-            )
-            .on_mouse_move(cx.listener(
-                move |this, event: &MouseMoveEvent, window, cx| {
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.mouse_down_position = None;
+                    this.pressed_button = None;
+                    this.consumed_mouse_buttons.remove(&MouseButton::Left);
+                    let Some(point) =
+                        frame_content_point(event.position, window.viewport_size(), border)
+                    else {
+                        return;
+                    };
                     let absolute_position = absolute_mouse_pixel_position(
                         event.position,
                         pointer_screen_left,
                         pointer_screen_top,
                         content_top_offset,
                     );
-                    let point = frame_content_point(
+                    let _ = this.tx.send_mouse_move(None, Some(absolute_position));
+                    if !left_mouse_down_grid.popup_menu_items.is_empty() {
+                        this.consumed_mouse_buttons.insert(MouseButton::Left);
+                        this.pressed_button = this.button_at(point);
+                        if let Some(event @ GuiEvent::PopupMenuSelection { index: None, .. }) =
+                            popup_menu_event_at(&popup_hit_for_input.borrow(), point)
+                        {
+                            let _ = left_mouse_down_tx.send(event);
+                        }
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if let Some(button) = this.button_at(point) {
+                        this.consumed_mouse_buttons.insert(MouseButton::Left);
+                        this.pressed_button = Some(button);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if let Some((bar, pointer_offset)) =
+                        scroll_bar_hit(&left_mouse_down_grid, point)
+                    {
+                        this.scroll_bar_drag = Some(ScrollBarDrag {
+                            window_id: bar.window_id,
+                            orientation: bar.orientation,
+                            pointer_offset,
+                        });
+                        send_scroll_bar_event(&left_mouse_down_tx, &bar, point, pointer_offset);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if let Some(position) = input::mouse_position_for_point_with_cell_width(
+                        &left_mouse_down_grid,
+                        point,
+                        cell_width,
+                        window,
+                    )
+                    .or_else(|| {
+                        input::mode_line_mouse_position(&left_mouse_down_grid, point, cell_width)
+                    }) {
+                        this.mouse_down_position = Some(position);
+                        let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
+                            button: RemacsMouseButton::Left,
+                            click_count: event.click_count,
+                            modifiers: mouse_modifier_bits(
+                                &event.modifiers,
+                                modifier_mapping,
+                                left_mouse_down_modifiers.get(),
+                            ),
+                            position,
+                        });
+                    }
+                }),
+            )
+            .on_mouse_move(
+                cx.listener(move |this, event: &MouseMoveEvent, window, cx| {
+                    let absolute_position = absolute_mouse_pixel_position(
                         event.position,
-                        window.viewport_size(),
-                        border,
+                        pointer_screen_left,
+                        pointer_screen_top,
+                        content_top_offset,
                     );
+                    let point = frame_content_point(event.position, window.viewport_size(), border);
                     let position = point.and_then(|point| {
                         input::mouse_position_for_text_point_with_cell_width(
-                            &this.grid,
-                            point,
-                            cell_width,
-                            window,
+                            &this.grid, point, cell_width, window,
                         )
                     });
                     let text_window_id = point.and_then(|point| {
@@ -1784,34 +1738,25 @@ impl Render for EditorView {
                             return;
                         };
                         if let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
-                            bar.window_id == drag.window_id
-                                && bar.orientation == drag.orientation
+                            bar.window_id == drag.window_id && bar.orientation == drag.orientation
                         }) {
-                            send_scroll_bar_event(
-                                &scroll_bar_tx,
-                                bar,
-                                point,
-                                drag.pointer_offset,
-                            );
+                            send_scroll_bar_event(&scroll_bar_tx, bar, point, drag.pointer_offset);
                             window.prevent_default();
                             cx.stop_propagation();
                         }
                         return;
                     }
                     let _ = this.tx.send_mouse_drag_move(position);
-                },
-            ))
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
                         if let Some(pressed) = this.pressed_button.take() {
-                            let current = frame_content_point(
-                                event.position,
-                                window.viewport_size(),
-                                border,
-                            )
-                            .and_then(|point| this.button_at(point));
+                            let current =
+                                frame_content_point(event.position, window.viewport_size(), border)
+                                    .and_then(|point| this.button_at(point));
                             if current.as_ref() == Some(&pressed) {
                                 let _ = left_mouse_up_tx.send(pressed.into_event());
                             } else if let Some(event) = pressed.cancel_event() {
@@ -1827,11 +1772,7 @@ impl Render for EditorView {
                         cx.stop_propagation();
                         return;
                     }
-                    let point = frame_content_point(
-                        event.position,
-                        window.viewport_size(),
-                        border,
-                    );
+                    let point = frame_content_point(event.position, window.viewport_size(), border);
                     let position = point
                         .and_then(|point| {
                             input::mouse_position_for_point_with_cell_width(
@@ -1876,7 +1817,9 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(|this, _event: &MouseUpEvent, window, cx| {
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
-                        if let Some(event) = this.pressed_button.take()
+                        if let Some(event) = this
+                            .pressed_button
+                            .take()
                             .and_then(PressedButton::cancel_event)
                         {
                             let _ = this.tx.send(event);
@@ -1985,18 +1928,34 @@ impl Render for EditorView {
                         let regions = popup_hit_for_scroll.borrow();
                         let parent = point
                             .and_then(|point| {
-                                regions.iter().rev().find(|item| {
-                                    point.x >= item.bounds.left() && point.x < item.bounds.right()
-                                        && point.y >= item.bounds.top() && point.y < item.bounds.bottom()
-                                }).map(|item| item.parent)
+                                regions
+                                    .iter()
+                                    .rev()
+                                    .find(|item| {
+                                        point.x >= item.bounds.left()
+                                            && point.x < item.bounds.right()
+                                            && point.y >= item.bounds.top()
+                                            && point.y < item.bounds.bottom()
+                                    })
+                                    .map(|item| item.parent)
                             })
                             .unwrap_or_else(|| {
-                                scroll_grid.popup_menu_items.last().and_then(|item| item.parent)
+                                scroll_grid
+                                    .popup_menu_items
+                                    .last()
+                                    .and_then(|item| item.parent)
                             });
                         let event = if parent.is_none() {
-                            GuiEvent::PopupMenuScroll { menu_id: menu.menu_id, delta_lines }
+                            GuiEvent::PopupMenuScroll {
+                                menu_id: menu.menu_id,
+                                delta_lines,
+                            }
                         } else {
-                            GuiEvent::PopupMenuScrollAt { menu_id: menu.menu_id, parent, delta_lines }
+                            GuiEvent::PopupMenuScrollAt {
+                                menu_id: menu.menu_id,
+                                parent,
+                                delta_lines,
+                            }
                         };
                         let _ = scroll_tx.send(event);
                     }
@@ -2042,8 +2001,7 @@ impl Render for EditorView {
                     &event.keystroke,
                     modifier_mapping,
                     key_modifier_state.get(),
-                )
-                {
+                ) {
                     let _ = tx.send(GuiEvent::Key(code));
                     window.prevent_default();
                     cx.stop_propagation();
@@ -2105,16 +2063,15 @@ impl Render for EditorView {
                                         .get(open_paragraph)
                                         .is_some_and(|range| range.start == byte)
                                     {
-                                        let marker = match bidi_paragraph_ranges[open_paragraph]
-                                            .direction
-                                        {
-                                            GridBidiDirection::LeftToRight => {
-                                                BIDI_PARAGRAPH_LTR_OPEN
-                                            }
-                                            GridBidiDirection::RightToLeft => {
-                                                BIDI_PARAGRAPH_RTL_OPEN
-                                            }
-                                        };
+                                        let marker =
+                                            match bidi_paragraph_ranges[open_paragraph].direction {
+                                                GridBidiDirection::LeftToRight => {
+                                                    BIDI_PARAGRAPH_LTR_OPEN
+                                                }
+                                                GridBidiDirection::RightToLeft => {
+                                                    BIDI_PARAGRAPH_RTL_OPEN
+                                                }
+                                            };
                                         append_styled_piece(
                                             &mut shaping_text,
                                             &mut styled_spans,
@@ -2186,7 +2143,8 @@ impl Render for EditorView {
                                             .font_family
                                             .and_then(|id| font_families.get(id as usize))
                                         {
-                                            f.family = font_family(window, Some(family.clone())).into();
+                                            f.family =
+                                                font_family(window, Some(family.clone())).into();
                                         }
                                         if let Some(weight) = st.font_weight {
                                             f.weight = FontWeight(weight as f32);
@@ -2222,7 +2180,9 @@ impl Render for EditorView {
                                                     .map(|color| rgb(color_rgb(color)).into()),
                                             }),
                                         });
-                                        font_sizes.push(st.font_height.map(|height| px(height as f32 / 10.0)));
+                                        font_sizes.push(
+                                            st.font_height.map(|height| px(height as f32 / 10.0)),
+                                        );
                                     };
                                 for (len, style) in styled_spans {
                                     push_run(style, len);
@@ -2231,7 +2191,8 @@ impl Render for EditorView {
                                     runs.push(TextRun {
                                         len: 0,
                                         font: text_font.clone(),
-                                        color: rgb(gamma_correct_rgb(FG, grid.gamma_exponent)).into(),
+                                        color: rgb(gamma_correct_rgb(FG, grid.gamma_exponent))
+                                            .into(),
                                         background_color: None,
                                         underline: None,
                                         strikethrough: None,
@@ -2247,9 +2208,12 @@ impl Render for EditorView {
                                 )
                             })
                             .collect();
-                        *popup_hit_for_shape.borrow_mut() = popup_menu_hit_regions(&grid, &shaped, line_height);
-                        *tab_hit_for_shape.borrow_mut() = tab_bar_hit_regions(&grid, &shaped, line_height);
-                        *tool_hit_for_shape.borrow_mut() = tool_bar_hit_regions(&grid, &shaped, line_height);
+                        *popup_hit_for_shape.borrow_mut() =
+                            popup_menu_hit_regions(&grid, &shaped, line_height);
+                        *tab_hit_for_shape.borrow_mut() =
+                            tab_bar_hit_regions(&grid, &shaped, line_height);
+                        *tool_hit_for_shape.borrow_mut() =
+                            tool_bar_hit_regions(&grid, &shaped, line_height);
                         (shaped, grid)
                     },
                     move |bounds, (lines, grid), window, _cx| {
@@ -2417,16 +2381,14 @@ impl Render for EditorView {
                             );
                             let origin = point(
                                 bounds.left() + cell_width * indicator.column as f32,
-                                bounds.top()
-                                    + grid_row_top(&grid, indicator.row, line_height)
+                                bounds.top() + grid_row_top(&grid, indicator.row, line_height)
                                     - px(vscroll_pixels_for_cell(
                                         &grid,
                                         indicator.row,
                                         indicator.column,
                                     ) as f32),
                             );
-                            let row_height =
-                                grid_row_height(&grid, indicator.row, line_height);
+                            let row_height = grid_row_height(&grid, indicator.row, line_height);
                             with_vscroll_cell_clip(
                                 &grid,
                                 indicator.row,
@@ -2444,9 +2406,9 @@ impl Render for EditorView {
                             let x = grid
                                 .cursor_index
                                 .and_then(|index| {
-                                    lines.get(row).map(|line| {
-                                        grid_line_x(&grid, row, line, index)
-                                    })
+                                    lines
+                                        .get(row)
+                                        .map(|line| grid_line_x(&grid, row, line, index))
                                 })
                                 .unwrap_or(cell_width * (column as f32));
                             (row, x)
@@ -2455,9 +2417,9 @@ impl Render for EditorView {
                             .then_some(marked_origin)
                             .flatten()
                             .and_then(|(row, index)| {
-                                lines.get(row).map(|line| {
-                                    (row, grid_line_x(&grid, row, line, index))
-                                })
+                                lines
+                                    .get(row)
+                                    .map(|line| (row, grid_line_x(&grid, row, line, index)))
                             })
                             .or(fallback_cursor);
                         let composition_caret = if !marked.is_empty() {
@@ -2473,25 +2435,19 @@ impl Render for EditorView {
                                 );
                                 let selection_start = marked_selection.start.min(marked.len());
                                 let selection_end = marked_selection.end.min(marked.len());
-                                let composition_run = |start: usize, end: usize, selected: bool| {
-                                    TextRun {
+                                let composition_run =
+                                    |start: usize, end: usize, selected: bool| TextRun {
                                         len: end.saturating_sub(start),
                                         font: composition_font.clone(),
                                         color: if selected {
-                                            rgb(gamma_correct_rgb(
-                                                0xffffff,
-                                                grid.gamma_exponent,
-                                            ))
-                                            .into()
+                                            rgb(gamma_correct_rgb(0xffffff, grid.gamma_exponent))
+                                                .into()
                                         } else {
                                             rgb(gamma_correct_rgb(FG, grid.gamma_exponent)).into()
                                         },
                                         background_color: selected.then(|| {
-                                            rgb(gamma_correct_rgb(
-                                                0x356fce,
-                                                grid.gamma_exponent,
-                                            ))
-                                            .into()
+                                            rgb(gamma_correct_rgb(0x356fce, grid.gamma_exponent))
+                                                .into()
                                         }),
                                         underline: Some(UnderlineStyle {
                                             thickness: px(1.0),
@@ -2499,8 +2455,7 @@ impl Render for EditorView {
                                             wavy: false,
                                         }),
                                         strikethrough: None,
-                                    }
-                                };
+                                    };
                                 let mut composition_runs = Vec::new();
                                 if selection_start == selection_end {
                                     composition_runs.push(composition_run(0, marked.len(), false));
@@ -2534,11 +2489,7 @@ impl Render for EditorView {
                                 let replacement_end_x = marked_replacement
                                     .as_ref()
                                     .and_then(|range| {
-                                        input::visible_input_position(
-                                            &grid,
-                                            range.end,
-                                            true,
-                                        )
+                                        input::visible_input_position(&grid, range.end, true)
                                     })
                                     .filter(|(end_row, _)| *end_row == row)
                                     .and_then(|(_, end_index)| {
@@ -2550,8 +2501,7 @@ impl Render for EditorView {
                                     marked_replacement.is_none() || replacement_end_x.is_some();
                                 let replaced_delta =
                                     replacement_end_x.map_or(px(0.0), |end_x| end_x - x);
-                                let replaced_width =
-                                    px(f32::from(replaced_delta).abs());
+                                let replaced_width = px(f32::from(replaced_delta).abs());
                                 let column = (f32::from(x) / f32::from(cell_width)) as usize;
                                 with_vscroll_cell_clip(
                                     &grid,
@@ -2634,9 +2584,7 @@ impl Render for EditorView {
                             let x = if cursor.selected {
                                 composition_caret
                                     .map(|(_, x)| x)
-                                    .unwrap_or_else(|| {
-                                        grid_line_x(&grid, row, line, cursor.index)
-                                    })
+                                    .unwrap_or_else(|| grid_line_x(&grid, row, line, cursor.index))
                             } else {
                                 grid_line_x(&grid, row, line, cursor.index)
                             };
@@ -2665,12 +2613,11 @@ impl Render for EditorView {
                             } else {
                                 cursor.column
                             };
-                            let origin =
-                                point(
-                                    bounds.left() + x,
-                                    bounds.top() + grid_row_top(&grid, row, line_height)
-                                        - px(vscroll_pixels_for_cell(&grid, row, column) as f32),
-                                );
+                            let origin = point(
+                                bounds.left() + x,
+                                bounds.top() + grid_row_top(&grid, row, line_height)
+                                    - px(vscroll_pixels_for_cell(&grid, row, column) as f32),
+                            );
                             with_vscroll_cell_clip(
                                 &grid,
                                 row,
@@ -2680,89 +2627,94 @@ impl Render for EditorView {
                                 line_height,
                                 window,
                                 |window| match cursor.shape {
-                                remacs_runtime::frontend::GridCursorShape::Block => {
-                                    let width = if cursor.thickness > 0 {
-                                        px(cursor.thickness as f32)
-                                    } else {
-                                        glyph_width
-                                    };
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin,
-                                            size: size(width, line_height),
-                                        },
-                                        rgba((rgb_color << 8) | 0x80),
-                                    ));
-                                }
-                                remacs_runtime::frontend::GridCursorShape::Hollow => {
-                                    let width = if cursor.thickness > 0 {
-                                        px(cursor.thickness as f32)
-                                    } else {
-                                        glyph_width
-                                    };
-                                    let color = rgb(rgb_color);
-                                    let edge = px(1.0);
-                                    let height = line_height;
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin,
-                                            size: size(width, edge),
-                                        },
-                                        color,
-                                    ));
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin: point(origin.x, origin.y + height - edge),
-                                            size: size(width, edge),
-                                        },
-                                        color,
-                                    ));
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin,
-                                            size: size(edge, height),
-                                        },
-                                        color,
-                                    ));
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin: point(origin.x + width - edge, origin.y),
-                                            size: size(edge, height),
-                                        },
-                                        color,
-                                    ));
-                                }
-                                remacs_runtime::frontend::GridCursorShape::Bar => {
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin,
-                                            size: size(
-                                                px(cursor.thickness.max(1) as f32),
-                                                line_height,
-                                            ),
-                                        },
-                                        rgb(rgb_color),
-                                    ));
-                                }
-                                remacs_runtime::frontend::GridCursorShape::HBar => {
-                                    let height = px(cursor.thickness.max(1) as f32);
-                                    window.paint_quad(fill(
-                                        Bounds {
-                                            origin: point(
-                                                origin.x,
-                                                origin.y + line_height - height,
-                                            ),
-                                            size: size(glyph_width, height),
-                                        },
-                                        rgb(rgb_color),
-                                    ));
-                                }
+                                    remacs_runtime::frontend::GridCursorShape::Block => {
+                                        let width = if cursor.thickness > 0 {
+                                            px(cursor.thickness as f32)
+                                        } else {
+                                            glyph_width
+                                        };
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin,
+                                                size: size(width, line_height),
+                                            },
+                                            rgba((rgb_color << 8) | 0x80),
+                                        ));
+                                    }
+                                    remacs_runtime::frontend::GridCursorShape::Hollow => {
+                                        let width = if cursor.thickness > 0 {
+                                            px(cursor.thickness as f32)
+                                        } else {
+                                            glyph_width
+                                        };
+                                        let color = rgb(rgb_color);
+                                        let edge = px(1.0);
+                                        let height = line_height;
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin,
+                                                size: size(width, edge),
+                                            },
+                                            color,
+                                        ));
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin: point(origin.x, origin.y + height - edge),
+                                                size: size(width, edge),
+                                            },
+                                            color,
+                                        ));
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin,
+                                                size: size(edge, height),
+                                            },
+                                            color,
+                                        ));
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin: point(origin.x + width - edge, origin.y),
+                                                size: size(edge, height),
+                                            },
+                                            color,
+                                        ));
+                                    }
+                                    remacs_runtime::frontend::GridCursorShape::Bar => {
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin,
+                                                size: size(
+                                                    px(cursor.thickness.max(1) as f32),
+                                                    line_height,
+                                                ),
+                                            },
+                                            rgb(rgb_color),
+                                        ));
+                                    }
+                                    remacs_runtime::frontend::GridCursorShape::HBar => {
+                                        let height = px(cursor.thickness.max(1) as f32);
+                                        window.paint_quad(fill(
+                                            Bounds {
+                                                origin: point(
+                                                    origin.x,
+                                                    origin.y + line_height - height,
+                                                ),
+                                                size: size(glyph_width, height),
+                                            },
+                                            rgb(rgb_color),
+                                        ));
+                                    }
                                 },
                             );
                         }
                         fringe::paint(
-                            &grid, bounds, cell_width, line_height,
-                            default_background, background_alpha, window,
+                            &grid,
+                            bounds,
+                            cell_width,
+                            line_height,
+                            default_background,
+                            background_alpha,
+                            window,
                         );
                         for bar in &grid.scroll_bars {
                             let (thumb_color, track_color) = scroll_bar_colors(
@@ -2842,36 +2794,30 @@ impl Render for EditorView {
                         CursorStyle::None
                     })
             }))
-            .children(
-                images
-                    .into_iter()
-                    .map(|image| {
-                        let cursors = image_cursors
-                            .iter()
-                            .copied()
-                            .filter(|cursor| {
-                                cursor.row == image.row
-                                    && cursor.column == image.column
-                                    && (!cursor.selected
-                                        || !image_blink_cursor
-                                        || image_blink_visible)
-                            })
-                            .collect();
-                        grid_image_element(
-                            image,
-                            cell_width,
-                            line_height,
-                            &image_row_heights,
-                            image_default_line_height,
-                            border,
-                            &image_vscrolls,
-                            cursors,
-                            image_gamma_exponent,
-                            image_cache_entries.clone(),
-                            image_cache_size.clone(),
-                        )
-                    }),
-            )
+            .children(images.into_iter().map(|image| {
+                let cursors = image_cursors
+                    .iter()
+                    .copied()
+                    .filter(|cursor| {
+                        cursor.row == image.row
+                            && cursor.column == image.column
+                            && (!cursor.selected || !image_blink_cursor || image_blink_visible)
+                    })
+                    .collect();
+                grid_image_element(
+                    image,
+                    cell_width,
+                    line_height,
+                    &image_row_heights,
+                    image_default_line_height,
+                    border,
+                    &image_vscrolls,
+                    cursors,
+                    image_gamma_exponent,
+                    image_cache_entries.clone(),
+                    image_cache_size.clone(),
+                )
+            }))
             .children(help_echoes.into_iter().map(|region| {
                 let text = region.text;
                 let vscroll = help_vscrolls
@@ -2905,9 +2851,7 @@ impl Render for EditorView {
                         "help-echo",
                         (region.row as u64).saturating_mul(1 << 32) + region.left as u64,
                     ))
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| HelpTooltipView { text: text.clone() }).into()
-                    })
+                    .tooltip(move |_, cx| cx.new(|_| HelpTooltipView { text: text.clone() }).into())
             }))
             .when_some(explicit_tooltip, |this, text| {
                 this.child(
@@ -3019,7 +2963,8 @@ mod native_menu_tests {
             command: None,
             ..row.clone()
         };
-        let gpui::OwnedMenuItem::WithTooltip { item, .. } = gpui_menu_item(&disabled).unwrap().owned()
+        let gpui::OwnedMenuItem::WithTooltip { item, .. } =
+            gpui_menu_item(&disabled).unwrap().owned()
         else {
             panic!("help missing")
         };
@@ -3400,22 +3345,15 @@ fn grid_image_element(
     });
     if let Some(scroll) = scroll {
         let first_row = scroll.top.min(row_heights.len());
-        let end_row = scroll.top.saturating_add(scroll.rows).min(row_heights.len());
+        let end_row = scroll
+            .top
+            .saturating_add(scroll.rows)
+            .min(row_heights.len());
         let region_left = border + cell_width * scroll.left as f32;
-        let region_top = border
-            + row_top_from_heights(
-                row_heights,
-                default_line_height,
-                first_row,
-                line_height,
-            );
-        let region_bottom = border
-            + row_top_from_heights(
-                row_heights,
-                default_line_height,
-                end_row,
-                line_height,
-            );
+        let region_top =
+            border + row_top_from_heights(row_heights, default_line_height, first_row, line_height);
+        let region_bottom =
+            border + row_top_from_heights(row_heights, default_line_height, end_row, line_height);
         let mut image_element = div()
             .absolute()
             .left(image_left - region_left)
@@ -3464,8 +3402,7 @@ fn grid_cursor_blink_visible(grid: &Grid) -> bool {
     }
     let elapsed = grid.blink_elapsed_since_input - grid.blink_delay;
     let interval = grid.blink_interval.max(0.05);
-    let completed = grid.blink_blinks > 0
-        && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
+    let completed = grid.blink_blinks > 0 && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
     elapsed < 0.0 || completed || (elapsed / interval).floor() as u64 % 2 == 1
 }
 
@@ -3481,9 +3418,7 @@ fn grid_image_cursor_overlay(
         |color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32,
     );
     let width = match cursor.shape {
-        remacs_runtime::frontend::GridCursorShape::Bar => {
-            px(cursor.thickness.max(1) as f32)
-        }
+        remacs_runtime::frontend::GridCursorShape::Bar => px(cursor.thickness.max(1) as f32),
         remacs_runtime::frontend::GridCursorShape::HBar => cell_width,
         remacs_runtime::frontend::GridCursorShape::Block
         | remacs_runtime::frontend::GridCursorShape::Hollow => {
@@ -3495,9 +3430,7 @@ fn grid_image_cursor_overlay(
         }
     };
     let height = match cursor.shape {
-        remacs_runtime::frontend::GridCursorShape::HBar => {
-            px(cursor.thickness.max(1) as f32)
-        }
+        remacs_runtime::frontend::GridCursorShape::HBar => px(cursor.thickness.max(1) as f32),
         _ => line_height,
     };
     let left = cell_width * cursor.column.saturating_sub(image_column) as f32;
@@ -3659,12 +3592,8 @@ fn paint_stipple_region(
         return;
     }
     let origin = point(bounds.left() + left, bounds.top() + row_top);
-    let (foreground, background) = style_colors(
-        style,
-        default_background,
-        background_alpha,
-        gamma_exponent,
-    );
+    let (foreground, background) =
+        style_colors(style, default_background, background_alpha, gamma_exponent);
     window.paint_quad(fill(
         Bounds {
             origin,
@@ -3820,8 +3749,8 @@ fn paint_grid_line(
             continue;
         }
         let x = origin.x + cell_width * left as f32 + px(segment.x_offset as f32);
-        let width = (cell_width * (right - left) as f32 + px(segment.width_adjustment as f32))
-            .max(px(0.0));
+        let width =
+            (cell_width * (right - left) as f32 + px(segment.width_adjustment as f32)).max(px(0.0));
         if width <= px(0.0) {
             continue;
         }
@@ -3896,9 +3825,8 @@ fn paint_grid_row(
         .filter(|styles| !styles.is_empty())
         .or_else(|| grid.attrs.get(row));
     if let Some(styles) = styles {
-        let overline_y = origin.y
-            + (paint_line_height - line.ascent - line.descent) / 2.0
-            + px(1.0);
+        let overline_y =
+            origin.y + (paint_line_height - line.ascent - line.descent) / 2.0 + px(1.0);
         for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
             let Some(style) = styles.get(index).copied() else {
                 continue;
@@ -4010,9 +3938,8 @@ fn paint_vscroll_regions(
                     .filter(|styles| !styles.is_empty())
                     .or_else(|| grid.attrs.get(row));
                 if let Some(styles) = styles {
-                    let overline_y = origin.y
-                        + (line_height - line.ascent - line.descent) / 2.0
-                        + px(1.0);
+                    let overline_y =
+                        origin.y + (line_height - line.ascent - line.descent) / 2.0 + px(1.0);
                     for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
                         let Some(style) = styles.get(index) else {
                             continue;
@@ -4357,7 +4284,10 @@ fn gamma_correct_rgb(color: u32, exponent: Option<f64>) -> u32 {
     };
     let channel = |shift: u32| {
         let value = ((color >> shift) & 0xff) as f64 / 255.0;
-        ((value.powf(exponent) * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u32) << shift
+        ((value.powf(exponent) * 255.0 + 0.5)
+            .floor()
+            .clamp(0.0, 255.0) as u32)
+            << shift
     };
     channel(16) | channel(8) | channel(0)
 }
@@ -4376,15 +4306,10 @@ fn paint_bottom_dividers(
             continue;
         }
         let thickness = px(divider.thickness as f32);
-        let left = bounds.left()
-            + cell_width * divider.left as f32
-            + px(divider.x_offset as f32);
-        let width = (cell_width * divider.width as f32
-            + px(divider.width_adjustment as f32))
-        .max(px(0.0));
-        let top = bounds.top()
-            + grid_row_top(grid, divider.row_boundary, line_height)
-            - thickness;
+        let left = bounds.left() + cell_width * divider.left as f32 + px(divider.x_offset as f32);
+        let width =
+            (cell_width * divider.width as f32 + px(divider.width_adjustment as f32)).max(px(0.0));
+        let top = bounds.top() + grid_row_top(grid, divider.row_boundary, line_height) - thickness;
         let paint_line = |offset: usize, height: usize, style, window: &mut Window| {
             if height == 0 {
                 return;
@@ -4486,9 +4411,7 @@ fn background_rgba(color: u32, alpha: u8) -> Hsla {
 mod scroll_bar_color_tests {
     use super::scroll_bar_colors;
     use gpui::{rgb, rgba};
-    use remacs_runtime::frontend::{
-        CellColor, CellStyle, GridScrollBar, GridScrollBarOrientation,
-    };
+    use remacs_runtime::frontend::{CellColor, CellStyle, GridScrollBar, GridScrollBarOrientation};
 
     fn bar(style: CellStyle) -> GridScrollBar {
         GridScrollBar {

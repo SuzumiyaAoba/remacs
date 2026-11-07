@@ -5975,7 +5975,7 @@ characters when necessary."
 (define-key m [C-home] 'beginning-of-buffer)
 (define-key m [home] 'beginning-of-buffer)
 (define-key m [C-S-backspace] 'kill-whole-line)
-(define-key m [Scroll_Lock] 'scroll-lock-mode)
+(define-key m (if (eq system-type 'windows-nt) [scroll] [Scroll_Lock]) 'scroll-lock-mode)
 (define-key m [find] 'search-forward)
 (define-key m [menu] 'execute-extended-command)
 (define-key m [67108896] 'set-mark-command)

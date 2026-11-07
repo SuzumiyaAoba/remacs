@@ -761,9 +761,14 @@ fn scroll_lock_keysym_toggles_the_default_mode_binding() {
         );
     }
     let mut i = Interp::new();
-    let binding = i.eval_str("(lookup-key global-map [Scroll_Lock])").unwrap();
+    let windows = i.eval_str("(eq system-type 'windows-nt)").unwrap().truthy();
+    assert_eq!(windows, cfg!(target_os = "windows"));
+    let key_name = if windows { "scroll" } else { "Scroll_Lock" };
+    let binding = i
+        .eval_str(&format!("(lookup-key global-map [{key_name}])"))
+        .unwrap();
     assert_eq!(i.prin1_to_string(&binding), "scroll-lock-mode");
-    let code = keystroke_to_code(&ks("scroll_lock", None, false, false, false, false)).unwrap();
+    let code = keystroke_to_code(&ks(key_name, None, false, false, false, false)).unwrap();
     let mut keys = Vec::new();
     let mut arg_mode = false;
     for enabled in [true, false] {

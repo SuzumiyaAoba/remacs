@@ -28,7 +28,14 @@ impl Interp {
                 "ns-version-string",
                 Value::string("appkit-2685.60 Version 26.5.2 (Build 25F84)"),
             ),
-            ("system-type", Value::Sym(self.q("darwin"))),
+            (
+                "system-type",
+                Value::Sym(self.q(if cfg!(target_os = "windows") {
+                    "windows-nt"
+                } else {
+                    "darwin"
+                })),
+            ),
             (
                 "system-configuration",
                 Value::string(env!("REMACS_SYSTEM_CONFIGURATION")),

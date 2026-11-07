@@ -1241,6 +1241,16 @@ RDATE and EXDATE values are ignored."
                             (icalendar-date/time<= rec until))))
      pos-recs)))
 
+(defun icalendar-recur--zone-interval (interval vtimezone)
+  "Interpret floating bounds of INTERVAL in a known VTIMEZONE context."
+  (if (and vtimezone
+           (seq-some (lambda (dt) (null (decoded-time-zone dt))) interval))
+      (vconcat (mapcar (lambda (dt)
+                        (if (decoded-time-zone dt) dt
+                          (icalendar-date-time-variant dt :tz vtimezone)))
+                      interval))
+    interval))
+
 (defun icalendar-recur-recurrences-in-interval (interval component &optional vtimezone nmax)
   "Return a list of the recurrences of COMPONENT in INTERVAL.
 
@@ -1291,6 +1301,8 @@ retrieved on subsequent calls with the same arguments."
                                       :zone offset-from
                                       :dst (not (icalendar-daylight-component-p
                                                  component)))))
+        (setq vtimezone (icalendar--time-zone-context dtstart vtimezone)
+              interval (icalendar-recur--zone-interval interval vtimezone))
         (let ((cached (icalendar-recur--set-get-interval component interval)))
           (cond ((eq cached :none) nil)
                 (cached (if nmax (take nmax cached) cached))
@@ -1371,6 +1383,7 @@ UTC offsets local to that time zone."
                                       :dst (not (icalendar-daylight-component-p
                                                  component)))))
 
+      (setq vtimezone (icalendar--time-zone-context dtstart vtimezone))
       (if (and rrule (icalendar-rrule-count rrule))
           ;; COUNT rules must be enumerated from DTSTART so a window after
           ;; their last occurrence cannot produce additional recurrences.
@@ -1516,6 +1529,7 @@ UTC offsets local to that time zone."
                                     :zone offset-from
                                     :dst (not (icalendar-daylight-component-p
                                                component)))))
+    (setq vtimezone (icalendar--time-zone-context dtstart vtimezone))
     (unless (or rrule rdate-nodes)
       (error "No recurrence data in component: %s" component))
     (unless (icalendar-rrule-count rrule)
@@ -2087,7 +2101,10 @@ observance in VTIMEZONE.  The value :error means to signal an
 \\='icalendar-tz-nonexistent-time error, and nil means to reset the
 clock time in DT to an existing one; see
 `icalendar-recur-tz-observance-on'."
-  (if (cl-typep vtimezone 'icalendar-utc-offset)
+  (if (eq vtimezone t)
+      ;; Remacs: keep the canonical UTC marker through recurrence arithmetic.
+      (setf (decoded-time-zone dt) t (decoded-time-dst dt) nil)
+    (if (cl-typep vtimezone 'icalendar-utc-offset)
       ;; This is where the recurrence rule/time zone mutual dependence
       ;; bottoms out; don't remove this conditional!
       (setf (decoded-time-zone dt) vtimezone)
@@ -2113,7 +2130,7 @@ clock time in DT to an existing one; see
       ;; TODO: if no observance is found, is it ever sensible to signal an error,
       ;; instead of just leaving the zone slot unset?
       (icalendar-recur-tz-observance-on dt vtimezone t nonexistent)))
-    dt)
+    dt))
 
 (defun icalendar-recur-tz-set-zones-in (vtimezones node)
   "Recursively set time zone offset and dst flags in times in NODE.

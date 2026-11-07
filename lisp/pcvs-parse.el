@@ -25,10 +25,8 @@
 
 ;;; Bugs:
 
-;; - when merging a modified file, if the merge says that the file already
-;;   contained in the changes, it marks the file as `up-to-date' although
-;;   it might still contain further changes.
-;;   Example: merging a zero-change commit.
+;; - A zero-change merge can leave local edits in the working file, so its
+;;   status should not be changed to `up-to-date'.
 
 ;;; Code:
 
@@ -442,7 +440,7 @@ The remaining KEYS are passed directly to `cvs-create-fileinfo'."
 	;; The file already contained the modifications
 	(cvs-match (concat "^\\(.*" qfile
 			   "\\) already contains the differences between .*$")
-		   (path 1) (type '(UP-TO-DATE . MERGED)))
+		   (path 1))
 	t)
        ;; FIXME: PATH might not be set yet.  Sometimes the only path
        ;; information is in `RCS file: ...' (yuck!!).

@@ -3,9 +3,9 @@ use gpui::*;
 use remacs_runtime::frontend::FrameVisibility;
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::{Arc, Mutex};
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 mod accessibility;
 #[cfg(target_os = "macos")]
@@ -129,9 +129,8 @@ fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String
         return Err("Unable to create a service pasteboard".to_owned());
     }
 
-    let send_types = unsafe {
-        NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType])
-    };
+    let send_types =
+        unsafe { NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType]) };
     if let Some(send) = send {
         let send: id = unsafe { msg_send![NSString::alloc(nil).init_str(send), autorelease] };
         unsafe {
@@ -201,8 +200,7 @@ fn native_service_provider_class() -> &'static Class {
         unsafe {
             declaration.add_method(
                 sel!(requestService:userData:error:),
-                receive_native_service
-                    as extern "C" fn(&Object, Sel, id, id, *mut Object),
+                receive_native_service as extern "C" fn(&Object, Sel, id, id, *mut Object),
             );
         }
         declaration.register() as *const Class as usize
@@ -226,9 +224,8 @@ fn service_pasteboard_text(pasteboard: id) -> Option<String> {
     if pasteboard == nil {
         return None;
     }
-    let types = unsafe {
-        NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType])
-    };
+    let types =
+        unsafe { NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType]) };
     let pasteboard_type: id = unsafe { msg_send![pasteboard, availableTypeFromArray: types] };
     if pasteboard_type == nil {
         return None;
@@ -448,16 +445,15 @@ pub fn run_gui_with_dump(
     let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
     let initial_sticky = initial_frame_size.is_some_and(|frame| frame.sticky);
     let initial_shaded = initial_frame_size.is_some_and(|frame| frame.shaded);
-    let initial_min_size = initial_frame_size
-        .and_then(|frame| {
-            frame_minimum_size(
-                frame.min_width,
-                frame.min_height,
-                8.0,
-                19.0,
-                frame.internal_border_width as f32 * 2.0,
-            )
-        });
+    let initial_min_size = initial_frame_size.and_then(|frame| {
+        frame_minimum_size(
+            frame.min_width,
+            frame.min_height,
+            8.0,
+            19.0,
+            frame.internal_border_width as f32 * 2.0,
+        )
+    });
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -1310,7 +1306,9 @@ fn frame_minimum_size(
     line_height: f32,
     border: f32,
 ) -> Option<Size<Pixels>> {
-    let columns = min_width.unwrap_or(MIN_FRAME_COLUMNS).max(MIN_FRAME_COLUMNS);
+    let columns = min_width
+        .unwrap_or(MIN_FRAME_COLUMNS)
+        .max(MIN_FRAME_COLUMNS);
     Some(size(
         px((columns as f32 * cell_width.max(1.0) + border).ceil()),
         min_height
@@ -1334,8 +1332,7 @@ fn frame_window_options(
         .sum::<usize>();
     let content_size = size(
         px((frame.width.max(10) as f32 * 8.0).max(80.0) + internal_border),
-        px((frame.height.max(3) as f32 * 19.0)
-            .max(57.0)
+        px((frame.height.max(3) as f32 * 19.0).max(57.0)
             + extra_row_height as f32
             + internal_border),
     );
@@ -1354,8 +1351,8 @@ fn frame_window_options(
                 .primary_frame_id
                 .and_then(|primary| windows.get(&primary))
         });
-    let parent_bounds = base_window
-        .and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
+    let parent_bounds =
+        base_window.and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
     let parameter_position = frame.left.zip(frame.top).map(|(left, top)| {
         if child {
             let position = parent_bounds
@@ -1378,12 +1375,7 @@ fn frame_window_options(
                     })
                     .ok()
                 })
-                .unwrap_or_else(|| {
-                    (
-                        point(px(left as f32), px(top as f32)),
-                        None,
-                    )
-                })
+                .unwrap_or_else(|| (point(px(left as f32), px(top as f32)), None))
         }
     });
     let bounds = if let Some(parent_bounds) = parent_bounds {
@@ -1404,8 +1396,14 @@ fn frame_window_options(
             let default_origin = parent_bounds.origin + point(px(36.0), px(36.0));
             Bounds::new(
                 point(
-                    frame.left.map(|value| px(value as f32)).unwrap_or(default_origin.x),
-                    frame.top.map(|value| px(value as f32)).unwrap_or(default_origin.y),
+                    frame
+                        .left
+                        .map(|value| px(value as f32))
+                        .unwrap_or(default_origin.x),
+                    frame
+                        .top
+                        .map(|value| px(value as f32))
+                        .unwrap_or(default_origin.y),
                 ),
                 content_size,
             )
@@ -1544,11 +1542,9 @@ fn frame_position_in_window(
             return (
                 point(
                     px(left.saturating_sub(monitor.native_origin[0]) as f32),
-                    px(
-                        top.saturating_sub(
-                            monitor.geometry[1].saturating_sub(monitor.native_origin[1]),
-                        ) as f32,
-                    ),
+                    px(top.saturating_sub(
+                        monitor.geometry[1].saturating_sub(monitor.native_origin[1]),
+                    ) as f32),
                 ),
                 Some(monitor.display_id),
             );
@@ -1578,13 +1574,7 @@ fn apply_frame_snapshot_bounds(
         && let (Some(left), Some(top)) = (left, top)
         && view.native_position() != Some((left, top))
     {
-        let (position, display_id) = frame_position_in_window(
-            left,
-            top,
-            parent_bounds,
-            window,
-            cx,
-        );
+        let (position, display_id) = frame_position_in_window(left, top, parent_bounds, window, cx);
         window.set_position(position, display_id);
     }
 }
@@ -1687,9 +1677,8 @@ fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool)
 #[cfg(target_os = "macos")]
 unsafe extern "C" fn gpui_can_become_key_window(this: &Object, selector: Sel) -> BOOL {
     let associated_key = std::ptr::addr_of!(NO_ACCEPT_FOCUS_ASSOCIATED_KEY).cast();
-    let no_accept_focus = unsafe {
-        !objc_getAssociatedObject(this as *const Object as id, associated_key).is_null()
-    };
+    let no_accept_focus =
+        unsafe { !objc_getAssociatedObject(this as *const Object as id, associated_key).is_null() };
     if no_accept_focus {
         return NO;
     }
@@ -1730,8 +1719,7 @@ fn install_gpui_no_accept_focus_hooks() {
         if method.is_null() {
             continue;
         }
-        let implementation: unsafe extern "C" fn(&Object, Sel) -> BOOL =
-            gpui_can_become_key_window;
+        let implementation: unsafe extern "C" fn(&Object, Sel) -> BOOL = gpui_can_become_key_window;
         let implementation: Imp = unsafe { std::mem::transmute(implementation) };
         let original = unsafe { method_setImplementation(method as *mut Method, implementation) };
         originals.insert(class_id, original as usize);
@@ -1857,13 +1845,9 @@ struct XcbWindowContext {
 
 #[cfg(target_os = "linux")]
 fn xcb_window_context(window: &Window) -> Result<Option<XcbWindowContext>, String> {
-    use raw_window_handle::{
-        HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
-    };
+    use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
-    let display = window
-        .display_handle()
-        .map_err(|error| error.to_string())?;
+    let display = window.display_handle().map_err(|error| error.to_string())?;
     let RawDisplayHandle::Xcb(display) = display.as_raw() else {
         // XCB requests are only available for the X11 display backend.
         return Ok(None);
@@ -1871,9 +1855,7 @@ fn xcb_window_context(window: &Window) -> Result<Option<XcbWindowContext>, Strin
     let Some(raw_connection) = display.connection else {
         return Ok(None);
     };
-    let handle = window
-        .window_handle()
-        .map_err(|error| error.to_string())?;
+    let handle = window.window_handle().map_err(|error| error.to_string())?;
     let RawWindowHandle::Xcb(handle) = handle.as_raw() else {
         return Ok(None);
     };
@@ -1884,8 +1866,8 @@ fn xcb_window_context(window: &Window) -> Result<Option<XcbWindowContext>, Strin
             &[],
         )
     };
-    let screen_index = usize::try_from(display.screen)
-        .map_err(|_| "invalid X11 screen number".to_owned())?;
+    let screen_index =
+        usize::try_from(display.screen).map_err(|_| "invalid X11 screen number".to_owned())?;
     let root = connection
         .get_setup()
         .roots()
@@ -2006,11 +1988,7 @@ fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
             .next()
             .unwrap_or(0)
     };
-    xcb_send_client_message(
-        &context,
-        net_wm_desktop,
-        [desktop, 1, 0, 0, 0],
-    )
+    xcb_send_client_message(&context, net_wm_desktop, [desktop, 1, 0, 0, 0])
 }
 
 #[cfg(target_os = "linux")]
@@ -2138,9 +2116,7 @@ extern "C" fn font_panel_change_font(_this: &Object, _cmd: Sel, sender: id) {
                 None
             } else {
                 let bytes = NSString::UTF8String(family);
-                (!bytes.is_null()).then(|| {
-                    CStr::from_ptr(bytes).to_string_lossy().into_owned()
-                })
+                (!bytes.is_null()).then(|| CStr::from_ptr(bytes).to_string_lossy().into_owned())
             }
         }
     };
@@ -2180,8 +2156,8 @@ fn show_native_font_panel(
 ) -> Result<Option<String>, String> {
     // The modal AppKit loop keeps the native Font panel responsive while the
     // logic thread waits for x-select-font to return.
-    let native_window =
-        appkit_native_window(window).ok_or_else(|| "native frame window is unavailable".to_owned())?;
+    let native_window = appkit_native_window(window)
+        .ok_or_else(|| "native frame window is unavailable".to_owned())?;
     if activate_frame {
         window.activate_window();
     }
@@ -2192,12 +2168,10 @@ fn show_native_font_panel(
         return Err("NSFontPanel could not be created".to_owned());
     }
 
-    let font_name: id = unsafe {
-        msg_send![NSString::alloc(nil).init_str(current_font), autorelease]
-    };
-    let initial_font: id = unsafe {
-        msg_send![class!(NSFont), fontWithName: font_name size: 14.0_f64]
-    };
+    let font_name: id =
+        unsafe { msg_send![NSString::alloc(nil).init_str(current_font), autorelease] };
+    let initial_font: id =
+        unsafe { msg_send![class!(NSFont), fontWithName: font_name size: 14.0_f64] };
     if initial_font != nil {
         unsafe {
             let _: () = msg_send![manager, setSelectedFont: initial_font isMultiple: NO];
@@ -2285,14 +2259,13 @@ fn show_native_about_panel(version: &str) -> Result<(), String> {
             autorelease
         ];
         let name: id = msg_send![NSString::alloc(nil).init_str("Remacs"), autorelease];
-        let version_key: id =
-            msg_send![NSString::alloc(nil).init_str("Version"), autorelease];
-        let version_value: id =
-            msg_send![NSString::alloc(nil).init_str(version), autorelease];
-        let app_version_key: id =
-            msg_send![NSString::alloc(nil).init_str("ApplicationVersion"), autorelease];
-        let app_version: id =
-            msg_send![NSString::alloc(nil).init_str(version), autorelease];
+        let version_key: id = msg_send![NSString::alloc(nil).init_str("Version"), autorelease];
+        let version_value: id = msg_send![NSString::alloc(nil).init_str(version), autorelease];
+        let app_version_key: id = msg_send![
+            NSString::alloc(nil).init_str("ApplicationVersion"),
+            autorelease
+        ];
+        let app_version: id = msg_send![NSString::alloc(nil).init_str(version), autorelease];
         let _: () = msg_send![options, setObject: name forKey: name_key];
         let _: () = msg_send![options, setObject: version_value forKey: version_key];
         let _: () = msg_send![options, setObject: app_version forKey: app_version_key];
@@ -2314,6 +2287,6 @@ use logic::{ChanIo, start_logic, start_logic_with_dump_for_test};
 #[cfg(test)]
 use view::build_editor_view;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod minimum_tests;
+#[cfg(test)]
+mod tests;

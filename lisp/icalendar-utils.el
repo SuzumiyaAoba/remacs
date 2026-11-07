@@ -440,6 +440,12 @@ ignored.  N may be a positive or negative integer."
            (new-dt (decoded-time-add dt delta)))
       (icalendar-date-time-to-date new-dt))))
 
+(defun icalendar--time-zone-context (dt vtimezone)
+  "Use VTIMEZONE, or the explicit UTC/fixed offset already present in DT."
+  (or vtimezone
+      (when (cl-typep dt 'icalendar-date-time)
+        (decoded-time-zone dt))))
+
 (defun icalendar-date-time-add (dt delta &optional vtimezone)
   "Like `decoded-time-add', but also updates weekday and time zone slots.
 
@@ -460,6 +466,8 @@ hours later, but at a different local time."
   (require 'icalendar-recur) ; for icalendar-recur-tz-decode-time; avoids circular requires
   (declare-function icalendar-recur-tz-decode-time "icalendar-recur")
 
+  ;; Remacs: an explicit UTC/fixed offset is sufficient without a zone node.
+  (setq vtimezone (icalendar--time-zone-context dt vtimezone))
   (if (not vtimezone)
       ;; the simple case: we have no time zone info, so just use
       ;; `decoded-time-add':
