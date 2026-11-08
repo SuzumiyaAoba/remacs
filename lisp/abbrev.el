@@ -980,8 +980,18 @@ Includes expansions from parent abbrev tables."
 (defun abbrev--suggest-count-words (expansion)
   "Return the number of words in EXPANSION.
 Expansion is a string of one or more words."
-    (length (split-string (abbrev--suggest-normalize-whitespace expansion)
-			  " " t)))
+  (length (split-string (abbrev--suggest-normalize-whitespace expansion)
+                        " " t)))
+
+(defun abbrev--suggest-get-exact-previous-text (expansion case-fixed)
+  "Return EXPANSION if it exactly matches the text before point.
+Respect case sensitivity when CASE-FIXED is non-nil."
+  (let ((start (- (point) (length expansion))))
+    (when (>= start (point-min))
+      (let ((previous (buffer-substring-no-properties start (point))))
+        (and (eq t (compare-strings expansion nil nil previous nil nil
+                                    (not case-fixed)))
+             previous)))))
 
 (defun abbrev--suggest-get-previous-words (n)
   "Return the N words before point, spaces included."
@@ -1034,7 +1044,9 @@ informed about the existing abbrev."
     (let (words abbrev-found word-count)
       (dolist (expansion (abbrev--suggest-get-active-abbrev-expansions))
 	(setq word-count (abbrev--suggest-count-words (nth 0 expansion))
-	      words (abbrev--suggest-get-previous-words word-count))
+	      words (or (abbrev--suggest-get-exact-previous-text
+                         (nth 0 expansion) (nth 2 expansion))
+                        (abbrev--suggest-get-previous-words word-count)))
 	(when (and (> word-count 0)
 		   (eq t (compare-strings
 			  (abbrev--suggest-normalize-whitespace

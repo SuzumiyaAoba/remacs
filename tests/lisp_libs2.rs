@@ -2236,6 +2236,30 @@ fn bookmark_rename_rejects_empty_name_atomically() {
 }
 
 #[test]
+fn abbrev_suggest_matches_punctuation_inside_expansion() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'abbrev)
+              (let ((global-abbrev-table (make-abbrev-table))
+                    (local-abbrev-table nil)
+                    (abbrev-suggest-hint-threshold 0)
+                    captured)
+                (define-abbrev global-abbrev-table "fb" "foo-bar")
+                (fset 'abbrev--suggest-inform-user
+                      (lambda (expansion)
+                        (push (cons (nth 0 expansion) (nth 1 expansion))
+                              captured)))
+                (with-temp-buffer
+                  (insert "foo-bar")
+                  (abbrev--suggest-maybe-suggest))
+                (list (length captured)
+                      (caar captured)
+                      (cdar captured))))"#),
+        "(1 \"foo-bar\" \"fb\")"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
