@@ -339,8 +339,6 @@ The options are `downcase-word', `upcase-word', `capitalize-word' and nil."
                  "final" "generic" "import" "non_intrinsic" "non_overridable"
                  "nopass" "pass" "protected" "same_type_as" "value" "volatile"
                  ;; F2008.
-                 ;; FIXME f90-change-keywords does not work right if
-                 ;; there are spaces.
                  "contiguous" "submodule" "concurrent" "codimension"
                  "sync all" "sync memory" "critical" "image_index" "error stop"
                  "impure"
@@ -2358,23 +2356,31 @@ CHANGE-WORD should be one of `upcase-word', `downcase-word', `capitalize-word'."
       (goto-char beg)
       (unwind-protect
           (while (re-search-forward keyword-re end t)
-            (unless (progn
-                      (setq state (parse-partial-sexp ref-point (point)))
-                      (or (nth 3 state) (nth 4 state)
-                          ;; GM f90-directive-comment-re?
-                          (save-excursion ; check for cpp directive
-                            (beginning-of-line)
-                            (skip-chars-forward " \t0-9")
-                            (looking-at "#"))))
-              (setq ref-point (point)
-                    ;; FIXME this does not work for constructs with
-                    ;; embedded space, eg "sync all".
-                    back-point (save-excursion (backward-word-strictly 1)
-                                               (point))
-                    saveword (buffer-substring back-point ref-point))
-              (funcall change-word -1)
-              (or (string= saveword (buffer-substring back-point ref-point))
-                  (setq modified t))))
+            (let ((match-start (match-beginning 0))
+                  (match-end (match-end 0)))
+              (unless (progn
+                        (setq state (parse-partial-sexp ref-point match-end))
+                        (or (nth 3 state) (nth 4 state)
+                            ;; GM f90-directive-comment-re?
+                            (save-excursion ; check for cpp directive
+                              (beginning-of-line)
+                              (skip-chars-forward " \t0-9")
+                              (looking-at "#"))))
+                (setq ref-point match-end
+                      back-point match-start
+                      saveword (buffer-substring back-point ref-point))
+                ;; Change every word in the match, since some keywords
+                ;; (such as "sync all") contain spaces.
+                (let ((word-count
+                       (save-excursion
+                         (goto-char match-start)
+                         (let ((count 0))
+                           (while (re-search-forward "\\sw+" match-end t)
+                             (setq count (1+ count)))
+                           count))))
+                  (funcall change-word (- word-count)))
+                (or (string= saveword (buffer-substring back-point ref-point))
+                    (setq modified t)))))
         (or modified (restore-buffer-modified-p nil))))))
 
 

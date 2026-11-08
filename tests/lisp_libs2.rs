@@ -3023,6 +3023,50 @@ fn cc_fill_paragraph_wraps_at_word_boundary_when_point_on_first_word() {
 }
 
 #[test]
+fn f90_change_keywords_changes_every_word_of_multiword_keywords() {
+    // Regression for #1679: F90 has keywords such as "sync all".
+    // Evaluate just these definitions; the mode's menu setup is unrelated.
+    assert_eq!(
+        ev(r#"(progn
+              (with-temp-buffer
+                (setq lexical-binding t)
+                (insert-file-contents "lisp/f90.el")
+                (goto-char (point-min))
+                (let ((wanted '(f90-keywords-re f90-procedures-re
+                                f90-operators-re f90-hpf-keywords-re
+                                f90-upcase-keywords f90-capitalize-keywords
+                                f90-downcase-keywords f90-change-keywords))
+                      form)
+                  (condition-case nil
+                      (while t
+                        (setq form (read (current-buffer)))
+                        (when (and (memq (car-safe form) '(defconst defun))
+                                   (memq (cadr form) wanted))
+                          (eval form)))
+                    (end-of-file nil)))
+                (let ((upper-text
+                       (with-temp-buffer
+                         (insert "sync all\n")
+                         (f90-upcase-keywords)
+                         (buffer-string)))
+                      (capitalized-text
+                       (with-temp-buffer
+                         (insert "sync all\n")
+                         (f90-capitalize-keywords)
+                         (buffer-string)))
+                      (lower-text
+                       (with-temp-buffer
+                         (insert "SYNC ALL\n")
+                         (f90-downcase-keywords)
+                         (buffer-string))))
+                  (list (equal upper-text "SYNC ALL\n")
+                        (equal capitalized-text "Sync All\n")
+                        (equal lower-text "sync all\n")))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn
