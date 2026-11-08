@@ -2260,6 +2260,33 @@ fn abbrev_suggest_matches_punctuation_inside_expansion() {
 }
 
 #[test]
+fn ecomplete_returns_a_multiline_candidate_as_one_match() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'ecomplete)
+              (let ((ecomplete-auto-select t)
+                    (ecomplete-database
+                     '((mail ("key" 1 0 "alpha\nbeta")))))
+                (let ((single (ecomplete-display-matches 'mail "alpha" t)))
+                  (let ((ecomplete-auto-select nil)
+                        (ecomplete-sort-predicate #'ecomplete-newness)
+                        (ecomplete-database
+                         '((mail ("multi" 1 2 "alpha\nbeta")
+                                 ("single" 1 1 "alpha one"))))
+                        (keys (list (kbd "<down>") (kbd "RET"))))
+                    (let ((selected
+                           (cl-letf (((symbol-function 'read-key-sequence)
+                                      (lambda (&rest _)
+                                        (prog1 (car keys)
+                                          (setq keys (cdr keys))))))
+                             (ecomplete-display-matches 'mail "alpha" t))))
+                      (list (equal single "alpha\nbeta")
+                            (equal selected "alpha one")))))))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

@@ -186,27 +186,34 @@ FORCE is non-nil, use TEXT exactly as is."
 	(write-region (point-min) (point-max)
 		      ecomplete-database-file nil 'silent)))))
 
-(defun ecomplete-get-matches (type match)
+(defun ecomplete--get-matches-list (type match)
   (let* ((elems (cdr (assq type ecomplete-database)))
-	 (match (regexp-quote match))
-	 (candidates
-	  (sort
-	   (cl-loop for (_key count time text) in elems
-		    when (string-match match text)
-		    collect (list count time text))
+         (regexp (regexp-quote match))
+         (candidates
+          (sort
+           (cl-loop for (_key count time text) in elems
+                    when (string-match regexp text)
+                    collect (list count time text))
            ecomplete-sort-predicate)))
     (when (> (length candidates) 10)
       (setcdr (nthcdr 10 candidates) nil))
-    (unless (zerop (length candidates))
+    (mapcar #'caddr candidates)))
+
+(defun ecomplete--format-matches (candidates match)
+  (when candidates
+    (let ((regexp (regexp-quote match)))
       (with-temp-buffer
-	(dolist (candidate candidates)
-	  (insert (caddr candidate) "\n"))
-	(goto-char (point-min))
-	(put-text-property (point) (1+ (point)) 'ecomplete t)
-	(while (re-search-forward match nil t)
-	  (put-text-property (match-beginning 0) (match-end 0)
-			     'face 'isearch))
-	(buffer-string)))))
+        (dolist (candidate candidates)
+          (insert candidate "\n"))
+        (goto-char (point-min))
+        (put-text-property (point) (1+ (point)) 'ecomplete t)
+        (while (re-search-forward regexp nil t)
+          (put-text-property (match-beginning 0) (match-end 0)
+                             'face 'isearch))
+        (buffer-string)))))
+
+(defun ecomplete-get-matches (type match)
+  (ecomplete--format-matches (ecomplete--get-matches-list type match) match))
 
 (defun ecomplete-display-matches (type word &optional choose)
   "Display the top-rated elements TYPE that match WORD.
@@ -215,9 +222,9 @@ matches.
 
 Auto-select when `ecomplete-auto-select' is
 non-nil and there is only a single completion option available."
-  (let* ((matches (ecomplete-get-matches type word))
-         (match-list (and matches (split-string matches "\n")))
-         (max-lines (and matches (- (length match-list) 2)))
+  (let* ((match-list (ecomplete--get-matches-list type word))
+         (matches (ecomplete--format-matches match-list word))
+         (max-lines (and matches (1- (length match-list))))
 	 (line 0)
 	 (message-log-max nil)
 	 command highlight)
@@ -246,28 +253,54 @@ non-nil and there is only a single completion option available."
 	    (define-key local-map (kbd "M-p") prev-func)
 	    (define-key local-map (kbd "<up>") prev-func)
 	    (let ((overriding-local-map local-map))
-              (setq highlight (ecomplete-highlight-match-line matches line))
+              (setq highlight
+                    (ecomplete-highlight-match-line matches line match-list))
 	      (while (and (null selected)
 			  (setq command (read-key-sequence highlight))
 			  (lookup-key local-map command))
 	        (apply (key-binding command) nil)
-	        (setq highlight (ecomplete-highlight-match-line matches line))))
+	        (setq highlight
+                      (ecomplete-highlight-match-line matches line match-list))))
 	    (message (or selected "Abort"))
             selected))))))
 
-(defun ecomplete-highlight-match-line (matches line)
+(defun ecomplete--candidate-line-count (candidate)
+  (let ((count 1)
+        (start 0))
+    (while (setq start (string-match "\n" candidate start))
+      (setq count (1+ count)
+            start (1+ start)))
+    count))
+
+(defun ecomplete-highlight-match-line (matches line &optional match-list)
   (with-temp-buffer
     (insert matches)
     (goto-char (point-min))
-    (forward-line line)
-    (save-restriction
-      (narrow-to-region (point) (line-end-position))
-      (while (not (eobp))
-	;; Put the 'region face on any characters on this line that
-	;; aren't already highlighted.
-	(unless (get-text-property (point) 'face)
-	  (put-text-property (point) (1+ (point)) 'face 'highlight))
-	(forward-char 1)))
+    (let ((start-line 0)
+          (line-count 1))
+      (if match-list
+          (progn
+            (setq line-count
+                  (ecomplete--candidate-line-count (nth line match-list)))
+            (dotimes (index line)
+              (setq start-line
+                    (+ start-line
+                       (ecomplete--candidate-line-count
+                        (nth index match-list))))))
+        (setq start-line line))
+      (forward-line start-line)
+      (let ((start (point))
+            (end (save-excursion
+                   (forward-line line-count)
+                   (point))))
+        (save-restriction
+          (narrow-to-region start end)
+          (while (not (eobp))
+            ;; Put the 'region face on any characters in this candidate that
+            ;; aren't already highlighted.
+            (unless (get-text-property (point) 'face)
+              (put-text-property (point) (1+ (point)) 'face 'highlight))
+            (forward-char 1)))))
     (buffer-string)))
 
 (defun ecomplete-usage (l1 l2)
