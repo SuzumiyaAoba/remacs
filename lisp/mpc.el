@@ -1520,8 +1520,9 @@ when constructing the set of constraints."
   (setcar (cdr ring) (max (cadr ring) (1+ (car ring))))
   (setcar ring (mod (1+ (car ring)) (length (cddr ring)))))
 (defun mpc-ring-pop (ring)
-  (setcar ring (mod (1- (car ring)) (cadr ring)))
-  (aref (cddr ring) (car ring)))
+  (when (> (cadr ring) 0)
+    (setcar ring (mod (1- (car ring)) (cadr ring)))
+    (aref (cddr ring) (car ring))))
 
 (defvar mpc-constraints-ring (mpc-ring-make 10))
 
