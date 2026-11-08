@@ -523,6 +523,11 @@ has no effect on MS-Windows."
 	 (modes (dired-mark-read-string
 		 "Change mode of %s to: "
 		 nil 'chmod arg files default))
+	 (octal-prefix-end
+	  (save-match-data
+	    (and (string-match "^[0-7]+" modes)
+		 (= (match-beginning 0) 0)
+		 (match-end 0))))
 	 num-modes)
     (cond ((or (equal modes "")
 	       ;; Use `eq' instead of `equal'
@@ -531,8 +536,11 @@ has no effect on MS-Windows."
 	   ;; We used to treat empty input as DEFAULT, but that is not
 	   ;; such a good idea (Bug#9361).
 	   (error "No file mode specified"))
-	  ((string-match-p "^[0-7]+" modes)
-	   (setq num-modes (string-to-number modes 8))))
+	  ((and octal-prefix-end
+		(= octal-prefix-end (length modes)))
+	   (setq num-modes (string-to-number modes 8)))
+          (octal-prefix-end
+           (user-error "Invalid octal file mode: %s" modes)))
 
     (dolist (file files)
       (set-file-modes

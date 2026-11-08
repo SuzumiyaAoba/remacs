@@ -9128,9 +9128,16 @@ based on existing mode bits, as in \"og+rX-w\"."
 	 (value (read-string (or prompt "File modes (octal or symbolic): ")
 			     nil nil default)))
     (save-match-data
-      (if (string-match "^[0-7]+" value)
-	  (string-to-number value 8)
-	(file-modes-symbolic-to-number value modes)))))
+      (let ((octal-prefix-end
+             (and (string-match "^[0-7]+" value)
+                  (= (match-beginning 0) 0)
+                  (match-end 0))))
+        (cond ((and octal-prefix-end
+                    (= octal-prefix-end (length value)))
+               (string-to-number value 8))
+              (octal-prefix-end
+               (user-error "Invalid octal file mode: %s" value))
+              (t (file-modes-symbolic-to-number value modes)))))))
 (defun recode-file-name (file coding new-coding &optional ok-if-already-exists)
   "Change the encoding of FILE's name from CODING to NEW-CODING.
 The value is a new name of FILE.

@@ -2311,6 +2311,46 @@ fn image_dired_uses_at_least_one_column_in_narrow_windows() {
 }
 
 #[test]
+fn file_mode_prompts_reject_malformed_octal_prefixes() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'files)
+              (require 'dired-aux)
+              (let* ((read-error
+                      (condition-case err
+                          (cl-letf (((symbol-function 'read-string)
+                                     (lambda (&rest _) "755note")))
+                            (read-file-modes))
+                        (error (car err))))
+                     (read-valid
+                      (cl-letf (((symbol-function 'read-string)
+                                 (lambda (&rest _) "755")))
+                        (read-file-modes)))
+                     (applied nil)
+                     (dired-error
+                      (condition-case err
+                          (cl-letf (((symbol-function 'dired-get-marked-files)
+                                     (lambda (&rest _) '("dummy")))
+                                    ((symbol-function 'dired-get-filename)
+                                     (lambda (&rest _) nil))
+                                    ((symbol-function 'dired-mark-read-string)
+                                     (lambda (&rest _) "755note"))
+                                    ((symbol-function 'set-file-modes)
+                                     (lambda (_file mode &rest _)
+                                       (setq applied mode)))
+                                    ((symbol-function 'dired-do-redisplay)
+                                     (lambda (&rest _) nil))
+                                    ((symbol-function 'dired-post-do-command)
+                                     (lambda (&rest _) nil)))
+                            (dired-do-chmod)
+                            'no-error)
+                        (error (car err)))))
+                (list read-error read-valid dired-error applied)))"#),
+        "(user-error 493 user-error nil)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
