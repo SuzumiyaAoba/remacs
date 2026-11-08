@@ -133,6 +133,9 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "print" => NSPrintFunctionKey,
         "select" => NSSelectFunctionKey,
         "break" => NSBreakFunctionKey,
+        "reset" => NSResetFunctionKey,
+        "stop" => NSStopFunctionKey,
+        "sys-req" => NSSysReqFunctionKey,
         "clear" => NSClearLineFunctionKey,
         "menu" => NSMenuFunctionKey,
         "f1" => NSF1FunctionKey,
@@ -464,6 +467,9 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSPrintFunctionKey) => "print".to_string(),
             Some(NSSelectFunctionKey) => "select".to_string(),
             Some(NSBreakFunctionKey) => "break".to_string(),
+            Some(NSResetFunctionKey) => "reset".to_string(),
+            Some(NSStopFunctionKey) => "stop".to_string(),
+            Some(NSSysReqFunctionKey) => "sys-req".to_string(),
             Some(NSClearLineFunctionKey) => "clear".to_string(),
             Some(NSMenuFunctionKey) => "menu".to_string(),
             Some(NSF1FunctionKey) => "f1".to_string(),
@@ -809,6 +815,18 @@ mod scroll_lock_key_tests {
     #[test]
     fn scroll_lock_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSScrollLockFunctionKey, "Scroll_Lock", 0);
+    }
+}
+
+#[cfg(test)]
+mod reset_stop_sys_req_key_tests {
+    use super::*;
+    use cocoa::appkit::{NSResetFunctionKey, NSStopFunctionKey, NSSysReqFunctionKey};
+    #[test]
+    fn reset_stop_and_sys_req_function_keys_are_named_non_text_events() {
+        assert_named_function_key(NSResetFunctionKey, "reset", 0);
+        assert_named_function_key(NSStopFunctionKey, "stop", 0);
+        assert_named_function_key(NSSysReqFunctionKey, "sys-req", 0);
     }
 }
 

@@ -221,6 +221,7 @@ fn function_key_name(key: &str) -> Option<&str> {
         "pagedown" => Some("next"),
         "scroll" => Some("scroll"),
         "scroll_lock" | "Scroll_Lock" => Some("Scroll_Lock"),
+        "reset" | "stop" | "sys-req" => Some(key),
         key if key.starts_with("XF86Audio") => Some(key),
         "up" | "down" | "left" | "right" | "home" | "end" | "begin" | "help" | "break" | "back"
         | "forward" | "pause" | "print" | "select" | "clear" | "delete" | "insert" | "undo"

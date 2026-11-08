@@ -560,6 +560,16 @@ fn break_keysym_reaches_the_named_break_binding() {
 }
 
 #[test]
+fn reset_stop_and_sys_req_keysyms_remain_named_events() {
+    use remacs_runtime::editor::event_code_for;
+    for name in ["reset", "stop", "sys-req"] {
+        let key = ks(name, None, false, false, false, false);
+        assert!(command_keystroke(&key), "{name}");
+        assert_eq!(keystroke_to_code(&key), Some(event_code_for(name)), "{name}");
+    }
+}
+
+#[test]
 fn begin_keysym_reaches_the_named_begin_binding() {
     let key = ks("begin", None, false, false, false, false);
     assert!(command_keystroke(&key));
