@@ -3002,6 +3002,27 @@ fn cc_forward_label_skips_ternary_colon_in_case_label() {
 }
 
 #[test]
+fn cc_fill_paragraph_wraps_at_word_boundary_when_point_on_first_word() {
+    // Regression for #1678: the comment opener and the more-indented next
+    // line must not make filling split the first word in the comment.
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cc-mode)
+              (with-temp-buffer
+                (insert "/* Bla bla bla bla bla\n        bla bla\n*/\n")
+                (c-mode)
+                (setq fill-column 12)
+                (goto-char (point-min))
+                (search-forward "Bla")
+                (backward-char 3)
+                (c-fill-paragraph nil)
+                (equal (substring-no-properties (buffer-string))
+                       "/* Bla bla\n        bla\n        bla\n        bla\n        bla\n        bla\n        */\n")))"#),
+        "t"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn
