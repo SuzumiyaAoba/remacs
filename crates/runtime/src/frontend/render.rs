@@ -1110,6 +1110,32 @@ fn selective_display_hides_line(mode: &Value, text: &EmacsText, tab_width: usize
     indentation >= usize::try_from(*threshold).unwrap_or(usize::MAX)
 }
 
+fn selective_display_next_line_is_hidden(
+    i: &Interp,
+    buffer_id: usize,
+    next_line_number: usize,
+    mode: &Value,
+    tab_width: usize,
+) -> bool {
+    if !matches!(mode, Value::Int(threshold) if *threshold > 0) {
+        return false;
+    }
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return false;
+    };
+    let buffer = buffer.borrow();
+    let line_start = buffer.text.line_start(next_line_number);
+    if line_start >= buffer.zv {
+        return false;
+    }
+    let line_end = buffer.text.line_end(line_start).min(buffer.zv);
+    selective_display_hides_line(
+        mode,
+        &buffer.text.substring(line_start, line_end),
+        tab_width,
+    )
+}
+
 fn buffer_tab_width(i: &Interp, buffer: usize) -> usize {
     let id = i.q_soft("tab-width").unwrap_or(u32::MAX);
     i.buffer_local_toplevel_value(id, buffer)
@@ -8290,10 +8316,10 @@ fn render_grid_internal(
                 break;
             }
             let (
-                line,
+                mut line,
                 line_pos,
                 row_end,
-                point_index,
+                mut point_index,
                 line_number,
                 point_line_number,
                 line_is_complete,
@@ -8339,6 +8365,30 @@ fn render_grid_internal(
                 }
                 None => (EmacsText::new(), 0, 0, None, 1, usize::MAX, false),
             };
+            let mut hidden_selective_suffix = false;
+            let hidden_start = if matches!(selective_display, Value::Sym(symbol) if i.symbol_name(symbol).as_str() == "t")
+            {
+                line.chars()
+                    .position(|character| character.unicode() == Some('\r'))
+            } else {
+                None
+            };
+            if let Some(hidden_start) = hidden_start {
+                hidden_selective_suffix = hidden_start < line.chars().count();
+                let visible_line: EmacsText = line.chars().take(hidden_start).collect();
+                line = visible_line;
+                point_index = point_index.map(|point| point.min(hidden_start));
+            }
+            let selective_ellipsis = buffer_setting(i, "selective-display-ellipses", buf_id)
+                .truthy()
+                && (hidden_selective_suffix
+                    || selective_display_next_line_is_hidden(
+                        i,
+                        buf_id,
+                        line_number,
+                        &selective_display,
+                        tab_width,
+                    ));
             visible_end = row_end;
             let line_len = line.chars().count();
             let trailing_whitespace = if line_is_complete
@@ -8476,6 +8526,17 @@ fn render_grid_internal(
                     line_len,
                     max_rows - plans.len(),
                 ));
+            }
+            if selective_ellipsis
+                && let Some(plan) = plans
+                    .iter_mut()
+                    .rev()
+                    .find(|plan| plan.include_end_boundary)
+            {
+                plan.boundaries
+                    .entry(line_len)
+                    .or_default()
+                    .push("…".to_owned());
             }
             for plan in plans {
                 let range = &plan.range;
