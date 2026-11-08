@@ -153,18 +153,19 @@ instead."
       (save-excursion
         (beginning-of-line)
         (and comment-start-skip
-             ;; FIXME: This doesn't work for the case where there
-             ;; are two matches of comment-start-skip, and the
-             ;; first one is, say, inside a string.  We need to
-             ;; call re-search-forward repeatedly until either
-             ;; reached EOL or (nth 4 (syntax-ppss)) returns
-             ;; non-nil.
-             (re-search-forward comment-start-skip (pos-eol) t)
-             (nth 8 (syntax-ppss))))
+             (let ((end (pos-eol)) found)
+               (while (and (not found)
+                           (re-search-forward comment-start-skip end t))
+                 ;; A comment-start regexp can also match inside a string.
+                 (setq found (nth 4 (syntax-ppss))))
+               found)))
       (save-excursion
         (beginning-of-line)
-        (and (re-search-forward "\\s-*\\s<" (line-end-position) t)
-             (nth 8 (syntax-ppss))))))
+        (let ((end (line-end-position)) found)
+          (while (and (not found)
+                      (re-search-forward "\\s-*\\s<" end t))
+            (setq found (nth 4 (syntax-ppss))))
+          found))))
 
 (defvar prog-fill-reindent-defun-function
   #'prog-fill-reindent-defun-default

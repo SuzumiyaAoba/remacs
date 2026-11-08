@@ -3101,6 +3101,30 @@ fn calc_pass_errors_bypasses_calc_do_error_handler() {
 }
 
 #[test]
+fn prog_text_at_point_ignores_comment_start_inside_string() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'prog-mode)
+              (list
+               (with-temp-buffer
+                 (emacs-lisp-mode)
+                 (insert "(message \"; in string\")\n")
+                 (goto-char (point-max))
+                 (backward-char 1)
+                 (and (prog--text-at-point-p) t))
+               (with-temp-buffer
+                 (emacs-lisp-mode)
+                 (insert "(message \"text\") ; comment\n")
+                 (goto-char (point-min))
+                 (search-forward "text")
+                 (search-forward ")")
+                 (backward-char 1)
+                 (and (prog--text-at-point-p) t))))"#),
+        "(nil t)"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn
