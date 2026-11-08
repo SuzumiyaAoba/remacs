@@ -3125,6 +3125,24 @@ fn prog_text_at_point_ignores_comment_start_inside_string() {
 }
 
 #[test]
+fn comment_indent_new_line_uses_explicit_comment_continue() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'newcomment)
+              (with-temp-buffer
+                (emacs-lisp-mode)
+                (setq-local comment-start ";; "
+                            comment-start-skip ";+ *"
+                            comment-continue ";;> ")
+                (insert ";; text")
+                (goto-char (point-max))
+                (comment-indent-new-line)
+                (equal (buffer-string) ";; text\n;;> ")))"#),
+        "t"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn

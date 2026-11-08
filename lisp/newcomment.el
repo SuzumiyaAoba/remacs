@@ -1473,8 +1473,9 @@ or comment indentation.
 The inserted newline is marked hard if variable `use-hard-newlines' is true,
 unless optional argument SOFT is non-nil."
   (interactive)
-  (comment-normalize-vars t)
-  (let (compos comin)
+  (let ((explicit-comment-continue comment-continue)
+        compos comin)
+    (comment-normalize-vars t)
     ;; If we are not inside a comment and we only auto-fill comments,
     ;; don't do anything (unless no comment syntax is defined).
     (unless (and comment-start
@@ -1559,12 +1560,14 @@ unless optional argument SOFT is non-nil."
                      (comment-start comstart)
                      (comment-end comend)
                      (continuep (or comment-multi-line
+                                    explicit-comment-continue
                                     (cadr (assoc comment-style
                                                  comment-styles))))
-                     ;; Recreate comment-continue from comment-start.
-                     ;; FIXME: wrong if comment-continue was set explicitly!
+                     ;; Preserve an explicit continuation string.  If there
+                     ;; was none, let `comment-indent' derive one from
+                     ;; `comment-start'.
                      ;; FIXME: use prev line's continuation if available.
-                     (comment-continue nil))
+                     (comment-continue explicit-comment-continue))
                 (comment-indent continuep))
 	      (save-excursion
 		(let ((pt (point)))
