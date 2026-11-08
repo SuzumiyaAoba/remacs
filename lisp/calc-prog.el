@@ -111,22 +111,9 @@
 	      "Not reporting timing of commands"))))
 
 (defun calc-pass-errors ()
-  ;; FIXME: This is broken at least since Emacs-26.
-  ;; AFAICT the immediate purpose of this code is to hack the
-  ;; `condition-case' in `calc-do' so it doesn't catch errors any
-  ;; more.  I'm not sure why/whatfor this was designed, but I suspect
-  ;; that `condition-case-unless-debug' would cover the same needs.
+  "Let errors from Calc commands pass through `calc-do'."
   (interactive)
-  ;; The following two cases are for the new, optimizing byte compiler
-  ;; or the standard 18.57 byte compiler, respectively.
-  (condition-case nil
-      (let ((place (aref (nth 2 (nth 2 (symbol-function 'calc-do))) 15)))
-	(or (memq (car-safe (car-safe place)) '(error xxxerror))
-	    (setq place (aref (nth 2 (nth 2 (symbol-function 'calc-do))) 27)))
-	(or (memq (car (car place)) '(error xxxerror))
-            (error "Foo"))
-	(setcar (car place) 'xxxerror))
-    (error (error "The calc-do function has been modified; unable to patch"))))
+  (setq calc-pass-errors-enabled t))
 
 (defun calc-user-define ()
   (interactive)

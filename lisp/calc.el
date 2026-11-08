@@ -1652,7 +1652,9 @@ See calc-keypad for details."
 (defvar calc-command-flags nil)
 (defvar calc-final-point-line)
 (defvar calc-final-point-column)
-;;; Note that modifications to this function may break calc-pass-errors.
+(defvar calc-pass-errors-enabled nil
+  "Non-nil means Calc command errors should escape `calc-do'.")
+
 (defun calc-do (do-body &optional do-slow)
   (calc-check-defines)
   (let* ((calc-command-flags nil)
@@ -1661,10 +1663,9 @@ See calc-keypad for details."
 			       (current-time-string)))
 	 (gc-cons-threshold (max gc-cons-threshold
 				 (if calc-timing 2000000 100000)))
-	 calc-final-point-line calc-final-point-column)
-    (setq calc-aborted-prefix "")
-    (unwind-protect
-	(condition-case err
+	 calc-final-point-line calc-final-point-column
+	 (calc-do--body
+	  (lambda ()
 	    (save-excursion
 	      (if calc-embedded-info
 		  (calc-embedded-select-buffer)
@@ -1680,15 +1681,21 @@ See calc-keypad for details."
 	      (when (memq 'renum-stack calc-command-flags)
 		(calc-renumber-stack))
 	      (when (memq 'clear-message calc-command-flags)
-		(message "")))
-	  (error
-	   (if (and (eq (car err) 'error)
-		    (stringp (nth 1 err))
-		    (string-search "max-lisp-eval-depth" (nth 1 err)))
-               (error (substitute-command-keys
-                       "Computation got stuck or ran too long.  Type \\`M' to increase the limit"))
-	     (setq calc-aborted-prefix nil)
-	     (signal err))))
+		(message ""))))))
+    (setq calc-aborted-prefix "")
+    (unwind-protect
+	(if calc-pass-errors-enabled
+	    (funcall calc-do--body)
+	  (condition-case err
+	      (funcall calc-do--body)
+	    (error
+	     (if (and (eq (car err) 'error)
+		      (stringp (nth 1 err))
+		      (string-search "max-lisp-eval-depth" (nth 1 err)))
+                 (error (substitute-command-keys
+                         "Computation got stuck or ran too long.  Type \\`M' to increase the limit"))
+	       (setq calc-aborted-prefix nil)
+	       (signal err)))))
       (when calc-aborted-prefix
 	(calc-record "<Aborted>" calc-aborted-prefix))
       (and calc-start-time

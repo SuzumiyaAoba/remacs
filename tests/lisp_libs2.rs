@@ -3067,6 +3067,40 @@ fn f90_change_keywords_changes_every_word_of_multiword_keywords() {
 }
 
 #[test]
+fn calc_pass_errors_bypasses_calc_do_error_handler() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'calc-prog)
+              (let ((calc-pass-errors-enabled nil)
+                    (calc-embedded-info nil)
+                    (calc-algebraic-mode nil)
+                    (calc-timing nil)
+                    recorded)
+                (cl-letf (((symbol-function 'calc-check-defines)
+                           (lambda () nil))
+                          ((symbol-function 'calc-select-buffer)
+                           (lambda () nil))
+                          ((symbol-function 'calc-record)
+                           (lambda (&rest args) (setq recorded args)))
+                          ((symbol-function 'calc-align-stack-window)
+                           (lambda () nil)))
+                  (condition-case nil
+                      (calc-do (lambda () (error "probe")))
+                    (error nil))
+                  (let ((caught-before (null recorded)))
+                    (setq recorded nil)
+                    (calc-pass-errors)
+                    (condition-case nil
+                        (calc-do (lambda () (error "probe")))
+                      (error nil))
+                    (list caught-before
+                          (equal (car recorded) "<Aborted>")
+                          calc-pass-errors-enabled)))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn
