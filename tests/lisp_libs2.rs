@@ -2158,6 +2158,32 @@ fn smtpmail_rejects_overlong_lines_before_data() {
 }
 
 #[test]
+fn smtpmail_requires_three_digit_reply_codes() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'smtpmail)
+              (let ((lines '("25 OK\r\n"
+                             "2500 OK\r\n"
+                             "25-First\r\n25 Done\r\n"
+                             "250-First\r\n2500 Done\r\n"
+                             "250 OK\r\n"
+                             "250-First\r\n250 Done\r\n")))
+                (list
+                 (mapcar
+                  (lambda (line)
+                    (with-temp-buffer
+                      (insert line)
+                      (let* ((smtpmail-read-point (point-min))
+                             (response (smtpmail-read-response nil)))
+                        (list (car response) (smtpmail-ok-p response)))))
+                  lines)
+                 (mapcar #'smtpmail-response-code
+                         '("25 OK\r\n" "2500 OK\r\n" "250 OK\r\n")))))"#),
+        "(((nil nil) (nil nil) (nil nil) (nil nil) (250 t) (250 t)) (nil nil 250))"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

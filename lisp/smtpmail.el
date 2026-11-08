@@ -666,7 +666,7 @@ USER and PASSWORD should be non-nil."
     (with-temp-buffer
       (insert string)
       (goto-char (point-min))
-      (and (re-search-forward "^\\([0-9]+\\) " nil t)
+      (and (re-search-forward "^\\([0-9][0-9][0-9]\\) " nil t)
 	   (string-to-number (match-string 1))))))
 
 (defun smtpmail-ok-p (response &optional code)
@@ -1037,7 +1037,7 @@ Returns an error if the server cannot be contacted."
 		    response-strings))
 
 	(goto-char smtpmail-read-point)
-	(if (looking-at "\\([0-9]+\\) ")
+	(if (looking-at "\\([0-9][0-9][0-9]\\) ")
 	    (let ((line-code (string-to-number (match-string 1))))
 	      (if smtpmail-debug-info
 		  (message "%s" (car response-strings)))
@@ -1057,7 +1057,7 @@ Returns an error if the server cannot be contacted."
 		      (cons (unless response-code-mismatch line-code)
 			    (nreverse response-strings)))))
 
-	  (if (looking-at "\\([0-9]+\\)-")
+	  (if (looking-at "\\([0-9][0-9][0-9]\\)-")
 	      (let ((line-code (string-to-number (match-string 1))))
 		(if response-code
 		    (unless (= response-code line-code)
