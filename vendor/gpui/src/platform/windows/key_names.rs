@@ -29,6 +29,7 @@ fn immutable_name(vkey: u16) -> Option<&'static str> {
         0x08 => "backspace", // VK_BACK
         0x0d => "enter",     // VK_RETURN
         0x13 => "pause",     // VK_PAUSE
+        0x91 => "scroll",    // VK_SCROLL
         0x09 => "tab",       // VK_TAB
         0x26 => "up",        // VK_UP
         0x28 => "down",      // VK_DOWN
@@ -168,6 +169,11 @@ mod tests {
     #[test]
     fn pause_virtual_key_is_named_non_text_and_preserves_modifiers() {
         assert_named_virtual_key(0x13, "pause");
+    }
+
+    #[test]
+    fn scroll_lock_virtual_key_is_named_non_text_and_preserves_modifiers() {
+        assert_named_virtual_key(0x91, "scroll");
     }
     #[test]
     fn print_screen_virtual_key_is_named_non_text_and_preserves_modifiers() {

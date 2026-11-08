@@ -129,6 +129,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "find" => NSFindFunctionKey,
         "execute" => NSExecuteFunctionKey,
         "pause" => NSPauseFunctionKey,
+        "Scroll_Lock" | "scroll_lock" => NSScrollLockFunctionKey,
         "print" => NSPrintFunctionKey,
         "select" => NSSelectFunctionKey,
         "break" => NSBreakFunctionKey,
@@ -459,6 +460,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             Some(NSFindFunctionKey) => "find".to_string(),
             Some(NSExecuteFunctionKey) => "execute".to_string(),
             Some(NSPauseFunctionKey) => "pause".to_string(),
+            Some(NSScrollLockFunctionKey) => "Scroll_Lock".to_string(),
             Some(NSPrintFunctionKey) => "print".to_string(),
             Some(NSSelectFunctionKey) => "select".to_string(),
             Some(NSBreakFunctionKey) => "break".to_string(),
@@ -797,6 +799,16 @@ mod pause_key_tests {
     #[test]
     fn pause_function_key_is_a_named_non_text_event() {
         assert_named_function_key(NSPauseFunctionKey, "pause", 0);
+    }
+}
+
+#[cfg(test)]
+mod scroll_lock_key_tests {
+    use super::*;
+    use cocoa::appkit::NSScrollLockFunctionKey;
+    #[test]
+    fn scroll_lock_function_key_is_a_named_non_text_event() {
+        assert_named_function_key(NSScrollLockFunctionKey, "Scroll_Lock", 0);
     }
 }
 

@@ -750,6 +750,12 @@ fn sun_again_keysym_uses_the_xkb_redo_binding() {
 #[test]
 fn scroll_lock_keysym_toggles_the_default_mode_binding() {
     use remacs_runtime::editor::event_code_for;
+    let windows_event = ks("scroll", None, false, false, false, false);
+    assert!(command_keystroke(&windows_event));
+    assert_eq!(
+        keystroke_to_code(&windows_event),
+        Some(event_code_for("scroll"))
+    );
     for name in ["scroll_lock", "Scroll_Lock"] {
         let key = ks(name, None, false, false, false, false);
         assert!(command_keystroke(&key));
