@@ -3067,6 +3067,28 @@ fn f90_change_keywords_changes_every_word_of_multiword_keywords() {
 }
 
 #[test]
+fn refill_backward_kill_word_keeps_point_before_space() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'refill)
+              (with-temp-buffer
+                (refill-mode 1)
+                (setq-local fill-column 25)
+                (insert "Foo bar blablabla asdgf\nword asdfas dfasdfasd\nasd asdfa sdfasd sdf\n")
+                (goto-char (point-min))
+                (forward-line 1)
+                (search-forward "word")
+                (setq this-command 'backward-kill-word)
+                (backward-kill-word 1)
+                (refill-post-command-function)
+                (list (current-column)
+                      (buffer-substring (line-beginning-position)
+                                        (line-end-position)))))"#),
+        "(0 \" asdfas dfasdfasd asd\")"
+    );
+}
+
+#[test]
 fn calc_pass_errors_bypasses_calc_do_error_handler() {
     assert_eq!(
         ev(r#"(progn

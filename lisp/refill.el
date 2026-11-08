@@ -189,7 +189,14 @@ complex processing.")
 	   (narrow-to-region (line-beginning-position) (point-max))
 	   (refill-fill-paragraph-at refill-doit))))
       (_
-       (refill-fill-paragraph-at refill-doit)))
+       (let ((keep-point-at-bol
+              (and (bolp)
+                   (memq this-command
+                         '(backward-kill-word kill-region
+                           backward-delete-char-untabify delete-backward-char)))))
+         (refill-fill-paragraph-at refill-doit)
+         (when keep-point-at-bol
+           (beginning-of-line)))))
     (setq refill-doit nil)))
 
 (defun refill-pre-command-function ()
