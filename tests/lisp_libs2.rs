@@ -2715,6 +2715,31 @@ fn gnus_server_compact_server_updates_group_lines_for_its_server() {
 }
 
 #[test]
+fn ff_find_the_other_file_extracts_case_folded_stub() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'find-file)
+              (let ((ff-case-fold-search t)
+                    (ff-search-directories '("."))
+                    (ff-other-file-alist '(("\\.c$" (".h"))))
+                    (ff-always-try-to-create nil)
+                    (case-fold-search nil)
+                    captured)
+                (with-temp-buffer
+                  (setq buffer-file-name "FOO.C")
+                  (setq-local case-fold-search nil)
+                  (cl-letf (((symbol-function 'ff-get-file)
+                             (lambda (_dirs stub suffixes &optional _window)
+                               (setq captured (list stub suffixes))
+                               nil)))
+                    (ff-find-the-other-file))
+                  captured)))"#),
+        "(\"FOO\" (\".h\"))"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn

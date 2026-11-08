@@ -486,7 +486,7 @@ If optional IN-OTHER-WINDOW is non-nil, find the file in another window."
 
            (t
             (setq format (concat "\\(.+\\)" (car match)))
-            (string-match format fname)
+            (ff-string-match format fname)
             ;; FIXME: What if `string-match' failed?
             (setq stub (match-string 1 fname))
             ))
