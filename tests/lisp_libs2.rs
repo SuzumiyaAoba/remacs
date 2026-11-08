@@ -2594,6 +2594,38 @@ fn idlwave_after_count_breakpoint_rejects_invalid_counts() {
 }
 
 #[test]
+fn erc_identd_rejects_zero_and_out_of_range_query_ports() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'erc-identd)
+              (let (reply replies)
+                (cl-letf (((symbol-function 'send-string)
+                           (lambda (_proc string) (setq reply string)))
+                          ((symbol-function 'stop-process)
+                           (lambda (&rest _) nil))
+                          ((symbol-function 'delete-process)
+                           (lambda (&rest _) nil)))
+                  (dolist (request '("0, 23\r\n" "70000, 23\r\n"
+                                     "23, 65536\r\n" "1, 65535\r\n"))
+                    (setq reply nil)
+                    (erc-identd-filter 'fake request)
+                    (push reply replies)))
+                (setq replies (nreverse replies))
+                (list (equal (nth 0 replies)
+                             "0, 23 : ERROR : INVALID-PORT\n")
+                      (equal (nth 1 replies)
+                             "70000, 23 : ERROR : INVALID-PORT\n")
+                      (equal (nth 2 replies)
+                             "23, 65536 : ERROR : INVALID-PORT\n")
+                      (and (string-match-p
+                            "\\`1, 65535 : USERID : " (nth 3 replies))
+                           t))))"#),
+        "(t t t t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn

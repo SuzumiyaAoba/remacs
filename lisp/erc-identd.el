@@ -55,6 +55,11 @@ This can be either a string or a number."
 		 (integer :tag "Port number")
 		 (string :tag "Port string")))
 
+(defun erc-identd--valid-port-p (port)
+  "Return non-nil if PORT is a decimal TCP port in the range 1–65535."
+  (let ((number (string-to-number port)))
+    (and (<= 1 number) (<= number 65535))))
+
 ;;;###autoload(autoload 'erc-identd-mode "erc-identd")
 (define-erc-module identd nil
   "This mode launches an identd server on port 8113."
@@ -70,9 +75,13 @@ This can be either a string or a number."
       (let ((port-on-server (match-string 1 string))
 	    (port-on-client (match-string 2 string)))
 	(send-string erc-identd-process
-		     (format "%s, %s : USERID : %s : %s\n"
-			     port-on-server port-on-client
-			     system-type (user-login-name)))
+		     (if (and (erc-identd--valid-port-p port-on-server)
+			      (erc-identd--valid-port-p port-on-client))
+			 (format "%s, %s : USERID : %s : %s\n"
+				 port-on-server port-on-client
+				 system-type (user-login-name))
+		       (format "%s, %s : ERROR : INVALID-PORT\n"
+			       port-on-server port-on-client)))
 	(stop-process erc-identd-process)
 	(delete-process proc)))))
 
