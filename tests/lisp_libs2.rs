@@ -1826,6 +1826,34 @@ fn register_configuration_points_survive_buffer_kill() {
 }
 
 #[test]
+fn bindat_unpack_rejects_truncated_fixed_strings() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'bindat)
+              (let ((str-error
+                     (condition-case err
+                         (progn
+                           (bindat-unpack '((payload str 4))
+                                          (unibyte-string ?A))
+                           'no-error)
+                       (error (car err))))
+                    (strz-error
+                     (condition-case err
+                         (progn
+                           (bindat-unpack '((name strz 4))
+                                          (unibyte-string ?A 0))
+                           'no-error)
+                       (error (car err)))))
+                (list str-error strz-error
+                      (bindat-unpack '((payload str 4))
+                                     (unibyte-string ?A ?B ?C ?D))
+                      (bindat-unpack '((name strz 4))
+                                     (unibyte-string ?A 0 ?B ?C)))))"#),
+        "(error error ((payload . \"ABCD\")) ((name . \"A\")))"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose

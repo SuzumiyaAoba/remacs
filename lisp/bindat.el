@@ -136,6 +136,10 @@
 (defvar bindat-raw)
 (defvar bindat-idx)
 
+(defun bindat--check-raw-length (len)
+  (when (< (- (length bindat-raw) bindat-idx) len)
+    (error "Not enough raw data for a %d-byte field" len)))
+
 (defsubst bindat--unpack-u8 ()
   (prog1
       (aref bindat-raw bindat-idx)
@@ -160,6 +164,7 @@
   (logior (bindat--unpack-u16r) (ash (bindat--unpack-u16r) 16)))
 
 (defun bindat--unpack-str (len)
+  (bindat--check-raw-length len)
   (let ((s (substring bindat-raw bindat-idx (+ bindat-idx len))))
     (setq bindat-idx (+ bindat-idx len))
     (if (stringp s) s
@@ -168,6 +173,7 @@
       (apply #'unibyte-string (append s nil)))))
 
 (defun bindat--unpack-strz (&optional len)
+  (when len (bindat--check-raw-length len))
   (let ((i 0) s)
     (while (and (if len (< i len) t) (/= (aref bindat-raw (+ bindat-idx i)) 0))
       (setq i (1+ i)))
