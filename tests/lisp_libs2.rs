@@ -2213,6 +2213,29 @@ fn timeclock_splits_overnight_intervals_by_date() {
 }
 
 #[test]
+fn bookmark_rename_rejects_empty_name_atomically() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'bookmark)
+              (let ((bookmark-alist
+                     '(("target" (filename . "/tmp/target"))))
+                    (bookmark-alist-modification-count 0)
+                    (bookmark-current-bookmark "target"))
+                (cl-letf (((symbol-function 'bookmark-maybe-load-default-file)
+                           (lambda () nil)))
+                  (let ((error-symbol
+                         (condition-case err
+                             (progn (bookmark-rename "target" "") 'no-error)
+                           (error (car err)))))
+                    (list error-symbol
+                          (bookmark-all-names)
+                          bookmark-current-bookmark
+                          bookmark-alist-modification-count)))))"#),
+        "(user-error (\"target\") \"target\" 0)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

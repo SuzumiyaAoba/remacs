@@ -1511,6 +1511,8 @@ name."
                 "C-w" #'bookmark-yank-word)
               nil
               'bookmark-history))))
+      (when (equal final-new-name "")
+        (user-error "Bookmark name cannot be empty"))
     (bookmark-set-name old-name final-new-name)
     (bookmark-update-last-modified final-new-name)
     (setq bookmark-current-bookmark final-new-name)
