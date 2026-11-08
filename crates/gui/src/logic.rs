@@ -9,7 +9,7 @@ use remacs_runtime::{
     lisp::{Interp, Value},
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     io,
     ops::Range,
@@ -49,6 +49,16 @@ fn cursor_blink_animation_active(grid: &Grid) -> bool {
     }
     let elapsed = grid.blink_elapsed_since_input - grid.blink_delay;
     elapsed < grid.blink_interval.max(0.05) * 2.0 * grid.blink_blinks as f64
+}
+
+fn cursor_blink_visible_at(grid: &Grid, elapsed_since_input: f64) -> bool {
+    if !grid.blink_cursor {
+        return true;
+    }
+    let elapsed = elapsed_since_input - grid.blink_delay;
+    let interval = grid.blink_interval.max(0.05);
+    let completed = grid.blink_blinks > 0 && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
+    elapsed < 0.0 || completed || (elapsed / interval).floor() as u64 % 2 == 1
 }
 
 /// Messages the UI thread sends to the editor logic thread.
@@ -1215,6 +1225,7 @@ pub(super) struct ChanIo {
     pending_frame_moved: Option<(usize, i128, i128)>,
     pending_frame_delete: Option<usize>,
     pending_power_off: bool,
+    last_blink_visible: Cell<Option<bool>>,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
     pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
     mouse_positions: HashMap<usize, MousePosition>,
@@ -1499,6 +1510,7 @@ impl ChanIo {
             pending_frame_moved: None,
             pending_frame_delete: None,
             pending_power_off: false,
+            last_blink_visible: Cell::new(None),
             geometry_symbols: None,
             mouse_down: None,
             mouse_positions: HashMap::new(),
@@ -1627,6 +1639,10 @@ impl ChanIo {
                     .publish(updates, self.latest_snapshots.clone())?;
             }
         }
+        self.last_blink_visible.set(Some(cursor_blink_visible_at(
+            &grid,
+            grid.blink_elapsed_since_input,
+        )));
         self.last = Some(grid.clone());
         if self.legacy_grid_output && changed {
             // Latest-wins: force_send displaces the oldest queued frame
@@ -2402,9 +2418,19 @@ impl KeyIo for ChanIo {
     }
 
     fn render_on_idle(&self) -> bool {
-        self.last
-            .as_ref()
-            .is_some_and(cursor_blink_animation_active)
+        let Some(grid) = self.last.as_ref() else {
+            return false;
+        };
+        if !cursor_blink_animation_active(grid) {
+            return false;
+        }
+        let visible = cursor_blink_visible_at(grid, self.last_input_at.elapsed().as_secs_f64());
+        if self.last_blink_visible.get() == Some(visible) {
+            false
+        } else {
+            self.last_blink_visible.set(Some(visible));
+            true
+        }
     }
 
     fn take_render_request(&mut self) -> bool {
@@ -2801,6 +2827,7 @@ fn start_logic_inner(
                 pending_frame_moved: None,
                 pending_frame_delete: None,
                 pending_power_off: false,
+                last_blink_visible: Cell::new(None),
                 geometry_symbols: if enable_gui_selections {
                     Some(GeometrySymbols::intern(&mut i))
                 } else {
