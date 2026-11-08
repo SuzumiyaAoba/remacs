@@ -168,6 +168,7 @@ impl Interp {
             minibuf_reader: None,
             sit_for_waiter: None,
             pending_frontend_input: Default::default(),
+            frontend_input_pending_reader: None,
             clipboard_backend: None,
             bell_backend: None,
             about_panel_backend: None,

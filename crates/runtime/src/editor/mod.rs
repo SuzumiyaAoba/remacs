@@ -11219,10 +11219,15 @@ fn f_input_pending_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         matches!(value("unread-command-events"), Value::Cons(_))
             || !value("unread-input-method-events").is_nil()
             || !value("unread-post-input-method-events").is_nil()
+            || !i.pending_frontend_input.is_empty()
     };
     if pending(i) { return Ok(Value::t()); }
     if arg(&a, 0).truthy() { crate::lisp::builtins::evalfn::timer_check(i)?; }
-    Ok(Value::from_bool(pending(i)))
+    if pending(i) { return Ok(Value::t()); }
+    if let Some(reader) = i.frontend_input_pending_reader.clone() {
+        return Ok(Value::from_bool(reader(i)?));
+    }
+    Ok(Value::Nil)
 }
 
 pub(crate) fn f_read_char(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

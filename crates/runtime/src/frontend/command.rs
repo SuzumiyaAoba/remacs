@@ -216,6 +216,27 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
             }
         }
     }));
+
+    let t = term.clone();
+    i.frontend_input_pending_reader = Some(std::rc::Rc::new(move |interp| {
+        let input = t
+            .borrow_mut()
+            .poll_input(Duration::ZERO)
+            .map_err(|error| interp.error(format!("input-pending-p input: {error}")))?;
+        apply_frame_selection(&t, interp);
+        sync_mouse_absolute_pixel_position(&t, interp);
+        if let Some((frame_id, left, top)) = t.borrow_mut().take_frame_moved()
+            && let Err(flow) = dispatch_frame_moved(interp, frame_id, left, top)
+        {
+            return Err(flow);
+        }
+        if let Some(input) = input {
+            interp.pending_frontend_input.push_back(input);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }));
 }
 
 fn scroll_popup(

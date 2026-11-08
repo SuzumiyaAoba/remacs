@@ -277,6 +277,11 @@ pub struct Interp {
     pub(crate) pending_frontend_input: std::collections::VecDeque<
         crate::frontend::InputEvent,
     >,
+    /// Nonblocking frontend poll used by `input-pending-p'. Any returned
+    /// input is queued in `pending_frontend_input' for the command loop.
+    pub(crate) frontend_input_pending_reader: Option<
+        Rc<dyn Fn(&mut Interp) -> Result<bool, Flow>>,
+    >,
     /// Host clipboard bridge, installed by a GUI front-end.
     pub(crate) clipboard_backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
     /// Host bell bridge, installed by a GUI front-end.

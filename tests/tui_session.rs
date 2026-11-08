@@ -795,6 +795,38 @@ fn tui_timeout_read_event_polls_frontend_input() {
 }
 
 #[test]
+fn tui_input_pending_p_detects_frontend_queue() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        let io = Rc::new(RefCell::new(EventQueueIo {
+            keys: VecDeque::from([120]),
+            empty_polls: 1,
+        }));
+        install_minibuf_reader(&io, &mut i);
+
+        let before = i
+            .eval_str("(input-pending-p)")
+            .expect("input-pending-p should poll without blocking");
+        assert_eq!(i.prin1_to_string(&before).to_unicode_lossy(), "nil");
+
+        let pending = i
+            .eval_str("(input-pending-p)")
+            .expect("a frontend key should be reported as pending input");
+        assert_eq!(i.prin1_to_string(&pending).to_unicode_lossy(), "t");
+
+        let event = i
+            .eval_str("(read-event nil nil 0)")
+            .expect("input-pending-p should preserve the event for read-event");
+        assert_eq!(i.prin1_to_string(&event).to_unicode_lossy(), "120");
+
+        let after = i
+            .eval_str("(input-pending-p)")
+            .expect("consuming the queued key should clear pending input");
+        assert_eq!(i.prin1_to_string(&after).to_unicode_lossy(), "nil");
+    })
+}
+
+#[test]
 fn tui_overlay_priority_matches_effective_face() {
     run_on_big_stack(move || {
         let mut i = Interp::new();
