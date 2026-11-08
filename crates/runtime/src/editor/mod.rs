@@ -11156,7 +11156,7 @@ fn record_keyboard_event(i: &mut Interp, event: Value) -> Value {
     event
 }
 
-fn pop_keyboard_event(i: &mut Interp) -> Option<Value> {
+pub(crate) fn pop_unread_input_event(i: &mut Interp) -> Option<Value> {
     if let Some(event) = pop_input_method_event(i, "unread-post-input-method-events") {
         return Some(record_keyboard_event(i, event));
     }
@@ -11165,6 +11165,13 @@ fn pop_keyboard_event(i: &mut Interp) -> Option<Value> {
     let event = pop_unread_command_event(i)
         .or_else(|| pop_input_method_event(i, "unread-input-method-events"));
     if let Some(event) = event { return Some(record_keyboard_event(i, event)); }
+    None
+}
+
+fn pop_keyboard_event(i: &mut Interp) -> Option<Value> {
+    if let Some(event) = pop_unread_input_event(i) {
+        return Some(event);
+    }
     if i.macro_replaying {
         if let Some(code) = i.macro_replay.pop_front() {
             let frame = i.q("last-event-frame");

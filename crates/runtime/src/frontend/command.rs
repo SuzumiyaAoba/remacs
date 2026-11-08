@@ -2419,7 +2419,7 @@ enum KeyTranslation {
 }
 
 fn pop_unread_key_event(i: &mut Interp) -> Option<(i128, Value)> {
-    let event = crate::editor::pop_unread_command_event(i)?;
+    let event = crate::editor::pop_unread_input_event(i)?;
     let key = event_key_code(i, &event)?;
     Some((key, event))
 }

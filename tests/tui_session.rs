@@ -851,6 +851,25 @@ fn tui_discard_input_drops_frontend_queue() {
 }
 
 #[test]
+fn tui_command_loop_dispatches_all_unread_input_queues() {
+    run_on_big_stack(|| {
+        let mut i = Interp::new();
+        i.eval_str(
+            "(setq unread-command-events '(97)\
+                  unread-input-method-events '(98)\
+                  unread-post-input-method-events '(99))",
+        )
+        .expect("set unread input queues");
+
+        run(vec![C_X, 3], &mut i);
+        let text = i
+            .eval_str("(with-current-buffer \"*scratch*\" (buffer-string))")
+            .expect("read the scratch buffer");
+        assert_eq!(i.prin1_to_string(&text).to_unicode_lossy(), "\"cab\"");
+    })
+}
+
+#[test]
 fn tui_overlay_priority_matches_effective_face() {
     run_on_big_stack(move || {
         let mut i = Interp::new();
