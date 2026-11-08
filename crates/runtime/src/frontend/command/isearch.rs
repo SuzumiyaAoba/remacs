@@ -2779,6 +2779,12 @@ pub(super) fn isearch_loop<T: KeyIo>(
         super::sync_mouse_absolute_pixel_position(term, i);
         let key = match input {
             Some(InputEvent::Key(key)) => key,
+            Some(InputEvent::SystemSleep { sleeping }) => {
+                if let Err(flow) = super::dispatch_system_sleep_event(i, sleeping) {
+                    report_flow(i, flow);
+                }
+                continue;
+            }
             Some(InputEvent::Text(text) | InputEvent::ReplaceText { text, .. }) => {
                 let mut characters = text.chars();
                 let Some(first) = characters.next() else {

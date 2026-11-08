@@ -67,6 +67,7 @@ pub(super) enum GuiEvent {
     #[cfg(target_os = "macos")]
     NativeService { name: String, argument: String },
     FrameFocus { frame_id: usize, focused: bool },
+    SystemSleep { sleeping: bool },
     FrameDeleteRequest { frame_id: usize },
     PowerOff,
     Key(i128),
@@ -1796,6 +1797,9 @@ impl KeyIo for ChanIo {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
+            GuiEvent::SystemSleep { sleeping } => {
+                Ok(Some(InputEvent::SystemSleep { sleeping }))
+            }
             GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
@@ -2024,6 +2028,9 @@ impl KeyIo for ChanIo {
             GuiEvent::FrameFocus { frame_id, focused } => {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
+            }
+            GuiEvent::SystemSleep { sleeping } => {
+                Ok(Some(InputEvent::SystemSleep { sleeping }))
             }
             GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),

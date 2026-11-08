@@ -505,6 +505,11 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::NativeService { name, argument } => {
                 dispatch_ns_service(i, &name, &argument, &mut keys, &mut arg_mode);
             }
+            InputEvent::SystemSleep { sleeping } => {
+                if let Err(flow) = dispatch_system_sleep_event(i, sleeping) {
+                    report_flow(i, flow);
+                }
+            }
             InputEvent::ColorDrop {
                 position,
                 color,
@@ -1216,6 +1221,37 @@ fn dispatch_ns_service(
     let _ = i.set_symbol(service_name, Value::string(name));
     let _ = i.set_symbol(service_argument, Value::string(argument));
     dispatch_frontend_command(i, "ns-spi-service-call", keys, arg_mode);
+}
+
+fn dispatch_system_sleep_event(i: &mut Interp, sleeping: bool) -> Result<(), Flow> {
+    let Some(backend) = i
+        .intern_soft("system-sleep--back-end")
+        .filter(|symbol| i.bound_p(*symbol))
+    else {
+        return Ok(());
+    };
+    if !matches!(
+        i.symbol_value(backend),
+        Value::Sym(symbol) if i.symbol_name(symbol) == "ns"
+    ) {
+        return Ok(());
+    }
+    let Some(make_event) = i
+        .intern_soft("make-sleep-event")
+        .filter(|symbol| i.fbound_p(*symbol))
+    else {
+        return Ok(());
+    };
+    let Some(handler) = i
+        .intern_soft("system-sleep--sleep-event-handler")
+        .filter(|symbol| i.fbound_p(*symbol))
+    else {
+        return Ok(());
+    };
+    let state = Value::Sym(i.intern(if sleeping { "pre-sleep" } else { "post-wake" }));
+    let event = i.apply(&Value::Sym(make_event), vec![state])?;
+    i.apply(&Value::Sym(handler), vec![event])?;
+    Ok(())
 }
 
 fn reveal_pointer_after_mouse_move(i: &mut Interp, frame_id: Option<usize>) {
@@ -2718,6 +2754,9 @@ fn minibuf_loop<T: KeyIo>(
             }
             InputEvent::NativeService { name, argument } => {
                 dispatch_ns_service(i, &name, &argument, &mut keys, &mut arg_mode);
+            }
+            InputEvent::SystemSleep { sleeping } => {
+                dispatch_system_sleep_event(i, sleeping)?;
             }
             InputEvent::ColorDrop {
                 position,

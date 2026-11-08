@@ -331,6 +331,8 @@ pub enum InputEvent {
     OpenFiles(Vec<(String, Option<usize>)>),
     /// A request from a native macOS Services provider.
     NativeService { name: String, argument: String },
+    /// A native system sleep or wake event.
+    SystemSleep { sleeping: bool },
     /// Apply a color dragged from the native color panel to the face under the pointer.
     ColorDrop {
         position: Option<MousePosition>,

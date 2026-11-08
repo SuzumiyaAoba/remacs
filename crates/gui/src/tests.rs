@@ -1349,6 +1349,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
+            GuiEvent::SystemSleep { .. } => None,
             GuiEvent::ColorDrop { .. } => None,
             GuiEvent::MouseDragMove { .. } => None,
             #[cfg(target_os = "macos")]
@@ -1383,6 +1384,7 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
+            GuiEvent::SystemSleep { .. } => None,
             GuiEvent::ColorDrop { .. } => None,
             GuiEvent::MouseDragMove { .. } => None,
             #[cfg(target_os = "macos")]

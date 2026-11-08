@@ -470,6 +470,8 @@ pub fn run_gui_with_dump(
         #[cfg(target_os = "macos")]
         register_power_off_listener(event_tx.clone());
         #[cfg(target_os = "macos")]
+        register_system_sleep_listener(event_tx.clone());
+        #[cfg(target_os = "macos")]
         if let Err(error) = register_native_service_provider(event_tx.clone()) {
             eprintln!("remacs: macOS Services input unavailable: {error}");
         }
@@ -1623,6 +1625,37 @@ fn register_power_off_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
     .copy();
     let _: id = unsafe {
         msg_send![notification_center, addObserverForName:name object:nil queue:nil usingBlock:handler]
+    };
+}
+
+#[cfg(target_os = "macos")]
+fn register_system_sleep_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
+    let workspace: id = unsafe { msg_send![class!(NSWorkspace), sharedWorkspace] };
+    let notification_center: id = unsafe { msg_send![workspace, notificationCenter] };
+
+    let will_sleep_name = unsafe {
+        NSString::alloc(nil).init_str("NSWorkspaceWillSleepNotification")
+    };
+    let will_sleep_tx = event_tx.clone();
+    let will_sleep = block::ConcreteBlock::new(move |_notification: id| {
+        let _ = will_sleep_tx.send(GuiEvent::SystemSleep { sleeping: true });
+    })
+    .copy();
+    let _: id = unsafe {
+        msg_send![notification_center, addObserverForName:will_sleep_name
+            object:nil queue:nil usingBlock:will_sleep]
+    };
+
+    let did_wake_name = unsafe {
+        NSString::alloc(nil).init_str("NSWorkspaceDidWakeNotification")
+    };
+    let did_wake = block::ConcreteBlock::new(move |_notification: id| {
+        let _ = event_tx.send(GuiEvent::SystemSleep { sleeping: false });
+    })
+    .copy();
+    let _: id = unsafe {
+        msg_send![notification_center, addObserverForName:did_wake_name
+            object:nil queue:nil usingBlock:did_wake]
     };
 }
 
