@@ -1732,6 +1732,20 @@ fn mail_quote_printable_emits_rfc2047_safe_words() {
 }
 
 #[test]
+fn url_parse_query_string_discards_empty_fields() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'url-util)
+              (list (url-parse-query-string "")
+                    (url-build-query-string (url-parse-query-string ""))
+                    (url-parse-query-string "&")
+                    (url-parse-query-string "a=1&&b=2")
+                    (url-parse-query-string "=x")))"#),
+        "(nil \"\" nil ((\"a\" \"1\") (\"b\" \"2\")) ((\"\" \"x\")))"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose

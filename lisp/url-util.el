@@ -232,22 +232,23 @@ Will not do anything if `url-show-status' is nil."
     (while pairs
       (setq cur (car pairs)
 	    pairs (cdr pairs))
-      (unless (string-search "=" cur)
-        (setq cur (concat cur "=")))
+      (unless (equal cur "")
+        (unless (string-search "=" cur)
+          (setq cur (concat cur "=")))
 
-      (when (string-match "=" cur)
-        (let ((beg (match-beginning 0))
-              (end (match-end 0)))
-          (setq key (url-unhex-string (substring cur 0 beg)
-                                      allow-newlines))
-          (setq val (url-unhex-string (substring cur end nil)
-                                      allow-newlines)))
-        (if downcase
-            (setq key (downcase key)))
-        (setq cur (assoc key retval))
-        (if cur
-            (setcdr cur (append (cdr cur) (list val)))
-          (setq retval (cons (list key val) retval)))))
+        (when (string-match "=" cur)
+          (let ((beg (match-beginning 0))
+                (end (match-end 0)))
+            (setq key (url-unhex-string (substring cur 0 beg)
+                                        allow-newlines))
+            (setq val (url-unhex-string (substring cur end nil)
+                                        allow-newlines)))
+          (if downcase
+              (setq key (downcase key)))
+          (setq cur (assoc key retval))
+          (if cur
+              (setcdr cur (append (cdr cur) (list val)))
+            (setq retval (cons (list key val) retval))))))
     ;;Remacs: return parameters in the order they appeared in the query.
     (nreverse retval)))
 
