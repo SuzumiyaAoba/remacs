@@ -2,8 +2,8 @@
 use super::{
     keys::{
         ModifierMapping, PhysicalModifierState, command_keystroke_with_mapping,
-        keystroke_to_code_with_mapping, modifier_state_after_change, mouse_modifier_bits,
-        pass_text_to_os, unicode_key_text,
+        is_native_command_w, keystroke_to_code_with_mapping, modifier_state_after_change,
+        mouse_modifier_bits, pass_text_to_os, unicode_key_text,
     },
     logic::{COLOR_DROP_PREFIX, FrameEventSender, GuiEvent, GuiGeometry},
     monitor::monitor_geometry,
@@ -873,6 +873,7 @@ pub(super) struct EditorView {
     last_window_active: Option<bool>,
     last_focus_update_sent: Option<bool>,
     native_close_on_alt_f4: Rc<Cell<bool>>,
+    native_close_on_command_w: Rc<Cell<bool>>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -962,6 +963,7 @@ impl EditorView {
             last_window_active: None,
             last_focus_update_sent: None,
             native_close_on_alt_f4: Rc::new(Cell::new(false)),
+            native_close_on_command_w: Rc::new(Cell::new(false)),
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -1537,6 +1539,8 @@ impl Render for EditorView {
         let focus = self.focus.clone();
         #[cfg(target_os = "windows")]
         let native_close_on_alt_f4 = self.native_close_on_alt_f4.clone();
+        let native_close_on_command_w = self.native_close_on_command_w.clone();
+        let native_close_on_command_w_on_key_up = self.native_close_on_command_w.clone();
         let marked = self.input.marked.clone();
         let marked_selection = self.input.selection_byte_range();
         let marked_cursor = self.input.selection_byte_end();
@@ -2008,6 +2012,10 @@ impl Render for EditorView {
                 }
             })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                if is_native_command_w(&event.keystroke) {
+                    native_close_on_command_w.set(true);
+                    return;
+                }
                 #[cfg(target_os = "windows")]
                 {
                     native_close_on_alt_f4.set(false);
@@ -2052,6 +2060,11 @@ impl Render for EditorView {
                     let _ = tx.send(GuiEvent::Text(text.to_owned()));
                     window.prevent_default();
                     cx.stop_propagation();
+                }
+            })
+            .on_key_up(move |event: &gpui::KeyUpEvent, _window, _cx| {
+                if event.keystroke.key == "w" {
+                    native_close_on_command_w_on_key_up.set(false);
                 }
             })
             .child(
@@ -4623,10 +4636,12 @@ pub(super) fn build_managed_editor_view(
     }
     let close_events = view.tx.clone();
     let native_close_on_alt_f4 = view.native_close_on_alt_f4.clone();
+    let native_close_on_command_w = view.native_close_on_command_w.clone();
     window.on_window_should_close(cx, move |_window, cx| {
         let alt_f4_close = native_close_on_alt_f4.replace(false);
+        let command_w_close = native_close_on_command_w.replace(false);
         if cx.windows().len() <= 1 {
-            if alt_f4_close {
+            if alt_f4_close || command_w_close {
                 let _ = close_events.send(GuiEvent::PowerOff);
             }
             return false;

@@ -233,6 +233,16 @@ fn function_key_name(key: &str) -> Option<&str> {
     }
 }
 
+pub(super) fn is_native_command_w(ks: &Keystroke) -> bool {
+    cfg!(target_os = "macos")
+        && ks.key == "w"
+        && ks.modifiers.platform
+        && !ks.modifiers.control
+        && !ks.modifiers.alt
+        && !ks.modifiers.shift
+        && !ks.modifiers.function
+}
+
 fn modifier_context(ks: &Keystroke) -> ModifierContext {
     if function_key_name(&ks.key).is_some() {
         ModifierContext::Function

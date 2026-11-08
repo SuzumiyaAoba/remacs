@@ -1,4 +1,6 @@
 use super::keys::unicode_key_text;
+#[cfg(target_os = "macos")]
+use super::keys::is_native_command_w;
 use super::{
     ChanIo, EditorView, GuiEvent, build_editor_view, command_keystroke, keystroke_to_code,
     start_logic,
@@ -479,6 +481,14 @@ fn keystroke_meta_and_super() {
     // C-M-x: ctrl folded, meta kept.
     let x = keystroke_to_code(&ks("x", None, true, true, false, false)).unwrap();
     assert_eq!(x, 24 | CHAR_META);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn command_w_is_left_for_native_window_close() {
+    assert!(is_native_command_w(&ks("w", None, false, false, false, true)));
+    assert!(!is_native_command_w(&ks("w", None, false, false, true, true)));
+    assert!(!is_native_command_w(&ks("w", None, false, false, false, false)));
 }
 
 #[test]
@@ -1431,6 +1441,20 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             127
         ]
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn command_w_is_not_sent_to_remacs_keymaps() {
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|window, cx| {
+        let view = EditorView::new(tx, cx);
+        view.focus.focus(window);
+        view
+    });
+    app.simulate_keystrokes(handle.into(), "cmd-w");
+    assert!(!rx.try_iter().any(|event| matches!(event, GuiEvent::Key(_))));
 }
 
 #[test]
