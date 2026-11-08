@@ -101,34 +101,69 @@ from START (inclusive) to END (exclusive)."
   (when (> char #xff)
     (error "Character %c cannot be represented in ISO-8859-1" char)))
 
+(defun mail-quote-printable--trailing-whitespace-p (string index)
+  (let ((end (1+ index))
+        (length (length string)))
+    (while (and (< end length)
+                (memq (aref string end) '(?\s ?\t)))
+      (setq end (1+ end)))
+    (or (= end length)
+        (memq (aref string end) '(?\r ?\n)))))
+
+(defun mail-quote-printable--wrap-words (tokens)
+  (let* ((prefix "=?ISO-8859-1?Q?")
+         (suffix "?=")
+         (max-text-length (- 75 (length prefix) (length suffix)))
+         (words nil)
+         (text "")
+         (text-length 0))
+    (dolist (token tokens)
+      (when (> (+ text-length (length token)) max-text-length)
+        (push (concat prefix text suffix) words)
+        (setq text ""
+              text-length 0))
+      (setq text (concat text token)
+            text-length (+ text-length (length token))))
+    (when (> text-length 0)
+      (push (concat prefix text suffix) words))
+    ;; A folded header separator is ignored between adjacent encoded-words.
+    (mapconcat #'identity (nreverse words) "\n ")))
+
 ;;;###autoload
 (defun mail-quote-printable (string &optional wrapper)
   "Convert a string to the \"quoted printable\" Q encoding if necessary.
-If the string contains only ASCII characters and no troublesome ones,
-we return it unconverted.
+Without WRAPPER, if the string contains only ASCII characters and no
+troublesome ones, return it unconverted.
 
 Characters not representable in ISO-8859-1 cause an error.
 
 If the optional argument WRAPPER is non-nil,
 we add the wrapper characters =?ISO-8859-1?Q?....?= and encode spaces
-and tabs inside it."
-  (let ((i 0)
-	(result "")
-	(special-chars (if wrapper "[?=\" \t]" "[?=\"]")))
-    (save-match-data
-	(while (or (string-match special-chars string i)
-		 (string-match "[^\000-\177]" string i))
-	(setq result
-	      (concat result (substring string i (match-beginning 0))
-		      (let ((char (aref string (match-beginning 0))))
-			(mail-quote-printable--check-char char)
-			(upcase (format "=%02x" char)))))
-	(setq i (match-end 0)))
-      (if wrapper
-	  (concat "=?ISO-8859-1?Q?"
-		  result (substring string i)
-		  "?=")
-	(concat result (substring string i))))))
+and tabs inside it. Long strings are split into encoded-words of at most
+75 characters."
+  (let ((index 0)
+        (length (length string))
+        tokens)
+    (while (< index length)
+      (let ((char (aref string index)))
+        (mail-quote-printable--check-char char)
+        (push
+         (if (or (> char #x7e)
+                 (< char #x20)
+                 (= char #x7f)
+                 (memq char '(?= ?? ?\"))
+                 (and wrapper (memq char '(?\s ?\t)))
+                 (and (not wrapper)
+                      (memq char '(?\s ?\t))
+                      (mail-quote-printable--trailing-whitespace-p string index)))
+             (upcase (format "=%02x" char))
+           (char-to-string char))
+         tokens))
+      (setq index (1+ index)))
+    (setq tokens (nreverse tokens))
+    (if wrapper
+        (mail-quote-printable--wrap-words tokens)
+      (mapconcat #'identity tokens ""))))
 
 ;;;###autoload
 (defun mail-quote-printable-region (beg end &optional wrapper)
@@ -142,23 +177,14 @@ and tabs inside it."
   (interactive "r\nP")
   (save-match-data
     (save-excursion
-      (goto-char beg)
       (save-restriction
 	(narrow-to-region beg end)
-	(while (< (point) (point-max))
-	  (mail-quote-printable--check-char (char-after))
-	  (forward-char))
-	(goto-char (point-min))
-	(while (re-search-forward
-		(if wrapper "[?=\" \t\200-\377]" "[?=\"\200-\377]")
-		nil t)
-	  (replace-match (upcase (format "=%02x" (preceding-char)))
-			 t t))
-	(when wrapper
-	  (goto-char beg)
-	  (insert "=?ISO-8859-1?Q?")
-	  (goto-char (point-max))
-	  (insert "?="))))))
+        (let ((encoded (mail-quote-printable
+                        (buffer-substring-no-properties (point-min) (point-max))
+                        wrapper)))
+          (delete-region (point-min) (point-max))
+          (goto-char (point-min))
+          (insert encoded))))))
 
 (defun mail-unquote-printable-hexdigit (char)
   (setq char (upcase char))

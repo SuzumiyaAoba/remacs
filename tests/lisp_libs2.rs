@@ -1692,6 +1692,46 @@ fn games_and_misc_tooling_entry_points() {
 }
 
 #[test]
+fn mail_quote_printable_emits_rfc2047_safe_words() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'mail-utils)
+              (let* ((prefix "=?ISO-8859-1?Q?")
+                     (specials (concat "x" (string 0 10 13 127) "y"))
+                     (wrapped (mail-quote-printable specials t))
+                     (long-words
+                      (split-string
+                       (mail-quote-printable (make-string 200 ?a) t)
+                       (string 10 32) t)))
+                (and
+                 (equal (mail-quote-printable "a\nb" t)
+                        "=?ISO-8859-1?Q?a=0Ab?=")
+                 (equal wrapped
+                        "=?ISO-8859-1?Q?x=00=0A=0D=7Fy?=")
+                 (equal (mail-quote-printable (concat (string #xe9) "=") t)
+                        "=?ISO-8859-1?Q?=E9=3D?=")
+                 (equal (mail-quote-printable specials)
+                        "x=00=0A=0D=7Fy")
+                 (equal (mail-quote-printable (concat "word" (string 32 9 10)))
+                        "word=20=09=0A")
+                 (equal (mail-quote-printable "" t) "")
+                 (= (length long-words) 4)
+                 (not (memq nil
+                            (mapcar (lambda (word)
+                                      (and (<= (length word) 75)
+                                           (string-prefix-p prefix word)
+                                           (string-suffix-p "?=" word)))
+                                    long-words)))
+                 (with-temp-buffer
+                   (insert "a\nb")
+                   (mail-quote-printable-region
+                    (point-min) (point-max) t)
+                   (equal (buffer-string) "=?ISO-8859-1?Q?a=0Ab?=")))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose
