@@ -2550,8 +2550,15 @@ impl KeyIo for ChanIo {
 pub(super) fn start_logic(
     files: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, _quit_request, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
-        start_logic_inner(files, None, Vec::new(), false, true, false)?;
+    let (
+        events,
+        _quit_request,
+        grids,
+        _gui_requests,
+        _clipboard_requests,
+        _initial_frame_size,
+        _logic_thread,
+    ) = start_logic_inner(files, None, Vec::new(), false, true, false)?;
     Ok((events, grids))
 }
 
@@ -2561,8 +2568,15 @@ pub(super) fn start_logic_with_dump_for_test(
     dump_file: Option<String>,
     arguments: Vec<String>,
 ) -> io::Result<(Sender<GuiEvent>, smol::channel::Receiver<Grid>)> {
-    let (events, _quit_request, grids, _gui_requests, _clipboard_requests, _initial_frame_size) =
-        start_logic_inner(files, dump_file, arguments, false, true, false)?;
+    let (
+        events,
+        _quit_request,
+        grids,
+        _gui_requests,
+        _clipboard_requests,
+        _initial_frame_size,
+        _logic_thread,
+    ) = start_logic_inner(files, dump_file, arguments, false, true, false)?;
     Ok((events, grids))
 }
 
@@ -2623,8 +2637,15 @@ pub(super) fn start_logic_with_dump(
     smol::channel::Receiver<Grid>,
     smol::channel::Receiver<ClipboardRequest>,
 )> {
-    let (events, _quit_request, grids, _gui_requests, clipboard, _initial_frame_size) =
-        start_logic_inner(files, dump_file, arguments, true, true, false)?;
+    let (
+        events,
+        _quit_request,
+        grids,
+        _gui_requests,
+        clipboard,
+        _initial_frame_size,
+        _logic_thread,
+    ) = start_logic_inner(files, dump_file, arguments, true, true, false)?;
     Ok((events, grids, clipboard))
 }
 
@@ -2638,9 +2659,17 @@ pub(super) fn start_logic_with_frames(
     smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
     Option<InitialFrameSize>,
+    std::thread::JoinHandle<()>,
 )> {
-    let (events, quit_request, grids, gui_requests, clipboard, initial_frame_size_rx) =
-        start_logic_inner(files, dump_file, arguments, true, false, true)?;
+    let (
+        events,
+        quit_request,
+        grids,
+        gui_requests,
+        clipboard,
+        initial_frame_size_rx,
+        logic_thread,
+    ) = start_logic_inner(files, dump_file, arguments, true, false, true)?;
     drop(grids);
     let initial_frame_size = initial_frame_size_rx
         .recv()
@@ -2651,6 +2680,7 @@ pub(super) fn start_logic_with_frames(
         gui_requests,
         clipboard,
         initial_frame_size,
+        logic_thread,
     ))
 }
 
@@ -2668,6 +2698,7 @@ fn start_logic_inner(
     smol::channel::Receiver<GuiRequest>,
     smol::channel::Receiver<ClipboardRequest>,
     mpsc::Receiver<Option<InitialFrameSize>>,
+    std::thread::JoinHandle<()>,
 )> {
     let wait_for_startup = dump_file.is_some();
     let (startup_tx, startup_rx) = mpsc::channel::<Result<(), String>>();
@@ -2683,7 +2714,7 @@ fn start_logic_inner(
     clipboard_tx
         .send_blocking(ClipboardRequest::Ready(clipboard_ready.clone()))
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "GUI clipboard channel closed"))?;
-    std::thread::Builder::new()
+    let logic_thread = std::thread::Builder::new()
         .name("remacs-logic".into())
         // Eval/macroexpand recursion needs far more than the default
         // thread stack (see main.rs's headless worker).
@@ -2914,6 +2945,7 @@ fn start_logic_inner(
         gui_requests_rx,
         clipboard_rx,
         initial_frame_size_rx,
+        logic_thread,
     ))
 }
 

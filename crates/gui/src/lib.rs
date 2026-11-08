@@ -417,12 +417,18 @@ pub fn run_gui_with_dump(
     dump_file: Option<&str>,
     arguments: &[String],
 ) -> io::Result<()> {
-    let (event_tx, quit_request, gui_requests, clipboard_requests, initial_frame_size) =
-        start_logic_with_frames(
-            files.to_vec(),
-            dump_file.map(str::to_owned),
-            arguments.to_vec(),
-        )?;
+    let (
+        event_tx,
+        quit_request,
+        gui_requests,
+        clipboard_requests,
+        initial_frame_size,
+        logic_thread,
+    ) = start_logic_with_frames(
+        files.to_vec(),
+        dump_file.map(str::to_owned),
+        arguments.to_vec(),
+    )?;
     // Use explicit runtime dimensions from the user's frame alists before
     // opening the native window. The first frame snapshot corrects this
     // estimate using actual font metrics.
@@ -1295,10 +1301,13 @@ pub fn run_gui_with_dump(
         })
         .detach();
     });
-    match open_error.lock().unwrap().take() {
-        Some(message) => Err(io::Error::new(io::ErrorKind::Other, message)),
-        None => Ok(()),
+    if let Some(message) = open_error.lock().unwrap().take() {
+        return Err(io::Error::new(io::ErrorKind::Other, message));
     }
+    if let Err(panic) = logic_thread.join() {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 fn frame_minimum_size(

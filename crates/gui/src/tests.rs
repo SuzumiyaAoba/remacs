@@ -211,7 +211,7 @@ fn gui_initial_frame_visibility_loads_init_and_honors_quick() {
         if explicit_load {
             args.extend(["--load".into(), init.to_string_lossy().into_owned()]);
         }
-        let (events, _quit, requests, _clipboard, _) =
+        let (events, _quit, requests, _clipboard, _, _logic_thread) =
             start_logic_with_frames(Vec::new(), None, args).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         let first: Vec<FrameSnapshot> = loop {
