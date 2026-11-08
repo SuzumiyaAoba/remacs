@@ -460,6 +460,7 @@ of the page moves to the previous page."
       (delete-overlay tem)))
   (cl-assert (or (eq t (car winprops))
                  (eq (window-buffer (car winprops)) (current-buffer))))
+  (doc-view--restore-window-state-parameters winprops)
   (let ((ol (image-mode-window-get 'overlay winprops)))
     (if ol
         (progn
@@ -483,7 +484,31 @@ of the page moves to the previous page."
       ;; Don't do it if there's a conversion is running, since in that case, it
       ;; will be done later.
       (with-selected-window (car winprops)
-        (doc-view-goto-page (image-mode-window-get 'page t))))))
+        (doc-view-goto-page (image-mode-window-get 'page winprops))))))
+
+(add-to-list 'window-persistent-parameters '(doc-view-window-state . writable))
+
+(defun doc-view--save-window-state-parameters (&optional window)
+  "Save the current page and slice as parameters of WINDOW."
+  (setq window (or window (selected-window)))
+  (when (eq (window-buffer window) (current-buffer))
+    (with-selected-window window
+      (set-window-parameter
+       window 'doc-view-window-state
+       (let ((file (or buffer-file-name doc-view--buffer-file-name)))
+         (and file
+              (list file (doc-view-current-page) (doc-view-current-slice)))))))
+  nil)
+
+(defun doc-view--restore-window-state-parameters (winprops)
+  "Restore DocView page and slice in WINPROPS from its window parameters."
+  (let* ((window (car winprops))
+         (file (or buffer-file-name doc-view--buffer-file-name))
+         (state (and (windowp window)
+                     (window-parameter window 'doc-view-window-state))))
+    (when (and file (consp state) (equal file (car state)))
+      (image-mode-window-put 'page (cadr state) winprops)
+      (image-mode-window-put 'slice (nth 2 state) winprops))))
 
 (defvar-local doc-view--current-files nil
   "Only used internally.")
@@ -774,6 +799,7 @@ Typically \"page-%s.png\".")
 					     doc-view--current-search-matches)))
 			 (setq contexts (concat contexts "\n  - \"" m "\"")))
 		       contexts)))))
+    (doc-view--save-window-state-parameters)
     ;; Update the buffer
     ;; We used to find the file name from doc-view--current-files but
     ;; that's not right if the pages are not generated sequentially
@@ -2150,6 +2176,7 @@ If FILE-NAME is nil, use the current file instead."
                                       (window-buffer)))))
 	(doc-view-buffer-message)
 	(setf (doc-view-current-page) (or (doc-view-current-page) 1))
+	(doc-view--save-window-state-parameters)
 	(if (doc-view-already-converted-p)
 	    (progn
 	      (message "DocView: using cached files!")
@@ -2271,29 +2298,14 @@ If FILE-NAME is nil, use the current file instead."
 ;; desktop.el integration
 
 (defun doc-view-desktop-save-buffer (_desktop-dirname)
-  ;; FIXME: This is wrong, since this info is per-window but we only do it once
-  ;; here for the buffer.  IOW it should be saved via something like
-  ;; `window-persistent-parameters'.
-  `((page . ,(doc-view-current-page))
-    (slice . ,(doc-view-current-slice))))
+  ;; Page and slice are per-window; they are stored in the window state.
+  nil)
 
 (declare-function desktop-restore-file-buffer "desktop"
                   (buffer-filename buffer-name buffer-misc))
 
 (defun doc-view-restore-desktop-buffer (file name misc)
-  (let ((page  (cdr (assq 'page misc)))
-	(slice (cdr (assq 'slice misc))))
-    (desktop-restore-file-buffer file name misc)
-    ;; FIXME: We need to run this code after displaying the buffer.
-    (with-selected-window (or (get-buffer-window (current-buffer) 0)
-			      (selected-window))
-      ;; FIXME: This should be done for all windows restored that show
-      ;; this buffer.  Basically, the page/slice should be saved as
-      ;; window-parameters in the window-state(s) and then restoring this
-      ;; window-state should call us back (to interpret/use those parameters).
-      (doc-view-goto-page page)
-      (when slice (apply #'doc-view-set-slice slice))
-      (current-buffer))))
+  (desktop-restore-file-buffer file name misc))
 
 (add-to-list 'desktop-buffer-mode-handlers
 	     '(doc-view-mode . doc-view-restore-desktop-buffer))

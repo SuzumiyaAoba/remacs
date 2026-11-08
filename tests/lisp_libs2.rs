@@ -3002,6 +3002,46 @@ fn cc_forward_label_skips_ternary_colon_in_case_label() {
 }
 
 #[test]
+fn doc_view_persists_page_and_slice_per_window() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'doc-view)
+              (let* ((window (selected-window))
+                     (image-mode-winprops-alist nil)
+                     (winprops (image-mode-winprops window))
+                     saved-state serialized)
+                (unwind-protect
+                    (progn
+                      (setq buffer-file-name "test.pdf")
+                      (image-mode-window-put 'page 5 winprops)
+                      (image-mode-window-put 'slice '(1 2 30 40) winprops)
+                      (doc-view--save-window-state-parameters window)
+                      (setq saved-state
+                            (window-parameter window 'doc-view-window-state)
+                            serialized
+                            (and (string-match-p
+                                  "doc-view-window-state"
+                                  (prin1-to-string (window-state-get window t)))
+                                 t))
+                      (set-window-parameter window 'doc-view-window-state
+                                            '("other.pdf" 9 nil))
+                      (doc-view--restore-window-state-parameters winprops)
+                      (let ((other-file-unchanged
+                             (eq (image-mode-window-get 'page winprops) 5)))
+                        (set-window-parameter window 'doc-view-window-state
+                                              '("test.pdf" 9 nil))
+                        (doc-view--restore-window-state-parameters winprops)
+                        (list (equal saved-state '("test.pdf" 5 (1 2 30 40)))
+                              serialized
+                              other-file-unchanged
+                              (eq (image-mode-window-get 'page winprops) 9)
+                              (null (image-mode-window-get 'slice winprops)))))
+                  (set-window-parameter window 'doc-view-window-state nil))))"#),
+        "(t t t t t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
