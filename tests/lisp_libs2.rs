@@ -2287,6 +2287,30 @@ fn ecomplete_returns_a_multiline_candidate_as_one_match() {
 }
 
 #[test]
+fn image_dired_uses_at_least_one_column_in_narrow_windows() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'image-dired)
+              (with-temp-buffer
+                (insert "abc")
+                (let ((image-dired-thumbs-per-row 3))
+                  (cl-letf (((symbol-function 'image-dired-thumbnail-window)
+                             (lambda (&rest _) nil))
+                            ((symbol-function 'window-body-width)
+                             (lambda (&rest _) 10))
+                            ((symbol-function 'frame-char-width)
+                             (lambda (&rest _) 8))
+                            ((symbol-function 'image-dired--thumb-size)
+                             (lambda (&rest _) 100))
+                            ((symbol-function 'image-dired-image-at-point-p)
+                             (lambda (&rest _) t)))
+                    (image-dired-line-up-dynamic)
+                    (equal (buffer-string) (concat "a\nb\nc\n"))))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

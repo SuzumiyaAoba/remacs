@@ -1234,11 +1234,12 @@ Calculate how many thumbnails fit."
   (let* ((char-width (frame-char-width))
          (width (window-body-width (image-dired-thumbnail-window) t))
          (image-dired-thumbs-per-row
-          (/ width
-             (+ (* 2 image-dired-thumb-relief)
-                (* 2 image-dired-thumb-margin)
-                (image-dired--thumb-size)
-                char-width))))
+          (max 1
+               (/ width
+                  (+ (* 2 image-dired-thumb-relief)
+                     (* 2 image-dired-thumb-margin)
+                     (image-dired--thumb-size)
+                     char-width)))))
     (image-dired-line-up)))
 
 (defun image-dired-line-up-interactive ()
