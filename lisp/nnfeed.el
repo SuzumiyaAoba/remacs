@@ -588,10 +588,11 @@ Only HEADERS of a type included in MIME are considered."
                 nnfeed-group-articles (aref g 2)
                 nnfeed-group-article-max-num (aref g 3)
                 nnfeed-group-article-min-num (aref g 4))
-          (insert (format "211 %s %s %s \"%s\""
+          (insert (format "211 %s %s %s %s"
                           (hash-table-count nnfeed-group-article-ids)
                           nnfeed-group-article-min-num
-                          nnfeed-group-article-max-num group))
+                          nnfeed-group-article-max-num
+                          (prin1-to-string group)))
           t)
       (insert "404 group not found")
       (nnheader-report nnfeed-backend "Group %s not found" group))))
@@ -615,8 +616,9 @@ Only HEADERS of a type included in MIME are considered."
               ((hash-table-p s)))
         (progn
           (maphash (lambda (group g)
-                     (insert (format "\"%s\" %s %s y\n"
-                                     group (aref g 3) (aref g 4))))
+                     (insert (format "%s %s %s y\n"
+                                     (prin1-to-string group)
+                                     (aref g 3) (aref g 4))))
                    s)
           (not (= (point) p)))
       (nnheader-report 'nnfeed (nnheader-get-report nnfeed-backend)))))
@@ -633,13 +635,11 @@ Only HEADERS of a type included in MIME are considered."
 (deffoo nnfeed-request-type (_group &optional _article)
   'unknown)
 
-;; FIXME: Works incorrectly when a group name contains spaces as Gnus actually
-;; separates the group name from the description with either a tab or a space.
 (defun nnfeed--group-description (name group)
   "Return a description line for a GROUP called NAME."
   (when-let* ((desc (aref group 5))
               ((not (string-blank-p desc))))
-    (insert name "\t" desc "\n")))
+    (insert (prin1-to-string name) "\t" desc "\n")))
 
 (deffoo nnfeed-request-group-description (group &optional server)
   (when-let* ((server (or server (nnfeed--current-server-no-prefix)))

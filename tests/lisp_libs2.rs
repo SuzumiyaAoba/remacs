@@ -2931,6 +2931,60 @@ fn info_fontifies_nested_curly_quotes() {
 }
 
 #[test]
+fn nnfeed_serializes_group_names_as_lisp_strings() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'nnfeed)
+              (let* ((quoted-group "news\"with\\slash")
+                     (description
+                      (with-temp-buffer
+                        (nnfeed--group-description
+                         "news with spaces"
+                         [nil nil nil nil nil "A description"])
+                        (goto-char (point-min))
+                        (let ((group (read (current-buffer))))
+                          (skip-chars-forward " \t")
+                          (list group
+                                (buffer-substring-no-properties
+                                 (point) (line-end-position))))))
+                     (group-response
+                      (with-temp-buffer
+                        (let ((nntp-server-buffer (current-buffer)))
+                          (cl-letf (((symbol-function 'nnfeed--current-server-no-prefix)
+                                     (lambda (&rest _) "server"))
+                                    ((symbol-function 'nnfeed--group-data)
+                                     (lambda (group _server)
+                                       (vector group
+                                               (make-hash-table :test 'equal)
+                                               (make-hash-table :test 'eql)
+                                               0 1 "")))
+                                    ((symbol-function 'nnfeed-message)
+                                     (lambda (&rest _) nil)))
+                            (nnfeed-request-group quoted-group nil t)
+                            (goto-char (point-min))
+                            (skip-chars-forward "0-9 ")
+                            (read (current-buffer))))))
+                     (list-response
+                      (with-temp-buffer
+                        (let ((nntp-server-buffer (current-buffer))
+                              (table (make-hash-table :test 'equal)))
+                          (puthash quoted-group
+                                   (vector quoted-group nil nil 0 1 nil) table)
+                          (cl-letf (((symbol-function 'nnfeed--parse-feed)
+                                     (lambda (&rest _) table)))
+                            (nnfeed-request-list "server")
+                            (goto-char (point-min))
+                            (read (current-buffer)))))) )
+                (list (equal (car description) "news with spaces")
+                      (equal (cadr description) "A description")
+                      (equal group-response quoted-group)
+                      (equal list-response quoted-group))))"#),
+        "(t t t t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
