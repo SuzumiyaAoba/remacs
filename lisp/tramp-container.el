@@ -311,17 +311,16 @@ This function is used by `tramp-set-completion-function', please
 see its function help for a description of the format."
   (tramp-skeleton-completion-function method
     (when-let* ((raw-list
-		 (shell-command-to-string
-		  (concat
-		   program " "
-		   (tramp-kubernetes--context-namespace vec)
-                   " get pods --no-headers"
-		   ;; We separate pods by "|".  Inside a pod, its name
-		   ;; is separated from the containers by ":".
-		   ;; Containers are separated by ",".
-		   " -o jsonpath='{range .items[*]}{\"|\"}{.metadata.name}"
-		   "{\":\"}{range .spec.containers[*]}{.name}{\",\"}"
-		   "{end}{end}'")))
+			 (with-temp-buffer
+			   (apply #'process-file program nil t nil
+				  (append
+				   (tramp-kubernetes--context-namespace-args vec)
+				   (list "get" "pods" "--no-headers" "-o"
+					 (concat
+					  "jsonpath={range .items[*]}{\"|\"}{.metadata.name}"
+					  "{\":\"}{range .spec.containers[*]}{.name}{\",\"}"
+					  "{end}{end}"))))
+			   (buffer-string)))
 		(lines (split-string raw-list "|" 'omit)))
       (let (names)
 	(dolist (line lines)
@@ -434,6 +433,14 @@ Obey `tramp-kubernetes-context'"
 	   ,(when-let* ((namespace (tramp-kubernetes--namespace vec)))
 	      (format "--namespace=%s" namespace))))
    " "))
+
+(defun tramp-kubernetes--context-namespace-args (vec)
+  "Return separate kubectl arguments for context and namespace in VEC."
+  (delq nil
+	`(,(when-let* ((context (tramp-kubernetes--current-context vec)))
+	    (format "--context=%s" context))
+	  ,(when-let* ((namespace (tramp-kubernetes--namespace vec)))
+	    (format "--namespace=%s" namespace)))))
 
 ;;;###tramp-autoload
 (defun tramp-toolbox--completion-function (method)

@@ -1943,6 +1943,38 @@ fn nslookup_helpers_pass_untrusted_names_as_argv() {
 }
 
 #[test]
+fn tramp_kubernetes_completion_passes_context_as_argv() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'tramp-container)
+              (let ((calls nil)
+                    (tramp-kubernetes-context "prod; echo injected")
+                    (tramp-kubernetes-namespace "ns; echo injected"))
+                (cl-letf (((symbol-function 'tramp-expand-args)
+                           (lambda (&rest _) "kubectl-test"))
+                          ((symbol-function 'process-file)
+                           (lambda (program _infile _destination _display &rest args)
+                             (setq calls (cons (cons program args) calls))
+                             0))
+                          ((symbol-function 'shell-command-to-string)
+                           (lambda (&rest _) (error "unexpected shell invocation"))))
+                  (tramp-kubernetes--completion-function "kubernetes"))
+                (let* ((call (car (nreverse calls)))
+                       (args (cdr call)))
+                  (list (equal (car call) "kubectl-test")
+                        (equal (nth 0 args) "--context=prod; echo injected")
+                        (equal (nth 1 args) "--namespace=ns; echo injected")
+                        (equal (nth 2 args) "get")
+                        (equal (nth 3 args) "pods")
+                        (equal (nth 4 args) "--no-headers")
+                        (equal (nth 5 args) "-o")
+                        (and (= (length args) 7)
+                             (string-prefix-p "jsonpath=" (nth 6 args)))))))"#),
+        "(t t t t t t t t)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
