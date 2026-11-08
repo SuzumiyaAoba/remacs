@@ -127,6 +127,14 @@ TOP-OR-BOTTOM-POS: Distance from top or bottom edge of frame or window."
 (defvar mouse-avoidance-pointer-shapes nil)
 (defvar mouse-avoidance-old-pointer-shape nil)
 (defvar mouse-avoidance-animating-pointer nil)
+;; Remacs: Track pointer movement even when the window system queues no event.
+(defvar mouse-avoidance-last-position :uninitialized)
+(defvar mouse-avoidance-pointer-moved nil)
+
+(defun mouse-avoidance-pre-command-hook ()
+  "Record the pointer position before a command."
+  (setq mouse-avoidance-last-position (mouse-position)
+        mouse-avoidance-pointer-moved nil))
 
 ;; This timer is used to run something when Emacs is idle.
 (defvar mouse-avoidance-timer nil)
@@ -163,6 +171,8 @@ Analogous to `mouse-position'."
   ;; Returns t if it moved the mouse.
   (let ((f (selected-frame)))
     (set-mouse-position f (car pos) (cdr pos))
+    (setq mouse-avoidance-last-position (cons f pos)
+          mouse-avoidance-pointer-moved nil)
     t))
 
 (defun mouse-avoidance-too-close-p (mouse)
@@ -313,19 +323,25 @@ redefine this function to suit your own tastes."
   (seq-random-elt mouse-avoidance-pointer-shapes))
 
 (defun mouse-avoidance-ignore-p ()
-  (let ((mp (mouse-position)))
+  (let* ((mp (mouse-position))
+         (mouse-moved
+          (and (not (eq mouse-avoidance-last-position :uninitialized))
+               (not (equal mp mouse-avoidance-last-position)))))
+    (when mouse-moved
+      (setq mouse-avoidance-pointer-moved t))
+    (setq mouse-avoidance-last-position mp)
     (or (not (frame-pointer-visible-p)) ; The pointer is hidden
         (not cursor-type)               ; There's no cursor
         executing-kbd-macro	       ; don't check inside macro
 	(null (cadr mp))	       ; don't move unless in an Emacs frame
 	(not (eq (car mp) (selected-frame)))
+        ;; Remacs: Some window systems do not enqueue pointer-movement events.
+        mouse-avoidance-pointer-moved
         ;; Don't interfere with ongoing `mouse-drag-and-drop-region'
         ;; (Bug#36269).
         (or (eq track-mouse 'dropping)
             (eq track-mouse 'drag-source))
 	;; Don't do anything if last event was a mouse event.
-	;; FIXME: this code fails in the case where the mouse was moved
-	;; since the last key-press but without generating any event.
 	(and (consp last-input-event)
 	     (symbolp (car last-input-event))
 	     (let ((modifiers (event-modifiers (car last-input-event))))
@@ -442,6 +458,14 @@ definition of \"random distance\".)"
 	       (run-with-idle-timer 0.1 t 'mouse-avoidance-banish))
 	 (setq mouse-avoidance-mode 'banish))
 	(t (setq mouse-avoidance-mode nil)))
+  (if mouse-avoidance-mode
+      (progn
+        (add-hook 'pre-command-hook #'mouse-avoidance-pre-command-hook)
+        (setq mouse-avoidance-last-position (mouse-position)
+              mouse-avoidance-pointer-moved nil))
+    (remove-hook 'pre-command-hook #'mouse-avoidance-pre-command-hook)
+    (setq mouse-avoidance-last-position :uninitialized
+          mouse-avoidance-pointer-moved nil))
   (force-mode-line-update))
 
 ;; Most people who use avoid mode leave it on all the time, so it's not

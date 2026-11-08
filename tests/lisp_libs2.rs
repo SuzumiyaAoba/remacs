@@ -2509,6 +2509,40 @@ fn archive_ar_recognizes_gnu_and_bsd_symbol_tables() {
 }
 
 #[test]
+fn mouse_avoidance_ignores_unreported_pointer_movement() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'avoid)
+              (let ((cursor-type t)
+                    (executing-kbd-macro nil)
+                    (track-mouse nil)
+                    (last-input-event ?a)
+                    (position '(test-frame 10 . 20))
+                    banished)
+                (cl-letf (((symbol-function 'frame-pointer-visible-p)
+                           (lambda (&rest _) t))
+                          ((symbol-function 'mouse-position)
+                           (lambda (&rest _) position))
+                          ((symbol-function 'selected-frame)
+                           (lambda (&rest _) 'test-frame))
+                          ((symbol-function 'mouse-avoidance-banish-mouse)
+                           (lambda (&rest _) (setq banished t))))
+                  (mouse-avoidance-ignore-p)
+                  (setq position '(test-frame 100 . 100))
+                  (mouse-avoidance-banish)
+                  (let ((moved-banished banished))
+                    (setq banished nil)
+                    (mouse-avoidance-banish)
+                    (let ((still-ignored banished))
+                      (mouse-avoidance-pre-command-hook)
+                      (mouse-avoidance-banish)
+                      (list moved-banished still-ignored banished))))))"#),
+        "(nil nil t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
