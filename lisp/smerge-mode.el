@@ -262,8 +262,7 @@ Used in `repeat-mode'."
      (1 smerge-upper-face prepend t)
      (2 smerge-base-face prepend t)
      (3 smerge-lower-face prepend t)
-     ;; FIXME: `keep' doesn't work right with syntactic fontification.
-     (0 smerge-markers-face keep)
+     (0 smerge-markers-face prepend t)
      (4 nil t t)
      (5 nil t t)))
   "Font lock patterns for `smerge-mode'.")

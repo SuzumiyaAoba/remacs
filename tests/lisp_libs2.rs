@@ -3143,6 +3143,29 @@ fn comment_indent_new_line_uses_explicit_comment_continue() {
 }
 
 #[test]
+fn smerge_markers_face_is_applied_inside_strings() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'smerge-mode)
+              (with-temp-buffer
+                (emacs-lisp-mode)
+                (setq-local font-lock-mode t)
+                (insert "(setq x \"\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n\")\n")
+                (smerge-mode 1)
+                (font-lock-ensure)
+                (goto-char (point-min))
+                (search-forward "<<<<<<<")
+                (backward-char 1)
+                (let* ((face (get-text-property (point) 'face))
+                       (faces (if (consp face) face (list face))))
+                  (and (memq 'smerge-markers-face faces)
+                       (memq 'font-lock-string-face faces)
+                       t))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn
