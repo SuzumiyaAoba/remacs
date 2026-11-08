@@ -409,6 +409,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             .to_str()
             .to_string();
         let mut key_char = None;
+        let mut is_dead_key = false;
         let first_char = characters.chars().next().map(|ch| ch as u16);
         let modifiers = native_event.modifierFlags();
 
@@ -544,7 +545,10 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                         mods |= OPTION_MOD;
                     }
 
-                    key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
+                    let (text, dead_key) =
+                        chars_for_modified_key_and_dead_key(native_event.keyCode(), mods);
+                    key_char = Some(text);
+                    is_dead_key = dead_key;
                 }
 
                 if shift
@@ -566,6 +570,13 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             && let Some(keypad_key) = keypad_key_name(native_event.keyCode(), first_char)
         {
             key = keypad_key.to_string();
+            key_char = None;
+        }
+
+        // Keep dead keys on AppKit's text-input path so it can retain the
+        // composition state and combine them with the next keystroke.
+        if is_dead_key {
+            key.clear();
             key_char = None;
         }
 
@@ -597,6 +608,10 @@ const SHIFT_MOD: u32 = 2;
 const OPTION_MOD: u32 = 8;
 
 fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
+    chars_for_modified_key_and_dead_key(code, modifiers).0
+}
+
+fn chars_for_modified_key_and_dead_key(code: CGKeyCode, modifiers: u32) -> (String, bool) {
     // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
     // shifted >> 8 for UCKeyTranslate
     const CG_SPACE_KEY: u16 = 49;
@@ -614,7 +629,7 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
 
     let keyboard = unsafe { TISCopyCurrentKeyboardLayoutInputSource() };
     if keyboard.is_null() {
-        return "".to_string();
+        return (String::new(), false);
     }
     let layout_data = unsafe {
         TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData as *const c_void)
@@ -624,7 +639,7 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
         unsafe {
             let _: () = msg_send![keyboard, release];
         }
-        return "".to_string();
+        return (String::new(), false);
     }
     let keyboard_layout = unsafe { CFDataGetBytePtr(layout_data) };
 
@@ -641,7 +656,8 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
             &mut buffer_size as *mut usize,
             &mut buffer as *mut u16,
         );
-        if dead_key_state != 0 {
+        let is_dead_key = dead_key_state != 0;
+        if is_dead_key {
             UCKeyTranslate(
                 keyboard_layout as *const c_void,
                 CG_SPACE_KEY,
@@ -656,8 +672,11 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
             );
         }
         let _: () = msg_send![keyboard, release];
+        (
+            String::from_utf16(&buffer[..buffer_size]).unwrap_or_default(),
+            is_dead_key,
+        )
     }
-    String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }
 
 #[cfg(test)]
