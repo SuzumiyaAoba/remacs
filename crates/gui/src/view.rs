@@ -872,6 +872,7 @@ pub(super) struct EditorView {
     auto_lower: Rc<Cell<bool>>,
     last_window_active: Option<bool>,
     last_focus_update_sent: Option<bool>,
+    native_close_on_alt_f4: Rc<Cell<bool>>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -960,6 +961,7 @@ impl EditorView {
             auto_lower: Rc::new(Cell::new(false)),
             last_window_active: None,
             last_focus_update_sent: None,
+            native_close_on_alt_f4: Rc::new(Cell::new(false)),
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -1533,6 +1535,8 @@ impl Render for EditorView {
         let scroll_modifiers = physical_modifier_state.clone();
         let entity = cx.entity();
         let focus = self.focus.clone();
+        #[cfg(target_os = "windows")]
+        let native_close_on_alt_f4 = self.native_close_on_alt_f4.clone();
         let marked = self.input.marked.clone();
         let marked_selection = self.input.selection_byte_range();
         let marked_cursor = self.input.selection_byte_end();
@@ -2004,6 +2008,25 @@ impl Render for EditorView {
                 }
             })
             .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                #[cfg(target_os = "windows")]
+                {
+                    native_close_on_alt_f4.set(false);
+                    if event.keystroke.modifiers.alt
+                        && !event.keystroke.modifiers.control
+                        && !event.keystroke.modifiers.shift
+                        && !event.keystroke.modifiers.platform
+                        && !event.keystroke.modifiers.function
+                    {
+                        match event.keystroke.key.as_str() {
+                            "space" => return,
+                            "f4" => {
+                                native_close_on_alt_f4.set(true);
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 // Printable text is delivered by the OS input handler. Sending
                 // it here as well would insert ordinary ASCII twice.
                 if command_keystroke_with_mapping(
@@ -4596,8 +4619,13 @@ pub(super) fn build_managed_editor_view(
         view.set_grid(grid, window);
     }
     let close_events = view.tx.clone();
+    let native_close_on_alt_f4 = view.native_close_on_alt_f4.clone();
     window.on_window_should_close(cx, move |_window, cx| {
+        let alt_f4_close = native_close_on_alt_f4.replace(false);
         if cx.windows().len() <= 1 {
+            if alt_f4_close {
+                let _ = close_events.send(GuiEvent::PowerOff);
+            }
             return false;
         }
         close_events
