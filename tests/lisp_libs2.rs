@@ -2752,6 +2752,44 @@ fn eshell_define_literal_alias_is_readable() {
 }
 
 #[test]
+fn calc_user_define_edit_accepts_string_keyboard_macros() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'calc-prog)
+              (let* ((key-entry (cons ?a "abc"))
+                     (edit-buffer (get-buffer-create " *calc-edit-test*"))
+                     finish)
+                (unwind-protect
+                    (progn
+                      (cl-letf (((symbol-function 'read-char)
+                                 (lambda (&rest _) ?a))
+                                ((symbol-function 'calc-user-key-map)
+                                 (lambda (&rest _) (list key-entry)))
+                                ((symbol-function 'message)
+                                 (lambda (&rest _) nil))
+                                ((symbol-function 'calc--edit-mode)
+                                 (lambda (handler &optional _allow-ret _title)
+                                   (setq finish handler)
+                                   (set-buffer edit-buffer)
+                                   (let ((inhibit-read-only t))
+                                     (erase-buffer))
+                                   (setq-local calc-edit-top (point-min))))
+                                ((symbol-function 'calc-edit-format-macro-buffer)
+                                 (lambda (&rest _) nil))
+                                ((symbol-function 'calc-show-edit-buffer)
+                                 (lambda (&rest _) nil)))
+                        (calc-user-define-edit))
+                      (funcall finish)
+                      (list (stringp (cdr key-entry))
+                            (functionp (cdr key-entry))))
+                  (when (buffer-live-p edit-buffer)
+                    (kill-buffer edit-buffer)))))"#),
+        "(nil t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn

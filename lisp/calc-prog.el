@@ -696,16 +696,23 @@
     (cond ((or (stringp cmd)
 	       (and (consp cmd)
 		    (eq (car-safe (nth 3 cmd)) #'calc-execute-kbd-macro)))
-           ;; FIXME: Won't (nth 3 cmd) fail when (stringp cmd)?
-           (let* ((mac (elt (nth 1 (nth 3 cmd)) 1))
+           (require 'edmacro)
+           (let* ((string-macro (stringp cmd))
+                  (mac (if string-macro cmd
+                         (elt (nth 1 (nth 3 cmd)) 1)))
                   (str (edmacro-format-keys mac t))
-                  (kys (nth 3 (nth 3 cmd))))
+                  (kys (if string-macro
+                           (format "z%c" (car def))
+                         (nth 3 (nth 3 cmd))))
+                  (original-keys (if string-macro str
+                                   (elt (nth 1 (nth 3 cmd)) 0)))
+                  (binding (and (not cmdname) def)))
              (calc--edit-mode
-              (lambda () (calc-edit-macro-finish-edit cmdname kys))
+              (lambda () (calc-edit-macro-finish-edit cmdname kys binding))
               t (format (concat
                          "Editing keyboard macro (%s, bound to %s).\n"
                          "Original keys: %s \n")
-                        cmdname kys (elt (nth 1 (nth 3 cmd)) 0)))
+                        (or cmdname kys) kys original-keys))
              (insert str "\n")
              (calc-edit-format-macro-buffer)
              (calc-show-edit-buffer)))
@@ -933,22 +940,27 @@
     (delete-char 3)
     (insert "<return>")))
 
-(defun calc-edit-macro-finish-edit (cmdname key)
+(defun calc-edit-macro-finish-edit (cmdname key &optional binding)
   "Finish editing a Calc macro.
 Redefine the corresponding command."
-  (let ((cmd (intern cmdname)))
+  (let ((cmd (and cmdname (intern cmdname))))
     (calc-edit-macro-pre-finish-edit)
     (let* ((str (buffer-substring calc-edit-top (point-max)))
            (mac (edmacro-parse-keys str t)))
       (if (= (length mac) 0)
-          (fmakunbound cmd)
-        (fset cmd
-              (list 'lambda '(arg)
-                    '(interactive "P")
-                    (list 'calc-execute-kbd-macro
-                          (vector (key-description mac)
-                                  mac)
-                          'arg key)))))))
+          (if binding
+              (setcdr binding nil)
+            (fmakunbound cmd))
+        (let ((definition
+               (list 'lambda '(arg)
+                     '(interactive "P")
+                     (list 'calc-execute-kbd-macro
+                           (vector (key-description mac)
+                                   mac)
+                           'arg key))))
+          (if binding
+              (setcdr binding definition)
+            (fset cmd definition)))))))
 
 (defun calc-finish-formula-edit (func)
   (let ((buf (current-buffer))
