@@ -2383,6 +2383,21 @@ fn vc_annotate_rejects_invalid_and_zero_spans() {
 }
 
 #[test]
+fn change_log_font_lock_recognizes_slash_date_formats() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'add-log)
+              (let ((add-log-time-format (lambda (_time _zone) "2026/10/28")))
+                (with-temp-buffer
+                  (insert "2026/10/28  Alice <alice@example.com>\n\n\t* file: change\n")
+                  (change-log-mode)
+                  (font-lock-ensure)
+                  (get-text-property (point-min) 'face))))"#),
+        "change-log-date"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
