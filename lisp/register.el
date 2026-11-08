@@ -487,6 +487,7 @@ Interactively, prompt for REGISTER using `register-read-with-preview'."
   (interactive (list (register-read-with-preview
 		      "Window configuration to register: ")
 		     current-prefix-arg))
+  (add-hook 'kill-buffer-hook #'register-swap-out nil t)
   ;; current-window-configuration does not include the value
   ;; of point in the current buffer, so record that separately.
   (set-register register (list (current-window-configuration) (point-marker))))
@@ -505,6 +506,7 @@ Interactively, prompt for REGISTER using `register-read-with-preview'."
   (interactive (list (register-read-with-preview
 		      "Frame configuration to register: ")
 		     current-prefix-arg))
+  (add-hook 'kill-buffer-hook #'register-swap-out nil t)
   ;; current-frame-configuration does not include the value
   ;; of point in the current buffer, so record that separately.
   (set-register register (list (current-frame-configuration) (point-marker))))
@@ -643,10 +645,10 @@ ARG is the value of the prefix argument or nil."
   (cond
    ((frame-configuration-p (car val))
     (set-frame-configuration (car val) (not delete))
-    (goto-char (cadr val)))
+    (register--restore-point (cadr val)))
    ((window-configuration-p (car val))
     (set-window-configuration (car val))
-    (goto-char (cadr val)))
+    (register--restore-point (cadr val)))
    ((eq (car val) 'file)
     (find-file (cdr val)))
    ((eq (car val) 'buffer)
@@ -659,16 +661,29 @@ ARG is the value of the prefix argument or nil."
     (goto-char (nth 2 val)))
    (t (cl-call-next-method val delete))))
 
+(defun register--restore-point (position)
+  "Restore POSITION after a frame or window configuration.
+If POSITION is a `file-query' reference, visit the file and restore its point."
+  (if (and (consp position) (eq (car position) 'file-query))
+      (register-val-jump-to position nil)
+    (goto-char position)))
+
 (defun register-swap-out ()
   "Turn markers into file-query references when a buffer is killed."
   (and buffer-file-name
        (dolist (elem register-alist)
-	 (and (markerp (cdr elem))
-	      (eq (marker-buffer (cdr elem)) (current-buffer))
-	      (setcdr elem
-		      (list 'file-query
-			    buffer-file-name
-			    (marker-position (cdr elem))))))))
+	 (let* ((value (cdr elem))
+		(marker (cond ((markerp value) value)
+			      ((and (consp value) (consp (cdr value)))
+			       (cadr value)))))
+	   (when (and (markerp marker)
+		      (eq (marker-buffer marker) (current-buffer)))
+	     (let ((file-query (list 'file-query
+			     buffer-file-name
+			     (marker-position marker))))
+	       (if (eq value marker)
+		   (setcdr elem file-query)
+		 (setcar (cdr value) file-query))))))))
 
 (defun register-buffer-to-file-query ()
   "Turn buffer registers into file-query references when a buffer is killed."

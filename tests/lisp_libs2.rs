@@ -1783,6 +1783,49 @@ fn binhex_external_decoder_confines_header_filename() {
 }
 
 #[test]
+fn register_configuration_points_survive_buffer_kill() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'register)
+              (let* ((file (make-temp-file "qa-register-marker-"))
+                     (register-alist nil))
+                (unwind-protect
+                    (progn
+                      (with-temp-file file (insert "0123456789"))
+                      (let ((buffer (find-file-noselect file)))
+                        (with-current-buffer buffer
+                          (goto-char 4)
+                          (point-to-register ?p t)
+                          (window-configuration-to-register ?w)
+                          (frame-configuration-to-register ?f))
+                        (kill-buffer buffer))
+                      (let ((expected (list 'file-query file 4))
+                            (restored t))
+                        (and
+                         (equal (cadr (get-register ?p)) expected)
+                         (equal (cadr (get-register ?w)) expected)
+                         (equal (cadr (get-register ?f)) expected)
+                         (cl-letf (((symbol-function 'set-frame-configuration)
+                                    (lambda (&rest _) nil))
+                                   ((symbol-function 'set-window-configuration)
+                                    (lambda (&rest _) nil))
+                                   ((symbol-function 'y-or-n-p)
+                                    (lambda (&rest _) t)))
+                           (dolist (register '(?p ?w ?f))
+                             (jump-to-register register)
+                             (unless (and (equal (buffer-file-name) file)
+                                          (= (point) 4))
+                               (setq restored nil)))
+                           restored))))
+                  (when (get-file-buffer file)
+                    (kill-buffer (get-file-buffer file)))
+                  (delete-file file))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose

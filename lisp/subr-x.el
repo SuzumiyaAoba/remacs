@@ -10144,12 +10144,18 @@ Second argument VERBOSE means produce a more detailed description."
   "Turn markers into file-query references when a buffer is killed."
   (and buffer-file-name
        (dolist (elem register-alist)
-	 (and (markerp (cdr elem))
-	      (eq (marker-buffer (cdr elem)) (current-buffer))
-	      (setcdr elem
-		      (list 'file-query
-			    buffer-file-name
-			    (marker-position (cdr elem))))))))
+	 (let* ((value (cdr elem))
+		(marker (cond ((markerp value) value)
+			      ((and (consp value) (consp (cdr value)))
+			       (cadr value)))))
+	   (when (and (markerp marker)
+		      (eq (marker-buffer marker) (current-buffer)))
+	     (let ((file-query (list 'file-query
+			     buffer-file-name
+			     (marker-position marker))))
+	       (if (eq value marker)
+		   (setcdr elem file-query)
+		 (setcar (cdr value) file-query))))))))
 (defun register-buffer-to-file-query ()
   "Turn buffer registers into file-query references when a buffer is killed."
   (and buffer-file-name
@@ -10265,14 +10271,20 @@ ARG is the value of the prefix argument or nil."
               (eq last-command 'jump-to-register))
     (push-mark))
   (goto-char val))
+(defun register--restore-point (position)
+  "Restore POSITION after a frame or window configuration.
+If POSITION is a `file-query' reference, visit the file and restore its point."
+  (if (and (consp position) (eq (car position) 'file-query))
+      (register-val-jump-to position nil)
+    (goto-char position)))
 (cl-defmethod register-val-jump-to ((val cons) delete)
   (cond
    ((frame-configuration-p (car val))
     (set-frame-configuration (car val) (not delete))
-    (goto-char (cadr val)))
+    (register--restore-point (cadr val)))
    ((window-configuration-p (car val))
     (set-window-configuration (car val))
-    (goto-char (cadr val)))
+    (register--restore-point (cadr val)))
    ((eq (car val) 'file)
     (find-file (cdr val)))
    ((eq (car val) 'buffer)
