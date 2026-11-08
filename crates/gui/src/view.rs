@@ -2762,6 +2762,15 @@ impl Render for EditorView {
                                 thumb_color,
                             ));
                         }
+                        paint_right_dividers(
+                            &grid,
+                            bounds,
+                            cell_width,
+                            line_height,
+                            default_background,
+                            background_alpha,
+                            window,
+                        );
                         if bell_flash {
                             window.paint_quad(fill(bounds, rgba((0xFFFFFF << 8) | 0x80)));
                         }
@@ -4290,6 +4299,73 @@ fn gamma_correct_rgb(color: u32, exponent: Option<f64>) -> u32 {
             << shift
     };
     channel(16) | channel(8) | channel(0)
+}
+
+fn paint_right_dividers(
+    grid: &Grid,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    default_background: u32,
+    background_alpha: u8,
+    window: &mut Window,
+) {
+    for divider in &grid.right_dividers {
+        if divider.thickness == 0 || divider.bottom <= divider.top {
+            continue;
+        }
+        let thickness = px(divider.thickness as f32);
+        let left = bounds.left()
+            + cell_width * divider.column_boundary as f32
+            + px(divider.width_adjustment as f32)
+            - thickness;
+        let top = bounds.top()
+            + grid_row_top(grid, divider.top, line_height)
+            + px(divider.y_offset as f32);
+        let bottom = bounds.top()
+            + grid_row_top(grid, divider.bottom, line_height)
+            + px(divider.height_adjustment as f32);
+        let height = (bottom - top).max(px(0.0));
+        if height == px(0.0) {
+            continue;
+        }
+        let paint_column = |offset: usize, width: usize, style, window: &mut Window| {
+            if width == 0 {
+                return;
+            }
+            let color = style_colors(
+                style,
+                default_background,
+                background_alpha,
+                grid.gamma_exponent,
+            )
+            .0;
+            window.paint_quad(fill(
+                Bounds {
+                    origin: point(left + px(offset as f32), top),
+                    size: size(px(width as f32), height),
+                },
+                color,
+            ));
+        };
+        if divider.thickness < 3 {
+            paint_column(0, divider.thickness, divider.style, window);
+        } else {
+            paint_column(0, 1, divider.first_pixel_style, window);
+            paint_column(
+                1,
+                divider.thickness.saturating_sub(2),
+                divider.style,
+                window,
+            );
+            paint_column(
+                divider.thickness.saturating_sub(1),
+                1,
+                divider.last_pixel_style,
+                window,
+            );
+        }
+    }
 }
 
 fn paint_bottom_dividers(

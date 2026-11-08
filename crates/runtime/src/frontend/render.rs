@@ -308,6 +308,27 @@ pub struct GridBottomDivider {
     pub last_pixel_style: CellStyle,
 }
 
+/// A right divider between a window and an adjacent window to its right.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridRightDivider {
+    /// Column boundary at the window's right edge.
+    pub column_boundary: usize,
+    /// Top and bottom row boundaries covered by the divider.
+    pub top: usize,
+    pub bottom: usize,
+    /// Pixelwise adjustment to the window's right edge.
+    pub width_adjustment: i128,
+    /// Pixelwise offset from the cell-aligned top edge.
+    pub y_offset: i128,
+    /// Pixelwise adjustment to the bottom edge.
+    pub height_adjustment: i128,
+    /// Divider thickness in pixels.
+    pub thickness: usize,
+    pub style: CellStyle,
+    pub first_pixel_style: CellStyle,
+    pub last_pixel_style: CellStyle,
+}
+
 /// A window's mode-line hit area and buffer-identification local-map extent.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridModeLine {
@@ -559,6 +580,7 @@ pub struct Grid {
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
     pub bottom_dividers: Vec<GridBottomDivider>,
+    pub right_dividers: Vec<GridRightDivider>,
     pub mode_lines: Vec<GridModeLine>,
     pub header_lines: Vec<GridHeaderLine>,
     pub window_text_areas: Vec<GridWindowTextArea>,
@@ -842,6 +864,7 @@ impl Grid {
             popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
             bottom_dividers: Vec::new(),
+            right_dividers: Vec::new(),
             mode_lines: Vec::new(),
             header_lines: Vec::new(),
             window_text_areas: Vec::new(),
@@ -7234,6 +7257,11 @@ fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) 
         resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
         resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
     }
+    for divider in &mut grid.right_dividers {
+        resolve_grid_style(&mut divider.style, exponent, threshold);
+        resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
+        resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
+    }
     for composition in &mut grid.compositions {
         resolve_grid_style(&mut composition.style, exponent, threshold);
     }
@@ -7361,6 +7389,7 @@ fn render_grid_internal(
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
     let mut bottom_dividers = Vec::new();
+    let mut right_dividers = Vec::new();
     let mut mode_lines = Vec::new();
     let mut header_lines = Vec::new();
     let mut window_text_areas = Vec::new();
@@ -7406,6 +7435,7 @@ fn render_grid_internal(
                 popup_menu_items,
                 scroll_bars,
                 bottom_dividers,
+                right_dividers,
                 mode_lines,
                 header_lines,
                 window_text_areas,
@@ -7467,7 +7497,19 @@ fn render_grid_internal(
     } else {
         0
     };
+    let right_divider_width = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "right-divider-width", 0)
+    } else {
+        0
+    };
     let bottom_divider_styles = (bottom_divider_width > 0).then(|| {
+        (
+            fctx.builtin(i, "window-divider", 0).finish(),
+            fctx.builtin(i, "window-divider-first-pixel", 0).finish(),
+            fctx.builtin(i, "window-divider-last-pixel", 0).finish(),
+        )
+    });
+    let right_divider_styles = (right_divider_width > 0).then(|| {
         (
             fctx.builtin(i, "window-divider", 0).finish(),
             fctx.builtin(i, "window-divider-first-pixel", 0).finish(),
@@ -7711,6 +7753,39 @@ fn render_grid_internal(
                 x_offset,
                 width_adjustment,
                 thickness: bottom_divider_width,
+                style,
+                first_pixel_style,
+                last_pixel_style,
+            });
+        }
+        let has_right_neighbor = fb.windows.iter().any(|other| {
+            let other = other.borrow();
+            other.id != window_id
+                && !other.minibuffer
+                && other.left == raw_left.saturating_add(raw_width)
+                && other.top < raw_top.saturating_add(raw_height)
+                && raw_top < other.top.saturating_add(other.height)
+        });
+        if !minibuffer_window
+            && raw_window_width > 0
+            && raw_window_height > 0
+            && has_right_neighbor
+            && let Some((style, first_pixel_style, last_pixel_style)) = right_divider_styles
+        {
+            let (_, y_offset) = crate::editor::winxtra::pixelwise_window_origin_offset(w);
+            let width_adjustment =
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, true);
+            let height_adjustment =
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, false)
+                    .saturating_sub(bottom_divider_width as i128);
+            right_dividers.push(GridRightDivider {
+                column_boundary: raw_window_right,
+                top: raw_window_top,
+                bottom: raw_window_bottom,
+                width_adjustment,
+                y_offset,
+                height_adjustment,
+                thickness: right_divider_width,
                 style,
                 first_pixel_style,
                 last_pixel_style,
@@ -9683,6 +9758,7 @@ fn render_grid_internal(
         popup_menu_items,
         scroll_bars,
         bottom_dividers,
+        right_dividers,
         mode_lines,
         header_lines,
         window_text_areas,
