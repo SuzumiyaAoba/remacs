@@ -2874,6 +2874,27 @@ fn cd_completion_excludes_file_when_later_cdpath_entry_has_directory() {
 }
 
 #[test]
+fn gv_setter_preserves_uninterned_symbol_identity() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'gv)
+              (let* ((one (make-symbol "same-name"))
+                     (two (make-symbol "same-name"))
+                     (obarray-a (make-vector 17 0))
+                     (obarray-b (make-vector 17 0))
+                     (three (let ((obarray obarray-a)) (intern "same-name")))
+                     (four (let ((obarray obarray-b)) (intern "same-name"))))
+                (list (eq one two)
+                      (eq (gv-setter one) (gv-setter two))
+                      (eq (gv-setter one) (gv-setter one))
+                      (eq three four)
+                      (eq (gv-setter three) (gv-setter four))
+                      (eq (gv-setter three) (gv-setter three)))))"#),
+        "(nil nil t nil nil t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
