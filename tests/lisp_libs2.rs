@@ -2790,6 +2790,24 @@ fn calc_user_define_edit_accepts_string_keyboard_macros() {
 }
 
 #[test]
+fn elint_update_env_keeps_preloaded_function_definitions() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'elint)
+              (with-temp-buffer
+                (let ((elint-preloaded-env
+                       (elint-env-add-func
+                        (elint-make-env) 'preloaded-probe '(arg))))
+                  (insert "(preloaded-probe 1)\n")
+                  (elint-update-env)
+                  (and (elint-env-find-func
+                        elint-buffer-env 'preloaded-probe)
+                       t))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
