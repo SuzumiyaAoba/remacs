@@ -1975,6 +1975,38 @@ fn tramp_kubernetes_completion_passes_context_as_argv() {
 }
 
 #[test]
+fn tramp_kubernetes_context_data_quotes_context_for_jsonpath() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'tramp-container)
+              (let* ((context "my\"\\context\\")
+                     (expected-quoted "\"my\\\"\\u005ccontext\\u005c\"")
+                     (expected-jsonpath
+                      (concat "jsonpath={.contexts[?(@.name == "
+                              expected-quoted ")]}"))
+                     (calls nil)
+                     (tramp-kubernetes-program "kubectl-test"))
+                (cl-letf (((symbol-function 'tramp-kubernetes--current-context)
+                           (lambda (_vec) context))
+                          ((symbol-function 'process-file)
+                           (lambda (program _infile _destination _display &rest args)
+                             (setq calls (cons (cons program args) calls))
+                             (insert "{}")
+                             0))
+                          ((symbol-function 'shell-command-to-string)
+                           (lambda (&rest _) (error "unexpected shell invocation"))))
+                  (tramp-kubernetes--current-context-data nil))
+                (let ((call (car calls)))
+                  (list (equal (tramp-kubernetes--jsonpath-quote-string context)
+                               expected-quoted)
+                        (equal (car call) "kubectl-test")
+                        (equal (cdr call)
+                               (list "config" "view" "-o" expected-jsonpath))))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

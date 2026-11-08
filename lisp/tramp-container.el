@@ -410,6 +410,21 @@ Obey `tramp-kubernetes-context'"
 	      (goto-char (point-min))
 	      (buffer-substring (point) (line-end-position))))))))
 
+(defun tramp-kubernetes--jsonpath-quote-string (string)
+  "Return STRING as a quoted Kubernetes JSONPath string literal."
+  (concat "\""
+          (mapconcat
+           (lambda (char)
+             (cond
+              ((= char ?\") "\\\"")
+              ;; Use a Unicode escape so the parser's quote scanner does not
+              ;; mistake a trailing backslash for an escaped closing quote.
+              ((= char ?\\) "\\u005c")
+              ((or (< char 32) (= char 127)) (format "\\u%04x" char))
+              (t (char-to-string char))))
+           (string-to-list string) "")
+          "\""))
+
 (defun tramp-kubernetes--current-context-data (vec)
   "Return Kubernetes current context data as JSON string."
   (when-let* ((current-context (tramp-kubernetes--current-context vec)))
@@ -419,8 +434,8 @@ Obey `tramp-kubernetes-context'"
 	       (process-file
 		tramp-kubernetes-program nil t nil
 		"config" "view" "-o"
-		(format
-		 "jsonpath='{.contexts[?(@.name == \"%s\")]}'" current-context)))
+		(format "jsonpath={.contexts[?(@.name == %s)]}"
+			(tramp-kubernetes--jsonpath-quote-string current-context))))
 	  (buffer-string))))))
 
 ;;;###tramp-autoload
