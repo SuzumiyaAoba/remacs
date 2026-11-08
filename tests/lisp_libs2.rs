@@ -2836,6 +2836,44 @@ fn filename_completion_preserves_literal_tilde_directories_and_remote_prefixes()
 }
 
 #[test]
+fn cd_completion_excludes_file_when_later_cdpath_entry_has_directory() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'files)
+              (let* ((root (make-temp-file "cd-completion-" t))
+                     (dir-a (file-name-as-directory
+                             (expand-file-name "A" root)))
+                     (dir-b (file-name-as-directory
+                             (expand-file-name "B" root)))
+                     (cd-path (list dir-a dir-b))
+                     (table (apply-partially
+                             #'locate-file-completion-table cd-path nil))
+                     (cd-table (apply-partially
+                                #'files--cd-completion-table cd-path nil))
+                     (predicate
+                      (lambda (name)
+                        (locate-file name cd-path nil
+                                     (lambda (path)
+                                       (and (file-directory-p path) 'dir-ok)))))
+                     original-result cd-result)
+                (unwind-protect
+                    (progn
+                      (make-directory dir-a)
+                      (make-directory dir-b)
+                      (with-temp-file (expand-file-name "a" dir-a)
+                        (insert "file"))
+                      (make-directory (expand-file-name "a" dir-b))
+                      (setq original-result
+                            (sort (all-completions "a" table predicate)
+                                  #'string<)
+                            cd-result (all-completions "a" cd-table predicate))
+                      (list original-result cd-result))
+                  (delete-directory root t))))"#),
+        "((\"a\" \"a/\") (\"a/\"))"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
