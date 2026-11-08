@@ -4524,12 +4524,33 @@ With a zero prefix arg, put the name inside a function call to `info'."
   '((t :inherit fixed-pitch-serif))
   "Face used for quoted elements.")
 
+(defun Info-fontify-quoted (limit)
+  "Fontify a balanced curly-quoted span before LIMIT."
+  (let (found)
+    (while (and (not found) (search-forward "‘" limit t))
+      (let ((start (match-beginning 0))
+            (content-start (match-end 0))
+            (depth 1)
+            end)
+        (while (and (> depth 0) (re-search-forward "[‘’]" limit t))
+          (if (eq (char-after (match-beginning 0)) ?‘)
+              (setq depth (1+ depth))
+            (setq depth (1- depth))
+            (when (= depth 0)
+              (setq end (match-beginning 0)))))
+        (if (= depth 0)
+            (progn
+              (set-match-data (list start (point) content-start end))
+              (setq found t))
+          ;; If this quote is unbalanced, try a nested opening quote.
+          (goto-char (1+ start)))))
+    found))
+
 ;; We deliberately fontify only ‘..’ quoting, and not `..', because
 ;; the former can be done much more reliably, i.e. without risking
 ;; false positives.
-;; FIXME: It doesn't handle nested quotes.
 (defvar Info-mode-font-lock-keywords
-  '(("‘\\([‘’]\\|[^‘’]*\\)’" (1 'Info-quoted))))
+  '((Info-fontify-quoted (1 'Info-quoted))))
 
 ;; See info-utils.c:degrade_utf8 in Texinfo for the source of the list
 ;; below.

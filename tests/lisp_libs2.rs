@@ -2915,6 +2915,22 @@ fn oclosure_mutable_slot_setter_has_setter_documentation() {
 }
 
 #[test]
+fn info_fontifies_nested_curly_quotes() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'info)
+              (with-temp-buffer
+                (insert "‘outer ‘inner’ outer’")
+                (Info-mode)
+                (font-lock-ensure)
+                (list (eq (get-text-property 3 'face) 'Info-quoted)
+                      (eq (get-text-property 10 'face) 'Info-quoted)
+                      (eq (get-text-property 18 'face) 'Info-quoted))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
