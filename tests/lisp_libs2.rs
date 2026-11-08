@@ -2657,6 +2657,64 @@ fn ange_ftp_preserves_literal_at_suffix_unless_ls_marks_symlinks() {
 }
 
 #[test]
+fn gnus_server_compact_server_updates_group_lines_for_its_server() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'gnus-srvr)
+              (let* ((gnus-group-buffer " *gnus-compact-test*")
+                     (group-buffer (get-buffer-create gnus-group-buffer))
+                     (gnus-original-article-buffer nil)
+                     updates)
+                (unwind-protect
+                    (progn
+                      (with-current-buffer group-buffer
+                        (let ((inhibit-read-only t)
+                              (start (point-min)))
+                          (erase-buffer)
+                          (setq start (point))
+                          (insert "first\n")
+                          (put-text-property start (1- (point))
+                                             'gnus-group "mail.first")
+                          (setq start (point))
+                          (insert "unrelated\n")
+                          (put-text-property start (1- (point))
+                                             'gnus-group "other.group")
+                          (setq start (point))
+                          (insert "second\n")
+                          (put-text-property start (1- (point))
+                                             'gnus-group "mail.second")))
+                      (cl-letf (((symbol-function 'gnus-server-server-name)
+                                 (lambda (&rest _) "nnml:test"))
+                                ((symbol-function 'gnus-server-to-method)
+                                 (lambda (&rest _) '(nnml "test")))
+                                ((symbol-function 'gnus-get-function)
+                                 (lambda (&rest _) t))
+                                ((symbol-function 'gnus-message)
+                                 (lambda (&rest _) nil))
+                                ((symbol-function 'gnus-open-server)
+                                 (lambda (&rest _) t))
+                                ((symbol-function 'gnus-request-compact)
+                                 (lambda (&rest _) t))
+                                ((symbol-function 'gnus-kill-buffer)
+                                 (lambda (&rest _) nil))
+                                ((symbol-function 'gnus-find-method-for-group)
+                                 (lambda (group)
+                                   (if (member group '("mail.first" "mail.second"))
+                                       '(nnml "test")
+                                     '(nnml "other"))))
+                                ((symbol-function 'gnus-group-update-group-line)
+                                 (lambda (&rest _)
+                                   (push (gnus-group-group-name) updates))))
+                        (gnus-server-compact-server))
+                      (nreverse updates))
+                  (when (buffer-live-p group-buffer)
+                    (kill-buffer group-buffer)))))"#),
+        "(\"mail.first\" \"mail.second\")"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn

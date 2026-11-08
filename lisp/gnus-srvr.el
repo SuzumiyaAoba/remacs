@@ -1056,8 +1056,27 @@ doing the deletion."
 ;;; Server compaction. -- dvl
 ;;;
 
-;; #### FIXME: this function currently fails to update the Group buffer's
-;; #### appearance.
+(defun gnus-server--update-compacted-group-lines (server)
+  "Update visible Group buffer lines for SERVER after compaction."
+  (let ((buffer (and gnus-group-buffer (get-buffer gnus-group-buffer)))
+        (method (gnus-server-to-method server))
+        groups)
+    (when buffer
+      (with-current-buffer buffer
+        (save-excursion
+          (save-restriction
+            (widen)
+            (goto-char (point-min))
+            (while (not (eobp))
+              (when-let ((group (gnus-group-group-name)))
+                (push group groups))
+              (forward-line 1))
+            (dolist (group (nreverse groups))
+              (when (and (gnus-server-equal
+                          (gnus-find-method-for-group group) method)
+                         (gnus-group-goto-group group t))
+                (gnus-group-update-group-line)))))))))
+
 (defun gnus-server-compact-server ()
   "Issue a command to the server to compact all its groups.
 
@@ -1082,7 +1101,8 @@ Requesting compaction of %s... (this may take a long time)"
       ;; Invalidate the original article buffer which might be out of date.
       ;; #### NOTE: Yes, this might be a bit rude, but since compaction
       ;; #### will not happen very often, I think this is acceptable.
-      (gnus-kill-buffer gnus-original-article-buffer))))
+      (gnus-kill-buffer gnus-original-article-buffer)
+      (gnus-server--update-compacted-group-lines server))))
 
 (defun gnus-server-toggle-cloud-server ()
   "Toggle whether the server under point is replicated in the Emacs Cloud."
