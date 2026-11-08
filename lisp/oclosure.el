@@ -329,10 +329,21 @@ list of slot properties.  The currently known properties are the following:
                               (oclosure--accessor-copy
                                oclosure--mut-getter-prototype
                                ',name ',slot ,i))
+                            (put ',aname 'function-documentation
+                                 ,(format
+                                   "Access slot \"%S\" of OBJ of type `%S'.\n\n(fn OBJ)"
+                                   slot name))
                             (defalias ',(gv-setter aname)
                               (oclosure--accessor-copy
                                oclosure--mut-setter-prototype
-                               ',name ',slot ,i))))))
+                               ',name ',slot ,i))
+                            ;; The OClosure accessor prototype documents a
+                            ;; getter; give the setter symbol its own calling
+                            ;; convention and description.
+                            (put ',(gv-setter aname) 'function-documentation
+                                 ,(format
+                                   "Set slot \"%S\" of OBJ of type `%S' to VAL.\n\n(fn VAL OBJ)"
+                                   slot name))))))
                    slotdescs))
        ,@(oclosure--defstruct-make-copiers
           copiers slotdescs name))))
@@ -546,7 +557,7 @@ immutable fields are indeed not mutated."
   (oclosure-lambda (oclosure-accessor (type) (slot) (index)) (oclosure)
     (oclosure--get oclosure index t)))
 (defconst oclosure--mut-setter-prototype
-  ;; FIXME: The generated docstring is wrong.
+  ;; The setter's generated docstring lives on its symbol (see above).
   (oclosure-lambda (oclosure-accessor (type) (slot) (index)) (val oclosure)
     (oclosure--set val oclosure index)))
 

@@ -2895,6 +2895,26 @@ fn gv_setter_preserves_uninterned_symbol_identity() {
 }
 
 #[test]
+fn oclosure_mutable_slot_setter_has_setter_documentation() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'oclosure)
+              (require 'gv)
+              (require 'simple)
+              (oclosure-define (probe-oc-1673) "Probe type" (slot :mutable t))
+              (let* ((getter 'probe-oc-1673--slot)
+                     (setter (gv-setter getter))
+                     (getter-doc (documentation getter))
+                     (setter-doc (documentation setter)))
+                (list (and (string-match-p "\\`Access slot" getter-doc) t)
+                      (and (string-match-p "\\`Set slot" setter-doc) t)
+                      (and (string-match-p "(fn VAL OBJ)\\'" setter-doc) t)
+                      (not (equal getter-doc setter-doc)))))"#),
+        "(t t t t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
