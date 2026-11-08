@@ -2626,6 +2626,37 @@ fn erc_identd_rejects_zero_and_out_of_range_query_ports() {
 }
 
 #[test]
+fn ange_ftp_preserves_literal_at_suffix_unless_ls_marks_symlinks() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'dired)
+              (require 'ange-ftp)
+              (let ((listing
+                     "lrwxrwxrwx 1 owner group 6 Jan 1 00:00 link@ -> target\n")
+                    (regexp
+                     "^lrwxrwxrwx 1 owner group 6 Jan 1 00:00 "))
+                (list
+                 (with-temp-buffer
+                   (let ((directory-listing-before-filename-regexp regexp)
+                         (dired-ls-F-marks-symlinks nil))
+                     (insert listing)
+                     (goto-char (point-min))
+                     (let ((files (ange-ftp-ls-parser "-F")))
+                       (list (gethash "link@" files)
+                             (gethash "link" files)))))
+                 (with-temp-buffer
+                   (let ((directory-listing-before-filename-regexp regexp)
+                         (dired-ls-F-marks-symlinks t))
+                     (insert listing)
+                     (goto-char (point-min))
+                     (let ((files (ange-ftp-ls-parser "-F")))
+                       (list (gethash "link@" files)
+                             (gethash "link" files))))))))"#),
+        "((\"target\" nil) (nil \"target\"))"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn

@@ -2730,7 +2730,9 @@ The main reason for this alist is to deal with file versions in VMS.")
 	    ;; Some ls's with the F switch mark symlinks with an @ (ULTRIX)
 	    ;; and others don't. (sigh...) Beware, that some Unix's don't
 	    ;; seem to believe in the F-switch
-	    (if (or (and symlink (string-match "@\\'" file))
+	    (if (or (and symlink
+		     (bound-and-true-p dired-ls-F-marks-symlinks)
+		     (string-match "@\\'" file))
 		    (and directory (string-match "/\\'" file))
 		    (and executable (string-match "\\*\\'" file))
 		    (and socket (string-match "=\\'" file)))
