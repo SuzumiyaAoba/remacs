@@ -224,7 +224,8 @@ fn function_key_name(key: &str) -> Option<&str> {
         "up" | "down" | "left" | "right" | "home" | "end" | "begin" | "help" | "break"
         | "back" | "forward" | "pause" | "print" | "select" | "clear" | "delete"
         | "insert" | "undo" | "redo" | "insertline" | "deleteline" | "insertchar"
-        | "deletechar" | "execute" | "find" | "menu" => Some(key),
+        | "deletechar" | "execute" | "find" | "menu" | "cut" | "copy" | "paste"
+        | "new" | "open" | "save" => Some(key),
         key if key.starts_with("kp-") => Some(key),
         key if key.starts_with('f') && key[1..].parse::<u32>().is_ok() => Some(key),
         _ => None,
