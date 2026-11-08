@@ -2985,6 +2985,23 @@ fn nnfeed_serializes_group_names_as_lisp_strings() {
 }
 
 #[test]
+fn cc_forward_label_skips_ternary_colon_in_case_label() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cc-mode)
+              (with-temp-buffer
+                (insert "switch (x) {\ncase 1 ? 2 : 3:\nreturn 1;\n}\n")
+                (c-mode)
+                (goto-char (point-min))
+                (search-forward "case")
+                (backward-char 4)
+                (c-forward-label)
+                (buffer-substring (point) (line-end-position))))"#),
+        "\"\""
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
