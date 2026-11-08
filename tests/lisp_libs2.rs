@@ -3178,6 +3178,24 @@ fn mpc_constraints_pop_empty_ring_reports_no_selection() {
 }
 
 #[test]
+fn org_agenda_next_date_line_handles_leading_whitespace() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'org-agenda)
+              (require 'cl-lib)
+              (let ((org-agenda-type 'agenda))
+                (with-temp-buffer
+                  (insert "  Monday\n  Tuesday\n")
+                  (goto-char (point-min))
+                  (cl-letf (((symbol-function 'org-agenda-check-type)
+                             (lambda (&rest _) nil)))
+                    (org-agenda-next-date-line))
+                  (= (line-number-at-pos) 2))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn doc_view_persists_page_and_slice_per_window() {
     assert_eq!(
         ev(r#"(progn

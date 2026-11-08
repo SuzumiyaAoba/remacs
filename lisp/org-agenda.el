@@ -8961,13 +8961,13 @@ so that the date SD will be in that range."
   "Jump to the next line indicating a date in agenda buffer."
   (interactive "p")
   (org-agenda-check-type t 'agenda)
-  (forward-line 0)
-  ;; This does not work if user makes date format that starts with a blank
-  (when (looking-at-p "^\\S-") (forward-char 1))
-  (unless (re-search-forward "^\\S-" nil t arg)
-    (backward-char 1)
-    (error "No next date after this line in this buffer"))
-  (goto-char (match-beginning 0)))
+  (let ((date-line-regexp "^[ \t]*\\S-"))
+    (forward-line 0)
+    (when (looking-at-p date-line-regexp) (forward-line 1))
+    (unless (re-search-forward date-line-regexp nil t arg)
+      (backward-char 1)
+      (error "No next date after this line in this buffer"))
+    (goto-char (match-beginning 0))))
 
 (defun org-agenda-previous-date-line (&optional arg)
   "Jump to the previous line indicating a date in agenda buffer."
