@@ -451,15 +451,17 @@ pub fn run_gui_with_dump(
     let initial_skip_taskbar = initial_frame_size.is_some_and(|frame| frame.skip_taskbar);
     let initial_sticky = initial_frame_size.is_some_and(|frame| frame.sticky);
     let initial_shaded = initial_frame_size.is_some_and(|frame| frame.shaded);
-    let initial_min_size = initial_frame_size.and_then(|frame| {
-        frame_minimum_size(
-            frame.min_width,
-            frame.min_height,
-            8.0,
-            19.0,
-            frame.internal_border_width as f32 * 2.0,
-        )
-    });
+    let initial_min_size = initial_frame_size
+        .and_then(|frame| {
+            frame_minimum_size(
+                frame.min_width,
+                frame.min_height,
+                8.0,
+                19.0,
+                frame.internal_border_width as f32 * 2.0,
+            )
+        })
+        .or_else(|| frame_minimum_size(None, None, 8.0, 19.0, 0.0));
 
     let open_error = Arc::new(Mutex::new(None));
     let app_open_error = Arc::clone(&open_error);
@@ -1320,11 +1322,10 @@ fn frame_minimum_size(
     let columns = min_width
         .unwrap_or(MIN_FRAME_COLUMNS)
         .max(MIN_FRAME_COLUMNS);
+    let rows = min_height.unwrap_or(3).max(3);
     Some(size(
         px((columns as f32 * cell_width.max(1.0) + border).ceil()),
-        min_height
-            .map(|height| px((height as f32 * line_height.max(1.0) + border).ceil()))
-            .unwrap_or(px(0.0)),
+        px((rows as f32 * line_height.max(1.0) + border).ceil()),
     ))
 }
 
