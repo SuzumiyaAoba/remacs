@@ -1268,6 +1268,26 @@ fn echo_input_cursor(text: &str, cursor_utf16: usize) -> Option<(usize, usize)> 
     (utf16 == cursor_utf16).then_some((characters, columns))
 }
 
+fn echo_input_cursor_in_display_text(
+    display_text: &str,
+    input_text: &str,
+    cursor_utf16: usize,
+) -> Option<(usize, usize)> {
+    let (input_cursor_character, _) = echo_input_cursor(input_text, cursor_utf16)?;
+    let input_start = display_text.rfind(input_text)?;
+    let cursor_character = display_text[..input_start]
+        .chars()
+        .count()
+        .saturating_add(input_cursor_character);
+    let cursor_column = display_text
+        .chars()
+        .take(cursor_character)
+        .fold(0usize, |column, character| {
+            column.saturating_add(echo_char_width(character, column))
+        });
+    Some((cursor_character, cursor_column))
+}
+
 fn echo_message_end_position(text: &str, width: usize) -> (usize, usize) {
     if width == 0 {
         return (0, 0);
@@ -1672,9 +1692,7 @@ impl ChanIo {
         let fallback_cursor_index = use_grid_cursor.then_some(grid.cursor_index).flatten();
         let input_cursor = if use_grid_cursor {
             grid.input.as_ref().and_then(|input| {
-                (input.text.as_ref() == text)
-                    .then(|| echo_input_cursor(&input.text, input.cursor))
-                    .flatten()
+                echo_input_cursor_in_display_text(text, input.text.as_ref(), input.cursor)
             })
         } else {
             None
