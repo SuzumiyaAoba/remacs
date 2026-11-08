@@ -2414,6 +2414,15 @@ non-nil disables the breakpoint."
 		     (idlwave-shell-current-module))
    no-show))
 
+(defun idlwave-shell-read-break-after-count (prompt)
+  "Read a positive breakpoint count using PROMPT."
+  (let* ((answer (read-string prompt))
+         (count (and (string-match-p "\\`[0-9]+\\'" answer)
+                     (string-to-number answer))))
+    (unless (and count (> count 0))
+      (user-error "Count must be a positive integer"))
+    count))
+
 (defun idlwave-shell-set-bp-check (bp)
   "Check for failure to set breakpoint.
 This is run on `idlwave-shell-post-command-hook'.
@@ -3683,8 +3692,8 @@ only for glyphs)."
 	 ((string-match "Count" select)
 	  (idlwave-shell-break-here (if (or (not count)
 					    (string-match "Change" select))
-					(string-to-number
-					 (read-string "Break After Count: ")))
+					(idlwave-shell-read-break-after-count
+					 "Break After Count: "))
 				    cmd condition disabled))
 	 ((string-match "able$" select)
 	  (idlwave-shell-toggle-enable-current-bp))
@@ -4219,9 +4228,8 @@ Shell debugging commands are available as single key sequences."
       :keys "C-c C-d C-b" :active (derived-mode-p 'idlwave-mode)]
      ("Set Special Breakpoint"
       ["Set After Count Breakpoint"
-       (progn
-	(let ((count (string-to-number (read-string "Break after count: "))))
-	      (if (integerp count) (idlwave-shell-break-here count))))
+       (idlwave-shell-break-here
+	(idlwave-shell-read-break-after-count "Break after count: "))
        :active (derived-mode-p 'idlwave-mode)]
       ["Set Condition Breakpoint"
        (idlwave-shell-break-here '(4))

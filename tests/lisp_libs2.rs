@@ -2543,6 +2543,57 @@ fn mouse_avoidance_ignores_unreported_pointer_movement() {
 }
 
 #[test]
+fn idlwave_after_count_breakpoint_rejects_invalid_counts() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'idlw-shell)
+              (let* ((breakpoints
+                      (cl-find-if
+                       (lambda (entry)
+                         (and (consp entry) (equal (car entry) "Breakpoints")))
+                       (cdr idlwave-shell-menu-def)))
+                     (special
+                      (cl-find-if
+                       (lambda (entry)
+                         (and (consp entry)
+                              (equal (car entry) "Set Special Breakpoint")))
+                       (cdr breakpoints)))
+                     (item
+                      (cl-find-if
+                       (lambda (entry)
+                         (and (vectorp entry)
+                              (equal (aref entry 0) "Set After Count Breakpoint")))
+                       (cdr special)))
+                     (action (aref item 1))
+                     (answer "oops")
+                     passed)
+                (cl-letf (((symbol-function 'read-string)
+                           (lambda (&rest _) answer))
+                          ((symbol-function 'idlwave-shell-break-here)
+                           (lambda (count) (setq passed count))))
+                  (let ((bad-text
+                         (condition-case err
+                             (eval action)
+                           (user-error (car err)))))
+                    (setq answer "0")
+                    (let ((zero
+                           (condition-case err
+                               (eval action)
+                             (user-error (car err)))))
+                      (setq answer "3junk")
+                      (let ((trailing
+                             (condition-case err
+                                 (eval action)
+                               (user-error (car err)))))
+                        (setq answer "2")
+                        (eval action)
+                        (list bad-text zero trailing passed)))))))"#),
+        "(user-error user-error user-error 2)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
