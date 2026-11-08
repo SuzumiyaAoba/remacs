@@ -127,6 +127,7 @@ impl WindowsKeyboardLayout {
                 b"0415" | // Polish
                 b"0413" | // Dutch
                 b"0816" | // Portuguese
+                b"0416" | // Portuguese (Brazil)
                 b"041D" | // Swedish
                 b"0414" | // Norwegian
                 b"040B" | // Finnish
