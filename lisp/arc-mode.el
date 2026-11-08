@@ -2462,6 +2462,10 @@ LONG-NAME-TABLE is the data from the archive's extended name table."
          (propertize ".<ExtNamesTable>." 'face 'italic))
         ((equal name "/               ")
          (propertize ".<LookupTable>." 'face 'italic))
+        ;; Remacs: GNU and BSD ar use additional names for symbol tables.
+        ((or (string-match-p "\\`/SYM64/ *\\'" name)
+             (string-match-p "\\`__\\.SYMDEF *\\'" name))
+         (propertize ".<LookupTable>." 'face 'italic))
         ((string-match "^/\\([0-9]+\\) *$" name)
          (let* ((offset (string-to-number (match-string 1 name)))
                 (token (concat "/" (match-string 1 name)))

@@ -2477,6 +2477,38 @@ fn archive_ar_extracts_bsd_extended_member_names() {
 }
 
 #[test]
+fn archive_ar_recognizes_gnu_and_bsd_symbol_tables() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'arc-mode)
+              (let ((names nil)
+                    (record
+                     (lambda (name)
+                       (concat
+                        (format "%-16s%-12d%-6d%-6d%-8o%-10d`\n"
+                                name 0 0 0 #o100644 0)))))
+                (cl-letf (((symbol-function 'archive--summarize-descs)
+                           (lambda (descs)
+                             (setq names
+                                   (mapcar
+                                    (lambda (desc)
+                                      (substring-no-properties
+                                       (archive--file-desc-ext-file-name desc)))
+                                    descs)))))
+                  (with-temp-buffer
+                    (set-buffer-multibyte nil)
+                    (insert "!<arch>\n"
+                            (funcall record "/SYM64/")
+                            (funcall record "__.SYMDEF")
+                            (funcall record "/")
+                            (funcall record "foo.o"))
+                    (archive-ar-summarize)))
+                names))"#),
+        "(\".<LookupTable>.\" \".<LookupTable>.\" \".<LookupTable>.\" \"foo.o\")"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
