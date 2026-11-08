@@ -2458,6 +2458,14 @@ impl Render for EditorView {
                                     .map(|line| (row, grid_line_x(&grid, row, line, index)))
                             })
                             .or(fallback_cursor);
+                        let (composition_foreground, composition_background) = style_colors(
+                            grid.default_style,
+                            default_background,
+                            background_alpha,
+                            grid.gamma_exponent,
+                        );
+                        let composition_background =
+                            composition_background.unwrap_or(default_background_fill.into());
                         let composition_caret = if !marked.is_empty() {
                             composition_origin.map(|(row, x)| {
                                 let origin = point(
@@ -2475,12 +2483,7 @@ impl Render for EditorView {
                                     |start: usize, end: usize, selected: bool| TextRun {
                                         len: end.saturating_sub(start),
                                         font: composition_font.clone(),
-                                        color: if selected {
-                                            rgb(gamma_correct_rgb(0xffffff, grid.gamma_exponent))
-                                                .into()
-                                        } else {
-                                            rgb(gamma_correct_rgb(FG, grid.gamma_exponent)).into()
-                                        },
+                                        color: composition_foreground,
                                         background_color: selected.then(|| {
                                             rgb(gamma_correct_rgb(0x356fce, grid.gamma_exponent))
                                                 .into()
@@ -2556,7 +2559,7 @@ impl Render for EditorView {
                                                     line_height,
                                                 ),
                                             },
-                                            default_background_fill,
+                                            composition_background,
                                         ));
                                         let _ = line.paint(origin, line_height, window, _cx);
                                         if can_shift_suffix {
