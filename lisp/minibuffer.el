@@ -3712,22 +3712,28 @@ same as `substitute-in-file-name'."
   ;; `substitute-in-file-name' handles `~FOO' specially (by cutting
   ;; any prefix to it that ends in `/', so `/foo/~bar/baz' turns into
   ;; `~bar/baz') but only if `FOO' is the name of a user on the system.
-  ;; Completion of `~FOO' against the set of user names is handled
-  ;; already in `completion-file-name-table' when `~FOO' occurs at the
-  ;; beginning of the file name, but if we want to support such completions
-  ;; "in the middle", I see two ways to do it:
-  ;; - Do something similar to `completion--embedded-envvar-table'.
-  ;; - Extend `substitute-in-file-name's handling of `~FOO' so
-  ;;   `/foo/~bar/baz' turns into `~bar/baz' regardless if `bar'
-  ;;   is a valid user name (because we hope that it will be completed
-  ;;   to a user name).
-  ;; The second option is what we do here.  (bug#32215)
-  ;; FIXME: This breaks completion when you have a file or directory
-  ;; whose name starts with `~'.
-  ;; FIXME: This doesn't take file-name-handlers into account.
-  (while (string-match "/~[[:alnum:]_*-]" filename)
-    (setq filename (substring filename (1+ (match-beginning 0)))))
-  (substitute-in-file-name filename))
+  ;; Let filename handlers see the original name before doing any local
+  ;; processing, since their prefix is part of the file name.
+  (if (find-file-name-handler filename 'substitute-in-file-name)
+      (substitute-in-file-name filename)
+    (let ((start 0)
+          literal-tilde)
+      ;; Completion of `~FOO' in the middle is supported by discarding the
+      ;; prefix before it.  But if that component already exists literally,
+      ;; preserve it as an ordinary file or directory name.
+      (while (string-match "/~[[:alnum:]_*-]" filename start)
+        (let* ((tilde-start (1+ (match-beginning 0)))
+               (component-end (or (string-search "/" filename (match-end 0))
+                                  (length filename))))
+          (if (file-exists-p (substring filename 0 component-end))
+              (setq literal-tilde t
+                    start component-end)
+            (setq filename (substring filename tilde-start)
+                  start 0
+                  literal-tilde nil))))
+      (if literal-tilde
+          (file-name-quote filename)
+        (substitute-in-file-name filename)))))
 
 (defun completion--sifn-requote (upos qstr)
   ;; We're looking for (the largest) `qpos' such that:
@@ -3750,7 +3756,7 @@ same as `substitute-in-file-name'."
   ;; - Cygwin (substitute-in-file-name "C:\bin") => "/usr/bin"
   ;;          (substitute-in-file-name "C:\") => "/"
   ;;          (substitute-in-file-name "C:\bi") => "/bi"
-  (let* ((ustr (substitute-in-file-name qstr))
+  (let* ((ustr (completion--sifn-regardless-of-system-users qstr))
          (uprefix (substring ustr 0 upos))
          qprefix)
     (if (eq upos (length ustr))
@@ -3770,12 +3776,12 @@ same as `substitute-in-file-name'."
                     (progn
                       (setq qprefix (substring qstr 0 boundary))
                       (string-prefix-p uprefix
-                                       (substitute-in-file-name qprefix)))))
+                    (completion--sifn-regardless-of-system-users qprefix)))))
         (setq qstr qprefix))
       (let ((qpos (length qstr)))
         (while (and (> qpos 0)
                     (string-prefix-p uprefix
-                                     (substitute-in-file-name
+                                     (completion--sifn-regardless-of-system-users
                                       (substring qstr 0 (1- qpos)))))
           (setq qpos (1- qpos)))
         (cons qpos #'minibuffer-maybe-quote-filename)))))
@@ -3792,7 +3798,7 @@ boundaries for the original string."
   (let* ((doubled-string (replace-regexp-in-string "\\$" "$$" string t t))
          ;; sifn will change $$ back into $, so SIFNED is mostly the
          ;; same as STRING, with some text deleted.
-         (sifned (substitute-in-file-name doubled-string))
+         (sifned (completion--sifn-regardless-of-system-users doubled-string))
          (bounds (completion-boundaries sifned table pred suffix))
          (sifned-start (car bounds))
          ;; Adjust SIFNED-START to be an offset in STRING instead of in SIFNED.

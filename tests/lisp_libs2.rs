@@ -2808,6 +2808,34 @@ fn elint_update_env_keeps_preloaded_function_definitions() {
 }
 
 #[test]
+fn filename_completion_preserves_literal_tilde_directories_and_remote_prefixes() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'minibuffer)
+              (require 'tramp)
+              (let* ((root (make-temp-file "remacs-tilde-" t))
+                     (dirname (concat (file-name-as-directory root)
+                                      "~" (user-login-name)))
+                     (target (expand-file-name "target" dirname))
+                     (input (concat (file-name-as-directory dirname) "tar"))
+                     (default-directory root))
+                (unwind-protect
+                    (progn
+                      (make-directory dirname)
+                      (with-temp-file target (insert "x"))
+                      (list (file-name-all-completions "tar" dirname)
+                            (completion--file-name-table input nil t)
+                            (and (string-match-p
+                                  "\\`/ssh:host:"
+                                  (completion--sifn-regardless-of-system-users
+                                   "/ssh:host:/foo/~bar/baz"))
+                                 t)))
+                  (delete-directory root t))))"#),
+        "((\"target\") (\"target\") t)"
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
