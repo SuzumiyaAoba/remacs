@@ -1746,6 +1746,43 @@ fn url_parse_query_string_discards_empty_fields() {
 }
 
 #[test]
+fn binhex_external_decoder_confines_header_filename() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'binhex)
+              (let* ((root (make-temp-file "qa-binhex-path-" t))
+                     (temporary-file-directory
+                      (file-name-as-directory (expand-file-name "tmp" root)))
+                     (outside (expand-file-name "outside.data" root)))
+                (make-directory temporary-file-directory)
+                (unwind-protect
+                    (progn
+                      (with-temp-file outside (insert "protected"))
+                      (with-temp-buffer
+                        (insert (concat ":" (make-string 63 ?a) "\n"))
+                        (cl-letf (((symbol-function 'binhex-decode-region-internal)
+                                   (lambda (&rest _) "../outside"))
+                                  ((symbol-function 'call-process-region)
+                                   (lambda (&rest _)
+                                     (with-temp-file "outside.data"
+                                       (insert "decoded"))
+                                     0)))
+                          (binhex-decode-region-external (point-min) (point-max))
+                          (and (equal (buffer-string) "decoded")
+                               (equal (with-temp-buffer
+                                        (insert-file-contents-literally outside)
+                                        (buffer-string))
+                                      "protected")
+                               (not (file-exists-p
+                                     (expand-file-name "outside.data"
+                                                       temporary-file-directory)))))))
+                  (delete-directory root t))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose

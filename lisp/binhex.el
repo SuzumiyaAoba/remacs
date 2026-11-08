@@ -274,12 +274,15 @@ If HEADER-ONLY is non-nil only decode header and return filename."
 (defun binhex-decode-region-external (start end)
   "Binhex decode region between START and END using external decoder."
   (interactive "r")
-  (let ((cbuf (current-buffer))
-	work-buffer ;; firstline
-	(file-name (expand-file-name
-		    (concat (binhex-decode-region-internal start end t)
-			    ".data")
-		    temporary-file-directory)))
+  ;; The header filename is untrusted; only use its basename in the temp dir.
+  (let* ((cbuf (current-buffer))
+	 work-buffer ;; firstline
+	 (decoded-file-name (binhex-decode-region-internal start end t))
+	 (file-name (expand-file-name
+		     (concat (and decoded-file-name
+				  (file-name-nondirectory decoded-file-name))
+			     ".data")
+		     temporary-file-directory)))
     (save-excursion
       (goto-char start)
       (when (re-search-forward binhex-begin-line nil t)
