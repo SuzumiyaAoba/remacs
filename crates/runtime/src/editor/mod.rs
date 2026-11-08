@@ -11181,6 +11181,20 @@ fn pop_keyboard_event(i: &mut Interp) -> Option<Value> {
     None
 }
 
+fn pop_frontend_keyboard_event(i: &mut Interp) -> Option<Value> {
+    let index = i
+        .pending_frontend_input
+        .iter()
+        .position(|input| matches!(input, crate::frontend::InputEvent::Key(_)))?;
+    let crate::frontend::InputEvent::Key(code) = i.pending_frontend_input.remove(index)? else {
+        return None;
+    };
+    let device = i.q("last-event-device");
+    i.store_internal_value(device, Value::Nil);
+    let event = keyboard_event_value(i, code);
+    Some(record_keyboard_event(i, event))
+}
+
 /// `discard-input': clears pending input — without a front-end that
 /// means clearing `unread-command-events' (GNU also drops the read
 /// socket backlog, which we don't have).
@@ -11398,10 +11412,27 @@ fn read_keyboard_event(i: &mut Interp, prompt: &str, deadline: EventDeadline) ->
             if let Some(ev) = pop_keyboard_event(i) {
                 return Ok(ev);
             }
+            if let Some(event) = pop_frontend_keyboard_event(i) {
+                return Ok(event);
+            }
+            if let Some(waiter) = i.sit_for_waiter.clone() {
+                let timeout = deadline
+                    .end
+                    .map(|end| end.saturating_duration_since(std::time::Instant::now()))
+                    .unwrap_or(std::time::Duration::from_millis(20))
+                    .min(std::time::Duration::from_millis(20));
+                waiter(i, timeout)?;
+                if let Some(event) = pop_frontend_keyboard_event(i) {
+                    return Ok(event);
+                }
+            } else if deadline.end.is_some_and(|end| std::time::Instant::now() >= end) {
+                return Ok(Value::Nil);
+            } else {
+                crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(1))?;
+            }
             if deadline.end.is_some_and(|end| std::time::Instant::now() >= end) {
                 return Ok(Value::Nil);
             }
-            crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(1))?;
         }
     }
     if i.minibuf_reader.is_some() {

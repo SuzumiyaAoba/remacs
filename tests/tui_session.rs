@@ -13,6 +13,7 @@
 //! infinite redraw spin.
 use remacs::lisp::Interp;
 use remacs::term::{Grid, KeyIo, render_grid};
+use remacs_runtime::frontend::install_minibuf_reader;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
@@ -47,6 +48,38 @@ impl KeyIo for ScriptIo {
         self.echoes.borrow_mut().push(text.to_string());
         Ok(())
     }
+    fn size(&self) -> (usize, usize) {
+        (80, 24)
+    }
+}
+
+struct EventQueueIo {
+    keys: VecDeque<i128>,
+    empty_polls: usize,
+}
+
+impl KeyIo for EventQueueIo {
+    fn poll_key(&mut self, _duration: Duration) -> io::Result<Option<i128>> {
+        if self.empty_polls > 0 {
+            self.empty_polls -= 1;
+            Ok(None)
+        } else {
+            Ok(self.keys.pop_front())
+        }
+    }
+
+    fn unread(&mut self, key: i128) {
+        self.keys.push_front(key);
+    }
+
+    fn render(&mut self, _i: &Interp) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn draw_echo(&mut self, _text: &str) -> io::Result<()> {
+        Ok(())
+    }
+
     fn size(&self) -> (usize, usize) {
         (80, 24)
     }
@@ -731,6 +764,33 @@ fn tui_extend_face_background_reaches_line_end() {
         .expect("set the extending active-region face");
         let grid = render_grid(&i, 80, 24);
         assert_extended_tail(&grid, "selected".len(), "active region");
+    })
+}
+
+#[test]
+fn tui_timeout_read_event_polls_frontend_input() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        let io = Rc::new(RefCell::new(EventQueueIo {
+            keys: VecDeque::from([97, 98]),
+            empty_polls: 2,
+        }));
+        install_minibuf_reader(&io, &mut i);
+
+        let event = i
+            .eval_str("(read-event nil nil 1)")
+            .expect("read-event should receive a frontend key before timeout");
+        assert_eq!(i.prin1_to_string(&event).to_unicode_lossy(), "97");
+
+        let character = i
+            .eval_str("(read-char nil nil 1)")
+            .expect("read-char should use the same frontend input path");
+        assert_eq!(i.prin1_to_string(&character).to_unicode_lossy(), "98");
+
+        let timeout = i
+            .eval_str("(read-event nil nil 0)")
+            .expect("an empty frontend queue should time out cleanly");
+        assert_eq!(i.prin1_to_string(&timeout).to_unicode_lossy(), "nil");
     })
 }
 
