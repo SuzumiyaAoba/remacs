@@ -961,7 +961,7 @@ Returns an error if the server cannot be contacted."
 		(setq n (1+ n))))
 
 	    ;; Send the contents.
-	    (smtpmail-command-or-throw process "DATA")
+	    (smtpmail-command-or-throw process "DATA" 354)
 	    (smtpmail-send-data process smtpmail-text-buffer)
 	    ;; Return success.
 	    nil))

@@ -2007,6 +2007,64 @@ fn tramp_kubernetes_context_data_quotes_context_for_jsonpath() {
 }
 
 #[test]
+fn smtpmail_requires_354_before_sending_message_data() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'smtpmail)
+              (let ((trace-buffer nil)
+                    (responses '((250 "250 sender accepted")
+                                 (250 "250 recipient accepted")
+                                 (250 "250 invalid DATA response")
+                                 (221 "221 goodbye")))
+                    (commands nil)
+                    (data-sent nil)
+                    (smtpmail-smtp-server "smtp.example")
+                    (smtpmail-smtp-service 25)
+                    (smtpmail-mail-address "sender@example.com")
+                    (smtpmail-debug-info t))
+                (unwind-protect
+                    (with-temp-buffer
+                      (insert "From: sender@example.com\nTo: recipient@example.com\n\nbody\n")
+                      (let ((result
+                             (cl-letf (((symbol-function 'open-network-stream)
+                                        (lambda (_name buffer &rest _)
+                                          (setq trace-buffer buffer)
+                                          (cons 'smtp-test-process
+                                                '(:greeting "220 smtp.example ready\r\n"
+                                                  :capabilities "250 HELP\r\n"))))
+                                       ((symbol-function 'set-process-filter)
+                                        (lambda (&rest _) nil))
+                                       ((symbol-function 'set-process-coding-system)
+                                        (lambda (&rest _) nil))
+                                       ((symbol-function 'process-buffer)
+                                        (lambda (&rest _) trace-buffer))
+                                       ((symbol-function 'delete-process)
+                                        (lambda (&rest _) nil))
+                                       ((symbol-function 'message-narrow-to-headers)
+                                        (lambda (&rest _) nil))
+                                       ((symbol-function 'smtpmail-fqdn)
+                                        (lambda () "client.example"))
+                                       ((symbol-function 'smtpmail-try-auth-methods)
+                                        (lambda (&rest _) nil))
+                                       ((symbol-function 'smtpmail-send-command)
+                                        (lambda (_process command)
+                                          (push command commands)))
+                                       ((symbol-function 'smtpmail-read-response)
+                                        (lambda (_process)
+                                          (prog1 (car responses)
+                                            (setq responses (cdr responses)))))
+                                       ((symbol-function 'smtpmail-send-data)
+                                        (lambda (&rest _) (setq data-sent t))))
+                               (smtpmail-via-smtp
+                                '("recipient@example.com") (current-buffer)))))
+                        (list result data-sent (nreverse commands))))
+                  (when (buffer-live-p trace-buffer)
+                    (kill-buffer trace-buffer)))))"#),
+        "(\"250 invalid DATA response in response to DATA\" nil (\"MAIL FROM:<sender@example.com>\" \"RCPT TO:<recipient@example.com>\" \"DATA\" \"QUIT\"))"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
