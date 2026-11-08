@@ -476,6 +476,11 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
 (defun bindat--pack-strz (len v)
   (let* ((v (string-to-unibyte v))
          (vlen (length v)))
+    ;; A zero byte ends the value when it is unpacked, regardless of
+    ;; whether the field has a fixed length.
+    (dotimes (i vlen)
+      (when (= (aref v i) 0)
+        (error "Null byte encountered in input strz string")))
     ;; Explicitly write a null terminator (if there's room) in case
     ;; the user provided a pre-allocated string to `bindat-pack' that
     ;; wasn't already zeroed.
@@ -486,11 +491,6 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
         ;; (except for the null terminator possibly written above).
         (bindat--pack-str len v)
       (dotimes (i vlen)
-        (when (= (aref v i) 0)
-          ;; Alternatively we could pretend that this was the end of
-          ;; the string and stop packing, but then bindat-length would
-          ;; need to scan the input string looking for a null byte.
-          (error "Null byte encountered in input strz string"))
         (aset bindat-raw (+ bindat-idx i) (aref v i)))
       (setq bindat-idx (+ bindat-idx vlen 1)))))
 

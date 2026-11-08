@@ -1874,6 +1874,23 @@ fn bindat_pack_preserves_field_sizes() {
 }
 
 #[test]
+fn bindat_pack_rejects_embedded_nul_in_fixed_strz() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'bindat)
+              (let ((raw (make-string 5 ?x)))
+                (list
+                 (condition-case err
+                     (progn
+                       (bindat-pack '((name strz 5)) '((name . "a\0b")) raw)
+                       'no-error)
+                   (error (car err)))
+                 (string-to-list raw))))"#),
+        "(error (120 120 120 120 120))"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose
