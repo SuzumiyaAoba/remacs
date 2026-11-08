@@ -2124,13 +2124,13 @@ pub(super) fn dispatch_text<T: KeyIo>(
     let mut chars = text.chars();
     if let Some(ch) = chars.next()
         && chars.next().is_none()
+        && !ch.is_control()
     {
         let key = crate::editor::translate_keyboard_input_code(i, ch as i128);
         if !has_input_method || key != ch as i128 {
-            // A single GUI text event is still a keyboard event.  Send it
-            // through normal key lookup so key-translation-map can affect
-            // otherwise printable characters, then let the dispatcher
-            // self-insert it when no binding applies.
+            // A single printable GUI text event is still a keyboard event.
+            // Send it through normal key lookup so key-translation-map can
+            // affect printable characters, then self-insert when unbound.
             return dispatch_key_pretranslated(term, i, key, keys, arg_mode);
         }
     }

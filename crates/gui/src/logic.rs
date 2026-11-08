@@ -2050,6 +2050,9 @@ impl KeyIo for ChanIo {
             }
             GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
+            GuiEvent::Text(text) if text.chars().any(char::is_control) => {
+                Ok(Some(InputEvent::Text(text)))
+            }
             GuiEvent::Text(text) => {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();
@@ -2070,6 +2073,11 @@ impl KeyIo for ChanIo {
                 Ok(Some(InputEvent::PopupMenuScrollAt { menu_id, parent, delta_lines }))
             }
             GuiEvent::CommandArgs { .. } => Ok(None),
+            GuiEvent::ReplaceText { range, text }
+                if text.chars().any(char::is_control) =>
+            {
+                Ok(Some(InputEvent::ReplaceText { range, text }))
+            }
             GuiEvent::ReplaceText { text, .. } => {
                 let mut chars = text.chars().map(|ch| ch as i128);
                 let first = chars.next();
