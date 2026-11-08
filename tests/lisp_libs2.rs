@@ -2433,6 +2433,50 @@ fn erc_identd_rejects_invalid_port_strings_before_opening_socket() {
 }
 
 #[test]
+fn archive_ar_extracts_bsd_extended_member_names() {
+    assert_eq!(
+        ev(r##"(progn
+              (require 'arc-mode)
+              (let* ((file (make-temp-file "bsd-ar"))
+                     (name "long_member.txt")
+                     (archive
+                      (concat "!<arch>\n"
+                              "#1/15" (make-string 11 32)
+                              "0" (make-string 11 32)
+                              "0" (make-string 5 32)
+                              "0" (make-string 5 32)
+                              "100644" (make-string 2 32)
+                              "16" (make-string 8 32)
+                              (string 96) "\n"
+                              name "x"))
+                     descs)
+                (unwind-protect
+                    (progn
+                      (with-temp-buffer
+                        (set-buffer-multibyte nil)
+                        (insert archive)
+                        (let ((coding-system-for-write 'no-conversion))
+                          (write-region (point-min) (point-max) file nil 'silent)))
+                      (cl-letf (((symbol-function 'archive--summarize-descs)
+                                 (lambda (files) (setq descs files))))
+                        (with-temp-buffer
+                          (set-buffer-multibyte nil)
+                          (insert-file-contents-literally file)
+                          (archive-ar-summarize)))
+                      (let ((contents
+                             (with-temp-buffer
+                               (set-buffer-multibyte nil)
+                               (archive-ar-extract file name)
+                               (buffer-string))))
+                        (list (archive--file-desc-ext-file-name (car descs))
+                              (archive--file-desc-size (car descs))
+                              contents)))
+                  (delete-file file))))"##),
+        "(\"long_member.txt\" 1 \"x\")"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

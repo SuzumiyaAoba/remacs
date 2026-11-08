@@ -2447,8 +2447,9 @@ FILENAME-START and FILENAME-LENGTH describe the original filename bytes."
 ;; -------------------------------------------------------------------------
 ;;; Section `ar' archives.
 
-;; TODO: we handle GNU/SVR4 long-name tables, but not the other GNU or BSD
-;; extensions.  The supported format is sufficient for .deb packages.
+;; TODO: we handle GNU/SVR4 long-name tables and BSD extended names, but not
+;; the other GNU extensions.  The supported format is sufficient for .deb
+;; packages.
 
 (defconst archive-ar-file-header-re
   "\\(.\\{16\\}\\)\\([ 0-9]\\{12\\}\\)\\([ 0-9]\\{6\\}\\)\\([ 0-9]\\{6\\}\\)\\([ 0-7]\\{8\\}\\)\\([ 0-9]\\{10\\}\\)`\n")
@@ -2475,6 +2476,11 @@ LONG-NAME-TABLE is the data from the archive's extended name table."
          ;; FIXME: Decode?  Add support for longer names?
          (substring name 0 (match-beginning 0)))))
 
+(defun archive-ar--bsd-extended-name-length (name)
+  "Return the BSD extended filename length encoded in NAME, or nil."
+  (when (string-match "^#1/\\([0-9]+\\) *$" name)
+    (string-to-number (match-string 1 name))))
+
 (defun archive-ar-summarize ()
   ;; File is used internally for `archive-rar-exe-summarize'.
   (let ((files ())
@@ -2483,24 +2489,35 @@ LONG-NAME-TABLE is the data from the archive's extended name table."
     (search-forward "!<arch>\n")
     (while (looking-at archive-ar-file-header-re)
       (let* ((name (match-string 1))
+             (data-start (match-end 0))
              extname
              (time (string-to-number (match-string 2)))
              (user (match-string 3))
              (group (match-string 4))
              (mode (string-to-number (match-string 5) 8))
              (sizestr (match-string 6))
-             (size (string-to-number sizestr)))
+             (member-size (string-to-number sizestr))
+             (name-size (archive-ar--bsd-extended-name-length name))
+             (size (- member-size (or name-size 0))))
+        (when (and name-size (> name-size member-size))
+          (error "Invalid BSD ar member name length"))
         ;; Move to the beginning of the data.
-        (goto-char (match-end 0))
+        (goto-char data-start)
         (when (equal name "//              ")
           (setq long-name-table
-                (buffer-substring-no-properties (point) (+ (point) size))))
+                (buffer-substring-no-properties (point) (+ (point) member-size))))
         (setq time (format-time-string "%Y-%m-%d %H:%M" time))
-        (setq extname (archive-ar--name name long-name-table))
+        (setq extname
+              (if name-size
+                  (decode-coding-string
+                   (buffer-substring-no-properties (point)
+                                                   (+ (point) name-size))
+                   (or archive-file-name-coding-system 'no-conversion))
+                (archive-ar--name name long-name-table)))
         (setq user (substring user 0 (string-match " +\\'" user)))
         (setq group (substring group 0 (string-match " +\\'" group)))
         ;; Move to the end of the data.
-        (forward-char size) (if (eq ?\n (char-after)) (forward-char 1))
+        (forward-char member-size) (if (eq ?\n (char-after)) (forward-char 1))
         (push (archive--file-desc extname extname mode size time
                                   :uid user :gid group)
               files)))
@@ -2518,17 +2535,29 @@ LONG-NAME-TABLE is the data from the archive's extended name table."
           (widen)
           (search-forward "!<arch>\n")
           (while (and (not from) (looking-at archive-ar-file-header-re))
-            (let ((this (match-string 1)))
-              (setq size (string-to-number (match-string 6)))
-              (goto-char (match-end 0))
+            (let* ((this (match-string 1))
+                   (data-start (match-end 0))
+                   (member-size (string-to-number (match-string 6)))
+                   (name-size (archive-ar--bsd-extended-name-length this)))
+              (when (and name-size (> name-size member-size))
+                (error "Invalid BSD ar member name length"))
+              (goto-char data-start)
               (when (equal this "//              ")
                 (setq long-name-table
                       (buffer-substring-no-properties
-                       (point) (+ (point) size))))
-              (if (equal name (archive-ar--name this long-name-table))
-                  (setq from (point))
+                       data-start (+ data-start member-size))))
+              (if (equal
+                   name
+                   (if name-size
+                       (decode-coding-string
+                        (buffer-substring-no-properties
+                         data-start (+ data-start name-size))
+                        (or archive-file-name-coding-system 'no-conversion))
+                     (archive-ar--name this long-name-table)))
+                  (setq from (+ data-start (or name-size 0))
+                        size (- member-size (or name-size 0)))
                 ;; Move to the end of the data.
-                (forward-char size)
+                (goto-char (+ data-start member-size))
                 (if (eq ?\n (char-after)) (forward-char 1)))))
           (when from
             (set-buffer-multibyte nil)
