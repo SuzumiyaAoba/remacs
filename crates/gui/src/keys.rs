@@ -341,6 +341,16 @@ pub(super) fn keystroke_to_code(ks: &Keystroke) -> Option<i128> {
     )
 }
 
+fn unmodified_keypad_digit(ks: &Keystroke) -> Option<char> {
+    let digit = ks.key.strip_prefix("kp-")?;
+    if digit.len() != 1 || !digit.as_bytes()[0].is_ascii_digit() {
+        return None;
+    }
+    let mut text = ks.key_char.as_deref()?.chars();
+    let character = text.next()?;
+    (character.is_ascii_digit() && text.next().is_none()).then_some(character)
+}
+
 pub(super) fn keystroke_to_code_with_mapping(
     ks: &Keystroke,
     mapping: ModifierMapping,
@@ -350,6 +360,13 @@ pub(super) fn keystroke_to_code_with_mapping(
         modifier_bits(&ks.modifiers, mapping, physical, modifier_context(ks));
     let named = |name: &str| remacs_runtime::editor::event_code_for(name);
     if let Some(name) = function_key_name(&ks.key) {
+        if mods == 0
+            && !has_unmapped
+            && name.starts_with("kp-")
+            && let Some(character) = unmodified_keypad_digit(ks)
+        {
+            return Some(character as i128);
+        }
         return Some(named(name) | mods);
     }
     if mods == CHAR_SHIFT

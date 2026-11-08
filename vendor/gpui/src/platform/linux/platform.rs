@@ -852,8 +852,6 @@ impl crate::Keystroke {
             Keysym::Prior => "pageup".to_owned(),
             Keysym::Next => "pagedown".to_owned(),
             Keysym::ISO_Left_Tab => "tab".to_owned(),
-            Keysym::KP_Prior => "pageup".to_owned(),
-            Keysym::KP_Next => "pagedown".to_owned(),
             Keysym::XF86_Back => "back".to_owned(),
             Keysym::XF86_Forward => "forward".to_owned(),
             Keysym::XF86_Cut => "cut".to_owned(),
@@ -918,7 +916,7 @@ impl crate::Keystroke {
                     // Preserve the canonical spelling used by named bindings.
                     name
                 } else if key_sym.is_keypad_key() {
-                    name.to_lowercase().replace("kp_", "")
+                    name.to_lowercase().replace("kp_", "kp-")
                 } else if let Some(key) = key_utf8.chars().next()
                     && key_utf8.len() == 1
                     && key.is_ascii()
