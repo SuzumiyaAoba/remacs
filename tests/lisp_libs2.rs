@@ -2477,6 +2477,27 @@ fn archive_ar_extracts_bsd_extended_member_names() {
 }
 
 #[test]
+fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'ange-ftp)
+              (let (calls)
+                (cl-letf (((symbol-function 'ange-ftp-call-chmod)
+                           (lambda (args) (push args calls))))
+                  (ange-ftp-set-file-modes "/user@host:/link" #o600 nil)
+                  (let ((error-type
+                         (condition-case err
+                             (progn
+                               (ange-ftp-set-file-modes
+                                "/user@host:/link" #o600 'nofollow)
+                               'no-error)
+                           (error (car err)))))
+                    (list (nreverse calls) error-type)))))"#),
+        "(((\"600\" \"/user@host:/link\")) file-error)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

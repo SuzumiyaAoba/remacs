@@ -4759,7 +4759,10 @@ NEWNAME should be the name to give the new compressed or uncompressed file.")
   0)
 
 (defun ange-ftp-set-file-modes (filename mode &optional flag)
-  flag ;; FIXME: Support 'nofollow'.
+  (when (eq flag 'nofollow)
+    (signal 'file-error
+            (list "set-file-modes" "nofollow is not supported over FTP"
+                  filename)))
   (ange-ftp-call-chmod (list (format "%o" mode) filename)))
 
 (defun ange-ftp-make-symbolic-link (&rest _arguments)
