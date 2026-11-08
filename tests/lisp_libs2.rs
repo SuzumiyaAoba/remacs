@@ -2398,6 +2398,41 @@ fn change_log_font_lock_recognizes_slash_date_formats() {
 }
 
 #[test]
+fn erc_identd_rejects_invalid_port_strings_before_opening_socket() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'erc-identd)
+              (let* ((invalid-results
+                      (mapcar
+                       (lambda (port)
+                         (let ((service nil)
+                               (erc-identd-process nil))
+                           (condition-case err
+                               (cl-letf (((symbol-function 'make-network-process)
+                                          (lambda (&rest args)
+                                            (setq service (plist-get args :service))
+                                            'fake-process))
+                                         ((symbol-function 'set-process-query-on-exit-flag)
+                                          (lambda (&rest _) nil)))
+                                 (erc-identd-start port)
+                                 (list 'accepted service))
+                             (error (list (car err) service)))))
+                       '("garbage" "8113junk")))
+                     (service nil)
+                     (erc-identd-process nil))
+                (cl-letf (((symbol-function 'make-network-process)
+                           (lambda (&rest args)
+                             (setq service (plist-get args :service))
+                             'fake-process))
+                          ((symbol-function 'set-process-query-on-exit-flag)
+                           (lambda (&rest _) nil)))
+                  (erc-identd-start "8113"))
+                (list invalid-results service)))"#),
+        "(((user-error nil) (user-error nil)) 8113)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

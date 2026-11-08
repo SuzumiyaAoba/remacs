@@ -87,6 +87,13 @@ system."
   (interactive (list (read-string "Serve identd requests on port: " "8113")))
   (unless port (setq port erc-identd-port))
   (when (stringp port)
+    (unless (let ((prefix-end
+                   (save-match-data
+                     (and (string-match "^[0-9]+" port)
+                          (= (match-beginning 0) 0)
+                          (match-end 0)))))
+              (and prefix-end (= prefix-end (length port))))
+      (user-error "Invalid identd port: %s" port))
     (setq port (string-to-number port)))
   (when erc-identd-process
     (delete-process erc-identd-process))
