@@ -45,6 +45,12 @@ Used by `ansi-osc-filter-region' and `ansi-osc-apply-on-region' to store
 position of an unfinished escape sequence, for the complete sequence to
 be handled in next call.")
 
+(defun ansi-osc--regexp-for-current-buffer (regexp)
+  "Return REGEXP encoded for the current buffer's character width."
+  (if enable-multibyte-characters
+      regexp
+    (string-as-unibyte regexp)))
+
 (defun ansi-osc-filter-region (begin end)
   "Filter out all OSC control sequences from region between BEGIN and END.
 When an unfinished escape sequence is found, the start position is saved
@@ -58,13 +64,15 @@ pointed by `ansi-osc--marker'."
       (setq ansi-osc--marker nil)
       (when (eq (char-before) ?\e) (backward-char))
       (while (re-search-forward
-              (concat "\e]\\|" (regexp-quote (string #x9d)))
+              (ansi-osc--regexp-for-current-buffer
+               (concat "\e]\\|" (regexp-quote (string #x9d))))
               end-marker t)
         (let ((pos0 (match-beginning 0)))
           (if (re-search-forward
-               (concat "\\=[\x08-\x0D]*[[:print:]]*\\(\a\\|"
-                       (regexp-quote (concat "\e\\"))
-                       "\\|" (regexp-quote (string #x9c)) "\\)")
+               (ansi-osc--regexp-for-current-buffer
+                (concat "\\=[\x08-\x0D]*[[:print:]]*\\(\a\\|"
+                        (regexp-quote (concat "\e\\"))
+                        "\\|" (regexp-quote (string #x9c)) "\\)"))
                end-marker t)
               (delete-region pos0 (point))
             (setq ansi-osc--marker (copy-marker pos0))))))))
@@ -97,7 +105,8 @@ pointed by `ansi-osc--marker'."
       (goto-char (or ansi-osc--marker begin))
       (when (eq (char-before) ?\e) (backward-char))
       (while (re-search-forward
-              (concat "\e]\\|" (regexp-quote (string #x9d)))
+              (ansi-osc--regexp-for-current-buffer
+               (concat "\e]\\|" (regexp-quote (string #x9d))))
               end-marker t)
         (let ((pos0 (match-beginning 0))
               (code (and
@@ -105,9 +114,10 @@ pointed by `ansi-osc--marker'."
                      (match-string 1)))
               (pos1 (point)))
           (if (re-search-forward
-               (concat "\a\\|"
-                       (regexp-quote (concat "\e\\"))
-                       "\\|" (regexp-quote (string #x9c)))
+               (ansi-osc--regexp-for-current-buffer
+                (concat "\a\\|"
+                        (regexp-quote (concat "\e\\"))
+                        "\\|" (regexp-quote (string #x9c))))
                end-marker t)
               (let ((text (buffer-substring-no-properties
                            pos1 (match-beginning 0))))
