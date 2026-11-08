@@ -871,6 +871,7 @@ pub(super) struct EditorView {
     auto_raise: Rc<Cell<bool>>,
     auto_lower: Rc<Cell<bool>>,
     last_window_active: Option<bool>,
+    last_focus_update_sent: Option<bool>,
     #[cfg(target_os = "macos")]
     accessibility_buffer_view: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -958,6 +959,7 @@ impl EditorView {
             auto_raise: Rc::new(Cell::new(false)),
             auto_lower: Rc::new(Cell::new(false)),
             last_window_active: None,
+            last_focus_update_sent: None,
             #[cfg(target_os = "macos")]
             accessibility_buffer_view: None,
             #[cfg(target_os = "macos")]
@@ -1243,8 +1245,15 @@ impl Render for EditorView {
         if self.button_activation_subscription.is_none() {
             self.button_activation_subscription =
                 Some(cx.observe_window_activation(window, |view, window, _cx| {
-                    if !window.is_window_active() {
+                    let active = window.is_window_active();
+                    if !active {
                         view.pressed_button = None;
+                    }
+                    if let Some(frame_id) = view.tx.frame_id()
+                        && view.last_focus_update_sent != Some(active)
+                    {
+                        let _ = view.tx.send_focus_update(frame_id, active);
+                        view.last_focus_update_sent = Some(active);
                     }
                 }));
         }
@@ -1264,11 +1273,15 @@ impl Render for EditorView {
                 } else if !active && self.auto_lower.get() {
                     crate::lower_frame_window(window);
                 }
-                let _ = self.tx.send_focus_update(frame_id, active);
                 self.last_window_active = Some(active);
+            }
+            if self.last_focus_update_sent != Some(active) {
+                let _ = self.tx.send_focus_update(frame_id, active);
+                self.last_focus_update_sent = Some(active);
             }
         } else {
             self.last_window_active = None;
+            self.last_focus_update_sent = None;
         }
         self.update_window_title(window);
         if self.installed_menus != self.grid.menus {
