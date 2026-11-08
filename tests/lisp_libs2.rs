@@ -1891,6 +1891,32 @@ fn bindat_pack_rejects_embedded_nul_in_fixed_strz() {
 }
 
 #[test]
+fn bindat_uint_rejects_non_byte_aligned_bit_lengths() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'bindat)
+              (let* ((spec (bindat-type (struct (value uint 12))))
+                     (data '((value . 2748)))
+                     (valid-spec (bindat-type uint 16))
+                     (valid-data 2748))
+                (list
+                 (condition-case err
+                     (bindat-length spec data)
+                   (error (car err)))
+                 (condition-case err
+                     (string-to-list (bindat-pack spec data))
+                   (error (car err)))
+                 (condition-case err
+                     (bindat-unpack spec (unibyte-string #x0a #xbc))
+                   (error (car err)))
+                 (list (bindat-length valid-spec valid-data)
+                       (string-to-list (bindat-pack valid-spec valid-data))
+                       (bindat-unpack valid-spec (unibyte-string #x0a #xbc))))))"#),
+        "(error error error (2 (10 188) 2748))"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose

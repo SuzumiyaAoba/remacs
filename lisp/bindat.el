@@ -678,6 +678,7 @@ The port (if any) is omitted.  IP can be a string, as well."
 ;;   (e.g. to unpack).
 
 (defun bindat--unpack-uint (bitlen)
+  (setq bitlen (bindat--check-uint-bitlen bitlen))
   (let ((v 0) (bitsdone 0))
     (while (< bitsdone bitlen)
       (setq v (logior (ash v 8) (bindat--unpack-u8)))
@@ -685,21 +686,30 @@ The port (if any) is omitted.  IP can be a string, as well."
     v))
 
 (defun bindat--unpack-uintr (bitlen)
+  (setq bitlen (bindat--check-uint-bitlen bitlen))
   (let ((v 0) (bitsdone 0))
     (while (< bitsdone bitlen)
       (setq v (logior v (ash (bindat--unpack-u8) bitsdone)))
       (setq bitsdone (+ bitsdone 8)))
     v))
 
+(defun bindat--check-uint-bitlen (bitlen)
+  (unless (and (integerp bitlen) (> bitlen 0) (= (% bitlen 8) 0))
+    (error "Bindat integer bit length must be a positive multiple of 8: %S"
+           bitlen))
+  bitlen)
+
 (defun bindat--pack-uint (bitlen v)
-  (let* ((len (/ bitlen 8))
+  (let* ((bitlen (bindat--check-uint-bitlen bitlen))
+         (len (/ bitlen 8))
          (shift (- (* 8 (1- len)))))
     (dotimes (_ len)
       (bindat--pack-u8 (logand 255 (ash v shift)))
       (setq shift (+ 8 shift)))))
 
 (defun bindat--pack-uintr (bitlen v)
-  (let* ((len (/ bitlen 8)))
+  (let* ((bitlen (bindat--check-uint-bitlen bitlen))
+         (len (/ bitlen 8)))
     (dotimes (_ len)
       (bindat--pack-u8 (logand v 255))
       (setq v (ash v -8)))))
@@ -725,7 +735,8 @@ is the name of a variable that will hold the value we need to pack.")
     (bindat--pcase op
       ('unpack
        `(if ,le (bindat--unpack-uintr ,n) (bindat--unpack-uint ,n)))
-      (`(length . ,_) `(incf bindat-idx (/ ,n 8)))
+      (`(length . ,_)
+       `(incf bindat-idx (/ (bindat--check-uint-bitlen ,n) 8)))
       (`(pack . ,args)
        `(if ,le (bindat--pack-uintr ,n . ,args)
           (bindat--pack-uint ,n . ,args))))))
