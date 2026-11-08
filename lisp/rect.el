@@ -154,8 +154,10 @@ The final point after the last operation will be returned."
     (let* ((cols (rectangle--pos-cols start end))
            (startcol (car cols))
            (endcol (cdr cols))
-           (startpt (progn (goto-char start) (line-beginning-position)))
-           (endpt (progn (goto-char end)
+           (startline (progn (goto-char start) (line-beginning-position)))
+           (endline (progn (goto-char end) (line-beginning-position)))
+           (startpt (min startline endline))
+           (endpt (progn (goto-char (max startline endline))
                          (copy-marker (line-end-position))))
            final-point)
       ;; Ensure the start column is the left one.

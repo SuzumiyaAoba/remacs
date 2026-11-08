@@ -1943,6 +1943,24 @@ fn nslookup_helpers_pass_untrusted_names_as_argv() {
 }
 
 #[test]
+fn apply_on_rectangle_normalizes_reversed_line_order() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'rect)
+              (with-temp-buffer
+                (insert "aaa\nbbb\nccc")
+                (let (lines)
+                  (apply-on-rectangle
+                   (lambda (_startcol _endcol)
+                     (push (line-number-at-pos) lines))
+                   (progn (goto-char (point-max)) (point))
+                   (point-min))
+                  (nreverse lines))))"#),
+        "(1 2 3)"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose
