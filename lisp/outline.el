@@ -715,7 +715,9 @@ at the end of the buffer."
 (defsubst outline-invisible-p (&optional pos)
   "Non-nil if the character after POS has outline invisible property.
 If POS is nil, use `point' instead."
-  (eq (get-char-property (or pos (point)) 'invisible) 'outline))
+  (let ((invisible (get-char-property (or pos (point)) 'invisible)))
+    (or (eq invisible 'outline)
+        (and (consp invisible) (memq 'outline invisible)))))
 
 (define-error 'outline-before-first-heading "Before first heading")
 
