@@ -2740,6 +2740,18 @@ fn ff_find_the_other_file_extracts_case_folded_stub() {
 }
 
 #[test]
+fn eshell_define_literal_alias_is_readable() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'esh-var)
+              (let ((eshell-variable-aliases-list nil))
+                (eshell/define "MYVAR" '("hello"))
+                (eshell-get-variable "MYVAR")))"#),
+        "\"hello\""
+    );
+}
+
+#[test]
 fn ange_ftp_set_file_modes_rejects_unsupported_nofollow() {
     assert_eq!(
         ev(r#"(progn
