@@ -676,6 +676,64 @@ fn tui_face_text_props_and_region_paint() {
     })
 }
 
+/// Faces with `:extend' carry their background past the final character
+/// of a line, whether the face comes from a text property, an overlay,
+/// or the active region.
+#[test]
+fn tui_extend_face_background_reaches_line_end() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        let assert_extended_tail = |grid: &Grid, text_len: usize, source: &str| {
+            for (column, style) in grid.attrs[0][text_len..].iter().enumerate() {
+                assert_eq!(
+                    style.bg,
+                    Some(remacs::term::CellColor(255, 0, 0)),
+                    "{source} did not extend its background into column {}: {style:?}",
+                    text_len + column
+                );
+            }
+        };
+
+        i.eval_str(
+            r##"(make-face 'qa-eol-extend-face)
+                (set-face-attribute 'qa-eol-extend-face nil
+                                    :background "#ff0000" :extend t)
+                (with-current-buffer "*scratch*"
+                  (erase-buffer)
+                  (insert "colored")
+                  (put-text-property 1 (point-max) 'face 'qa-eol-extend-face)
+                  (setq mark-active nil))"##,
+        )
+        .expect("set the extending text-property face");
+        let grid = render_grid(&i, 80, 24);
+        assert_extended_tail(&grid, "colored".len(), "text property");
+
+        i.eval_str(
+            r##"(with-current-buffer "*scratch*"
+                  (erase-buffer)
+                  (insert "colored")
+                  (let ((overlay (make-overlay 1 (point-max))))
+                    (overlay-put overlay 'face 'qa-eol-extend-face)))"##,
+        )
+        .expect("set the extending overlay face");
+        let grid = render_grid(&i, 80, 24);
+        assert_extended_tail(&grid, "colored".len(), "overlay");
+
+        i.eval_str(
+            r##"(set-face-attribute 'region nil :background "#ff0000" :extend t)
+                (with-current-buffer "*scratch*"
+                  (erase-buffer)
+                  (insert "selected")
+                  (goto-char (point-min))
+                  (push-mark (point) t t)
+                  (goto-char (point-max)))"##,
+        )
+        .expect("set the extending active-region face");
+        let grid = render_grid(&i, 80, 24);
+        assert_extended_tail(&grid, "selected".len(), "active region");
+    })
+}
+
 #[test]
 fn tui_overlay_priority_matches_effective_face() {
     run_on_big_stack(move || {
