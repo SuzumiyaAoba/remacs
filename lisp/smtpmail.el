@@ -720,6 +720,36 @@ Returns an error if the server cannot be contacted."
 	      (string-search "." (cadr parts))
 	      user-mail-address))))
 
+(defconst smtpmail--max-data-line-octets 1000
+  "Maximum SMTP text line length, including its CRLF.")
+
+(defun smtpmail--encode-data-line (data)
+  (if (and (multibyte-string-p data) smtpmail-code-conv-from)
+      (encode-coding-string data smtpmail-code-conv-from)
+    data))
+
+(defun smtpmail--validate-data-line (data)
+  "Encode DATA as needed and signal if its SMTP line exceeds the octet limit."
+  (setq data (smtpmail--encode-data-line data))
+  ;; RFC 5321 counts CRLF but excludes the extra leading dot used for
+  ;; transparency.
+  (let ((octets (+ (string-bytes data) 2)))
+    (when (> octets smtpmail--max-data-line-octets)
+      (user-error "SMTP text line has %d octets; maximum is %d including CRLF"
+                  octets smtpmail--max-data-line-octets)))
+  data)
+
+(defun smtpmail--validate-data-buffer (buffer)
+  "Signal if any outgoing text line in BUFFER exceeds the SMTP octet limit."
+  (with-current-buffer buffer
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (smtpmail--validate-data-line
+         (buffer-substring-no-properties (line-beginning-position)
+                                         (line-end-position)))
+        (forward-line 1)))))
+
 (defun smtpmail-via-smtp (recipient smtpmail-text-buffer
 				    &optional ask-for-password
                                     send-attempts)
@@ -756,6 +786,9 @@ Returns an error if the server cannot be contacted."
 
     (unwind-protect
 	(catch 'done
+	  ;; Validate before opening the SMTP transaction so an invalid line
+	  ;; cannot leave the server waiting for the rest of DATA.
+	  (smtpmail--validate-data-buffer smtpmail-text-buffer)
 	  ;; get or create the trace buffer
 	  (setq process-buffer
 		(get-buffer-create
@@ -1052,11 +1085,8 @@ Returns an error if the server cannot be contacted."
   (process-send-string process (concat command "\r\n")))
 
 (defun smtpmail-send-data-1 (process data)
+  (setq data (smtpmail--validate-data-line data))
   (goto-char (point-max))
-
-  (if (and (multibyte-string-p data)
-	   smtpmail-code-conv-from)
-      (setq data (encode-coding-string data smtpmail-code-conv-from)))
 
   (if smtpmail-debug-info
       (insert data "\r\n"))
@@ -1069,6 +1099,7 @@ Returns an error if the server cannot be contacted."
   (process-send-string process "\r\n"))
 
 (defun smtpmail-send-data (process buffer)
+  (smtpmail--validate-data-buffer buffer)
   (let ((data-continue t)
         (pr (with-current-buffer buffer
               (make-progress-reporter "Sending email "

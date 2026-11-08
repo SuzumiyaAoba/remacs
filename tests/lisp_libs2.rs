@@ -2065,6 +2065,99 @@ fn smtpmail_requires_354_before_sending_message_data() {
 }
 
 #[test]
+fn smtpmail_rejects_overlong_lines_before_data() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'smtpmail)
+              (let* ((smtpmail-code-conv-from 'utf-8-unix)
+                     (direct-sent nil)
+                     (direct-result
+                      (with-temp-buffer
+                        (condition-case err
+                            (cl-letf (((symbol-function 'process-send-string)
+                                       (lambda (_process data)
+                                         (push data direct-sent)))
+                                      ((symbol-function 'message-narrow-to-headers)
+                                       (lambda (&rest _) nil)))
+                              (smtpmail-send-data-1 nil (make-string 500 ?é))
+                              nil)
+                          (error err))))
+                     (valid-sent nil)
+                     (valid-result
+                      (with-temp-buffer
+                        (cl-letf (((symbol-function 'process-send-string)
+                                   (lambda (_process data)
+                                     (push data valid-sent)))
+                                  ((symbol-function 'message-narrow-to-headers)
+                                   (lambda (&rest _) nil)))
+                          (smtpmail-send-data-1 nil (make-string 998 ?a))
+                          t)))
+                     (responses '((250 "250 sender accepted")
+                                  (250 "250 recipient accepted")
+                                  (354 "354 Start mail input")
+                                  (221 "221 goodbye")))
+                     (commands nil)
+                     (network-opened nil)
+                     (data-sent nil)
+                     (trace-buffer nil)
+                     (smtpmail-smtp-server "smtp.example")
+                     (smtpmail-smtp-service 25)
+                     (smtpmail-mail-address "sender@example.com")
+                     (smtpmail-debug-info t)
+                     (smtp-result
+                      (unwind-protect
+                          (with-temp-buffer
+                            (insert "From: sender@example.com\nTo: recipient@example.com\n\n"
+                                    (make-string 999 ?a))
+                            (condition-case err
+                                (cl-letf (((symbol-function 'open-network-stream)
+                                           (lambda (_name buffer &rest _)
+                                             (setq network-opened t
+                                                   trace-buffer buffer)
+                                             (cons 'smtp-test-process
+                                                   '(:greeting "220 smtp.example ready\r\n"
+                                                     :capabilities "250 HELP\r\n"))))
+                                          ((symbol-function 'set-process-filter)
+                                           (lambda (&rest _) nil))
+                                          ((symbol-function 'set-process-coding-system)
+                                           (lambda (&rest _) nil))
+                                          ((symbol-function 'process-buffer)
+                                           (lambda (&rest _) trace-buffer))
+                                          ((symbol-function 'delete-process)
+                                           (lambda (&rest _) nil))
+                                          ((symbol-function 'message-narrow-to-headers)
+                                           (lambda (&rest _) nil))
+                                          ((symbol-function 'smtpmail-fqdn)
+                                           (lambda () "client.example"))
+                                          ((symbol-function 'smtpmail-try-auth-methods)
+                                           (lambda (&rest _) nil))
+                                          ((symbol-function 'smtpmail-send-command)
+                                           (lambda (_process command)
+                                             (push command commands)))
+                                          ((symbol-function 'smtpmail-read-response)
+                                           (lambda (_process)
+                                             (prog1 (car responses)
+                                               (setq responses (cdr responses)))))
+                                          ((symbol-function 'smtpmail-send-data)
+                                           (lambda (&rest _) (setq data-sent t))))
+                                  (smtpmail-via-smtp
+                                   '("recipient@example.com") (current-buffer)))
+                              (error err)))
+                        (when (buffer-live-p trace-buffer)
+                          (kill-buffer trace-buffer)))))
+                (list (eq (car direct-result) 'user-error)
+                      (null direct-sent)
+                      (eq valid-result t)
+                      (equal (mapcar #'string-bytes (nreverse valid-sent)) '(998 2))
+                      (eq (car smtp-result) 'user-error)
+                      (not network-opened)
+                      (not (member "DATA" commands))
+                      (not data-sent))))"#),
+        "(t t t t t t t t)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
