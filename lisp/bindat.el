@@ -328,6 +328,22 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
     (u32 . 4) (u32r . 4) (dword . 4) (long . 4)
     (ip . 4)))
 
+(defun bindat--pack-item-length (type len vectype &optional value)
+  "Return the encoded size of a TYPE field with length LEN and VECTYPE."
+  (let (fixed)
+    (while (eq type 'vec)
+      (if (consp vectype)
+          (setq len (* len (nth 1 vectype))
+                type (nth 2 vectype))
+        (setq type (or vectype 'u8)
+              vectype nil)))
+    (cond
+     ((setq fixed (assq type bindat--fixed-length-alist))
+      (* (or len 1) (cdr fixed)))
+     ((and (eq type 'strz) (null len))
+      (if value (1+ (length (string-to-unibyte value))) 1))
+     (t (or len 1)))))
+
 (defun bindat--length-group (struct spec)
   (if (cl-typep spec 'bindat--type)
       (funcall (bindat--type-le spec) struct)
@@ -353,7 +369,7 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
               (setq field (eval (car (cdr field)) t)))
           (if (and (consp len) (not (eq type 'eval)))
               (setq len (apply #'bindat-get-field struct len)))
-          (if (not len)
+          (if (and (not len) (not (eq type 'strz)))
               (setq len 1))
           (while (eq type 'vec)
             (if (consp vectype)
@@ -391,6 +407,12 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
                      (progn
                        (bindat--length-group struct (cdr case))
                        (setq cases nil))))))
+            ('strz
+             (if field
+                 (setq last (bindat-get-field struct field)))
+             (setq bindat-idx
+                   (+ bindat-idx
+                      (bindat--pack-item-length type len vectype last))))
             (_
              (if (setq type (assq type bindat--fixed-length-alist))
                  (setq len (* len (cdr type))))
@@ -490,7 +512,9 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
   (if (eq type 'ip)
       (setq type 'vec len 4))
   (pcase type
-   ((guard (null v)) (setq bindat-idx (+ bindat-idx len)))
+   ((guard (null v))
+    (setq bindat-idx
+          (+ bindat-idx (bindat--pack-item-length type len vectype v))))
    ((or 'u8 'byte) (bindat--pack-u8 v))
    ((or 'u16 'word 'short) (bindat--pack-u16 v))
    ('u24 (bindat--pack-u24 v))
@@ -510,7 +534,12 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
 	      vectype nil))
       (if (> l len) (setq l len))
       (dotimes (i l)
-	(bindat--pack-item (aref v i) type vlen vectype))))
+	(bindat--pack-item (aref v i) type vlen vectype))
+      (when (< l len)
+        (setq bindat-idx
+              (+ bindat-idx
+                 (* (- len l)
+                    (bindat--pack-item-length type vlen vectype nil)))))))
    (_
     (setq bindat-idx (+ bindat-idx len)))))
 
@@ -539,7 +568,7 @@ e.g. corresponding to STRUCT.FIELD1[INDEX2].FIELD3..."
 	    (setq field (eval (car (cdr field)) t)))
 	(if (and (consp len) (not (eq type 'eval)))
             (setq len (apply #'bindat-get-field struct len)))
-	(if (not len)
+	(if (and (not len) (not (eq type 'strz)))
 	    (setq len 1))
 	(pcase type
 	 ('eval

@@ -1854,6 +1854,26 @@ fn bindat_unpack_rejects_truncated_fixed_strings() {
 }
 
 #[test]
+fn bindat_pack_preserves_field_sizes() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'bindat)
+              (list
+               (string-to-list
+                (bindat-pack '((a u16) (b u8)) '((a . nil) (b . 1))))
+               (string-to-list
+                (bindat-pack '((a vec 2 u8) (b u8)) '((a . [1]) (b . 2))))
+               (string-to-list
+                (bindat-pack '((a vec 2 u16) (b u8)) '((a . nil) (b . 1))))
+               (string-to-list
+                (bindat-pack '((name strz)) '((name . "abc"))))
+               (string-to-list
+                (bindat-pack '((name strz)) '((name . nil))))))"#),
+        "((0 0 1) (1 0 2) (0 0 0 0 1) (97 98 99 0) (0))"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose
