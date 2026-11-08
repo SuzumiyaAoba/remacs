@@ -827,6 +827,30 @@ fn tui_input_pending_p_detects_frontend_queue() {
 }
 
 #[test]
+fn tui_discard_input_drops_frontend_queue() {
+    run_on_big_stack(move || {
+        let mut i = Interp::new();
+        let io = Rc::new(RefCell::new(EventQueueIo {
+            keys: VecDeque::from([120]),
+            empty_polls: 0,
+        }));
+        install_minibuf_reader(&io, &mut i);
+
+        i.eval_str("(progn (sleep-for 0.02) (discard-input))")
+            .expect("discard-input should flush pending frontend keys");
+        let event = i
+            .eval_str("(read-event nil nil 0)")
+            .expect("discarded input should not reach the next read-event");
+        assert_eq!(i.prin1_to_string(&event).to_unicode_lossy(), "nil");
+
+        let pending = i
+            .eval_str("(input-pending-p)")
+            .expect("discarded input should not remain pending");
+        assert_eq!(i.prin1_to_string(&pending).to_unicode_lossy(), "nil");
+    })
+}
+
+#[test]
 fn tui_overlay_priority_matches_effective_face() {
     run_on_big_stack(move || {
         let mut i = Interp::new();

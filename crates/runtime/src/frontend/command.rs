@@ -237,6 +237,14 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
             Ok(false)
         }
     }));
+
+    let t = term.clone();
+    i.frontend_input_discarder = Some(std::rc::Rc::new(move |interp| {
+        t.borrow_mut()
+            .discard_input()
+            .map_err(|error| interp.error(format!("discard-input: {error}")))?;
+        Ok(())
+    }));
 }
 
 fn scroll_popup(

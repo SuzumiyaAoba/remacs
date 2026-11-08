@@ -131,6 +131,40 @@ pub(super) enum GuiEvent {
     },
 }
 
+fn discardable_gui_input(event: &GuiEvent) -> bool {
+    match event {
+        GuiEvent::ForFrame { event, .. } => discardable_gui_input(event),
+        GuiEvent::ColorDrop { .. }
+        | GuiEvent::Key(_)
+        | GuiEvent::Text(_)
+        | GuiEvent::MenuCommand(_)
+        | GuiEvent::NativeMenuCommand(_)
+        | GuiEvent::PopupMenuSelection { .. }
+        | GuiEvent::PopupMenuScroll { .. }
+        | GuiEvent::PopupMenuHover { .. }
+        | GuiEvent::PopupMenuScrollAt { .. }
+        | GuiEvent::CommandArgs { .. }
+        | GuiEvent::ReplaceText { .. }
+        | GuiEvent::Drop { .. }
+        | GuiEvent::OpenFiles(_)
+        | GuiEvent::MouseMove { .. }
+        | GuiEvent::MouseDragMove { .. }
+        | GuiEvent::MouseDown { .. }
+        | GuiEvent::MouseUp { .. }
+        | GuiEvent::Scroll { .. }
+        | GuiEvent::ScrollBar { .. } => true,
+        #[cfg(target_os = "macos")]
+        GuiEvent::NativeService { .. } => true,
+        GuiEvent::FrameVisibility { .. }
+        | GuiEvent::FrameFocus { .. }
+        | GuiEvent::SystemSleep { .. }
+        | GuiEvent::FrameDeleteRequest { .. }
+        | GuiEvent::PowerOff
+        | GuiEvent::Resize(..)
+        | GuiEvent::Geometry(..) => false,
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FrameEventSender {
     sender: Sender<GuiEvent>,
@@ -1200,6 +1234,8 @@ pub(super) struct ChanIo {
     pub(super) gui_requests: Option<smol::channel::Sender<GuiRequest>>,
     /// Keys pushed back via `unread` (unread-command-events).
     pub(super) pending: Vec<i128>,
+    /// Non-input events held while `discard_input' drains the channel.
+    pending_events: VecDeque<GuiEvent>,
     pub(super) pending_open_files: VecDeque<(String, Option<usize>)>,
     #[cfg(target_os = "macos")]
     pending_native_services: VecDeque<(String, String)>,
@@ -1508,6 +1544,7 @@ impl ChanIo {
             legacy_grid_output: true,
             gui_requests: None,
             pending: Vec::new(),
+            pending_events: VecDeque::new(),
             pending_open_files: VecDeque::new(),
             #[cfg(target_os = "macos")]
             pending_native_services: VecDeque::new(),
@@ -1578,6 +1615,9 @@ impl ChanIo {
     }
 
     fn receive_event(&mut self, dur: Duration) -> io::Result<Option<GuiEvent>> {
+        if let Some(event) = self.pending_events.pop_front() {
+            return Ok(Some(self.unwrap_frame_event(event)));
+        }
         match self.events.recv_timeout(dur) {
             Ok(event) => Ok(Some(self.unwrap_frame_event(event))),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
@@ -1777,6 +1817,29 @@ impl KeyIo for ChanIo {
             x.saturating_sub(display_origin.0),
             y.saturating_sub(display_origin.1),
         ))
+    }
+
+    fn discard_input(&mut self) -> io::Result<()> {
+        self.pending.clear();
+        self.pending_open_files.clear();
+        #[cfg(target_os = "macos")]
+        self.pending_native_services.clear();
+
+        let mut retained = VecDeque::new();
+        while let Some(event) = self.pending_events.pop_front() {
+            if !discardable_gui_input(&event) {
+                retained.push_back(event);
+            }
+        }
+        loop {
+            match self.events.try_recv() {
+                Ok(event) if !discardable_gui_input(&event) => retained.push_back(event),
+                Ok(_) => {}
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+        self.pending_events = retained;
+        Ok(())
     }
 
     fn poll_input(&mut self, dur: Duration) -> io::Result<Option<InputEvent>> {
@@ -2598,6 +2661,41 @@ pub(super) fn start_logic_with_dump_for_test(
     Ok((events, grids))
 }
 
+#[cfg(test)]
+mod discard_input_tests {
+    use super::*;
+
+    #[test]
+    fn discard_input_drops_queued_keys_and_preserves_frame_events() {
+        let (events, receiver) = mpsc::channel();
+        let (grids, _grid_receiver) = smol::channel::unbounded();
+        let mut io = ChanIo::new_for_test(receiver, grids);
+        events
+            .send(GuiEvent::ForFrame {
+                frame_id: 7,
+                event: Box::new(GuiEvent::Key(120)),
+            })
+            .unwrap();
+        events
+            .send(GuiEvent::FrameVisibility {
+                frame_id: 7,
+                visible: false,
+            })
+            .unwrap();
+
+        io.discard_input().unwrap();
+        assert_eq!(io.pending_events.len(), 1);
+        assert!(matches!(
+            io.events.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+        assert_eq!(io.pending_frame_visibility, Some((7, false)));
+        assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+    }
+}
+
 fn apply_startup_arguments(
     i: &mut Interp,
     files: &[String],
@@ -2862,6 +2960,7 @@ fn start_logic_inner(
                 legacy_grid_output,
                 gui_requests: enable_gui_requests.then_some(gui_requests_tx.clone()),
                 pending: Vec::new(),
+                pending_events: VecDeque::new(),
                 pending_open_files: VecDeque::new(),
                 #[cfg(target_os = "macos")]
                 pending_native_services: VecDeque::new(),

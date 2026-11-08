@@ -282,6 +282,8 @@ pub struct Interp {
     pub(crate) frontend_input_pending_reader: Option<
         Rc<dyn Fn(&mut Interp) -> Result<bool, Flow>>,
     >,
+    /// Frontend hook to discard queued input for `discard-input'.
+    pub(crate) frontend_input_discarder: Option<Rc<dyn Fn(&mut Interp) -> Result<(), Flow>>>,
     /// Host clipboard bridge, installed by a GUI front-end.
     pub(crate) clipboard_backend: Option<Rc<dyn crate::frontend::ClipboardBackend>>,
     /// Host bell bridge, installed by a GUI front-end.

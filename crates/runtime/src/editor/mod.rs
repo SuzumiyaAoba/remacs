@@ -11204,6 +11204,10 @@ fn f_discard_input(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         f_cancel_kbd_macro_events(i, vec![].into())?;
         end_kbd_macro_recording(i);
     }
+    if let Some(discarder) = i.frontend_input_discarder.clone() {
+        discarder(i)?;
+    }
+    i.pending_frontend_input.clear();
     if let Some(sid) = i.q_soft("unread-command-events") {
         i.store_internal_value(sid, Value::Nil);
     }

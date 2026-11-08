@@ -463,6 +463,11 @@ pub trait KeyIo {
     }
     /// Push a key back onto the pending queue.
     fn unread(&mut self, k: i128);
+    /// Discard currently pending frontend input without waiting for new input.
+    fn discard_input(&mut self) -> io::Result<()> {
+        while self.poll_input(Duration::ZERO)?.is_some() {}
+        Ok(())
+    }
     /// Run the pre-redisplay callback for a specific set of windows.
     fn run_pre_redisplay_for_windows(
         &mut self,
