@@ -248,6 +248,16 @@ pub(crate) fn generate_key_char(
     shift: bool,
     alt: bool,
 ) -> Option<String> {
+    generate_key_char_with_dead_key(vkey, scan_code, control, shift, alt).0
+}
+
+pub(crate) fn generate_key_char_with_dead_key(
+    vkey: VIRTUAL_KEY,
+    scan_code: u32,
+    control: bool,
+    shift: bool,
+    alt: bool,
+) -> (Option<String>, bool) {
     let mut state = [0; 256];
     if control {
         state[VK_CONTROL.0 as usize] = 0x80;
@@ -263,13 +273,16 @@ pub(crate) fn generate_key_char(
     let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 1 << 2) };
 
     match len {
-        len if len > 0 => String::from_utf16(&buffer[..len as usize])
-            .ok()
-            .filter(|candidate| {
-                !candidate.is_empty() && !candidate.chars().next().unwrap().is_control()
-            }),
-        len if len < 0 => String::from_utf16(&buffer[..(-len as usize)]).ok(),
-        _ => None,
+        len if len > 0 => (
+            String::from_utf16(&buffer[..len as usize])
+                .ok()
+                .filter(|candidate| {
+                    !candidate.is_empty() && !candidate.chars().next().unwrap().is_control()
+                }),
+            false,
+        ),
+        len if len < 0 => (None, true),
+        _ => (None, false),
     }
 }
 

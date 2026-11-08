@@ -1439,14 +1439,20 @@ fn parse_normal_key(
         return Some(key);
     }
     let scan_code = lparam.hiword() & 0xFF;
-    let key_char = generate_key_char(
+    let (key_char, dead_key) = generate_key_char_with_dead_key(
         vkey,
         scan_code as u32,
         modifiers.control,
         modifiers.shift,
         modifiers.alt,
     );
-    let key = get_keystroke_key(vkey, scan_code as u32, &mut modifiers)?;
+    let key = if dead_key {
+        // Let TranslateMessage generate WM_DEADCHAR so the input handler can
+        // compose this key with the next character.
+        String::new()
+    } else {
+        get_keystroke_key(vkey, scan_code as u32, &mut modifiers)?
+    };
     Some(Keystroke {
         modifiers,
         key,
