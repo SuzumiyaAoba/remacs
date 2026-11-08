@@ -1917,6 +1917,32 @@ fn bindat_uint_rejects_non_byte_aligned_bit_lengths() {
 }
 
 #[test]
+fn nslookup_helpers_pass_untrusted_names_as_argv() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'net-utils)
+              (let ((calls nil)
+                    (host "example.invalid; echo injected")
+                    (name-server "ns; echo injected")
+                    (nslookup-program "nslookup-test"))
+                (cl-letf (((symbol-function 'process-file)
+                           (lambda (program _infile _destination _display &rest args)
+                             (setq calls (cons (cons program args) calls))
+                             (insert
+                              (if (equal (car args) "-type=A")
+                                  "Name: example.invalid\nAddress: 192.0.2.1\n"
+                                "example.invalid has AAAA address 2001:db8::1\n"))
+                             0))
+                          ((symbol-function 'shell-command-to-string)
+                           (lambda (&rest _) (error "unexpected shell invocation"))))
+                  (list (nslookup-host-ipv4 host name-server)
+                        (nslookup-host-ipv6 host name-server)
+                        (nreverse calls)))))"#),
+        "(\"192.0.2.1\" \"2001:db8::1\" ((\"nslookup-test\" \"-type=A\" \"example.invalid; echo injected\" \"ns; echo injected\") (\"nslookup-test\" \"-type=AAAA\" \"example.invalid; echo injected\" \"ns; echo injected\")))"
+    );
+}
+
+#[test]
 fn proced_loads_and_reports_attributes() {
     // GNU-verified on 31.1: proced.el loads with zero requires;
     // proced-process-attributes returns (pid . attr-alist) pairs whose
