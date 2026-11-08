@@ -109,6 +109,7 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 		     (include-subdomains (string= (nth 1 fields) "TRUE"))
 		     (path (nth 2 fields))
 		     (secure (string= (nth 3 fields) "TRUE"))
+	     ;; The expiry field is a Unix timestamp, so format it in UTC.
 		     ;; session cookies (expire time = 0) are supposed
 		     ;; to be removed when the browser is closed, but
 		     ;; the main point of loading external cookie is to
@@ -120,7 +121,8 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 			       (let ((s (string-to-number (nth 4 fields))))
 				 (if (and (zerop s) long-session)
 				     (time-add nil (* 365 24 60 60))
-				   s))))
+			   s))
+		       t))
 		     (key (nth 5 fields))
 		     (val (nth 6 fields)))
                 (incf n)
