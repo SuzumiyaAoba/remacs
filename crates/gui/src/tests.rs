@@ -390,7 +390,7 @@ fn non_ascii_key_text_has_a_fallback_when_the_input_client_is_skipped() {
     );
     assert_eq!(
         unicode_key_text(&ks("", Some("A日B"), false, false, false, false)),
-        None
+        Some("A日B")
     );
 }
 

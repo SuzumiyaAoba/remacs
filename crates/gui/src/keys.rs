@@ -455,8 +455,8 @@ pub(super) fn pass_text_to_os(
     !has_unmapped_modifier
 }
 
-/// Return text from a Unicode key event when the platform bypasses the input
-/// client. ASCII remains owned by the OS input handler to avoid duplicates.
+/// Return text from a key event containing Unicode when the platform bypasses
+/// the input client. ASCII-only text remains owned by the OS input handler.
 pub(super) fn unicode_key_text(ks: &Keystroke) -> Option<&str> {
     let text = ks
         .key_char
@@ -465,7 +465,7 @@ pub(super) fn unicode_key_text(ks: &Keystroke) -> Option<&str> {
         .unwrap_or(ks.key.as_str());
     let mut chars = text.chars();
     let first = chars.next()?;
-    (!first.is_ascii() && chars.all(|ch| !ch.is_ascii())).then_some(text)
+    (!first.is_ascii() || chars.any(|ch| !ch.is_ascii())).then_some(text)
 }
 
 #[cfg(test)]
