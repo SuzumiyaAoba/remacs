@@ -1435,6 +1435,13 @@ fn parse_normal_key(
     lparam: LPARAM,
     mut modifiers: Modifiers,
 ) -> Option<Keystroke> {
+    if vkey == VK_RETURN && lparam.hiword() & 0x0100 != 0 {
+        return Some(Keystroke {
+            key: "kp-enter".to_owned(),
+            key_char: None,
+            modifiers,
+        });
+    }
     if let Some(key) = crate::platform::windows_key_names::immutable_keystroke(vkey.0, modifiers) {
         return Some(key);
     }

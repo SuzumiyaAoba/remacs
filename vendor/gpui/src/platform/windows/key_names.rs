@@ -3,7 +3,27 @@ use smallvec::{SmallVec, smallvec};
 
 // Win32 virtual-key values are fixed independently of the active layout.
 // https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+fn keypad_name(vkey: u16) -> Option<&'static str> {
+    const DIGITS: [&str; 10] = [
+        "kp-0", "kp-1", "kp-2", "kp-3", "kp-4", "kp-5", "kp-6", "kp-7", "kp-8", "kp-9",
+    ];
+    match vkey {
+        0x0c => Some("kp-begin"), // VK_CLEAR
+        0x60..=0x69 => Some(DIGITS[usize::from(vkey - 0x60)]),
+        0x6a => Some("kp-multiply"),  // VK_MULTIPLY
+        0x6b => Some("kp-add"),       // VK_ADD
+        0x6c => Some("kp-separator"), // VK_SEPARATOR
+        0x6d => Some("kp-subtract"),  // VK_SUBTRACT
+        0x6e => Some("kp-decimal"),   // VK_DECIMAL
+        0x6f => Some("kp-divide"),    // VK_DIVIDE
+        _ => None,
+    }
+}
+
 fn immutable_name(vkey: u16) -> Option<&'static str> {
+    if let Some(name) = keypad_name(vkey) {
+        return Some(name);
+    }
     Some(match vkey {
         0x20 => "space",     // VK_SPACE
         0x08 => "backspace", // VK_BACK
