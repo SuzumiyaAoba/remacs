@@ -2184,6 +2184,35 @@ fn smtpmail_requires_three_digit_reply_codes() {
 }
 
 #[test]
+fn timeclock_splits_overnight_intervals_by_date() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'timeclock)
+              (let ((file (make-temp-file "timeclock-overnight"))
+                    (timeclock-workday (* 9 3600.0)))
+                (unwind-protect
+                    (progn
+                      (with-temp-file file
+                        (insert "h 2025/01/01 00:00:00 8\n"
+                                "i 2025/01/01 23:00:00 project\n"
+                                "o 2025/01/02 01:00:00\n"))
+                      (let* ((data (timeclock-log-data nil file))
+                             (days (nreverse (timeclock-day-alist data))))
+                        (list
+                         (mapcar (lambda (day)
+                                   (list (car day)
+                                         (timeclock-day-length (cdr day))
+                                         (timeclock-day-required (cdr day))))
+                                 days)
+                         (timeclock-entry-list-length
+                          (cdr (assoc "project"
+                                      (timeclock-project-alist data)))))))
+                  (delete-file file))))"#),
+        "(((\"2025/01/01\" 3600.0 28800.0) (\"2025/01/02\" 3600.0 32400.0)) 7200.0)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn

@@ -834,6 +834,32 @@ This is only provided for coherency when used by
   "Return the project alist from LOG-DATA, default `timeclock-log-data'."
   (nth 2 (or log-data (timeclock-log-data))))
 
+(defun timeclock--next-day-midnight (time)
+  "Return the local midnight after TIME."
+  (let ((decoded (decode-time time)))
+    (encode-time 0 0 0
+                 (1+ (decoded-time-day decoded))
+                 (decoded-time-month decoded)
+                 (decoded-time-year decoded))))
+
+(defun timeclock--split-entry-by-day (entry)
+  "Split ENTRY into segments grouped by local calendar date."
+  (let ((start (timeclock-entry-begin entry))
+        (end (timeclock-entry-end entry))
+        (project (timeclock-entry-project entry))
+        segments)
+    (if (not (time-less-p start end))
+        (list (cons (timeclock-time-to-date start) entry))
+      (while (time-less-p start end)
+        (let* ((next-midnight (timeclock--next-day-midnight start))
+               (last-segment (not (time-less-p next-midnight end)))
+               (segment-end (if last-segment end next-midnight))
+               (segment (append (list start segment-end project)
+                                (and last-segment (nthcdr 3 entry)))))
+          (push (cons (timeclock-time-to-date start) segment) segments)
+          (setq start segment-end)))
+      (nreverse segments))))
+
 (defun timeclock-log-data (&optional recent-only filename)
   "Return the contents of the timelog file, in a useful format.
 If the optional argument RECENT-ONLY is non-nil, only show the contents
@@ -966,8 +992,8 @@ lists:
 See the documentation for the given function if more info is needed."
   (let ((log-data (list 0.0 nil nil))
 	(now (current-time))
-	last-date-limited last-date-seconds last-date
-	(line 0) last beg day entry event)
+	day-data day-limits
+	(line 0) last beg entry event)
     (with-temp-buffer
       (insert-file-contents (or filename timeclock-file))
       (when recent-only
@@ -982,30 +1008,22 @@ See the documentation for the given function if more info is needed."
           ("b"
 	   (setcar log-data (string-to-number (nth 2 event))))
 	  ("h"
-	   (setq last-date-limited (timeclock-time-to-date (cadr event))
-		 last-date-seconds (* (string-to-number (nth 2 event))
-				      3600.0)))
+	   (let* ((date (timeclock-time-to-date (cadr event)))
+		  (seconds (* (string-to-number (nth 2 event)) 3600.0))
+		  (limit (assoc date day-limits))
+		  (day (assoc date day-data)))
+	     (if limit
+		 (setcdr limit seconds)
+	       (setq day-limits (cons (cons date seconds) day-limits)))
+	     (when day
+	       (setcar (cdr day) seconds))))
 	  ("i"
 	   (if beg
 	       (error "Error in format of timelog file, line %d" line)
 	     (setq beg t))
 	   (setq entry (list (cadr event) nil
 			     (and (> (length (nth 2 event)) 0)
-				  (nth 2 event))))
-	   (let ((date (timeclock-time-to-date (cadr event))))
-	     (if (and last-date
-		      (not (equal date last-date)))
-		 (progn
-		   (setcar (cdr log-data)
-			   (cons (cons last-date day)
-				 (cadr log-data)))
-		   (setq day (list (and last-date-limited
-					last-date-seconds))))
-	       (unless day
-		 (setq day (list (and last-date-limited
-				      last-date-seconds)))))
-	     (setq last-date date
-		   last-date-limited nil)))
+				  (nth 2 event)))))
 	  ((or "o" "O")
 	   (if (not beg)
 	       (error "Error in format of timelog file, line %d" line)
@@ -1019,7 +1037,16 @@ See the documentation for the given function if more info is needed."
 		 (nconc entry (if desc
 				  (list t)
 				(list nil t))))
-	     (nconc day (list entry))
+	     (dolist (date-entry (timeclock--split-entry-by-day entry))
+	       (let* ((date (car date-entry))
+		      (day (assoc date day-data)))
+		 (unless day
+		   (setq day-data
+			 (cons (cons date (list (cdr (assoc date day-limits))))
+			       day-data))
+		   (setq day (car day-data)))
+		 (setcdr day
+			 (nconc (cdr day) (list (cdr date-entry))))))
 	     (setq desc (nth 2 entry))
 	     (let* ((project (or desc t))
 		    (proj (assoc project (nth 2 log-data))))
@@ -1029,10 +1056,13 @@ See the documentation for the given function if more info is needed."
 				 (nth 2 log-data)))
 		 (nconc (cdr proj) (list entry)))))))
 	(forward-line))
-      (if day
-	  (setcar (cdr log-data)
-		  (cons (cons last-date day)
-			(cadr log-data))))
+      (let (days)
+	(dolist (date-day day-data)
+	  (when (cddr date-day)
+	    (push date-day days)))
+	(setcar (cdr log-data)
+		(sort days (lambda (a b) (string> (car a) (car b)))))
+	)
       log-data)))
 
 (defun timeclock-find-discrep ()
