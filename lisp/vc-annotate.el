@@ -277,6 +277,23 @@ cover the range from the oldest annotation to the newest."
 			 (- current newest))
 	       (format "Spanned to %.1f days old" (- current oldest))))))
 
+(defun vc-annotate--read-span (prompt &optional default)
+  "Read a positive numeric span using PROMPT and optional DEFAULT."
+  (let* ((value (read-string prompt nil nil default))
+         (prefix-end
+          (save-match-data
+            (and (string-match
+                  "^[+-]?\\(?:[0-9]+\\(?:\\.[0-9]*\\)?\\|\\.[0-9]+\\)\\(?:[eE][+-]?[0-9]+\\)?"
+                  value)
+                 (= (match-beginning 0) 0)
+                 (match-end 0))))
+         (span (and prefix-end
+                    (= prefix-end (length value))
+                    (string-to-number value))))
+    (unless (and (numberp span) (> span 0))
+      (user-error "Span must be a positive number"))
+    (float span)))
+
 (easy-menu-define vc-annotate-mode-menu vc-annotate-mode-map
   "Menu for VC-Annotate buffers."
   `("VC-Annotate"
@@ -298,7 +315,7 @@ cover the range from the oldest annotation to the newest."
      :style toggle :selected (null vc-annotate-display-mode)]
     ["Span ..."
      (vc-annotate-display-select
-      nil (float (string-to-number (read-string "Span how many days? "))))]
+      nil (vc-annotate--read-span "Span how many days? "))]
     "--"
     ["Span to Oldest"
      (unless (eq vc-annotate-display-mode 'scale)
@@ -348,6 +365,9 @@ By default, the current buffer is highlighted, unless overridden by
 BUFFER.  `vc-annotate-display-mode' specifies the highlighting mode to
 use; you may override this using the second optional arg MODE."
   (interactive)
+  (when (and (numberp (or mode vc-annotate-display-mode))
+             (<= (or mode vc-annotate-display-mode) 0))
+    (user-error "Span must be a positive number"))
   (when mode (setq vc-annotate-display-mode mode))
   (pop-to-buffer (or buffer (current-buffer)))
   (cond ((null vc-annotate-display-mode)
@@ -418,9 +438,10 @@ should be applied to the background or to the foreground."
 		  (list name) nil def)))
 	     (if (null current-prefix-arg)
 	         vc-annotate-display-mode
-	       (float (string-to-number
-		       (read-string (format-prompt "Annotate span days" 20)
-				    nil nil "20"))))))))
+	       (vc-annotate--read-span
+		(format-prompt "Annotate span days" 20) "20"))))))
+  (when (and (numberp display-mode) (<= display-mode 0))
+    (user-error "Span must be a positive number"))
   (setq vc-annotate-display-mode display-mode) ;Not sure why.  --Stef
   (let* ((backend (or backend
                       (car vc-buffer-overriding-fileset)

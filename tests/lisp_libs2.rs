@@ -2351,6 +2351,38 @@ fn file_mode_prompts_reject_malformed_octal_prefixes() {
 }
 
 #[test]
+fn vc_annotate_rejects_invalid_and_zero_spans() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'vc-annotate)
+              (let* ((vc-annotate-display-mode 'fullscale)
+                     (nonnumeric
+                      (condition-case err
+                          (cl-letf (((symbol-function 'read-string)
+                                     (lambda (&rest _) "not-a-number")))
+                            (vc-annotate--read-span "Span? "))
+                        (error (car err))))
+                     (partial
+                      (condition-case err
+                          (cl-letf (((symbol-function 'read-string)
+                                     (lambda (&rest _) "20days")))
+                            (vc-annotate--read-span "Span? "))
+                        (error (car err))))
+                     (valid
+                      (cl-letf (((symbol-function 'read-string)
+                                 (lambda (&rest _) "1.5")))
+                        (vc-annotate--read-span "Span? ")))
+                     (zero
+                      (condition-case err
+                          (vc-annotate-display-select nil 0.0)
+                        (error (car err)))))
+                (list nonnumeric partial valid zero
+                      vc-annotate-display-mode)))"#),
+        "(user-error user-error 1.5 user-error fullscale)"
+    );
+}
+
+#[test]
 fn apply_on_rectangle_normalizes_reversed_line_order() {
     assert_eq!(
         ev(r#"(progn
