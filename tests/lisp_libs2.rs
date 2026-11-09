@@ -3176,6 +3176,25 @@ fn pp_fill_uses_visible_width() {
 }
 
 #[test]
+fn edebug_frequency_display_drops_noncharacter_events() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'edebug)
+              (require 'cl-lib)
+              (let ((unread-command-events nil))
+                (cl-letf (((symbol-function 'edebug-display-freq-count)
+                           (lambda () nil))
+                          ((symbol-function 'read-event)
+                           (lambda (&rest _) [left]))
+                          ((symbol-function 'undo)
+                           (lambda (&rest _) nil)))
+                  (edebug-temp-display-freq-count)
+                  (null unread-command-events)))"#),
+        "t"
+    );
+}
+
+#[test]
 fn calc_pass_errors_bypasses_calc_do_error_handler() {
     assert_eq!(
         ev(r#"(progn

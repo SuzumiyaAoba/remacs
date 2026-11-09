@@ -4496,8 +4496,11 @@ It is removed when you hit any char."
   (let ((inhibit-read-only t))
     (undo-boundary)
     (edebug-display-freq-count)
-    (setq unread-command-events
-          (append unread-command-events (list (read-event))))
+    (let ((event (read-event)))
+      ;; Do not queue events that a subsequent character reader can't handle.
+      (when (characterp event)
+        (setq unread-command-events
+              (append unread-command-events (list event)))))
     ;; Yuck!  This doesn't seem to work at all for me.
     (undo)))
 
