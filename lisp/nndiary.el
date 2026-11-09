@@ -36,7 +36,6 @@
 ;; Bugs / Todo:
 ;; ===========
 
-;; * There's a bug in the time zone mechanism with variable TZ locations.
 ;; * We could allow a keyword like `ask' in X-Diary-* headers, that would mean
 ;;   "ask for value upon reception of the message".
 ;; * We could add an optional header X-Diary-Reminders to specify a special
@@ -336,10 +335,10 @@ all.  This may very well take some time.")
   ;; header). In the latter case, the list does NOT include the unspecified
   ;; spec (*).
 
-  ;; For time zone values, we have symbolic time zone names associated with
-  ;; the (relative) number of seconds ahead GMT.
-  ;; The list of time zone values is obsolescent, and new code should
-  ;; not rely on it.  Many of the time zone abbreviations are wrong;
+  ;; The historical time zone abbreviations below map to fixed offsets.
+  ;; New entries can use TZ database location names to retain DST rules.
+  ;; The abbreviation list is obsolescent, and new code should not
+  ;; rely on it.  Many of the time zone abbreviations are wrong;
   ;; in particular, all single-letter abbreviations other than "Z" have
   ;; been wrong since Internet RFC 2822 (2001).  However, the
   ;; abbreviations have not been changed due to backward compatibility
@@ -645,7 +644,7 @@ all.  This may very well take some time.")
 	 (nnmail-activate 'nndiary)
 	 (if (and (not (setq result
 			     (let ((nnmail-split-methods nndiary-split-methods))
-			       (nnmail-article-group 'nndiary-active-number)))
+			       (nnmail-article-group 'nndiary-active-number))))
 		  (yes-or-no-p "Moved to `junk' group; delete article? "))
 	     (setq result 'junk)
 	   (setq result (car (nndiary-save-mail result))))
@@ -1153,6 +1152,16 @@ all.  This may very well take some time.")
 	   (error "Value out of range"))
       val)))
 
+(defun nndiary--location-time-zone-p (zone)
+  "Return non-nil if ZONE is a safe TZ database location name."
+  (and (stringp zone)
+       (string-match-p
+        "\\`[[:alnum:]_.+-]+\\(?:/[[:alnum:]_.+-]+\\)+\\'" zone)
+       (let ((parts (split-string zone "/" t)))
+         (and (> (length parts) 1)
+              (not (member "." parts))
+              (not (member ".." parts))))))
+
 (defun nndiary-parse-schedule-value (str min-or-values max)
   ;; Parse the schedule string STR, or signal an error.
   ;; Signals are caught by `nndiary-schedule'.
@@ -1162,12 +1171,12 @@ all.  This may very well take some time.")
     ;; specified
     (if (listp min-or-values)
 	;; min-or-values is values
-	;; #### NOTE: this is actually only a hack for time zones.
-	(let ((val (and (string-match "[ \t]*\\([^ \t]+\\)[ \t]*" str)
-			(match-string 1 str))))
-	  (if (and val (setq val (assoc val min-or-values)))
-	      (list (cadr val))
-	    (error "Invalid syntax")))
+	(let* ((val (and (string-match "[ \t]*\\([^ \t]+\\)[ \t]*" str)
+			 (match-string 1 str)))
+	       (fixed-zone (and val (assoc val min-or-values))))
+	  (cond (fixed-zone (list (cadr fixed-zone)))
+	        ((nndiary--location-time-zone-p val) (list val))
+	        (t (error "Invalid syntax"))))
       ;; min-or-values is min
       (mapcar
        (lambda (val)
