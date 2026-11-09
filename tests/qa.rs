@@ -906,6 +906,7 @@ qa!(qa_called_interactively_frames, "qa_called_interactively_frames.el");
 qa!(qa_map_live_sequence, "qa_map_live_sequence.el");
 qa!(qa_lisp_mode_init, "qa_lisp_mode_init.el");
 qa!(qa_lisp_mode_reload, "qa_lisp_mode_reload.el");
+qa!(qa_lisp_mnt_load, "qa_lisp_mnt_load.el");
 qa!(qa_org_deferred, "qa_org_deferred.el");
 qa!(qa_org_capture_abort_new_buffer, "qa_org_capture_abort_new_buffer.el");
 qa!(qa_org_mode_startup, "qa_org_mode_startup.el");
