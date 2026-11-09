@@ -1560,10 +1560,9 @@ was taken, or the direct save failed."
           (x-change-window-property "XdndDirectSave0" encoded-name
                                     frame "text/plain" 8 nil)
           (gui-set-selection 'XdndSelection (concat "file://" file-name))
-          ;; FIXME: this does not work with GTK file managers,
-          ;; since they always reach for `text/uri-list' first,
-          ;; contrary to the spec.
-          (let ((action (x-begin-drag '("XdndDirectSave0" "text/uri-list"
+          ;; GTK requests `text/uri-list' before XDS, contrary to the
+          ;; spec; omit it so GTK can begin the direct-save handshake.
+          (let ((action (x-begin-drag '("XdndDirectSave0"
                                         "application/octet-stream")
                                       'XdndActionDirectSave
                                       frame nil allow-same-frame)))

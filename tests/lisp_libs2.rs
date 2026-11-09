@@ -5368,6 +5368,31 @@ fn r7_autoload_libs_parity() {
 }
 
 #[test]
+fn x_dnd_direct_save_omits_uri_list_target() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'x-dnd)
+              (let (targets)
+                (cl-letf (((symbol-function 'dnd-remove-last-dragged-remote-file)
+                           (lambda (&rest _) nil))
+                          ((symbol-function 'x-change-window-property)
+                           (lambda (&rest _) nil))
+                          ((symbol-function 'gui-set-selection)
+                           (lambda (&rest _) nil))
+                          ((symbol-function 'x-begin-drag)
+                           (lambda (types action &rest _)
+                             (setq targets types)
+                             action))
+                          ((symbol-function 'x-delete-window-property)
+                           (lambda (&rest _) nil)))
+                  (x-dnd-do-direct-save "/tmp/source" "target.txt" 'test-frame t)
+                  targets)))"#),
+        "(\"XdndDirectSave0\" \"application/octet-stream\")"
+    );
+}
+
+#[test]
 fn r8_dumped_libs_parity() {
     // abbrev, cconv, cus-face, ediff-hook, eldoc, mouse, prog-mode,
     // regexp-opt, register, replace, scroll-bar, text-mode and timer
