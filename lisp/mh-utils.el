@@ -528,40 +528,46 @@ nested folders within them."
   (let* ((folder (mh-normalize-folder-name folder nil
                                            (string= folder "+/")
                                            t))
-         (sub-folders (if (hash-table-contains-p folder mh-sub-folders-cache)
-                          (gethash folder mh-sub-folders-cache)
-                        (setf (gethash folder mh-sub-folders-cache)
-                              (mh-sub-folders-actual folder)))))
+         (sub-folders
+          (cond ((and (stringp folder)
+                      (not (file-directory-p (mh-expand-file-name folder))))
+                 (remhash folder mh-sub-folders-cache)
+                 nil)
+                ((hash-table-contains-p folder mh-sub-folders-cache)
+                 (gethash folder mh-sub-folders-cache))
+                (t
+                 (setf (gethash folder mh-sub-folders-cache)
+                       (mh-sub-folders-actual folder))))))
     (if add-trailing-slash-flag
         (mapcar (lambda (x)
                   (if (cdr x) (cons (concat (car x) "/") (cdr x)) x))
                 sub-folders)
       sub-folders)))
 
-;; FIXME: This function does not do well if FOLDER does not exist. It
-;; then changes the context to that folder which causes problems down
-;; the line. Since a folder in the cache could later be deleted, it
-;; would be good for mh-sub-folders-actual to return nil in this case
-;; so that mh-sub-folders could delete it from the cache. This
-;; function could protect itself by using a temporary context.
+;; A folder may be deleted after its sub-folders are cached.  The
+;; caller evicts stale cache entries; this guard also protects direct
+;; callers from passing a missing folder to the external MH command.
 (defun mh-sub-folders-actual (folder)
   "Execute the command folders to return the sub-folders of FOLDER.
 Filters out the folder names that start with \".\" so that
 directories that aren't usually mail folders are hidden.
 Expects FOLDER to have already been normalized with
   (mh-normalize-folder-name folder nil nil t)"
-  (let ((arg-list `(,(expand-file-name "folders" mh-progs)
-                    nil (t nil) nil "-noheader" "-norecurse" "-nototal"
-                    ,@(if (stringp folder) (list folder) ())))
-        (current-folder (concat
-                         (with-temp-buffer
-                           (call-process (expand-file-name "folder" mh-progs)
-                                         nil '(t nil) nil "-fast")
-                           (buffer-substring (point-min) (1- (point-max))))
-                         "+")))
-    (with-temp-buffer
-      (apply #'call-process arg-list)
-      (mh-sub-folders-parse folder current-folder))))
+  (if (and (stringp folder)
+           (not (file-directory-p (mh-expand-file-name folder))))
+      nil
+    (let ((arg-list `(,(expand-file-name "folders" mh-progs)
+                       nil (t nil) nil "-noheader" "-norecurse" "-nototal"
+                       ,@(if (stringp folder) (list folder) ())))
+          (current-folder (concat
+                           (with-temp-buffer
+                             (call-process (expand-file-name "folder" mh-progs)
+                                           nil '(t nil) nil "-fast")
+                             (buffer-substring (point-min) (1- (point-max))))
+                           "+")))
+      (with-temp-buffer
+        (apply #'call-process arg-list)
+        (mh-sub-folders-parse folder current-folder)))))
 
 (defun mh-sub-folders-parse (folder current-folder)
   "Parse the results of \"folders FOLDER\" and return a list of sub-folders.

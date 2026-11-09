@@ -74,6 +74,7 @@ qa!(qa_backup, "qa_backup.el");
 qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_buffer_history, "qa_buffer_history.el");
 qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
+qa!(qa_mh_sub_folders_missing, "qa_mh_sub_folders_missing.el");
 qa!(
     qa_diary_display_no_entries_empty,
     "qa_diary_display_no_entries_empty.el"
