@@ -1184,8 +1184,9 @@
 ;; allow the number of lines of the current buffer or of its current region to
 ;; fit in this number of pages.
 ;;
-;; NOTE: `ps-nb-pages-buffer' and `ps-nb-pages-region' count logical lines;
-;;       additional lines caused by folding long lines are not included.
+;; `ps-nb-pages-buffer' and `ps-nb-pages-region' estimate additional printed
+;; lines caused by folding long lines, using the selected font's average
+;; character width.
 ;;
 ;; The command `ps-print-customize' activates a customization buffer for
 ;; ps-print options.
@@ -1322,10 +1323,6 @@
 ;;
 ;; Fixed-pitch fonts work better for line folding, but are not required.
 ;;
-;; `ps-nb-pages-buffer' and `ps-nb-pages-region' don't take care of folding
-;; lines.
-;;
-;;
 ;; Things to change
 ;; ----------------
 ;;
@@ -1334,10 +1331,6 @@
 ;; Add `ps-non-bold-faces' and `ps-non-italic-faces' (should be easy).
 ;;
 ;; Improve the memory management for big files (hard?).
-;;
-;; `ps-nb-pages-buffer' and `ps-nb-pages-region' should take care of folding
-;; lines.
-;;
 ;;
 ;; Acknowledgments
 ;; ---------------
@@ -3561,20 +3554,33 @@ Try: pr -t file | awk \\='{printf \"%3d %s\n\", length($0), $0}\\=' | sort -r | 
   (ps-line-lengths-internal))
 
 ;;;###autoload
-(defun ps-nb-pages-buffer (nb-lines)
+(defun ps-nb-pages-buffer (nb-lines &optional from to)
   "Display number of pages to print this buffer, for various font heights.
 The table depends on the current ps-print setup.  NB-LINES counts logical
-lines and does not include additional lines caused by folding long lines."
-  (interactive (ps-count-lines-preprint (point-min) (point-max)))
-  (ps-nb-pages nb-lines))
+lines.  When FROM and TO are supplied, folding of long lines is estimated
+using the selected font's average character width."
+  (interactive
+   (let ((from (point-min))
+	 (to (point-max)))
+     (append (ps-count-lines-preprint from to) (list from to))))
+  (ps-nb-pages nb-lines (or from (point-min)) (or to (point-max))))
 
 ;;;###autoload
-(defun ps-nb-pages-region (nb-lines)
+(defun ps-nb-pages-region (nb-lines &optional from to)
   "Display number of pages to print the region, for various font heights.
 The table depends on the current ps-print setup.  NB-LINES counts logical
-lines and does not include additional lines caused by folding long lines."
-  (interactive (ps-count-lines-preprint (mark) (point)))
-  (ps-nb-pages nb-lines))
+lines.  When FROM and TO are supplied, folding of long lines is estimated
+using the selected font's average character width."
+  (interactive
+   (let* ((from (mark))
+	  (to (point))
+	  (nb-lines (car (ps-count-lines-preprint from to))))
+	 (list nb-lines (min from to) (max from to))))
+  (let ((from (or from (mark)))
+	(to (or to (point))))
+    (ps-nb-pages nb-lines
+		 (and from to (min from to))
+		 (and from to (max from to)))))
 
 (defvar ps-prefix-quote nil
   "Used for `ps-print-quote' (which see).")
@@ -4267,11 +4273,120 @@ Try: pr -t file | awk \\='{printf \"%3d %s\n\", length($0), $0}\\=' | sort -r | 
     (insert "\n")
     (display-buffer buf 'not-this-window)))
 
-(defun ps-nb-pages (nb-lines)
+(defun ps-nb-pages-line-widths (from to)
+  "Return sorted line widths in units of `ps-print-width' for FROM to TO."
+  (let ((char-width (ps-avg-char-width 'ps-font-for-text))
+	(space-width (ps-space-width 'ps-font-for-text))
+	(line-width 0.0)
+	has-text
+	line-widths)
+    (save-excursion
+      (goto-char from)
+      (while (< (point) to)
+	(let ((char (char-after)))
+	  (cond
+	   ((eq char ?\n)
+	    (push (/ line-width ps-print-width) line-widths)
+	    (setq line-width 0.0
+		  has-text nil)
+	    (forward-char 1))
+	   ((eq char ?\f)
+	    ;; A form feed starts a new page and resets the horizontal position.
+	    (when has-text
+	      (push (/ line-width ps-print-width) line-widths)
+	      (setq line-width 0.0))
+	    (setq has-text t)
+	    (forward-char 1))
+	   ((eq char ?\t)
+	    ;; ps-print expands a run containing a tab to spaces using the buffer's
+	    ;; display columns.
+	    (let ((column (current-column)))
+	      (setq has-text t)
+	      (skip-chars-forward " \t" to)
+	      (setq line-width
+		    (+ line-width (* (- (current-column) column) space-width)))))
+	   ((and (<= 0 char 255)
+		 (or (< char ?\s) (>= char ?\177)))
+	    ;; ps-print renders control and 8-bit characters as visible escapes.
+	    (setq has-text t
+		  line-width
+		  (+ line-width
+		     (* (length (aref ps-string-control-codes char))
+			char-width)))
+	    (forward-char 1))
+	   (t
+	    (setq has-text t
+		  line-width (+ line-width char-width))
+	    (forward-char 1)))))
+      (when has-text
+	(push (/ line-width ps-print-width) line-widths)))
+    (vconcat (sort line-widths #'<))))
+
+(defun ps-nb-pages-count-line-widths-over (line-widths width)
+  "Count entries in sorted LINE-WIDTHS greater than WIDTH."
+  (let ((low 0)
+	(high (length line-widths)))
+    (while (< low high)
+      (let ((middle (ash (+ low high) -1)))
+	(if (> (aref line-widths middle) width)
+	    (setq high middle)
+	  (setq low (1+ middle)))))
+    (- (length line-widths) low)))
+
+(defun ps-nb-pages-folded-lines (line-widths font-size initial-font-size)
+  "Estimate extra printed lines in sorted LINE-WIDTHS at FONT-SIZE."
+  (let* ((scale (/ (float font-size) initial-font-size))
+	 (max-width (if (> (length line-widths) 0)
+			(aref line-widths (1- (length line-widths)))
+		      0.0))
+	 (max-folds (max 0 (1- (ceiling (* max-width scale)))))
+	 (fold-index 1)
+	 (folds 0))
+    ;; A line contributes one extra printed line for each whole print-width
+    ;; it exceeds.  Count those thresholds across the sorted line widths.
+    (while (<= fold-index max-folds)
+      (setq folds
+	    (+ folds
+	       (ps-nb-pages-count-line-widths-over
+		line-widths (/ (float fold-index) scale)))
+	    fold-index (1+ fold-index)))
+    folds))
+
+(defun ps-nb-pages-count-at-font-size
+    (nb-lines line-widths font-size initial-font-size line-height line-spacing
+	      page-height)
+  "Estimate printed pages for NB-LINES at FONT-SIZE."
+  (let* ((printed-lines
+	  (+ nb-lines
+	     (ps-nb-pages-folded-lines line-widths font-size initial-font-size)))
+	 (height (+ (* line-height (/ (float font-size) initial-font-size))
+		    line-spacing))
+	 (lines-per-page (max 1 (floor (/ page-height height)))))
+    (ceiling (/ (float printed-lines) lines-per-page))))
+
+(defun ps-nb-pages-font-size-for-pages
+    (nb-page nb-lines line-widths min-font-size max-font-size
+	     initial-font-size line-height line-spacing page-height)
+  "Find the largest font size that fits NB-LINES in at most NB-PAGE pages."
+  (let ((low min-font-size)
+	(high max-font-size)
+	(iteration 0))
+    (while (< iteration 18)
+      (let ((middle (/ (+ low high) 2.0)))
+	(if (<= (ps-nb-pages-count-at-font-size
+		 nb-lines line-widths middle initial-font-size
+		 line-height line-spacing page-height)
+		 nb-page)
+	    (setq low middle)
+	  (setq high middle)))
+      (setq iteration (1+ iteration)))
+    low))
+
+(defun ps-nb-pages (nb-lines &optional from to)
   "Display correspondence between font size and the number of pages.
-The correspondence is based on having NB-LINES logical lines of text,
-without additional lines caused by folding long lines, and on the current
-ps-print setup."
+The correspondence is based on NB-LINES logical lines and the current ps-print
+setup.  If FROM and TO specify a source range, long-line folding is estimated
+using the selected font's average character width."
   (let* ((ps-font-size-internal
 	  (or ps-font-size-internal
 	      (ps-get-font-size 'ps-font-size)))
@@ -4294,6 +4409,7 @@ ps-print setup."
 			     ps-print-height))
 	 (ilh (ps-line-height 'ps-font-for-text)) ; initial line height
 	 (ps-setup (ps-setup))		; setup for the current buffer
+	 (line-widths (and from to (ps-nb-pages-line-widths from to)))
 	 (fs-min 4)			; minimum font size
 	 lh-min				; minimum line height
 	 nb-lpp-max			; maximum nb of lines per page
@@ -4309,22 +4425,35 @@ ps-print setup."
 	 )
     (setq lh-min      (/ (- (* (+ ilh ils) fs-min) ils) ifs)
 	  nb-lpp-max  (floor (/ page-height lh-min))
-	  nb-page-min (ceiling (/ (float nb-lines) nb-lpp-max))
 	  lh-max      (/ (- (* (+ ilh ils) fs-max) ils) ifs)
 	  nb-lpp-min  (floor (/ page-height lh-max))
-	  nb-page-max (ceiling (/ (float nb-lines) nb-lpp-min))
+	  nb-page-min (if (and from to)
+			  (ps-nb-pages-count-at-font-size
+			   nb-lines line-widths fs-min ifs ilh ils page-height)
+			(ceiling (/ (float nb-lines) nb-lpp-max)))
+	  nb-page-max (if (and from to)
+			  (ps-nb-pages-count-at-font-size
+			   nb-lines line-widths fs-max ifs ilh ils page-height)
+			(ceiling (/ (float nb-lines) nb-lpp-min)))
 	  nb-page     nb-page-min)
     (set-buffer buf)
     (goto-char (point-max))
     (or (bobp) (insert "\n" (make-string 75 ?\;) "\n"))
     (insert ps-setup
-	    (format "\nThere are %d logical lines (folded lines are not included).\n\n"
-		    nb-lines)
+	    (format "\nThere are %d logical lines%s.\n\n"
+		    nb-lines
+		    (if (and from to)
+			" (long-line folding is estimated)"
+		      " (folded lines are not included without a source range)"))
 	    "nb page / font size\n")
     (while (<= nb-page nb-page-max)
-      (setq nb-lpp (ceiling (/ nb-lines (float nb-page)))
-	    lh     (/ page-height nb-lpp)
-	    fs     (/ (* ifs lh) ilh))
+	(if (and from to)
+	    (setq fs (ps-nb-pages-font-size-for-pages
+		      nb-page nb-lines line-widths fs-min fs-max
+		      ifs ilh ils page-height))
+	  (setq nb-lpp (ceiling (/ nb-lines (float nb-page)))
+		lh     (/ page-height nb-lpp)
+		fs     (/ (* ifs lh) ilh)))
       (insert (format "%7d   %s\n" nb-page fs))
       (setq nb-page (1+ nb-page)))
     (insert "\n")
