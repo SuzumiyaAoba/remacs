@@ -460,13 +460,14 @@ This may be useful when columns have been shrunk."
     (let* ((beg (line-beginning-position))
            (end (line-end-position))
            (str (buffer-substring beg end)))
-      ;; FIXME: This does not handle intersecting overlays.
-      (dolist (ov (overlays-in beg end))
-        (when (overlay-get ov 'display)
-          (put-text-property
-           (- (overlay-start ov) beg) (- (overlay-end ov) beg)
-           'display (overlay-get ov 'display)
-           str)))
+      ;; Copy the effective overlay value one character at a time.  This
+      ;; clips overlays to the row and uses redisplay's priority ordering.
+      (dotimes (offset (length str))
+        (let* ((position (+ beg offset))
+               (property (get-char-property-and-overlay position 'display))
+               (overlay (cdr property)))
+          (when overlay
+            (put-text-property offset (1+ offset) 'display (car property) str))))
       str)))
 
 (defvar-local org-table-header-overlay nil)

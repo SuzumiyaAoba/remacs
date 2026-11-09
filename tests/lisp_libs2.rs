@@ -3756,6 +3756,40 @@ fn org_odt_table_closes_textbox_before_list_table() {
 }
 
 #[test]
+fn org_table_row_visible_string_clips_overlays_and_honors_priority() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'org-table)
+              (list
+               (with-temp-buffer
+                 (insert "previous\n|a|b|\nnext")
+                 (make-overlay (point-min) (point-max))
+                 (let ((overlay (car (overlays-in (point-min) (point-max)))))
+                   (overlay-put overlay 'display "X"))
+                 (goto-char (point-min))
+                 (forward-line 1)
+                 (let ((row (org-table-row-get-visible-string)))
+                   (list (length row)
+                         (get-text-property 0 'display row)
+                         (get-text-property 4 'display row))))
+               (with-temp-buffer
+                 (insert "abcdef\n")
+                 (let ((high (make-overlay 1 5))
+                       (low (make-overlay 3 6)))
+                   (overlay-put high 'display "A")
+                   (overlay-put high 'priority 100)
+                   (overlay-put low 'display "B")
+                   (overlay-put low 'priority 1)
+                   (goto-char (point-min))
+                   (let ((row (org-table-row-get-visible-string)))
+                     (list (get-char-property 3 'display)
+                           (get-text-property 2 'display row)
+                           (get-text-property 4 'display row)))))))"#),
+        "((5 \"X\" \"X\") (\"A\" \"A\" \"B\"))"
+    );
+}
+
+#[test]
 fn artist_detects_shift_changes_from_mouse_movement_events() {
     assert_eq!(
         ev(r#"(progn
