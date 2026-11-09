@@ -3212,6 +3212,24 @@ fn todo_mode_converts_legacy_date_time_with_calendar_form() {
 }
 
 #[test]
+fn rst_adaptive_fill_uses_paragraph_start_prefix() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'compile)
+              (require 'rst)
+              (with-temp-buffer
+                (rst-mode)
+                (setq-local fill-column 20)
+                (insert "Some start of a paragraph\n  continued wrong and more words to wrap here\n")
+                (goto-char (point-min))
+                (forward-line 1)
+                (fill-paragraph nil)
+                (buffer-string)))"#),
+        "\"Some start of a\nparagraph continued\nwrong and more words\nto wrap here\n\""
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

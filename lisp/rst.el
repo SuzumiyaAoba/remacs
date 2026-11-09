@@ -3317,17 +3317,15 @@ above.  If no suitable tab is found `rst-indent-width' is used."
 			 (if (< col 0) 0 col)))))
 	   (- tab leftmostcol)))))))
 
-;; FIXME: A paragraph with an (incorrectly) indented second line is not filled
-;;        correctly::
-;;
-;;          Some start
-;;            continued wrong
 (defun rst-adaptive-fill ()
   "Return fill prefix found at point.
 Value for `adaptive-fill-function'."
   (save-match-data
-    (let ((fnd (if (looking-at adaptive-fill-regexp)
-		   (match-string-no-properties 0))))
+    (let ((fnd (save-excursion
+		 (backward-paragraph)
+		 (beginning-of-line)
+		 (if (looking-at adaptive-fill-regexp)
+		     (match-string-no-properties 0)))))
       (if (save-match-data
 	    (not (string-match comment-start-skip fnd)))
 	  ;; An non-comment prefix is fine.
