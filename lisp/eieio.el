@@ -516,7 +516,8 @@ If EXTRA, include that in the string returned to represent the symbol."
   ;; class-allocated slots.
   (setq class (eieio--class-object class))
   (cl-check-type class eieio--class)
-  (mapcar #'identity (eieio--class-slots class)))
+  (append (mapcar #'identity (eieio--class-slots class))
+          (mapcar #'identity (eieio--class-class-slots class))))
 
 (defun object-slots (obj)
   "Return list of slot names available in OBJ."

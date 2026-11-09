@@ -4327,6 +4327,22 @@ fn proced_loads_and_reports_attributes() {
 // ------------------------------------------------------- eieio + registry
 
 #[test]
+fn eieio_class_slots_include_class_allocated_slots() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'eieio)
+              (defclass remacs-test-class-slot ()
+                ((shared :allocation :class :initform 1)))
+              (let ((object (remacs-test-class-slot)))
+                (list (mapcar #'eieio-slot-descriptor-name
+                              (eieio-class-slots 'remacs-test-class-slot))
+                      (slot-exists-p object 'shared)
+                      (oref object shared))))"#),
+        "((shared) t 1)"
+    );
+}
+
+#[test]
 fn registry_db_insert_lookup_search() {
     // GNU 31.1: `(registry-db)' constructor runs `initialize-instance'
     // :before/:after methods (data/tracker hash setup); lookup returns
