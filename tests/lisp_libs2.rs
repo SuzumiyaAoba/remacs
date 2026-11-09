@@ -1335,6 +1335,42 @@ fn project_dir_ignores_rebases_root_scoped_patterns() {
 }
 
 #[test]
+fn vc_git_project_ignores_exclude_matching_directory_contents() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'project)
+              (require 'vc-git)
+              (let* ((root (file-name-as-directory
+                            (make-temp-file "remacs-vc-ignore-" t)))
+                     (cache (expand-file-name "cache/" root)))
+                (unwind-protect
+                    (progn
+                      (make-directory cache t)
+                      (make-directory (expand-file-name "cache2/" root) t)
+                      (with-temp-file (expand-file-name "ignored.txt" cache)
+                        (insert "ignored"))
+                      (with-temp-file (expand-file-name "keep.txt" root)
+                        (insert "keep"))
+                      (with-temp-file
+                          (expand-file-name "keep.txt"
+                                            (expand-file-name "cache2/" root))
+                        (insert "keep"))
+                      (let ((default-directory root)
+                            (project-files-relative-names t))
+                        (unless (zerop (call-process "git" nil nil nil
+                                                     "init" "-q"))
+                          (error "git init failed"))
+                        (unless (zerop (call-process "git" nil nil nil
+                                                     "add" "."))
+                          (error "git add failed"))
+                        (sort (vc-git-project-list-files root '("cache"))
+                              #'string<)))
+                  (delete-directory root t))))"#),
+        "(\"cache2/keep.txt\" \"keep.txt\")"
+    );
+}
+
+#[test]
 fn epg_config_entry_points() {
     // GNU-verified on 31.1.
     assert_eq!(

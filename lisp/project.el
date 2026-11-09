@@ -772,6 +772,26 @@ in the `project-current' call, the timeout is determined by
 (declare-function vc-git-command "vc-git")
 (declare-function vc-hg-command "vc-hg")
 
+(defun project--vc-git-ignore-pathspecs (ignore)
+  "Return Git pathspecs for IGNORE, including descendants of directories."
+  (let* ((path (if (string-match-p "\\*\\*" ignore)
+                   ;; Looks like pathspec glob format already.
+                   ignore
+                 (if (string-prefix-p "./" ignore)
+                     ;; ./abc -> abc
+                     (substring ignore 2)
+                   ;; abc -> **/abc
+                   (concat "**/" ignore))))
+         (path (if (string-suffix-p "/" path)
+                   ;; abc/ -> abc/**
+                   (concat path "**")
+                 path))
+         (spec (format ":(exclude,glob,top)%s" path)))
+    (if (or (equal path "**") (string-suffix-p "/**" path))
+        (list spec)
+      ;; Excluding a directory entry does not exclude its contents.
+      (list spec (format ":(exclude,glob,top)%s/**" path)))))
+
 (defun vc-default-project-list-files (backend dir extra-ignores)
   (project--files-in-directory
    dir
@@ -802,29 +822,10 @@ in the `project-current' call, the timeout is determined by
       (when extra-ignores
         (setq args (append args
                            (cons "--"
-                                 (mapcar
-                                  (lambda (i)
-                                    (format
-                                     ":(exclude,glob,top)%s"
-                                     (if (string-match-p "\\*\\*" i)
-                                         ;; Looks like pathspec glob
-                                         ;; format already.
-                                         i
-                                       (if (string-prefix-p "./" i)
-                                           ;; ./abc -> abc
-                                           (substring i 2)
-                                         ;; abc -> **/abc
-                                         (setq i (concat "**/" i))
-                                         ;; FIXME: '**/abc' should also
-                                         ;; match a directory with that
-                                         ;; name, but doesn't (git 2.25.1).
-                                         ;; Maybe we should replace
-                                         ;; such entries with two.
-                                         (if (string-suffix-p "/" i)
-                                             ;; abc/ -> abc/**
-                                             (concat i "**")
-                                           i)))))
-                                  extra-ignores)))))
+                                 (apply #'append
+                                        (mapcar
+                                         #'project--vc-git-ignore-pathspecs
+                                         extra-ignores))))))
       (setq files
             (delq nil
                   (mapcar
