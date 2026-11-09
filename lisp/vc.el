@@ -2560,17 +2560,28 @@ BACKEND is the VC backend."
                           rev))))
       (user-error "Aborted"))
     (if delete
-        ;; FIXME: As discussed in bug#79408, instead of just failing if
-        ;; the user declines reverting the changes, we would leave
-        ;; behind some sort of conflict for the user to resolve, like we
-        ;; do when there is a merge conflict.
-        (let ((root (vc-root-dir)))
+        ;; If the user declines to discard local changes, preserve them
+        ;; by uncommitting the revisions instead of deleting their changes.
+        (let ((root (vc-root-dir))
+              (delete-contents t))
           (when (vc-dir-status-files root nil backend)
             (if (eq delete 'discard)
                 (vc-revert-file root)
               (let ((vc-buffer-overriding-fileset `(,backend (,root))))
-                (vc-revert))))
-          (vc-call-backend backend 'delete-revisions-from-end rev))
+                (condition-case err
+                    (vc-revert)
+                  (error
+                   (if (member (error-message-string err)
+                               '("Revert canceled" "Revert cancelled"))
+                       ;; Preserve the working tree by uncommitting these
+                       ;; revisions when the user declines to discard it.
+                       (setq delete-contents nil)
+                     (signal (car err) (cdr err)))))))
+          (vc-call-backend backend
+                           (if delete-contents
+                               'delete-revisions-from-end
+                             'uncommit-revisions-from-end)
+                           rev)))
       (vc-call-backend backend 'uncommit-revisions-from-end rev))))
 
 ;;;###autoload

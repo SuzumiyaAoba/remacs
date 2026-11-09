@@ -2383,6 +2383,40 @@ fn vc_annotate_rejects_invalid_and_zero_spans() {
 }
 
 #[test]
+fn vc_delete_revisions_preserves_changes_when_revert_declined() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'vc)
+              (let ((operations nil)
+                    (working-tree '(local-changes)))
+                (cl-letf (((symbol-function 'vc-find-backend-function)
+                           (lambda (&rest _) t))
+                          ((symbol-function 'vc-call-backend)
+                           (lambda (_backend function &rest args)
+                             (pcase function
+                               ('revision-granularity 'repository)
+                               ('working-revision-symbol "tip")
+                               ('revision-published-p nil)
+                               ('delete-revisions-from-end
+                                (push 'delete operations))
+                               ('uncommit-revisions-from-end
+                                (push (list 'uncommit (car args)) operations)))))
+                          ((symbol-function 'yes-or-no-p)
+                           (lambda (&rest _) t))
+                          ((symbol-function 'vc-root-dir)
+                           (lambda () "/repo/"))
+                          ((symbol-function 'vc-dir-status-files)
+                           (lambda (&rest _) '("/repo/file")))
+                          ((symbol-function 'vc-revert)
+                           (lambda () (error "Revert cancelled"))))
+                  (vc-delete-revisions-from-end "base" nil 'git)
+                  (list (nreverse operations) working-tree))))"#),
+        "(((uncommit \"base\")) (local-changes))"
+    );
+}
+
+#[test]
 fn change_log_font_lock_recognizes_slash_date_formats() {
     assert_eq!(
         ev(r#"(progn
