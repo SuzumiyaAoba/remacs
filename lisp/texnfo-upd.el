@@ -648,9 +648,8 @@ Single argument, END-OF-MENU, is position limiting search."
   (skip-chars-forward ":.,\t\n ")
   ;; don't copy a carriage return at line beginning with asterisk!
   ;; don't copy @detailmenu or @end menu or @ignore as descriptions!
-  ;; do copy a description that begins with an `@'!
-  ;; !! Known bug: does not copy descriptions starting with ^|\{?* etc.
-  (if (and (looking-at "\\(\\w+\\|@\\)")
+  ;; A description may begin with any non-newline character.
+  (if (and (looking-at ".")
 	   (not (looking-at
 		 "\\(^\\* \\|^@detailmenu\\|^@end menu\\|^@ignore\\)")))
       (buffer-substring

@@ -3668,6 +3668,24 @@ fn texinfo_node_pointer_search_skips_excluded_output_blocks() {
 }
 
 #[test]
+fn texinfo_menu_copy_preserves_punctuation_descriptions() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'texnfo-upd)
+              (mapcar
+               (lambda (description)
+                 (with-temp-buffer
+                   (insert (format "@menu\n* Node:: %s\n@end menu\n" description))
+                   (goto-char (point-min))
+                   (let ((menu (list (cons "Node" nil))))
+                     (texinfo-incorporate-descriptions menu)
+                     (cdr (car menu)))))
+               '("?Important" "^Caret" "|Pipe" "{Brace" "*Star" "@code")))"#),
+        "(\"?Important\" \"^Caret\" \"|Pipe\" \"{Brace\" \"*Star\" \"@code\")"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
