@@ -3247,6 +3247,29 @@ fn rst_insert_list_new_tag_clears_whitespace_only_line() {
 }
 
 #[test]
+fn rst_convert_bullets_indents_continuation_lines() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'compile)
+              (require 'rst)
+              (list
+               (with-temp-buffer
+                 (rst-mode)
+                 (insert "* item one\n  continuation\n* item two\n")
+                 (rst-convert-bullets-to-enumeration (point-min) (point-max))
+                 (equal (buffer-string)
+                        "1. item one\n   continuation\n2. item two\n"))
+               (with-temp-buffer
+                 (rst-mode)
+                 (insert "  * item one\n    continuation\n  * item two\n")
+                 (rst-convert-bullets-to-enumeration (point-min) (point-max))
+                 (equal (buffer-string)
+                        "  1. item one\n     continuation\n  2. item two\n"))))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

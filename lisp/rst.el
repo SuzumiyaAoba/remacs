@@ -3526,26 +3526,49 @@ do all lines instead of just paragraphs."
          (insert indent)))
        nil))))
 
-;; FIXME: Does not deal with a varying number of digits appropriately.
 ;; FIXME: Does not deal with multiple levels independently.
-;; FIXME: Does not indent a multiline item correctly.
 (defun rst-convert-bullets-to-enumeration (beg end)
   "Convert the bulleted and enumerated items in the region to enumerated lists.
 Renumber as necessary.  Region is from BEG to END."
   (interactive "r")
-  (let ((count 1))
-    (save-match-data
-      (save-excursion
-	(dolist (marker (mapcar
-			 (cl-function
-			  (lambda ((pnt &rest clm))
-			    (copy-marker pnt)))
-			 (rst-find-begs beg end 'itmany-beg-1)))
-	  (set-marker
-	   (goto-char marker) nil)
-	  (looking-at (rst-re 'itmany-beg-1))
-	  (replace-match (format "%d." count) nil nil nil 1)
-          (incf count))))))
+  (let ((count 1)
+	(end-marker (copy-marker end t)))
+    (unwind-protect
+	(save-match-data
+	  (save-excursion
+	    (dolist (marker (mapcar
+			     (cl-function
+			      (lambda ((pnt &rest clm))
+				(copy-marker pnt)))
+			     (rst-find-begs beg end 'itmany-beg-1)))
+	      (set-marker
+	       (goto-char marker) nil)
+	      (beginning-of-line)
+	      (when (looking-at (rst-re 'itmany-beg-1))
+		(let* ((old-tag (match-string-no-properties 1))
+		       (new-tag (format "%d." count))
+		       (delta (- (length new-tag) (length old-tag)))
+		       (body-column
+			(save-excursion
+			  (goto-char (match-end 0))
+			  (current-column))))
+		  (replace-match new-tag nil nil nil 1)
+		  (incf count)
+		  (when (and (/= delta 0)
+			     (rst-forward-line-strict
+			      1 (marker-position end-marker)))
+		    (rst-apply-indented-blocks
+		     (line-beginning-position) (marker-position end-marker)
+		     body-column
+		     (lambda (_count _in-first _in-sub in-super in-empty _relind)
+		       (cond
+			(in-super t)
+			(in-empty nil)
+			(t
+			 (indent-rigidly (line-beginning-position)
+					 (line-end-position) delta)
+			 nil))))))))))
+	(set-marker end-marker nil))))
 
 (defun rst-line-block-region (beg end &optional with-empty)
   "Add line block prefixes for a region.
