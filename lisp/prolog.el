@@ -3181,6 +3181,53 @@ the following comma and whitespace, if any."
     ((or ?\( ?\; ?>) (prolog-electric--if-then-else))
     (?. (prolog-electric--dot))))
 
+(defun prolog--term-arity (open-paren)
+  "Return the number of top-level arguments after OPEN-PAREN.
+Return nil if the term is not closed."
+  (save-excursion
+    (goto-char (1+ open-paren))
+    ;; Do not count commas inside nested terms, lists, comments or quotes.
+    (let ((depth 0)
+          (commas 0)
+          argument-p quote escaped arity)
+      (while (and (not arity) (not (eobp)))
+        (let ((char (char-after))
+              (skip-forward nil))
+          (cond
+           (quote
+            (cond
+             (escaped (setq escaped nil))
+             ((eq char ?\\) (setq escaped t))
+             ((eq char quote)
+              (if (eq (char-after (1+ (point))) quote)
+                  (forward-char 1)
+                (setq quote nil)))))
+           ((memq char '(?\" ?'))
+            (setq quote char
+                  argument-p t))
+           ((eq char ?%) (end-of-line))
+           ((and (eq char ?/) (eq (char-after (1+ (point))) ?*))
+            (if (search-forward "*/" nil t)
+                (setq skip-forward t)
+              (setq skip-forward t)
+              (goto-char (point-max))))
+           ((memq char '(?\( ?\[ ?\{))
+            (setq depth (1+ depth)
+                  argument-p t))
+           ((memq char '(?\) ?\] ?\}))
+            (if (and (= depth 0) (eq char ?\)))
+                (setq arity (if (or argument-p (> commas 0))
+                                (1+ commas)
+                              0))
+              (when (> depth 0) (setq depth (1- depth)))))
+           ((and (= depth 0) (eq char ?,))
+            (setq commas (1+ commas)
+                  argument-p nil))
+           ((not (memq char '(?\s ?\t ?\n ?\r)))
+            (setq argument-p t)))
+          (unless (or arity skip-forward) (forward-char 1))))
+      arity)))
+
 (defun prolog-find-term (functor arity &optional prefix)
   "Go to the position at the start of the next occurrence of a term.
 The term is specified with FUNCTOR and ARITY.  The optional argument
@@ -3189,27 +3236,26 @@ PREFIX is the prefix of the search regexp."
          (prefix (if (not prefix)
                      "\\<"
                    prefix))
-         (regexp (concat prefix functor))
-         (i 1))
-
-    ;; Build regexp for the search if the arity is > 0
+         (regexp (concat prefix functor)))
     (if (= arity 0)
         ;; Add that the functor must be at the end of a word. This
         ;; does not work if the arity is > 0 since the closing )
         ;; is not a word constituent.
-        (setq regexp (concat regexp "\\>"))
-      ;; Arity is > 0, add parens and commas
-      (setq regexp (concat regexp "("))
-      (while (< i arity)
-        (setq regexp (concat regexp ".+,"))
-        (setq i (1+ i)))
-      (setq regexp (concat regexp ".+)")))
-
-    ;; Search, and return position
-    (if (re-search-forward regexp nil t)
-        (goto-char (match-beginning 0))
-      (error "Term not found"))
-    ))
+        (progn
+          (setq regexp (concat regexp "\\>"))
+          (if (re-search-forward regexp nil t)
+              (goto-char (match-beginning 0))
+            (error "Term not found")))
+      (let ((term-regexp (concat regexp "("))
+            found)
+        (while (and (not found) (re-search-forward term-regexp nil t))
+          (let ((start (match-beginning 0))
+                (term-arity (prolog--term-arity (1- (point)))))
+            (when (and (integerp term-arity) (= term-arity arity))
+              (setq found start))))
+        (if found
+            (goto-char found)
+          (error "Term not found"))))))
 
 (defun prolog-variables-to-anonymous (beg end)
   "Replace all variables within a region BEG to END by anonymous variables."

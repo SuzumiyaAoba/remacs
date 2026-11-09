@@ -3117,6 +3117,32 @@ fn dired_noselect_opens_directory_with_newline_name() {
 }
 
 #[test]
+fn prolog_find_term_counts_top_level_arguments() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'prolog)
+              (let ((one-argument
+                     (with-temp-buffer
+                       (insert "foo(a,b).\nfoo(a).\n")
+                       (goto-char (point-min))
+                       (prolog-find-term "foo" 1)
+                       (equal (buffer-substring
+                               (line-beginning-position) (line-end-position))
+                              "foo(a).")))
+                    (two-arguments
+                     (with-temp-buffer
+                       (insert "foo(bar(a,b), 'c,d').\nfoo(a,b).\n")
+                       (goto-char (point-min))
+                       (prolog-find-term "foo" 2)
+                       (equal (buffer-substring
+                               (line-beginning-position) (line-end-position))
+                              "foo(bar(a,b), 'c,d')."))))
+                (list one-argument two-arguments)))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn calc_pass_errors_bypasses_calc_do_error_handler() {
     assert_eq!(
         ev(r#"(progn
