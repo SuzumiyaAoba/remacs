@@ -267,7 +267,7 @@ undoes the expansion."
 	      (setq he-tried-table nil
 	            he-tried-buffer-hashes
 	            (list (secure-hash 'sha256 (current-buffer)
-                               (point-min) (point-max)))))
+                               (point-min) (point-max))))))
 	(if arg
 	    (if (not first) (he-reset-string))
 	    (setq arg 0))
