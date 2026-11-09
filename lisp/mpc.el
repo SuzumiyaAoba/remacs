@@ -1020,6 +1020,18 @@ If PLAYLIST is t or nil or missing, use the main playlist."
                       (split-string (symbol-name browser-tag) "|")))))
    mpc-browser-tags))
 
+(defun mpc--truncate-to-width (string width)
+  "Truncate STRING to WIDTH display columns, including the ellipsis."
+  (if (> (string-width string) width)
+      (let* ((ellipsis "…")
+             (ellipsis-width (string-width ellipsis)))
+        (if (>= width ellipsis-width)
+            (concat (truncate-string-to-width
+                     string (- width ellipsis-width))
+                    ellipsis)
+          (truncate-string-to-width string width)))
+    string))
+
 (defun mpc-format (format-spec info &optional hscroll)
   "Format the INFO according to FORMAT-SPEC, inserting the result at point.
 
@@ -1122,11 +1134,15 @@ string POST."
                (textwidth (if text (string-width text) 0))
                (postwidth (if post (string-width post) 0)))
           (when text
+            (when (and size (> postwidth size))
+              (setq post (mpc--truncate-to-width post size)
+                    postwidth (string-width post)))
             (let ((display
                    (if (and size
                             (> (+ postwidth textwidth) size))
                        (propertize
-			(truncate-string-to-width text size nil nil "…")
+                        (mpc--truncate-to-width
+                         text (max 0 (- size postwidth)))
                         'help-echo text)
                      text)))
               (when (mpc--tag-browser-p tag)
@@ -1147,7 +1163,8 @@ string POST."
                                              (list 'space :align-to
                                                    (+ col
                                                       (if (and size right-align)
-                                                          (- size postwidth textwidth)
+                                                          (- size postwidth
+                                                             (string-width display))
                                                         0)))))
                                display post))))
           (if (null size) (setq col (+ col textwidth postwidth))

@@ -402,6 +402,7 @@ qa!(qa_count_lines_invisible, "qa_count_lines_invisible.el");
 qa!(qa_value_lt_lexicographic_ties, "qa_value_lt_lexicographic_ties.el");
 qa!(qa_value_lt_string_char_codes, "qa_value_lt_string_char_codes.el");
 qa!(qa_format_spec_properties, "qa_format_spec_properties.el");
+qa!(qa_mpc_format_width_post, "qa_mpc_format_width_post.el");
 qa!(qa_url_unhex_bytes, "qa_url_unhex_bytes.el");
 qa!(qa_url_truncate_display_width, "qa_url_truncate_display_width.el");
 qa!(qa_url_cookie_expiry_invalid_day, "qa_url_cookie_expiry_invalid_day.el");
