@@ -3602,6 +3602,41 @@ fn gnus_picon_splits_after_quoted_local_part() {
 }
 
 #[test]
+fn sh_mode_highlights_in_only_after_list_constructs() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'sh-script)
+              (list
+               (with-temp-buffer
+                 (sh-mode)
+                 (sh-set-shell "sh" nil nil)
+                 (insert "echo in\n")
+                 (font-lock-ensure)
+                 (goto-char 6)
+                 (eq (get-text-property (point) 'face) 'font-lock-keyword-face))
+               (with-temp-buffer
+                 (sh-mode)
+                 (sh-set-shell "sh" nil nil)
+                 (insert "for x in items; do\n")
+                 (font-lock-ensure)
+                 (goto-char (point-min))
+                 (search-forward "in")
+                 (backward-char 2)
+                 (eq (get-text-property (point) 'face) 'font-lock-keyword-face))
+               (with-temp-buffer
+                 (sh-mode)
+                 (sh-set-shell "sh" nil nil)
+                 (insert "case x in\n  x) echo x;;\nesac\n")
+                 (font-lock-ensure)
+                 (goto-char (point-min))
+                 (search-forward "in")
+                 (backward-char 2)
+                 (eq (get-text-property (point) 'face) 'font-lock-keyword-face))))"#),
+        "(nil t t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

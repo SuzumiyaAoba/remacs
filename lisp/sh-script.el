@@ -36,7 +36,6 @@
 
 ;;; Known Bugs:
 
-;; - In Bourne the keyword `in' is not anchored to case, for, select ...
 ;; - Variables in `"' strings aren't fontified because there's no way of
 ;;   syntactically distinguishing those from `'' strings.
 
@@ -881,7 +880,9 @@ See `sh-feature'.")
   "Default expressions to highlight in Shell Script modes.  See `sh-feature'.")
 
 (defvar sh-font-lock-keywords-var-1
-  '((sh "[ \t]\\(in\\|do\\)\\>"))
+  '((sh "[ \t]\\(do\\)\\>"
+       ("\\(?:^\\|[;|&()]\\)[ \t]*\\(?:for\\|case\\|select\\)\\_>[^;\n]*?\\(in\\)\\_>"
+        1 font-lock-keyword-face)))
   "Subdued level highlighting for Shell Script modes.")
 
 (defvar sh-font-lock-keywords-var-2 ()
