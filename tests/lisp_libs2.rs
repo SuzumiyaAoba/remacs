@@ -3178,6 +3178,23 @@ fn semantic_symref_translates_grep_extended_grouping() {
 }
 
 #[test]
+fn dired_guesses_local_man_command_with_selected_path() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'dired-aux)
+              (require 'cl-lib)
+              (cl-letf (((symbol-function 'Man-support-local-filenames)
+                         (lambda () 'man)))
+                (let* ((file "/tmp/foo.1")
+                       (command (dired-guess-default (list file))))
+                  (list command
+                        (dired-shell-stuff-it command (list file) t)
+                        (car (dired-guess-default '("/tmp/foo.1.gz")))))))"#),
+        "(\"man\" \"man /tmp/foo.1\" \"man\")"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

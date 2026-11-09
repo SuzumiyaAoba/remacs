@@ -1320,14 +1320,13 @@ Return the result of `process-file' - zero for success."
          '(concat "znew" (if dired-guess-shell-gzip-quiet " -q")
                   " " dired-guess-shell-znew-switches))
 
-   ;; The following four extensions are useful with dired-man ("N" key)
-   ;; FIXME "man ./" does not work with dired-do-shell-command,
-   ;; because there seems to be no way for us to modify the filename,
-   ;; only the command.  Hmph.  `dired-man' works though.
+   ;; The following four extensions are useful with dired-man ("N" key).
+   ;; The `man' implementation that reports `man' accepts local filenames
+   ;; by their slash, so let Dired append the selected path.
    (list "\\.\\(?:[0-9]\\|man\\)\\'"
          '(let ((loc (Man-support-local-filenames)))
             (cond ((eq loc 'man-db) "man -l")
-                  ((eq loc 'man) "man ./")
+                  ((eq loc 'man) "man")
                   (t
                    "cat * | tbl | nroff -man -h | col -b"))))
    (list "\\.\\(?:[0-9]\\|man\\)\\.g?z\\'"
@@ -1335,14 +1334,14 @@ Return the result of `process-file' - zero for success."
             (cond ((eq loc 'man-db)
                    "man -l")
                   ((eq loc 'man)
-                   "man ./")
+                   "man")
                   (t "gunzip -qc * | tbl | nroff -man -h | col -b")))
          ;; Optional decompression.
          '(concat "gunzip" (if dired-guess-shell-gzip-quiet " -q")))
    (list "\\.[0-9]\\.Z\\'"
          '(let ((loc (Man-support-local-filenames)))
             (cond ((eq loc 'man-db) "man -l")
-                  ((eq loc 'man) "man ./")
+                  ((eq loc 'man) "man")
                   (t "zcat * | tbl | nroff -man -h | col -b")))
          ;; Optional conversion to gzip format.
          '(concat "znew" (if dired-guess-shell-gzip-quiet " -q")
