@@ -1312,6 +1312,29 @@ fn project_vc_git_detection() {
 }
 
 #[test]
+fn project_dir_ignores_rebases_root_scoped_patterns() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'project)
+              (let* ((root (file-name-as-directory
+                            (make-temp-file "remacs-project-ignore-" t)))
+                     (dir (expand-file-name "lisp/" root)))
+                (unwind-protect
+                    (progn
+                      (make-directory dir t)
+                      (cl-letf (((symbol-function 'project-root)
+                                 (lambda (_) root))
+                                ((symbol-function 'project-ignores)
+                                 (lambda (&rest _)
+                                   '("./lisp/generated/"))))
+                        (project--dir-ignores nil dir)))
+                  (delete-directory root t))))"#),
+        "(\"./generated/\")"
+    );
+}
+
+#[test]
 fn epg_config_entry_points() {
     // GNU-verified on 31.1.
     assert_eq!(
