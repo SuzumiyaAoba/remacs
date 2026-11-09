@@ -1202,9 +1202,6 @@ Return position of the beginning of the node line; do not move point.
 Thus, if this level is subsection, searches backwards for section node.
 Only argument is a string of the general type of section."
   (let ((case-fold-search t))
-    ;; !! Known bug: if section immediately follows top node, this
-    ;; returns the beginning of the buffer as the beginning of the
-    ;; higher level section.
     (cond
      ((< level 3)
       (save-excursion
@@ -1213,7 +1210,7 @@ Only argument is a string of the general type of section."
 	(line-beginning-position)))
      (t
       (save-excursion
-	(re-search-backward
+	(or (and (re-search-backward
 	 (concat
 	  "\\(^@node\\).*\n"              ; match node line
 	  "\\(\\(\\(^@c\\).*\n\\)"        ; match comment line, if any
@@ -1224,9 +1221,13 @@ Only argument is a string of the general type of section."
           "\\)?"                          ; end of expression
 	  (eval
 	   (cdr (assoc level texinfo-update-menu-higher-regexps)) t))
-	 nil
-	 'goto-beginning)
-	(point))))))
+	 nil t)
+	    (point))
+	   (progn
+	     (goto-char (point-min))
+	     (if (re-search-forward "^@node [ \t]*top[ \t]*\\(,\\|$\\)" nil t)
+		 (line-beginning-position)
+	       (point-min)))))))))
 
 (defun texinfo-update-menu-region-end (level)
   "Locate end of higher level section this section is within.

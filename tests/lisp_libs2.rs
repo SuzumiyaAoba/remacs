@@ -3686,6 +3686,29 @@ fn texinfo_menu_copy_preserves_punctuation_descriptions() {
 }
 
 #[test]
+fn texinfo_menu_after_top_is_inserted_inside_top() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'texnfo-upd)
+              (with-temp-buffer
+                (insert "@setfilename manual.info\n"
+                        "@node Top\n@top Manual\n\n"
+                        "@node First\n@section First\n")
+                (goto-char (point-min))
+                (search-forward "@node First")
+                (beginning-of-line)
+                (texinfo-make-menu)
+                (let* ((output (buffer-string))
+                       (top (string-match "^@node Top" output))
+                       (menu (string-match "^@menu" output))
+                       (first (string-match "^@node First" output)))
+                  (list (and top menu first (< top menu) (< menu first))
+                        (and (string-match "^\\* First::" output) t)))))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn
