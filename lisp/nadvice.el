@@ -644,8 +644,6 @@ of the piece of advice."
             (setq i (1+ i)))))
     ;; FIXME: Adjust this for the new :filter advices, since they use `funcall'
     ;; rather than `apply'.
-    ;; FIXME: Somehow this doesn't work on (advice-add :before
-    ;; 'call-interactively #'ignore), see bug#3984.
     (when (and (eq (nth 1 frame2) 'apply)
                (progn
                  (funcall get-next-frame)

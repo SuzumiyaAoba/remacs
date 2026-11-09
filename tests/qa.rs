@@ -60,6 +60,7 @@ qa!(qa_imenu_list_positions, "qa_imenu_list_positions.el");
 qa!(qa_imenu_menu_limit, "qa_imenu_menu_limit.el");
 qa!(qa_absolute_name, "qa_absolute_name.el");
 qa!(qa_advice, "qa_advice.el");
+qa!(qa_advised_call_interactively, "qa_advised_call_interactively.el");
 qa!(qa_ansi_color_load, "qa_ansi_color_load.el");
 qa!(qa_interactive_ignore, "qa_interactive_ignore.el");
 qa!(qa_apply, "qa_apply.el");
