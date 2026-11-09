@@ -4805,10 +4805,11 @@ Helper function for `todo-convert-legacy-files'."
   (calendar-dlet
       ((year (match-string 1))
        (month (match-string 2))
-       (monthname (calendar-month-name (string-to-number month) t))
+       monthname
        (day (match-string 3))
        (time (match-string 4))
        dayname)
+    (setq monthname (calendar-month-name (string-to-number month) t))
     (replace-match "")
     (insert (mapconcat #'eval calendar-date-display-form)
 	    (when time (concat " " time)))))

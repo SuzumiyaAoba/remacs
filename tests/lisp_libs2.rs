@@ -3195,6 +3195,23 @@ fn dired_guesses_local_man_command_with_selected_path() {
 }
 
 #[test]
+fn todo_mode_converts_legacy_date_time_with_calendar_form() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'todo-mode)
+              (let* ((calendar-date-display-form '(monthname "-" day "-" year))
+                     (expected (concat (calendar-month-name 1 t) "-01-2001")))
+                (with-temp-buffer
+                  (insert "2001-01-01 10:00")
+                  (goto-char (point-min))
+                  (re-search-forward todo-legacy-date-time-regexp)
+                  (todo-convert-legacy-date-time)
+                  (equal (buffer-string) (concat expected " 10:00")))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
