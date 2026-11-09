@@ -144,6 +144,7 @@ qa!(qa_custom, "qa_custom.el");
 qa!(qa_custom2, "qa_custom2.el");
 qa!(qa_descr, "qa_descr.el");
 qa!(qa_doc, "qa_doc.el");
+qa!(qa_eldoc_echo_width, "qa_eldoc_echo_width.el");
 qa!(qa_documentation_property, "qa_documentation_property.el");
 qa!(qa_text_char_description, "qa_text_char_description.el");
 qa!(qa_function_alias_docs, "qa_function_alias_docs.el");

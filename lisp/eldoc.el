@@ -674,9 +674,11 @@ INTERACTIVE is non-nil if user explicitly invoked ElDoc.  Honor
                 (setq single-doc (caar docs))
                 (setq single-doc-sym
                       (format "%s" (plist-get (cdar docs) :thing)))
-                (< (length single-doc) width)
+                (< (string-width single-doc) width)
                 (not (string-match "\n" single-doc))
-                (> (+ (length single-doc) (length single-doc-sym) 2) width))
+                (> (+ (string-width single-doc)
+                      (string-width single-doc-sym) 2)
+                   width))
                single-doc)
               ((and (numberp available)
                     (cl-plusp available))
@@ -692,7 +694,7 @@ INTERACTIVE is non-nil if user explicitly invoked ElDoc.  Honor
                         (buffer-substring (goto-char (point-min))
                                           (progn (end-of-visible-line)
                                                  (point))))))
-                 (if (> (length string) width)  ; truncation to happen
+                 (if (> (string-width string) width) ; truncation to happen
                      (unless (eldoc--echo-area-prefer-doc-buffer-p t)
                        (truncate-string-to-width string width))
                    (unless (eldoc--echo-area-prefer-doc-buffer-p nil)
