@@ -64,6 +64,7 @@ fn window_autoselection_does_not_enable_lisp_motion_tracking() {
         frame_position: Some((x, 0)),
         frame_pixel_position: None,
         position: None,
+        modifiers: 0,
     };
     let events = VecDeque::from([
         (motion(0), 0),

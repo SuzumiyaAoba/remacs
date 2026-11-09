@@ -1,12 +1,53 @@
 use super::{EditorView, GuiEvent};
 use crate::logic::ChanIo;
-use gpui::{Modifiers, NavigationDirection, point, px};
+use gpui::{Modifiers, MouseButton as GpuiMouseButton, NavigationDirection, point, px};
 use remacs_runtime::{
     editor::{CHAR_CTL, CHAR_SHIFT, event_code_for, reflow_frame_windows},
-    frontend::{MouseButton as Button, render_grid_with_input_cached, run_editor_with},
+    frontend::{Grid, MouseButton as Button, render_grid_with_input_cached, run_editor_with},
     lisp::Interp,
 };
 use std::sync::mpsc;
+
+#[test]
+fn mouse_drag_events_keep_current_modifiers() {
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(0);
+            let mut grid = Grid::blank(40, 8);
+            grid.rows = vec![" ".repeat(40); 8];
+            view.grid = grid;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    let start = point(px(5.0), px(5.0));
+    let end = point(px(25.0), px(5.0));
+    visual.simulate_mouse_down(start, GpuiMouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        end,
+        Some(GpuiMouseButton::Left),
+        Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+
+    let events: Vec<_> = rx.try_iter().collect();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        GuiEvent::MouseMove { modifiers: CHAR_SHIFT, .. }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        GuiEvent::MouseDragMove { modifiers: CHAR_SHIFT, .. }
+    )));
+}
 
 #[test]
 fn navigation_buttons_reach_the_gui_channel_with_position_and_modifiers() {

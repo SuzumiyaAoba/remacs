@@ -3723,6 +3723,20 @@ fn org_context_reports_latex_fragment_bounds() {
 }
 
 #[test]
+fn artist_detects_shift_changes_from_mouse_movement_events() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'artist)
+              (list
+               (artist-shift-has-changed nil '(mouse-movement nil))
+               (artist-shift-has-changed nil '(S-mouse-movement nil))
+               (artist-shift-has-changed t '(S-mouse-movement nil))
+               (artist-shift-has-changed t '(mouse-movement nil))))"#),
+        "(nil t nil t)"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn

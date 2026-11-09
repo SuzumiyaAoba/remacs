@@ -104,8 +104,12 @@ pub(super) enum GuiEvent {
         position: Option<MousePosition>,
         /// Native pixel coordinates in the frontend's global desktop space.
         absolute_position: Option<(i128, i128)>,
+        modifiers: i128,
     },
-    MouseDragMove { position: Option<MousePosition> },
+    MouseDragMove {
+        position: Option<MousePosition>,
+        modifiers: i128,
+    },
     MouseDown {
         button: MouseButton,
         click_count: usize,
@@ -238,7 +242,7 @@ impl FrameEventSender {
         position: Option<MousePosition>,
         absolute_position: Option<(i128, i128)>,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
-        self.send_mouse_move_for_window(position, absolute_position, None)
+        self.send_mouse_move_for_window(position, absolute_position, None, 0)
     }
 
     pub(super) fn send_mouse_move_for_window(
@@ -246,20 +250,26 @@ impl FrameEventSender {
         position: Option<MousePosition>,
         absolute_position: Option<(i128, i128)>,
         text_window_id: Option<usize>,
+        modifiers: i128,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
         self.sender.send(GuiEvent::MouseMove {
             frame_id: self.frame_id.get(),
             text_window_id,
             position,
             absolute_position,
+            modifiers,
         })
     }
 
     pub(super) fn send_mouse_drag_move(
         &self,
         position: Option<MousePosition>,
+        modifiers: i128,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
-        self.send(GuiEvent::MouseDragMove { position })
+        self.send(GuiEvent::MouseDragMove {
+            position,
+            modifiers,
+        })
     }
 }
 
@@ -1970,6 +1980,7 @@ impl KeyIo for ChanIo {
                 text_window_id,
                 position,
                 absolute_position,
+                modifiers,
             } => {
                 let geometry = match frame_id {
                     Some(id) => self.frame_geometries.get(&id),
@@ -2006,13 +2017,20 @@ impl KeyIo for ChanIo {
                         frame_position,
                         frame_pixel_position,
                         position,
+                        modifiers,
                     }))
                 } else {
                     Ok(None)
                 }
             }
-            GuiEvent::MouseDragMove { position } => {
-                Ok(Some(InputEvent::MouseMovement { position }))
+            GuiEvent::MouseDragMove {
+                position,
+                modifiers,
+            } => {
+                Ok(Some(InputEvent::MouseMovement {
+                    position,
+                    modifiers,
+                }))
             }
             GuiEvent::MouseDown {
                 button,

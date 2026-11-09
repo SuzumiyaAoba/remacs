@@ -70,6 +70,7 @@ impl KeyIo for Frontend {
                     frame_position: Some((x as i128, y as i128)),
                     frame_pixel_position: None,
                     position: None,
+                    modifiers: 0,
                 }
             }
         }))

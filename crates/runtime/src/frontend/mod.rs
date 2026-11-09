@@ -342,7 +342,11 @@ pub enum InputEvent {
     MouseDown(MouseInput),
     Mouse(MouseInput),
     /// Pointer movement while a mouse button is held.
-    MouseMovement { position: Option<MousePosition> },
+    MouseMovement {
+        position: Option<MousePosition>,
+        /// Emacs keyboard modifier bits held while the pointer moved.
+        modifiers: i128,
+    },
     /// Pointer movement outside a drag, including movement over blank areas.
     MouseMoved {
         frame_id: Option<usize>,
@@ -353,6 +357,8 @@ pub enum InputEvent {
         /// Frame-relative pixel coordinates for `mouse-pixel-position`.
         frame_pixel_position: Option<(i128, i128)>,
         position: Option<MousePosition>,
+        /// Emacs keyboard modifier bits held while the pointer moved.
+        modifiers: i128,
     },
     /// A wheel/trackpad event, with line count normalized by the front-end.
     MouseWheel {

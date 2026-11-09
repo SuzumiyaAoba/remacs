@@ -1484,6 +1484,7 @@ impl Render for EditorView {
         let modifier_mapping = self.modifier_mapping;
         let physical_modifier_state = self.physical_modifier_state.clone();
         let key_modifier_state = physical_modifier_state.clone();
+        let mouse_move_modifier_state = physical_modifier_state.clone();
         let bell_flash = self.bell_flash;
         let mouse_cursor = if self.grid.pointer_visible {
             gpui_cursor_style(self.grid.hover_cursor)
@@ -1724,6 +1725,11 @@ impl Render for EditorView {
                     let text_window_id = point.and_then(|point| {
                         input::text_window_at_point(&this.grid, point, cell_width)
                     });
+                    let modifiers = mouse_modifier_bits(
+                        &event.modifiers,
+                        modifier_mapping,
+                        mouse_move_modifier_state.get(),
+                    );
                     let target =
                         position.map(|position| (position.buffer_id, position.buffer_position));
                     let _ = this.mouse_face_position.replace(target);
@@ -1731,6 +1737,7 @@ impl Render for EditorView {
                         position,
                         Some(absolute_position),
                         text_window_id,
+                        modifiers,
                     );
                     {
                         let popup = this.popup_hit_regions.borrow();
@@ -1767,7 +1774,7 @@ impl Render for EditorView {
                         }
                         return;
                     }
-                    let _ = this.tx.send_mouse_drag_move(position);
+                    let _ = this.tx.send_mouse_drag_move(position, modifiers);
                 }),
             )
             .on_mouse_up(

@@ -116,13 +116,6 @@
 ;; to be loadable, unless the variable `artist-picture-compatibility'
 ;; is set to nil.
 
-;;; Known bugs:
-
-;; It is not possible to change between shifted and unshifted operation
-;; while drawing with the mouse.  (See the comment in the function
-;; `artist-shift-has-changed' for further details.)
-
-
 ;;; ChangeLog:
 
 ;; 1.2.6	6-Aug-2004
@@ -4876,20 +4869,10 @@ If optional argument STATE is positive, turn borders on."
 ;; Mouse routines
 ;;
 
-(defsubst artist-shift-has-changed (_shift-state _ev)
+(defsubst artist-shift-has-changed (shift-state ev)
   "From the last SHIFT-STATE and EV, determine if the shift-state has changed."
-  ;; This one simply doesn't work.
-  ;;
-  ;; There seems to be no way to tell whether the user has pressed shift
-  ;; while dragging the cursor around when we are in a track-mouse
-  ;; form. Calling (event-modifiers ev) yields nil :-( Neither is the
-  ;; (event-basic-type ev) of any help (it is simply `mouse-movement').
-  ;;
-  ;; So this doesn't work:
-  ;; (cond ((and shift-state (not (artist-event-is-shifted ev))) t)
-  ;;       ((and (not shift-state) (artist-event-is-shifted ev)) t)
-  ;;       (t nil))
-  nil)
+  (not (eq (and shift-state t)
+           (and (artist-event-is-shifted ev) t))))
 
 (defun artist-coord-win-to-buf (coord)
   "Convert a window-relative coordinate COORD to a buffer-relative coordinate."

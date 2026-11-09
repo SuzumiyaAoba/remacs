@@ -555,8 +555,11 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 dispatch_mouse_down(i, mouse, &mut keys, &mut arg_mode)?
             }
             InputEvent::Mouse(mouse) => dispatch_mouse(&term, i, mouse, &mut keys, &mut arg_mode)?,
-            InputEvent::MouseMovement { position } => {
-                dispatch_mouse_movement(i, position, &mut keys, &mut arg_mode)?;
+            InputEvent::MouseMovement {
+                position,
+                modifiers,
+            } => {
+                dispatch_mouse_movement(i, position, modifiers, &mut keys, &mut arg_mode)?;
             }
             InputEvent::MouseMoved {
                 frame_id,
@@ -564,6 +567,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 frame_position,
                 frame_pixel_position,
                 position,
+                modifiers,
             } => dispatch_gui_mouse_move(
                 i,
                 frame_id,
@@ -571,6 +575,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 frame_position,
                 frame_pixel_position,
                 position,
+                modifiers,
                 &mut keys,
                 &mut arg_mode,
             )?,
@@ -1299,22 +1304,29 @@ fn reveal_pointer_after_mouse_move(i: &mut Interp, frame_id: Option<usize>) {
     }
 }
 
-fn mouse_movement_event(i: &mut Interp, position: Option<MousePosition>) -> Value {
+fn mouse_movement_event(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    modifiers: i128,
+) -> Value {
     let position = position
         .and_then(|position| mouse_position_value(i, position))
         .unwrap_or(Value::Nil);
-    Value::list(vec![Value::Sym(i.intern("mouse-movement")), position])
+    let name = mouse_event_name("mouse-movement", modifiers);
+    Value::list(vec![Value::Sym(i.intern(&name)), position])
 }
 
 fn dispatch_mouse_movement(
     i: &mut Interp,
     position: Option<MousePosition>,
+    modifiers: i128,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
-    let event = mouse_movement_event(i, position);
+    let name = mouse_event_name("mouse-movement", modifiers);
+    let event = mouse_movement_event(i, position, modifiers);
     crate::editor::record_recent_input_event(i, event.clone());
-    let key = crate::editor::event_code_for("mouse-movement");
+    let key = crate::editor::event_code_for(&name);
     let sequence = Value::vector(vec![Value::Int(key)]);
     if matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None) {
         return Ok(());
@@ -1447,6 +1459,7 @@ fn dispatch_gui_mouse_move(
     frame_position: Option<(i128, i128)>,
     frame_pixel_position: Option<(i128, i128)>,
     position: Option<MousePosition>,
+    modifiers: i128,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
@@ -1456,7 +1469,7 @@ fn dispatch_gui_mouse_move(
     // Lisp consumers such as mouse tracking modes observe ordinary pointer
     // motion through the same event used for a drag.
     if mouse_movement_tracking_enabled(i) {
-        dispatch_mouse_movement(i, position, keys, arg_mode)?;
+        dispatch_mouse_movement(i, position, modifiers, keys, arg_mode)?;
     }
     dispatch_gui_window_autoselect(
         i,
@@ -2697,6 +2710,7 @@ fn minibuf_loop<T: KeyIo>(
                 frame_position,
                 frame_pixel_position,
                 position,
+                modifiers,
             } => {
                 reveal_pointer_after_mouse_move(i, frame_id);
                 let frame_id = remember_gui_mouse_position(
@@ -2718,12 +2732,20 @@ fn minibuf_loop<T: KeyIo>(
                         return Err(i.error(format!("minibuffer input: {error}")));
                     }
                     if mouse_movement_tracking_enabled(i) {
-                        return Ok(MinibufInput::Event(mouse_movement_event(i, position)));
+                        return Ok(MinibufInput::Event(mouse_movement_event(
+                            i, position, modifiers,
+                        )));
                     }
                 } else {
                     if mouse_movement_tracking_enabled(i)
                         && let Err(error) =
-                            dispatch_mouse_movement(i, position, &mut keys, &mut arg_mode)
+                            dispatch_mouse_movement(
+                                i,
+                                position,
+                                modifiers,
+                                &mut keys,
+                                &mut arg_mode,
+                            )
                     {
                         return Err(i.error(format!("minibuffer input: {error}")));
                     }
@@ -2740,8 +2762,13 @@ fn minibuf_loop<T: KeyIo>(
                     }
                 }
             }
-            InputEvent::MouseMovement { position } if single => {
-                return Ok(MinibufInput::Event(mouse_movement_event(i, position)));
+            InputEvent::MouseMovement {
+                position,
+                modifiers,
+            } if single => {
+                return Ok(MinibufInput::Event(mouse_movement_event(
+                    i, position, modifiers,
+                )));
             }
             InputEvent::Mouse(mouse) if single => {
                 if let Some((_, event)) = mouse_event(i, mouse) {

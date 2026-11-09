@@ -955,6 +955,52 @@ fn chanio_mouse_click_keeps_down_position_and_modifiers() {
 }
 
 #[test]
+fn chanio_mouse_movement_keeps_shift_modifiers() {
+    let (mut io, tx, _grx) = chan_pair();
+    let position = MousePosition {
+        buffer_id: 7,
+        buffer_position: 4,
+        utf16_offset: 4,
+        x: 31,
+        y: 12,
+        row: 0,
+        column: 4,
+        window_id: None,
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    tx.send(GuiEvent::MouseMove {
+        frame_id: None,
+        text_window_id: Some(3),
+        position: Some(position),
+        absolute_position: None,
+        modifiers: CHAR_SHIFT,
+    })
+    .unwrap();
+    assert!(matches!(
+        io.poll_input(Duration::from_millis(10)).unwrap(),
+        Some(InputEvent::MouseMoved {
+            position: Some(actual),
+            modifiers: CHAR_SHIFT,
+            ..
+        }) if actual == position
+    ));
+
+    tx.send(GuiEvent::MouseDragMove {
+        position: Some(position),
+        modifiers: CHAR_SHIFT,
+    })
+    .unwrap();
+    assert!(matches!(
+        io.poll_input(Duration::from_millis(10)).unwrap(),
+        Some(InputEvent::MouseMovement {
+            position: Some(actual),
+            modifiers: CHAR_SHIFT,
+        }) if actual == position
+    ));
+}
+
+#[test]
 fn chanio_navigation_buttons_keep_down_data_on_release() {
     let (mut io, tx, _grids) = chan_pair();
     let start = MousePosition {
