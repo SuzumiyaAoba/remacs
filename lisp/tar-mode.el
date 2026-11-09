@@ -1449,6 +1449,48 @@ for this to be permanent."
 	 (tar-alter-one-field tar-gid-offset
 	   (concat (substring (format "%6o" new-gid) 0 6) "\000 ")))))
 
+(defun tar--rename-longlink-entry (descriptor new-name encoded-name)
+  "Rename DESCRIPTOR whose name is stored in a GNU LongLink record."
+  (let* ((header-start
+          (marker-position (tar-header-header-start descriptor)))
+         (data-start (+ header-start 512))
+         (entry-header-start
+          (- (marker-position (tar-header-data-start descriptor)) 512))
+         (name-size (1+ (length encoded-name)))
+         (padded-size (tar-roundup-512 name-size))
+         (payload
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (insert encoded-name 0)
+            (insert (make-string (- padded-size name-size) 0))
+            (buffer-string)))
+         (header-name
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (insert encoded-name)
+            (when (< (buffer-size) 100)
+              (insert (make-string (- 100 (buffer-size)) 0)))
+            (substring (buffer-string) 0 100))))
+    (setf (tar-header-name descriptor) new-name)
+    ;; Replace the old LongLink name and its padding.  Markers on the real
+    ;; entry and later entries track the resulting size change.
+    (with-current-buffer tar-data-buffer
+      (delete-region data-start entry-header-start)
+      (goto-char data-start)
+      (insert payload)
+      ;; Update the LongLink header size and checksum.
+      (goto-char (+ header-start tar-size-offset))
+      (delete-region (point) (+ (point) 12))
+      (insert (format "%11o " name-size))
+      (let ((checksum
+             (tar-header-block-checksum
+              (buffer-substring header-start (+ header-start 512)))))
+        (goto-char (+ header-start tar-chk-offset))
+        (delete-region (point) (+ (point) 8))
+        (insert (format "%6o\0 " checksum))))
+    ;; Keep the ordinary header's name field in sync as well.
+    (tar-alter-one-field 0 header-name descriptor)))
+
 (defun tar-rename-entry (new-name)
   "Change the name associated with this entry in the tar file.
 This does not modify the disk image; you must save the tar file itself
@@ -1461,26 +1503,31 @@ for this to be permanent."
 						tar-file-name-coding-system))
         (descriptor (tar-current-descriptor))
         (prefix nil))
-    (when (tar-header-header-start descriptor)
-      ;; FIXME: Make it work for ././@LongLink.
-      (error "Rename with @LongLink format is not implemented"))
+    (if (tar-header-header-start descriptor)
+        (if (with-current-buffer tar-data-buffer
+              (eq (char-after
+                   (+ (marker-position (tar-header-header-start descriptor))
+                      tar-linkp-offset))
+                  ?L))
+            (tar--rename-longlink-entry descriptor new-name encoded-new-name)
+          (error "Rename with @LongLink target is not implemented"))
+      (progn
+        (when (and (> (length encoded-new-name) 98)
+                   (string-match "/" encoded-new-name
+				 (- (length encoded-new-name) 99))
+	           (< (match-beginning 0) 155))
+          (unless (equal (tar-header-magic descriptor) "ustar\0")
+            (tar-alter-one-field tar-magic-offset (concat "ustar\0" "00")))
+          (setq prefix (substring encoded-new-name 0 (match-beginning 0)))
+          (setq encoded-new-name (substring encoded-new-name (match-end 0))))
 
-    (when (and (> (length encoded-new-name) 98)
-               (string-match "/" encoded-new-name
-			     (- (length encoded-new-name) 99))
-	       (< (match-beginning 0) 155))
-      (unless (equal (tar-header-magic descriptor) "ustar\0")
-        (tar-alter-one-field tar-magic-offset (concat "ustar\0" "00")))
-      (setq prefix (substring encoded-new-name 0 (match-beginning 0)))
-      (setq encoded-new-name (substring encoded-new-name (match-end 0))))
-
-    (if (> (length encoded-new-name) 98) (error "Name too long"))
-    (setf (tar-header-name descriptor) new-name)
-    (tar-alter-one-field 0
-     (substring (concat encoded-new-name (make-string 99 0)) 0 99))
-    (if prefix
-        (tar-alter-one-field tar-prefix-offset
-         (substring (concat prefix (make-string 155 0)) 0 155)))))
+        (if (> (length encoded-new-name) 98) (error "Name too long"))
+        (setf (tar-header-name descriptor) new-name)
+        (tar-alter-one-field 0
+         (substring (concat encoded-new-name (make-string 99 0)) 0 99))
+        (if prefix
+            (tar-alter-one-field tar-prefix-offset
+             (substring (concat prefix (make-string 155 0)) 0 155)))))))
 
 
 (defun tar-chmod-entry (new-mode)

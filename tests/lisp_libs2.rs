@@ -3471,6 +3471,55 @@ fn nxml_parent_document_provides_internal_dtd_entities() {
 }
 
 #[test]
+fn tar_rename_longlink_member_updates_archive_record() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'tar-mode)
+              (let* ((file-name-coding-system 'no-conversion)
+                     (tar-file-name-coding-system 'no-conversion)
+                     (old-name (make-string 110 ?a))
+                     (new-name (make-string 620 ?b))
+                     (long-size (1+ (length old-name)))
+                     (long-header
+                      (make-tar-header nil "././@LongLink" #o644 0 0 long-size
+                                       (current-time) nil ?L nil "ustar "
+                                       nil nil nil nil))
+                     (file-header
+                      (make-tar-header nil "short" #o644 0 0 0 (current-time)
+                                       nil nil nil "ustar " nil nil nil nil))
+                     (long-data
+                      (with-temp-buffer
+                        (set-buffer-multibyte nil)
+                        (insert old-name 0)
+                        (insert (make-string
+                                 (- (tar-roundup-512 long-size) long-size) 0))
+                        (buffer-string)))
+                     (archive
+                      (concat (tar-header-serialize long-header t)
+                              long-data
+                              (tar-header-serialize file-header t)
+                              (make-string 1024 0))))
+                (with-temp-buffer
+                  (set-buffer-multibyte nil)
+                  (insert archive)
+                  (tar-mode)
+                  (goto-char (point-min))
+                  (let ((inhibit-read-only t))
+                    (tar-rename-entry new-name))
+                  (let ((renamed-archive
+                         (with-current-buffer tar-data-buffer (buffer-string))))
+                    (with-temp-buffer
+                      (set-buffer-multibyte nil)
+                      (insert renamed-archive)
+                      (tar-mode)
+                      (list
+                       (equal (tar-header-name (car tar-parse-info)) new-name)
+                       (= (length renamed-archive) (+ (length archive) 512))))))))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
