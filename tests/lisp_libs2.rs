@@ -3637,6 +3637,11 @@ fn sh_mode_highlights_in_only_after_list_constructs() {
 }
 
 #[test]
+fn cus_edit_loads_after_custom_widget_setup_definition() {
+    assert_eq!(ev("(progn (require 'cus-edit) t)"), "t");
+}
+
+#[test]
 fn texinfo_node_pointer_search_skips_excluded_output_blocks() {
     assert_eq!(
         ev(r#"(progn

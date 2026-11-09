@@ -464,7 +464,7 @@
   (when (eq major-mode 'Custom-mode)
     (dolist (field widget-field-new)
       (when (eq (widget-get field :keymap) widget-field-keymap)
-        (widget-put field :keymap custom-field-keymap))))
+        (widget-put field :keymap custom-field-keymap)))))
 
 (advice-add 'widget-setup :before #'custom--widget-setup)
 
