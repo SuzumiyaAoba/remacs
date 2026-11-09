@@ -3637,6 +3637,37 @@ fn sh_mode_highlights_in_only_after_list_constructs() {
 }
 
 #[test]
+fn texinfo_node_pointer_search_skips_excluded_output_blocks() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'texnfo-upd)
+              (list
+               (with-temp-buffer
+                 (insert "@node One\n@chapter One\n\n"
+                         "@ignore\n@node Hidden\n@chapter Hidden\n@end ignore\n\n"
+                         "@node Two\n@chapter Two\n")
+                 (goto-char (point-min))
+                 (search-forward "@node One")
+                 (end-of-line)
+                 (let ((kind (texinfo-find-pointer
+                              (point-min) (point-max) 2 'next)))
+                   (list kind (texinfo-pointer-name kind))))
+               (with-temp-buffer
+                 (insert "@node One\n@chapter One\n"
+                         "@iftex\n@node TexOnly\n@chapter TexOnly\n@end iftex\n"
+                         "@ifnottex\n@node InfoOnly\n@chapter InfoOnly\n@end ifnottex\n"
+                         "@node Two\n@chapter Two\n")
+                 (goto-char (point-min))
+                 (search-forward "@node One")
+                 (end-of-line)
+                 (let ((kind (texinfo-find-pointer
+                              (point-min) (point-max) 2 'next)))
+                   (list kind (texinfo-pointer-name kind))))))"#),
+        "((normal \"Two\") (normal \"InfoOnly\"))"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

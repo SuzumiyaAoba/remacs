@@ -1279,7 +1279,8 @@ Interactively, a prefix argument means to operate on the region.
 Warning: do NOT use this function if your Texinfo file uses @node
 lines without the `Next', `Previous', `Up' pointers, because the
 result could be an invalid Texinfo file due to known deficiencies
-in this command: it does not support @ignore and @if* directives.
+in this command: it skips @ignore and output-specific @if* blocks for
+Info output, but does not evaluate @ifset or @ifclear conditions.
 
 The functions for creating or updating nodes and menus, and their
 keybindings, are:
@@ -1313,7 +1314,7 @@ which menu descriptions are indented. Its default value is 32."
 	(save-restriction
 	  (narrow-to-region beginning end)
 	  (goto-char (point-min))
-	  (while (re-search-forward "^@node" (point-max) t)
+	  (while (texinfo--re-search-visible-node "^@node" (point-max))
 	    (beginning-of-line)
 	    (texinfo-update-the-node))
 	  (goto-char (point-max))
@@ -1326,7 +1327,8 @@ which menu descriptions are indented. Its default value is 32."
 Warning: do NOT use this function if your Texinfo file uses @node
 lines without the `Next', `Previous', `Up' pointers, because the
 result could be an invalid Texinfo file due to known deficiencies
-in this command: it does not support @ignore and @if* directives."
+in this command: it skips @ignore and output-specific @if* blocks for
+Info output, but does not evaluate @ifset or @ifclear conditions."
   (interactive)
   (save-excursion
     (texinfo-update-node (point-min) (point-max))
@@ -1369,7 +1371,7 @@ left at the end of the node line."
 	    ;; for an `ifinfo' section. This @chapter command must
 	    ;; be skipped.  So the procedure is to search for
 	    ;; the next `@node' line, and then copy its name.
-	    (if (re-search-forward "^@node" nil t)
+    (if (texinfo--re-search-visible-node "^@node" nil)
 		(progn
 		  (beginning-of-line)
 		  (texinfo-copy-node-name))
@@ -1402,6 +1404,47 @@ line, including the comma.  Leaves point at beginning of line."
 	(delete-region (1- (point)) eol-point)))
   (beginning-of-line))
 
+(defun texinfo--node-visible-in-info-p (position)
+  "Return non-nil if the node at POSITION is included in Info output.
+Skip nodes inside `@ignore' and output-specific conditional blocks."
+  (save-restriction
+    (widen)
+    (save-match-data
+      (save-excursion
+        (goto-char (point-min))
+        (let ((case-fold-search t)
+              (condition-re "^@[ \t]*\\(?:\\(if[a-z]+\\|ignore\\)\\_>\\|end[ \t]+\\(if[a-z]+\\|ignore\\)\\_>\\)")
+              stack)
+          (while (re-search-forward condition-re position t)
+            (let ((opening (match-string-no-properties 1))
+                  (closing (match-string-no-properties 2)))
+              (if opening
+                  (push
+                   (cons opening
+                         (or (equal opening "ignore")
+                             (member opening
+                                     '("iftex" "ifhtml" "ifxml" "ifdocbook"
+                                       "ifplaintext" "ifnotinfo"))))
+                   stack)
+                (when (and stack (equal closing (caar stack)))
+                  (pop stack)))))
+          (not (let ((excluded nil))
+                 (dolist (condition stack)
+                   (when (cdr condition) (setq excluded t)))
+                 excluded)))))))
+
+(defun texinfo--re-search-visible-node (regexp bound &optional backward)
+  "Search for REGEXP up to BOUND, skipping nodes excluded from Info output.
+Search backward when BACKWARD is non-nil."
+  (let (found)
+    (while (and (not found)
+                (if backward
+                    (re-search-backward regexp bound t)
+                  (re-search-forward regexp bound t)))
+      (when (texinfo--node-visible-in-info-p (match-beginning 0))
+        (setq found t)))
+    found))
+
 (defun texinfo-find-pointer (beginning end level direction)
   "Move point to section associated with next, previous, or up pointer.
 Return type of pointer (either `normal' or `no-pointer').
@@ -1422,7 +1465,7 @@ will be at some level higher in the Texinfo file.  The fourth argument
 	   (forward-line 3)             ; skip over current node
 	   ;; Search for section commands accompanied by node lines;
 	   ;; ignore section commands in the middle of nodes.
-	   (if (re-search-forward
+           (if (texinfo--re-search-visible-node
                 ;; A `Top' node is never a next pointer, so won't find it.
 		(concat
 		 ;; Match node line.
@@ -1438,12 +1481,11 @@ will be at some level higher in the Texinfo file.  The fourth argument
                   "\\)?")
 		 (eval
 		  (cdr (assoc level texinfo-update-menu-same-level-regexps)) t))
-		end
-		t)
+		end)
 	       'normal
 	     'no-pointer))
 	  ((eq direction 'previous)
-	   (if (re-search-backward
+           (if (texinfo--re-search-visible-node
 		(concat
 		 "\\("
 		 ;; Match node line.
@@ -1482,7 +1524,7 @@ will be at some level higher in the Texinfo file.  The fourth argument
 	       'normal
 	     'no-pointer))
 	  ((eq direction 'up)
-	   (if (re-search-backward
+           (if (texinfo--re-search-visible-node
 		(concat
 		 "\\("
 		 ;; Match node line.
