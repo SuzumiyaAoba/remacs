@@ -633,20 +633,39 @@ See URL `https://docs.python.org/3/reference/lexical_analysis.html#string-and-by
                (buffer-substring-no-properties (max (- spos 4) (point-min))
                                                (min (+ spos 2) (point-max)))))
          (and (string-match-p python--f-string-start-regexp before-quote)
-              (or (< (point-min) spos)
+              (or (<= spos (point-min))
                   (not (memq (char-syntax (char-before spos)) '(?w ?_))))))))
+
+(defun python--fontify-f-string-expression (beg end)
+  "Syntactically fontify the Python expression between BEG and END."
+  (let* ((beg (1+ beg))
+         (end (1- end))
+         (text (buffer-substring-no-properties beg end))
+         (fontified
+          (with-temp-buffer
+            (set-syntax-table python-mode-syntax-table)
+            (setq-local syntax-propertize-function
+                        python-syntax-propertize-function)
+            (setq-local font-lock-syntactic-face-function
+                        (lambda (state)
+                          (cond ((nth 3 state) 'font-lock-string-face)
+                                ((nth 4 state) 'font-lock-comment-face))))
+            (insert text)
+            (font-lock-fontify-syntactically-region (point-min) (point-max))
+            (buffer-string)))
+         (offset 0))
+    (while (< offset (length fontified))
+      (let* ((face (get-text-property offset 'face fontified))
+             (next (or (next-single-property-change offset 'face fontified)
+                       (length fontified))))
+        (when face
+          (put-text-property (+ beg offset) (+ beg next) 'face face))
+        (setq offset next)))))
 
 (defun python--font-lock-f-strings (limit)
   "Mark {...} holes as being code.
 Remove the (presumably `font-lock-string-face') `face' property from
 the {...} holes that appear within f-strings."
-  ;; FIXME: This will fail to properly highlight strings appearing
-  ;; within the {...} of an f-string.
-  ;; We could presumably fix it by running
-  ;; `font-lock-default-fontify-syntactically-region' (as is done in
-  ;; `sm-c--cpp-fontify-syntactically', for example) after removing
-  ;; the `face' property, but I'm not sure it's worth the effort and
-  ;; the risks.
   (let ((ppss (syntax-ppss)))
     (while
         (progn
@@ -673,7 +692,8 @@ the {...} holes that appear within f-strings."
                              (min send (point)))
                          (scan-error send))))
               (goto-char end)
-              (put-text-property beg end 'face nil))))
+              (put-text-property beg end 'face nil)
+              (python--fontify-f-string-expression beg end))))
         (goto-char (min limit (1+ send)))
         (setq ppss (syntax-ppss))))))
 

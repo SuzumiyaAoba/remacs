@@ -3877,6 +3877,26 @@ fn idlwave_completion_does_not_skip_numeric_literals_as_identifiers() {
 }
 
 #[test]
+fn python_f_string_expression_highlights_inner_strings() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'python)
+              (with-temp-buffer
+                (python-mode)
+                (font-lock-mode 1)
+                (insert "f\"{'inner'}\"\n")
+                (font-lock-ensure)
+                (goto-char (point-min))
+                (search-forward "'inner'")
+                (backward-char 7)
+                (let* ((face (get-text-property (point) 'face))
+                       (faces (if (consp face) face (list face))))
+                  (and (memq 'font-lock-string-face faces) t))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn
