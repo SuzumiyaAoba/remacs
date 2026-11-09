@@ -1868,7 +1868,7 @@ Gnus might fail to display all of it.")
 	         (gnus-message 9 "Deleting file %s..." file)
 	         (condition-case err
 	             (delete-file file)
-	           (error (gnus-message 3 "Deleting file %s failed... %s" file err))))))
+	           (error (gnus-message 3 "Deleting file %s failed... %s" file err)))))))
       (condition-case err
           (delete-directory dir)
         (error (gnus-message 3 "Deleting directory %s failed... %s" file err))))
@@ -1987,7 +1987,7 @@ The user will be asked for a file name."
 			    (format "%s %s -o %s"
 				    (shell-quote-argument "mmencode")
 				    (shell-quote-argument path)
-				    (shell-quote-argument file-name)))
+				    (shell-quote-argument file-name))))
     (gnus-uu-post-make-mime file-name "base64")
     t))
 
@@ -2018,7 +2018,7 @@ The user will be asked for a file name."
 			      (mapconcat #'shell-quote-argument
 					 (split-string-and-unquote command) " ")
 			      (shell-quote-argument path)
-			      (shell-quote-argument file-name))))
+			      (shell-quote-argument file-name)))))
 
 (defun gnus-uu-post-news-inews ()
   "Posts the composed news article and encoded file.
