@@ -102,11 +102,22 @@ List of pairs (KEY . GLYPH) where KEY is either a filename or an URL.")
 ;;; Functions:
 
 (defsubst gnus-picon-split-address (address)
-  (setq address (split-string address "@"))
-  (if (stringp (cadr address))
-      (cons (car address) (split-string (cadr address) "\\."))
-    (if (stringp (car address))
-	(split-string (car address) "\\."))))
+  (let ((index 0)
+        (length (length address))
+        quoted escaped at)
+    ;; Only an @ outside a quoted local-part separates the domain.
+    (while (and (< index length) (null at))
+      (let ((char (aref address index)))
+        (cond
+         (escaped (setq escaped nil))
+         ((and quoted (= char ?\\)) (setq escaped t))
+         ((= char ?\") (setq quoted (not quoted)))
+         ((and (not quoted) (= char ?@)) (setq at index))))
+      (setq index (1+ index)))
+    (if at
+        (cons (substring address 0 at)
+              (split-string (substring address (1+ at)) "\\."))
+      (split-string address "\\."))))
 
 (defun gnus-picon-find-face (address directories &optional exact)
   (let* ((address (gnus-picon-split-address address))

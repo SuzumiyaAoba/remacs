@@ -3549,6 +3549,22 @@ fn sql_mode_does_not_highlight_quoted_identifiers_as_keywords() {
 }
 
 #[test]
+fn gnus_picon_splits_after_quoted_local_part() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'gnus-picon)
+              (let ((parts
+                     (gnus-picon-split-address
+                      (concat "\"" "foo@bar" "\"@example.com"))))
+                (list (equal (car parts) (concat "\"" "foo@bar" "\""))
+                      (equal (cdr parts) '("example" "com"))
+                      (equal (gnus-picon-split-address "foo@example.com")
+                             '("foo" "example" "com")))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
