@@ -687,27 +687,40 @@ By default, treat as a function name."
      dictionary
      "Width not specified for variable/width inserter"))
 
+  (unless (stringp width)
+    (srecode-insert-report-error
+     dictionary "Invalid width %s" width))
+
   ;; Trim or pad to new length
-  (let* ((split  (split-string width ":"))
-	 (width  (string-to-number (nth 0 split)))
-	 (second (nth 1 split))
-	 (pad    (cond
-		  ((or (null second) (string= "right" second))
-		   'right)
-		  ((string= "left" second)
-		   'left)
-		  (t
-		   (srecode-insert-report-error
-		    dictionary
-		    "Unknown pad type %s" second)))))
-    (if (>= (length value) width)
-	;; Simple case - too long.
-	(substring value 0 width)
-      ;; We need to pad on one side or the other.
-      (let ((padchars (make-string (- width (length value)) ? )))
-	(if (eq pad 'left)
-	    (concat padchars value)
-	  (concat value padchars))))))
+  (let* ((split (split-string width ":" nil))
+         (width-string (car split))
+         (second (cadr split))
+         (valid-width
+          (and (<= 1 (length split) 2)
+               (stringp width-string)
+               (string-match "[0-9]+" width-string)
+               (= (match-beginning 0) 0)
+               (= (match-end 0) (length width-string)))))
+    (unless valid-width
+      (srecode-insert-report-error
+       dictionary "Invalid width %s" width))
+    (let* ((width (string-to-number width-string))
+           (pad (cond
+                 ((or (null second) (string= "right" second))
+                  'right)
+                 ((string= "left" second)
+                  'left)
+                 (t
+                  (srecode-insert-report-error
+                   dictionary "Unknown pad type %s" second)))))
+      (if (>= (length value) width)
+          ;; Simple case - too long.
+          (substring value 0 width)
+        ;; We need to pad on one side or the other.
+        (let ((padchars (make-string (- width (length value)) ? )))
+          (if (eq pad 'left)
+              (concat padchars value)
+            (concat value padchars)))))))
 
 (cl-defmethod srecode-inserter-prin-example ((_ins (subclass srecode-template-inserter-width))
                                              escape-start escape-end)

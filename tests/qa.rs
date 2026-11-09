@@ -764,6 +764,7 @@ qa!(qa_subrinfo, "qa_subrinfo.el");
 qa!(qa_subrx, "qa_subrx.el");
 qa!(qa_subrx2, "qa_subrx2.el");
 qa!(qa_subrx3, "qa_subrx3.el");
+qa!(qa_srecode_width_validation, "qa_srecode_width_validation.el");
 qa!(qa_symbol, "qa_symbol.el");
 qa!(qa_variable_watchers, "qa_variable_watchers.el");
 qa!(qa_syntax, "qa_syntax.el");
