@@ -3728,6 +3728,34 @@ fn org_context_reports_latex_fragment_bounds() {
 }
 
 #[test]
+fn org_odt_table_closes_textbox_before_list_table() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'ox-odt)
+              (with-temp-buffer
+                (org-mode)
+                (insert "- List item\n"
+                        "  - Sub-item\n"
+                        "    #+begin_textbox\n"
+                        "    | Table |\n"
+                        "    #+end_textbox\n")
+                (let* ((xml (org-export-as 'odt nil nil t))
+                       (open (string-match "<draw:text-box" xml))
+                       (close (and open
+                                   (string-match "</draw:text-box>" xml open)))
+                       (table (string-match "<table:table " xml))
+                       (reopen (and table
+                                    (string-match "<draw:text-box" xml table)))
+                       (reclose (and reopen
+                                     (string-match "</draw:text-box>" xml reopen))))
+                  (list (and open close table (< open close) (< close table))
+                        (and table reopen reclose (< table reopen)
+                             (< reopen reclose))))))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn artist_detects_shift_changes_from_mouse_movement_events() {
     assert_eq!(
         ev(r#"(progn

@@ -3133,6 +3133,20 @@ holding contextual information."
 						 style extra anchor))))
      (t contents))))
 
+(defun org-odt--special-block-close-open-tags (special-block info)
+  "Return XML close/open tags around the contents of SPECIAL-BLOCK.
+INFO is the export state.  Return nil when the transcoder does not wrap
+its contents in an element."
+  (let* ((marker (symbol-name (cl-gensym "org-odt-table-content-")))
+	 (transcoded (org-odt-special-block special-block marker info))
+	 (position (and (stringp transcoded)
+			 (string-match (regexp-quote marker) transcoded))))
+    (when position
+      (let ((open (substring transcoded 0 position))
+	    (close (substring transcoded (+ position (length marker)))))
+	(when (or (> (length open) 0) (> (length close) 0))
+	  (cons close open))))))
+
 
 ;;;; Src Block
 
@@ -3552,16 +3566,12 @@ pertaining to indentation here."
 	 (--walk-list-genealogy-and-collect-tags
 	  (lambda (table info)
 	    (let* ((genealogy (org-element-lineage table))
-                   ;; FIXME: This will fail when the table is buried
-                   ;; inside non-list parent greater element, like
-                   ;; special block.  The parent block will not be
-                   ;; closed properly.
-                   ;; Example:
-                   ;; 1. List item
-                   ;;    - Sub-item
-                   ;;      #+begin_textbox
-                   ;;      | Table |
-                   ;;      #+end_textbox
+		   (special-block-genealogy
+		    (delq nil
+			  (cl-loop for el in genealogy
+				   when (org-element-type-p el 'special-block)
+				   collect (org-odt--special-block-close-open-tags
+					    el info))))
 		   (list-genealogy
 		    (when (org-element-type-p (car genealogy) 'item)
 		      (cl-loop for el in genealogy
@@ -3580,6 +3590,9 @@ pertaining to indentation here."
 					 (org-element-parent el)))))))
 		   parent-list)
 	      (nconc
+	       ;; Close and reopen wrapper elements around the table, just as for
+	       ;; list items, so no unsupported parent contains the table itself.
+	       special-block-genealogy
 	       ;; Handle list genealogy.
 	       (cl-loop
 		for el in list-genealogy collect
