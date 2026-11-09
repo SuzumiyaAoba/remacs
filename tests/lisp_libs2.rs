@@ -2714,6 +2714,35 @@ fn ange_ftp_preserves_literal_at_suffix_unless_ls_marks_symlinks() {
 }
 
 #[test]
+fn gnus_crosspost_group_names_use_individual_charsets() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'gnus-msg)
+              (let* ((gnus-group-name-charset-method-alist nil)
+                     (gnus-group-name-charset-group-alist
+                      '(("^alt\\.café\\'" . iso-8859-1)
+                        ("^alt\\.日本語\\'" . utf-8)))
+                     (method '(nntp "news.example")))
+                (with-temp-buffer
+                  (insert "Newsgroups: alt.café,alt.日本語\n"
+                          "Followup-To: alt.日本語\n"
+                          "Subject: café\n\nbody\n")
+                  (message-narrow-to-headers)
+                  (gnus-encode-group-name-headers method)
+                  (let ((newsgroups (message-fetch-field "Newsgroups"))
+                        (followup (message-fetch-field "Followup-To")))
+                    (list (gnus-group-name-field-charsets
+                           method "alt.café,alt.日本語")
+                          (and (string-match-p "iso-8859-1" newsgroups) t)
+                          (and (string-match-p "utf-8" newsgroups) t)
+                          (not (string-match-p "café" newsgroups))
+                          (not (string-match-p "日本語" newsgroups))
+                          (and (string-match-p "utf-8" followup) t))))))"#),
+        "((iso-8859-1 utf-8) t t t t t)"
+    );
+}
+
+#[test]
 fn gnus_server_compact_server_updates_group_lines_for_its_server() {
     assert_eq!(
         ev(r#"(progn

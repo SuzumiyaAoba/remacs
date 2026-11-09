@@ -1530,6 +1530,64 @@ this is a reply."
    ;; Find the method.
    (t (gnus-server-to-method (gnus-group-method group)))))
 
+(defun gnus-group-name-field-charsets (method field)
+  "Return the configured charsets for the comma-separated groups in FIELD."
+  (delq nil
+        (mapcar (lambda (group)
+                  (gnus-group-name-charset
+                   method
+                   (rfc2047-decode-string (string-trim group))))
+                (message-tokenize-header field))))
+
+(defun gnus-encode-group-name-field (method field)
+  "Encode each group name in FIELD with its configured charset for METHOD."
+  (let (changed)
+    (let ((groups
+           (mapcar
+            (lambda (group)
+              (let* ((leading (and (string-match "\\`[ \t]*" group)
+                                   (match-string 0 group)))
+                     (trailing (and (string-match "[ \t]*\\'" group)
+                                    (match-string 0 group)))
+                     (name (substring group (length leading)
+                                      (- (length group) (length trailing))))
+                     (name (rfc2047-decode-string name))
+                     (charset (gnus-group-name-charset method name))
+                     (coding-system (and charset
+                                         (mm-charset-to-coding-system charset))))
+                (if (string-match-p "[^\000-\177]" name)
+                    (progn
+                      (setq changed t)
+                      (concat leading
+                              (let ((mm-coding-system-priorities
+                                     (if coding-system
+                                         (cons coding-system
+                                               mm-coding-system-priorities)
+                                       mm-coding-system-priorities))
+                                    (rfc2047-encoding-type 'mime))
+                                (rfc2047-encode-string name))
+                              trailing))
+                  group)))
+            (message-tokenize-header field))))
+      (when changed
+        (mapconcat #'identity groups ",")))))
+
+(defun gnus-encode-group-name-headers (method)
+  "Encode Newsgroups and Followup-To headers for METHOD, then encode others."
+  (let (headers)
+    (dolist (header '("Newsgroups" "Followup-To"))
+      (let* ((field (message-field-value header))
+             (encoded (and field
+                           (gnus-encode-group-name-field method field))))
+        (when encoded
+          (push (cons header encoded) headers)
+          (save-restriction
+            (message-narrow-to-headers)
+            (message-remove-header header)))))
+    (mail-encode-encoded-word-buffer)
+    (dolist (header (nreverse headers))
+      (message-add-header (format "%s: %s" (car header) (cdr header))))))
+
 ;; Do Gcc handling, which copied the message over to some group.
 (defun gnus-inews-do-gcc (&optional gcc)
   (save-excursion
@@ -1577,31 +1635,7 @@ this is a reply."
 	      (run-hooks 'gnus-gcc-post-body-encode-hook)
 	      (save-restriction
 		(message-narrow-to-headers)
-		(let* ((newsgroups-field (save-restriction
-					   (message-narrow-to-headers-or-head)
-					   (message-fetch-field "Newsgroups")))
-		       (followup-field (save-restriction
-					 (message-narrow-to-headers-or-head)
-					 (message-fetch-field "Followup-To")))
-		       ;; BUG: We really need to get the charset for
-		       ;; each name in the Newsgroups and Followup-To
-		       ;; lines to allow crossposting between group
-		       ;; names with incompatible character sets.
-		       ;; -- Per Abrahamsen <abraham@dina.kvl.dk> 2001-10-08.
-		       (group-field-charset
-			(gnus-group-name-charset
-			 method (or newsgroups-field "")))
-		       (followup-field-charset
-			(gnus-group-name-charset
-			 method (or followup-field "")))
-		       (rfc2047-header-encoding-alist
-			(append
-			 (when group-field-charset
-			   (list (cons "Newsgroups" group-field-charset)))
-			 (when followup-field-charset
-			   (list (cons "Followup-To" followup-field-charset)))
-			 rfc2047-header-encoding-alist)))
-		  (mail-encode-encoded-word-buffer)))
+		(gnus-encode-group-name-headers method))
 	      (goto-char (point-min))
 	      (when (re-search-forward
 		     (concat "^" (regexp-quote mail-header-separator) "$")

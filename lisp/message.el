@@ -5261,6 +5261,8 @@ Otherwise, generate and save a value for `canlock-password' first."
 (autoload 'nnheader-get-report "nnheader")
 
 (declare-function gnus-setup-posting-charset "gnus-msg" (group))
+(declare-function gnus-group-name-field-charsets "gnus-msg" (method field))
+(declare-function gnus-encode-group-name-headers "gnus-msg" (method))
 
 (defun message-send-news (&optional arg)
   (require 'gnus-msg)
@@ -5272,23 +5274,8 @@ Otherwise, generate and save a value for `canlock-password' first."
 	 (newsgroups-field (save-restriction
 			    (message-narrow-to-headers-or-head)
 			    (message-fetch-field "Newsgroups")))
-	 (followup-field (save-restriction
-			   (message-narrow-to-headers-or-head)
-			   (message-fetch-field "Followup-To")))
-	 ;; BUG: We really need to get the charset for each name in the
-	 ;; Newsgroups and Followup-To lines to allow crossposting
-	 ;; between group names with incompatible character sets.
-	 ;; -- Per Abrahamsen <abraham@dina.kvl.dk> 2001-10-08.
-	 (group-field-charset
-	  (gnus-group-name-charset method newsgroups-field))
-	 (followup-field-charset
-	  (gnus-group-name-charset method (or followup-field "")))
-	 (rfc2047-header-encoding-alist
-	  (append (when group-field-charset
-		    (list (cons "Newsgroups" group-field-charset)))
-		  (when followup-field-charset
-		    (list (cons "Followup-To" followup-field-charset)))
-		  rfc2047-header-encoding-alist))
+	 (group-field-charsets
+	  (gnus-group-name-field-charsets method newsgroups-field))
 	 (messbuf (current-buffer))
 	 (message-syntax-checks
 	  (if (and arg
@@ -5311,7 +5298,7 @@ Otherwise, generate and save a value for `canlock-password' first."
 	(run-hooks 'message-header-hook))
       ;; Note: This check will be disabled by the ".*" default value for
       ;; gnus-group-name-charset-group-alist. -- Pa 2001-10-07.
-      (when (and group-field-charset
+      (when (and group-field-charsets
 		 (listp message-syntax-checks))
 	(setq message-syntax-checks
 	      (cons '(valid-newsgroups . disabled)
@@ -5339,7 +5326,7 @@ Otherwise, generate and save a value for `canlock-password' first."
 		  (message-generate-headers '(Lines)))
 		;; Remove some headers.
 		(message-remove-header message-ignored-news-headers t)
-                (mail-encode-encoded-word-buffer))
+                (gnus-encode-group-name-headers method))
 	      (goto-char (point-max))
 	      ;; require one newline at the end.
 	      (or (= (preceding-char) ?\n)
