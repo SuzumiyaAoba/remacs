@@ -2319,6 +2319,22 @@ If this is nil, no heading line will be shown."
 
 (defvar-local completions--lazy-insert-button nil)
 
+(defun completion--string-width-with-display (string)
+  "Return the display-column width of STRING, including string substitutions."
+  (let ((position 0)
+        (length (length string))
+        (width 0))
+    (while (< position length)
+      (let* ((next (or (next-single-property-change position 'display string)
+                       length))
+             (display (get-text-property position 'display string)))
+        (setq width
+              (+ width (if (stringp display)
+                           (string-width display)
+                         (string-width (substring string position next))))
+              position next)))
+    width))
+
 (defun completion--insert-strings (strings &optional group-fun)
   "Insert a list of STRINGS into the current buffer.
 The candidate strings are inserted into the buffer depending on the
@@ -2329,8 +2345,8 @@ Runs of equal candidate strings are eliminated.  GROUP-FUN is a
     (let* ((length (apply #'max
 			  (mapcar (lambda (s)
 				    (if (consp s)
-				        (apply #'+ (mapcar #'string-width s))
-				      (string-width s)))
+				        (apply #'+ (mapcar #'completion--string-width-with-display s))
+				      (completion--string-width-with-display s)))
 				  strings)))
 	   (window (get-buffer-window (current-buffer) 0))
 	   (wwidth (if window (1- (window-width window)) 79))
@@ -2397,9 +2413,14 @@ Runs of equal candidate strings are eliminated.  GROUP-FUN is a
   (let ((column 0)
         (first t)
         (last-string nil)
+        (str-width 0)
         str)
     (while strings
-      (setq str (pop strings))
+      (setq str (pop strings)
+            str-width
+            (if (consp str)
+                (apply #'+ (mapcar #'completion--string-width-with-display str))
+              (completion--string-width-with-display str)))
       (unless (equal last-string str) ; Remove (consecutive) duplicates.
 	(setq last-string str)
         (when group-fun
@@ -2412,13 +2433,8 @@ Runs of equal candidate strings are eliminated.  GROUP-FUN is a
                 (setq column 0
                       first t)))))
 	(unless first
-          ;; FIXME: `string-width' doesn't pay attention to
-          ;; `display' properties.
-	  (if (< wwidth (+ column
-                           (max colwidth
-                                (if (consp str)
-                                    (apply #'+ (mapcar #'string-width str))
-                                  (string-width str)))))
+          ;; Account for string-valued `display' properties in STR's width.
+	  (if (< wwidth (+ column (max colwidth str-width)))
 	      ;; No space for `str' at point, move to next line.
 	      (progn
                 (insert "\n")
@@ -2446,7 +2462,8 @@ Runs of equal candidate strings are eliminated.  GROUP-FUN is a
 	;; Next column to align to.
 	(setq column (+ column
 			;; Round up to a whole number of columns.
-			(* colwidth (ceiling length colwidth))))))))
+                        (* colwidth
+                           (ceiling (max length str-width) colwidth))))))))
 
 (defun completion--insert-vertical (strings group-fun
                                             _length _wwidth

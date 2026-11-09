@@ -146,6 +146,7 @@ qa!(qa_unicode_codecs, "qa_unicode_codecs.el");
 qa!(qa_coding2, "qa_coding2.el");
 qa!(qa_coding_detection, "qa_coding_detection.el");
 qa!(qa_completion, "qa_completion.el");
+qa!(qa_completion_display_width, "qa_completion_display_width.el");
 qa!(qa_ctl, "qa_ctl.el");
 qa!(qa_custom, "qa_custom.el");
 qa!(qa_custom2, "qa_custom2.el");
