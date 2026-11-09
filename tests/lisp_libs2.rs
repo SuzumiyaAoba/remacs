@@ -3337,6 +3337,29 @@ fn mpc_format_makes_browser_tags_clickable() {
 }
 
 #[test]
+fn pcvs_zero_change_merge_keeps_modified_status() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'pcvs-parse)
+              (let ((dont-change-disc nil)
+                    (cvs-current-dir "/tmp/")
+                    (cvs-current-subdir nil))
+                (cl-letf (((symbol-function 'cvs-parsed-fileinfo)
+                           (lambda (type &rest _) type)))
+                  (with-temp-buffer
+                    (insert "RCS file: /tmp/foo,v\n"
+                            "retrieving revision 1.1\n"
+                            "retrieving revision 1.2\n"
+                            "Merging differences between 1.1 and 1.2 into foo\n"
+                            "foo already contains the differences between 1.1 and 1.2\n")
+                    (goto-char (point-min))
+                    (cvs-parse-merge)))))"#),
+        "(MODIFIED . MERGED)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
