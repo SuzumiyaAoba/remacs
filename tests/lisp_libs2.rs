@@ -3762,6 +3762,22 @@ fn eudc_ecomplete_returns_only_requested_attributes() {
 }
 
 #[test]
+fn tempo_o_tag_opens_line_when_inserting_region() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'tempo)
+              (setq tempo-template-test '(o "before " r " after"))
+              (with-temp-buffer
+                (insert "body")
+                (goto-char (point-min))
+                (set-mark (point-max))
+                (tempo-insert-template 'tempo-template-test t)
+                (buffer-string)))"#),
+        "\"before \nbody after\""
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn

@@ -368,8 +368,7 @@ possible."
     ;; Bug: If the 'o is the first element in a template, strange
     ;; things can happen when the template is inserted at the
     ;; beginning of a line.
-    ('o (if (not (or on-region
-		     (eolp)
+    ('o (if (not (or (eolp)
 		     (save-excursion
 		       (re-search-forward
 			"\\=\\s-*$" nil t))))
