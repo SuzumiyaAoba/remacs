@@ -3926,30 +3926,11 @@ Set the match data to the next `|' on a row adjacent to a grid border."
 
     ;; `Quoted Literal Blocks`_ are matched after inline fontification below.
 
-    ;; `Doctest Blocks`_
-    ;; FIXME: This is wrong according to the specification:
-    ;;
-    ;;   Doctest blocks are text blocks which begin with ">>> ", the Python
-    ;;   interactive interpreter main prompt, and end with a blank line.
-    ;;   Doctest blocks are treated as a special case of literal blocks,
-    ;;   without requiring the literal block syntax. If both are present, the
-    ;;   literal block syntax takes priority over Doctest block syntax:
-    ;;
-    ;;   This is an ordinary paragraph.
-    ;;
-    ;;   >>> print 'this is a Doctest block'
-    ;;   this is a Doctest block
-    ;;
-    ;;   The following is a literal block::
-    ;;
-    ;;       >>> This is not recognized as a doctest block by
-    ;;       reStructuredText.  It *will* be recognized by the doctest
-    ;;       module, though!
-    ;;
-    ;;   Indentation is not required for doctest blocks.
-    (,(rst-re 'lin-beg '(:grp (:alt ">>>" ell-tag)) '(:grp ".+"))
-     (1 'rst-block)
-     (2 'rst-literal))
+    ;; `Doctest Blocks`_ are literal blocks ending at the next blank line.
+    ;; The matcher skips prompts already recognized inside an indented literal
+    ;; block, whose syntax takes precedence over doctest syntax.
+    (rst-font-lock-match-doctest-block
+     (0 'rst-literal append))
 
     ;; Quoted literal blocks are matched as a whole so their content cannot
     ;; receive inline markup faces.
@@ -4146,6 +4127,33 @@ match was found.  _LIMIT is not used but mandated by the caller."
     ;; Make sure this is called only once.
     (setq rst-font-lock-find-unindented-line-end nil)
     t))
+
+(defun rst-font-lock-match-doctest-block (limit)
+  "Match a doctest block before LIMIT, including its output lines."
+  (let ((prompt-regexp "^[ \t]*\\(>>>\\|\\.\\.\\.\\)\\(.*\\)$")
+        matched)
+    (while (and (not matched) (re-search-forward prompt-regexp limit t))
+      (let* ((start (match-beginning 0))
+             (prompt-start (match-beginning 1))
+             (prompt-end (match-end 1))
+             (face (get-text-property prompt-start 'face)))
+        (unless (or (eq face 'rst-literal)
+                    (and (consp face) (memq 'rst-literal face)))
+          (let ((end (save-excursion
+                       (goto-char (match-end 0))
+                       (forward-line 1)
+                       (while (and (< (point) (point-max))
+                                   (not (looking-at (rst-re 'lin-end))))
+                         (forward-line 1))
+                       (point))))
+            (goto-char end)
+            (font-lock-append-text-property start end 'face 'rst-literal)
+            (put-text-property prompt-start prompt-end 'face 'rst-block)
+            (put-text-property start end 'font-lock-multiline t)
+            (set-match-data (list start end
+                                  prompt-start prompt-end))
+            (setq matched t))))
+    matched)))
 
 (defun rst-font-lock-quoted-literal-char-p (char)
   "Return non-nil if CHAR can quote a reStructuredText literal block."

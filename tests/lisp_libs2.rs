@@ -3798,6 +3798,61 @@ fn register_preview_accepts_context_specialized_jump_methods() {
 }
 
 #[test]
+fn rst_doctest_output_is_literal_and_indented_literal_takes_precedence() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'compile)
+              (require 'rst)
+              (list
+               (with-temp-buffer
+                 (rst-mode)
+                 (font-lock-mode 1)
+                 (insert ">>> print('hello')\nhello\n\nordinary text\n")
+                 (font-lock-ensure)
+                 (let* ((prompt (save-excursion
+                                 (goto-char (point-min))
+                                 (search-forward ">>>")
+                                 (backward-char 3)
+                                 (point)))
+                       (output (save-excursion
+                                 (goto-char (point-min))
+                                 (search-forward "\nhello")
+                                 (backward-char 5)
+                                 (point)))
+                       (ordinary (save-excursion
+                                   (goto-char (point-min))
+                                   (search-forward "ordinary text")
+                                   (backward-char 13)
+                                   (point)))
+                       (prompt-face (get-text-property prompt 'face))
+                       (output-face (get-text-property output 'face))
+                       (ordinary-face (get-text-property ordinary 'face))
+                       (prompt-faces (if (consp prompt-face)
+                                         prompt-face (list prompt-face)))
+                       (output-faces (if (consp output-face)
+                                         output-face (list output-face)))
+                       (ordinary-faces (if (consp ordinary-face)
+                                           ordinary-face (list ordinary-face))))
+                  (list (and (memq 'rst-block prompt-faces) t)
+                        (and (memq 'rst-literal output-faces) t)
+                        (not (memq 'rst-literal ordinary-faces)))))
+               (with-temp-buffer
+                 (rst-mode)
+                 (font-lock-mode 1)
+                 (insert "A literal block::\n\n    >>> This is not a doctest block.\n")
+                 (font-lock-ensure)
+                 (goto-char (point-min))
+                 (search-forward ">>>")
+                 (backward-char 3)
+                 (let* ((face (get-text-property (point) 'face))
+                        (faces (if (consp face) face (list face))))
+                   (list (and (memq 'rst-literal faces) t)
+                         (and (memq 'rst-block faces) t))))))"#),
+        "((t t t) (t nil))"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn
