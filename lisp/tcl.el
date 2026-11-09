@@ -61,13 +61,6 @@
 ;; Ben Wing <ben@xemacs.org>
 
 ;; KNOWN BUGS:
-;; * In Tcl "#" is not always a comment character.  This can confuse tcl.el
-;;   in certain circumstances.  For now the only workaround is to use
-;;   font-lock which will mark the # chars accordingly or enclose offending
-;;   hash characters in quotes or precede them with a backslash.  Note that
-;;   using braces won't work -- quotes change the syntax class of characters
-;;   between them, while braces do not.  If you don't use font-lock, the
-;;   electric-# mode helps alleviate this problem somewhat.
 ;; * indent-tcl-exp is untested.
 
 ;; TODO:
@@ -411,17 +404,7 @@ This variable is generally set from `tcl-proc-regexp',
            ((eq char ?\]) (setq depth (max 0 (1- depth))))
            ((and (> depth 0) (eq char ?\")) (setq quoted t))))
         (forward-char))
-      (> depth 0)))
-
-(defun tcl--syntax-of-hash (pos)
-  "Return punctuation syntax for a hash inside a braced Tcl word at POS."
-  (let ((openers (nth 9 (syntax-ppss pos)))
-        found)
-    (while (and openers (not found))
-      (when (eq (char-after (car openers)) ?\{)
-        (setq found t))
-      (setq openers (cdr openers)))
-    (when found (string-to-syntax ".")))
+      (> depth 0))))
 
 (defun tcl--syntax-of-quote (pos)
   "Decide whether a double quote opens a string or not."
@@ -483,7 +466,7 @@ This variable is generally set from `tcl-proc-regexp',
    ;; Tcl folds backslash-newline before parsing, including inside comments.
    ((concat (regexp-quote "\\") "\\(\n\\)[ \t]*") (1 " "))
    ;; Hashes inside braced words are data, not comment starters.
-   ("#" (0 (tcl--syntax-of-hash (match-beginning 0))))
+   ("{\\s-*\\(#\\)" (1 "."))
    ;; Mark the few `#' that are not comment-markers.
    ((concat "[^" tcl--word-delimiters "][ \t]*\\(#\\)") (1 "."))
    ("\"" (0 (tcl--syntax-of-quote (match-beginning 0)))))
@@ -864,7 +847,7 @@ See documentation for variable `tcl-type-alist' for more information."
 (defun tcl--virtually-blank-line-p ()
   "Return non-nil if the rest of the line is blank or in a comment."
   (or (looking-at "[ \t]*\\(#.*\\)?$")
-      (nth 4 (syntax-ppss (point))))
+      (nth 4 (syntax-ppss (point)))))
 
 (defun tcl-calculate-indent (&optional parse-start)
   "Return appropriate indentation for current line as Tcl code.
