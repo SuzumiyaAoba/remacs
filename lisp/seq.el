@@ -323,8 +323,11 @@ Value is a sequence of the same type as SEQUENCE."
 (cl-defgeneric seq-sort (pred sequence)
   "Sort SEQUENCE using PRED as the sorting comparison function.
 The result is a sequence of the same type as SEQUENCE.  The sort
-operates on a copy of SEQUENCE and does not modify SEQUENCE."
-  (let ((result (seq-sort pred (append sequence nil))))
+operates on a copy of SEQUENCE and does not modify SEQUENCE.  For
+character tables, the result is a vector because character tables
+cannot be resized."
+  (let* ((sequence (seq-into-sequence sequence))
+         (result (seq-sort pred (append sequence nil))))
     (seq-into result (type-of sequence))))
 
 (cl-defmethod seq-sort (pred (list list))

@@ -60,6 +60,20 @@
 (qa (seq-sort #'< '(3 1 2)) '(1 2 3))
 (qa (seq-sort #'> "bca") "cba")
 (qa (seq-sort-by #'length #'< '("bbb" "a" "cc")) '("a" "cc" "bbb"))
+(let* ((table (make-char-table 'generic 0))
+       (original-seq-length (symbol-function 'seq-length)))
+  ;; Character tables span millions of positions.  Give this test a small
+  ;; visible length while exercising the actual char-table dispatch paths.
+  (set-char-table-range table 0 2)
+  (set-char-table-range table 1 1)
+  (cl-letf (((symbol-function 'seq-length)
+             (lambda (sequence)
+               (if (eq sequence table)
+                   2
+                 (funcall original-seq-length sequence)))))
+    (qa (seq-sort #'< table) [1 2])
+    (qa (seq-sort-by #'identity #'< table) [1 2])
+    (qa (seq-remove-at-position table 0) [1])))
 (qa (seq-uniq '(1 1 2 2 3)) '(1 2 3))
 (qa (seq-uniq [1 2 1]) '(1 2))
 (qa (seq-reverse '(1 2 3)) '(3 2 1))
