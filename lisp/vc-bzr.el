@@ -30,14 +30,6 @@
 
 ;; This library provides bzr support in VC.
 
-;; Known bugs
-;; ==========
-
-;; When editing a symlink and *both* the symlink and its target
-;; are bzr-versioned, `vc-bzr' presently runs `bzr status' on the
-;; symlink, thereby not detecting whether the actual contents
-;; (that is, the target contents) are changed.
-
 ;;; Properties of the backend
 
 (defun vc-bzr-revision-granularity () 'repository)
@@ -334,6 +326,17 @@ in the repository root directory of FILE."
 ;; History of Bzr commands.
 (defvar vc-bzr-history nil)
 
+(defun vc-bzr--symlink-target (file)
+  "Return FILE's target when it is a symlink inside the same Bzr root."
+  (when (file-symlink-p file)
+    (let* ((target (condition-case nil (file-truename file) (error nil)))
+           (root (vc-bzr-root file))
+           (target-root (and target (vc-bzr-root target))))
+      (when (and target root target-root
+                 (equal (file-name-as-directory (expand-file-name root))
+                        (file-name-as-directory (expand-file-name target-root))))
+        target))))
+
 (defun vc-bzr-file-name-relative (filename)
   "Return file name FILENAME stripped of the initial Bzr repository path."
   (let* ((filename* (expand-file-name filename))
@@ -485,6 +488,13 @@ in the branch repository (or whose status not be determined)."
           (delete-region (match-beginning 0) (match-end 0))
           (setq status
                 (intern (string-replace " " "" statusword)))))
+      ;; `bzr status' follows no symlinks.  If the link itself is unchanged,
+      ;; also check a versioned target in the same working tree.
+      (when (eq status 'unchanged)
+        (let ((target (vc-bzr--symlink-target file)))
+          (when (and target
+                     (eq (car (vc-bzr-status target)) 'modified))
+            (setq status 'modified))))
       (when status
         (goto-char (point-min))
         (skip-chars-forward " \n\t") ;Throw away spaces.
