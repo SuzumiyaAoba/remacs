@@ -3360,6 +3360,43 @@ fn pcvs_zero_change_merge_keeps_modified_status() {
 }
 
 #[test]
+fn read_passwd_visibility_uses_clicked_mode_line_window() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'auth-source)
+              (let* ((outer (generate-new-buffer " *passwd-outer*"))
+                     (inner (generate-new-buffer " *passwd-inner*"))
+                     (outer-window 'outer-window)
+                     (inner-window 'inner-window)
+                     (mode-line-window outer-window)
+                     (icon-preference nil))
+                (unwind-protect
+                    (progn
+                      (dolist (buffer (list outer inner))
+                        (with-current-buffer buffer
+                          (setq-local local-minor-modes '(read-passwd-mode)
+                                      read-passwd--password-hidden t)))
+                      (cl-letf (((symbol-function 'active-minibuffer-window)
+                                 (lambda () inner-window))
+                                ((symbol-function 'window-buffer)
+                                 (lambda (window)
+                                   (if (eq window outer-window) outer inner)))
+                                ((symbol-function 'force-mode-line-update)
+                                 (lambda (&rest _) nil))
+                                ((symbol-function 'read-passwd--hide-password)
+                                 (lambda () nil)))
+                        (read-passwd-toggle-visibility)
+                        (list
+                         (buffer-local-value 'read-passwd--password-hidden outer)
+                         (buffer-local-value 'read-passwd--password-hidden inner)))
+                  (kill-buffer outer)
+                  (kill-buffer inner))))"#),
+        "(nil t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

@@ -2627,10 +2627,8 @@ point is moved into the passwords (see `authinfo-hide-elements').
 Adapt also mode line.  If optional FORCE is non-nil, hide the minibuffer
 contents."
   (interactive)
-  (let ((win (active-minibuffer-window)))
+  (let ((win (or mode-line-window (active-minibuffer-window))))
     (unless win (error "No active minibuffer"))
-    ;; FIXME: In case of a recursive minibuffer, this may select the wrong
-    ;; mini-buffer.
     (with-current-buffer (window-buffer win)
       (when (memq 'read-passwd-mode local-minor-modes)
         (setq read-passwd--password-hidden
