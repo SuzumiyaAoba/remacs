@@ -19311,8 +19311,11 @@ and :keyword."
 		  (overlay-start o) (overlay-end o))
 	    clist))
      ((org-inside-LaTeX-fragment-p)
-      ;; FIXME: positions wrong.
-      (push (list :latex-fragment (point) (point)) clist)))
+      (let ((element (org-element-context)))
+	(push (list :latex-fragment
+		    (org-element-property :begin element)
+		    (org-element-property :end element))
+	      clist))))
 
     (setq clist (nreverse (delq nil clist)))
     clist))

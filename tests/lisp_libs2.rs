@@ -3709,6 +3709,20 @@ fn texinfo_menu_after_top_is_inserted_inside_top() {
 }
 
 #[test]
+fn org_context_reports_latex_fragment_bounds() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'org)
+              (with-temp-buffer
+                (org-mode)
+                (insert "$a+b$")
+                (goto-char 2)
+                (assoc :latex-fragment (org-context))))"#),
+        "(:latex-fragment 1 6)"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn
