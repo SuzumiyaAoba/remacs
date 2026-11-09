@@ -3143,6 +3143,39 @@ fn prolog_find_term_counts_top_level_arguments() {
 }
 
 #[test]
+fn pp_fill_uses_visible_width() {
+    // Test text display, invisible text, and overlay display strings.
+    assert_eq!(
+        ev(r#"(progn
+              (require 'pp)
+              (list
+               (with-temp-buffer
+                 (emacs-lisp-mode)
+                 (insert "(f123456789 bar)")
+                 (setq-local fill-column 8)
+                 (add-text-properties 2 12 '(display ""))
+                 (pp-fill (point-min) (point-max))
+                 (not (string-match-p "\n" (buffer-string))))
+               (with-temp-buffer
+                 (emacs-lisp-mode)
+                 (insert "(f123456789 bar)")
+                 (setq-local fill-column 8 buffer-invisibility-spec t)
+                 (add-text-properties 2 12 '(invisible t))
+                 (pp-fill (point-min) (point-max))
+                 (not (string-match-p "\n" (buffer-string))))
+               (with-temp-buffer
+                 (emacs-lisp-mode)
+                 (insert "(foo bar)")
+                 (let ((overlay (make-overlay 2 5)))
+                   (overlay-put overlay 'display "abcdefghijklmnop"))
+                 (setq-local fill-column 20)
+                 (pp-fill (point-min) (point-max))
+                 (and (string-match-p "\n" (buffer-string)) t))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn calc_pass_errors_bypasses_calc_do_error_handler() {
     assert_eq!(
         ev(r#"(progn

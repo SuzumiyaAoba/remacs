@@ -145,15 +145,70 @@ Optional argument PP-FUNCTION overrides `pp-default-function'."
     (unless (bolp) (insert "\n"))
     (buffer-string)))
 
+(defun pp--has-display-width-properties-p (beg end)
+  "Return non-nil if BEG..END contains display or invisible properties."
+  (or (text-property-not-all beg end 'display nil)
+      (text-property-not-all beg end 'invisible nil)
+      (let ((overlays (overlays-in beg end)) found)
+        (while (and overlays (not found))
+          (setq found (or (overlay-get (car overlays) 'display)
+                          (overlay-get (car overlays) 'invisible))
+                overlays (cdr overlays)))
+        found)))
+
+(defun pp--visible-column ()
+  "Return point's column after accounting for invisible and overlay text."
+  (let* ((line-beg (line-beginning-position))
+         (limit (point))
+         (column (current-column)))
+    ;; `current-column' counts invisible text, so subtract its width.
+    (save-excursion
+      (goto-char line-beg)
+      (while (< (point) limit)
+        (if (invisible-p (point))
+            (let ((start (point)))
+              (while (and (< (point) limit) (invisible-p (point)))
+                (forward-char 1))
+              (setq column
+                    (- column
+                       (- (current-column)
+                          (save-excursion
+                            (goto-char start)
+                            (current-column))))))
+          (forward-char 1))))
+    ;; Overlay `display' strings replace their underlying buffer text.
+    (dolist (overlay (overlays-in line-beg limit))
+      (let* ((overlay-beg (overlay-start overlay))
+             (overlay-end (overlay-end overlay))
+             (beg (max line-beg overlay-beg))
+             (end (min limit overlay-end))
+             (display (overlay-get overlay 'display)))
+        (when (and (stringp display)
+                   (< beg end)
+                   (not (invisible-p beg))
+                   (eq (cdr (get-char-property-and-overlay beg 'display))
+                       overlay))
+          (let ((underlying-width
+                 (- (save-excursion (goto-char end) (current-column))
+                    (save-excursion (goto-char beg) (current-column)))))
+            (setq column
+                  (+ column
+                     (if (>= overlay-beg line-beg) (string-width display) 0)
+                     (- underlying-width)))))))
+    column))
+
 (defun pp--within-fill-column-p ()
   "Return non-nil if point is within `fill-column'."
-  ;; Try and make it O(fill-column) rather than O(current-column),
-  ;; so as to avoid major slowdowns on long lines.
-  ;; FIXME: This doesn't account for invisible text or `display' properties :-(
-  (and (save-excursion
-         (re-search-backward
-          "^\\|\n" (max (point-min) (- (point) fill-column)) t))
-       (<= (current-column) fill-column)))
+  (let ((beg (line-beginning-position))
+        (end (point)))
+    (if (pp--has-display-width-properties-p beg end)
+        (<= (pp--visible-column) fill-column)
+      ;; Try and make it O(fill-column) rather than O(current-column),
+      ;; so as to avoid major slowdowns on long lines.
+      (and (save-excursion
+             (re-search-backward
+              "^\\|\n" (max (point-min) (- (point) fill-column)) t))
+           (<= (current-column) fill-column)))))
 
 (defun pp-fill (beg &optional end)
   "Break lines in Lisp code between BEG and END so it fits within `fill-column'.
