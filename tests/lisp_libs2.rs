@@ -2849,6 +2849,27 @@ fn ff_find_the_other_file_extracts_stub_for_alternation() {
 }
 
 #[test]
+fn ffap_menu_ask_selects_a_later_choice_with_duplicate_label() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'ffap)
+              (let ((last-nonmenu-event nil)
+                    selected)
+                (cl-letf (((symbol-function 'completing-read)
+                           (lambda (_prompt collection &rest _)
+                             (cadr (all-completions "" collection))))
+                          ((symbol-function 'sit-for)
+                           (lambda (&rest _) nil)))
+                  (ffap-menu-ask "Pick: "
+                                 '(("same" . first) ("same" . second))
+                                 (lambda (entry) (setq selected (cdr entry))))
+                  selected)))"#),
+        "second"
+    );
+}
+
+#[test]
 fn eshell_define_literal_alias_is_readable() {
     assert_eq!(
         ev(r#"(progn

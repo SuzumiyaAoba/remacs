@@ -1817,6 +1817,31 @@ a rebuild.  Searches with `ffap-menu-regexp'."
 	  (find-file-at-point (car choice)))
       (ffap-highlight t))))
 
+(defun ffap-menu--completion-alist (alist)
+  "Return ALIST with unique completion labels for each choice."
+  (let ((counts (make-hash-table :test 'equal))
+        (occurrences (make-hash-table :test 'equal))
+        (seen (make-hash-table :test 'equal))
+        result)
+    (dolist (entry alist)
+      (let ((label (car entry)))
+        (puthash label (1+ (gethash label counts 0)) counts)))
+    (dolist (entry alist)
+      (let* ((label (car entry))
+             (occurrence (1+ (gethash label occurrences 0)))
+             (duplicate (> (gethash label counts) 1))
+             (candidate (if duplicate
+                            (format "%s [%d]" label occurrence)
+                          label))
+             (suffix 1))
+        (puthash label occurrence occurrences)
+        (while (gethash candidate seen)
+          (setq candidate (format "%s [%d] #%d" label occurrence suffix)
+                suffix (1+ suffix)))
+        (puthash candidate t seen)
+        (push (cons candidate entry) result)))
+    (nreverse result)))
+
 (defun ffap-menu-ask (title alist cont)
   "Prompt from a menu of choices, and then apply some action.
 Arguments are TITLE, ALIST, and CONT (a continuation function).
@@ -1841,18 +1866,16 @@ Function CONT is applied to the entry chosen by the user."
 				    alist))))))
      ;; minibuffer with completion buffer:
      (t
-      ;; Bug: prompting may assume unique strings, no "".
-      (setq choice
-	    (completing-read
-	     (format-prompt title (car (car alist)))
-             (completion-table-with-metadata
-	      alist '((category . ffap-menu) (eager-display . t)))
-             nil t
-	     ;; (cons (car (car alist)) 0)
-	     nil))
-      (sit-for 0)			; redraw original screen
-      ;; Convert string to its entry, or else the default:
-      (setq choice (or (assoc choice alist) (car alist)))))
+      (let* ((choices (ffap-menu--completion-alist alist))
+             (answer
+              (completing-read
+               (format-prompt title (caar choices))
+               (completion-table-with-metadata
+		choices '((category . ffap-menu) (eager-display . t)))
+	       nil t nil)))
+        (sit-for 0)			; redraw original screen
+        ;; Convert the unique completion label back to its original entry.
+        (setq choice (or (cdr (assoc answer choices)) (car alist))))))
     (if choice
 	(funcall cont choice)
       (message "No choice made!")	; possible with menus
