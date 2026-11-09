@@ -6521,7 +6521,12 @@ This function is not general, can only be used for completion stuff."
   (catch 'exit
     (save-excursion
       ;; skip the current identifier
-      (skip-chars-backward "a-zA-Z0-9_$")
+      (let ((end (point)))
+	(skip-chars-backward "a-zA-Z0-9_$")
+	;; A numeric literal can contain identifier characters but cannot
+	;; start an IDL identifier.
+	(unless (looking-at "[a-zA-Z_]")
+	  (goto-char end)))
       ;; also skip a leading slash which might be belong to the keyword
       (if (eq (preceding-char) ?/)
 	  (backward-char 1))

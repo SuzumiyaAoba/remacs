@@ -3853,6 +3853,30 @@ fn rst_doctest_output_is_literal_and_indented_literal_takes_precedence() {
 }
 
 #[test]
+fn idlwave_completion_does_not_skip_numeric_literals_as_identifiers() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'idlwave)
+              (cl-letf (((symbol-function 'idlwave-routines) #'ignore)
+                        ((symbol-function 'idlwave-start-of-substatement)
+                         (lambda (&rest _) (goto-char (point-min))))
+                        ((symbol-function 'idlwave-what-function)
+                         (lambda (&rest _) '("plot" nil nil 1 1)))
+                        ((symbol-function 'idlwave-what-procedure)
+                         (lambda (&rest _) '(nil nil nil 0 0))))
+                (mapcar
+                 (lambda (text)
+                   (with-temp-buffer
+                     (insert text)
+                     (goto-char (point-max))
+                     (list (char-to-string (idlwave-last-valid-char))
+                           (nth 2 (idlwave-where)))))
+                 '("plot(123" "plot(name"))))"#),
+        "((\"3\" function) (\"(\" function-keyword))"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn
