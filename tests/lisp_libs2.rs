@@ -3488,7 +3488,20 @@ fn rst_insert_list_new_tag_clears_whitespace_only_line() {
                 (forward-line 1)
                 (rst-insert-list-new-tag "*")
                 (buffer-string)))"#),
-        "\"Paragraph\n\n* \nNext\n\""
+        "\"Paragraph\n\n* \n\nNext\n\""
+    );
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'compile)
+              (require 'rst)
+              (with-temp-buffer
+                (rst-mode)
+                (insert "before\n\nnext")
+                (goto-char (point-min))
+                (forward-line 1)
+                (rst-insert-list-new-tag "-")
+                (buffer-string)))"#),
+        "\"before\n\n- \n\nnext\""
     );
 }
 

@@ -2312,21 +2312,28 @@ when (a) and not (b), a blank line is added before adding the new list.
 When not (a), first forward point to the end of the line, and add two
 blank lines, then add the new list.
 
+When the following line is not blank, add a blank line after the new item.
+
 Other situations are just ignored and left to users themselves."
-  ;; FIXME: Following line is not considered at all.
-  (let ((pfx-nls
-	 (if (rst-forward-line-looking-at 0 'lin-end)
-	     (if (not (rst-forward-line-looking-at -1 'lin-end #'not))
-		 0
-	       1)
-	   2)))
+  (let* ((pfx-nls
+	  (if (rst-forward-line-looking-at 0 'lin-end)
+	      (if (not (rst-forward-line-looking-at -1 'lin-end #'not))
+		  0
+		1)
+	    2))
+	 (following-nonblank
+	  (save-excursion
+	    (and (rst-forward-line-strict 1)
+		 (not (looking-at (rst-re 'lin-end)))))))
     ;; Whitespace on a blank line is not part of the new list item.
     (when (rst-forward-line-looking-at 0 'lin-end)
       (delete-region (line-beginning-position) (line-end-position)))
     (end-of-line)
     ;; FIXME: The indentation is not fixed to a single space by the syntax. May
     ;;        be this should be configurable or rather taken from the context.
-    (insert (make-string pfx-nls ?\n) tag " ")))
+    (insert (make-string pfx-nls ?\n) tag " ")
+    (when following-nonblank
+      (insert ?\n))))
 
 (defconst rst-initial-items
   (append (mapcar #'char-to-string rst-bullets)
