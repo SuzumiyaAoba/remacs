@@ -2370,6 +2370,25 @@ fn image_dired_uses_at_least_one_column_in_narrow_windows() {
 }
 
 #[test]
+fn dired_goto_file_matches_control_characters_escaped_by_ls_b() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'dired)
+              (let ((fname (concat "foo" (string 1) "bar")))
+                (with-temp-buffer
+                  (setq-local dired-actual-switches "-b")
+                  (insert " -rw-r--r-- 1 user group 1 Jan 1 00:00 foo\\001bar\n")
+                  (goto-char (point-min))
+                  (cl-letf (((symbol-function 'dired-get-filename)
+                             (lambda (&rest _) fname))
+                            ((symbol-function 'dired-move-to-filename)
+                             (lambda (&rest _) 1)))
+                    (and (dired-goto-file-1 fname fname (point-max)) t)))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn file_mode_prompts_reject_malformed_octal_prefixes() {
     assert_eq!(
         ev(r#"(progn
