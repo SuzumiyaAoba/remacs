@@ -72,6 +72,7 @@ qa!(qa_array, "qa_array.el");
 qa!(qa_backquote, "qa_backquote.el");
 qa!(qa_backtrace_frames, "qa_backtrace_frames.el");
 qa!(qa_backup, "qa_backup.el");
+qa!(qa_bat_mode_load, "qa_bat_mode_load.el");
 qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_buffer_history, "qa_buffer_history.el");
 qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
