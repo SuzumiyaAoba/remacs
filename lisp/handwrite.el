@@ -50,7 +50,6 @@
 ;;
 ;;
 ;; Known bugs:
-;; - Page feeds do not work, and are ignored instead.
 ;; - Tabs are not always properly displayed.
 ;; - Handwrite may create corrupt PostScript if it encounters
 ;;   unknown characters.
@@ -197,29 +196,55 @@ Variables: `handwrite-linespace'     (default 12)
 	  (setq line (replace-regexp-in-string (car trans)
 					       (concat "\\\\" (cdr trans))
 					       line)))
-	(switch-to-buffer ps-buf-name)
-	(insert (string-replace "\n" "" line))
-	(message "write write write...")
-	(setq ps-ypos (+ ps-ypos handwrite-linespace))
-	(end-of-line)
-	(insert "\n")
-	(setq lcount (+ lcount 1))
-	(when (= lcount handwrite-numlines)
-	  (setq ipage (+ ipage 1))
-	  (insert "0 0  m\n")
-	  (insert "showpage exec Hwsave restore\n")
-	  (insert "%%Page: " (number-to-string ipage) " "
-		  (number-to-string ipage) "\n")
-	  (insert "Hwjst\n")
-	  (insert "/Hwsave save def\n")
-	  (if handwrite-pagenumbering
-	      (insert "20 30 m\nxym(page "
-		      (number-to-string ipage) ")a\n"))
-	  (setq ps-ypos 63)
-	  (setq lcount 0))
-	(insert "44 " (number-to-string ps-ypos) " m\n")
-	(insert "xym( )a")
-	(backward-char 3)
+	(let ((start 0)
+	      (segments nil))
+	  ;; A form feed ends the current printed line and starts a new page.
+	  (while (string-match "\f" line start)
+	    (let ((end (match-beginning 0))
+		  (next (match-end 0)))
+	      (push (cons (substring line start end) t) segments)
+	      (setq start next)))
+	  (push (cons (substring line start) nil) segments)
+	  (dolist (segment (nreverse segments))
+	    (let ((page-feed-after (cdr segment))
+		  (page-started nil))
+	      (switch-to-buffer ps-buf-name)
+	      (insert (string-replace "\n" "" (car segment)))
+	      (message "write write write...")
+	      (setq ps-ypos (+ ps-ypos handwrite-linespace))
+	      (end-of-line)
+	      (insert "\n")
+	      (setq lcount (+ lcount 1))
+	      (when (= lcount handwrite-numlines)
+		(setq ipage (+ ipage 1))
+		(insert "0 0  m\n")
+		(insert "showpage exec Hwsave restore\n")
+		(insert "%%Page: " (number-to-string ipage) " "
+			(number-to-string ipage) "\n")
+		(insert "Hwjst\n")
+		(insert "/Hwsave save def\n")
+		(if handwrite-pagenumbering
+		    (insert "20 30 m\nxym(page "
+			    (number-to-string ipage) ")a\n"))
+		(setq page-started t))
+	      (when (and page-feed-after (not page-started))
+		(setq ipage (+ ipage 1))
+		(insert "0 0  m\n")
+		(insert "showpage exec Hwsave restore\n")
+		(insert "%%Page: " (number-to-string ipage) " "
+			(number-to-string ipage) "\n")
+		(insert "Hwjst\n")
+		(insert "/Hwsave save def\n")
+		(if handwrite-pagenumbering
+		    (insert "20 30 m\nxym(page "
+			    (number-to-string ipage) ")a\n"))
+		(setq page-started t))
+	      (when page-started
+		(setq ps-ypos 63)
+		(setq lcount 0))
+	      (insert "44 " (number-to-string ps-ypos) " m\n")
+	      (insert "xym( )a")
+	      (backward-char 3))))
 	(switch-to-buffer cur-buf)
 	(forward-line 1)
 	))
@@ -228,10 +253,6 @@ Variables: `handwrite-linespace'     (default 12)
     (insert " showpage exec Hwsave restore\n\n")
     (insert "%%Pages " (number-to-string ipage) " 0\n")
     (insert "%%EOF\n")
-    ;;To avoid cumbersome code we simply ignore formfeeds
-    (goto-char textp)
-    (while (search-forward "\f" nil t)
-      (replace-match "" nil t) )
     (untabify textp (point-max))	; this may result in strange tabs
     (when (y-or-n-p "Send this to the printer? ")
       (let* ((coding-system-for-write 'raw-text-unix)

@@ -3686,6 +3686,30 @@ fn texinfo_menu_copy_preserves_punctuation_descriptions() {
 }
 
 #[test]
+fn handwrite_form_feed_starts_new_postscript_page() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'handwrite)
+              (let ((handwrite-numlines 100000)
+                    (handwrite-pagenumbering nil))
+                (fset 'y-or-n-p (lambda (&rest _args) nil))
+                (with-temp-buffer
+                  (insert "first\fsecond\n")
+                  (handwrite)
+                  (with-current-buffer "*handwritten1.ps*"
+                    (let* ((output (buffer-string))
+                           (first (string-match "first" output))
+                           (page-two (string-match "%%Page: 2 2" output))
+                           (second (string-match "second" output)))
+                      (list (how-many "^%%Page:" (point-min) (point-max))
+                            (and first page-two second
+                                 (< first page-two) (< page-two second))
+                            (not (string-match "\f" output))))))))"#),
+        "(2 t t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
