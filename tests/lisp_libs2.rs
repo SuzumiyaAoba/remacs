@@ -3319,6 +3319,24 @@ fn todo_legacy_comment_pattern_matches_multiple_lines() {
 }
 
 #[test]
+fn mpc_format_makes_browser_tags_clickable() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'mpc)
+              (let (clickable)
+                (dolist (tag '(Genre Performer Artist Album Playlist Date))
+                  (with-temp-buffer
+                    (mpc-format (format "%%{%s}" tag)
+                                (list (cons tag "value")))
+                    (push (and (get-text-property (point-min) 'keymap)
+                               (eq (get-text-property (point-min) 'follow-link) t))
+                          clickable)))
+                (nreverse clickable)))"#),
+        "(t t t t t nil)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

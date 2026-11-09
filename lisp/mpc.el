@@ -1011,6 +1011,15 @@ If PLAYLIST is t or nil or missing, use the main playlist."
   (puthash key file mpc-tempfiles-reftable)
   (push file mpc-tempfiles))
 
+(defun mpc--tag-browser-p (tag)
+  (cl-some
+   (lambda (browser-tag)
+     (and (symbolp browser-tag)
+          (or (eq browser-tag tag)
+              (member (symbol-name tag)
+                      (split-string (symbol-name browser-tag) "|")))))
+   mpc-browser-tags))
+
 (defun mpc-format (format-spec info &optional hscroll)
   "Format the INFO according to FORMAT-SPEC, inserting the result at point.
 
@@ -1120,7 +1129,7 @@ string POST."
 			(truncate-string-to-width text size nil nil "…")
                         'help-echo text)
                      text)))
-              (when (memq tag '(Artist Album Composer)) ;FIXME: wrong list.
+              (when (mpc--tag-browser-p tag)
                 (setq display
                       (propertize display
                                   'mouse-face 'highlight
