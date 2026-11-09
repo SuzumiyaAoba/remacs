@@ -980,16 +980,47 @@ actually appear on disk when you save the tar-file's buffer."
 
 ;; Revert the buffer and recompute the dired-like listing.
 (defun tar-mode-revert (&optional no-auto-save no-confirm)
-  (unwind-protect
-      (let ((revert-buffer-function nil))
-        (if (tar-data-swapped-p) (tar-swap-data))
-        ;; FIXME: If we ask for confirmation, the user will be temporarily
-        ;; looking at the raw data.
-        (revert-buffer no-auto-save no-confirm 'preserve-modes)
-        ;; Recompute the summary.
-        (if (buffer-live-p tar-data-buffer) (kill-buffer tar-data-buffer))
-        (tar-mode))
-    (unless (tar-data-swapped-p) (tar-swap-data))))
+  (unless buffer-file-name
+    (error "Buffer does not seem to be associated with a file"))
+  (let* ((modified (buffer-modified-p))
+         (auto-save-p
+          (and (not no-auto-save)
+               (recent-auto-save-p)
+               buffer-auto-save-file-name
+               (file-readable-p buffer-auto-save-file-name)
+               (yes-or-no-p
+                "Buffer has been auto-saved recently.  Revert from auto-save file? ")))
+         (file-name (if auto-save-p buffer-auto-save-file-name buffer-file-name))
+         (confirm-needed
+          (and (not no-confirm)
+               (not (and (not modified)
+                         (catch 'found
+                           (dolist (regexp revert-without-query)
+                             (when (string-match regexp file-name)
+                               (throw 'found t))))))))
+         (confirmed
+          (or (not confirm-needed)
+              (yes-or-no-p
+               (format (if modified "Discard edits and reread from %s? "
+                         "Revert buffer from file %s? ")
+                       file-name))))
+         (original-y-or-n-p (symbol-function 'y-or-n-p)))
+    (when confirmed
+      (unwind-protect
+          (let ((revert-buffer-function nil))
+            (if (tar-data-swapped-p) (tar-swap-data))
+            ;; Confirmation has already happened while the listing was
+            ;; visible.  Answer the auto-save question with that choice.
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (prompt &rest args)
+                         (if (string-match-p "auto-saved recently" prompt)
+                             auto-save-p
+                           (apply original-y-or-n-p prompt args)))))
+              (revert-buffer (not auto-save-p) t 'preserve-modes))
+            ;; Recompute the summary.
+            (if (buffer-live-p tar-data-buffer) (kill-buffer tar-data-buffer))
+            (tar-mode))
+        (unless (tar-data-swapped-p) (tar-swap-data))))))
 
 
 (defun tar-next-line (arg)

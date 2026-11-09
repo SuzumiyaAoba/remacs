@@ -3520,6 +3520,43 @@ fn tar_rename_longlink_member_updates_archive_record() {
 }
 
 #[test]
+fn tar_mode_revert_keeps_listing_visible_for_confirmation() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'tar-mode)
+              (let* ((file-name-coding-system 'no-conversion)
+                     (tar-file-name-coding-system 'no-conversion)
+                     (file (make-temp-file "tar-revert-" nil ".tar"))
+                     (header (tar-new-regular-file-header "file.txt"))
+                     (archive (concat (tar-header-serialize header t)
+                                      (make-string 1024 0)))
+                     (buffer (generate-new-buffer " *tar-revert-test*"))
+                     prompt-listing)
+                (unwind-protect
+                    (progn
+                      (write-region archive nil file)
+                      (with-current-buffer buffer
+                        (setq buffer-file-name file)
+                        (set-buffer-multibyte nil)
+                        (insert archive)
+                        (tar-mode)
+                        (set-buffer-modified-p t)
+                        (cl-letf (((symbol-function 'yes-or-no-p)
+                                   (lambda (&rest _)
+                                     (setq prompt-listing
+                                           (tar-data-swapped-p))
+                                     t)))
+                          (tar-mode-revert))
+                        (list prompt-listing
+                              (tar-data-swapped-p)
+                              (not (buffer-modified-p)))))
+                  (kill-buffer buffer)
+                  (delete-file file))))"#),
+        "(t t t)"
+    );
+}
+
+#[test]
 fn sql_mode_does_not_highlight_quoted_identifiers_as_keywords() {
     assert_eq!(
         ev(r#"(progn
