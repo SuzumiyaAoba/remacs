@@ -246,7 +246,7 @@ Only a non-nil value other than `maybe' confirms that FILE is a source file."
   ;; TLA is not installed.
   (let ((source (and (vc-arch-root file)
                      (vc-arch-file-source-p file))))
-    (and source (not (eq source 'maybe))))
+    (and source (not (eq source 'maybe)))))
 
 (defun vc-arch-default-version (file)
   (or (vc-file-getprop (vc-arch-root file) 'arch-default-version)
@@ -264,7 +264,9 @@ Only a non-nil value other than `maybe' confirms that FILE is a source file."
   ;; There's no checkout operation and merging is not done from VC
   ;; so the only operation that's state dependent that VC supports is commit
   ;; which is only activated if the file is `edited'.
-  (let* ((root (vc-arch-root file))
+  (if (not (vc-arch-registered file))
+      'unregistered
+    (let* ((root (vc-arch-root file))
 	 (ver (vc-arch-default-version file))
 	 (pat (concat "\\`" (subst-char-in-string ?/ ?% ver)))
 	 (dir (expand-file-name ",,inode-sigs/"
@@ -308,7 +310,7 @@ Only a non-nil value other than `maybe' confirms that FILE is a source file."
 				 "%s" (file-attribute-modification-time ats))
 				(match-string 1)))
 		    'up-to-date
-		  'edited)))))))))
+		  'edited))))))))))
 
 ;; dir-status-files called from vc-dir, which loads vc,
 ;; which loads vc-dispatcher.
