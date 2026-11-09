@@ -3778,6 +3778,26 @@ fn tempo_o_tag_opens_line_when_inserting_region() {
 }
 
 #[test]
+fn register_preview_accepts_context_specialized_jump_methods() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'register)
+              (cl-defmethod register-val-jump-to ((val string) arg
+                                                   &context (major-mode (eql text-mode)))
+                'ok)
+              (list
+               (with-temp-buffer
+                 (text-mode)
+                 (list (register--jumpable-p "x")
+                       (register-val-jump-to "x" nil)))
+               (with-temp-buffer
+                 (fundamental-mode)
+                 (register--jumpable-p "x"))))"#),
+        "((string ok) nil)"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn

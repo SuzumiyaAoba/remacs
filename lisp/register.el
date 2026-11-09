@@ -578,6 +578,45 @@ With a prefix argument, prompt for BUFFER as well."
     (add-hook 'kill-buffer-hook #'register-buffer-to-file-query nil t))
   (set-register register (cons 'buffer buffer)))
 
+(defun register--context-method-applicable-p (method genfun)
+  "Return non-nil if all context specializers of METHOD match here."
+  (let ((methods (cl--generic-method-table (cl--generic genfun))))
+    (cl-every
+     (lambda (specializer)
+       (let ((dispatch-arg (car-safe specializer)))
+         (or (not (eq '&context (car-safe dispatch-arg)))
+             (let* ((type (cdr specializer))
+                    (context (cdr dispatch-arg)))
+               (cl-some
+                (lambda (generalizer)
+                  ;; Keep context matching in step with cl-generic dispatch.
+                  (let* ((tagcode-function
+                          (cl--generic-generalizer-tagcode-function generalizer))
+                         (tagcode (funcall tagcode-function 'arg))
+                         (bindings+code
+                          (when (eq tagcode :need-specializers)
+                            (cl--generic--tagcode-with-specializers
+                             generalizer dispatch-arg nil)))
+                         (bindings (car-safe bindings+code))
+                         (tagcode (if bindings+code
+                                      (cdr bindings+code)
+                                    tagcode))
+                         (tag (eval `(let* ((methods ',methods)
+                                            (arg ,context)
+                                            ,@bindings)
+                                       ,tagcode)
+                                    t))
+                         (specializers-function
+                          (cl--generic-generalizer-specializers-function
+                           generalizer))
+                         (extra-args (and bindings+code
+                                          (list (caar bindings)))))
+                    (member type
+                            (apply specializers-function
+                                   (cons tag extra-args)))))
+                (cl-generic-generalizers type))))))
+     (cl--generic-method-specializers method))))
+
 (defun register--get-method-type (val genfun &optional other-args-type)
   ;; Try and return the specializer used in the most specific method
   ;; applicable to argument VAL in generic function GENFUN.
@@ -594,11 +633,27 @@ With a prefix argument, prompt for BUFFER as well."
   ;; corresponding set of specializers (which we approximate here in TYPES),
   ;; then look for the best matching method.
   (let* ((type (or (oclosure-type val) (cl-type-of val)))
+         (methods (cl--generic-method-table (cl--generic genfun)))
 	 (types (cl--class-allparents (cl--find-class type))))
     (if (eq type 'cons) (push `(head ,(car val)) types))
     (push `(eql ',val) types)
-    (while (and types (not (cl-find-method genfun nil
-                                           (cons (car types) other-args-type))))
+    (while
+        (and types
+             (not
+              (or (cl-find-method genfun nil
+                                  (cons (car types) other-args-type))
+                  (cl-some
+                   (lambda (method)
+                     (and (null (cl--generic-method-qualifiers method))
+                          (equal
+                           (cl-remove-if
+                            (lambda (specializer)
+                              (eq '&context
+                                  (car-safe (car-safe specializer))))
+                            (cl--generic-method-specializers method))
+                           (cons (car types) other-args-type))
+                          (register--context-method-applicable-p method genfun)))
+                   methods))))
       (setq types (cdr types)))
     (car types)))
 
