@@ -786,7 +786,7 @@ Return the amount the indentation changed by."
 	beg shift-amt
 	(case-fold-search nil)
 	(pos (- (point-max) (point))))
-    (if (null indent)
+    (if (or (null indent) (eq indent t))
         'noindent
       (beginning-of-line)
       (setq beg (point))
@@ -1259,8 +1259,7 @@ first word following a semicolon, opening brace, or opening bracket."
      ((bobp) t)
      ((bolp)
       (backward-char)
-      ;; Note -- continued comments are not supported here.  I
-      ;; consider those to be a wart on the language.
+      ;; A backslash-continued line is part of the preceding command.
       (not (eq ?\\ (preceding-char))))
      (t
       (memq (preceding-char) '(?\; ?{ ?\[))))))
