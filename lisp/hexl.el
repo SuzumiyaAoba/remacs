@@ -897,7 +897,7 @@ to produce the command line options to pass to the hexl command."
                             (setq position (1+ position))))
                       (setq done t)))))))
           (setq line-start (if (< line-end length) (1+ line-end) length))))
-    (mapconcat #'unibyte-string (nreverse bytes) "")))
+    (mapconcat #'unibyte-string (nreverse bytes) ""))))
 
 (defun hexl--remacs-convert-buffer (dehex)
   (let* ((options (split-string (hexl-options)))
