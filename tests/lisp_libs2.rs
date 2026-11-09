@@ -3425,6 +3425,52 @@ fn highlight_changes_navigation_skips_contiguous_regions() {
 }
 
 #[test]
+fn nxml_parent_document_provides_internal_dtd_entities() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'compile)
+              (require 'cl-lib)
+              (require 'nxml-mode)
+              (require 'rng-valid)
+              (let* ((parent (make-temp-file "nxml-parent-" nil ".xml"))
+                     (child (make-temp-file "nxml-child-" nil ".xml"))
+                     (pbuf nil)
+                     (cbuf nil))
+                (unwind-protect
+                    (progn
+                      (with-temp-file parent
+                        (insert "<!DOCTYPE p [<!ELEMENT p ANY><!ENTITY shared \"ok\">]><p/>"))
+                      (with-temp-file child
+                        (insert "<p>&shared;</p>"))
+                      (setq pbuf (find-file-noselect parent)
+                            cbuf (find-file-noselect child))
+                      (set-window-buffer (selected-window) pbuf)
+                      (with-current-buffer pbuf
+                        (nxml-mode)
+                        (rng-validate-mode 1))
+                      (set-window-buffer (selected-window) cbuf)
+                      (with-current-buffer cbuf
+                        (nxml-mode)
+                        (rng-validate-mode 1)
+                        (nxml-parent-document-set parent)
+                        (not
+                         (cl-some
+                          (lambda (overlay)
+                            (let ((help (overlay-get overlay 'help-echo)))
+                              (and (stringp help)
+                                   (string-match-p
+                                    "Referenced entity has not been defined"
+                                    help))))
+                          (overlays-in (point-min) (point-max)))))
+                  (when (buffer-live-p pbuf) (kill-buffer pbuf))
+                  (when (buffer-live-p cbuf) (kill-buffer cbuf))
+                  (delete-file parent)
+                  (delete-file child))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
