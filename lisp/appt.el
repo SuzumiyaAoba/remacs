@@ -486,7 +486,7 @@ Usually just deletes the appointment buffer."
     (select-window lowest-window)))
 
 (defconst appt-time-regexp
-  "[0-9]?[0-9]\\(h\\([0-9][0-9]\\)?\\|[:.][0-9][0-9]\\)\\(am\\|pm\\)?")
+  "[0-9]?[0-9]\\(?:\\(?:h\\([0-9][0-9]\\)?\\|[:.][0-9][0-9]\\)\\(?:am\\|pm\\)?\\|am\\|pm\\)")
 
 (defun appt--valid-time-string-p (time)
   "Return non-nil if TIME is a complete, valid clock time."

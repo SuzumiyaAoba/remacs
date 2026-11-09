@@ -2958,6 +2958,22 @@ fn file_relative_name_uses_filesystem_case_semantics() {
 }
 
 #[test]
+fn appt_add_accepts_compact_am_pm_times() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'appt)
+              (let ((appt-time-msg-list nil)
+                    (appt-timer t))
+                (appt-add "10am" "appointment")
+                (list (appt--valid-time-string-p "10am")
+                      (appt--valid-time-string-p "10")
+                      (car (car (car appt-time-msg-list)))
+                      (cadr (car appt-time-msg-list)))))"#),
+        "(t nil 600 \"10am appointment\")"
+    );
+}
+
+#[test]
 fn feedmail_one_last_look_deletes_a_new_frame() {
     assert_eq!(
         ev(r#"(progn
