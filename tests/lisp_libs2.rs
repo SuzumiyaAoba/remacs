@@ -3742,6 +3742,26 @@ fn artist_detects_shift_changes_from_mouse_movement_events() {
 }
 
 #[test]
+fn eudc_ecomplete_returns_only_requested_attributes() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'eudcb-ecomplete)
+              (cl-letf (((symbol-function 'ecomplete-setup) #'ignore)
+                        ((symbol-function 'eudc-translate-attribute-list)
+                         (lambda (_) '(mail)))
+                        ((symbol-function 'ecomplete-get-matches)
+                         (lambda (&rest _) "Alice <alice@example.com>"))
+                        ((symbol-function 'mail-header-parse-address)
+                         (lambda (&rest _) '("alice@example.com" . "Alice"))))
+                (list
+                 (eudc-ecomplete-query-internal '((mail . "alice")) '(name))
+                 (eudc-ecomplete-query-internal '((mail . "alice")) '(mail))
+                 (eudc-ecomplete-query-internal '((mail . "alice")) nil))))"#),
+        "((((name . \"Alice\"))) (((mail . \"alice@example.com\"))) (((mail . \"alice@example.com\") (name . \"Alice\"))))"
+    );
+}
+
+#[test]
 fn handwrite_form_feed_starts_new_postscript_page() {
     assert_eq!(
         ev(r#"(progn

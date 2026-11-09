@@ -70,7 +70,7 @@ in your ecompleterc database file.")
 		   'ecomplete)
 
 ;;;###autoload
-(defun eudc-ecomplete-query-internal (query &optional _return-attrs)
+(defun eudc-ecomplete-query-internal (query &optional return-attrs)
   "Query `ecomplete' with QUERY.
 QUERY is a list of cons cells (ATTR . VALUE).  Since `ecomplete'
 does not provide attributes in the usual sense, the
@@ -79,7 +79,8 @@ back-end-specific attribute names in
 KEY (that is, the \"type\" of match) when looking for matches in
 `ecomplete-database'.
 
-RETURN-ATTRS is ignored." ; FIXME: why is this being ignored?
+RETURN-ATTRS is the list of attributes to return.  A nil or `all'
+value keeps all attributes available from `ecomplete'."
   (ecomplete-setup)
   (let ((email-attr (car (eudc-translate-attribute-list '(email))))
         result)
@@ -103,7 +104,21 @@ RETURN-ATTRS is ignored." ; FIXME: why is this being ignored?
                         result)
                 ;; Otherwise just forward the value as-is.
                 (push (list (cons attr match)) result)))))))
-    result))
+    (if (or (null return-attrs)
+	    (eq return-attrs 'all)
+	    (not (listp return-attrs)))
+	result
+      (delq nil
+	    (mapcar
+	     (lambda (record)
+	       (let ((record
+		      (delq nil
+			    (mapcar (lambda (attribute)
+				      (and (memq (car attribute) return-attrs)
+					   attribute))
+				    record))))
+		 (and record record)))
+	     result)))))
 
 (eudc-register-protocol 'ecomplete)
 
