@@ -76,15 +76,7 @@
 
 ;;; Bugs:
 
-;;  1. The undo command doesn't restore deleted regions well.  That is, if
-;;  you delete all characters in a difference region and then invoke
-;;  `undo', the reinstated text will most likely be inserted outside of
-;;  what Ediff thinks is the current difference region.
-;;
-;;  If at any point you feel that difference regions are no longer correct,
-;;  you can hit '!' to recompute the differences.
-
-;;  2. On a monochrome display, the repertoire of faces with which to
+;;  1. On a monochrome display, the repertoire of faces with which to
 ;;  highlight fine differences is limited.  By default, Ediff is using
 ;;  underlining.  However, if the region is already underlined by some other
 ;;  overlays, there is no simple way to temporarily remove that residual
