@@ -3270,6 +3270,37 @@ fn rst_convert_bullets_indents_continuation_lines() {
 }
 
 #[test]
+fn reftex_combined_citation_keeps_each_entry_comment() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'reftex-cite)
+              (let ((reftex-comment-citations t)
+                    (reftex-cite-comment-format " -- %a %y")
+                    (reftex-cite-key-separator ", ")
+                    (reftex-select-return-marker (make-marker))
+                    (reftex-format-cite-function nil))
+                (cl-letf (((symbol-function 'reftex-figure-out-cite-format)
+                           (lambda (&rest _) "\\cite{%l}"))
+                          ((symbol-function 'reftex-offer-bib-menu)
+                           (lambda ()
+                             '(concat
+                               ("foo" ("&key" . "foo")
+                                       ("author" . "Alice Example")
+                                       ("year" . "2001"))
+                               ("bar" ("&key" . "bar")
+                                       ("author" . "Bob Example")
+                                       ("year" . "2002")))))
+                          ((symbol-function 'reftex-kill-buffer)
+                           (lambda (&rest _) nil)))
+                  (with-temp-buffer
+                    (reftex-do-citation)
+                    (buffer-string)))))"#),
+        "\"\\\\cite{foo, bar -- Alice Example 2001 -- Bob Example 2002}\""
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

@@ -674,13 +674,27 @@ While entering the regexp, completion on known citation keys is possible.
       (setq cite-view t))
 
     (when (eq (car selected-entries) 'concat)
-      ;; All keys go into a single command - we need to trick a little
-      ;; FIXME: Unfortunately, this means that commenting does not work right.
+      ;; All keys go into a single command.  Keep a formatted comment for
+      ;; each original entry because the combined entry has no BibTeX fields.
       (pop selected-entries)
-      (let ((concat-keys (mapconcat #'car selected-entries
-				    reftex-cite-key-separator)))
+      (let* ((concat-keys (mapconcat #'car selected-entries
+					     reftex-cite-key-separator))
+             (comment
+              (and reftex-comment-citations
+                   (mapconcat
+                    (lambda (entry)
+                      (let ((reftex-comment-citations nil))
+                        (replace-regexp-in-string
+                         "%" "%%"
+                         (reftex-format-citation
+                          entry reftex-cite-comment-format)
+                         t t)))
+                    selected-entries "")))
+             (combined-entry
+              (append (list concat-keys (cons "&key" concat-keys))
+                      (when comment (list (cons "&comment" comment))))))
         (setq insert-entries
-              (list (list concat-keys (cons "&key" concat-keys))))))
+              (list combined-entry))))
 
     (unless no-insert
 
@@ -1029,11 +1043,13 @@ in order to only add another reference in the same cite command."
       (save-match-data
         (setq rpl
               (cond
-               ((= l ?l) (concat
-                          (reftex-get-bib-field "&key" entry)
-                          (if reftex-comment-citations
-                              reftex-cite-comment-format
-                            "")))
+               ((= l ?l)
+                (concat
+                 (reftex-get-bib-field "&key" entry)
+                 (if reftex-comment-citations
+                     (or (cdr (assoc "&comment" entry))
+                         reftex-cite-comment-format)
+                   "")))
                ((= l ?a) (reftex-format-names
                           (reftex-get-bib-names "author" entry)
                           (or n 2)))
