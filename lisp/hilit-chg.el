@@ -124,13 +124,6 @@
 ;; `highlight-changes-rotate-faces'
 
 
-;;; Bugs:
-
-;; - the next-change and previous-change functions are too literal;
-;;   they should find the next "real" change, in other words treat
-;;   consecutive changes as one.
-
-
 ;;; To do (maybe), notes, ...
 
 ;; - having different faces for deletion and non-deletion: is it
@@ -576,22 +569,46 @@ This removes all saved change information."
     (force-mode-line-update)))
 
 
+(defun hilit-chg--skip-run-forward (position non-nil)
+  "Move POSITION to the end of the contiguous `hilit-chg' run.
+NON-NIL says the run should have a non-nil `hilit-chg' value."
+  (let ((limit (point-max)))
+    (while (and (< position limit)
+                (if non-nil
+                    (get-text-property position 'hilit-chg)
+                  (not (get-text-property position 'hilit-chg))))
+      (setq position
+            (or (next-single-property-change position 'hilit-chg nil limit)
+                limit)))
+    position))
+
+(defun hilit-chg--skip-run-backward (position non-nil)
+  "Move POSITION to the start of the contiguous `hilit-chg' run.
+NON-NIL says the run should have a non-nil `hilit-chg' value."
+  (let ((limit (point-min)))
+    (while (and (> position limit)
+                (if non-nil
+                    (get-text-property (1- position) 'hilit-chg)
+                  (not (get-text-property (1- position) 'hilit-chg))))
+      (setq position
+            (or (previous-single-property-change position 'hilit-chg nil limit)
+                limit)))
+    position))
+
 ;;;###autoload
 (defun highlight-changes-next-change ()
   "Move to the beginning of the next change, if in Highlight Changes mode."
   (interactive)
   (if highlight-changes-mode
-      (let ((start (point))
-	    prop)
-	(setq prop (get-text-property (point) 'hilit-chg))
-	(if prop
-	    ;; we are in a change
-	    (setq start (next-single-property-change (point) 'hilit-chg)))
-	(if start
-	    (setq start (next-single-property-change start 'hilit-chg)))
-	(if start
-	    (goto-char start)
-	  (message "no next change")))
+      (let* ((start (point))
+             (changed (and (< start (point-max))
+                           (get-text-property start 'hilit-chg))))
+        (setq start (hilit-chg--skip-run-forward start changed))
+        (setq start (hilit-chg--skip-run-forward start nil))
+        (if (and (< start (point-max))
+                 (get-text-property start 'hilit-chg))
+            (goto-char start)
+          (message "no next change")))
     (message "This buffer is not in Highlight Changes mode.")))
 
 
@@ -600,22 +617,22 @@ This removes all saved change information."
   "Move to the beginning of the previous change, if in Highlight Changes mode."
   (interactive)
   (if highlight-changes-mode
-      (let ( (start (point)) (prop nil) )
-	(or (bobp)
-	    (setq prop (get-text-property (1- (point)) 'hilit-chg)))
-	(if prop
-	    ;; we are in a change
-	    (setq start (previous-single-property-change (point) 'hilit-chg)))
-	(if start
-	    (setq start (previous-single-property-change start 'hilit-chg)))
-	;; special handling for the case where (point-min) is a change
-	(if start
-	    (setq start (or (previous-single-property-change start 'hilit-chg)
-			    (if (get-text-property (point-min) 'hilit-chg)
-				(point-min)))))
-	(if start
-	    (goto-char start)
-	  (message "no previous change")))
+      (let* ((origin (point))
+             (min (point-min))
+             (current-start
+              (when (and (> origin min)
+                         (get-text-property (1- origin) 'hilit-chg))
+                (hilit-chg--skip-run-backward origin t)))
+             (start (or current-start origin)))
+        (setq start (hilit-chg--skip-run-backward start nil))
+        (when (and (> start min)
+                   (get-text-property (1- start) 'hilit-chg))
+          (setq start (hilit-chg--skip-run-backward start t)))
+        (if (and (< start origin)
+                 (or (null current-start) (< start current-start))
+                 (get-text-property start 'hilit-chg))
+            (goto-char start)
+          (message "no previous change")))
     (message "This buffer is not in Highlight Changes mode.")))
 
 ;; ========================================================================

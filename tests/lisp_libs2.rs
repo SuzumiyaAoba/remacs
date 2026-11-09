@@ -3397,6 +3397,34 @@ fn read_passwd_visibility_uses_clicked_mode_line_window() {
 }
 
 #[test]
+fn highlight_changes_navigation_skips_contiguous_regions() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'hilit-chg)
+              (list
+               (with-temp-buffer
+                 (insert "abcde")
+                 (setq-local highlight-changes-mode t)
+                 (put-text-property 1 2 'hilit-chg 'change-1)
+                 (put-text-property 2 3 'hilit-chg 'change-2)
+                 (put-text-property 4 5 'hilit-chg 'change-1)
+                 (goto-char 1)
+                 (highlight-changes-next-change)
+                 (point))
+               (with-temp-buffer
+                 (insert "abcde")
+                 (setq-local highlight-changes-mode t)
+                 (put-text-property 1 2 'hilit-chg 'change-1)
+                 (put-text-property 2 3 'hilit-chg 'change-2)
+                 (put-text-property 4 5 'hilit-chg 'change-1)
+                 (goto-char 5)
+                 (highlight-changes-previous-change)
+                 (point))))"#),
+        "(4 1)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(
