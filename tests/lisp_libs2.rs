@@ -1371,6 +1371,25 @@ fn vc_git_project_ignores_exclude_matching_directory_contents() {
 }
 
 #[test]
+fn project_git_submodules_unquotes_paths_with_spaces() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'project)
+              (let ((root (file-name-as-directory
+                           (make-temp-file "remacs-gitmodules-" t))))
+                (unwind-protect
+                    (progn
+                      (with-temp-file (expand-file-name ".gitmodules" root)
+                        (insert "[submodule \"vendor/mod\"]\n"
+                                "\tpath = \"vendor/my module\"\n"))
+                      (let ((default-directory root))
+                        (project--git-submodules)))
+                  (delete-directory root t))))"#),
+        "(\"vendor/my module\")"
+    );
+}
+
+#[test]
 fn epg_config_entry_points() {
     // GNU-verified on 31.1.
     assert_eq!(

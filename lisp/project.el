@@ -901,7 +901,13 @@ in the `project-current' call, the timeout is determined by
         (let (res)
           (goto-char (point-min))
           (while (re-search-forward "^[ \t]*path *= *\\(.+\\)" nil t)
-            (push (match-string 1) res))
+            (let ((path (match-string 1)))
+              (push (if (string-prefix-p "\"" path)
+                        (condition-case nil
+                            (car (read-from-string path))
+                          (error path))
+                      path)
+                    res)))
           (nreverse res)))
     (file-missing nil)))
 
