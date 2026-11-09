@@ -3075,19 +3075,26 @@ been weeded out."
 (defun feedmail-one-last-look (buffer)
   "Offer the user one last chance to give it up."
   (feedmail-say-debug ">in-> feedmail-one-last-look")
-  (save-excursion
-    ;; FIXME: switch-to-buffer may fail or pop up a new frame
-    ;; (in minibuffer-only frames, for example) and save-window-excursion
-    ;; won't delete the newly created frame upon exit!
-    (save-window-excursion
-      (switch-to-buffer buffer)
-      (if (numberp feedmail-confirm-outgoing-timeout)
-	  (y-or-n-p-with-timeout
-	   "FQM: Send this email? "
-	   (abs feedmail-confirm-outgoing-timeout)
-	   (> feedmail-confirm-outgoing-timeout 0))
-	(y-or-n-p "FQM: Send this email? "))
-      )))
+  (let ((old-frames (frame-list))
+        new-frames)
+    (unwind-protect
+        (save-excursion
+          (save-window-excursion
+            (switch-to-buffer buffer)
+            (setq new-frames
+                  (delq nil
+                        (mapcar (lambda (frame)
+                                  (unless (memq frame old-frames) frame))
+                                (frame-list))))
+            (if (numberp feedmail-confirm-outgoing-timeout)
+                (y-or-n-p-with-timeout
+                 "FQM: Send this email? "
+                 (abs feedmail-confirm-outgoing-timeout)
+                 (> feedmail-confirm-outgoing-timeout 0))
+              (y-or-n-p "FQM: Send this email? "))))
+      (dolist (frame new-frames)
+        (when (frame-live-p frame)
+          (delete-frame frame t))))))
 
 (defun feedmail-fqm-p (might-be)
   "Internal; does filename end with FQM suffix?"

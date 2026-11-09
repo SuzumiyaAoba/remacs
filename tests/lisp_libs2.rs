@@ -2920,6 +2920,34 @@ fn file_relative_name_uses_filesystem_case_semantics() {
 }
 
 #[test]
+fn feedmail_one_last_look_deletes_a_new_frame() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'feedmail)
+              (let ((frames '(original))
+                    deleted
+                    (last-nonmenu-event nil))
+                (cl-letf (((symbol-function 'frame-list)
+                           (lambda () frames))
+                          ((symbol-function 'switch-to-buffer)
+                           (lambda (&rest _)
+                             (push 'confirmation-frame frames)))
+                          ((symbol-function 'frame-live-p)
+                           (lambda (frame) (memq frame frames)))
+                          ((symbol-function 'delete-frame)
+                           (lambda (frame &optional _force)
+                             (push frame deleted)
+                             (setq frames (delq frame frames))))
+                          ((symbol-function 'y-or-n-p)
+                           (lambda (&rest _) t)))
+                  (feedmail-one-last-look nil)
+                  (list (nreverse deleted) frames))))"#),
+        "((confirmation-frame) (original))"
+    );
+}
+
+#[test]
 fn eshell_define_literal_alias_is_readable() {
     assert_eq!(
         ev(r#"(progn
