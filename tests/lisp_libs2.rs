@@ -3301,6 +3301,24 @@ fn reftex_combined_citation_keeps_each_entry_comment() {
 }
 
 #[test]
+fn todo_legacy_comment_pattern_matches_multiple_lines() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'todo-mode)
+              (with-temp-buffer
+                (let ((item-start (copy-marker (point-min))))
+                  (insert "task (first line\ncontinued) ")
+                  (set-marker item-start (point-min))
+                  (goto-char (point-max))
+                  (and (looking-back
+                        "(\\(\\(?:.\\|\n\\)*\\)) "
+                        (marker-position item-start))
+                       (equal (match-string 1) "first line\ncontinued")))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

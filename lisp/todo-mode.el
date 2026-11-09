@@ -4923,8 +4923,8 @@ name in `todo-directory'.  See also the documentation string of
 		;; If the item ends with a non-comment parenthesis not
 		;; followed by a period, we lose (but we inherit that
 		;; problem from the legacy code).
-                ;; FIXME: fails on multiline comment
-		(when (looking-back "(\\(.*\\)) " (line-beginning-position))
+		(when (looking-back "(\\(\\(?:.\\|\n\\)*\\)) "
+				    (marker-position beg))
 		  (setq comment (match-string 1))
 		  (replace-match "")
 		  (insert "[" todo-comment-string ": " comment "]"))
