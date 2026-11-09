@@ -619,7 +619,7 @@ manner suitable for prepending to a user-specified script."
       (when file ; output file
 	(funcall ats (format "set output '%s'"
 			     (org-plot--gnuplot-quote-string
-			      (expand-file-name file))))
+			      (expand-file-name file)))))
 
       (when plot-pre
 	(funcall ats (funcall plot-pre table data-file num-cols params plot-str)))
