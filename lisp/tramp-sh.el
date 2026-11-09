@@ -4732,21 +4732,7 @@ process to set up.  VEC specifies the connection."
 	(tramp-send-command
 	 vec (format "unset %s" (string-join unset " ")) t)))
 
-    ;; FIXME: This doesn't work with `tramp-test42-utf8' and "/ssh::tmp".
-    ;; Set connection-local variable `command-line-max-length'.
-    ;; `command-line-max-length' exists since Emacs 31.
-    ;; `connection-local-profile-name-for-criteria' exists since Emacs 29.1.
-    ;; We simulate it with `make-symbol'.
-    ;; (when (boundp 'command-line-max-length)
-    ;;   (let* ((arg-max (tramp-get-remote-arg-max vec))
-    ;; 	     (criteria (tramp-get-connection-local-criteria vec))
-    ;; 	     (profile (if (fboundp 'connection-local-profile-name-for-criteria)
-    ;; 			  (connection-local-profile-name-for-criteria criteria)
-    ;; 			(make-symbol "generated-profile-name"))))
-    ;; 	(connection-local-set-profile-variables
-    ;; 	 profile
-    ;; 	 `((command-line-max-length . ,(if arg-max (floor arg-max 4) 4094))))
-    ;; 	(connection-local-set-profiles criteria profile)))))
+    (tramp--set-command-line-max-length vec)
     ))
 
 ;; Old text from documentation of tramp-methods:
@@ -5866,6 +5852,29 @@ Nonexistent directories are removed from spec."
 		  'noerror))
 		((natnump result)))
       result)))
+
+(defun tramp--set-command-line-max-length (vec)
+  "Set connection-local command-line length limit for VEC.
+The remote value is in bytes; the argument partitioner measures
+characters, so use a conservative UTF-8 bound."
+  (when (boundp 'command-line-max-length)
+    (let* ((arg-max (tramp-get-remote-arg-max vec))
+           (criteria (tramp-get-connection-local-criteria vec))
+           (profile
+            (if (fboundp 'connection-local-profile-name-for-criteria)
+                (connection-local-profile-name-for-criteria criteria)
+              (make-symbol "generated-profile-name")))
+           (max-length
+            (if (and (natnump arg-max) (> arg-max 0))
+                (max 1 (floor arg-max 4))
+              4094)))
+      (connection-local-update-profile-variables
+       profile `((command-line-max-length . ,max-length)))
+      (connection-local-set-profiles criteria profile)
+      ;; The profile was installed after Tramp first applied connection
+      ;; local variables to the existing process buffer.
+      (tramp-set-connection-local-variables vec)
+      max-length)))
 
 ;; The PIPE_BUF in POSIX [1] can be as low as 512 [2].  Here are the values
 ;; on various platforms:

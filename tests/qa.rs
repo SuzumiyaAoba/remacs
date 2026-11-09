@@ -89,6 +89,7 @@ qa!(qa_process_buffer_identity, "qa_process_buffer_identity.el");
 qa!(qa_process_window_size, "qa_process_window_size.el");
 qa!(qa_process_names, "qa_process_names.el");
 qa!(qa_network_datagram, "qa_network_datagram.el");
+qa!(qa_tramp_command_line_max, "qa_tramp_command_line_max.el");
 qa!(qa_network_nowait, "qa_network_nowait.el");
 qa!(qa_network_random_service, "qa_network_random_service.el");
 qa!(qa_nnrss_timezone_tokens, "qa_nnrss_timezone_tokens.el");
