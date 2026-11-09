@@ -2740,6 +2740,29 @@ fn ff_find_the_other_file_extracts_case_folded_stub() {
 }
 
 #[test]
+fn ff_find_the_other_file_extracts_stub_for_alternation() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (require 'find-file)
+              (let ((ff-search-directories '("."))
+                    (ff-other-file-alist
+                     '(("\\.c\\'\\|\\.h\\'" (".m"))))
+                    (ff-always-try-to-create nil)
+                    captured)
+                (with-temp-buffer
+                  (setq buffer-file-name "foo.h")
+                  (cl-letf (((symbol-function 'ff-get-file)
+                             (lambda (_dirs stub suffixes &optional _window)
+                               (setq captured (list stub suffixes))
+                               nil)))
+                    (ff-find-the-other-file))
+                  captured)))"#),
+        "(\"foo\" (\".m\"))"
+    );
+}
+
+#[test]
 fn eshell_define_literal_alias_is_readable() {
     assert_eq!(
         ev(r#"(progn
