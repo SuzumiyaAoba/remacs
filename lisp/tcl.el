@@ -413,8 +413,12 @@ This variable is generally set from `tcl-proc-regexp',
   ;; simple cases (e.g. `abc' but also `a"b').  To make things more
   ;; interesting, code is represented as strings, so the content of
   ;; strings can be later re-lexed to find nested strings.
-  (save-excursion
-    (let ((ppss (syntax-ppss pos)))
+  (save-match-data
+    (save-excursion
+      (let* ((pos (if (eq (char-after pos) ?\")
+                      pos
+                    (if (eq (char-before pos) ?\") (1- pos) pos)))
+             (ppss (syntax-ppss pos)))
       (cond
        ((nth 8 ppss)
         (if (and (nth 3 ppss)
@@ -458,18 +462,23 @@ This variable is generally set from `tcl-proc-regexp',
           (when (eq type 'unmatched)
             ;; The quote has no matching close because a } closes the
             ;; surrounding string before, so it doesn't really "open a string".
-            (string-to-syntax "."))))))))
+            (string-to-syntax ".")))))))))
 
 (defconst tcl-syntax-propertize-function
   ;; Preserve the outer string across quotes inside [...] substitutions.
   (syntax-propertize-rules
+   ("\\(\"\\)"
+    (1 (prog1 "."
+         (unless (tcl--syntax-of-quote (1- (point)))
+           (remove-text-properties (1- (point)) (point)
+                                   '(syntax-table nil))))))
    ;; Tcl folds backslash-newline before parsing, including inside comments.
    ((concat (regexp-quote "\\") "\\(\n\\)[ \t]*") (1 " "))
    ;; Hashes inside braced words are data, not comment starters.
    ("{\\s-*\\(#\\)" (1 "."))
    ;; Mark the few `#' that are not comment-markers.
    ((concat "[^" tcl--word-delimiters "][ \t]*\\(#\\)") (1 "."))
-   ("\"" (0 (tcl--syntax-of-quote (match-beginning 0)))))
+   )
   "Syntactic keywords for `tcl-mode'.")
 
 ;; FIXME need some way to recognize variables because array refs look

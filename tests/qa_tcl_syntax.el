@@ -18,4 +18,13 @@
       (nth 4 (syntax-ppss)))
     t)
 
+(qa (with-temp-buffer
+      (insert "set result \"[string length \"abc\"]\"\nputs done\n")
+      (tcl-mode)
+      (syntax-propertize (point-max))
+      (goto-char (point-min))
+      (search-forward "abc")
+      (and (nth 3 (syntax-ppss)) t))
+    t)
+
 (princ (qa--done))
