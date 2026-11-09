@@ -3143,6 +3143,41 @@ fn prolog_find_term_counts_top_level_arguments() {
 }
 
 #[test]
+fn semantic_symref_translates_grep_extended_grouping() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'semantic/symref)
+              (require 'cl-lib)
+              (and
+               (with-temp-buffer
+                 (insert "foobar\n")
+                 (cl-letf (((symbol-function 'find-buffer-visiting)
+                            (lambda (&rest _) (current-buffer)))
+                           ((symbol-function 'semantic-current-tag)
+                            (lambda ()
+                              (and (looking-at "foobar") 'foo-tag)))
+                           ((symbol-function 'semantic-tag-copy)
+                            (lambda (tag &rest _) tag))
+                           ((symbol-function 'semantic--tag-put-property)
+                            (lambda (&rest _) nil)))
+                   (eq (semantic-symref-hit-to-tag-via-buffer
+                        '(1 . "test") "foo(bar)" 'regexp)
+                       'foo-tag)))
+               (let ((repetition
+                      (semantic-symref--grep-regexp-to-emacs-regexp "foo+"))
+                     (literal-plus
+                      (semantic-symref--grep-regexp-to-emacs-regexp "foo\\+")))
+                 (and (string-match-p (concat "\\`" repetition "\\'") "foooo")
+                      (not (string-match-p (concat "\\`" repetition "\\'")
+                                           "foo+"))
+                      (string-match-p (concat "\\`" literal-plus "\\'") "foo+")
+                      (not (string-match-p (concat "\\`" literal-plus "\\'")
+                                           "fooo"))))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

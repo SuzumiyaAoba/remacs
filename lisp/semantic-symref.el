@@ -502,6 +502,93 @@ If there is no database, or if the searchtype is wrong, return nil."
       ;;                as such, this is a cheat and we will need to give up.
       hit)))
 
+(defun semantic-symref--grep-regexp-to-emacs-regexp (regexp)
+  "Translate grep -E REGEXP into Emacs regexp syntax."
+  (let ((index 0)
+        (length (length regexp))
+        in-bracket bracket-first parts)
+    (while (< index length)
+      (let* ((char (aref regexp index))
+             (next (and (< (1+ index) length)
+                        (aref regexp (1+ index)))))
+        (cond
+         ((eq char ?\\)
+          (if next
+              (let ((escaped next))
+                ;; In ERE, escaped grouping, alternation, and braces are
+                ;; literal; Emacs makes those special only when escaped.
+                (push (if (and (not in-bracket)
+                               (memq escaped '(?\( ?\) ?| ?{ ?})))
+                          (char-to-string escaped)
+                        (concat "\\" (char-to-string escaped)))
+                      parts)
+                (setq index (+ index 2)
+                      bracket-first nil))
+            (push "\\" parts)
+            (setq index (1+ index))))
+         ((and in-bracket (= char ?[) (memq next '(?: ?. ?=)))
+          ;; Preserve POSIX bracket classes such as [:alpha:] as one unit.
+          (let ((marker next)
+                (close (+ index 2)))
+            (while (and (< (1+ close) length)
+                        (not (and (eq (aref regexp close) marker)
+                                  (eq (aref regexp (1+ close)) ?]))))
+              (setq close (1+ close)))
+            (if (< (1+ close) length)
+                (progn
+                  (push (substring regexp index (+ close 2)) parts)
+                  (setq index (+ close 2)
+                        bracket-first nil))
+              (push "[" parts)
+              (setq index (1+ index)
+                    bracket-first nil))))
+         ((and (not in-bracket) (eq char ?[))
+          (push "[" parts)
+          (setq in-bracket t
+                bracket-first t
+                index (1+ index)))
+         ((and in-bracket (eq char ?]) bracket-first)
+          (push "]" parts)
+          (setq bracket-first nil
+                index (1+ index)))
+         ((and in-bracket (eq char ?]))
+          (push "]" parts)
+          (setq in-bracket nil
+                bracket-first nil
+                index (1+ index)))
+         ((and in-bracket bracket-first (eq char ?^))
+          (push "^" parts)
+          (setq index (1+ index)))
+         (in-bracket
+          (push (char-to-string char) parts)
+          (setq bracket-first nil
+                index (1+ index)))
+         ((eq char ?\()
+          (push "\\(" parts)
+          (setq index (1+ index)))
+         ((eq char ?\))
+          (push "\\)" parts)
+          (setq index (1+ index)))
+         ((eq char ?|)
+          (push "\\|" parts)
+          (setq index (1+ index)))
+         ((eq char ?{)
+          (let ((close (string-match "}" regexp (1+ index))))
+            (if (and close
+                     (string-match-p "\\`[0-9]+\\(,[0-9]*\\)?\\'"
+                                     (substring regexp (1+ index) close)))
+                (progn
+                  (push (concat "\\{" (substring regexp (1+ index) close)
+                                "\\}")
+                        parts)
+                  (setq index (1+ close)))
+              (push "{" parts)
+              (setq index (1+ index)))))
+         (t
+          (push (char-to-string char) parts)
+          (setq index (1+ index))))))
+    (apply #'concat (nreverse parts))))
+
 (defun semantic-symref-hit-to-tag-via-buffer (hit searchtxt searchtype &optional open-buffers)
   "Convert the symref HIT into a TAG by looking up the tag via a buffer.
 Return the Semantic tag associated with HIT.
@@ -551,15 +638,13 @@ deleting the buffers that were opened."
     (forward-line (1- line))
 
     ;; Search forward for the matching text.
-    ;; FIXME: This still fails if the regexp uses something specific
-    ;; to the extended syntax, like grouping.
-    (when (re-search-forward (if (memq searchtype '(regexp tagregexp))
-                                 searchtxt
-                               (regexp-quote searchtxt))
-                             (line-end-position)
-			     t)
-      (goto-char (match-beginning 0))
-      )
+    (let ((search-regexp
+           (cond ((eq searchtype 'regexp)
+                  (semantic-symref--grep-regexp-to-emacs-regexp searchtxt))
+                 ((eq searchtype 'tagregexp) searchtxt)
+                 (t (regexp-quote searchtxt)))))
+      (when (re-search-forward search-regexp (line-end-position) t)
+        (goto-char (match-beginning 0))))
 
     (setq tag (semantic-current-tag))
 
