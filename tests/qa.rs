@@ -1028,6 +1028,11 @@ fn qa_output_stream_state() {
 
 qa!(qa_xml_normalization, "qa_xml_normalization.el");
 
+qa!(
+    qa_sgml_parse_tag_backward_pi_cdata,
+    "qa_sgml_parse_tag_backward_pi_cdata.el"
+);
+
 qa!(qa_xml_namespace_attrs, "qa_xml_namespace_attrs.el");
 
 qa!(qa_xml_well_formed, "qa_xml_well_formed.el");

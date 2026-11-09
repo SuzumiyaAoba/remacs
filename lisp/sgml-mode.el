@@ -1406,11 +1406,34 @@ Returns t if found, nil otherwise."
                               font-lock-comment-face))))
         (throw 'found t)))))
 
+(defun sgml--special-tag-backward (limit)
+  "Return the enclosing CDATA or PI tag if point is inside one.
+LIMIT is the backward search limit used by `sgml-parse-tag-backward'."
+  (let* ((here (point))
+         (special-start
+          (save-excursion
+            (when (re-search-backward "<!\\[[A-Z]+\\[\\|<\\?" limit t)
+              (point)))))
+    (when special-start
+      (let* ((context (sgml-lexical-context special-start))
+             (type (car context))
+             (start (cdr context)))
+        (when (memq type '(cdata pi))
+          (let ((end (save-excursion
+                       (goto-char here)
+                       (search-forward (if (eq type 'cdata) "]]>" "?>")
+                                       nil t))))
+            (when end
+              (goto-char start)
+              (sgml-make-tag type start end nil))))))))
+
 (defun sgml-parse-tag-backward (&optional limit)
   "Parse an SGML tag backward, and return information about the tag.
 Assume that parsing starts from within a textual context.
 Leave point at the beginning of the tag."
   (catch 'found
+    (let ((special-tag (sgml--special-tag-backward limit)))
+      (when special-tag (throw 'found special-tag)))
     (let (tag-type tag-start tag-end name)
       (or (sgml--find-<>-backward limit)
 	  (error "No tag found"))
@@ -1425,7 +1448,6 @@ Leave point at the beginning of the tag."
 	(with-syntax-table sgml-tag-syntax-table
 	  (let ((pos (point)))
 	    (condition-case nil
-                ;; FIXME: This does not correctly skip over PI and CDATA tags.
 		(sgml-forward-sexp 1)
 	      (scan-error
 	       ;; This < seems to be just a spurious one, let's ignore it.
