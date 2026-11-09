@@ -1467,6 +1467,15 @@ The return value is the target column for the file names."
           (setq switches (connection-local-value dired-listing-switches)))
       (if mode (funcall mode)
         (dired-mode dir-or-list switches))
+      ;; Directory headers are escaped only when `-b' is active.  Add it
+      ;; before the first listing when the directory name itself has a
+      ;; newline, so the header and subdirectory alist remain parseable.
+      (when (and (stringp dirname)
+                 (not (file-remote-p dirname))
+                 (string-match-p "\n" dirname)
+                 (files--use-insert-directory-program-p)
+                 (not (dired-switches-escape-p dired-actual-switches)))
+        (setq dired-actual-switches (concat dired-actual-switches " -b")))
       ;; default-directory and dired-actual-switches are set now
       ;; (buffer-local), so we can call dired-readin:
       (let ((failed t))

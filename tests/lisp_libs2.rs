@@ -3089,6 +3089,34 @@ fn refill_backward_kill_word_keeps_point_before_space() {
 }
 
 #[test]
+fn dired_noselect_opens_directory_with_newline_name() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'dired)
+              (let* ((dired-listing-switches "-al")
+                     (base (make-temp-file
+                            (expand-file-name "dired-newline-"
+                                              temporary-file-directory)
+                            t))
+                     (dir (concat base "\n"))
+                     buffer)
+                (unwind-protect
+                    (progn
+                      (rename-file base dir)
+                      (setq buffer (dired-noselect dir))
+                      (with-current-buffer buffer
+                        (and dired-subdir-alist
+                             (equal default-directory
+                                    (file-name-as-directory dir))
+                             t)))
+                  (when (buffer-live-p buffer) (kill-buffer buffer))
+                  (when (file-directory-p base) (delete-directory base t))
+                  (when (file-directory-p dir) (delete-directory dir t)))))"#),
+        "t"
+    );
+}
+
+#[test]
 fn calc_pass_errors_bypasses_calc_do_error_handler() {
     assert_eq!(
         ev(r#"(progn
