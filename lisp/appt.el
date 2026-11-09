@@ -501,7 +501,7 @@ Usually just deletes the appointment buffer."
          (and (<= 0 minute 59)
               (if am-pm
                   (<= 1 hour 12)
-                (<= 0 hour 23)))))
+                (<= 0 hour 23))))))
 
 ;;;###autoload
 (defun appt-add (time msg &optional warntime)

@@ -5412,6 +5412,16 @@ fn x_dnd_direct_save_omits_uri_list_target() {
 }
 
 #[test]
+fn appt_library_loads() {
+    assert_eq!(
+        ev("(progn (require 'appt)
+                  (list (fboundp 'appt--valid-time-string-p)
+                        (fboundp 'appt-add)))"),
+        "(t t)"
+    );
+}
+
+#[test]
 fn r8_dumped_libs_parity() {
     // abbrev, cconv, cus-face, ediff-hook, eldoc, mouse, prog-mode,
     // regexp-opt, register, replace, scroll-bar, text-mode and timer
