@@ -3520,6 +3520,35 @@ fn tar_rename_longlink_member_updates_archive_record() {
 }
 
 #[test]
+fn sql_mode_does_not_highlight_quoted_identifiers_as_keywords() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'sql)
+              (list
+               (with-temp-buffer
+                 (sql-mode)
+                 (insert "SELECT \"select\" FROM mytable;")
+                 (font-lock-ensure)
+                 (goto-char (point-min))
+                 (search-forward "\"select\"")
+                 (backward-char 2)
+                 (not (eq (get-text-property (point) 'face)
+                          'font-lock-keyword-face)))
+               (with-temp-buffer
+                 (sql-mode)
+                 (insert "SELECT [select] FROM mytable;")
+                 (sql-set-product 'ms)
+                 (font-lock-ensure)
+                 (goto-char (point-min))
+                 (search-forward "[select]")
+                 (backward-char 2)
+                 (not (eq (get-text-property (point) 'face)
+                          'font-lock-keyword-face)))))"#),
+        "(t t)"
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

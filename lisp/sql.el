@@ -87,10 +87,8 @@
 ;; This improves the interaction under Emacs but it still is somewhat
 ;; awkward.
 
-;; Quoted identifiers are not supported for highlighting.  Most
-;; databases support the use of double quoted strings in place of
-;; identifiers; ms (Microsoft SQLServer) also supports identifiers
-;; enclosed within brackets [].
+;; Double-quoted identifiers are treated as syntactic strings so keywords
+;; inside them are not highlighted.  SQL Server also uses bracket quotes.
 
 ;;; Product Support:
 
@@ -429,7 +427,7 @@ file.  Since that is a plaintext file, this could be dangerous."
      :prompt-regexp "^[0-9]*>"
      :prompt-cont-regexp "^[0-9]*>"
      :prompt-length 5
-     :syntax-alist ((?@ . "_"))
+     :syntax-alist ((?@ . "_") (?\[ . "|") (?\] . "|"))
      :terminator ("^go" . "go"))
 
     (mysql
@@ -1472,8 +1470,8 @@ Based on `comint-mode-map'."
     (modify-syntax-entry ?\f "> b" table)
     ;; single quotes (') delimit strings
     (modify-syntax-entry ?' "\"" table)
-    ;; double quotes (") don't delimit strings
-    (modify-syntax-entry ?\" "." table)
+    ;; Double quotes delimit quoted identifiers.
+    (modify-syntax-entry ?\" "\"" table)
     ;; Make these all punctuation
     (mapc (lambda (c) (modify-syntax-entry c "." table))
           (string-to-list "!#$%&+,.:;<=>?@\\|"))
