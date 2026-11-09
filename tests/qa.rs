@@ -779,6 +779,7 @@ qa!(qa_time, "qa_time.el");
 qa!(qa_iso8601_load, "qa_iso8601_load.el");
 qa!(qa_ietf_drums_load, "qa_ietf_drums_load.el");
 qa!(qa_timefmt, "qa_timefmt.el");
+qa!(qa_format_spec_split_missing, "qa_format_spec_split_missing.el");
 qa!(qa_encode_time_ranges, "qa_encode_time_ranges.el");
 qa!(qa_format_time_ranges, "qa_format_time_ranges.el");
 qa!(qa_decode_time_offset_range, "qa_decode_time_offset_range.el");

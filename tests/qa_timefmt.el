@@ -299,6 +299,9 @@
 (qa-err (format-spec "%b" '((?a . "x"))) 'error)
 ;; A nil-valued entry counts as missing.
 (qa-err (format-spec "%a" '((?a))) 'error)
+(qa-err (format-spec "%a" (list (cons ?a (lambda () nil)))) 'error)
+(qa (format-spec "%a" '((?a)) 'ignore) "%a")
+(qa (format-spec "%a" (list (cons ?a (lambda () nil))) 'ignore) "%a")
 ;; IGNORE-ARGS: a list of spec chars leaves those specs untouched.
 (qa (format-spec "%b%a%b" '((?a . "X")) '(?b)) "%bX%b")
 ;; Non-list IGNORE-ARGS also leaves unknown specs literal.

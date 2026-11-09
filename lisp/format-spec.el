@@ -135,7 +135,10 @@ is returned, where each format spec is its own element."
               (when (and split
                          (not (= (1- beg) split-start)))
                 (push (buffer-substring split-start (1- beg)) split-result))
-              (cond (entry
+              ;; Remacs: an entry whose value is nil is missing, just as
+              ;; in GNU's C `format-spec'; a callback returning nil is
+              ;; missing too.
+              (cond ((and entry text)
                      ;; Handle flags.
                      (setq text (format-spec--do-flags
                                  (format "%s" text)
@@ -157,7 +160,11 @@ is returned, where each format spec is its own element."
                      ;; Delete the whole format spec.
                      (delete-region (1- beg) end))
                     ((not ignore-missing)
-                     (error "Invalid format character: `%%%c'" char)))
+                     (error "Invalid format character: `%%%c'" char))
+                    (t
+                     ;; The specifier is still present in the result.  Move
+                     ;; past its full match so SPLIT keeps it as one element.
+                     (goto-char end)))
               (when split
                 (push (buffer-substring (1- beg) (point)) split-result)
                 (setq split-start (point)))))
