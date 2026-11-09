@@ -3230,6 +3230,23 @@ fn rst_adaptive_fill_uses_paragraph_start_prefix() {
 }
 
 #[test]
+fn rst_insert_list_new_tag_clears_whitespace_only_line() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'compile)
+              (require 'rst)
+              (with-temp-buffer
+                (rst-mode)
+                (insert "Paragraph\n  \nNext\n")
+                (goto-char (point-min))
+                (forward-line 1)
+                (rst-insert-list-new-tag "*")
+                (buffer-string)))"#),
+        "\"Paragraph\n\n* \nNext\n\""
+    );
+}
+
+#[test]
 fn pp_fill_uses_visible_width() {
     // Test text display, invisible text, and overlay display strings.
     assert_eq!(

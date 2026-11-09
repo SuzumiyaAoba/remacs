@@ -2315,13 +2315,14 @@ blank lines, then add the new list.
 Other situations are just ignored and left to users themselves."
   ;; FIXME: Following line is not considered at all.
   (let ((pfx-nls
-	 ;; FIXME: Doesn't work properly for white-space line. See
-	 ;;        `rst-insert-list-new-BUGS'.
 	 (if (rst-forward-line-looking-at 0 'lin-end)
 	     (if (not (rst-forward-line-looking-at -1 'lin-end #'not))
 		 0
 	       1)
 	   2)))
+    ;; Whitespace on a blank line is not part of the new list item.
+    (when (rst-forward-line-looking-at 0 'lin-end)
+      (delete-region (line-beginning-position) (line-end-position)))
     (end-of-line)
     ;; FIXME: The indentation is not fixed to a single space by the syntax. May
     ;;        be this should be configurable or rather taken from the context.
