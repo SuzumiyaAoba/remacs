@@ -833,6 +833,12 @@ If LOCAL is non-nil use the buffer-local value of `org-capture-plist'."
         (funcall value)
       (mapc #'funcall value))))
 
+(defun org-capture--target-buffer-should-be-saved-p (abort-note)
+  "Return non-nil when the target buffer should be saved.
+ABORT-NOTE is non-nil when the capture is being discarded."
+  (and (not (org-capture-get :no-save))
+       (not (and abort-note (org-capture-get :new-buffer 'local)))))
+
 (defun org-capture-finalize (&optional stay-with-capture)
   "Finalize the capture process.
 With prefix argument STAY-WITH-CAPTURE, jump to the location of the
@@ -923,7 +929,8 @@ captured item after finalizing."
 	(goto-char (org-capture-get :decrypted))
 	(org-encrypt-entry)))
 
-    (unless (org-capture-get :no-save) (save-buffer))
+    (when (org-capture--target-buffer-should-be-saved-p abort-note)
+      (save-buffer))
 
     (let ((return-wconf (org-capture-get :return-to-wconf 'local))
 	  (new-buffer (org-capture-get :new-buffer 'local))
