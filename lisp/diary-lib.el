@@ -957,12 +957,14 @@ Returns a cons (NOENTRIES . HOLIDAY-STRING)."
                                (if holiday-list ": " "")
                                (mapconcat #'identity holiday-list "; ")))
            (msg (format "No diary entries for %s" hol-string))
-           ;; Empty list, or single item with no text.
-           ;; FIXME multiple items with no text?
+           ;; Empty list, or a list whose entries all have no text.
            (noentries (or (not diary-entries-list)
-                          (and (not (cdr diary-entries-list))
-                               (string-equal "" (cadr
-                                                 (car diary-entries-list)))))))
+                          (let ((entries diary-entries-list))
+                            (while (and entries
+                                        (string-equal ""
+                                                      (cadr (car entries))))
+                              (setq entries (cdr entries)))
+                            (not entries)))))
       ;; Inconsistency: whether or not the holidays are displayed in a
       ;; separate buffer depends on if there are diary entries.
       (when noentries
