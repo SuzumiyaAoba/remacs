@@ -1846,7 +1846,7 @@ SEEN is used to report dependency cycles."
                      (setq last-error err)))))
               (if last-error
                   (signal (car last-error) (cdr last-error))
-                (error "Unable to resolve package `%s'" next-pkg)))))))))
+                (error "Unable to resolve package `%s'" next-pkg)))))))))))
 
 (defun package-compute-transaction (packages requirements &optional seen)
   "Return a list of packages to be installed, including PACKAGES.
