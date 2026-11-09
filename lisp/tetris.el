@@ -263,23 +263,26 @@ each one of its four blocks.")
   "n"       #'tetris-start-game
   "q"       #'quit-window)
 
+(defun tetris--menu-filter (items)
+  "Pause an active game while displaying its menu, then return ITEMS."
+  (when (and (tetris-active-p) (not tetris-paused))
+    (setq tetris-paused t))
+  items)
+
 (defconst tetris--menu-def
   '("Tetris"
+    :filter tetris--menu-filter
     ["Start new game"    tetris-start-game
      :help "Start a new Tetris game"]
     ["End game"          tetris-end-game
      :active (tetris-active-p)
      :help "End the current Tetris game"]
-    ;; FIXME: Pause and resume from the menu currently doesn't work
-    ;;        very well and is therefore disabled.  The game continues
-    ;;        running while navigating the menu.  See also
-    ;;        `snake--menu-def' which has the same problem.
-    ;; ["Pause"             tetris-pause-game
-    ;;  :active (and (tetris-active-p) (not tetris-paused))
-    ;;  :help "Pause running Tetris game"]
-    ;; ["Resume"            tetris-pause-game
-    ;;  :active (and (tetris-active-p) tetris-paused)
-    ;;  :help "Resume paused Tetris game"]
+    ["Pause"             tetris-pause-game
+     :active (and (tetris-active-p) (not tetris-paused))
+     :help "Pause running Tetris game"]
+    ["Resume"            tetris-pause-game
+     :active (and (tetris-active-p) tetris-paused)
+     :help "Resume paused Tetris game"]
     )
   "Menu for `tetris'.  Used to initialize menus.")
 
