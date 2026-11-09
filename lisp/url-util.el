@@ -525,10 +525,11 @@ of the file with the extension stripped off."
 
 ;;;###autoload
 (defun url-truncate-url-for-viewing (url &optional width)
-  "Return a shortened version of URL that is WIDTH characters wide or less.
+  "Return a shortened version of URL that is WIDTH columns wide or less.
 WIDTH defaults to the current frame width."
   (let* ((fr-width (or width (frame-width)))
-	 (str-width (length url))
+	 (max-width fr-width)
+	 (str-width (string-width url))
 	 (fname nil)
 	 (modified 0)
 	 (urlobj nil))
@@ -536,7 +537,7 @@ WIDTH defaults to the current frame width."
     (if (and (>= str-width fr-width)
 	     (string-match "\\?" url))
 	(setq url (concat (substring url 0 (match-beginning 0)) "?...")
-	      str-width (length url)))
+	      str-width (string-width url)))
     (if (< str-width fr-width)
 	nil				; Hey, we are done!
       (setq urlobj (url-generic-parse-url url)
@@ -548,12 +549,16 @@ WIDTH defaults to the current frame width."
 	      modified (1+ modified))
 	(setf (url-filename urlobj) fname)
 	(setq url (url-recreate-url urlobj)
-	      str-width (length url)))
+	      str-width (string-width url)))
       (if (> modified 1)
 	  (setq fname (concat "/.../" fname))
 	(setq fname (concat "/" fname)))
       (setf (url-filename urlobj) fname)
       (setq url (url-recreate-url urlobj)))
+    ;; Dropping path components cannot shorten a URL with one overlong
+    ;; component.  Keep the documented display-column limit in that case.
+    (when (> (string-width url) max-width)
+      (setq url (truncate-string-to-width url max-width)))
     url))
 
 ;;;###autoload
