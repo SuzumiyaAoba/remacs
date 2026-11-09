@@ -764,11 +764,19 @@ If COUNT is negative, move backward instead."
   (catch 'simula-out
     (while t
       (skip-chars-forward " \t\n\f")
-      ;; BUG: the following (0 2) branches don't take into account intermixing
-      ;; directive lines
       (cond
        ((looking-at "!\\|\\<comment\\>")
-	(search-forward ";" nil 'move))
+	(let (directive semicolon)
+	  (while (progn
+		   (setq directive
+			 (save-excursion
+			   (and (re-search-forward "^%" nil t)
+				(line-beginning-position))))
+		   (setq semicolon (save-excursion (search-forward ";" nil t)))
+		   (and directive (or (not semicolon) (< directive semicolon))))
+	    (goto-char directive)
+	    (beginning-of-line 2))
+	  (goto-char (or semicolon (point-max)))))
        ((and (bolp) (eq (following-char) ?%))
 	(beginning-of-line 2))
        ((and (looking-at "[a-z0-9_]*[ \t\f]*:[^-=]")

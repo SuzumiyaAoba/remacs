@@ -3176,6 +3176,25 @@ fn f90_change_keywords_changes_every_word_of_multiword_keywords() {
 }
 
 #[test]
+fn simula_skip_comment_forward_ignores_directive_semicolons() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'simula)
+              (with-temp-buffer
+                (insert "! outer comment starts\n"
+                        "% directive text; semicolon belongs to this directive\n"
+                        "continued comment;\n"
+                        "code;\n")
+                (goto-char (point-min))
+                (simula-skip-comment-forward)
+                (equal (buffer-substring-no-properties
+                        (point) (line-end-position))
+                       "code;")))"#),
+        "t"
+    );
+}
+
+#[test]
 fn refill_backward_kill_word_keeps_point_before_space() {
     assert_eq!(
         ev(r#"(progn
