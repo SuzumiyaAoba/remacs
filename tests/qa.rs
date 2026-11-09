@@ -360,6 +360,7 @@ qa!(qa_mapcan_nconc_semantics, "qa_mapcan_nconc_semantics.el");
 qa!(qa_maphash_live_slots, "qa_maphash_live_slots.el");
 qa!(qa_load, "qa_load.el");
 qa!(qa_autoload_dispatch, "qa_autoload_dispatch.el");
+qa!(qa_autoinsert_load, "qa_autoinsert_load.el");
 qa!(qa_load_read_stream, "qa_load_read_stream.el");
 qa!(qa_unload_dependencies, "qa_unload_dependencies.el");
 qa!(qa_locate_embedded, "qa_locate_embedded.el");
