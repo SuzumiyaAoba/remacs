@@ -5927,15 +5927,7 @@ on a DOS/Windows machine, it returns FILENAME in expanded form."
     (setq filename (expand-file-name filename))
     (let ((fremote (file-remote-p filename))
 	  (dremote (file-remote-p directory))
-	  (fold-case (or (file-name-case-insensitive-p filename)
-			 ;; During bootstrap, it can happen that
-                         ;; `read-file-name-completion-ignore-case' is
-                         ;; not defined yet.
-                         ;; FIXME: `read-file-name-completion-ignore-case' is
-                         ;; a user-config which we shouldn't trust to reflect
-                         ;; the actual file system's semantics.
-			 (and (boundp 'read-file-name-completion-ignore-case)
-			      read-file-name-completion-ignore-case))))
+	  (fold-case (file-name-case-insensitive-p filename)))
       (if ;; Conditions for separate trees
 	  (or
 	   ;; Test for different filesystems on DOS/Windows

@@ -2906,6 +2906,20 @@ fn ffap_menu_ask_selects_a_later_choice_with_duplicate_label() {
 }
 
 #[test]
+fn file_relative_name_uses_filesystem_case_semantics() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'cl-lib)
+              (cl-letf (((symbol-function 'file-name-case-insensitive-p)
+                         (lambda (_) nil)))
+                (let ((read-file-name-completion-ignore-case t))
+                  (file-relative-name
+                   "/tmp/Project/Foo/new" "/tmp/project/foo/"))))"#),
+        "\"../../Project/Foo/new\""
+    );
+}
+
+#[test]
 fn eshell_define_literal_alias_is_readable() {
     assert_eq!(
         ev(r#"(progn

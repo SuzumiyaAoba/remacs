@@ -13258,7 +13258,12 @@ fn f_file_relative_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut dir = want_str(i, &dir_value)?;
     let filename_value = call_file_name_lisp(i, "expand-file-name", vec![a[0].clone()])?;
     let filename = want_str(i, &filename_value)?;
-    let fold = f_file_name_case_insensitive_p_impl(i, &filename);
+    let fold = call_file_name_lisp(
+        i,
+        "file-name-case-insensitive-p",
+        vec![filename_value.clone()],
+    )?
+    .truthy();
     let fdir_value = call_file_name_lisp(
         i,
         "file-name-as-directory",
@@ -13339,12 +13344,6 @@ fn string_prefix_p(
         ],
     )?;
     Ok(result.truthy())
-}
-
-fn f_file_name_case_insensitive_p_impl<T: TextSource + ?Sized>(i: &mut Interp, path: &T) -> bool {
-    path.with_text(|path| match crate::lisp::builtins::misc::f_file_name_case_insensitive_p(i, vec![Value::string(path)].into()) {
-        Ok(value) => value.truthy(), Err(_) => false,
-    })
 }
 
 fn f_abbreviate_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
