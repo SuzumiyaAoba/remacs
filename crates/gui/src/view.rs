@@ -914,6 +914,12 @@ pub(super) struct EditorView {
 
 impl EditorView {
     pub(super) fn set_grid(&mut self, grid: Grid, window: &mut Window) {
+        if self
+            .input
+            .composition_buffer_changed(grid.input.as_ref().map(|input| input.buffer_id))
+        {
+            self.input.discard_stale_composition();
+        }
         self.grid = grid;
         // Minimized windows may not render again until they are restored.
         self.update_window_title(window);

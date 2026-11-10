@@ -20,6 +20,8 @@ pub(super) struct TextInputState {
     marked_range: Option<Range<usize>>,
     /// Buffer interval replaced by the current marked text.
     pub(super) replacement_range: Option<Range<usize>>,
+    composition_buffer_id: Option<usize>,
+    discarded_replacement_range: Option<Range<usize>>,
 }
 
 fn offset(text: &str, requested: usize, round_up: bool) -> (usize, usize) {
@@ -287,11 +289,43 @@ impl TextInputState {
         self.selection = replaced.start + selected.start..replaced.start + selected.end;
     }
 
-    fn take(&mut self) -> String {
+    pub(super) fn record_composition_buffer(&mut self, buffer_id: Option<usize>) {
+        if self.composition_buffer_id.is_none() {
+            self.composition_buffer_id = buffer_id;
+        }
+    }
+
+    pub(super) fn composition_buffer_changed(&self, buffer_id: Option<usize>) -> bool {
+        self.composition_buffer_id
+            .is_some_and(|origin| buffer_id != Some(origin))
+    }
+
+    pub(super) fn discard_stale_composition(&mut self) {
+        let discarded = self.replacement_range.clone();
+        self.clear_active();
+        self.discarded_replacement_range = discarded;
+    }
+
+    pub(super) fn is_discarded_replacement(&self, range: Option<&Range<usize>>) -> bool {
+        self.discarded_replacement_range
+            .as_ref()
+            .is_some_and(|discarded| range == Some(discarded))
+    }
+
+    pub(super) fn clear_discarded_replacement(&mut self) {
+        self.discarded_replacement_range = None;
+    }
+
+    fn clear_active(&mut self) -> String {
         self.selection = 0..0;
         self.marked_range = None;
         self.replacement_range = None;
+        self.composition_buffer_id = None;
         std::mem::take(&mut self.marked)
+    }
+
+    fn take(&mut self) -> String {
+        self.clear_active()
     }
 
     #[cfg(test)]
@@ -556,6 +590,12 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input.is_discarded_replacement(replacement.as_ref()) {
+            self.input.take();
+            self.input.clear_discarded_replacement();
+            cx.notify();
+            return;
+        }
         // Commit a leading or trailing segment while retaining the rest as
         // marked text.  The base document still needs the original replaced
         // range, but the surviving mark starts next to the committed text.
@@ -574,6 +614,7 @@ impl EntityInputHandler for EditorView {
             .unwrap_or(0..0);
         self.send_replace_text(range, text.to_owned());
         self.input.take();
+        self.input.clear_discarded_replacement();
         cx.notify();
     }
 
@@ -585,6 +626,13 @@ impl EntityInputHandler for EditorView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input.is_discarded_replacement(replacement.as_ref()) {
+            return;
+        }
+        self.input.clear_discarded_replacement();
+        self.input.record_composition_buffer(
+            self.grid.input.as_ref().map(|input| input.buffer_id),
+        );
         let fallback = self.grid.input.as_ref().map(selected_document_range);
         self.input
             .mark_document(replacement, text, selected, fallback.unwrap_or(0..0));
@@ -802,4 +850,23 @@ mod tests {
         assert!(input.take().is_empty());
         assert_eq!(input.commit(None, "A日B😀e\u{301}"), "A日B😀e\u{301}");
     }
+    #[test]
+    fn buffer_switch_discards_stale_replacement_range() {
+        let mut input = TextInputState::default();
+        let stale_range = 2..5;
+        input.record_composition_buffer(Some(1));
+        input.replacement_range = Some(stale_range.clone());
+        input.marked_range = Some(2..4);
+        input.marked = "かな".to_owned();
+
+        assert!(!input.composition_buffer_changed(Some(1)));
+        assert!(input.composition_buffer_changed(Some(2)));
+        input.discard_stale_composition();
+
+        assert!(input.marked.is_empty());
+        assert!(input.marked_range.is_none());
+        assert!(input.replacement_range.is_none());
+        assert!(input.is_discarded_replacement(Some(&stale_range)));
+    }
+
 }
