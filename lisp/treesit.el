@@ -1504,6 +1504,12 @@ list.
 
 LANGUAGE is the language of QUERY.")
 
+(defvar-local treesit--font-lock-feature-overrides nil
+  "Explicit feature adjustments to reapply after recomputing this buffer.")
+
+(defvar treesit--preserve-font-lock-feature-overrides nil
+  "Non-nil when a font-lock level change should retain feature adjustments.")
+
 ;; Follow cl-defstruct naming conventions, in case we use cl-defstruct
 ;; in the future.
 (defsubst treesit-font-lock-setting-query (setting)
@@ -1544,14 +1550,13 @@ fontification is enabled.
 
 If optional BUFFER-LOCAL is non-nil, only affect the current buffer.
 Set SYM buffer locally and refontify."
-  ;; FIXME: This doesn't re-run major mode hooks, meaning any
-  ;; customization done in major mode hooks (e.g., with
-  ;; `treesit-font-lock-recompute-features') may be overridden.
   (cond (buffer-local
          (set-local sym val)
          (when (and (treesit-available-p)
                     treesit-font-lock-settings)
-           (treesit-font-lock-recompute-features)
+           ;; Keep adjustments made by major-mode hooks.
+           (let ((treesit--preserve-font-lock-feature-overrides t))
+             (treesit-font-lock-recompute-features))
            (font-lock-flush)))
         (t
          (set-default sym val)
@@ -1559,7 +1564,9 @@ Set SYM buffer locally and refontify."
            (dolist (buffer (buffer-list))
              (with-current-buffer buffer
                (when treesit-font-lock-settings
-                 (treesit-font-lock-recompute-features)
+                 ;; Keep adjustments made by major-mode hooks.
+                 (let ((treesit--preserve-font-lock-feature-overrides t))
+                   (treesit-font-lock-recompute-features))
                  (font-lock-flush))))))))
 
 (defcustom treesit-font-lock-level 3
@@ -1841,6 +1848,9 @@ no match, return 3."
     (&optional add-list remove-list language)
   "Enable/disable font-lock features and validate and compile queries.
 
+Feature adjustments previously made in the current buffer are reapplied
+when `treesit-font-lock-level' changes.
+
 When either ADD-LIST or REMOVE-LIST is non-nil, enable/disable features
 according to ADD-LIST and REMOVE-LIST, on top of the currently enabled
 features in the buffer.
@@ -1862,6 +1872,14 @@ and leave settings for other languages unchanged."
     (signal 'treesit-font-lock-error
             (list "ADD-LIST and REMOVE-LIST contain the same feature"
                   intersection)))
+  (if (or add-list remove-list)
+      (push (list language (copy-sequence add-list) (copy-sequence remove-list))
+            treesit--font-lock-feature-overrides)
+    (unless treesit--preserve-font-lock-feature-overrides
+      (if language
+          (push (list language :reset :reset)
+                treesit--font-lock-feature-overrides)
+        (setq-local treesit--font-lock-feature-overrides nil))))
   (let* ((level (treesit--compute-font-lock-level
                  treesit-font-lock-level))
          (base-features (cl-loop
@@ -1869,34 +1887,36 @@ and leave settings for other languages unchanged."
                          for features in treesit-font-lock-feature-list
                          if (or (eq level t)
                                 (>= level (1+ idx)))
-                         append features))
-         (features (cl-set-difference (cl-union base-features add-list)
-                                      remove-list))
-         ;; If additive non-nil, we are configuring on top of the
-         ;; existing configuration, if nil, we are resetting
-         ;; everything according to `treesit-font-lock-feature-list'.
-         (additive (or add-list remove-list)))
+                         append features)))
     (cl-loop for idx = 0 then (1+ idx)
              for setting in treesit-font-lock-settings
              for lang = (treesit-font-lock-setting-language setting)
              for feature = (treesit-font-lock-setting-feature setting)
-             for current-value = (treesit-font-lock-setting-enable setting)
              for reversed = (treesit-font-lock-setting-reversed setting)
+             for default-enabled =
+             (if reversed
+                 (not (memq feature base-features))
+               (and (memq feature base-features) t))
              ;; Set the ENABLE flag for the setting if its language is
              ;; relevant.
              if (or (null language)
                     (eq language lang))
-             do (setf (nth 1 (nth idx treesit-font-lock-settings))
-                      (cond
-                       ((not additive)
-                        (if (not reversed)
-                            (if (memq feature features) t nil)
-                          (if (memq feature features) nil t)))
-                       ((memq feature add-list) t)
-                       ((memq feature remove-list) nil)
-                       (t current-value))))
+             do (let ((enabled default-enabled))
+                  (dolist (override (reverse treesit--font-lock-feature-overrides))
+                    (let ((override-language (nth 0 override))
+                          (override-add (nth 1 override))
+                          (override-remove (nth 2 override)))
+                      (when (or (null override-language)
+                                (eq override-language lang))
+                        (if (eq override-add :reset)
+                            (setq enabled default-enabled)
+                          (when (memq feature override-add)
+                            (setq enabled t))
+                          (when (memq feature override-remove)
+                            (setq enabled nil)))))
+                  (setf (nth 1 (nth idx treesit-font-lock-settings)) enabled)))
     ;; Validate and compile newly enabled queries.
-    (treesit-validate-and-compile-font-lock-rules treesit-font-lock-settings)))
+    (treesit-validate-and-compile-font-lock-rules treesit-font-lock-settings))))
 
 (defun treesit-merge-font-lock-feature-list (features-list-1 features-list-2)
   "Merge two tree-sitter font lock feature lists.
