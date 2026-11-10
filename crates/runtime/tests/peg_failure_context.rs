@@ -20,6 +20,7 @@ fn sequences_report_only_terms_that_failed_at_the_rightmost_position() {
                  (list
                   (remacs-test-peg-failure "ax" '(peg-parse "a" "b") t)
                   (remacs-test-peg-failure "xx" '(peg-parse "a" "b"))
+                  ;; #1862: after consuming "a", only the failing "b" is expected.
                   (remacs-test-peg-failure "ax" '(peg-parse "a" "b"))
                   (remacs-test-peg-failure "abx" '(peg-parse "a" "b" "c"))
                   (remacs-test-peg-failure
