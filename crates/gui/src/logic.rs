@@ -1275,7 +1275,7 @@ pub(super) struct ChanIo {
     pending_power_off: bool,
     last_blink_visible: Cell<Option<bool>>,
     pub(super) geometry_symbols: Option<GeometrySymbols>,
-    pub(super) mouse_down: Option<(MouseButton, usize, i128, MousePosition)>,
+    pub(super) mouse_down: Vec<(MouseButton, usize, i128, MousePosition)>,
     mouse_positions: HashMap<usize, MousePosition>,
     mouse_position: Option<MousePosition>,
     /// Last native pointer location in the frontend's global desktop space.
@@ -1657,7 +1657,7 @@ impl ChanIo {
             pending_power_off: false,
             last_blink_visible: Cell::new(None),
             geometry_symbols: None,
-            mouse_down: None,
+            mouse_down: Vec::new(),
             mouse_positions: HashMap::new(),
             mouse_position: None,
             mouse_absolute_position: None,
@@ -1749,6 +1749,25 @@ impl ChanIo {
         }
     }
 
+    fn record_mouse_down(
+        &mut self,
+        button: MouseButton,
+        click_count: usize,
+        modifiers: i128,
+        position: MousePosition,
+    ) {
+        if let Some(down) = self
+            .mouse_down
+            .iter_mut()
+            .find(|(down_button, _, _, _)| *down_button == button)
+        {
+            *down = (button, click_count, modifiers, position);
+        } else {
+            self.mouse_down
+                .push((button, click_count, modifiers, position));
+        }
+    }
+
     fn mouse_input(
         &mut self,
         button: MouseButton,
@@ -1758,8 +1777,9 @@ impl ChanIo {
     ) -> MouseInput {
         let down = self
             .mouse_down
-            .take()
-            .filter(|(down_button, _, _, _)| *down_button == button);
+            .iter()
+            .position(|(down_button, _, _, _)| *down_button == button)
+            .map(|index| self.mouse_down.remove(index));
         let (start, down_click_count, down_modifiers) = down
             .map(|(_, click_count, modifiers, position)| (position, click_count, modifiers))
             .unwrap_or((end, click_count, 0));
@@ -2116,7 +2136,7 @@ impl KeyIo for ChanIo {
                 modifiers,
                 position,
             } => {
-                self.mouse_down = Some((button, click_count, modifiers, position));
+                self.record_mouse_down(button, click_count, modifiers, position);
                 Ok(Some(InputEvent::MouseDown(MouseInput {
                     button,
                     click_count: click_count.max(1),
@@ -2316,7 +2336,7 @@ impl KeyIo for ChanIo {
                 modifiers,
                 position,
             } => {
-                self.mouse_down = Some((button, click_count, modifiers, position));
+                self.record_mouse_down(button, click_count, modifiers, position);
                 Ok(Some(InputEvent::MouseDown(MouseInput {
                     button,
                     click_count: click_count.max(1),
@@ -3070,7 +3090,7 @@ fn start_logic_inner(
                 } else {
                     None
                 },
-                mouse_down: None,
+                mouse_down: Vec::new(),
                 mouse_positions: HashMap::new(),
                 mouse_position: None,
                 mouse_absolute_position: None,
