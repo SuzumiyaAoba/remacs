@@ -1535,7 +1535,8 @@ impl Render for EditorView {
         } else {
             CursorStyle::None
         };
-        let grid = self.grid.clone();
+        let mut grid = self.grid.clone();
+        let block_cursor_glyphs = prepare_block_cursor_glyphs(&mut grid, default_background);
         let images = grid.images.clone();
         let image_cursors = grid.cursors.clone();
         let image_blink_cursor = grid.blink_cursor;
@@ -2736,13 +2737,17 @@ impl Render for EditorView {
                                         } else {
                                             glyph_width
                                         };
-                                        window.paint_quad(fill(
-                                            Bounds {
-                                                origin,
-                                                size: size(width, line_height),
-                                            },
-                                            rgba((rgb_color << 8) | 0x80),
-                                        ));
+                                        if !block_cursor_glyphs
+                                            .contains(&(cursor.row, cursor.index))
+                                        {
+                                            window.paint_quad(fill(
+                                                Bounds {
+                                                    origin,
+                                                    size: size(width, line_height),
+                                                },
+                                                rgba((rgb_color << 8) | 0x80),
+                                            ));
+                                        }
                                     }
                                     remacs_runtime::frontend::GridCursorShape::Hollow => {
                                         let width = if cursor.thickness > 0 {
@@ -3516,6 +3521,67 @@ fn grid_cursor_blink_visible(grid: &Grid) -> bool {
     let interval = grid.blink_interval.max(0.05);
     let completed = grid.blink_blinks > 0 && elapsed >= interval * 2.0 * grid.blink_blinks as f64;
     elapsed < 0.0 || completed || (elapsed / interval).floor() as u64 % 2 == 1
+}
+
+fn prepare_block_cursor_glyphs(grid: &mut Grid, default_background: u32) -> HashSet<(usize, usize)> {
+    let blink_visible = grid_cursor_blink_visible(grid);
+    let cursors = grid.cursors.clone();
+    let frame_background = CellColor(
+        (default_background >> 16) as u8,
+        (default_background >> 8) as u8,
+        default_background as u8,
+    );
+    let mut styled = HashSet::new();
+    for cursor in cursors {
+        if cursor.shape != remacs_runtime::frontend::GridCursorShape::Block
+            || cursor.thickness > 0
+            || (cursor.selected && grid.blink_cursor && !blink_visible)
+            || grid.images.iter().any(|image| {
+                image.row == cursor.row && image.column == cursor.column
+            })
+            || grid.compositions.iter().any(|composition| {
+                composition.row == cursor.row && composition.byte_index == cursor.index
+            })
+        {
+            continue;
+        }
+        let Some(char_index) = grid.rows.get(cursor.row).and_then(|text| {
+            text.char_indices()
+                .enumerate()
+                .find_map(|(index, (byte, _))| (byte == cursor.index).then_some(index))
+        }) else {
+            continue;
+        };
+        let mut styles = grid
+            .char_attrs
+            .get(cursor.row)
+            .filter(|styles| !styles.is_empty())
+            .or_else(|| grid.attrs.get(cursor.row))
+            .cloned()
+            .unwrap_or_default();
+        styles.resize(char_index.saturating_add(1), Default::default());
+        let cursor_background = cursor.color.unwrap_or_else(|| {
+            let color = gamma_correct_rgb(CURSOR, grid.gamma_exponent);
+            CellColor(
+                (color >> 16) as u8,
+                (color >> 8) as u8,
+                color as u8,
+            )
+        });
+        let style = &mut styles[char_index];
+        style.fg = Some(frame_background);
+        style.bg = Some(cursor_background);
+        style.distant_foreground = None;
+        style.inverse = false;
+        style.extend = false;
+        style.stipple = None;
+        if grid.char_attrs.len() <= cursor.row {
+            grid.char_attrs.resize_with(cursor.row + 1, Vec::new);
+        }
+        grid.char_attrs[cursor.row] = styles;
+        styled.insert((cursor.row, cursor.index));
+    }
+    styled
 }
 
 fn grid_image_cursor_overlay(
