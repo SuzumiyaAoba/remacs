@@ -940,7 +940,7 @@ only be used for decoding, not for encoding."
   "Decode successive encoded-words in WORDS and return a decoded string.
 Each element of WORDS looks like (CHARSET ENCODING ENCODED-TEXT
 ENCODED-WORD)."
-  (let (cs text rest)
+  (let (cs text rest parts output-starts-with-space have-output)
     (dolist (word words)
       (if (and (setq cs (rfc2047-charset-to-coding-system
 			 (car word) t))
@@ -958,29 +958,34 @@ ENCODED-WORD)."
 	  (if (and rfc2047-allow-incomplete-encoded-text
 		   (eq cs (caar rest)))
 	      ;; Concatenate text of which the charset is the same.
-	      (setcdr (car rest) (concat (cdar rest) text))
-	    (push (cons cs text) rest))
+	      (setcdr (car rest) (cons text (cdar rest)))
+	    (push (cons cs (list text)) rest))
 	;; Don't decode encoded-word.
 	(push (cons nil (nth 3 word)) rest)))
-    (setq words nil)
     (while rest
-      ;; FIXME: This looks O(N²).  Can we make it more efficient
-      ;; with something like mapconcat?
-      (setq words (concat
-		   (or (and (setq cs (caar rest))
-			    (condition-case code
-				(decode-coding-string (cdar rest) cs)
-			      (error
-			       (message "%s" (error-message-string code))
-			       nil)))
-		       (concat (when (cdr rest) " ")
-			       (cdar rest)
-			       (when (and words
-					  (not (eq (string-to-char words) ? )))
-				 " ")))
-		   words)
-	    rest (cdr rest)))
-    words))
+	  (let* ((cs (caar rest))
+		 (text (if cs
+			   (mapconcat #'identity (nreverse (cdar rest)) "")
+			 (cdar rest)))
+		 (part
+		  (or (and cs
+			   (condition-case code
+			       (decode-coding-string text cs)
+			     (error
+			      (message "%s" (error-message-string code))
+			      nil)))
+		      (concat (when (cdr rest) " ")
+			      text
+			      (when (and have-output
+					 (not output-starts-with-space))
+				" "))))
+	(push part parts)
+	(when (> (length part) 0)
+	  (setq output-starts-with-space (eq (aref part 0) ? )))
+	(setq have-output t
+	      rest (cdr rest)))
+    (when parts
+      (mapconcat #'identity parts ""))))
 
 ;; Fixme: This should decode in place, not cons intermediate strings.
 ;; Also check whether it needs to worry about delimiting fields like
