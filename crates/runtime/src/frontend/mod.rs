@@ -136,6 +136,12 @@ pub trait FontSelectionBackend {
     fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String>;
 }
 
+/// Font-family names available to a graphical front-end. Implementations
+/// may query the native text system on its owning UI thread.
+pub trait FontFamilyListBackend {
+    fn list_families(&self, frame_id: usize) -> Result<Vec<String>, String>;
+}
+
 /// Requested native visibility of a graphical frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameVisibility {

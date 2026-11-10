@@ -294,6 +294,22 @@ pub(super) fn f_font_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 /// `font-info' — needs a window-system frame; GNU always errors on
 /// a tty.
+pub(super) fn f_font_family_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = arg(&a, 0);
+    let frame = crate::editor::frame_live(i, &display)?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let Some(backend) = i.font_family_list_backend.clone() else {
+        return Ok(Value::Nil);
+    };
+    let frame_id = frame.borrow().id;
+    let families = backend
+        .list_families(frame_id)
+        .map_err(|error| i.error(error))?;
+    Ok(Value::list(families.into_iter().map(Value::string).collect()))
+}
+
 pub(super) fn f_font_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU font.c Ffont_info:
     // CHECK_STRING(NAME) first, then the optional FRAME decodes via

@@ -1518,7 +1518,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-get-glyphs", 3, 4, f_font_object_stub, ""),
     S!("font-info", 1, 2, f_font_info, ""),
     S!("font-match-p", 2, 2, f_font_match_p, ""),
-    S!("font-family-list", 0, 1, crate::editor::f_nil_frame_arg, ""),
+    S!("font-family-list", 0, 1, faces::f_font_family_list, ""),
     S!("font-face-attributes", 1, 2, f_font_face_attributes, ""),
     S!("font-spec", many 0, f_font_spec, ""),
     S!("face-name", 1, 1, f_face_name, ""),

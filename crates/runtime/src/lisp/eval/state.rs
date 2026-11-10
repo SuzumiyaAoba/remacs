@@ -46,6 +46,14 @@ impl Interp {
         self.file_dialog_backend = backend;
     }
 
+    /// Install or remove the host font-family query used by GUI primitives.
+    pub fn set_font_family_list_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::FontFamilyListBackend>>,
+    ) {
+        self.font_family_list_backend = backend;
+    }
+
     /// Install or remove the host font chooser used by GUI font primitives.
     pub fn set_font_selection_backend(
         &mut self,

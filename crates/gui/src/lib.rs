@@ -1081,6 +1081,23 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::FontFamilyList { frame_id, reply } => {
+                        let handle = windows
+                            .get(&frame_id)
+                            .copied()
+                            .or_else(|| windows.values().next().copied())
+                            .or(primary_window);
+                        let result = if let Some(handle) = handle {
+                            handle
+                                .update(cx, |_view, window, _cx| {
+                                    window.text_system().all_font_names()
+                                })
+                                .map_err(|error| error.to_string())
+                        } else {
+                            Ok(Vec::new())
+                        };
+                        let _ = reply.send(result);
+                    }
                     #[cfg(target_os = "macos")]
                     GuiRequest::FontSelection {
                         frame_id,

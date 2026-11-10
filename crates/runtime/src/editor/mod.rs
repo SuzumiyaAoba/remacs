@@ -2731,12 +2731,6 @@ pub(crate) fn frame_or_win(i: &mut Interp, v: &Value) -> Result<FrameRef, Flow> 
     frame_live(i, v)
 }
 
-/// nil result after a `decode_live_frame' check on the optional arg —
-/// GNU's font-family-list/frame-font-cache shape.
-pub(crate) fn f_nil_frame_arg(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = frame_live(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
-}
 fn f_window_live_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match &a[0] {
         // Live = leaf window still attached to a frame; internal

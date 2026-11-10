@@ -469,6 +469,10 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
     },
+    FontFamilyList {
+        frame_id: usize,
+        reply: SyncSender<Result<Vec<String>, String>>,
+    },
     #[cfg(target_os = "macos")]
     FontSelection {
         frame_id: usize,
@@ -946,6 +950,22 @@ impl remacs_runtime::frontend::AboutPanelBackend for GuiAboutPanelBackend {
 
 struct GuiColorPanelBackend {
     requests: smol::channel::Sender<GuiRequest>,
+}
+
+struct GuiFontFamilyListBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::FontFamilyListBackend for GuiFontFamilyListBackend {
+    fn list_families(&self, frame_id: usize) -> Result<Vec<String>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FontFamilyList { frame_id, reply })
+            .map_err(|_| "GUI font-family service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI font-family service stopped".to_owned())?
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -3090,6 +3110,9 @@ fn start_logic_inner(
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_file_dialog_backend(Some(Rc::new(GuiFileDialogBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                i.set_font_family_list_backend(Some(Rc::new(GuiFontFamilyListBackend {
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {
