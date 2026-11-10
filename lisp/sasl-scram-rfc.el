@@ -53,7 +53,11 @@ See https://www.rfc-editor.org/rfc/rfc5801#section-4.")
   ;; The "n," means the client doesn't support channel binding, and
   ;; the trailing comma is included as per RFC 5801.
   (let ((authzid (sasl-client-property client 'authenticator-name)))
-    (concat "n," (and authzid "a=") authzid ",")))
+    (concat "n,"
+            (if authzid
+                (concat "a=" (sasl-scram--escape-name authzid))
+              "")
+            ",")))
 
 (defun sasl-scram-client-first-message (client _step)
   (let ((c-nonce (sasl-unique-id)))
