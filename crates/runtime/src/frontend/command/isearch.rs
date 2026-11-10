@@ -92,6 +92,41 @@ fn isearch_delay_duration(seconds: f64) -> std::time::Duration {
         .unwrap_or_else(|_| std::time::Duration::from_secs(365 * 24 * 60 * 60))
 }
 
+fn dispatch_isearch_mouse<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    input: InputEvent,
+) -> io::Result<()> {
+    let depth = i.specbind_depth();
+    let overriding = i.q("overriding-terminal-local-map");
+    let saved_map = i.q("isearch--saved-local-map");
+    let isearch_map_symbol = i.q("isearch-mode-map");
+    let previous_map = i.symbol_value(overriding);
+    let isearch_map = i.symbol_value(isearch_map_symbol);
+    if let Err(flow) = i
+        .specbind(saved_map, previous_map)
+        .and_then(|()| i.specbind(overriding, isearch_map))
+    {
+        if let Err(cleanup) = i.unbind_to(depth) {
+            report_flow(i, cleanup);
+        }
+        report_flow(i, flow);
+        return Ok(());
+    }
+
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    let result = match input {
+        InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse, &mut keys, &mut arg_mode),
+        InputEvent::Mouse(mouse) => dispatch_mouse(term, i, mouse, &mut keys, &mut arg_mode),
+        _ => Ok(()),
+    };
+    if let Err(flow) = i.unbind_to(depth) {
+        report_flow(i, flow);
+    }
+    result
+}
+
 struct IsearchHistory {
     query_len: usize,
     positions_len: usize,
@@ -2810,16 +2845,21 @@ pub(super) fn isearch_loop<T: KeyIo>(
                                 )
                         })
                     });
+                if !edit_click_pending {
+                    dispatch_isearch_mouse(term, i, InputEvent::MouseDown(mouse))?;
+                }
                 continue;
             }
             Some(InputEvent::Mouse(mouse)) => {
                 // GNU waits for and swallows the release before opening the
                 // edit minibuffer, so it cannot move point in the new prompt.
                 let edit = std::mem::take(&mut edit_click_pending);
-                if !edit || mouse.button != MouseButton::Left {
+                if edit && mouse.button == MouseButton::Left {
+                    CHAR_META | 'e' as i128
+                } else {
+                    dispatch_isearch_mouse(term, i, InputEvent::Mouse(mouse))?;
                     continue;
                 }
-                CHAR_META | 'e' as i128
             }
             _ => continue,
         };
