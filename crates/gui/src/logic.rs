@@ -1369,7 +1369,7 @@ fn fit_echo_text_at_cursor(
     if width == 0 {
         return (String::new(), 0, 0, 0, 0);
     }
-    let scroll_start = cursor_column.saturating_sub(width);
+    let scroll_start = cursor_column.saturating_add(1).saturating_sub(width);
     let scroll_end = scroll_start.saturating_add(width);
     let mut rendered = String::new();
     let mut source_column = 0usize;
