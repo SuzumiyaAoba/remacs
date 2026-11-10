@@ -3,7 +3,9 @@ use crate::logic::ChanIo;
 use gpui::{Modifiers, MouseButton as GpuiMouseButton, NavigationDirection, point, px};
 use remacs_runtime::{
     editor::{CHAR_CTL, CHAR_SHIFT, event_code_for, reflow_frame_windows},
-    frontend::{Grid, MouseButton as Button, render_grid_with_input_cached, run_editor_with},
+    frontend::{
+        Grid, MouseArea, MouseButton as Button, render_grid_with_input_cached, run_editor_with,
+    },
     lisp::Interp,
 };
 use std::sync::mpsc;
@@ -174,4 +176,79 @@ fn navigation_buttons_reach_the_gui_channel_with_position_and_modifiers() {
             .to_unicode_lossy(),
         "(C-S-down-mouse-2 C-S-mouse-2 C-S-down-mouse-3 C-S-mouse-3 C-S-down-mouse-4 C-S-mouse-4 C-S-down-mouse-5 C-S-mouse-5)"
     );
+}
+
+#[test]
+fn mode_line_middle_clicks_send_mode_line_mouse_events() {
+    let mut interp = Interp::new();
+    interp
+        .eval_str(
+            r#"(progn
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (setq-local mode-line-format "Mode"
+                      header-line-format nil tab-line-format nil)
+          (erase-buffer))"#,
+        )
+        .unwrap();
+    let frame = interp.selected_frame.as_ref().unwrap();
+    reflow_frame_windows(frame, 40, 12);
+    let grid = render_grid_with_input_cached(&interp, 40, 12, None);
+    let mode_line = *grid.mode_lines.first().expect("mode line should be rendered");
+    assert!(mode_line.width > 0);
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(0);
+            view.grid = grid.clone();
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    let (cell_width, cell_height) = handle
+        .update(&mut app, |view, _, _| {
+            let geometry = view.geometry.as_ref().unwrap();
+            (geometry.char_width as f32, geometry.char_height as f32)
+        })
+        .unwrap();
+    let column = mode_line.left + 1;
+    let row_top = super::grid_row_top(&grid, mode_line.row, px(cell_height));
+    let row_height = super::grid_row_height(&grid, mode_line.row, px(cell_height));
+    let point = point(
+        px((column as f32 + 0.5) * cell_width),
+        px(f32::from(row_top) + f32::from(row_height) / 2.0),
+    );
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    visual.simulate_mouse_down(point, GpuiMouseButton::Middle, Modifiers::none());
+    visual.simulate_mouse_up(point, GpuiMouseButton::Middle, Modifiers::none());
+
+    let events: Vec<_> = rx
+        .try_iter()
+        .filter(|event| matches!(event, GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. }))
+        .collect();
+    assert_eq!(events.len(), 2);
+    for event in events {
+        let position = match event {
+            GuiEvent::MouseDown {
+                button: Button::Middle,
+                position,
+                ..
+            }
+            | GuiEvent::MouseUp {
+                button: Button::Middle,
+                position,
+                ..
+            } => position,
+            _ => panic!("unexpected non-middle mode-line mouse event"),
+        };
+        assert_eq!(position.area, Some(MouseArea::ModeLine));
+        assert_eq!(position.window_id, Some(mode_line.window_id));
+    }
 }
