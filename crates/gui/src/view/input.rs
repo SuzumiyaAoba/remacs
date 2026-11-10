@@ -783,7 +783,13 @@ impl EntityInputHandler for EditorView {
         let start = layout.x_for_index(start_byte);
         let end = match end_position {
             Some((end_row, end_byte)) if end_row == row => layout.x_for_index(end_byte),
-            _ => layout.width,
+            _ => input
+                .rows
+                .iter()
+                .find(|input_row| input_row.row == row)
+                .and_then(|input_row| input_row.source_offsets.last().copied())
+                .map(|byte| layout.x_for_index(byte))
+                .unwrap_or(layout.width),
         };
         let (left, text_width) = if end >= start {
             (start, end - start)
