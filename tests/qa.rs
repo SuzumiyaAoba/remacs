@@ -107,6 +107,7 @@ qa!(qa_bufferfile, "qa_bufferfile.el");
 qa!(qa_bibtex_escaped_braces, "qa_bibtex_escaped_braces.el");
 qa!(qa_buffmenu, "qa_buffmenu.el");
 qa!(qa_display_fallback, "qa_display_fallback.el");
+qa!(qa_ns_display_capabilities, "qa_ns_display_capabilities.el");
 qa!(qa_case, "qa_case.el");
 qa!(qa_cc_defs_load, "qa_cc_defs_load.el");
 qa!(qa_cc_engine_load, "qa_cc_engine_load.el");

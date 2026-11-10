@@ -182,6 +182,7 @@ mod display;
 pub(crate) use display::{
     decode_display, mouse_coordinate, warp_mouse_absolute, win_min_size, window_is_size_fixed,
 };
+pub(crate) use display::f_display_grayscale_p;
 use display::{
     f_current_frame_configuration, f_delete_other_windows_internal, f_delete_windows_on,
     f_display_false, f_display_mm, f_display_monitor_attributes_list, f_display_pixel_height,
@@ -205,8 +206,8 @@ mod faces;
 use faces::{
     f_close_font, f_color_defined_p, f_color_distance, f_color_gray_p,
     f_color_values_from_color_spec, f_define_fringe_bitmap, f_destroy_fringe_bitmap,
-    f_display_color_cells, f_face_attributes_as_vector, f_face_documentation, f_face_font,
-    f_face_name, f_font_at, f_font_face_attributes, f_font_has_char_p, f_font_info, f_font_match_p,
+    f_face_attributes_as_vector, f_face_documentation, f_face_font, f_face_name, f_font_at,
+    f_font_face_attributes, f_font_has_char_p, f_font_info, f_font_match_p,
     f_font_object_stub, f_font_shape_gstring, f_font_spec, f_glyph_face, f_internal_copy_lisp_face,
     f_internal_make_lisp_face, f_invert_face, f_query_fontset, f_select_font,
     f_set_alt_font_family_alist, f_set_alt_font_registry_alist, f_set_font_selection_order,
@@ -1167,11 +1168,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-pixel-height", 0, 1, f_display_pixel_height, ""),
     S!("display-mm-width", 0, 1, f_display_mm, ""),
     S!("display-mm-height", 0, 1, f_display_mm, ""),
-    S!("display-backing-store", 0, 1, f_not_useful, ""),
+    S!("display-backing-store", 0, 1, display::f_display_backing_store, ""),
     S!("display-visual-class", 0, 1, f_display_visual_class, ""),
     S!("display-planes", 0, 1, f_display_planes, ""),
-    S!("display-color-cells", 0, 1, f_display_color_cells, ""),
-    S!("display-save-under", 0, 1, f_not_useful, ""),
+    S!("display-color-cells", 0, 1, display::f_display_color_cells, ""),
+    S!("display-save-under", 0, 1, display::f_display_save_under, ""),
     S!(
         "display-monitor-attributes-list",
         0,
@@ -1562,17 +1563,47 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_select_font,
         "Choose a font using the graphical font panel."
     ),
-    S!("x-display-backing-store", 0, 1, f_ns_display, ""),
-    S!("x-display-color-cells", 0, 1, f_ns_display, ""),
-    S!("x-display-grayscale-p", 0, 1, f_ns_display, ""),
+    S!(
+        "x-display-backing-store",
+        0,
+        1,
+        display::f_ns_display_backing_store,
+        ""
+    ),
+    S!(
+        "x-display-color-cells",
+        0,
+        1,
+        display::f_ns_display_color_cells,
+        ""
+    ),
+    S!(
+        "x-display-grayscale-p",
+        0,
+        1,
+        display::f_ns_display_grayscale_p,
+        ""
+    ),
     S!("x-display-mm-height", 0, 1, f_ns_display_mm_height, ""),
     S!("x-display-mm-width", 0, 1, f_ns_display_mm_width, ""),
     S!("x-display-pixel-height", 0, 1, f_ns_display, ""),
     S!("x-display-pixel-width", 0, 1, f_ns_display, ""),
-    S!("x-display-planes", 0, 1, f_ns_display, ""),
-    S!("x-display-save-under", 0, 1, f_ns_display, ""),
-    S!("x-display-screens", 0, 1, f_ns_display, ""),
-    S!("x-display-visual-class", 0, 1, f_ns_display, ""),
+    S!("x-display-planes", 0, 1, display::f_ns_display_planes, ""),
+    S!(
+        "x-display-save-under",
+        0,
+        1,
+        display::f_ns_display_save_under,
+        ""
+    ),
+    S!("x-display-screens", 0, 1, display::f_ns_display_screens, ""),
+    S!(
+        "x-display-visual-class",
+        0,
+        1,
+        display::f_ns_display_visual_class,
+        ""
+    ),
     S!("x-get-clipboard", 0, 0, f_nil, ""),
     S!("x-get-resource", 2, 4, f_x_get_resource, ""),
     S!("x-get-selection", 0, 2, f_nil, ""),

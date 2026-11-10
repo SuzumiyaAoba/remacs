@@ -618,11 +618,6 @@ pub(super) fn f_set_lisp_face_attr_resource(i: &mut Interp, a: crate::lisp::Argv
     Ok(a[0].clone())
 }
 
-pub(super) fn f_display_color_cells(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = decode_display(i, &arg(&a, 0))?;
-    Ok(Value::Int(0))
-}
-
 /// `(tty-color-desc COLOR FRAME)' — the prelude Lisp entry; returns
 /// (NAME INDEX R G B) or nil.  `frame' is the already-validated frame
 /// arg (nil = selected), forwarded verbatim like GNU's C callers do.

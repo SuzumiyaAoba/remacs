@@ -2406,7 +2406,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("display-color-p", 0, 1, f_display_color_p, ""),
-    S!("display-grayscale-p", 0, 1, f_display_pred_nil, ""),
+    S!(
+        "display-grayscale-p",
+        0,
+        1,
+        crate::lisp::builtins::misc::f_display_grayscale_p,
+        ""
+    ),
     S!("display-mouse-p", 0, 1, f_display_pred_nil, ""),
     S!("color-defined-p", 1, 2, f_color_defined_p, ""),
     S!("defined-colors", 0, 1, f_defined_colors, ""),

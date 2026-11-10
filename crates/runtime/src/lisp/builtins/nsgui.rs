@@ -87,6 +87,57 @@ unsafe impl Sync for Objc {}
 
 static OBJC: OnceLock<Option<Objc>> = OnceLock::new();
 
+type CgMainDisplayId = unsafe extern "C" fn() -> u32;
+type CgDisplayBitsPerPixel = unsafe extern "C" fn(u32) -> usize;
+
+struct CoreGraphics {
+    _lib: libloading::Library,
+    main_display_id: CgMainDisplayId,
+    display_bits_per_pixel: CgDisplayBitsPerPixel,
+}
+
+unsafe impl Send for CoreGraphics {}
+unsafe impl Sync for CoreGraphics {}
+
+static CORE_GRAPHICS: OnceLock<Option<CoreGraphics>> = OnceLock::new();
+
+fn core_graphics() -> Option<&'static CoreGraphics> {
+    CORE_GRAPHICS
+        .get_or_init(|| {
+            let lib = crate::lisp::dynlib::open_library(
+                "REMACS_COREGRAPHICS_LIBRARY",
+                &[
+                    "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+                    "CoreGraphics.framework/CoreGraphics",
+                    "CoreGraphics",
+                ],
+                "",
+                "",
+            )?;
+            unsafe {
+                Some(CoreGraphics {
+                    main_display_id: crate::lisp::dynlib::sym(&lib, b"CGMainDisplayID\0")?,
+                    display_bits_per_pixel: crate::lisp::dynlib::sym(
+                        &lib,
+                        b"CGDisplayBitsPerPixel\0",
+                    )?,
+                    _lib: lib,
+                })
+            }
+        })
+        .as_ref()
+}
+
+/// Return the primary macOS display's framebuffer depth, when CoreGraphics
+/// is available.  NS backend capability primitives use this for their
+/// plane and color-cell counts.
+pub(crate) fn ns_display_bits_per_pixel() -> Option<usize> {
+    let graphics = core_graphics()?;
+    let display = unsafe { (graphics.main_display_id)() };
+    let bits = unsafe { (graphics.display_bits_per_pixel)(display) };
+    (bits > 0).then_some(bits)
+}
+
 fn objc() -> Option<&'static Objc> {
     OBJC.get_or_init(|| {
         let lib = crate::lisp::dynlib::open_library(

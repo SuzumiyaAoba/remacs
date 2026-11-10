@@ -407,6 +407,76 @@ pub(super) fn f_ns_display(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+/// Resolve the live NS frame used by GNU's `check_ns_display_info'.
+/// The graphical frontend runs as a single Nextstep display; the optional
+/// display-name and terminal cases retain the NS backend's errors.
+fn ns_display_frame(i: &mut Interp, a: &crate::lisp::Argv) -> Result<FrameRef, Flow> {
+    let display = a.first().cloned().unwrap_or(Value::Nil);
+    let frame = match &display {
+        Value::Nil | Value::Frame(_) => crate::editor::frame_live(i, &display)?,
+        Value::Str(_) => {
+            return Err(i.error("Emacs for Nextstep does not yet support multi-display"));
+        }
+        other if crate::editor::is_terminal(i, other) => {
+            return Err(i.error("Terminal 0 is not a Nextstep display"));
+        }
+        other => return Err(i.wrong_type_mut("frame-live-p", other)),
+    };
+    if !crate::editor::frame_is_nextstep(i, &frame) {
+        return Err(i.error(if display.is_nil() {
+            "Nextstep windows are not in use or not initialized"
+        } else {
+            "Terminal 0 is not a Nextstep display"
+        }));
+    }
+    Ok(frame)
+}
+
+/// GNU nsfns.m reports one NS display, whose windows use buffered backing.
+pub(super) fn f_ns_display_screens(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    Ok(Value::Int(1))
+}
+
+pub(super) fn f_ns_display_backing_store(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    Ok(Value::Sym(i.q("buffered")))
+}
+
+pub(super) fn f_ns_display_save_under(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    Ok(Value::t())
+}
+
+pub(super) fn f_ns_display_visual_class(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    Ok(Value::Sym(i.q("direct-color")))
+}
+
+pub(super) fn f_ns_display_grayscale_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    let bits_per_pixel =
+        crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
+    Ok(Value::from_bool(bits_per_pixel > 1))
+}
+
+pub(super) fn f_ns_display_planes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    let bits_per_pixel =
+        crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
+    Ok(Value::Int(bits_per_pixel as i128))
+}
+
+pub(super) fn f_ns_display_color_cells(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let _frame = ns_display_frame(i, &a)?;
+    let bits_per_pixel =
+        crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
+    Ok(Value::Int(1_i128 << bits_per_pixel.min(24)))
+}
+
 pub(super) fn f_ns_display_mm_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     f_ns_display_mm_size(i, a, 1)
 }
@@ -726,13 +796,57 @@ pub(super) fn f_display_mm(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(super) fn f_display_visual_class(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = decode_display(i, &arg(&a, 0))?;
+    let display = arg(&a, 0);
+    let frame = decode_display(i, &display)?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display_visual_class(i, a);
+    }
     Ok(Value::Sym(i.q("static-gray")))
 }
 
 pub(super) fn f_display_planes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = decode_display(i, &arg(&a, 0))?;
+    let display = arg(&a, 0);
+    let frame = decode_display(i, &display)?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display_planes(i, a);
+    }
     Ok(Value::Int(3))
+}
+
+pub(super) fn f_display_backing_store(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = arg(&a, 0);
+    let frame = decode_display(i, &display)?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display_backing_store(i, a);
+    }
+    Ok(Value::Sym(i.q("not-useful")))
+}
+
+pub(super) fn f_display_save_under(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = arg(&a, 0);
+    let frame = decode_display(i, &display)?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display_save_under(i, a);
+    }
+    Ok(Value::Sym(i.q("not-useful")))
+}
+
+pub(super) fn f_display_color_cells(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = arg(&a, 0);
+    let frame = decode_display(i, &display)?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display_color_cells(i, a);
+    }
+    Ok(Value::Int(0))
+}
+
+pub(crate) fn f_display_grayscale_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = arg(&a, 0);
+    let frame = decode_display(i, &display)?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display_grayscale_p(i, a);
+    }
+    Ok(Value::Nil)
 }
 
 /// Window dims helper: nil/omitted → selected window; a non-window
