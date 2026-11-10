@@ -1492,3 +1492,31 @@ fn window_size_hooks_see_current_frontend_pixel_geometry() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn range_replacement_text_records_keyboard_macro_events() {
+    let mut i = interp_with_frame("abcd");
+    i.eval_str("(start-kbd-macro nil)").unwrap();
+
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    super::dispatch_text_range(&mut i, &(1..3), "日本", &mut keys, &mut arg_mode);
+
+    assert_eq!(i.kbd_macro_events.len(), 2);
+    assert!(matches!(
+        &i.kbd_macro_events[0],
+        Value::Int(code) if *code == '日' as i128
+    ));
+    assert!(matches!(
+        &i.kbd_macro_events[1],
+        Value::Int(code) if *code == '本' as i128
+    ));
+
+    i.kbd_macro_events.clear();
+    super::dispatch_text_range(&mut i, &(0..0), "あ", &mut keys, &mut arg_mode);
+    assert_eq!(i.kbd_macro_events.len(), 1);
+    assert!(matches!(
+        &i.kbd_macro_events[0],
+        Value::Int(code) if *code == 'あ' as i128
+    ));
+}

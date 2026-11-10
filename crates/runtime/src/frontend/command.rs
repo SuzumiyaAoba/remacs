@@ -2399,6 +2399,13 @@ fn dispatch_text_range(
         let last_event = i.q("last-command-event");
         let _ = i.set_symbol(last_event, Value::Int(ch as i128));
     }
+    if !i.macro_replaying {
+        let defining = i.q("defining-kbd-macro");
+        if i.symbol_value(defining).truthy() {
+            i.kbd_macro_events
+                .extend(text.chars().map(|ch| Value::Int(ch as i128)));
+        }
+    }
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
 
     let mut changed = false;
