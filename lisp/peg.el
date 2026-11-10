@@ -250,7 +250,6 @@
 
 ;;;; Todo:
 
-;; - Reduce the quadratic diagnostic quoting in `peg-translate-exp'.
 ;; - Add a proper debug-spec for PEXs.
 
 ;;; News:
@@ -670,6 +669,16 @@ rulesets defined previously with `define-peg-ruleset'."
 (cl-defgeneric peg--translate (head &rest args)
   (error "No translator for: %S" (cons head args)))
 
+(defvar peg--translation-exp-reference nil
+  "Variable referring to the PEG expression currently being translated.")
+
+(defun peg--translate-child (exp reference-form)
+  "Translate child EXP, whose runtime expression is REFERENCE-FORM."
+  (let ((reference (make-symbol "peg-exp")))
+    `(let ((,reference ,reference-form))
+       ,(let ((peg--translation-exp-reference reference))
+          (peg-translate-exp exp)))))
+
 (defun peg--translate-rule-body (name exp)
   (let ((msg (condition-case err
                  (progn (peg-detect-cycles exp (list name)) nil)
@@ -682,11 +691,15 @@ rulesets defined previously with `define-peg-ruleset'."
 ;; This is the main translation function.
 (defun peg-translate-exp (exp)
   "Return the Emacs Lisp code to match the PE EXP."
-  ;; Failure recording still quotes EXP once at each ancestor, so deeply
-  ;; nested expressions can produce quadratic output.  In particular, the
-  ;; one-or-more translator keeps its repeated operand code in one matcher.
-  `(or ,(apply #'peg--translate exp)
-       (peg--record-failure ',exp))) ; for error reporting
+  (if peg--translation-exp-reference
+      `(or ,(apply #'peg--translate exp)
+           (peg--record-failure ,peg--translation-exp-reference))
+    ;; Bind the full expression once.  Recursive translations bind their
+    ;; child references from it instead of quoting each remaining subtree.
+    (let ((reference (make-symbol "peg-exp")))
+      `(let ((,reference ',exp))
+         ,(let ((peg--translation-exp-reference reference))
+            (peg-translate-exp exp))))))
 
 (define-obsolete-function-alias 'peg-record-failure
   #'peg--record-failure "peg-1.0")
@@ -698,8 +711,9 @@ rulesets defined previously with `define-peg-ruleset'."
   nil)
 
 (cl-defmethod peg--translate ((_ (eql and)) e1 e2)
-  `(and ,(peg-translate-exp e1)
-	,(peg-translate-exp e2)))
+  (let ((reference peg--translation-exp-reference))
+    `(and ,(peg--translate-child e1 `(nth 1 ,reference))
+         ,(peg--translate-child e2 `(nth 2 ,reference)))))
 
 ;; Choicepoints are used for backtracking.  At a choicepoint we save
 ;; enough state, so that we can continue from there if needed.
@@ -719,13 +733,19 @@ rulesets defined previously with `define-peg-ruleset'."
         ,@(list ,@body))))
 
 (cl-defmethod peg--translate ((_ (eql or)) e1 e2)
-  (peg--with-choicepoint cp
-    `(or ,(peg-translate-exp e1)
-	 (,@(peg--choicepoint-restore cp)
-	  ,(peg-translate-exp e2)))))
+  (let ((reference peg--translation-exp-reference))
+    (peg--with-choicepoint cp
+      `(or ,(peg--translate-child e1 `(nth 1 ,reference))
+           (,@(peg--choicepoint-restore cp)
+            ,(peg--translate-child e2 `(nth 2 ,reference)))))))
 
 (cl-defmethod peg--translate ((_ (eql with)) rules &rest exps)
-  `(with-peg-rules ,rules ,(peg--translate `(and . ,exps))))
+  (let ((reference peg--translation-exp-reference)
+        (sequence (make-symbol "peg-exp-sequence")))
+    `(let ((,sequence (cons 'and (cddr ,reference))))
+       (with-peg-rules ,rules
+         ,(let ((peg--translation-exp-reference sequence))
+            (peg-translate-exp `(and . ,exps)))))))
 
 (cl-defmethod peg--translate ((_ (eql guard)) exp) exp)
 
@@ -750,8 +770,10 @@ rulesets defined previously with `define-peg-ruleset'."
      (search-forward str (+ (point) (length str)) t)))
 
 (cl-defmethod peg--translate ((_ (eql peg--plus)) e)
-  (let ((matcher (make-symbol "peg-plus-matcher")))
-    `(let ((,matcher (lambda () ,(peg-translate-exp e))))
+  (let ((reference peg--translation-exp-reference)
+        (matcher (make-symbol "peg-plus-matcher")))
+    `(let ((,matcher
+            (lambda () ,(peg--translate-child e `(nth 1 ,reference)))))
        (and (funcall ,matcher)
             (progn
               (while ,(peg--with-choicepoint cp
@@ -763,7 +785,8 @@ rulesets defined previously with `define-peg-ruleset'."
 
 (cl-defmethod peg--translate ((_ (eql *)) e)
   `(progn (while ,(peg--with-choicepoint cp
-		    `(if ,(peg-translate-exp e)
+		    `(if ,(peg--translate-child
+                           e `(nth 1 ,peg--translation-exp-reference))
                          ;; Just as regexps do for the `*' operator,
                          ;; we allow the body of `*' loops to match
                          ;; the empty string, but we don't repeat the loop if
@@ -775,13 +798,15 @@ rulesets defined previously with `define-peg-ruleset'."
 
 (cl-defmethod peg--translate ((_ (eql if)) e)
   (peg--with-choicepoint cp
-    `(when ,(peg-translate-exp e)
+    `(when ,(peg--translate-child
+             e `(nth 1 ,peg--translation-exp-reference))
        ,(peg--choicepoint-restore cp)
        t)))
 
 (cl-defmethod peg--translate ((_ (eql not)) e)
   (peg--with-choicepoint cp
-    `(unless ,(peg-translate-exp e)
+    `(unless ,(peg--translate-child
+               e `(nth 1 ,peg--translation-exp-reference))
        ,(peg--choicepoint-restore cp)
        t)))
 
