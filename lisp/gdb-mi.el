@@ -4163,7 +4163,7 @@ DOC is an optional documentation string."
   (let* ((frame (gdb-current-buffer-frame))
          (file (gdb-mi--field frame 'fullname))
          (line (gdb-mi--field frame 'line)))
-    (if file
+    (if (and file line)
         (format "-data-disassemble -f %s -l %s -n -1 -- 0"
                 (file-local-name file) line)
       ;; If we're unable to get a file name / line for $PC, simply
