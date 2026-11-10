@@ -407,6 +407,42 @@ pub(super) fn f_ns_display(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
+pub(super) fn f_ns_display_mm_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_ns_display_mm_size(i, a, 1)
+}
+
+pub(super) fn f_ns_display_mm_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_ns_display_mm_size(i, a, 2)
+}
+
+fn f_ns_display_mm_size(i: &mut Interp, a: crate::lisp::Argv, component: usize) -> EvalResult {
+    let display = arg(&a, 0);
+    let frame = match &display {
+        Value::Nil | Value::Frame(_) => crate::editor::frame_live(i, &display)?,
+        _ => return f_ns_display(i, a),
+    };
+    if !crate::editor::frame_is_nextstep(i, &frame) {
+        return f_ns_display(i, a);
+    }
+
+    let mm_size = i.q("mm-size");
+    let value = monitor_attributes(i, &frame)
+        .list_to_vec()
+        .ok()
+        .and_then(|entries| {
+            entries.into_iter().find_map(|entry| {
+                let fields = entry.list_to_vec().ok()?;
+                if matches!(fields.first(), Some(Value::Sym(symbol)) if *symbol == mm_size) {
+                    fields.get(component).and_then(Value::int).map(Value::Int)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(Value::Nil);
+    Ok(value)
+}
+
 /// GPUI's graphical frames expose the usual color display predicate
 /// through their `display-type' frame parameter.
 pub(super) fn f_xw_display_color_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
