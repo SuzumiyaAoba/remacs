@@ -1422,7 +1422,7 @@ impl Render for EditorView {
                         .iter()
                         .find(|monitor| monitor.display_id == display_id)
                 })
-                .map(|monitor| monitor.geometry[1].saturating_sub(monitor.native_origin[1]))
+                .map(|monitor| monitor.geometry[1])
                 .unwrap_or(0),
         );
         let pointer_screen_left = frame_left;

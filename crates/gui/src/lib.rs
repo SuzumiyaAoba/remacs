@@ -1554,9 +1554,7 @@ fn frame_position_in_window(
             return (
                 point(
                     px(left.saturating_sub(monitor.native_origin[0]) as f32),
-                    px(top.saturating_sub(
-                        monitor.geometry[1].saturating_sub(monitor.native_origin[1]),
-                    ) as f32),
+                    px(top.saturating_sub(monitor.geometry[1]) as f32),
                 ),
                 Some(monitor.display_id),
             );

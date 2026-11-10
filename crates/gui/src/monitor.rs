@@ -120,7 +120,7 @@ pub(super) fn warp_mouse_pointer(
             let viewport = window.viewport_size();
             let frame_left = f32::from(bounds.origin.x).round() as i128 + monitor.native_origin[0];
             let frame_top = (f32::from(bounds.origin.y).round() as i128)
-                .saturating_add(monitor.geometry[1].saturating_sub(monitor.native_origin[1]));
+                .saturating_add(monitor.geometry[1]);
             let content_left_offset = ((f32::from(bounds.size.width) - f32::from(viewport.width))
                 / 2.0)
                 .max(0.0)
