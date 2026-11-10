@@ -38,6 +38,12 @@ src=\"/ssh:host...\"> element, which can be disturbing.")
 (defconst url-file-asynchronous-p t "FTP transfers are asynchronous.")
 (defalias 'url-file-expand-file-name 'url-default-expander)
 
+(defun url-file--uncompressed-filename (filename)
+  "Return FILENAME without a compression suffix handled by url-file."
+  (if (string-match "\\.\\(gz\\|Z\\|z\\|bz2\\|xz\\)\\'" filename)
+      (substring filename 0 (match-beginning 0))
+    filename))
+
 (defun url-file-find-possibly-compressed-file (fname &rest _)
   "Find the exact file referenced by `fname'.
 This tries the common compression extensions, because things like
@@ -154,11 +160,8 @@ it up to them."
     (or filename (error "File does not exist: %s" (url-recreate-url url)))
     ;; Need to figure out the content-type from the real extension,
     ;; not the compressed one.
-    ;; FIXME should this regexp not include more extensions; basically
-    ;; everything that url-file-find-possibly-compressed-file does?
-    (setq uncompressed-filename (if (string-match "\\.\\(gz\\|Z\\|z\\)\\'" filename)
-				    (substring filename 0 (match-beginning 0))
-				  filename))
+    (setq uncompressed-filename
+          (url-file--uncompressed-filename filename))
     (setq content-type (mailcap-extension-to-mime
 			(url-file-extension uncompressed-filename))
 	  content-encoding (pcase (url-file-extension filename)
