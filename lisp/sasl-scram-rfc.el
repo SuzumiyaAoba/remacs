@@ -99,11 +99,11 @@ See https://www.rfc-editor.org/rfc/rfc5801#section-4.")
             (concat "c=" (base64-encode-string cbind-input t) ","
 		    "r=" nonce))
 	   (password
-	    ;; TODO: either apply saslprep or disallow non-ASCII characters
-	    (sasl-read-passphrase
-	     (format "%s passphrase for %s: "
-		     (sasl-mechanism-name (sasl-client-mechanism client))
-		     (sasl-client-name client))))
+	    (sasl-scram--prepare-password
+	     (sasl-read-passphrase
+	      (format "%s passphrase for %s: "
+		      (sasl-mechanism-name (sasl-client-mechanism client))
+		      (sasl-client-name client)))))
 	   (salt (base64-decode-string salt-base64))
            (string-xor (lambda (a b)
                          (apply #'unibyte-string (cl-mapcar #'logxor a b))))
@@ -132,6 +132,14 @@ See https://www.rfc-editor.org/rfc/rfc5801#section-4.")
       (sasl-client-set-property client 'auth-message auth-message)
       (sasl-client-set-property client 'salted-password salted-password)
       client-final-message)))
+
+(defun sasl-scram--prepare-password (password)
+  "Return ASCII PASSWORD, signaling `sasl-error' for other characters.
+SCRAM requires SASLprep before deriving its key.  Until SASLprep is
+available, reject non-ASCII passwords as permitted by RFC 5802."
+  (when (string-match-p "[^[:ascii:]]" password)
+    (sasl-error "Non-ASCII SCRAM passwords are not supported"))
+  password)
 
 (defun sasl-scram--authenticate-server (hash-fun block-length hash-length client step)
   (cond
