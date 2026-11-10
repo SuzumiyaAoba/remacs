@@ -606,4 +606,45 @@ mod tests {
         assert!(command_keystroke(&shifted("space", " ")));
         assert!(command_keystroke(&shifted("1", "!")));
     }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn mouse_modifiers_follow_ns_modifier_settings() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str("(setq ns-command-modifier 'meta ns-alternate-modifier 'none)")
+                    .unwrap();
+                let mapping = ModifierMapping::from_interp(&interp);
+                let physical = PhysicalModifierState::default();
+
+                assert_eq!(
+                    mouse_modifier_bits(
+                        &Modifiers {
+                            platform: true,
+                            ..Modifiers::default()
+                        },
+                        mapping,
+                        physical,
+                    ),
+                    CHAR_META
+                );
+                assert_eq!(
+                    mouse_modifier_bits(
+                        &Modifiers {
+                            alt: true,
+                            ..Modifiers::default()
+                        },
+                        mapping,
+                        physical,
+                    ),
+                    0
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
