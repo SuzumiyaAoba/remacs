@@ -706,7 +706,11 @@ impl EntityInputHandler for EditorView {
                         - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
                 ),
                 size: size(
-                    text_width.max(self.cell_width),
+                    if requested.is_empty() {
+                        px(0.0)
+                    } else {
+                        text_width.max(self.cell_width)
+                    },
                     grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
                 ),
             });
@@ -769,7 +773,11 @@ impl EntityInputHandler for EditorView {
                         - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
                 ),
                 size: size(
-                    text_width.max(self.cell_width),
+                    if requested.is_empty() {
+                        px(0.0)
+                    } else {
+                        text_width.max(self.cell_width)
+                    },
                     grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
                 ),
             });
@@ -804,7 +812,11 @@ impl EntityInputHandler for EditorView {
                     - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
             ),
             size: size(
-                text_width.max(self.cell_width),
+                if requested.is_empty() {
+                    px(0.0)
+                } else {
+                    text_width.max(self.cell_width)
+                },
                 grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
             ),
         })
