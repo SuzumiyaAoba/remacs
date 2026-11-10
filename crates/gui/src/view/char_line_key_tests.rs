@@ -22,6 +22,7 @@ fn character_and_line_keys_reach_gui_defaults_and_custom_bindings() {
                     shift: modified,
                     platform: modified,
                     function: false,
+                    hyper: false,
                 },
             },
             is_held: false,

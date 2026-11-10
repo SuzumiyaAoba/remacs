@@ -20,6 +20,7 @@ fn select_reaches_gui_custom_plain_and_modified_bindings() {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             },
         },
         is_held: false,

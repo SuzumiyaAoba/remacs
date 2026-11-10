@@ -20,6 +20,7 @@ fn clear_line_reaches_named_clear_without_killing_text() {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             },
         },
         is_held: false,

@@ -193,6 +193,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
             shift,
             platform: command,
             function,
+            hyper: false,
         }
     }
 }
@@ -595,6 +596,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 shift,
                 platform: command,
                 function,
+                hyper: false,
             },
             key,
             key_char,

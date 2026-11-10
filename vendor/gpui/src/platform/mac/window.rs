@@ -1215,6 +1215,7 @@ impl PlatformWindow for MacWindow {
                 shift,
                 platform: command,
                 function,
+                hyper: false,
             }
         }
     }

@@ -339,6 +339,7 @@ fn ks(
             shift,
             platform,
             function: false,
+            hyper: false,
         },
         key: key.into(),
         key_char: key_char.map(|s| s.into()),

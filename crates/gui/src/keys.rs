@@ -241,6 +241,7 @@ pub(super) fn is_native_command_w(ks: &Keystroke) -> bool {
         && !ks.modifiers.alt
         && !ks.modifiers.shift
         && !ks.modifiers.function
+        && !ks.modifiers.hyper
 }
 
 fn modifier_context(ks: &Keystroke) -> ModifierContext {
@@ -294,6 +295,9 @@ fn modifier_bits(
     context: ModifierContext,
 ) -> (i128, bool) {
     let mut bits = if modifiers.shift { CHAR_SHIFT } else { 0 };
+    if modifiers.hyper {
+        bits |= CHAR_HYPER;
+    }
     let mut has_unmapped = add_modifier_group(
         &mut bits,
         modifiers.control,
@@ -516,6 +520,25 @@ mod tests {
             key: key.to_owned(),
             key_char: Some(text.to_owned()),
         }
+    }
+
+    #[test]
+    fn hyper_modifier_becomes_an_emacs_hyper_event() {
+        let parsed = Keystroke::parse("hyper-f").unwrap();
+        assert!(parsed.modifiers.hyper);
+        assert_eq!(parsed.unparse(), "hyper-f");
+
+        let event = Keystroke {
+            key: "f".to_owned(),
+            key_char: Some("f".to_owned()),
+            modifiers: Modifiers {
+                hyper: true,
+                ..Modifiers::default()
+            },
+        };
+
+        assert!(command_keystroke(&event));
+        assert_eq!(keystroke_to_code(&event), Some('f' as i128 | CHAR_HYPER));
     }
 
     #[test]

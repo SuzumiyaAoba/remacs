@@ -20,6 +20,7 @@ fn help_reaches_gui_prefix_and_custom_bindings_without_overwrite() {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             },
         },
         is_held: false,

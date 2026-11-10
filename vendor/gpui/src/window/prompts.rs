@@ -202,6 +202,7 @@ impl FallbackPromptRenderer {
             || key.modifiers.alt
             || key.modifiers.platform
             || key.modifiers.function
+            || key.modifiers.hyper
         {
             return;
         }

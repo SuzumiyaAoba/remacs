@@ -20,6 +20,7 @@ fn execute_reaches_gui_and_runs_extended_command_and_modified_binding() {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             },
         },
         is_held: false,

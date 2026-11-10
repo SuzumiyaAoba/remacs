@@ -21,6 +21,7 @@ fn pause_and_print_reach_gui_custom_plain_and_modified_bindings() {
                     shift: modified,
                     platform: modified,
                     function: false,
+                    hyper: false,
                 },
             },
             is_held: false,

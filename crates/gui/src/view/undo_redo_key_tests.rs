@@ -21,6 +21,7 @@ fn undo_redo_reach_gui_and_execute_default_and_modified_bindings() {
                     shift: modified,
                     platform: modified,
                     function: false,
+                    hyper: false,
                 },
             },
             is_held: false,

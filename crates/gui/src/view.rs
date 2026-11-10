@@ -2077,6 +2077,7 @@ impl Render for EditorView {
                         && !event.keystroke.modifiers.shift
                         && !event.keystroke.modifiers.platform
                         && !event.keystroke.modifiers.function
+                        && !event.keystroke.modifiers.hyper
                     {
                         match event.keystroke.key.as_str() {
                             "space" => return,

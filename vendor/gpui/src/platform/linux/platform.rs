@@ -1032,12 +1032,19 @@ impl crate::Modifiers {
             keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
         let platform =
             keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+        // XKB commonly assigns Hyper to Mod3. Some keymaps expose a named
+        // Hyper modifier directly, so accept that name as well.
+        let hyper = keymap_state.mod_name_is_active(
+            xkb::MOD_NAME_MOD3,
+            xkb::STATE_MODS_EFFECTIVE,
+        ) || keymap_state.mod_name_is_active("Hyper", xkb::STATE_MODS_EFFECTIVE);
         Self {
             shift,
             alt,
             control,
             platform,
             function: false,
+            hyper,
         }
     }
 }
@@ -1117,6 +1124,38 @@ mod tests {
             assert_eq!(key.key, expected, "{keysym}");
             assert_eq!(key.key_char.as_deref(), text, "{keysym}");
         }
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[test]
+    fn xkb_mod3_is_reported_as_hyper() {
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let source = r#"
+                xkb_keymap {
+                    xkb_keycodes "test" { minimum = 8; maximum = 255; <TEST> = 38; };
+                    xkb_types "test" {
+                        type "ONE_LEVEL" { modifiers = None; map[None] = Level1; };
+                    };
+                    xkb_compatibility "test" {};
+                    xkb_symbols "test" {
+                        key <TEST> { type = "ONE_LEVEL", [ a ] };
+                        modifier_map Mod3 { <TEST> };
+                    };
+                };
+            "#;
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            source,
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .unwrap();
+        let mut state = State::new(&keymap);
+        let mod3 = keymap.mod_get_index(xkb::MOD_NAME_MOD3);
+        assert!(mod3 < 32, "Mod3 must have an XKB modifier index");
+        state.update_mask(1u32 << mod3, 0, 0, 0, 0, 0);
+
+        assert!(crate::Modifiers::from_xkb(&state).hyper);
     }
 
     #[test]

@@ -3879,6 +3879,7 @@ impl Window {
                     modifiers if modifiers.alt => Some("alt"),
                     modifiers if modifiers.platform => Some("platform"),
                     modifiers if modifiers.function => Some("function"),
+                    modifiers if modifiers.hyper => Some("hyper"),
                     _ => None,
                 };
                 if let Some(key) = key {

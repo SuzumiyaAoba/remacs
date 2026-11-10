@@ -140,6 +140,10 @@ impl Keystroke {
                 modifiers.function = true;
                 continue;
             }
+            if component.eq_ignore_ascii_case("hyper") {
+                modifiers.hyper = true;
+                continue;
+            }
             if component.eq_ignore_ascii_case("secondary") {
                 if cfg!(target_os = "macos") {
                     modifiers.platform = true;
@@ -203,6 +207,8 @@ impl Keystroke {
                 Some("platform".to_string())
             } else if mem::take(&mut modifiers.function) {
                 Some("function".to_string())
+            } else if mem::take(&mut modifiers.hyper) {
+                Some("hyper".to_string())
             } else {
                 None
             }
@@ -232,6 +238,7 @@ impl Keystroke {
             && !(self.modifiers.platform
                 || self.modifiers.control
                 || self.modifiers.function
+                || self.modifiers.hyper
                 || self.modifiers.alt)
     }
 
@@ -243,6 +250,7 @@ impl Keystroke {
             && !self.modifiers.platform
             && !self.modifiers.control
             && !self.modifiers.function
+            && !self.modifiers.hyper
             && !self.modifiers.alt
         {
             self.key_char = match self.key.as_str() {
@@ -467,6 +475,10 @@ pub struct Modifiers {
     /// The function key
     #[serde(default)]
     pub function: bool,
+
+    /// The Hyper key, when the platform exposes it separately.
+    #[serde(default)]
+    pub hyper: bool,
 }
 
 /// Physical modifier key that changed state, when the platform can report it.
@@ -489,7 +501,7 @@ pub enum ModifierKey {
 impl Modifiers {
     /// Returns whether any modifier key is pressed.
     pub fn modified(&self) -> bool {
-        self.control || self.alt || self.shift || self.platform || self.function
+        self.control || self.alt || self.shift || self.platform || self.function || self.hyper
     }
 
     /// Whether the semantically 'secondary' modifier key is pressed.
@@ -515,6 +527,7 @@ impl Modifiers {
             + self.shift as u8
             + self.platform as u8
             + self.function as u8
+            + self.hyper as u8
     }
 
     /// Returns [`Modifiers`] with no modifiers.
@@ -629,6 +642,7 @@ impl std::ops::BitOrAssign for Modifiers {
         self.shift |= other.shift;
         self.platform |= other.platform;
         self.function |= other.function;
+        self.hyper |= other.hyper;
     }
 }
 
@@ -647,6 +661,7 @@ impl std::ops::BitXorAssign for Modifiers {
         self.shift ^= other.shift;
         self.platform ^= other.platform;
         self.function ^= other.function;
+        self.hyper ^= other.hyper;
     }
 }
 
@@ -665,6 +680,7 @@ impl std::ops::BitAndAssign for Modifiers {
         self.shift &= other.shift;
         self.platform &= other.platform;
         self.function &= other.function;
+        self.hyper &= other.hyper;
     }
 }
 
@@ -713,6 +729,9 @@ fn display_modifiers(modifiers: &Modifiers, f: &mut std::fmt::Formatter<'_>) -> 
         #[cfg(target_os = "windows")]
         f.write_char('⊞')?;
     }
+    if modifiers.hyper {
+        write!(f, "hyper-")?;
+    }
     if modifiers.shift {
         #[cfg(target_os = "macos")]
         f.write_char('⇧')?;
@@ -759,6 +778,9 @@ fn unparse(modifiers: &Modifiers, key: &str) -> String {
     let mut result = String::new();
     if modifiers.function {
         result.push_str("fn-");
+    }
+    if modifiers.hyper {
+        result.push_str("hyper-");
     }
     if modifiers.control {
         result.push_str("ctrl-");

@@ -20,6 +20,7 @@ fn begin_reaches_the_gui_channel_and_default_buffer_start_binding() {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             },
         },
         is_held: false,

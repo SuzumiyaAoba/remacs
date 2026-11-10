@@ -20,6 +20,7 @@ fn insert_reaches_the_gui_channel_and_default_overwrite_binding() {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             },
         },
         is_held: false,

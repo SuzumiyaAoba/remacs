@@ -150,6 +150,7 @@ mod tests {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             };
             let key = immutable_keystroke(code, modifiers).expect(name);
             assert_eq!(key.key, name);
@@ -247,6 +248,7 @@ mod event_tests {
                 shift: true,
                 platform: true,
                 function: false,
+                hyper: false,
             },
         }
     }

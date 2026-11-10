@@ -1521,6 +1521,7 @@ pub(crate) fn current_modifiers() -> Modifiers {
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
+        hyper: false,
     }
 }
 
@@ -1613,6 +1614,7 @@ mod help_key_tests {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             };
             let key = parse_normal_key(VK_HELP, LPARAM(0), modifiers).expect("Help key");
             assert_eq!(key.key, "help");
@@ -1634,6 +1636,7 @@ mod execute_key_tests {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             };
             let key = parse_normal_key(VK_EXECUTE, LPARAM(0), modifiers).expect("Execute key");
             assert_eq!(key.key, "execute");
@@ -1656,6 +1659,7 @@ mod pause_print_screen_key_tests {
                     shift: modified,
                     platform: modified,
                     function: false,
+                    hyper: false,
                 };
                 let key = parse_normal_key(code, LPARAM(0), modifiers).expect(name);
                 assert_eq!(key.key, name);
@@ -1678,6 +1682,7 @@ mod print_key_tests {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             };
             let key = parse_normal_key(VK_PRINT, LPARAM(0), modifiers).expect("Print key");
             assert_eq!(key.key, "print");
@@ -1699,6 +1704,7 @@ mod select_key_tests {
                 shift: modified,
                 platform: modified,
                 function: false,
+                hyper: false,
             };
             let key = parse_normal_key(VK_SELECT, LPARAM(0), modifiers).expect("Select key");
             assert_eq!(key.key, "select");
