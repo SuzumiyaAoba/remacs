@@ -718,8 +718,7 @@ Returns `unknown' if we couldn't find arguments."
 	    (if (fboundp func)
 		(let ((fcode (indirect-function func)))
 		  (if (subrp fcode)
-		      ;; FIXME builtins with no args have args = nil.
-		      (or (get func 'elint-args) 'unknown)
+		      (get func 'elint-args 'unknown)
 		    (elint-find-args-in-code fcode)))
 	      'undefined))
 	(elint-find-args-in-code func)))))
@@ -1081,7 +1080,6 @@ Insert HEADER followed by a blank line if non-nil."
 (defun elint-put-function-args (func args)
   "Mark function FUNC as having argument list ARGS."
   (and (symbolp func)
-       args
        (not (eq args 'unknown))
        (put func 'elint-args args)))
 
@@ -1136,13 +1134,14 @@ Marks the function with their arguments, and returns a list of variables."
 	    (when (fboundp sym)
 	      (when (re-search-forward "\\(^(fn.*)\\)?\^_" nil t)
 		(backward-char 1)
-		;; FIXME distinguish no args from not found.
+		;; Retain a non-nil wrapper for the empty argument list.
 		(and (setq args (match-string 1))
 		     (setq args
 			   (ignore-errors
-			     (read
-			      (replace-regexp-in-string "^(fn ?" "(" args))))
-		     (elint-put-function-args sym args))))))))
+			     (cons t
+				   (read
+				    (replace-regexp-in-string "^(fn ?" "(" args)))))
+		     (elint-put-function-args sym (cdr args))))))))
     vars))
 
 (defun elint-find-autoloaded-variables ()
