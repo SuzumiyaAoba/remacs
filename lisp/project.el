@@ -1632,19 +1632,28 @@ The current buffer's `default-directory' is available as part of
   (interactive)
   (let* ((project (project-current t))
          (project-files-relative-names t)
+         (root (project-root project))
          (all-files (project-files project))
          (completion-ignore-case read-file-name-completion-ignore-case)
-         ;; FIXME: This misses directories without any files directly
-         ;; inside.  Consider DIRS-ONLY as an argument for
-         ;; `project-files-filtered', and see
-         ;; https://stackoverflow.com/a/50685235/615245 for possible
-         ;; implementation.
          (all-dirs (cons "./"
-                         (delq nil
-                               ;; Some completion UIs show duplicates.
-                               (delete-dups
-                                (mapcar #'file-name-directory all-files)))))
-         (default-directory (project-root project))
+                         (delete-dups
+                          (apply #'append
+                                 (mapcar
+                                  (lambda (file)
+                                    (let* ((file (if (file-name-absolute-p file)
+                                                     (file-relative-name file root)
+                                                   file))
+                                           (dir (file-name-directory file))
+                                           dirs)
+                                      (while (and dir
+                                                  (not (string-prefix-p "../" dir)))
+                                        (push dir dirs)
+                                        (setq dir
+                                              (file-name-directory
+                                               (directory-file-name dir))))
+                                      (nreverse dirs)))
+                                  all-files))))
+         (default-directory root)
          (dir (project--read-file-name
                project "Dired"
                all-dirs
