@@ -1347,3 +1347,35 @@ fn mouse_click_in_shared_buffer_targets_the_clicked_window() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn horizontal_scroll_mouse_hit_test_skips_hidden_source_prefix() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut i = interp_with_frame("abcdefghij\n");
+            i.eval_str(
+                "(setq-local auto-hscroll-mode nil truncate-lines t) \
+                 (set-window-hscroll nil 3) (goto-char (point-max))",
+            )
+            .unwrap();
+            let frame = i.selected_frame.as_ref().unwrap().clone();
+            let selected_id = frame.borrow().selected.borrow().id;
+            let grid = crate::frontend::render_grid_with_input_cached(&i, 80, 25, None);
+            let area = grid
+                .window_text_areas
+                .iter()
+                .find(|area| area.window_id == selected_id)
+                .unwrap();
+            let position = grid
+                .input
+                .as_ref()
+                .unwrap()
+                .hit_test_position(area.top, area.left, 0)
+                .unwrap();
+            assert_eq!(position.buffer_position, 3);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
