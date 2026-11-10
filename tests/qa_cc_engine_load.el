@@ -1,7 +1,7 @@
 ;;; -*- lexical-binding: t -*-
-;; #3379: the complete source must load past the state-cache function and
+;; #1964/#3379: requiring cc-mode must load the full cc-engine source and
 ;; reach its final provide, using the real cc-defs/cc-vars dependencies.
-(require 'cc-engine)
+(require 'cc-mode)
 
 (qa (featurep 'cc-engine) t)
 (qa (fboundp 'c-state-cache-init) t)
