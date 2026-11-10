@@ -46,7 +46,6 @@ impl Default for BoxStyle {
         }
     }
 }
-
 /// The merged face attributes for one screen cell.  `Option' fields
 /// are tri-state during merging (None = unspecified, Some(false) =
 /// explicitly cleared) and collapsed to plain bools once merged.
@@ -1004,7 +1003,11 @@ fn input_snapshot(
 }
 
 fn display_char_width(ch: char) -> usize {
-    UnicodeWidthChar::width(ch).unwrap_or(1)
+    if matches!(ch as u32, 0x80..=0x9f) {
+        4
+    } else {
+        UnicodeWidthChar::width(ch).unwrap_or(1)
+    }
 }
 
 fn display_columns(text: &EmacsText, tab_width: usize) -> usize {
@@ -6840,6 +6843,16 @@ fn ctl_arrow_replacement(character: EmacsChar, ctl_arrow: bool) -> Option<Displa
     Some(DisplayReplacement::Text(format!("^{caret}")))
 }
 
+fn c1_control_replacement(
+    character: EmacsChar,
+    escape_glyph_style: CellStyle,
+) -> Option<DisplayReplacement> {
+    let code = character.code();
+    (0x80..=0x9f)
+        .contains(&code)
+        .then(|| DisplayReplacement::GlyphlessText(format!("\\{code:03o}"), escape_glyph_style))
+}
+
 fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
     if matches!(spec, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
         return if property.is_nil() {
@@ -8504,6 +8517,7 @@ fn render_grid_internal(
             .get(buf_id)
             .map(|b| window_faces(i, &mut fctx, &b, &Value::Window(w.clone()), mouse_position));
         let glyphless_style = fctx.builtin(i, "glyphless-char", 0).finish();
+        let escape_glyph_style = fctx.builtin(i, "escape-glyph", 0).finish();
         let fill_column_indicator =
             buffer_fill_column_indicator(i, &mut fctx, wf.as_ref(), buf_id);
         let buffer_line_spacing = buffer_setting(i, "line-spacing", buf_id);
@@ -8960,6 +8974,10 @@ fn render_grid_internal(
                                     graphical,
                                     glyphless_style,
                                 )
+                            })
+                            .or_else(|| {
+                                let character = *segment_chars.get(index)?;
+                                c1_control_replacement(character, escape_glyph_style)
                             })
                             .or_else(|| {
                                 let character = *segment_chars.get(index)?;

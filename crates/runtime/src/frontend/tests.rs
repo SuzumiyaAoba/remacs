@@ -1386,6 +1386,26 @@ fn horizontal_scroll_mouse_hit_test_skips_hidden_source_prefix() {
 }
 
 #[test]
+fn c1_control_renders_as_octal_and_keeps_cursor_columns_aligned() {
+    std::thread::Builder::new()
+        .stack_size(128 << 20)
+        .spawn(|| {
+            let mut i = interp_with_frame("a\u{80}b");
+            i.eval_str("(goto-char 3)").unwrap();
+
+            let column = i.eval_str("(current-column)").unwrap();
+            assert_eq!(i.prin1_to_string(&column), "5");
+
+            let grid = render_grid(&i, 80, 25);
+            assert!(grid.rows[0].starts_with("a\\200b"));
+            assert_eq!(grid.cursor, Some((5, 0)));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn window_size_hooks_see_current_frontend_pixel_geometry() {
     std::thread::Builder::new()
         .stack_size(128 << 20)
