@@ -5439,15 +5439,14 @@ connection or, with -A, all applicable connections.
 
 (put 'erc-cmd-RECONNECT 'process-not-needed t)
 
-;; FIXME use less speculative error message or lose `condition-case',
-;; since most connection failures don't signal anything.
 (defun erc-cmd-SERVER (server)
   "Connect to SERVER, leaving existing connection intact."
   (erc-log (format "cmd: SERVER: %s" server))
-  (condition-case nil
+  (condition-case err
       (erc :server server :nick (erc-current-nick))
     (error
-     (erc-error "Cannot find host: `%s'" server)))
+     (erc-error "Could not connect to %s: %s"
+                server (error-message-string err))))
   t)
 (put 'erc-cmd-SERVER 'process-not-needed t)
 
