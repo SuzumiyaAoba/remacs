@@ -5687,3 +5687,17 @@ fn htmlfontify_tag_regex_matches_buffer_boundaries() {
         "(\"foo\" \"foo\" \"foo\" nil nil)"
     );
 }
+
+#[test]
+fn shell_zsh_directory_query_bypasses_aliases() {
+    assert_eq!(
+        ev(r#"(progn
+              (require 'shell)
+              (with-temp-buffer
+                (let ((shell--start-prog "zsh")
+                      (shell-history-file-name "/dev/null"))
+                  (shell-mode)
+                  shell-dirstack-query)))"#),
+        "\"builtin dirs -l\""
+    );
+}

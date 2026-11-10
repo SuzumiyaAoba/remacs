@@ -813,7 +813,7 @@ command."
                         (eq (w32-application-type (executable-find "bash.exe"))
                             'msys))
                    "command pwd -W")
-		  ((string-equal shell "zsh") "dirs -l")
+		  ((string-equal shell "zsh") "builtin dirs -l")
 		  (t "dirs")))
       ;; Bypass a bug in certain versions of bash.
       (when (string-equal shell "bash")
