@@ -77,6 +77,7 @@ qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_buffer_history, "qa_buffer_history.el");
 qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
 qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
+qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_mh_sub_folders_missing, "qa_mh_sub_folders_missing.el");
 qa!(
     qa_diary_display_no_entries_empty,
