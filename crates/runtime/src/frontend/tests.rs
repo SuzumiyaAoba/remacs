@@ -1406,6 +1406,54 @@ fn c1_control_renders_as_octal_and_keeps_cursor_columns_aligned() {
 }
 
 #[test]
+fn printable_text_input_uses_key_bindings_prefixes_hooks_and_overwrite() {
+    std::thread::Builder::new()
+        .stack_size(128 << 20)
+        .spawn(|| {
+            let (frontend, _out) = test_term(80, 25);
+            let term = Rc::new(RefCell::new(frontend));
+            let mut i = interp_with_frame("");
+            let mut keys = Vec::new();
+            let mut arg_mode = false;
+
+            i.eval_str(
+                "(global-set-key (kbd \"a\") \
+                   (lambda () (interactive) (insert \"X\")))",
+            )
+            .unwrap();
+            dispatch_text(&term, &mut i, "a", &mut keys, &mut arg_mode).unwrap();
+            let buffer = i.current_buffer_ref().unwrap();
+            assert_eq!(buffer.borrow().text.text(), "X");
+
+            i.eval_str("(erase-buffer)").unwrap();
+            dispatch_key(&term, &mut i, 21, &mut keys, &mut arg_mode).unwrap();
+            dispatch_text(&term, &mut i, "b", &mut keys, &mut arg_mode).unwrap();
+            assert_eq!(buffer.borrow().text.text(), "bbbb");
+
+            i.eval_str(
+                "(erase-buffer) \
+                 (setq qa-post-self-insert-count 0) \
+                 (add-hook 'post-self-insert-hook \
+                   (lambda () (setq qa-post-self-insert-count \
+                                   (1+ qa-post-self-insert-count))))",
+            )
+            .unwrap();
+            dispatch_text(&term, &mut i, "c", &mut keys, &mut arg_mode).unwrap();
+            assert_eq!(i.eval_str("qa-post-self-insert-count").unwrap().int(), Some(1));
+
+            i.eval_str(
+                "(erase-buffer) (insert \"ab\") (goto-char 2) (overwrite-mode 1)",
+            )
+            .unwrap();
+            dispatch_text(&term, &mut i, "x", &mut keys, &mut arg_mode).unwrap();
+            assert_eq!(buffer.borrow().text.text(), "ax");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn window_size_hooks_see_current_frontend_pixel_geometry() {
     std::thread::Builder::new()
         .stack_size(128 << 20)

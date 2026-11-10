@@ -8147,7 +8147,15 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if n > 0 && self_insert_expand_abbrev(i, c)? {
             return Ok(Value::Nil);
         }
-        let s: crate::lisp::text::EmacsText = std::iter::repeat(c).take(n as usize).collect();
+        let (chars_to_delete, spaces_to_insert) = overwrite_self_insert_extent(i, c, n)?;
+        let mut s: crate::lisp::text::EmacsText = std::iter::repeat(c).take(n as usize).collect();
+        if spaces_to_insert > 0 {
+            s.push_str(&" ".repeat(spaces_to_insert));
+        }
+        if chars_to_delete > 0 {
+            let point = cur(i).borrow().point();
+            chg_delete(i, point, point.saturating_add(chars_to_delete))?;
+        }
         chg_insert_and_inherit_pt(i, &s)?;
         // GNU `internal_self_insert': when `auto-fill-function' is
         // non-nil and the `auto-fill-chars' table maps the inserted
@@ -8191,6 +8199,81 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         call_hook(i, "post-self-insert-hook")?;
     }
     Ok(Value::Nil)
+}
+
+/// Compute the range GNU's `internal_self_insert' overwrites, including the
+/// extra spaces needed when a narrow character replaces part of a wide one.
+fn overwrite_self_insert_extent(
+    i: &mut Interp,
+    character: EmacsChar,
+    count: i128,
+) -> Result<(usize, usize), Flow> {
+    let overwrite = i
+        .q_soft("overwrite-mode")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    if overwrite.is_nil() {
+        return Ok((0, 0));
+    }
+    let binary = matches!(
+        &overwrite,
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "overwrite-mode-binary"
+    );
+    let buffer = cur(i);
+    let (point, end, next) = {
+        let buffer = buffer.borrow();
+        let point = buffer.point();
+        (
+            point,
+            buffer.zv,
+            (point < buffer.zv).then(|| buffer.text.char_at(point)),
+        )
+    };
+    if point >= end {
+        return Ok((0, 0));
+    }
+    if binary {
+        return Ok((usize::try_from(count).unwrap_or(usize::MAX).min(end - point), 0));
+    }
+    if character == '\n' || next.is_some_and(|character| character == '\n') {
+        return Ok((0, 0));
+    }
+
+    let character_width = column_char_width(i, character, false);
+    if character_width <= 0 {
+        return Ok((0, 0));
+    }
+    let current_column = f_current_column(i, vec![].into())?.int().unwrap_or(0);
+    let Some(target_column) = character_width
+        .checked_mul(count)
+        .and_then(|width| current_column.checked_add(width))
+    else {
+        return Ok((0, 0));
+    };
+    let actual_column = f_move_to_column(
+        i,
+        vec![Value::Int(target_column), Value::Nil].into(),
+    )?
+    .int()
+    .unwrap_or(current_column);
+    let overwritten_point = cur(i).borrow().point();
+    let mut chars_to_delete = overwritten_point.saturating_sub(point).min(end - point);
+    let spaces_to_insert = if actual_column > target_column {
+        let last = overwritten_point
+            .checked_sub(1)
+            .filter(|position| *position >= point)
+            .map(|position| cur(i).borrow().text.char_at(position));
+        if last.is_some_and(|character| character == '\t') {
+            chars_to_delete = chars_to_delete.saturating_sub(1);
+            0
+        } else {
+            usize::try_from(actual_column - target_column).unwrap_or(usize::MAX)
+        }
+    } else {
+        0
+    };
+    cur(i).borrow_mut().set_point(point);
+    Ok((chars_to_delete, spaces_to_insert))
 }
 
 /// GNU's abbrev check in `internal_self_insert' (src/cmds.c): when
