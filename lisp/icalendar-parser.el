@@ -4691,7 +4691,7 @@ which see."
               (let* ((start (icalendar-period-start period))
                      (end (icalendar-period-end period)))
                 (when end
-                  (setq dates (append dates (icalendar-dates-until start end t)))))))
+                  (setq dates (append dates (icalendar-dates-until start end t))))))))
          ;; Same with RDATEs when there's no RRULE:
          ((and rdates (not rrule))
           (dolist (rec (cons dtstart rdates))
@@ -4710,7 +4710,7 @@ which see."
                               (icalendar-date/time-add-duration
                                start (icalendar-period-dur-value rec)))))
                 (unless (member start exdates)
-                  (setq dates (append dates (icalendar-dates-until start end t)))))))
+                  (setq dates (append dates (icalendar-dates-until start end t))))))))
          ;; A non-recurring event also gets an index entry for each date
          ;; until its end time:
          ((not rrule)
@@ -4795,7 +4795,9 @@ Only one keyword argument can be queried at a time."
                   (icalendar-rrule :value rrule)
                   (icalendar-rdate :all rdate-nodes)
                   (icalendar-duration :value duration))
-               (unless (icalendar-date/time<= date dtstart)
+               ;; DTSTART is the first occurrence, so only dates strictly
+               ;; before it can skip recurrence evaluation.
+               (unless (icalendar-date/time< date dtstart)
                  (let* ((tz (icalendar-with-param-of dtstart-node 'icalendar-tzidparam nil
                               (gethash value (plist-get index :bytzid))))
                         (int (icalendar-recur-find-interval date dtstart rrule tz))
