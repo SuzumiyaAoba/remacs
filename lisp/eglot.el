@@ -880,8 +880,7 @@ compile time if an undeclared LSP interface is used."))
        for type = (or (cdr (assoc k types)) t) ;; FIXME: enforce nil type?
        unless (cl-typep v type)
        do (eglot--error "A `%s' must have a %s as %s, but has %s"
-                        ;; FIXME: Arguments missing?
-                        interface-name)))
+                        interface-name k type v)))
     t))
 
 (eval-and-compile
