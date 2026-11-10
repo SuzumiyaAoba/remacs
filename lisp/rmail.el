@@ -3125,7 +3125,8 @@ This leaves a message alone if it already has the `filed' attribute."
       ;; are no messages.
       nil
     ;; Find out some basics (common fields)
-    (let ((from (mail-fetch-field "from"))
+    (let ((case-fold-search nil)
+	  (from (mail-fetch-field "from"))
 	  (subj (mail-fetch-field "subject"))
 	  (to   (concat (mail-fetch-field "to") "," (mail-fetch-field "cc")))
 	  (d rmail-automatic-folder-directives)
@@ -3143,7 +3144,6 @@ This leaves a message alone if it already has the `filed' attribute."
 			      ((string= (downcase (car directive-loop))
 					"subject") subj)
 			      (t (mail-fetch-field (car directive-loop))))))
-		      ;; FIXME - shouldn't this ignore case?
 		      (and f (string-match (car (cdr directive-loop)) f))))
 	  (setq directive-loop (cdr (cdr directive-loop))))
 	;; If there are no directives left, then it was a complete match.
