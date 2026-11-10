@@ -5667,3 +5667,23 @@ fn f90_indent_region_preserves_leading_blank_line() {
         "t"
     );
 }
+
+#[test]
+fn htmlfontify_tag_regex_matches_buffer_boundaries() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'cus-edit)
+              (defmacro easy-menu-define (&rest _) nil)
+              (require 'htmlfontify)
+              (let ((regexp (hfy-word-regex "foo")))
+                (list (and (string-match regexp "foo")
+                           (match-string 1 "foo"))
+                      (and (string-match regexp "foo ")
+                           (match-string 1 "foo "))
+                      (and (string-match regexp " foo")
+                           (match-string 1 " foo"))
+                      (string-match regexp "xfoo")
+                      (string-match regexp "foox"))))"#),
+        "(\"foo\" \"foo\" \"foo\" nil nil)"
+    );
+}

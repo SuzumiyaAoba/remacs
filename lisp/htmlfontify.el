@@ -1987,7 +1987,9 @@ TAG-MAP is the entry in `hfy-tags-cache'."
   "Return a regex that matches STRING as the first `match-string', with non
 word characters on either side."
   ;; FIXME: Should this use [^$[:alnum:]_] instead?  --Stef
-  (concat "[^$A-Za-z_0-9]\\(" (regexp-quote string) "\\)[^A-Za-z_0-9]"))
+  (concat "\\(?:\\`\\|[^$A-Za-z_0-9]\\)\\("
+          (regexp-quote string)
+          "\\)\\(?:\\'\\|[^A-Za-z_0-9]\\)"))
 
 ;; mark all tags for hyperlinking, except the tags at
 ;; their own points of definition, iyswim:
@@ -2035,7 +2037,7 @@ FILE is the specific file we are rendering."
              (goto-char (point-min))
              (while (search-forward TAG nil 'NOERROR)
                (setq tmp-point   (point)
-                     maybe-start (- (match-beginning 0) 1))
+                     maybe-start (max (point-min) (1- (match-beginning 0))))
                (goto-char maybe-start)
                (if (not (looking-at tag-regex))
                    nil
