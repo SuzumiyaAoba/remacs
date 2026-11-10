@@ -402,7 +402,13 @@ pub(super) fn keystroke_to_code_with_mapping(
         // from the corresponding control characters (C-m, C-i, and C-[).
         "return" | "enter" => named("return"),
         "tab" => named("tab"),
-        "backspace" => 127,
+        "backspace" => {
+            if mods == 0 {
+                127
+            } else {
+                named("backspace")
+            }
+        }
         "escape" => named("escape"),
         "linefeed" => {
             // LFD already carries Control-j's ASCII control conversion.
