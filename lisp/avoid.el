@@ -252,7 +252,16 @@ If you want the mouse banished to a different corner set
 	(R2 (min (- max cur) (+    dist     var))))
     (if (< R1 (- min cur)) (setq L1 nil R1 nil))
     (if (> L2 (- max cur)) (setq L2 nil R2 nil))
-    (cond ((and L1 (< delta L1)) L1)
+    (cond ((and (zerop var)
+		(not (or (and L1 (<= L1 delta R1))
+			 (and L2 (<= L2 delta R2)))))
+	   ;; With no variability, choose a fixed-distance direction instead
+	   ;; of returning the zero target unchanged.
+	   (cond ((and R1 L2) (if (< delta 0) R1 L2))
+		 (R1)
+		 (L2)
+		 (t 0)))
+	  ((and L1 (< delta L1)) L1)
 	  ((and R1 (< delta R1)) delta)
 	  ((and R1 (< delta 0)) R1)
 	  ((and L2 (< delta L2)) L2)
@@ -272,15 +281,16 @@ accumulated, and tries to keep it close to zero."
  	 (wtop (pop pos))
  	 (wright (pop pos))
  	 (wbot (pop pos))
+	 (var (max 0 mouse-avoidance-nudge-var))
 	 (deltax (mouse-avoidance-delta
-		  (car cur-pos) (- (random mouse-avoidance-nudge-var)
+		  (car cur-pos) (- (if (> var 0) (random var) 0)
 				   (car mouse-avoidance-state))
-		  mouse-avoidance-nudge-dist mouse-avoidance-nudge-var
+		  mouse-avoidance-nudge-dist var
 		  wleft (1- wright)))
 	 (deltay (mouse-avoidance-delta
-		  (cdr cur-pos) (- (random mouse-avoidance-nudge-var)
+		  (cdr cur-pos) (- (if (> var 0) (random var) 0)
 				   (cdr mouse-avoidance-state))
-		  mouse-avoidance-nudge-dist mouse-avoidance-nudge-var
+		  mouse-avoidance-nudge-dist var
 		  wtop (1- wbot))))
     (setq mouse-avoidance-state
 	  (cons (+ (car mouse-avoidance-state) deltax)
