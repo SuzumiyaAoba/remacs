@@ -3921,35 +3921,37 @@ package(s); this is always nil in interactive invocations."
         (describe-package pkg-desc)
       (user-error "No package here"))))
 
-;; fixme numeric argument
-(defun package-menu-mark-delete (&optional _num)
-  "Mark the current package for deletion and move to the next line.
-The current package is the package at point."
+(defun package-menu-mark-delete (&optional num)
+  "Mark up to NUM packages for deletion, starting at point.
+Move point forward across NUM rows; NUM defaults to 1."
   (interactive "p" package-menu-mode)
   (package--ensure-package-menu-mode)
-  (if (member (package-menu-get-status)
-              '("installed" "source" "dependency" "obsolete" "unsigned"))
-      (progn (package-menu--overlay-line 'package-mark-delete-line)
-             (tabulated-list-put-tag "D" t))
-    (forward-line)))
+  (dotimes (_ (or num 1))
+    (if (member (package-menu-get-status)
+                '("installed" "source" "dependency" "obsolete" "unsigned"))
+        (progn (package-menu--overlay-line 'package-mark-delete-line)
+               (tabulated-list-put-tag "D" t))
+      (forward-line))))
 
-(defun package-menu-mark-install (&optional _num)
-  "Mark the current package for installation and move to the next line.
-The current package is the package at point."
+(defun package-menu-mark-install (&optional num)
+  "Mark up to NUM packages for installation, starting at point.
+Move point forward across NUM rows; NUM defaults to 1."
   (interactive "p" package-menu-mode)
   (package--ensure-package-menu-mode)
-  (if (member (package-menu-get-status) '("available" "avail-obso" "new" "dependency"))
-      (progn (package-menu--overlay-line 'package-mark-install-line)
-             (tabulated-list-put-tag "I" t))
-    (forward-line)))
+  (dotimes (_ (or num 1))
+    (if (member (package-menu-get-status) '("available" "avail-obso" "new" "dependency"))
+        (progn (package-menu--overlay-line 'package-mark-install-line)
+               (tabulated-list-put-tag "I" t))
+      (forward-line))))
 
-(defun package-menu-mark-unmark (&optional _num)
-  "Clear any marks on the current package and move to the next line.
-The current package is the package at point."
+(defun package-menu-mark-unmark (&optional num)
+  "Clear marks on up to NUM packages, starting at point.
+Move point forward across NUM rows; NUM defaults to 1."
   (interactive "p" package-menu-mode)
   (package--ensure-package-menu-mode)
-  (package-menu--remove-overlay)
-  (tabulated-list-put-tag " " t))
+  (dotimes (_ (or num 1))
+    (package-menu--remove-overlay)
+    (tabulated-list-put-tag " " t)))
 
 (defun package-menu-backup-unmark ()
   "Back up one line and clear any marks on that line's package."
