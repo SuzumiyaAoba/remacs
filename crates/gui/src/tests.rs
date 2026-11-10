@@ -8,7 +8,8 @@ use super::{
 use gpui::{EntityInputHandler, Keystroke, Modifiers, point, px};
 use remacs_runtime::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use remacs_runtime::frontend::{
-    Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, render_grid_with_input_cached,
+    Grid, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, MouseWheelDirection,
+    render_grid_with_input_cached,
 };
 use remacs_runtime::lisp::Interp;
 use std::sync::mpsc::{self, Sender};
@@ -873,6 +874,64 @@ fn chanio_key_events_and_unread() {
     io.unread(7);
     assert_eq!(io.poll_key(Duration::from_millis(10)).unwrap(), Some(7));
     assert_eq!(io.poll_key(Duration::from_millis(10)).unwrap(), Some(97));
+}
+
+#[test]
+fn chanio_fractional_scroll_remainders_reset_when_input_context_changes() {
+    let (mut io, tx, _grx) = chan_pair();
+    let position = |buffer_id, window_id| MousePosition {
+        buffer_id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 8,
+        y: 8,
+        row: 0,
+        column: 1,
+        window_id: Some(window_id),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let buffer_a = position(1, 11);
+    let buffer_b = position(2, 22);
+    let send_scroll = |position, modifiers, delta| {
+        tx.send(GuiEvent::Scroll {
+            delta,
+            horizontal: false,
+            modifiers,
+            position,
+        })
+        .unwrap();
+    };
+
+    send_scroll(buffer_a, 0, -0.6);
+    assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+    send_scroll(buffer_b, 0, -0.6);
+    assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+    send_scroll(buffer_b, CHAR_CTL, -0.6);
+    assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+    send_scroll(buffer_b, CHAR_CTL, -0.6);
+    assert!(matches!(
+        io.poll_input(Duration::ZERO).unwrap(),
+        Some(InputEvent::MouseWheel {
+            direction: MouseWheelDirection::Up,
+            modifiers: CHAR_CTL,
+            position: MousePosition { buffer_id: 2, .. },
+            line_count: 1,
+        })
+    ));
+
+    send_scroll(buffer_b, CHAR_CTL, 0.6);
+    assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+    send_scroll(buffer_b, CHAR_CTL, 0.6);
+    assert!(matches!(
+        io.poll_input(Duration::ZERO).unwrap(),
+        Some(InputEvent::MouseWheel {
+            direction: MouseWheelDirection::Down,
+            modifiers: CHAR_CTL,
+            position: MousePosition { buffer_id: 2, .. },
+            line_count: 1,
+        })
+    ));
 }
 
 #[test]

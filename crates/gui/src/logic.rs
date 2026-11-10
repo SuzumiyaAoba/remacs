@@ -2,8 +2,8 @@
 use remacs_runtime::{
     frontend::{
         AppleScriptResult, DragAction, FrameVisibility, Grid, GridImageSource,
-        GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
-        MouseWheelDirection, NativeMenuCommandId, QuitRequest, fit_text_to_cells,
+        GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton, MouseInput,
+        MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest, fit_text_to_cells,
         render_frame_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
@@ -1271,6 +1271,22 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ScrollContext {
+    buffer_id: usize,
+    window_id: Option<usize>,
+    area: Option<MouseArea>,
+    mode_line_buffer_name: bool,
+    modifiers: i128,
+    negative_delta: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct ScrollRemainder {
+    context: Option<ScrollContext>,
+    amount: f32,
+}
+
 /// `KeyIo` implementation backed by channels; runs on the logic
 /// thread inside `run_editor_with`.
 pub(super) struct ChanIo {
@@ -1318,8 +1334,8 @@ pub(super) struct ChanIo {
     /// Last frame-local mouse position, including transitions into and out of
     /// the frame content area.
     mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>, Option<usize>)>,
-    /// Fractional smooth-scroll units kept separately for each frame and axis.
-    pub(super) scroll_remainders: HashMap<(Option<usize>, bool), f32>,
+    /// Fractional scroll units, discarded when the target or event context changes.
+    pub(super) scroll_remainders: HashMap<(Option<usize>, bool), ScrollRemainder>,
     last_input_at: Instant,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
 }
@@ -2386,13 +2402,22 @@ impl KeyIo for ChanIo {
                     return Ok(None);
                 }
                 let frame_id = self.active_frame_id.or(self.primary_frame_id);
-                let remainder = self
-                    .scroll_remainders
-                    .entry((frame_id, horizontal))
-                    .or_default();
-                let total = *remainder + delta;
+                let context = ScrollContext {
+                    buffer_id: position.buffer_id,
+                    window_id: position.window_id,
+                    area: position.area,
+                    mode_line_buffer_name: position.mode_line_buffer_name,
+                    modifiers,
+                    negative_delta: delta.is_sign_negative(),
+                };
+                let remainder = self.scroll_remainders.entry((frame_id, horizontal)).or_default();
+                if remainder.context != Some(context) {
+                    remainder.context = Some(context);
+                    remainder.amount = 0.0;
+                }
+                let total = remainder.amount + delta;
                 let whole = total.trunc();
-                *remainder = total - whole;
+                remainder.amount = total - whole;
                 if whole == 0.0 {
                     Ok(None)
                 } else {
