@@ -1903,6 +1903,22 @@ This performs fontification according to `js--class-styles'."
                            'syntax-table (string-to-syntax "\"/"))
         (goto-char end)))))
 
+(defun js--syntax-in-string-or-comment-p (position)
+  "Return non-nil when POSITION is inside a string or comment."
+  (let ((state (syntax-ppss position)))
+    (or (nth 3 state) (nth 4 state))))
+
+(defun js--regexp-after-update-operator-p (operator position)
+  "Return non-nil if OPERATOR at POSITION is part of ++ or --."
+  (and (memq operator '(?+ ?-))
+       (let ((length 1))
+         (save-excursion
+           (goto-char position)
+           (while (eq (char-before) operator)
+             (setq length (1+ length))
+             (backward-char)))
+         (zerop (% length 2)))))
+
 (defconst js--unary-keyword-re
   (js--regexp-opt-symbol '("await" "delete" "typeof" "void" "yield"))
   "Regexp matching unary operator keywords.")
@@ -2309,26 +2325,30 @@ testing for syntax only valid as JSX."
   (js-syntax-propertize-regexp end)
   (funcall
    (syntax-propertize-rules
-    ;; Distinguish /-division from /-regexp chars (and from /-comment-starter).
-    ;; FIXME: Allow regexps after infix ops like + ...
-    ;; https://developer.mozilla.org/en/JavaScript/Reference/Operators
-    ;; We can probably just add +, -, <, >, %, ^, ~, ?, : at which
-    ;; point I think only * and / would be missing which could also be added,
-    ;; but need care to avoid affecting the // and */ comment markers.
-    ("\\(?:^\\|[=([{,:;|&!]\\|\\_<return\\_>\\)\\(?:[ \t]\\)*\\(/\\)[^/*]"
+    ;; Distinguish /-division from /-regexp chars (and from comment markers).
+    ;; Operators which expect a right operand can precede a regexp literal.
+    ("\\(?:^\\|[=([{,:;|&!+<>%^~?*/-]\\|\\_<return\\_>\\)\\(?:[ \t]\\)*\\(/\\)[^/*]"
      (1 (ignore
 	 (forward-char -1)
-         (when (or (not (memq (char-after (match-beginning 0)) '(?\s ?\t)))
-                   ;; If the / is at the beginning of line, we have to check
-                   ;; the end of the previous text.
-                   (save-excursion
-                     (goto-char (match-beginning 0))
-                     (forward-comment (- (point)))
-                     (memq (char-before)
-                           (eval-when-compile (append "=({[,:;" '(nil))))))
-           (put-text-property (match-beginning 1) (match-end 1)
-                              'syntax-table (string-to-syntax "\"/"))
-           (js-syntax-propertize-regexp end)))))
+	 (let ((operator-position (match-beginning 0))
+	       (slash-position (match-beginning 1)))
+	   (when (or (not (memq (char-after operator-position) '(?\s ?\t)))
+	             ;; If the / is at the beginning of line, check the
+	             ;; preceding token as well.
+	             (save-excursion
+	               (goto-char operator-position)
+	               (forward-comment (- (point)))
+	               (memq (char-before)
+	                     (eval-when-compile (append "=({[,:;" '(nil))))))
+	     (unless (or (js--syntax-in-string-or-comment-p operator-position)
+	                 (js--syntax-in-string-or-comment-p (1+ operator-position))
+	                 (js--syntax-in-string-or-comment-p slash-position)
+	                 (js--syntax-in-string-or-comment-p (1+ slash-position))
+	                 (js--regexp-after-update-operator-p
+	                  (char-after operator-position) operator-position))
+	       (put-text-property slash-position (1+ slash-position)
+	                          'syntax-table (string-to-syntax "\"/"))
+	       (js-syntax-propertize-regexp end)))))))
     ("\\`\\(#\\)!" (1 "< b"))
     ("<" (0 (ignore
              (when js-jsx-syntax
