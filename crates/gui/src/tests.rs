@@ -464,10 +464,10 @@ fn keystroke_ctrl_folds_to_control_char() {
         keystroke_to_code(&ks("g", None, true, false, false, false)),
         Some(7)
     );
-    // C-? folds to DEL.
+    // C-? preserves the control modifier rather than folding to DEL.
     assert_eq!(
         keystroke_to_code(&ks("?", None, true, false, false, false)),
-        Some(127)
+        Some(CHAR_CTL | '?' as i128)
     );
 }
 
