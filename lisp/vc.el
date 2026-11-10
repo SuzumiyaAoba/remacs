@@ -2552,11 +2552,13 @@ BACKEND is the VC backend."
                    (not (y-or-n-p
                          (format "Uncommit revisions newer than %s?"
                                  rev))))
-            ;; FIXME: Actually potentially not all revisions newer than
-            ;; REV would be permanently deleted -- only those which are
-            ;; unpushed.  So this prompt is a little misleading.
+            ;; Revisions already published remain in public history and
+            ;; can be restored by syncing; only unpublished revisions may
+            ;; be lost permanently.
             (not (yes-or-no-p
-                  (format "Permanently delete revisions newer than %s?"
+                  (format (concat "Delete revisions newer than %s? "
+                                  "Published revisions are only removed locally; "
+                                  "unpublished revisions may be lost permanently.")
                           rev))))
       (user-error "Aborted"))
     (if delete
