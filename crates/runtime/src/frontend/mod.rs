@@ -592,3 +592,11 @@ pub use render::{
 pub(crate) use render::{position_at_display_cell, position_display_cell};
 pub(crate) use render::{buffer_setting, line_number_display_settings};
 pub(crate) use render::visible_fontification_range;
+
+pub(crate) fn gui_face_attributes_supported(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    attributes: &crate::lisp::Value,
+) -> bool {
+    render::gui_face_attributes_supported(i, frame, attributes)
+}

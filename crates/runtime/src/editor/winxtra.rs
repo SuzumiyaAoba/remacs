@@ -12,7 +12,7 @@ use crate::editor::{
     terminal_token, w_parent, w_siblings, win_any, win_err_live, win_err_valid, win_live, win_of,
     win_valid,
 };
-use crate::lisp::builtins::{S, arg, want_int};
+use crate::lisp::builtins::{S, arg, want_int, want_list};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::sym;
 use crate::lisp::text::EmacsText;
@@ -587,7 +587,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_minibuffer_innermost_command_loop_p,
         "t if BUFFER is a minibuffer at the current command loop level."
     ),
-    S!("display-supports-face-attributes-p", 1, 2, f_nil, ""),
+    S!(
+        "display-supports-face-attributes-p",
+        1,
+        2,
+        f_display_supports_face_attributes_p,
+        ""
+    ),
     S!(
         "run-window-configuration-change-hook",
         0,
@@ -639,6 +645,19 @@ pub(crate) static SUBRS: &[Subr] = &[
 fn f_nil(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
+
+fn f_display_supports_face_attributes_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::lisp::builtins::misc::decode_display(i, &arg(&a, 1))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let attributes = arg(&a, 0);
+    let _ = want_list(i, &attributes)?;
+    Ok(Value::from_bool(
+        crate::frontend::gui_face_attributes_supported(i, &frame, &attributes),
+    ))
+}
+
 /// nil result, but the optional arg is still decode_live_frame-checked
 /// like GNU (font-family-list, frame-font-cache, ...).
 fn f_nil_checked(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

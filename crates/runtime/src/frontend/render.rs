@@ -1948,6 +1948,131 @@ fn frame_mouse_color(
     face_ctx.color(&value)
 }
 
+pub(crate) fn gui_face_attributes_supported(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    attributes: &Value,
+) -> bool {
+    let Ok(items) = attributes.list_to_vec() else {
+        return false;
+    };
+    if items.len() % 2 != 0 {
+        return false;
+    }
+
+    let mut faces = FaceCtx::new(i, Some(frame));
+    let mut any_specified = false;
+    for pair in items.chunks_exact(2) {
+        let Value::Sym(attribute) = &pair[0] else {
+            return false;
+        };
+        let name = i.symbol_name(*attribute);
+        let Some(name) = name.strip_prefix(':') else {
+            return false;
+        };
+        let value = &pair[1];
+        if matches!(value, Value::Sym(symbol) if i.symbol_name(*symbol) == "unspecified") {
+            continue;
+        }
+        any_specified = true;
+        if matches!(value, Value::Sym(symbol) if i.symbol_name(*symbol) == "reset") {
+            continue;
+        }
+        let supported = match name {
+            "foreground" | "background" | "distant-foreground" => faces.color(value).is_some(),
+            "family" => matches!(value, Value::Str(_)),
+            "width" => font_width_percent(i, value).is_some(),
+            "height" => {
+                matches!(value, Value::Float(scale) if scale.is_finite() && **scale > 0.0)
+                    || font_height_tenths(value).is_some()
+            }
+            "weight" => match value {
+                Value::Int(_) => true,
+                Value::Sym(symbol) => matches!(
+                    i.symbol_name(*symbol).as_str(),
+                    "thin"
+                        | "ultra-light"
+                        | "extra-light"
+                        | "light"
+                        | "semi-light"
+                        | "book"
+                        | "normal"
+                        | "regular"
+                        | "medium"
+                        | "semi-bold"
+                        | "demi-bold"
+                        | "demibold"
+                        | "bold"
+                        | "extra-bold"
+                        | "ultra-bold"
+                        | "extrabold"
+                        | "ultrabold"
+                        | "black"
+                        | "heavy"
+                        | "ultra-heavy"
+                ),
+                _ => false,
+            },
+            "slant" => matches!(
+                value,
+                Value::Sym(symbol)
+                    if matches!(i.symbol_name(*symbol).as_str(), "normal" | "roman" | "italic" | "oblique")
+            ),
+            "underline" => match value {
+                Value::Nil | Value::Sym(_) => true,
+                Value::Str(_) => faces.color(value).is_some(),
+                Value::Cons(_) => {
+                    let style = crate::lisp::eval::plist_get(value, faces.box_style);
+                    let color = crate::lisp::eval::plist_get(value, faces.box_color);
+                    (style.is_nil()
+                        || matches!(
+                            style,
+                            Value::Sym(symbol)
+                                if matches!(i.symbol_name(symbol).as_str(), "line" | "wave")
+                        ))
+                        && (color.is_nil() || faces.color(&color).is_some())
+                }
+                _ => false,
+            },
+            "overline" | "inverse-video" | "extend" => {
+                matches!(value, Value::Nil | Value::Sym(_))
+            }
+            "strike-through" => match value {
+                Value::Nil | Value::Sym(_) => true,
+                Value::Str(_) => faces.color(value).is_some(),
+                Value::Cons(_) => {
+                    let color = crate::lisp::eval::plist_get(value, faces.box_color);
+                    color.is_nil() || faces.color(&color).is_some()
+                }
+                _ => false,
+            },
+            "box" => {
+                if let Value::Str(_) = value {
+                    faces.color(value).is_some()
+                } else if let Value::Cons(_) = value {
+                    let color = crate::lisp::eval::plist_get(value, faces.box_color);
+                    color.is_nil() || faces.color(&color).is_some()
+                } else {
+                    true
+                }
+            }
+            "stipple" => faces.stipple_id(i, value).is_some(),
+            "inherit" => matches!(value, Value::Nil | Value::Sym(_) | Value::Cons(_)),
+            _ => false,
+        };
+        if !supported {
+            return false;
+        }
+    }
+
+    let mut base = faces.builtin(i, "default", 0);
+    let default_style = base.finish();
+    faces.default_style = Some(default_style);
+    let overrides = faces.face_plist(i, attributes, 0);
+    base.merge(&overrides);
+    !any_specified || base.finish() != default_style
+}
+
 fn frame_scroll_bar_style(
     i: &Interp,
     face_ctx: &mut FaceCtx,
