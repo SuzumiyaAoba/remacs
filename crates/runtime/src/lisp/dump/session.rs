@@ -94,7 +94,9 @@ struct OverlayData {
     handle: Ref,
 }
 
-fn initial_change_stamp() -> u64 { 1 }
+fn initial_change_stamp() -> u64 {
+    1
+}
 
 #[derive(Serialize, Deserialize)]
 struct FrameData {
@@ -120,11 +122,24 @@ struct FrameData {
     #[serde(default)]
     change_size: Option<(usize, usize)>,
     #[serde(default)]
+    change_pixel_size: Option<(usize, usize)>,
+    #[serde(default)]
     window_state_change: bool,
     buffer_list: Vec<usize>,
     buried_buffer_list: Vec<usize>,
     params: Ref,
     dead: bool,
+}
+
+fn frame_pixel_size_from_params(i: &Interp, params: &Value) -> (usize, usize) {
+    let pixel = |name: &str| {
+        i.q_soft(name)
+            .map(|key| crate::lisp::eval::plist_get(params, key))
+            .and_then(|value| value.int())
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0)
+    };
+    (pixel("pixel-width"), pixel("pixel-height"))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -296,6 +311,7 @@ impl Image {
                 change_selected: frame.change_selected,
                 change_frame_selected: frame.change_frame_selected,
                 change_size: frame.change_size,
+                change_pixel_size: frame.change_pixel_size,
                 window_state_change: frame.window_state_change,
                 buffer_list: frame.buffer_list.clone(),
                 buried_buffer_list: frame.buried_buffer_list.clone(),
@@ -586,6 +602,7 @@ impl Image {
                 .map(|r| window(i, &mut decoder, r))
                 .transpose()?;
             let params = decoder.value(i, &data.params)?;
+            let pixel_size = frame_pixel_size_from_params(i, &params);
             let mut f = object.borrow_mut();
             f.name = name;
             f.windows = windows;
@@ -598,6 +615,7 @@ impl Image {
             f.change_selected = data.change_selected;
             f.change_frame_selected = data.change_frame_selected;
             f.change_size = data.change_size;
+            f.change_pixel_size = data.change_pixel_size.or(Some(pixel_size));
             f.window_state_change = data.window_state_change;
             f.params = params;
         }
@@ -964,6 +982,7 @@ impl Image {
             change_selected: f.change_selected,
             change_frame_selected: f.change_frame_selected,
             change_size: f.change_size,
+            change_pixel_size: f.change_pixel_size,
             window_state_change: f.window_state_change,
             buffer_list: f.buffer_list.clone(),
             buried_buffer_list: f.buried_buffer_list.clone(),
@@ -1032,6 +1051,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn frame_pixel_size_defaults_in_legacy_dumps() {
+        let nil = serde_json::to_value(Ref::Nil).unwrap();
+        let mut value = serde_json::json!({
+            "id": 1,
+            "name": nil.clone(),
+            "windows": [],
+            "selected": nil.clone(),
+            "minibuffer": null,
+            "root": null,
+            "menu_shift": false,
+            "text_margin": 0,
+            "width": 80,
+            "height": 24,
+            "buffer_list": [],
+            "buried_buffer_list": [],
+            "params": nil,
+            "dead": false,
+        });
+
+        let legacy: FrameData = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(legacy.change_pixel_size, None);
+
+        value["change_pixel_size"] = serde_json::json!([800, 600]);
+        let current: FrameData = serde_json::from_value(value).unwrap();
+        assert_eq!(current.change_pixel_size, Some((800, 600)));
+    }
+
+    #[test]
     fn window_change_history_survives_pending_changes_and_removed_frames() {
         std::thread::Builder::new().stack_size(128 << 20).spawn(|| {
             let mut source = Interp::new();
@@ -1069,7 +1116,7 @@ mod tests {
             let mut legacy = serde_json::to_value(&image).unwrap();
             for frame in legacy["frame_data"].as_array_mut().unwrap() {
                 let fields = frame.as_object_mut().unwrap();
-                for name in ["change_stamp", "change_window_count", "change_selected", "change_frame_selected", "change_size", "window_state_change"] { fields.remove(name); }
+                for name in ["change_stamp", "change_window_count", "change_selected", "change_frame_selected", "change_size", "change_pixel_size", "window_state_change"] { fields.remove(name); }
             }
             for window in legacy["window_data"].as_array_mut().unwrap() {
                 let fields = window.as_object_mut().unwrap();

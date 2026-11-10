@@ -13,6 +13,18 @@ pub(crate) fn frame_windows(frame: &FrameRef) -> Vec<WindowRef> {
         .collect()
 }
 
+fn frame_pixel_size(i: &Interp, frame: &FrameRef) -> (usize, usize) {
+    let frame = frame.borrow();
+    let pixel = |name: &str| {
+        i.q_soft(name)
+            .map(|key| crate::lisp::eval::plist_get(&frame.params, key))
+            .and_then(|value| value.int())
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0)
+    };
+    (pixel("pixel-width"), pixel("pixel-height"))
+}
+
 fn window_size(i: &Interp, window: &WindowRef) -> [usize; 5] {
     let body = win_body_width(i, window);
     let window = window.borrow();
@@ -140,6 +152,7 @@ fn configuration_hook(i: &mut Interp, frame: &FrameRef) -> Result<(), Flow> {
 fn record(i: &Interp) {
     for frame in i.frames.iter().filter(|f| !f.borrow().dead) {
         let windows = frame_windows(frame);
+        let pixel_size = frame_pixel_size(i, frame);
         let (stamp, id, clock) = {
             let mut data = frame.borrow_mut();
             let selected = data.selected.clone();
@@ -153,6 +166,7 @@ fn record(i: &Interp) {
                 .as_ref()
                 .is_some_and(|f| Rc::ptr_eq(f, frame));
             data.change_size = Some((data.width, data.height));
+            data.change_pixel_size = Some(pixel_size);
             data.window_state_change = false;
             data.old_selected = Some(selected);
             (stamp, data.id, data.change_stamp.clone())
@@ -186,7 +200,17 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                 continue;
             }
             let windows = frame_windows(&frame);
-            let (stamp, old_selected, selected, frame_selected, frame_size, flag, previous_count) = {
+            let pixel_size = frame_pixel_size(i, &frame);
+            let (
+                stamp,
+                old_selected,
+                selected,
+                frame_selected,
+                frame_size,
+                frame_pixel_size_changed,
+                flag,
+                previous_count,
+            ) = {
                 let data = frame.borrow();
                 (
                     data.change_stamp.get(),
@@ -197,13 +221,14 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                             .as_ref()
                             .is_some_and(|f| Rc::ptr_eq(f, &frame)),
                     data.change_size != Some((data.width, data.height)),
+                    data.change_pixel_size != Some(pixel_size),
                     data.window_state_change,
                     data.change_window_count,
                 )
             };
             let selection = old_selected != Some(selected);
             let mut buffers = false;
-            let mut sizes = frame_size;
+            let mut sizes = frame_size || frame_pixel_size_changed;
             for window in &windows {
                 if window.borrow().dead {
                     continue;
@@ -217,7 +242,9 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                         data.buffer,
                         data.old_buffer.clone(),
                         buffer_change,
-                        buffer_change || data.change_size != Some(size),
+                        buffer_change
+                            || data.change_size != Some(size)
+                            || frame_pixel_size_changed,
                         (selection || frame_selected)
                             && (old_selected == Some(data.id) || selected == data.id),
                         data.change_start.is_some_and(|start| start != data.start),
@@ -324,6 +351,55 @@ mod tests {
                     let result = i.eval_str(&format!("({probe})")).unwrap();
                     assert_eq!(i.prin1_to_string(&result), expected, "{probe}");
                 }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn pixel_only_frame_resize_runs_window_size_change_functions() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut i = Interp::new();
+                i.eval_str(
+                    "(set-frame-parameter nil 'window-system 'ns) \
+                     (set-frame-parameter nil 'pixel-width 800) \
+                     (set-frame-parameter nil 'pixel-height 600)",
+                )
+                .unwrap();
+                run(&mut i).unwrap();
+                i.eval_str(
+                    "(setq qa-pixel-size-hook-count 0) \
+                     (add-hook 'window-size-change-functions \
+                       (lambda (_frame) \
+                         (setq qa-pixel-size-hook-count \
+                               (1+ qa-pixel-size-hook-count))))",
+                )
+                .unwrap();
+                let cell_size = {
+                    let frame = i.selected_frame.as_ref().unwrap().borrow();
+                    (frame.width, frame.height)
+                };
+
+                i.eval_str("(set-frame-parameter nil 'pixel-width 801)")
+                    .unwrap();
+                assert!(run(&mut i).unwrap());
+                let count = i.eval_str("qa-pixel-size-hook-count").unwrap();
+                assert_eq!(i.prin1_to_string(&count), "1");
+
+                i.eval_str(
+                    "(setq qa-pixel-size-hook-count 0) \
+                     (set-frame-parameter nil 'pixel-height 601)",
+                )
+                .unwrap();
+                assert!(run(&mut i).unwrap());
+                let count = i.eval_str("qa-pixel-size-hook-count").unwrap();
+                assert_eq!(i.prin1_to_string(&count), "1");
+
+                let frame = i.selected_frame.as_ref().unwrap().borrow();
+                assert_eq!((frame.width, frame.height), cell_size);
             })
             .unwrap()
             .join()

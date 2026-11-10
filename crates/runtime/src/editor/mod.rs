@@ -206,6 +206,8 @@ pub struct Frame {
     pub(crate) change_selected: Option<usize>,
     pub(crate) change_frame_selected: bool,
     pub(crate) change_size: Option<(usize, usize)>,
+    /// Frame pixel geometry observed by the previous redisplay change pass.
+    pub(crate) change_pixel_size: Option<(usize, usize)>,
     pub(crate) window_state_change: bool,
     /// Buffers selected on this frame, most recently selected first.
     pub buffer_list: Vec<usize>,
@@ -431,6 +433,7 @@ impl Frame {
                 change_selected: None,
                 change_frame_selected: false,
                 change_size: None,
+                change_pixel_size: None,
                 window_state_change: false,
                 buffer_list: vec![buffer],
                 buried_buffer_list: Vec::new(),
