@@ -80,6 +80,7 @@ qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
 qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");
+qa!(qa_diary_icalendar_all_day_duration, "qa_diary_icalendar_all_day_duration.el");
 qa!(qa_mh_sub_folders_missing, "qa_mh_sub_folders_missing.el");
 qa!(
     qa_diary_display_no_entries_empty,

@@ -3735,12 +3735,32 @@ be an `icalendar-vtimezone' used to calculate local-time recurrences."
                        (icalendar-dtstart start)
                        (icalendar-rdate include)
                        (icalendar-exdate exclude)))
-              (interval (icalendar-recur-find-interval date start rule)))
-          (if (icalendar-rrule-count rule)
-              (when (member date (icalendar-recur-recurrences-to-count vevent))
-                entry)
-            (when (member date (icalendar-recur-recurrences-in-interval interval vevent))
-              entry))))
+              (interval (unless duration
+                          (icalendar-recur-find-interval date start rule)))
+              (duration-recurrences
+               (when duration
+                 (icalendar-recur-recurrences-in-window
+                  (icalendar-date/time-add-duration
+                   date (diary-icalendar--negate-duration duration))
+                  (icalendar-date-add date :day 1)
+                  vevent))))
+          (cond
+           (duration
+            ;; DURATION is an exclusive end, so an occurrence ending at
+            ;; midnight on DATE does not cover DATE.
+            (when (seq-some
+                   (lambda (occurrence)
+                     (icalendar-date<
+                      date (icalendar-date/time-add-duration occurrence duration)))
+                   duration-recurrences)
+              entry))
+           ((icalendar-rrule-count rule)
+            (when (member date (icalendar-recur-recurrences-to-count vevent))
+              entry))
+           (t
+            (when (member date
+                          (icalendar-recur-recurrences-in-interval interval vevent))
+              entry)))))
       (icalendar-date-time
        ;; Compare actual occurrences with the local-day window.  The date
        ;; in a UTC or fixed-offset DTSTART can differ from its local date.
