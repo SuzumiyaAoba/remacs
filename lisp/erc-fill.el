@@ -116,6 +116,16 @@ Set to nil to disable."
   "The column at which a filled paragraph is broken."
   :type 'integer)
 
+(defcustom erc-fill-timestamp-offset nil
+  "Column width to reserve for a custom left-side timestamp.
+When nil, ERC assumes custom `erc-insert-timestamp-function' functions
+insert a left-side timestamp unless they are the built-in right-only or
+left-and-right functions.  Set this to 0 for a custom right-side
+timestamp, or to the exact width when its format differs from
+`erc-timestamp-format'."
+  :type '(choice (const :tag "Automatic" nil)
+                 (integer :tag "Columns" 0 *)))
+
 (defcustom erc-fill-wrap-margin-width nil
   "Starting width in columns of dedicated stamp margin.
 When nil, ERC normally pretends its value is one column greater
@@ -904,14 +914,16 @@ decorations applied by third-party modules."
   (indent-rigidly (point) (point-max) (erc-timestamp-offset)))
 
 (defun erc-timestamp-offset ()
-  "Get length of timestamp if inserted left."
-  (if (and (boundp 'erc-timestamp-format)
-           erc-timestamp-format
-           ;; FIXME use a more robust test than symbol equivalence.
-           (eq erc-insert-timestamp-function 'erc-insert-timestamp-left)
-           (not erc-hide-timestamps))
-      (length (format-time-string erc-timestamp-format))
-    0))
+  "Get the width of a timestamp inserted before message text."
+  (or erc-fill-timestamp-offset
+      (if (and (boundp 'erc-timestamp-format)
+               erc-timestamp-format
+               (not erc-hide-timestamps)
+               (not (memq erc-insert-timestamp-function
+                          '(erc-insert-timestamp-right
+                            erc-insert-timestamp-left-and-right))))
+          (string-width (format-time-string erc-timestamp-format))
+        0)))
 
 (cl-defmethod erc--determine-fill-column-function
   (&context (erc-fill-mode (eql t)))
