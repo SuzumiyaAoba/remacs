@@ -3740,53 +3740,12 @@ be an `icalendar-vtimezone' used to calculate local-time recurrences."
               (when (member date (icalendar-recur-recurrences-to-count vevent))
                 entry)
             (when (member date (icalendar-recur-recurrences-in-interval interval vevent))
-              entry)))
+              entry))))
       (icalendar-date-time
-       (if (or vtimezone (null (icalendar-date/time-zone start)))
-           (diary-icalendar--rrule-entries-for-date
-            date entry rule start duration include exclude vtimezone)
-         ;; Without VTIMEZONE, retain the existing date-only approximation
-         ;; for date-times with an explicit UTC or fixed-offset zone.
-         (let* ((date-rule (copy-sequence rule))
-                (start-date (icalendar-date-time-to-date start))
-                (include-dates (mapcar #'icalendar-date-time-to-date include))
-                (exclude-dates (mapcar #'icalendar-date-time-to-date exclude))
-                ;; Preserve the clock times in the entry:
-                (entry-time
-                 (if duration
-                     (diary-icalendar-format-time-range
-                      start
-                      (icalendar-date/time-add-duration start duration))
-                   (diary-icalendar-format-time-as-local start)))
-                (date-entry (concat entry-time " " entry)))
-           (if (and (memq (icalendar-rrule-freq rule) '(HOURLY MINUTELY SECONDLY))
-                    (icalendar-rrule-count rule))
-               ;; A subdaily COUNT can end before the next date.  Enumerate
-               ;; it before projecting the occurrences onto diary dates.
-               (let* ((vevent (icalendar-make-vevent
-                               (icalendar-rrule rule)
-                               (icalendar-dtstart start)
-                               (icalendar-rdate include)
-                               (icalendar-exdate exclude)))
-                      (query-date (icalendar-date/time-to-date date))
-                      (recurrences
-                       (icalendar-recur-recurrences-to-count vevent)))
-                 (when (member query-date
-                               (mapcar #'icalendar-date/time-to-date recurrences))
-                   date-entry))
-             (progn
-               (when (memq (icalendar-rrule-freq date-rule) '(HOURLY MINUTELY SECONDLY))
-                 (setf (alist-get 'FREQ date-rule) 'DAILY)
-                 (setf (alist-get 'INTERVAL date-rule) 1)
-                 (setf (alist-get 'BYHOUR date-rule nil t) nil)
-                 (setf (alist-get 'BYMINUTE date-rule nil t) nil)
-                 (setf (alist-get 'BYSECOND date-rule nil t) nil))
-               ;; Recurse with the plain date values:
-               (calendar-dlet
-                   ((date date)
-                    (entry date-entry))
-                 (diary-rrule :rule date-rule :start start-date
-                              :include include-dates :exclude exclude-dates)))))))))))
+       ;; Compare actual occurrences with the local-day window.  The date
+       ;; in a UTC or fixed-offset DTSTART can differ from its local date.
+       (diary-icalendar--rrule-entries-for-date
+        date entry rule start duration include exclude vtimezone)))))
 
 (defun diary-icalendar-display-entries ()
   "Display iCalendar data from a file in the diary.
