@@ -826,7 +826,10 @@ be used instead.
                      (elisp--local-variables-1
                       (let ((args (if (listp args) args)))
                         ;; FIXME: Exit the loop if witness is in args.
-                        (append (remq '&optional (remq '&rest args)) vars))
+                        (append
+                         (mapcar (lambda (arg) (if (consp arg) (car arg) arg))
+                                 (remq '&optional (remq '&rest args)))
+                         vars))
                       (car (last body))))
                     (`(condition-case ,_ ,e) (elisp--local-variables-1 vars e))
                     (`(condition-case ,v ,_ . ,catches)
