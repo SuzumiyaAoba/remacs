@@ -62,11 +62,19 @@ See https://www.rfc-editor.org/rfc/rfc5801#section-4.")
    (funcall sasl-scram-gs2-header-function client)
    (sasl-scram--client-first-message-bare client)))
 
+(defun sasl-scram--escape-name (name)
+  "Escape NAME for use as a SCRAM SASL name."
+  ;; Escape '=' first so the escape sequences we insert aren't escaped again.
+  (replace-regexp-in-string
+   "," "=2C"
+   (replace-regexp-in-string "=" "=3D" name t t)
+   t t))
+
 (defun sasl-scram--client-first-message-bare (client)
   (let ((c-nonce (sasl-client-property client 'c-nonce)))
     (concat
      ;; TODO: saslprep username or disallow non-ASCII characters
-     "n=" (sasl-client-name client) ","
+     "n=" (sasl-scram--escape-name (sasl-client-name client)) ","
      "r=" c-nonce)))
 
 (defun sasl-scram--client-final-message (hash-fun block-length hash-length client step)
