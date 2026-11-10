@@ -75,6 +75,7 @@ qa!(qa_backup, "qa_backup.el");
 qa!(qa_bat_mode_load, "qa_bat_mode_load.el");
 qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_buffer_history, "qa_buffer_history.el");
+qa!(qa_calendar_exit_sessions, "qa_calendar_exit_sessions.el");
 qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
 qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");

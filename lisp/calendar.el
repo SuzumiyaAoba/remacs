@@ -2015,13 +2015,16 @@ concatenated and the result truncated."
 If KILL (interactively, the prefix), kill the buffers instead of
 hiding them."
   (interactive "P")
-  (let ((diary-buffer (get-file-buffer diary-file))
-        (calendar-buffers (calendar-buffer-list)))
-    ;; `calendar-buffer-list' names the main calendar buffer, but callers
-    ;; may have entered `calendar-mode' in another buffer.
-    (when (and (derived-mode-p 'calendar-mode)
-               (not (memq (current-buffer) calendar-buffers)))
-      (push (current-buffer) calendar-buffers))
+  (let* ((nonstandard-calendar
+          (and (derived-mode-p 'calendar-mode)
+               (not (eq (current-buffer) (get-buffer calendar-buffer)))))
+         (diary-buffer (unless nonstandard-calendar
+                         (get-file-buffer diary-file)))
+         (calendar-buffers
+          (if nonstandard-calendar
+              ;; Auxiliary buffers are shared; their session is not tracked.
+              (list (current-buffer))
+            (calendar-buffer-list))))
     (when (or (not diary-buffer)
               (not (buffer-modified-p diary-buffer))
               (yes-or-no-p
