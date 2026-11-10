@@ -1213,6 +1213,16 @@ Actually this is just customized `prolog-mode'."
     ;; GNU-Prolog now uses the GNU standard format.
     gnu))
 
+(defconst prolog-sicstus-compilation-error-regexp
+  '("^\\(.*\\):\\([0-9]+\\): " 1 2)
+  "Regexp for file-and-line prefixes added to SICStus diagnostics.")
+
+(defun prolog-sicstus-setup-compilation-errors ()
+  "Enable navigation for SICStus diagnostics in the current buffer."
+  (setq-local compilation-error-regexp-alist
+              (cons prolog-sicstus-compilation-error-regexp
+                    compilation-error-regexp-alist)))
+
 (defun prolog-inferior-self-insert-command ()
   "Insert the char in the buffer or pass it directly to the process."
   (interactive)
@@ -1611,6 +1621,8 @@ Used for temporary files.")
   "The file to compile/consult (can be a temporary file).")
 (defvar prolog-consult-compile-real-file nil
   "The file name of the buffer to compile/consult.")
+(defvar prolog-consult-compile-error-file nil
+  "Absolute source file name used for compilation error navigation.")
 
 (defun prolog-consult-compile (compilep file &optional first-line)
   "Consult/compile FILE.
@@ -1624,8 +1636,15 @@ This function must be called from the source code buffer."
   (if prolog-process-flag
       (error "Another Prolog task is running"))
   (prolog-ensure-process t)
-  (let* ((buffer (get-buffer-create prolog-compilation-buffer))
+  (let* ((source-directory default-directory)
+         (system prolog-system)
+         (buffer (get-buffer-create prolog-compilation-buffer))
          (real-file buffer-file-name)
+         (error-file (expand-file-name
+                      (if (equal file real-file)
+                          file
+                        (or real-file file))
+                      source-directory))
          (command-string (prolog-build-prolog-command compilep file
                                                       real-file first-line))
          (process (get-process "prolog")))
@@ -1633,6 +1652,9 @@ This function must be called from the source code buffer."
       (delete-region (point-min) (point-max))
       ;; FIXME: Wasn't this supposed to use prolog-inferior-mode?
       (compilation-mode)
+      (setq-local default-directory source-directory)
+      (when (eq system 'sicstus)
+        (prolog-sicstus-setup-compilation-errors))
       ;; FIXME: This doesn't seem to cooperate well with new(ish) compile.el.
       ;; Setting up font-locking for this buffer
       (setq-local font-lock-defaults
@@ -1651,6 +1673,7 @@ This function must be called from the source code buffer."
     (setq prolog-process-flag t
           prolog-consult-compile-output ""
           prolog-consult-compile-first-line (if first-line (1- first-line) 0)
+          prolog-consult-compile-error-file error-file
           prolog-consult-compile-file file
           prolog-consult-compile-real-file (if (string=
                                                 file buffer-file-name)
@@ -1757,24 +1780,16 @@ Argument OUTPUT is a name of the output file."
           (setq output (concat output input))))
 
        ((eq prolog-system 'sicstus)
-        (if (and prolog-consult-compile-real-file
-                 (string-match
-                  "\\({.*:.* in line[s ]*\\)\\([0-9]+\\)-\\([0-9]+\\)" output))
-            (setq output (replace-match
-                          ;; Adds a {processing ...} line so that
-                          ;; `prolog-parse-sicstus-compilation-errors'
-                          ;; finds the real file instead of the temporary one.
-                          ;; Also fixes the line numbers.
-                          (format "Added by Emacs: {processing %s...}\n%s%d-%d"
-                                  prolog-consult-compile-real-file
-                                  (match-string 1 output)
-                                  (+ prolog-consult-compile-first-line
-                                     (string-to-number
-                                      (match-string 2 output)))
-                                  (+ prolog-consult-compile-first-line
-                                     (string-to-number
-                                      (match-string 3 output))))
-                          t t output)))
+        (when (and prolog-consult-compile-error-file
+                   (string-match
+                    "{\\(?:[a-zA-Z ]*ERROR\\|Warning\\):.* in line[s ]*\\([0-9]+\\)"
+                    output))
+          (setq output
+                (concat prolog-consult-compile-error-file ":"
+                        (number-to-string
+                         (+ (or prolog-consult-compile-first-line 0)
+                            (string-to-number (match-string 1 output))))
+                        ": " output)))
         )
 
        ((eq prolog-system 'swi)
