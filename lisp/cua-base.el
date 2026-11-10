@@ -1332,6 +1332,8 @@ If ARG is the atom `-', scroll upward by nearly full screen."
 ;;   whether cua-delete-copy-to-register-0 was enabled
 ;;   whether delete-selection-save-to-register was bound
 ;;   its value when bound
+;;   whether cua-highlight-region-shift-only was enabled
+;;   transient-mark-mode's prior value
 
 (defvar cua--saved-state nil)
 (defvar delete-selection-save-to-register)
@@ -1396,7 +1398,9 @@ the prefix fallback behavior."
 	     cua-delete-copy-to-register-0
 	     (boundp 'delete-selection-save-to-register)
 	     (and (boundp 'delete-selection-save-to-register)
-		  delete-selection-save-to-register)))
+		  delete-selection-save-to-register)
+	     cua-highlight-region-shift-only
+	     transient-mark-mode))
     (if cua-delete-selection
         (delete-selection-mode 1)
       (if (and (boundp 'delete-selection-mode) delete-selection-mode)
@@ -1414,6 +1418,8 @@ the prefix fallback behavior."
 	(if (nth 2 cua--saved-state)
 	    (setq delete-selection-save-to-register (nth 3 cua--saved-state))
 	  (makunbound 'delete-selection-save-to-register)))
+    (when (nth 4 cua--saved-state)
+	(transient-mark-mode (if (nth 5 cua--saved-state) 1 -1)))
     (if (called-interactively-p 'interactive)
 	(message "CUA mode disabled.%s"
 		 (if (nth 0 cua--saved-state) " Delete-Selection enabled" "")))
