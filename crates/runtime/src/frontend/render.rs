@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 90474)
-Total output lines: 9847
-
 //! Resolve faces and render editor state into a frontend-neutral grid.
 use super::MousePosition;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
@@ -630,6 +627,8 @@ pub struct Grid {
     pub freeze_pointer_shape: bool,
     /// Whether the native mouse pointer should be visible over this frame.
     pub pointer_visible: bool,
+    /// RGB color for the native mouse pointer, from the frame's `mouse-color` parameter.
+    pub mouse_color: Option<CellColor>,
     /// Unicode text and visible positions for the active OS text client.
     pub input: Option<GridInput>,
 }
@@ -709,7 +708,9 @@ impl GridInput {
 
     /// Map a UTF-16 offset to a character index without rescanning `text`.
     pub fn character_index_for_utf16_offset(&self, requested: usize, round_up: bool) -> usize {
-        let character = self.char_offsets.partition_point(|offset| *offset < requested);
+        let character = self
+            .char_offsets
+            .partition_point(|offset| *offset < requested);
         if round_up {
             character.min(self.character_count())
         } else if self.char_offsets.get(character) == Some(&requested) {
@@ -900,6 +901,7 @@ impl Grid {
             hover_cursor: None,
             freeze_pointer_shape: false,
             pointer_visible: true,
+            mouse_color: None,
             input: None,
         }
     }
@@ -1933,6 +1935,19 @@ fn frame_cursor_color(
     face_ctx.color(&value)
 }
 
+fn frame_mouse_color(
+    i: &Interp,
+    face_ctx: &mut FaceCtx,
+    frame: &crate::editor::Frame,
+) -> Option<CellColor> {
+    let key = i.q_soft("mouse-color")?;
+    let value = crate::lisp::eval::plist_get_v(&frame.params, &Value::Sym(key));
+    if value.is_nil() {
+        return None;
+    }
+    face_ctx.color(&value)
+}
+
 fn frame_scroll_bar_style(
     i: &Interp,
     face_ctx: &mut FaceCtx,
@@ -1941,7 +1956,10 @@ fn frame_scroll_bar_style(
     let mut style = face_ctx.builtin(i, "scroll-bar", 0).finish();
     let parameter_color = |name: &str| {
         i.q_soft(name).and_then(|key| {
-            face_ctx.color(&crate::lisp::eval::plist_get_v(&frame.params, &Value::Sym(key)))
+            face_ctx.color(&crate::lisp::eval::plist_get_v(
+                &frame.params,
+                &Value::Sym(key),
+            ))
         })
     };
     if let Some(color) = parameter_color("scroll-bar-foreground") {
@@ -2361,7 +2379,5620 @@ fn overlay_arrow_positions(i: &Interp, buffer_id: usize) -> Vec<(usize, String)>
     let mut arrows = Vec::new();
     if let Some(position) = mode_line_variable(i, buffer_id, "overlay-arrow-position")
         .as_ref()
-        .and_then(|marker| arrow_marker(mar…50474 tokens truncated…content_left_with_margin, content_top))
+        .and_then(|marker| arrow_marker(marker, buffer_id))
+    {
+        arrows.push((position, default_string.clone()));
+    }
+
+    if let Some(mut variables) = i.q_soft("overlay-arrow-variable-list").map(|id| i.symbol_value(id))
+    {
+        let arrow_string_property = i.q_soft("overlay-arrow-string");
+        while let Value::Cons(cell) = variables {
+            let (variable, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            variables = next;
+            let Value::Sym(variable_id) = variable else {
+                continue;
+            };
+            let value = mode_line_variable(i, buffer_id, &i.symbol_name(variable_id))
+                .unwrap_or(Value::Nil);
+            let Some(position) = arrow_marker(&value, buffer_id) else {
+                continue;
+            };
+            let specific = arrow_string_property
+                .map(|property| i.get_prop(variable_id, property))
+                .unwrap_or(Value::Nil);
+            arrows.push((position, arrow_string(i, specific, &default_string)));
+        }
+    }
+    arrows
+}
+
+fn fit_mode_line_field(field: &str, width: usize, left_align: bool) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let characters: Vec<_> = field.chars().collect();
+    if characters.len() > width {
+        if width >= 3 {
+            return format!("{}…", characters[..width - 1].iter().collect::<String>());
+        }
+        return characters[..width].iter().collect();
+    }
+    let padding = " ".repeat(width - characters.len());
+    if left_align {
+        format!("{field}{padding}")
+    } else {
+        format!("{padding}{field}")
+    }
+}
+
+fn readable_mode_line_size(size: usize) -> String {
+    if size < 1000 {
+        return size.to_string();
+    }
+    let mut whole = size;
+    let mut remainder;
+    let mut exponent = 0;
+    loop {
+        remainder = whole % 1000;
+        whole /= 1000;
+        exponent += 1;
+        if whole < 1000 {
+            break;
+        }
+    }
+    // Match GNU pint2hrstr: one decimal below ten, then whole units,
+    // with half-up rounding and promotion at the end of a unit range.
+    let mut tenths = None;
+    if whole < 10 {
+        let rounded = (remainder + 50) / 100;
+        if rounded == 10 {
+            whole += 1;
+            tenths = (whole < 10).then_some(0);
+        } else {
+            tenths = Some(rounded);
+        }
+    } else if remainder >= 500 {
+        whole += 1;
+        if whole == 1000 {
+            whole = 1;
+            exponent += 1;
+            tenths = Some(0);
+        }
+    }
+    let mut output = match tenths {
+        Some(tenths) => format!("{whole}.{tenths}"),
+        None => whole.to_string(),
+    };
+    output.push(b" kMGTPEZYRQ"[exponent] as char);
+    output
+}
+
+fn format_mode_line_string(
+    i: &Interp,
+    buffer_id: usize,
+    value: &crate::lisp::value::StrRef,
+    context: &ModeLineContext,
+    fill_remaining: &mut bool,
+) -> String {
+    let characters: Vec<_> = value.borrow().to_unicode_lossy().chars().collect();
+    let mut output = String::new();
+    let collect = context.properties.borrow().is_some();
+    let mut sources = Vec::new();
+    let mut fill_source = None;
+    let mut index = 0usize;
+    while index < characters.len() {
+        let source = index;
+        if characters[index] != '%' {
+            output.push(characters[index]);
+            if collect {
+                sources.push(source);
+            }
+            index += 1;
+            continue;
+        }
+        index += 1;
+        if index >= characters.len() {
+            output.push('%');
+            if collect {
+                sources.push(source);
+            }
+            break;
+        }
+        if characters[index] == '%' {
+            output.push('%');
+            if collect {
+                sources.push(source);
+            }
+            index += 1;
+            continue;
+        }
+        if characters[index] == '-' && index + 1 == characters.len() {
+            *fill_remaining = true;
+            fill_source = Some(source);
+            break;
+        }
+        let left_align = characters[index] == '-';
+        if left_align {
+            index += 1;
+        }
+        let mut width = 0usize;
+        let mut has_width = false;
+        while index < characters.len() && characters[index].is_ascii_digit() {
+            has_width = true;
+            width = width
+                .saturating_mul(10)
+                .saturating_add(characters[index].to_digit(10).unwrap_or(0) as usize);
+            index += 1;
+        }
+        let mut precision = None;
+        if index < characters.len() && characters[index] == '.' {
+            index += 1;
+            let mut value = 0usize;
+            while index < characters.len() && characters[index].is_ascii_digit() {
+                value = value
+                    .saturating_mul(10)
+                    .saturating_add(characters[index].to_digit(10).unwrap_or(0) as usize);
+                index += 1;
+            }
+            precision = Some(value);
+        }
+        if index >= characters.len() {
+            output.push('%');
+            if collect {
+                sources.push(source);
+            }
+            break;
+        }
+        let specifier = characters[index];
+        index += 1;
+        let mut field = match specifier {
+            'b' => context.buffer_name.clone(),
+            'f' => context.file_name.clone(),
+            'm' | 'M' => context.mode_name.clone(),
+            'l' => context.line.to_string(),
+            'c' => context.column.to_string(),
+            'C' => context.column.saturating_add(1).to_string(),
+            'L' => context.line_count.to_string(),
+            'I' => readable_mode_line_size(context.buffer_size),
+            'p' | 'P' | 'o' | 'q' => mode_line_position(context, specifier),
+            '@' => {
+                context.remote_used.set(true);
+                if context.remote { "@" } else { "-" }.to_owned()
+            }
+            'n' => narrowing_indicator(context.narrowed).to_owned(),
+            '*' | '+' | '&' => {
+                buffer_state_marker(context.read_only, context.modified, specifier).to_string()
+            }
+            'e' => {
+                if context.memory_full {
+                    MEMORY_FULL_WARNING.to_owned()
+                } else {
+                    String::new()
+                }
+            }
+            '[' | ']' | 's' => String::new(),
+            other => other.to_string(),
+        };
+        if let Some(maximum) = precision {
+            field = field.chars().take(maximum).collect();
+        }
+        if has_width {
+            // GNU counts the numeric part separately from %I's suffix.
+            let width =
+                width.saturating_add(usize::from(specifier == 'I' && context.buffer_size >= 1000));
+            field = fit_mode_line_field(&field, width, left_align);
+        }
+        if collect {
+            sources.extend(std::iter::repeat_n(source, field.chars().count()));
+        }
+        output.push_str(&field);
+    }
+    if let Some(properties) = context.properties.borrow_mut().as_mut() {
+        let properties_at = |position| {
+            let plist = Value::list(crate::buffer::primitives::str_plist_at(
+                i.str_props(value),
+                position,
+            ));
+            let help = i.q_soft("help-echo").and_then(|property| {
+                help_echo_text(crate::lisp::eval::plist_get(&plist, property))
+            });
+            let identification = i.q_soft("local-map").is_some_and(|property| {
+                mode_line_identification_map(
+                    i,
+                    buffer_id,
+                    &crate::lisp::eval::plist_get(&plist, property),
+                )
+            });
+            let pointer = i.q_soft("pointer").and_then(|property| {
+                mode_line_pointer_shape(i, &crate::lisp::eval::plist_get(&plist, property))
+            });
+            ModeLineCharacterProperties {
+                help,
+                identification,
+                pointer,
+            }
+        };
+        properties
+            .characters
+            .extend(sources.into_iter().map(properties_at));
+        if let Some(source) = fill_source {
+            properties.fill = Some(properties_at(source));
+        }
+    }
+    output
+}
+
+fn mode_line_pointer_shape(i: &Interp, value: &Value) -> Option<GridPointerShape> {
+    value.truthy().then(|| grid_pointer_shape(i, Some(value)))
+}
+
+fn mode_line_identification_map(i: &Interp, buffer_id: usize, map: &Value) -> bool {
+    map.truthy()
+        && mode_line_variable(i, buffer_id, "mode-line-buffer-identification-keymap")
+            .is_some_and(|identification| crate::lisp::eq_values(map, &identification))
+}
+
+fn help_echo_text(value: Value) -> Option<String> {
+    match value {
+        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+        _ => None,
+    }
+}
+
+pub(super) fn mode_line_minor_values(i: &Interp, buffer_id: usize) -> Vec<Value> {
+    let Some(alist) = mode_line_variable(i, buffer_id, "minor-mode-alist") else {
+        return Vec::new();
+    };
+    let Ok(entries) = alist.list_to_vec() else {
+        return Vec::new();
+    };
+    let mut output = Vec::new();
+    for entry in entries {
+        let Ok(parts) = entry.list_to_vec() else {
+            continue;
+        };
+        let Some(Value::Sym(mode)) = parts.first() else {
+            continue;
+        };
+        let active = mode_line_variable(i, buffer_id, &i.symbol_name(*mode))
+            .unwrap_or(Value::Nil)
+            .truthy();
+        if active {
+            output.extend(parts.into_iter().skip(1));
+        }
+    }
+    output
+}
+
+fn format_mode_line_minor_modes(
+    i: &Interp,
+    buffer_id: usize,
+    context: &ModeLineContext,
+    depth: usize,
+    fill_remaining: &mut bool,
+) -> String {
+    let mut output = String::new();
+    for value in mode_line_minor_values(i, buffer_id) {
+        if *fill_remaining {
+            break;
+        }
+        output.push_str(&format_mode_line_value(
+            i,
+            buffer_id,
+            &value,
+            context,
+            depth + 1,
+            fill_remaining,
+        ));
+    }
+    output
+}
+
+pub(super) fn format_mode_line_value(
+    i: &Interp,
+    buffer_id: usize,
+    value: &Value,
+    context: &ModeLineContext,
+    depth: usize,
+    fill_remaining: &mut bool,
+) -> String {
+    if depth > 32 || *fill_remaining {
+        return String::new();
+    }
+    match value {
+        Value::Nil => String::new(),
+        Value::Str(string) => {
+            format_mode_line_string(i, buffer_id, string, context, fill_remaining)
+        }
+        Value::Int(_) | Value::Float(_) => {
+            let output = match value {
+                Value::Int(number) => number.to_string(),
+                Value::Float(number) => number.to_string(),
+                _ => unreachable!(),
+            };
+            if let Some(properties) = context.properties.borrow_mut().as_mut() {
+                properties.characters.extend(std::iter::repeat_n(
+                    ModeLineCharacterProperties::default(),
+                    output.chars().count(),
+                ));
+            }
+            output
+        }
+        Value::Sym(symbol) => {
+            if i.symbol_name(*symbol) == "mode-line-minor-modes" {
+                return format_mode_line_minor_modes(
+                    i,
+                    buffer_id,
+                    context,
+                    depth + 1,
+                    fill_remaining,
+                );
+            }
+            let Some(value) = mode_line_variable(i, buffer_id, &i.symbol_name(*symbol)) else {
+                return String::new();
+            };
+            if matches!(value, Value::Sym(id) if id == *symbol) {
+                return String::new();
+            }
+            format_mode_line_value(i, buffer_id, &value, context, depth + 1, fill_remaining)
+        }
+        Value::Cons(_) => {
+            let Ok(elements) = value.list_to_vec() else {
+                return String::new();
+            };
+            if elements.is_empty() {
+                return String::new();
+            }
+            if let Value::Sym(head) = &elements[0] {
+                match i.symbol_name(*head).as_str() {
+                    ":eval" => return String::new(),
+                    ":propertize" => {
+                        let start = context
+                            .properties
+                            .borrow()
+                            .as_ref()
+                            .map(|p| p.characters.len());
+                        let output = elements.get(1).map_or_else(String::new, |body| {
+                            format_mode_line_value(
+                                i,
+                                buffer_id,
+                                body,
+                                context,
+                                depth + 1,
+                                fill_remaining,
+                            )
+                        });
+                        if let Some(start) = start
+                            && let Some(properties) = context.properties.borrow_mut().as_mut()
+                        {
+                            let property = |name| {
+                                let property = i.q_soft(name)?;
+                                elements
+                                    .get(2..)
+                                    .unwrap_or_default()
+                                    .chunks_exact(2)
+                                    .find(
+                                        |pair| matches!(pair[0], Value::Sym(id) if id == property),
+                                    )
+                                    .map(|pair| &pair[1])
+                            };
+                            let help =
+                                property("help-echo").map(|value| help_echo_text(value.clone()));
+                            let identification = property("local-map")
+                                .map(|value| mode_line_identification_map(i, buffer_id, value));
+                            let pointer =
+                                property("pointer").map(|value| mode_line_pointer_shape(i, value));
+                            for character in properties.characters[start..]
+                                .iter_mut()
+                                .chain(properties.fill.iter_mut())
+                            {
+                                if let Some(help) = &help {
+                                    character.help = help.clone();
+                                }
+                                if let Some(identification) = identification {
+                                    character.identification = identification;
+                                }
+                                if let Some(pointer) = pointer {
+                                    character.pointer = pointer;
+                                }
+                            }
+                        }
+                        return output;
+                    }
+                    _ => {}
+                }
+                if elements.len() > 1 {
+                    let condition = mode_line_variable(i, buffer_id, &i.symbol_name(*head))
+                        .unwrap_or(Value::Nil)
+                        .truthy();
+                    let branch = elements.get(if condition { 1 } else { 2 });
+                    return branch.map_or_else(String::new, |body| {
+                        format_mode_line_value(
+                            i,
+                            buffer_id,
+                            body,
+                            context,
+                            depth + 1,
+                            fill_remaining,
+                        )
+                    });
+                }
+            }
+            let start = if matches!(elements[0], Value::Int(_)) {
+                1
+            } else {
+                0
+            };
+            let mut output = String::new();
+            for element in &elements[start..] {
+                if *fill_remaining {
+                    break;
+                }
+                output.push_str(&format_mode_line_value(
+                    i,
+                    buffer_id,
+                    element,
+                    context,
+                    depth + 1,
+                    fill_remaining,
+                ));
+            }
+            output
+        }
+        Value::Vec(vector) => {
+            let mut output = String::new();
+            for element in vector.borrow().iter() {
+                if *fill_remaining {
+                    break;
+                }
+                output.push_str(&format_mode_line_value(
+                    i,
+                    buffer_id,
+                    element,
+                    context,
+                    depth + 1,
+                    fill_remaining,
+                ));
+            }
+            output
+        }
+        _ => String::new(),
+    }
+}
+
+fn menu_key_name(i: &Interp, key: &Value) -> String {
+    match key {
+        Value::Sym(symbol) => i.symbol_name(*symbol),
+        Value::Int(code) => char::from_u32(*code as u32)
+            .map(|character| character.to_string())
+            .unwrap_or_else(|| code.to_string()),
+        _ => i.princ_to_string(key).to_unicode_lossy(),
+    }
+}
+
+/// GNU keyboard.c's separator names, including empty/single-dash compatibility.
+pub(super) fn menu_separator_name_p(label: &str) -> bool {
+    // GNU passes a C string to the native menu constructor.
+    let label = label.split('\0').next().unwrap_or_default();
+    label.bytes().all(|byte| byte == b'-')
+        || matches!(
+            label.strip_prefix("--"),
+            Some(
+                "space"
+                    | "no-line"
+                    | "single-line"
+                    | "double-line"
+                    | "single-dashed-line"
+                    | "double-dashed-line"
+                    | "shadow-etched-in"
+                    | "shadow-etched-out"
+                    | "shadow-etched-in-dash"
+                    | "shadow-etched-out-dash"
+                    | "shadow-double-etched-in"
+                    | "shadow-double-etched-out"
+                    | "shadow-double-etched-in-dash"
+                    | "shadow-double-etched-out-dash"
+            )
+        )
+}
+
+pub(super) fn menu_label_and_definition(
+    i: &Interp,
+    key: &Value,
+    definition: &Value,
+) -> (String, Value, bool) {
+    let fallback = menu_key_name(i, key);
+    if let Value::Cons(cell) = definition {
+        let head = cell.borrow().car.clone();
+        if let Value::Str(label) = &head {
+            let label = label.borrow().to_unicode_lossy();
+            let separator = menu_separator_name_p(&label);
+            return (label, cell.borrow().cdr.clone(), separator);
+        }
+        if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "menu-item") {
+            if let Ok(items) = definition.list_to_vec() {
+                let label = items
+                    .get(1)
+                    .and_then(|value| match value {
+                        Value::Str(label) => Some(label.borrow().to_unicode_lossy()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| fallback.clone());
+                let definition = items.get(2).cloned().unwrap_or(Value::Nil);
+                let separator = menu_separator_name_p(&label);
+                return (label, definition, separator);
+            }
+        }
+    }
+    if let Value::Str(label) = definition {
+        let label = label.borrow().to_unicode_lossy();
+        if menu_separator_name_p(&label) {
+            return (label, Value::Nil, true);
+        }
+    }
+    (fallback, definition.clone(), false)
+}
+
+pub(super) fn menu_keymap_from_definition(
+    i: &Interp,
+    definition: &Value,
+    depth: usize,
+) -> Option<Value> {
+    if depth > 16 {
+        return None;
+    }
+    if crate::editor::is_keymap(i, definition) {
+        return Some(definition.clone());
+    }
+    match definition {
+        Value::Sym(symbol) => {
+            let value = i.symbol_value(*symbol);
+            if crate::editor::is_keymap(i, &value) {
+                return Some(value);
+            }
+            let function = i.symbol_function(*symbol);
+            crate::editor::is_keymap(i, &function).then_some(function)
+        }
+        Value::Cons(cell) => {
+            let (head, tail) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if matches!(head, Value::Str(_)) {
+                return menu_keymap_from_definition(i, &tail, depth + 1);
+            }
+            if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "menu-item")
+                && let Ok(items) = definition.list_to_vec()
+            {
+                return items
+                    .get(2)
+                    .and_then(|definition| menu_keymap_from_definition(i, definition, depth + 1));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
+    i.native_menus.clone()
+}
+
+fn render_tool_bar(
+    i: &Interp,
+    frame: &crate::editor::Frame,
+    width: usize,
+    rows: usize,
+    row_offset: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridToolBarItem> {
+    let mut background = faces.builtin(i, "tool-bar", 0).finish();
+    if background.fg.is_none() {
+        background.fg = default_style.fg;
+    }
+    if background.bg.is_none() {
+        background.bg = default_style.bg.or(Some(CellColor(0x33, 0x36, 0x3a)));
+    }
+    for row in screen.iter_mut().skip(row_offset).take(rows) {
+        for cell in row {
+            *cell = ScreenCell {
+                chars: Vec::new(),
+                style: background,
+                occupied: true,
+                continuation: false,
+            };
+        }
+    }
+    let Some(map_id) = i.q_soft("tool-bar-map") else {
+        return Vec::new();
+    };
+    let map = i
+        .buffer_local_toplevel_value(map_id, frame.selected.borrow().buffer)
+        .or_else(|| i.default_toplevel_value(map_id))
+        .unwrap_or(Value::Nil);
+    let mut items = Vec::new();
+    let mut row = 0usize;
+    let mut column = 0usize;
+    // Unprepared symbol maps retain the legacy read-only rendering path.
+    let fallback;
+    let bindings = if let Some(items) = i.native_menu_commands.tool_bar(frame.id) {
+        items
+    } else {
+        fallback = crate::editor::keymap_own_bindings(i, &map)
+            .into_iter()
+            .filter_map(|(key, definition)| {
+                let (mut label, command, separator) =
+                    menu_label_and_definition(i, &key, &definition);
+                let name = match command {
+                    Value::Sym(symbol) if i.fbound_p(symbol) => Some(i.symbol_name(symbol)),
+                    _ if separator => None,
+                    _ => return None,
+                };
+                if let Ok(parts) = definition.list_to_vec() {
+                    let properties = Value::list(parts.into_iter().skip(3).collect());
+                    if let Some(property) = i.q_soft(":label")
+                        && let Value::Str(value) =
+                            crate::lisp::eval::plist_get(&properties, property)
+                    {
+                        label = value.borrow().to_unicode_lossy();
+                    }
+                }
+                Some(GridMenuItem {
+                    label,
+                    help: None,
+                    command: name,
+                    command_id: None,
+                    items: Vec::new(),
+                    separator,
+                    checked: false,
+                    key_hint: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        &fallback
+    };
+    for binding in bindings {
+        let label = &binding.label;
+        let separator = binding.separator;
+        if separator {
+            column = column.saturating_add(1);
+            continue;
+        }
+        let label_width = label.chars().map(display_char_width).sum::<usize>().max(1);
+        let button_width = label_width.saturating_add(2).min(width.max(1));
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row >= rows || width == 0 {
+            break;
+        }
+        let text = fit_text_to_cells_with_tab_width(&format!(" {label} "), button_width, 8).0;
+        let mut button_style = background;
+        button_style.box_style = Some(BoxStyle {
+            vertical_width: 1,
+            horizontal_width: 1,
+            color: background.fg,
+            kind: BoxStyleKind::Released,
+        });
+        let cell_styles = vec![button_style; button_width];
+        let character_styles = text.chars().map(|_| button_style).collect::<Vec<_>>();
+        let screen_row_index = row_offset.saturating_add(row);
+        if let Some(screen_row) = screen.get_mut(screen_row_index) {
+            place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
+        }
+        items.push(GridToolBarItem {
+            row: screen_row_index,
+            byte_range: None,
+            left: column,
+            width: button_width,
+            command: binding.command.clone().unwrap_or_default(),
+            command_id: binding.command_id.clone(),
+        });
+        column = column.saturating_add(button_width).saturating_add(1);
+    }
+    items
+}
+
+fn tab_entry_parameter(i: &Interp, entry: &Value, name: &str) -> Value {
+    let Some(property) = i.q_soft(name) else {
+        return Value::Nil;
+    };
+    let Ok(items) = entry.list_to_vec() else {
+        return Value::Nil;
+    };
+    items
+        .into_iter()
+        .find_map(|item| {
+            let Value::Cons(cell) = item else {
+                return None;
+            };
+            let cell = cell.borrow();
+            matches!(cell.car, Value::Sym(symbol) if symbol == property)
+                .then(|| cell.cdr.clone())
+        })
+        .unwrap_or(Value::Nil)
+}
+
+fn render_tab_bar(
+    i: &Interp,
+    frame_params: &Value,
+    width: usize,
+    rows: usize,
+    row_offset: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridTabBarItem> {
+    let mut background = faces.builtin(i, "tab-bar", 0).finish();
+    if background.fg.is_none() {
+        background.fg = default_style.fg;
+    }
+    if background.bg.is_none() {
+        background.bg = default_style.bg.or(Some(CellColor(0x2d, 0x30, 0x33)));
+    }
+    for row in screen.iter_mut().skip(row_offset).take(rows) {
+        for cell in row {
+            *cell = ScreenCell {
+                chars: Vec::new(),
+                style: background,
+                occupied: true,
+                continuation: false,
+            };
+        }
+    }
+
+    let tabs = i
+        .q_soft("tabs")
+        .map(|property| crate::lisp::eval::plist_get(frame_params, property))
+        .and_then(|value| value.list_to_vec().ok())
+        .unwrap_or_default();
+    let tab_count = tabs.len().max(1);
+    let close_setting = mode_line_variable(i, i.current_buffer, "tab-bar-close-button-show")
+        .unwrap_or(Value::Nil);
+    let close_button = mode_line_variable(i, i.current_buffer, "tab-bar-close-button")
+        .and_then(|value| match value {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        })
+        .unwrap_or_else(|| " ×".to_owned());
+    let mut items = Vec::new();
+    let mut row = 0usize;
+    let mut column = 0usize;
+
+    for index in 0..tab_count {
+        let tab = tabs.get(index);
+        let current = tab.is_none_or(|tab| {
+            matches!(tab, Value::Cons(cell)
+                if matches!(cell.borrow().car, Value::Sym(symbol) if i.symbol_name(symbol) == "current-tab"))
+        });
+        let name = tab
+            .map(|tab| tab_entry_parameter(i, tab, "name"))
+            .unwrap_or_else(|| {
+                i.buffers
+                    .get(i.current_buffer)
+                    .map(|buffer| Value::string(buffer.borrow().name.clone()))
+                    .unwrap_or(Value::Nil)
+            });
+        let name = match name {
+            Value::Str(name) => name.borrow().to_unicode_lossy(),
+            _ => format!("Tab {}", index.saturating_add(1)),
+        };
+        let close_visible = match &close_setting {
+            Value::Nil => false,
+            Value::Sym(symbol) if i.symbol_name(*symbol) == "selected" => current,
+            Value::Sym(symbol) if i.symbol_name(*symbol) == "non-selected" => !current,
+            _ => close_setting.truthy(),
+        };
+        let label_width = name
+            .chars()
+            .map(display_char_width)
+            .sum::<usize>()
+            .saturating_add(2)
+            .max(3);
+        let close_width = if close_visible {
+            close_button.chars().map(display_char_width).sum::<usize>()
+        } else {
+            0
+        };
+        let button_width = label_width
+            .saturating_add(close_width)
+            .min(width.max(1));
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row >= rows || width == 0 {
+            break;
+        }
+        let mut style = faces
+            .builtin(i, if current { "tab-bar-tab" } else { "tab-bar-tab-inactive" }, 0)
+            .finish();
+        if style.fg.is_none() {
+            style.fg = background.fg;
+        }
+        if style.bg.is_none() {
+            style.bg = background.bg;
+        }
+        style.box_style = Some(BoxStyle {
+            vertical_width: 1,
+            horizontal_width: 1,
+            color: style.fg,
+            kind: BoxStyleKind::Released,
+        });
+        let label = if close_visible {
+            format!(" {name}{close_button} ")
+        } else {
+            format!(" {name} ")
+        };
+        let label = fit_text_to_cells_with_tab_width(&label, button_width, 8).0;
+        let cell_styles = vec![style; button_width];
+        let character_styles = label.chars().map(|_| style).collect::<Vec<_>>();
+        let screen_row = row_offset.saturating_add(row);
+        if let Some(screen_row) = screen.get_mut(screen_row) {
+            place_text_row(screen_row, column, &label, &cell_styles, &character_styles);
+        }
+        items.push(GridTabBarItem {
+            row: screen_row,
+            byte_range: None,
+            left: column,
+            width: label_width.min(button_width),
+            command: "tab-bar-select-tab".to_owned(),
+            argument: Some(index.saturating_add(1) as i128),
+        });
+        if close_visible && close_width > 0 {
+            items.push(GridTabBarItem {
+                row: screen_row,
+                byte_range: None,
+                left: column.saturating_add(label_width.min(button_width)),
+                width: close_width.min(button_width.saturating_sub(label_width.min(button_width))),
+                command: "tab-bar-close-tab".to_owned(),
+                argument: Some(index.saturating_add(1) as i128),
+            });
+        }
+        column = column.saturating_add(button_width).saturating_add(1);
+    }
+
+    let new_button_show = mode_line_variable(i, i.current_buffer, "tab-bar-new-button-show")
+        .unwrap_or(Value::t())
+        .truthy();
+    if new_button_show && width > 0 {
+        let label = mode_line_variable(i, i.current_buffer, "tab-bar-new-button")
+            .and_then(|value| match value {
+                Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+                _ => None,
+            })
+            .unwrap_or_else(|| " + ".to_owned());
+        let button_width = label
+            .chars()
+            .map(display_char_width)
+            .sum::<usize>()
+            .max(1)
+            .min(width);
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row < rows {
+            let mut style = faces.builtin(i, "tab-bar-tab-inactive", 0).finish();
+            if style.fg.is_none() {
+                style.fg = background.fg;
+            }
+            if style.bg.is_none() {
+                style.bg = background.bg;
+            }
+            style.box_style = Some(BoxStyle {
+                vertical_width: 1,
+                horizontal_width: 1,
+                color: style.fg,
+                kind: BoxStyleKind::Released,
+            });
+            let label = fit_text_to_cells_with_tab_width(&label, button_width, 8).0;
+            let cell_styles = vec![style; button_width];
+            let character_styles = label.chars().map(|_| style).collect::<Vec<_>>();
+            let screen_row = row_offset.saturating_add(row);
+            if let Some(screen_row) = screen.get_mut(screen_row) {
+                place_text_row(screen_row, column, &label, &cell_styles, &character_styles);
+            }
+            items.push(GridTabBarItem {
+                row: screen_row,
+                byte_range: None,
+                left: column,
+                width: button_width,
+                command: "tab-bar-new-tab".to_owned(),
+                argument: None,
+            });
+        }
+    }
+    items
+}
+
+fn render_popup_menu(
+    i: &Interp,
+    menu: &super::PopupMenu,
+    pixel_position: (i128, i128),
+    width: usize,
+    height: usize,
+    cell_width: usize,
+    cell_height: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridPopupMenuItem> {
+    if menu.entries.is_empty() || width < 3 || height < 3 {
+        return Vec::new();
+    }
+    let parents = std::iter::once(None)
+        .chain(menu.opened_submenus().into_iter().map(Some))
+        .collect::<Vec<_>>();
+    let panels = parents
+        .iter()
+        .map(|&parent| {
+            let rows = menu.level_entries(parent);
+            let base = parent.map_or(0, |parent| menu.entries[parent].depth + 1);
+            let label_width = rows
+                .iter()
+                .map(|&index| {
+                    let entry = &menu.entries[index];
+                    entry.label.chars().map(display_char_width).sum::<usize>()
+                        + entry.depth.saturating_sub(base) * 2
+                        + usize::from(entry.submenu) * 2
+                })
+                .max()
+                .unwrap_or(1);
+            let back_width = parent.map_or(0, |parent| {
+                menu.entries[parent]
+                    .label
+                    .chars()
+                    .map(display_char_width)
+                    .sum::<usize>()
+                    + 2
+            });
+            (
+                parent,
+                rows,
+                label_width
+                    .max(back_width)
+                    .saturating_add(2)
+                    .max(3)
+                    .min(width),
+            )
+        })
+        .collect::<Vec<_>>();
+    // Keep as many ancestor columns as fit. On a narrow frame, a child panel
+    // replaces them and provides a back action in its top border.
+    let mut first = 0;
+    let mut total_width = panels.iter().map(|panel| panel.2).sum::<usize>();
+    while total_width > width && first + 1 < panels.len() {
+        total_width -= panels[first].2;
+        first += 1;
+    }
+    menu.focus_visible_levels(&parents[first..]);
+    let mut left = usize::try_from(pixel_position.0.max(0))
+        .unwrap_or(usize::MAX)
+        .checked_div(cell_width.max(1))
+        .unwrap_or(0)
+        .min(width.saturating_sub(total_width));
+    let origin_top = usize::try_from(pixel_position.1.max(0))
+        .unwrap_or(usize::MAX)
+        .checked_div(cell_height.max(1))
+        .unwrap_or(0);
+    let mut style = faces.builtin(i, "menu", 0).finish();
+    if style.fg.is_none() {
+        style.fg = default_style.fg;
+    }
+    if style.bg.is_none() {
+        style.bg = default_style.bg.or(Some(CellColor(0x2e, 0x30, 0x33)));
+    }
+    style.box_style = Some(BoxStyle {
+        vertical_width: 1,
+        horizontal_width: 1,
+        color: style.fg,
+        kind: BoxStyleKind::Flat,
+    });
+    let mut selected_style = style;
+    selected_style.fg = style.bg.or(Some(CellColor(0, 0, 0)));
+    selected_style.bg = style.fg.or(Some(CellColor(0xee, 0xee, 0xee)));
+    let mut hit_items: Vec<GridPopupMenuItem> = Vec::new();
+    for (level, (parent, rows, panel_width)) in panels.iter().enumerate().skip(first) {
+        if rows.is_empty() {
+            continue;
+        }
+        let panel_height = rows.len().saturating_add(2).min(height);
+        let capacity = panel_height - 2;
+        let offset = menu.viewport(*parent).0;
+        menu.set_viewport(*parent, offset, capacity);
+        if let Some(&Some(next)) = parents.get(level + 1) {
+            menu.ensure_visible(*parent, next);
+        } else if let Some(selected) = menu.highlighted().filter(|index| rows.contains(index)) {
+            menu.ensure_visible(*parent, selected);
+        }
+        let offset = menu.viewport(*parent).0;
+        let anchor = if level > first {
+            let Some(parent_row) = hit_items.iter().rfind(|item| item.selection == *parent) else {
+                break;
+            };
+            parent_row.row.saturating_sub(1)
+        } else {
+            origin_top
+        };
+        let top = anchor.min(height.saturating_sub(panel_height));
+        for row_index in top..top + panel_height {
+            if let Some(row) = screen.get_mut(row_index) {
+                for cell in row.iter_mut().skip(left).take(*panel_width) {
+                    *cell = ScreenCell {
+                        chars: Vec::new(),
+                        style,
+                        occupied: true,
+                        continuation: false,
+                    };
+                }
+            }
+        }
+        let mut painted_rows = Vec::new();
+        if level == first && first != 0 {
+            painted_rows.push((top, parent.unwrap(), true));
+        }
+        painted_rows.extend(
+            rows.iter()
+                .copied()
+                .skip(offset)
+                .take(capacity)
+                .enumerate()
+                .map(|(line, index)| (top + line + 1, index, false)),
+        );
+        let base = parent.map_or(0, |parent| menu.entries[parent].depth + 1);
+        for (row_index, index, back) in painted_rows {
+            let item = &menu.entries[index];
+            let text = if back {
+                format!("‹ {}", item.label)
+            } else if item.separator {
+                "─".repeat(panel_width.saturating_sub(2))
+            } else {
+                format!(
+                    "{}{}{}",
+                    " ".repeat(item.depth.saturating_sub(base) * 2),
+                    item.label,
+                    if item.submenu { " ▸" } else { "" }
+                )
+            };
+            let text = fit_text_to_cells_with_tab_width(&text, panel_width.saturating_sub(2), 8).0;
+            let row_style = if !back && menu.highlighted() == Some(index) {
+                selected_style
+            } else {
+                style
+            };
+            let cell_styles = vec![row_style; panel_width.saturating_sub(2)];
+            let char_styles = text.chars().map(|_| row_style).collect::<Vec<_>>();
+            if let Some(row) = screen.get_mut(row_index) {
+                place_text_row(row, left + 1, &text, &cell_styles, &char_styles);
+            }
+            hit_items.push(GridPopupMenuItem {
+                menu_id: menu.id,
+                parent: *parent,
+                selection: (back || item.submenu || item.value.is_some()).then_some(index),
+                row: row_index,
+                left: left + 1,
+                width: panel_width.saturating_sub(2),
+                byte_range: None,
+                command: if back || item.separator || item.submenu {
+                    None
+                } else {
+                    item.command.clone()
+                },
+            });
+        }
+        left += panel_width;
+    }
+    hit_items
+}
+
+fn scroll_thumb(
+    track_length: usize,
+    total: usize,
+    visible: usize,
+    offset: usize,
+    minimum_size: usize,
+) -> Option<(usize, usize)> {
+    if track_length == 0 || visible == 0 || total == 0 {
+        return None;
+    }
+    let max_offset = total.saturating_sub(visible);
+    let thumb_size = if max_offset == 0 {
+        track_length
+    } else {
+        track_length
+            .saturating_mul(visible)
+            .checked_div(total)
+            .unwrap_or(0)
+            .max(minimum_size)
+            .min(track_length)
+    };
+    let travel = track_length.saturating_sub(thumb_size);
+    let thumb_start = if max_offset == 0 {
+        0
+    } else {
+        travel
+            .saturating_mul(offset.min(max_offset))
+            .checked_div(max_offset)
+            .unwrap_or(0)
+    };
+    Some((thumb_start, thumb_size))
+}
+
+struct RenderedRow {
+    text: String,
+    cell_attrs: Vec<CellStyle>,
+    char_attrs: Vec<CellStyle>,
+    source_offsets: Vec<usize>,
+    source_columns: Vec<usize>,
+    cell_offsets: Vec<usize>,
+    visible_columns: usize,
+    padding_char_start: usize,
+    images: Vec<RenderedImage>,
+    compositions: Vec<RenderedComposition>,
+    fringes: Vec<RenderedFringe>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderedFringe {
+    left: bool,
+    bitmap: usize,
+    style: CellStyle,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderedImage {
+    column: usize,
+    source: GridImageSource,
+    width: Option<usize>,
+    height: Option<usize>,
+    masked: bool,
+    intrinsic_width: Option<usize>,
+    intrinsic_height: Option<usize>,
+}
+
+impl RenderedImage {
+    fn cursor_dimensions(&self) -> (Option<f64>, Option<f64>) {
+        match (
+            self.width,
+            self.height,
+            self.intrinsic_width,
+            self.intrinsic_height,
+        ) {
+            (Some(width), Some(height), _, _) => (Some(width as f64), Some(height as f64)),
+            (Some(width), None, Some(intrinsic_width), Some(intrinsic_height)) => (
+                Some(width as f64),
+                scale_image_dimension(intrinsic_height, width, intrinsic_width),
+            ),
+            (None, Some(height), Some(intrinsic_width), Some(intrinsic_height)) => (
+                scale_image_dimension(intrinsic_width, height, intrinsic_height),
+                Some(height as f64),
+            ),
+            (width, height, intrinsic_width, intrinsic_height) => (
+                width
+                    .map(|width| width as f64)
+                    .or_else(|| intrinsic_width.map(|width| width as f64)),
+                height
+                    .map(|height| height as f64)
+                    .or_else(|| intrinsic_height.map(|height| height as f64)),
+            ),
+        }
+    }
+}
+
+fn scale_image_dimension(value: usize, scale: usize, basis: usize) -> Option<f64> {
+    if basis == 0 {
+        return None;
+    }
+    Some(value as f64 * scale as f64 / basis as f64)
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderedComposition {
+    column: usize,
+    components: Vec<char>,
+    style: CellStyle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Visibility {
+    Visible,
+    Hidden,
+    Ellipsis,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum DisplayReplacement {
+    Text(String),
+    Fringe(RenderedFringe),
+    GlyphlessText(String, CellStyle),
+    CompositionDefault(usize),
+    Image {
+        source: GridImageSource,
+        width: Option<usize>,
+        height: Option<usize>,
+        masked: bool,
+        intrinsic_width: Option<usize>,
+        intrinsic_height: Option<usize>,
+    },
+    /// Another character in a run already replaced by its first character.
+    Hidden,
+}
+
+/// A display row can reuse a source character while continuing the string
+/// which replaces it. Overrides contain only the fragments for this row.
+struct DisplayRowPlan {
+    range: Range<usize>,
+    replacements: HashMap<usize, DisplayReplacement>,
+    boundaries: HashMap<usize, Vec<String>>,
+    include_end_boundary: bool,
+    hard_break: bool,
+    repeated_start: bool,
+    continued: bool,
+}
+
+impl DisplayRowPlan {
+    fn new(range: Range<usize>, line_len: usize) -> Self {
+        Self {
+            include_end_boundary: range.end == line_len,
+            range,
+            replacements: HashMap::new(),
+            boundaries: HashMap::new(),
+            hard_break: false,
+            repeated_start: false,
+            continued: false,
+        }
+    }
+}
+
+fn display_row_plans(
+    i: &Interp,
+    faces: Option<&WindowFaces>,
+    line_pos: usize,
+    range: Range<usize>,
+    line_len: usize,
+    max_rows: usize,
+) -> Vec<DisplayRowPlan> {
+    if max_rows == 0 {
+        return Vec::new();
+    }
+    let Some(faces) = faces else {
+        return vec![DisplayRowPlan::new(range, line_len)];
+    };
+    let first = line_pos + range.start;
+    let end = line_pos + range.end;
+    let has_newline = faces.display_props.iter().any(|(start, stop, replacement, _)| {
+        *start < end && *stop > first
+            && matches!(replacement, Some(DisplayReplacement::Text(text)) if text.contains('\n'))
+    }) || faces.overlay_strings.iter().any(|(position, strings)| {
+        *position >= first && (*position < end || (*position == end && range.end == line_len))
+            && strings.iter().any(|text| text.contains('\n'))
+    });
+    if !has_newline {
+        return vec![DisplayRowPlan::new(range, line_len)];
+    }
+    let source_end = range.end;
+    let mut current = DisplayRowPlan::new(range.clone(), line_len);
+    let mut rows = Vec::new();
+    for index in range.start..=source_end {
+        let at_end = index == source_end;
+        if at_end && source_end != line_len {
+            break;
+        }
+        let position = line_pos + index;
+        let strings = overlay_strings_at(faces, position);
+        if strings.iter().any(|text| text.contains('\n')) {
+            let text = strings.concat();
+            let mut parts = text.split('\n').peekable();
+            while let Some(part) = parts.next() {
+                current.boundaries.insert(index, vec![part.to_owned()]);
+                if parts.peek().is_some() {
+                    current.range.end = index;
+                    current.include_end_boundary = true;
+                    current.hard_break = true;
+                    rows.push(current);
+                    if rows.len() == max_rows {
+                        return rows;
+                    }
+                    current = DisplayRowPlan::new(index..source_end, line_len);
+                    current.continued = true;
+                }
+            }
+        }
+        if at_end {
+            break;
+        }
+        if visibility_at_pos(i, faces, position) != Visibility::Visible {
+            continue;
+        }
+        if let Some(DisplayReplacement::Text(text)) = display_replacement_at(faces, position)
+            && text.contains('\n')
+        {
+            let mut parts = text.split('\n').peekable();
+            while let Some(part) = parts.next() {
+                current
+                    .replacements
+                    .insert(index, DisplayReplacement::Text(part.to_owned()));
+                if parts.peek().is_some() {
+                    current.range.end = index + 1;
+                    current.include_end_boundary = false;
+                    current.hard_break = true;
+                    rows.push(current);
+                    if rows.len() == max_rows {
+                        return rows;
+                    }
+                    current = DisplayRowPlan::new(index..source_end, line_len);
+                    current.boundaries.insert(index, Vec::new());
+                    current.repeated_start = true;
+                    current.continued = true;
+                }
+            }
+        }
+    }
+    rows.push(current);
+    rows
+}
+
+#[derive(Clone)]
+struct ScreenCell {
+    chars: Vec<(char, CellStyle)>,
+    style: CellStyle,
+    occupied: bool,
+    continuation: bool,
+}
+
+impl ScreenCell {
+    fn new(style: CellStyle) -> ScreenCell {
+        ScreenCell {
+            chars: Vec::new(),
+            style,
+            occupied: false,
+            continuation: false,
+        }
+    }
+}
+
+fn place_rendered_row(screen: &mut [ScreenCell], left: usize, row: &RenderedRow) {
+    place_text_row(screen, left, &row.text, &row.cell_attrs, &row.char_attrs);
+}
+
+fn place_text_row(
+    screen: &mut [ScreenCell],
+    left: usize,
+    text: &str,
+    cell_attrs: &[CellStyle],
+    char_attrs: &[CellStyle],
+) {
+    let mut column = 0usize;
+    let mut last_lead = None;
+    for (index, ch) in text.chars().enumerate() {
+        let char_width = display_char_width(ch);
+        let style = char_attrs.get(index).copied().unwrap_or_default();
+        if char_width == 0 {
+            let target = last_lead
+                .unwrap_or_else(|| left + column.min(screen.len().saturating_sub(left + 1)));
+            if let Some(cell) = screen.get_mut(target) {
+                cell.chars.push((ch, style));
+                cell.occupied = true;
+                cell.continuation = false;
+            }
+            continue;
+        }
+        let Some(target) = screen.get_mut(left.saturating_add(column)) else {
+            break;
+        };
+        target.chars.clear();
+        target.chars.push((ch, style));
+        target.style = cell_attrs.get(column).copied().unwrap_or_default();
+        target.occupied = true;
+        target.continuation = false;
+        last_lead = Some(left + column);
+        for offset in 1..char_width {
+            let Some(continuation) = screen.get_mut(left.saturating_add(column + offset)) else {
+                break;
+            };
+            continuation.chars.clear();
+            continuation.style = cell_attrs.get(column + offset).copied().unwrap_or(style);
+            continuation.occupied = true;
+            continuation.continuation = true;
+        }
+        column = column.saturating_add(char_width);
+    }
+}
+
+fn place_fringe_glyph(
+    screen: &mut [Vec<ScreenCell>],
+    row: usize,
+    column: usize,
+    fringe_width: usize,
+    glyph: &str,
+    style: CellStyle,
+) {
+    if fringe_width == 0 || glyph.is_empty() {
+        return;
+    }
+    let glyph = if glyph.chars().count() > fringe_width {
+        glyph
+            .chars()
+            .last()
+            .map(|character| character.to_string())
+            .unwrap_or_default()
+    } else {
+        glyph.to_owned()
+    };
+    let cells = vec![style; fringe_width];
+    let characters = glyph.chars().map(|_| style).collect::<Vec<_>>();
+    if let Some(screen_row) = screen.get_mut(row) {
+        place_text_row(screen_row, column, &glyph, &cells, &characters);
+    }
+}
+
+fn place_formatted_window_row(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+    row: usize,
+    left: usize,
+    width: usize,
+    tab_width: usize,
+    buffer_id: usize,
+    format: &Value,
+    context: &ModeLineContext,
+    face_name: &str,
+    help_echoes: &mut Vec<GridHelpEcho>,
+    pointer_regions: &mut Vec<GridPointerRegion>,
+) -> Option<(usize, usize)> {
+    let screen_row = screen.get_mut(row)?;
+    *context.properties.borrow_mut() = Some(ModeLineProperties::default());
+    let mut fill_remaining = false;
+    let mut text = format_mode_line_value(i, buffer_id, format, context, 0, &mut fill_remaining);
+    let mut properties = context.properties.borrow_mut().take().unwrap_or_default();
+    if fill_remaining {
+        let occupied = fit_text_to_cells_with_tab_width(&text, width, tab_width).1;
+        let count = width.saturating_sub(occupied);
+        text.push_str(&"-".repeat(count));
+        properties.characters.extend(std::iter::repeat_n(
+            properties.fill.unwrap_or_default(),
+            count,
+        ));
+    }
+    // Use the same column conversion and clipping as the visible row. In
+    // particular, tabs cover several cells and a clipped wide glyph covers none.
+    let mut column = 0usize;
+    let mut buffer_name_range = None;
+    for (character, properties) in text.chars().zip(properties.characters) {
+        let character = match character {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        let cells = if character == '\t' {
+            let tab_width = tab_width.max(1);
+            tab_width - column % tab_width
+        } else {
+            display_char_width(character)
+        };
+        if column.saturating_add(cells) > width {
+            break;
+        }
+        push_pointer_region(
+            pointer_regions,
+            GridPointerRegion {
+                row,
+                left: left.saturating_add(column),
+                width: cells,
+                shape: properties.pointer.unwrap_or(GridPointerShape::Arrow),
+            },
+        );
+        if cells > 0 && properties.identification {
+            let start = left.saturating_add(column);
+            let end = start.saturating_add(cells);
+            match &mut buffer_name_range {
+                None => buffer_name_range = Some((start, end)),
+                Some((_, right)) if *right == start => *right = end,
+                _ => {}
+            }
+        }
+        if cells > 0
+            && let Some(text) = properties.help
+        {
+            push_help_echo(
+                help_echoes,
+                GridHelpEcho {
+                    row,
+                    left: left.saturating_add(column),
+                    width: cells,
+                    text,
+                },
+            );
+        }
+        column += cells;
+    }
+    push_pointer_region(
+        pointer_regions,
+        GridPointerRegion {
+            row,
+            left: left.saturating_add(column),
+            width: width.saturating_sub(column),
+            shape: GridPointerShape::Arrow,
+        },
+    );
+    let row_text = fit_text_to_cells_with_tab_width(&text, width, tab_width).0;
+    let mut style = faces.builtin(i, face_name, 0).finish();
+    if style == CellStyle::default()
+        && matches!(
+            face_name,
+            "mode-line-active" | "mode-line-inactive" | "header-line"
+        )
+    {
+        style.inverse = true;
+    }
+    let cell_styles = vec![style; width];
+    let character_styles = row_text.chars().map(|_| style).collect::<Vec<_>>();
+    place_text_row(screen_row, left, &row_text, &cell_styles, &character_styles);
+    buffer_name_range
+}
+
+fn compose_screen_rows(
+    screen: &[Vec<ScreenCell>],
+    width: usize,
+    default_style: CellStyle,
+) -> (
+    Vec<String>,
+    Vec<Vec<CellStyle>>,
+    Vec<Vec<CellStyle>>,
+    Vec<Vec<usize>>,
+) {
+    let mut rows = Vec::with_capacity(screen.len());
+    let mut attrs = Vec::with_capacity(screen.len());
+    let mut char_attrs = Vec::with_capacity(screen.len());
+    let mut cell_offsets = Vec::with_capacity(screen.len());
+    for screen_row in screen {
+        let mut text = String::new();
+        let mut cell_styles = Vec::with_capacity(width);
+        let mut char_styles = Vec::new();
+        let mut offsets = vec![0; width + 1];
+        for column in 0..width {
+            offsets[column] = text.len();
+            let cell = &screen_row[column];
+            cell_styles.push(cell.style);
+            if !cell.continuation {
+                if cell.chars.is_empty() {
+                    text.push(' ');
+                    char_styles.push(if cell.occupied {
+                        cell.style
+                    } else {
+                        default_style
+                    });
+                } else {
+                    for (ch, style) in &cell.chars {
+                        text.push(*ch);
+                        char_styles.push(*style);
+                    }
+                }
+            }
+            offsets[column + 1] = text.len();
+        }
+        rows.push(text);
+        attrs.push(cell_styles);
+        char_attrs.push(char_styles);
+        cell_offsets.push(offsets);
+    }
+    (rows, attrs, char_attrs, cell_offsets)
+}
+
+/// Render a Lisp line into a fixed number of display cells. The source
+/// and cell offset maps let the GUI position its caret in GPUI's shaped
+/// line while the terminal keeps using cell coordinates.
+fn append_rendered_character(
+    display: char,
+    style: CellStyle,
+    hscroll: usize,
+    width: usize,
+    end_column: usize,
+    tab_width: usize,
+    column: &mut usize,
+    visible_columns: &mut usize,
+    rendered: &mut String,
+    cell_attrs: &mut [CellStyle],
+    char_attrs: &mut Vec<CellStyle>,
+    cell_offsets: &mut [usize],
+) -> bool {
+    let columns = if display == '\t' {
+        tab_width - *column % tab_width
+    } else {
+        display_char_width(display)
+    };
+    let start_column = *column;
+    let next_column = column.saturating_add(columns);
+    let before = rendered.len();
+
+    if columns == 0 {
+        if start_column >= hscroll && start_column < end_column {
+            rendered.push(display);
+            char_attrs.push(style);
+        }
+        return true;
+    }
+
+    if next_column <= hscroll {
+        *column = next_column;
+        return true;
+    }
+    if start_column >= end_column {
+        return false;
+    }
+
+    let cell_start = start_column.saturating_sub(hscroll);
+    let cell_end = next_column.min(end_column).saturating_sub(hscroll);
+    if start_column < hscroll || next_column > end_column {
+        // A horizontal boundary can bisect a wide glyph. Preserve its
+        // remaining cell geometry with blanks instead of shifting the
+        // following text or drawing half a glyph outside the viewport.
+        for cell in cell_start..cell_end {
+            if let Some(offset) = cell_offsets.get_mut(cell) {
+                *offset = rendered.len();
+            }
+            if let Some(attribute) = cell_attrs.get_mut(cell) {
+                *attribute = style;
+            }
+            rendered.push(' ');
+            char_attrs.push(style);
+            if let Some(offset) = cell_offsets.get_mut(cell + 1) {
+                *offset = rendered.len();
+            }
+        }
+    } else {
+        for cell in cell_start..cell_end {
+            if let Some(offset) = cell_offsets.get_mut(cell) {
+                *offset = before;
+            }
+            if let Some(attribute) = cell_attrs.get_mut(cell) {
+                *attribute = style;
+            }
+        }
+        if display == '\t' {
+            for cell in cell_start..cell_end {
+                rendered.push(' ');
+                char_attrs.push(style);
+                if let Some(offset) = cell_offsets.get_mut(cell + 1) {
+                    *offset = rendered.len();
+                }
+            }
+        } else {
+            rendered.push(display);
+            char_attrs.push(style);
+        }
+        if let Some(offset) = cell_offsets.get_mut(cell_end) {
+            *offset = rendered.len();
+        }
+    }
+    *visible_columns = (*visible_columns).max(cell_end.min(width));
+    *column = next_column;
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_rendered_text(
+    text: &str,
+    style: CellStyle,
+    hscroll: usize,
+    width: usize,
+    end_column: usize,
+    tab_width: usize,
+    column: &mut usize,
+    visible_columns: &mut usize,
+    rendered: &mut String,
+    cell_attrs: &mut [CellStyle],
+    char_attrs: &mut Vec<CellStyle>,
+    cell_offsets: &mut [usize],
+) -> bool {
+    for raw_display in text.chars() {
+        let display = match raw_display {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        if !append_rendered_character(
+            display,
+            style,
+            hscroll,
+            width,
+            end_column,
+            tab_width,
+            column,
+            visible_columns,
+            rendered,
+            cell_attrs,
+            char_attrs,
+            cell_offsets,
+        ) {
+            return false;
+        }
+    }
+    true
+}
+
+fn render_text_row<F, V, D, B>(
+    text: &EmacsText,
+    hscroll: usize,
+    width: usize,
+    column_offset: usize,
+    tab_width: usize,
+    default_style: CellStyle,
+    mut style_at: F,
+    mut visibility_at: V,
+    mut display_at: D,
+    mut boundary_strings_at: B,
+    include_end_boundary: bool,
+    graphical: bool,
+) -> RenderedRow
+where
+    F: FnMut(usize) -> CellStyle,
+    V: FnMut(usize) -> Visibility,
+    D: FnMut(usize) -> Option<DisplayReplacement>,
+    B: FnMut(usize) -> Vec<String>,
+{
+    let chars: Vec<_> = text.chars().collect();
+    let mut rendered = String::new();
+    let mut char_attrs = Vec::new();
+    let mut cell_attrs = vec![default_style; width];
+    let mut source_offsets = vec![0; chars.len() + 1];
+    let mut source_columns = vec![0; chars.len() + 1];
+    let mut cell_offsets = vec![0; width + 1];
+    let hscroll = hscroll.saturating_add(column_offset);
+    let mut column = column_offset;
+    let mut visible_columns = 0usize;
+    let end_column = hscroll.saturating_add(width);
+    let tab_width = tab_width.max(1);
+    let mut hidden_run = false;
+    let mut images = Vec::new();
+    let mut compositions = Vec::new();
+    let mut fringes = Vec::new();
+
+    for (index, ch) in chars.iter().enumerate() {
+        let mut keep_rendering = true;
+        for string in boundary_strings_at(index) {
+            if !append_rendered_text(
+                &string,
+                default_style,
+                hscroll,
+                width,
+                end_column,
+                tab_width,
+                &mut column,
+                &mut visible_columns,
+                &mut rendered,
+                &mut cell_attrs,
+                &mut char_attrs,
+                &mut cell_offsets,
+            ) {
+                keep_rendering = false;
+                break;
+            }
+        }
+        let offset = if column <= hscroll { 0 } else { rendered.len() };
+        source_offsets[index] = offset;
+        source_columns[index] = column;
+        if !keep_rendering {
+            source_offsets[index..].fill(offset);
+            source_columns[index..].fill(column);
+            break;
+        }
+        let visibility = visibility_at(index);
+        let draw_ellipsis = visibility == Visibility::Ellipsis && !hidden_run;
+        if visibility != Visibility::Visible && !draw_ellipsis {
+            source_offsets[index + 1] = rendered.len();
+            source_columns[index + 1] = column;
+            hidden_run = true;
+            continue;
+        }
+        hidden_run = visibility != Visibility::Visible;
+        let style = style_at(index);
+        let replacement = if draw_ellipsis {
+            None
+        } else {
+            display_at(index)
+        };
+        let keep_rendering = match replacement {
+            Some(DisplayReplacement::Hidden) => true,
+            Some(DisplayReplacement::Fringe(fringe)) => {
+                if graphical {
+                    fringes.push(fringe);
+                }
+                true
+            }
+            Some(DisplayReplacement::Text(replacement)) => {
+                append_rendered_text(
+                    &replacement,
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+            Some(DisplayReplacement::GlyphlessText(replacement, glyphless_style)) => {
+                append_rendered_text(
+                    &replacement,
+                    glyphless_style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+            Some(DisplayReplacement::CompositionDefault(source_width)) => {
+                let mut components: Vec<char> = chars
+                    .iter()
+                    .skip(index)
+                    .take(source_width)
+                    .filter_map(|character| character.unicode())
+                    .collect();
+                if components.is_empty() {
+                    components.push(ch.unicode().unwrap_or('\u{fffd}'));
+                }
+                if graphical {
+                    if let Some(base) = components.first().copied() {
+                        let base_column = column;
+                        let keep_rendering = append_rendered_character(
+                            base,
+                            style,
+                            hscroll,
+                            width,
+                            end_column,
+                            tab_width,
+                            &mut column,
+                            &mut visible_columns,
+                            &mut rendered,
+                            &mut cell_attrs,
+                            &mut char_attrs,
+                            &mut cell_offsets,
+                        );
+                        if keep_rendering
+                            && components.len() > 1
+                            && base_column >= hscroll
+                            && base_column < end_column
+                        {
+                            compositions.push(RenderedComposition {
+                                column: base_column.saturating_sub(hscroll),
+                                components,
+                                style,
+                            });
+                        }
+                        keep_rendering
+                    } else {
+                        true
+                    }
+                } else {
+                    let text = components.into_iter().collect::<String>();
+                    append_rendered_text(
+                        &text,
+                        style,
+                        hscroll,
+                        width,
+                        end_column,
+                        tab_width,
+                        &mut column,
+                        &mut visible_columns,
+                        &mut rendered,
+                        &mut cell_attrs,
+                        &mut char_attrs,
+                        &mut cell_offsets,
+                    )
+                }
+            }
+            Some(DisplayReplacement::Image {
+                source,
+                width: image_width,
+                height: image_height,
+                masked,
+                intrinsic_width,
+                intrinsic_height,
+            }) => {
+                let image_column = column;
+                let visible = image_column >= hscroll && image_column < end_column;
+                if visible {
+                    images.push(RenderedImage {
+                        column: image_column - hscroll,
+                        source,
+                        width: image_width,
+                        height: image_height,
+                        masked,
+                        intrinsic_width,
+                        intrinsic_height,
+                    });
+                }
+                append_rendered_character(
+                    ' ',
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+            None => {
+                let display = if draw_ellipsis {
+                    '…'
+                } else {
+                    match ch.unicode().unwrap_or('\u{fffd}') {
+                        '\n' | '\r' => ' ',
+                        other => other,
+                    }
+                };
+                append_rendered_character(
+                    display,
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+        };
+        let offset = if column <= hscroll { 0 } else { rendered.len() };
+        source_offsets[index + 1] = offset;
+        source_columns[index + 1] = column;
+        if !keep_rendering {
+            source_offsets[index + 2..].fill(offset);
+            source_columns[index + 2..].fill(column);
+            break;
+        }
+    }
+
+    if include_end_boundary {
+        for string in boundary_strings_at(chars.len()) {
+            if !append_rendered_text(
+                &string,
+                default_style,
+                hscroll,
+                width,
+                end_column,
+                tab_width,
+                &mut column,
+                &mut visible_columns,
+                &mut rendered,
+                &mut cell_attrs,
+                &mut char_attrs,
+                &mut cell_offsets,
+            ) {
+                break;
+            }
+        }
+    }
+    let offset = if column <= hscroll { 0 } else { rendered.len() };
+    source_offsets[chars.len()] = offset;
+    source_columns[chars.len()] = column;
+
+    // The line end maps to the end of its visible text, before padding.
+    let padding_char_start = char_attrs.len();
+    for cell in visible_columns..width {
+        cell_offsets[cell] = rendered.len();
+        rendered.push(' ');
+        char_attrs.push(default_style);
+        cell_offsets[cell + 1] = rendered.len();
+    }
+    cell_offsets[width] = rendered.len();
+    RenderedRow {
+        text: rendered,
+        cell_attrs,
+        char_attrs,
+        source_offsets,
+        source_columns,
+        cell_offsets,
+        visible_columns,
+        padding_char_start,
+        images,
+        compositions,
+        fringes,
+    }
+}
+
+fn prepend_rendered_prefix(
+    prefix: &EmacsText,
+    prefix_width: usize,
+    tab_width: usize,
+    mut row: RenderedRow,
+) -> RenderedRow {
+    if prefix_width == 0 {
+        return row;
+    }
+    let prefix: String = prefix
+        .chars()
+        .map(|character| character.unicode().unwrap_or('\u{fffd}'))
+        .collect();
+    let prefix = fit_text_to_cells_with_tab_width(&prefix, prefix_width, tab_width).0;
+    let prefix_bytes = prefix.len();
+    let prefix_char_count = prefix.chars().count();
+    let mut prefix_cell_offsets = vec![0; prefix_width + 1];
+    let mut column = 0usize;
+    for (byte, character) in prefix.char_indices() {
+        let width = display_char_width(character);
+        for cell in column..column.saturating_add(width).min(prefix_width) {
+            prefix_cell_offsets[cell] = byte;
+        }
+        column = column.saturating_add(width);
+    }
+    for offset in prefix_cell_offsets.iter_mut().skip(column).take(prefix_width - column) {
+        *offset = prefix_bytes;
+    }
+    prefix_cell_offsets[prefix_width] = prefix_bytes;
+
+    let mut text = String::with_capacity(prefix_bytes.saturating_add(row.text.len()));
+    text.push_str(&prefix);
+    text.push_str(&row.text);
+    row.text = text;
+    let mut cell_attrs = vec![CellStyle::default(); prefix_width];
+    cell_attrs.extend(row.cell_attrs);
+    row.cell_attrs = cell_attrs;
+    let mut char_attrs = vec![CellStyle::default(); prefix_char_count];
+    char_attrs.extend(row.char_attrs);
+    row.char_attrs = char_attrs;
+    row.source_offsets
+        .iter_mut()
+        .for_each(|offset| *offset = offset.saturating_add(prefix_bytes));
+    let mut cell_offsets = prefix_cell_offsets[..prefix_width].to_vec();
+    cell_offsets.extend(
+        row.cell_offsets
+            .iter()
+            .map(|offset| offset.saturating_add(prefix_bytes)),
+    );
+    row.cell_offsets = cell_offsets;
+    row.visible_columns = row.visible_columns.saturating_add(prefix_width);
+    row.padding_char_start = row.padding_char_start.saturating_add(prefix_char_count);
+    for image in &mut row.images {
+        image.column = image.column.saturating_add(prefix_width);
+    }
+    for composition in &mut row.compositions {
+        composition.column = composition.column.saturating_add(prefix_width);
+    }
+    row
+}
+
+/// Truncate and pad text to WIDTH display columns. The tuple contains the
+/// padded text, occupied columns before padding, and visible text's byte end.
+pub fn fit_text_to_cells(text: &str, width: usize) -> (String, usize, usize) {
+    fit_text_to_cells_with_tab_width(text, width, 8)
+}
+
+fn fit_text_to_cells_with_tab_width(
+    text: &str,
+    width: usize,
+    tab_width: usize,
+) -> (String, usize, usize) {
+    let mut rendered = String::new();
+    let mut columns = 0usize;
+    let tab_width = tab_width.max(1);
+    for raw_ch in text.chars() {
+        let ch = match raw_ch {
+            '\n' | '\r' => ' ',
+            _ => raw_ch,
+        };
+        let char_width = if ch == '\t' {
+            tab_width - columns % tab_width
+        } else {
+            display_char_width(ch)
+        };
+        let next = columns.saturating_add(char_width);
+        if next > width {
+            break;
+        }
+        if ch == '\t' {
+            rendered.push_str(&" ".repeat(char_width));
+        } else {
+            rendered.push(ch);
+        }
+        columns = next;
+    }
+    let visible_bytes = rendered.len();
+    rendered.push_str(&" ".repeat(width.saturating_sub(columns)));
+    (rendered, columns, visible_bytes)
+}
+// ---------- face resolution ----------
+//
+// GNU realizes faces in xfaces.c (`realize_face' +
+// `compute_char_face'): the `default' face seeds every cell, the
+// active region and `face'/`font-lock-face' text properties overlay
+// it, and overlays stack on top by ascending `priority'.  The face
+// attribute layers here are the same: defface specs land in
+// `Interp::face_table' via `internal-set-lisp-face-attribute'/the
+// prelude's `face-spec-set', `(set-face-attribute FACE t ...)' goes to
+// `face_t_table', and `face-alias' links resolve like GNU's
+// `lface_from_face_name'.
+
+/// Per-render face computation: symbol/keyword ids looked up once,
+/// the color name table from `color-name-rgb-alist', and a cache of
+/// already-resolved named faces.
+struct FaceCtx {
+    // Symbol ids for property names (SymId::MAX = missing).
+    face: u32,
+    font_lock_face: u32,
+    mouse_face: u32,
+    pointer: u32,
+    line_spacing: u32,
+    line_height: u32,
+    mark_active: u32,
+    face_remapping_alist: u32,
+    inherit: u32,
+    invisible: u32,
+    buffer_invisibility_spec: u32,
+    box_color: u32,
+    box_line_width: u32,
+    box_style: u32,
+    /// `color-name-rgb-alist' folded into (canonical name -> rgb).
+    colors: HashMap<EmacsText, (u8, u8, u8)>,
+    /// Face family names interned for compact, copyable cell styles.
+    font_families: Vec<String>,
+    font_family_ids: HashMap<String, u16>,
+    /// Bitmap face backgrounds interned for compact cell styles.
+    stipples: Vec<GridStipple>,
+    stipple_ids: HashMap<GridStipple, u16>,
+    stipple_files: HashMap<EmacsText, Option<u16>>,
+    bitmap_directory: EmacsText,
+    /// Resolved face name -> merged StyleMix.
+    cache: HashMap<crate::lisp::value::SymId, StyleMix>,
+    /// Resolved `default' face values used by :reset in other face specs.
+    default_style: Option<CellStyle>,
+    /// Foreground from this frame's `foreground-color' parameter. It is a
+    /// fallback for the default face, so an explicit default-face foreground
+    /// still takes precedence.
+    frame_default_foreground: Option<CellColor>,
+    /// Background from this frame's `background-color' parameter. It is a
+    /// fallback for the default face, so an explicit default-face background
+    /// still takes precedence.
+    frame_default_background: Option<CellColor>,
+}
+
+impl FaceCtx {
+    fn new(i: &Interp, frame: Option<&crate::editor::FrameRef>) -> FaceCtx {
+        let sym = |n: &str| i.intern_soft(n).unwrap_or(u32::MAX);
+        let mut colors: HashMap<EmacsText, (u8, u8, u8)> = HashMap::new();
+        // The eight standard colors come from tty-standard-colors so
+        // they resolve even if color-name-rgb-alist never loads.
+        for (n, r, g, b) in [
+            ("black", 0u32, 0u32, 0u32),
+            ("red", 65535, 0, 0),
+            ("green", 0, 65535, 0),
+            ("yellow", 65535, 65535, 0),
+            ("blue", 0, 0, 65535),
+            ("magenta", 65535, 0, 65535),
+            ("cyan", 0, 65535, 65535),
+            ("white", 65535, 65535, 65535),
+        ] {
+            colors.insert(
+                EmacsText::from(n),
+                ((r / 256) as u8, (g / 256) as u8, (b / 256) as u8),
+            );
+        }
+        if let Value::Cons(_) = i.symbol_value(sym("color-name-rgb-alist")) {
+            let alist = i.symbol_value(sym("color-name-rgb-alist"));
+            if let Ok(entries) = alist.list_to_vec() {
+                for e in entries {
+                    if let Value::Cons(c) = &e {
+                        let (k, v) = {
+                            let cb = c.borrow();
+                            (cb.car.clone(), cb.cdr.clone())
+                        };
+                        if let Value::Str(name) = &k {
+                            if let Ok(rgb) = v.list_to_vec() {
+                                let mut c8 = [0u8; 3];
+                                let mut ok = rgb.len() >= 3;
+                                for (n, x) in rgb.iter().take(3).enumerate() {
+                                    match x {
+                                        Value::Int(v) => {
+                                            c8[n] = ((*v).clamp(0, 65535) / 256) as u8;
+                                        }
+                                        _ => ok = false,
+                                    }
+                                }
+                                if ok {
+                                    colors.insert(
+                                        name.borrow().to_lowercase().replace(' ', ""),
+                                        (c8[0], c8[1], c8[2]),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let bitmap_directory = frame
+            .map(|frame| frame.borrow().selected.borrow().buffer)
+            .and_then(|buffer| {
+                let symbol = i.q_soft("default-directory")?;
+                i.buffer_local_toplevel_value(symbol, buffer)
+                    .or_else(|| i.default_toplevel_value(symbol))
+            })
+            .and_then(|value| match value {
+                Value::Str(directory) => Some(directory.borrow().clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| crate::editor::default_directory(i));
+        let mut ctx = FaceCtx {
+            face: sym("face"),
+            font_lock_face: sym("font-lock-face"),
+            mouse_face: sym("mouse-face"),
+            pointer: sym("pointer"),
+            line_spacing: sym("line-spacing"),
+            line_height: sym("line-height"),
+            mark_active: sym("mark-active"),
+            face_remapping_alist: sym("face-remapping-alist"),
+            inherit: sym(":inherit"),
+            invisible: sym("invisible"),
+            buffer_invisibility_spec: sym("buffer-invisibility-spec"),
+            box_color: sym(":color"),
+            box_line_width: sym(":line-width"),
+            box_style: sym(":style"),
+            colors,
+            font_families: Vec::new(),
+            font_family_ids: HashMap::new(),
+            stipples: Vec::new(),
+            stipple_ids: HashMap::new(),
+            stipple_files: HashMap::new(),
+            bitmap_directory,
+            cache: HashMap::new(),
+            frame_default_foreground: None,
+            frame_default_background: None,
+            default_style: None,
+        };
+        if let Some(frame) = frame {
+            ctx.frame_default_foreground = i
+                .intern_soft("foreground-color")
+                .and_then(|parameter| {
+                    let value = crate::lisp::eval::plist_get_v(
+                        &frame.borrow().params,
+                        &Value::Sym(parameter),
+                    );
+                    ctx.color(&value)
+                });
+            ctx.frame_default_background = i
+                .intern_soft("background-color")
+                .and_then(|parameter| {
+                    let value = crate::lisp::eval::plist_get_v(
+                        &frame.borrow().params,
+                        &Value::Sym(parameter),
+                    );
+                    ctx.color(&value)
+                });
+        }
+        ctx
+    }
+
+    /// Parse standard RGB specifications directly, then fall back to the
+    /// canonicalized color-name alist.
+    fn color(&self, v: &Value) -> Option<CellColor> {
+        if let Some((red, green, blue)) = crate::lisp::builtins::misc::parse_color_16(v) {
+            return Some(CellColor(
+                (red / 256) as u8,
+                (green / 256) as u8,
+                (blue / 256) as u8,
+            ));
+        }
+        let Value::Str(s) = v else {
+            return None;
+        };
+        let t = s.borrow();
+        let canon = t.to_lowercase().replace(' ', "");
+        self.colors.get(&canon).map(|&(r, g, b)| CellColor(r, g, b))
+    }
+
+    fn font_family_id(&mut self, value: &Value) -> Option<u16> {
+        let Value::Str(name) = value else {
+            return None;
+        };
+        let family = name.borrow().to_unicode_lossy();
+        if let Some(id) = self.font_family_ids.get(&family) {
+            return Some(*id);
+        }
+        let id = u16::try_from(self.font_families.len()).ok()?;
+        self.font_families.push(family.clone());
+        self.font_family_ids.insert(family, id);
+        Some(id)
+    }
+
+    fn stipple_id(&mut self, i: &Interp, value: &Value) -> Option<Option<u16>> {
+        if value.is_nil() {
+            return Some(None);
+        }
+        if let Value::Str(file) = value {
+            let file = file.borrow().clone();
+            if let Some(id) = self.stipple_files.get(&file) {
+                return id.map(Some);
+            }
+            let id = read_stipple_file(i, &file, &self.bitmap_directory)
+                .and_then(|stipple| self.intern_stipple(stipple));
+            self.stipple_files.insert(file, id);
+            return id.map(Some);
+        }
+        let values = match value {
+            Value::Vec(vector) => vector.borrow().clone(),
+            Value::Cons(_) => value.list_to_vec().ok()?,
+            _ => return None,
+        };
+        if values.len() != 3 {
+            return None;
+        }
+        let width = usize::try_from(values[0].int()?.max(1)).ok()?;
+        let height = usize::try_from(values[1].int()?.max(1)).ok()?;
+        let width = u16::try_from(width).ok()?;
+        let height = u16::try_from(height).ok()?;
+        let Value::Str(data) = &values[2] else {
+            return None;
+        };
+        let bytes: Vec<u8> = data
+            .borrow()
+            .chars()
+            .map(|character| {
+                character
+                    .byte8()
+                    .or_else(|| u8::try_from(character.code()).ok())
+            })
+            .collect::<Option<_>>()?;
+        let row_bytes = usize::from(width).div_ceil(8);
+        let data_len = row_bytes.checked_mul(usize::from(height))?;
+        if bytes.len() < data_len {
+            return None;
+        }
+        let stipple = GridStipple {
+            width,
+            height,
+            data: Arc::<[u8]>::from(bytes[..data_len].to_vec()),
+        };
+        self.intern_stipple(stipple).map(Some)
+    }
+
+    fn intern_stipple(&mut self, stipple: GridStipple) -> Option<u16> {
+        if let Some(id) = self.stipple_ids.get(&stipple) {
+            return Some(*id);
+        }
+        let id = u16::try_from(self.stipples.len()).ok()?;
+        self.stipples.push(stipple.clone());
+        self.stipple_ids.insert(stipple, id);
+        Some(id)
+    }
+
+    fn parse_box_style(&self, i: &Interp, value: &Value) -> Option<BoxStyle> {
+        if value.is_nil() {
+            return None;
+        }
+        let mut style = BoxStyle::default();
+        match value {
+            Value::Str(_) => style.color = self.color(value),
+            Value::Cons(_) => {
+                let line_width = crate::lisp::eval::plist_get(value, self.box_line_width);
+                if let Value::Int(width) = line_width {
+                    let width = width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
+                    style.vertical_width = width;
+                    style.horizontal_width = width;
+                } else if let Value::Cons(widths) = line_width {
+                    let (vertical, horizontal) = {
+                        let widths = widths.borrow();
+                        (widths.car.int(), widths.cdr.int())
+                    };
+                    if let Some(width) = vertical {
+                        style.vertical_width =
+                            width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
+                    }
+                    if let Some(width) = horizontal {
+                        style.horizontal_width =
+                            width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
+                    }
+                }
+                style.color = self.color(&crate::lisp::eval::plist_get(value, self.box_color));
+                if let Value::Sym(box_style) = crate::lisp::eval::plist_get(value, self.box_style) {
+                    style.kind = match i.symbol_name(box_style).as_str() {
+                        "released-button" => BoxStyleKind::Released,
+                        "pressed-button" => BoxStyleKind::Pressed,
+                        _ => BoxStyleKind::Flat,
+                    };
+                }
+            }
+            _ => {}
+        }
+        Some(style)
+    }
+
+    fn decoration_color(&self, value: &Value) -> Option<CellColor> {
+        match value {
+            Value::Cons(_) => self.color(&crate::lisp::eval::plist_get(value, self.box_color)),
+            _ => self.color(value),
+        }
+    }
+
+    fn underline_wave(&self, i: &Interp, value: &Value) -> bool {
+        let Value::Cons(_) = value else {
+            return false;
+        };
+        matches!(
+            crate::lisp::eval::plist_get(value, self.box_style),
+            Value::Sym(style) if i.symbol_name(style) == "wave"
+        )
+    }
+
+    /// Merge one named face's attributes (spec layer first, then the
+    /// new-frame defaults layer like GNU's realize_default_face, then
+    /// the compiled-in basic-face fallbacks).
+    fn builtin(&mut self, i: &Interp, name: &str, depth: u32) -> StyleMix {
+        let mut mix = match i.q_soft(name) {
+            Some(face) => self.named(i, &face, depth),
+            None => builtin_face_defaults(i, name),
+        };
+        if mix.font_height_scale.is_some() {
+            let default = self.default_style.and_then(|style| style.font_height).unwrap_or(140);
+            mix.font_height = Some(mix.resolved_font_height(default));
+            mix.font_height_scale = None;
+        }
+        mix
+    }
+
+    fn named(&mut self, i: &Interp, name: &crate::lisp::value::SymId, depth: u32) -> StyleMix {
+        if let Some(s) = self.cache.get(name) {
+            return *s;
+        }
+        // The realized value: face_table plist (defface/theme layer)
+        // over the new-frame defaults layer over built-in defaults.
+        let mut mix = builtin_face_defaults(i, crate::editor::builtin_face_name(i, *name).unwrap_or(""));
+        if let Some((_, plist)) = i.face_t_table.iter().find(|(n, _)| n == name) {
+            mix.merge(&self.face_plist(i, plist, depth));
+        }
+        if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
+            mix.merge(&self.face_plist(i, plist, depth));
+        }
+        if i.symbol_name(*name) == "default" {
+            // Cache the realized default size, so inheriting it cannot apply
+            // its own relative factor for a second time.
+            if mix.font_height_scale.is_some() {
+                mix.font_height = Some(mix.resolved_font_height(140));
+                mix.font_height_scale = None;
+            }
+            if mix.fg.is_none()
+                && let Some(color) = self.frame_default_foreground
+            {
+                mix.fg = Some(Some(color));
+            }
+            if mix.bg.is_none()
+                && let Some(color) = self.frame_default_background
+            {
+                mix.bg = Some(Some(color));
+            }
+        }
+        self.cache.insert(*name, mix);
+        mix
+    }
+
+    /// One face's attribute plist: :inherit expands first (GNU merge
+    /// order), then the face's own attributes override it.
+    fn face_plist(&mut self, i: &Interp, plist: &Value, depth: u32) -> StyleMix {
+        let mut mix = StyleMix::default();
+        if depth >= 16 {
+            return mix;
+        }
+        let inherit = crate::lisp::eval::plist_get(plist, self.inherit);
+        if inherit.truthy() {
+            mix.merge(&self.face_value(i, &inherit, depth + 1));
+        }
+        mix.merge(&self.attrs(i, plist));
+        mix
+    }
+
+    /// The attribute keywords of a plist, without :inherit.
+    /// The attribute keywords of a plist, without :inherit.
+    fn attrs(&mut self, i: &Interp, plist: &Value) -> StyleMix {
+        let mut mix = StyleMix::default();
+        let default_style = self.default_style.unwrap_or_else(|| CellStyle {
+            fg: self.frame_default_foreground,
+            bg: self.frame_default_background,
+            ..CellStyle::default()
+        });
+        let Ok(items) = plist.list_to_vec() else {
+            return mix;
+        };
+        for kv in items.chunks(2) {
+            let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) else {
+                continue;
+            };
+            let is_unspecified = matches!(v, Value::Sym(symbol) if i.symbol_name(*symbol) == "unspecified");
+            let is_reset = matches!(v, Value::Sym(symbol) if i.symbol_name(*symbol) == "reset");
+            match i.symbol_name(k).as_str() {
+                ":foreground" => {
+                    if is_reset {
+                        mix.fg = Some(default_style.fg);
+                    } else if !is_unspecified
+                        && let Some(c) = self.color(v)
+                    {
+                        mix.fg = Some(Some(c));
+                    }
+                }
+                ":distant-foreground" => {
+                    if is_reset {
+                        mix.distant_foreground = Some(default_style.distant_foreground);
+                    } else if !is_unspecified {
+                        mix.distant_foreground = Some(self.color(v));
+                    }
+                }
+                ":background" => {
+                    if is_reset {
+                        mix.bg = Some(default_style.bg);
+                    } else if !is_unspecified
+                        && let Some(c) = self.color(v)
+                    {
+                        mix.bg = Some(Some(c));
+                    }
+                }
+                ":family" => {
+                    if is_reset {
+                        mix.font_family = Some(default_style.font_family);
+                    } else if !is_unspecified
+                        && let Some(family) = self.font_family_id(v)
+                    {
+                        mix.font_family = Some(Some(family));
+                    }
+                }
+                ":font" => {
+                    if is_reset {
+                        mix.font_family = Some(default_style.font_family);
+                        mix.font_weight = Some(default_style.font_weight);
+                        mix.font_width = Some(default_style.font_width);
+                        mix.font_height = Some(default_style.font_height);
+                        mix.font_height_scale = None;
+                        mix.bold = Some(default_style.bold);
+                        mix.italic = Some(default_style.italic);
+                    } else if !is_unspecified && let Value::Str(_) = v {
+                        if let Some(family) = self.font_family_id(v) {
+                            mix.font_family = Some(Some(family));
+                        }
+                    }
+                }
+                ":weight" => {
+                    if is_reset {
+                        mix.font_weight = Some(default_style.font_weight);
+                        mix.bold = Some(default_style.bold);
+                    } else if !is_unspecified {
+                        let weight = font_weight_value(i, v);
+                        mix.font_weight = Some(Some(weight));
+                        mix.bold = Some(weight >= 600);
+                    }
+                }
+                ":width" => {
+                    if is_reset {
+                        mix.font_width = Some(default_style.font_width);
+                    } else if !is_unspecified
+                        && let Some(width) = font_width_percent(i, v)
+                    {
+                        mix.font_width = Some(Some(width));
+                    }
+                }
+                ":height" => {
+                    if is_reset {
+                        mix.font_height = Some(default_style.font_height);
+                        mix.font_height_scale = None;
+                    } else if !is_unspecified {
+                        if let Value::Float(scale) = v
+                            && scale.is_finite() && **scale > 0.0
+                        {
+                            mix.font_height = None;
+                            mix.font_height_scale = Some(**scale);
+                        } else if let Some(height) = font_height_tenths(v) {
+                            mix.font_height = Some(Some(height));
+                            mix.font_height_scale = None;
+                        }
+                    }
+                }
+                ":stipple" => {
+                    if is_reset {
+                        mix.stipple = Some(default_style.stipple);
+                    } else if !is_unspecified {
+                        mix.stipple = self.stipple_id(i, v);
+                    }
+                }
+                ":box" => {
+                    if is_reset {
+                        mix.box_style = Some(default_style.box_style);
+                    } else if !is_unspecified {
+                        mix.box_style = Some(self.parse_box_style(i, v));
+                    }
+                }
+                ":slant" => {
+                    if is_reset {
+                        mix.italic = Some(default_style.italic);
+                    } else if !is_unspecified {
+                        mix.italic = Some(slant_italic(i, v));
+                    }
+                }
+                ":underline" => {
+                    if is_reset {
+                        mix.underline = Some(default_style.underline);
+                        mix.underline_color = Some(default_style.underline_color);
+                        mix.underline_wave = Some(default_style.underline_wave);
+                    } else if !is_unspecified {
+                        mix.underline = Some(v.truthy());
+                        mix.underline_color = Some(self.decoration_color(v));
+                        mix.underline_wave = Some(self.underline_wave(i, v));
+                    }
+                }
+                ":overline" => {
+                    if is_reset {
+                        mix.overline = Some(default_style.overline);
+                    } else if !is_unspecified {
+                        mix.overline = Some(v.truthy());
+                    }
+                }
+                ":strike-through" => {
+                    if is_reset {
+                        mix.strike = Some(default_style.strike);
+                        mix.strike_color = Some(default_style.strike_color);
+                    } else if !is_unspecified {
+                        mix.strike = Some(v.truthy());
+                        mix.strike_color = Some(self.decoration_color(v));
+                    }
+                }
+                ":inverse-video" => {
+                    if is_reset {
+                        mix.inverse = Some(default_style.inverse);
+                    } else if !is_unspecified {
+                        mix.inverse = Some(v.truthy());
+                    }
+                }
+                ":extend" => {
+                    if is_reset {
+                        mix.extend = Some(default_style.extend);
+                    } else if !is_unspecified {
+                        mix.extend = Some(v.truthy());
+                    }
+                }
+                _ => {}
+            }
+        }
+        mix
+    }
+
+    /// A `face' property value: a symbol/string names a face, a list
+    /// whose car is a keyword is an anonymous face plist, any other
+    /// list merges elements with the first element having highest priority, and
+    /// (foreground-color . C)/(background-color . C) pairs set colors.
+    fn face_value(&mut self, i: &Interp, v: &Value, depth: u32) -> StyleMix {
+        if depth >= 16 {
+            return StyleMix::default();
+        }
+        match v {
+            Value::Sym(s) => {
+                match crate::editor::face_resolve(i, s) {
+                    Some(t) => self.named(i, &t, depth + 1),
+                    None => StyleMix::default(),
+                }
+            }
+            Value::Str(s) => {
+                match crate::editor::face_symbol(i, v).and_then(|face| crate::editor::face_resolve(i, &face)) {
+                    Some(t) => self.named(i, &t, depth + 1),
+                    None => StyleMix::default(),
+                }
+            }
+            Value::Cons(_) => {
+                let Ok(items) = v.list_to_vec() else {
+                    // Dotted pair: (foreground-color . COLOR) /
+                    // (background-color . COLOR).
+                    let (car, cdr) = {
+                        let Value::Cons(c) = v else {
+                            return StyleMix::default();
+                        };
+                        let cb = c.borrow();
+                        (cb.car.clone(), cb.cdr.clone())
+                    };
+                    let mut mix = StyleMix::default();
+                    if let Some(cs) = i.sym_id(&car).map(|s| i.symbol_name(s)) {
+                        if let Some(c) = self.color(&cdr) {
+                            match cs.as_str() {
+                                "foreground-color" => mix.fg = Some(Some(c)),
+                                "background-color" => mix.bg = Some(Some(c)),
+                                _ => {}
+                            }
+                        }
+                    }
+                    return mix;
+                };
+                let is_plist = i
+                    .sym_id(&items[0])
+                    .map(|s| i.symbol_name(s).starts_with(':'))
+                    .unwrap_or(false);
+                if is_plist {
+                    // Anonymous face: a plist of attributes.
+                    self.face_plist(i, v, depth + 1)
+                } else {
+                    let mut mix = StyleMix::default();
+                    for it in items.into_iter().rev() {
+                        mix.merge(&self.face_value(i, &it, depth + 1));
+                    }
+                    mix
+                }
+            }
+            _ => StyleMix::default(),
+        }
+    }
+}
+
+/// GNU weight mapping (xfaces.c `face_numeric_weight').
+fn font_weight_value(i: &Interp, v: &Value) -> u16 {
+    let n: i128 = match v {
+        Value::Int(n) => *n,
+        Value::Sym(s) => match i.symbol_name(*s).as_str() {
+            "thin" => 200,
+            "ultra-light" | "extra-light" => 275,
+            "light" => 300,
+            "semi-light" | "book" => 380,
+            "normal" | "regular" => 400,
+            "medium" => 500,
+            "semi-bold" | "demi-bold" | "demibold" => 600,
+            "bold" => 700,
+            "extra-bold" | "ultra-bold" | "extrabold" | "ultrabold" => 800,
+            "black" | "heavy" | "ultra-heavy" => 900,
+            _ => 400,
+        },
+        _ => 400,
+    };
+    n.clamp(100, 900) as u16
+}
+
+fn font_width_percent(i: &Interp, value: &Value) -> Option<u8> {
+    match value {
+        Value::Int(width) => Some((*width).clamp(50, 200) as u8),
+        Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+            "ultra-condensed" => Some(50),
+            "extra-condensed" => Some(62),
+            "condensed" | "compressed" | "narrow" => Some(75),
+            "semi-condensed" | "demi-condensed" => Some(87),
+            "normal" | "medium" | "regular" => Some(100),
+            "semi-expanded" | "demi-expanded" => Some(112),
+            "expanded" => Some(125),
+            "extra-expanded" => Some(150),
+            "ultra-expanded" | "wide" => Some(200),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn font_height_tenths(value: &Value) -> Option<u16> {
+    match value {
+        Value::Int(height) if *height > 0 => u16::try_from(*height).ok(),
+        _ => None,
+    }
+}
+
+fn scale_font_height(base: u16, scale: f64) -> Option<u16> {
+    let height = (f64::from(base) * scale).round();
+    (height >= 1.0 && height <= f64::from(u16::MAX)).then_some(height as u16)
+}
+
+/// GNU slant mapping: italic/oblique slant the text.
+fn slant_italic(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Sym(s) => !matches!(
+            i.symbol_name(*s).as_str(),
+            "normal"
+                | "roman"
+                | "unspecified"
+                | "reverse-oblique"
+                | "reverse-italic"
+                | "reversed-oblique"
+                | "reversed-italic"
+        ),
+        _ => false,
+    }
+}
+
+/// The attributes a face has even with no face_table row.  These
+/// mirror the `(t ...)'/`((type tty) (class mono) ...)' fallbacks in
+/// GNU's defface specs — what `face-spec-set' would leave on a
+/// monochrome tty — for the faces `lisp/faces.el'/`lisp/isearch.el'
+/// define but that aren't booted into `face_table'.
+fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
+    let mut mix = StyleMix::default();
+    match name {
+        "default" => {
+            mix.bold = Some(false);
+            mix.italic = Some(false);
+            mix.underline = Some(false);
+            mix.overline = Some(false);
+            mix.strike = Some(false);
+            mix.inverse = Some(false);
+            mix.extend = Some(false);
+        }
+        "bold" => mix.bold = Some(true),
+        "italic" => mix.italic = Some(true),
+        "bold-italic" => {
+            mix.bold = Some(true);
+            mix.italic = Some(true);
+        }
+        "underline" => mix.underline = Some(true),
+        // faces.el/isearch.el `(t :inverse-video t)' and
+        // `((type tty) (class mono)) :inverse-video t' entries.
+        "isearch"
+        | "isearch-fail"
+        | "highlight"
+        | "secondary-selection"
+        | "trailing-whitespace"
+        | "match"
+        | "query-replace"
+        | "mode-line"
+        | "mode-line-active"
+        | "mode-line-inactive" => mix.inverse = Some(true),
+        "region" => {
+            // GNU's last-resort `(t :background "gray" :extend t)'.
+            mix.bg = Some(Some(CellColor(190, 190, 190)));
+            mix.extend = Some(true);
+        }
+        "lazy-highlight" => mix.underline = Some(true),
+        "isearch-group-1" | "isearch-group-2" => mix.merge(&builtin_face_defaults(i, "isearch")),
+        // `(t (:weight bold))' entries.
+        "mode-line-emphasis" | "mode-line-buffer-id" => mix.bold = Some(true),
+        _ => {}
+    }
+    mix
+}
+
+/// One window's face context for render_grid: the buffer's overlay
+/// faces and `face'/`font-lock-face' text-property runs collected
+/// once per render, and the active-region range.
+struct WindowFaces {
+    /// The window whose redisplay is using these face values.
+    window: Value,
+    /// Buffer-local face replacements. Keep each cdr intact so direct
+    /// composite specs remain distinct from face-remap helper entries.
+    face_remappings: Vec<(crate::lisp::value::SymId, Value)>,
+    /// Overlay snapshots and face values. Precedence is computed for the
+    /// overlays covering each position, including interval containment.
+    overlays: Vec<(crate::buffer::Overlay, Value)>,
+    /// 'face/'font-lock-face' text-property runs: (start, end, value,
+    /// insertion index).  Later-inserted props merge on top (GNU's
+    /// interval "last write wins").
+    prop_faces: Vec<(usize, usize, Value, usize)>,
+    /// The active mouse-face run from the hovered text or overlay.
+    mouse_face: Option<(usize, usize, Value)>,
+    /// The pointer property supplied by the hovered text or overlay.
+    pointer: Option<Value>,
+    /// Newline line-spacing text-property runs.
+    line_spacing_props: Vec<(usize, usize, Value, usize)>,
+    /// Newline line-spacing overlay properties, with window restrictions applied.
+    line_spacing_overlays: Vec<(crate::buffer::Overlay, Value)>,
+    /// Newline line-height text-property runs.
+    line_height_props: Vec<(usize, usize, Value, usize)>,
+    /// Newline line-height overlay properties, with window restrictions applied.
+    line_height_overlays: Vec<(crate::buffer::Overlay, Value)>,
+    /// `help-echo` text-property runs and overlay values for hover tooltips.
+    help_echo_props: Vec<(usize, usize, Value, usize)>,
+    help_echo_overlays: Vec<(crate::buffer::Overlay, Value)>,
+    /// `display` text-property runs; the run is replaced once, at its start.
+    display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
+    composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)>,
+    /// Per-window, per-buffer, and standard display tables in precedence order.
+    display_tables: Vec<Value>,
+    /// Overlay strings positioned at the overlay's start/end boundaries.
+    overlay_strings: HashMap<usize, Vec<String>>,
+    /// Invisible text ranges and visible overlays carrying `invisible`.
+    invisible_overlays: Vec<(crate::buffer::Overlay, Value)>,
+    invisible_props: Vec<(usize, usize, Value)>,
+    invisibility_spec: Value,
+    /// Active region as a half-open range when the mark is active.
+    region: Option<(usize, usize)>,
+    /// Whether this buffer requests trailing whitespace highlighting.
+    show_trailing_whitespace: bool,
+    /// Trailing spaces/tabs on the currently rendered line.
+    trailing_whitespace: Option<Range<usize>>,
+}
+
+#[derive(Clone)]
+struct OverlayStrings {
+    start: usize,
+    end: usize,
+    before: Option<String>,
+    after: Option<String>,
+}
+
+fn window_faces(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    b: &std::rc::Rc<std::cell::RefCell<Buffer>>,
+    win: &Value,
+    mouse_position: Option<MousePosition>,
+) -> WindowFaces {
+    let bb = b.borrow();
+    let mouse_position = mouse_position
+        .filter(|position| position.buffer_id == bb.id)
+        .map(|position| position.buffer_position);
+    // GNU's `redisplay--update-region-highlight' only displays the
+    // region while Transient Mark mode and `mark-active' are both set.
+    // Nonselected windows use their own window point, and are eligible
+    // only when `highlight-nonselected-windows' is non-nil.
+    let region = {
+        let active = i
+            .buffer_local_toplevel_value(ctx.mark_active, bb.id)
+            .or_else(|| i.default_toplevel_value(ctx.mark_active))
+            .or_else(|| bb.locals.get(&ctx.mark_active).cloned())
+            .map(|v| v.truthy())
+            .unwrap_or(false);
+        let transient_mark_mode = buffer_setting(i, "transient-mark-mode", bb.id).truthy();
+        let highlight_nonselected =
+            buffer_setting(i, "highlight-nonselected-windows", bb.id).truthy();
+        let window_present = matches!(win, Value::Window(_));
+        let selected_window = match win {
+            Value::Window(window) => crate::editor::sel_window(i)
+                .is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, window)),
+            _ => false,
+        };
+        let point = match win {
+            Value::Window(_window) if selected_window => bb.point(),
+            Value::Window(window) => window.borrow().point,
+            _ => bb.point(),
+        }
+        .clamp(bb.begv, bb.zv);
+        let mark = bb.mark.as_ref().and_then(|m| {
+            let mm = m.borrow();
+            (mm.buffer == Some(bb.id)).then_some(mm.position)
+        });
+        match (
+            active
+                && transient_mark_mode
+                && window_present
+                && (selected_window || highlight_nonselected),
+            mark,
+        ) {
+            (true, Some(mk)) if mk != point => Some((mk.min(point), mk.max(point))),
+            _ => None,
+        }
+    };
+    let face_remappings = if ctx.face_remapping_alist == u32::MAX {
+        Vec::new()
+    } else {
+        i.buffer_local_toplevel_value(ctx.face_remapping_alist, bb.id)
+            .or_else(|| i.default_toplevel_value(ctx.face_remapping_alist))
+            .or_else(|| bb.locals.get(&ctx.face_remapping_alist).cloned())
+            .and_then(|alist| alist.list_to_vec().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|entry| {
+                let Value::Cons(entry) = entry else {
+                    return None;
+                };
+                let (face, remapping) = {
+                    let entry = entry.borrow();
+                    (entry.car.clone(), entry.cdr.clone())
+                };
+                Some((i.sym_id(&face)?, remapping))
+            })
+            .collect()
+    };
+    // Overlays covering this buffer, for this window (a `window'
+    // property restricts an overlay to one window — lazy-highlight
+    // uses it). Face candidates retain their slot order until point-specific
+    // priority/containment ordering is computed below.
+    let font_lock_enabled = buffer_setting(i, "font-lock-mode", bb.id).truthy();
+    let overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, ov)| {
+            if ov.buffer != Some(bb.id) || ov.start >= ov.end {
+                return false;
+            }
+            ov.matches_window(i, win)
+        })
+        .filter_map(|(_, ov)| {
+            let face = ov.property(i, &Value::Sym(ctx.face));
+            let font_lock_face = if font_lock_enabled {
+                ov.property(i, &Value::Sym(ctx.font_lock_face))
+            } else {
+                Value::Nil
+            };
+            let fv = if font_lock_face.is_nil() {
+                face
+            } else {
+                font_lock_face
+            };
+            if fv.is_nil() {
+                return None;
+            }
+            Some((ov.clone(), fv))
+        })
+        .collect();
+    let invisible_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|ov| ov.buffer == Some(bb.id) && ov.start < ov.end && ov.matches_window(i, win))
+        .filter_map(|overlay| {
+            let value = overlay.property(i, &Value::Sym(ctx.invisible));
+            (!value.is_nil()).then(|| (overlay.clone(), value))
+        })
+        .collect();
+    let help_echo = i.q_soft("help-echo");
+    let help_echo_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| overlay.buffer == Some(bb.id) && overlay.matches_window(i, win))
+        .filter_map(|overlay| {
+            let value = help_echo
+                .map(|property| overlay.property(i, &Value::Sym(property)))
+                .unwrap_or(Value::Nil);
+            (!value.is_nil()).then(|| (overlay.clone(), value))
+        })
+        .collect();
+    let before_string = i.q_soft("before-string");
+    let after_string = i.q_soft("after-string");
+    let mut overlay_strings: Vec<(crate::buffer::Overlay, OverlayStrings)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| overlay.buffer == Some(bb.id) && overlay.matches_window(i, win))
+        .filter_map(|overlay| {
+            let string_value = |property: Option<crate::lisp::value::SymId>| {
+                property.and_then(|property| match overlay.property(i, &Value::Sym(property)) {
+                    Value::Str(value) => Some(value.borrow().to_unicode_lossy()),
+                    _ => None,
+                })
+            };
+            let strings = OverlayStrings {
+                start: overlay.start,
+                end: overlay.end,
+                before: string_value(before_string),
+                after: string_value(after_string),
+            };
+            (strings.before.is_some() || strings.after.is_some())
+                .then(|| (overlay.clone(), strings))
+        })
+        .collect();
+    let mut overlay_order: Vec<_> = overlay_strings
+        .iter()
+        .enumerate()
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
+    let overlay_strings: Vec<OverlayStrings> = overlay_order
+        .into_iter()
+        .map(|(_, index)| overlay_strings[index].1.clone())
+        .collect();
+    let mut ending_strings: HashMap<usize, Vec<String>> = HashMap::new();
+    let mut starting_strings: HashMap<usize, Vec<(Option<String>, Option<String>)>> =
+        HashMap::new();
+    for overlay in overlay_strings {
+        if overlay.start < overlay.end
+            && let Some(after) = &overlay.after
+        {
+            ending_strings
+                .entry(overlay.end)
+                .or_default()
+                .push(after.clone());
+        }
+        let empty_after = (overlay.start == overlay.end)
+            .then(|| overlay.after.clone())
+            .flatten();
+        if overlay.before.is_some() || empty_after.is_some() {
+            starting_strings
+                .entry(overlay.start)
+                .or_default()
+                .push((overlay.before, empty_after));
+        }
+    }
+    let mut overlay_strings = ending_strings;
+    for (position, starts) in starting_strings {
+        let strings = overlay_strings.entry(position).or_default();
+        for (before, after) in starts {
+            if let Some(before) = before {
+                strings.push(before);
+            }
+            if let Some(after) = after {
+                strings.push(after);
+            }
+        }
+    }
+    let properties = bb.text.props.borrow();
+    let prop_faces: Vec<(usize, usize, Value, usize)> = properties
+        .iter()
+        .enumerate()
+        .filter(|(_, tp)| {
+            tp.prop == ctx.face || (font_lock_enabled && tp.prop == ctx.font_lock_face)
+        })
+        .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
+        .collect();
+    let help_echo_props: Vec<(usize, usize, Value, usize)> = help_echo.map_or_else(
+        Vec::new,
+        |property| {
+            properties
+                .iter()
+                .enumerate()
+                .filter(|(_, tp)| tp.prop == property)
+                .map(|(idx, tp)| (tp.start, tp.end, tp.value.clone(), idx))
+                .collect()
+        },
+    );
+    let display_property = i.q_soft("display");
+    let mut display_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
+        display_property.map_or_else(Vec::new, |display| {
+            let mut runs: Vec<(usize, usize, Option<DisplayReplacement>, usize)> = Vec::new();
+            let mut previous_value: Option<&Value> = None;
+            for (idx, property) in properties
+                .iter()
+                .enumerate()
+                .filter(|(_, tp)| tp.prop == display)
+            {
+                let start = property.start.max(bb.begv);
+                let end = property.end.min(bb.zv);
+                if start >= end {
+                    continue;
+                }
+                if let Some(last) = runs.last_mut()
+                    && last.1 == start
+                    && previous_value
+                        .is_some_and(|value| crate::lisp::eq_values(value, &property.value))
+                {
+                    last.1 = end;
+                    continue;
+                }
+                runs.push((
+                    start,
+                    end,
+                    display_value_replacement(i, ctx, &property.value, bb.id),
+                    idx,
+                ));
+                previous_value = Some(&property.value);
+            }
+            runs
+        });
+    if let Some(display_property) = display_property {
+        let overlay_display: Vec<_> = bb
+            .overlays
+            .iter()
+            .filter(|overlay| {
+                overlay.buffer == Some(bb.id)
+                    && overlay.start < overlay.end
+                    && overlay.matches_window(i, win)
+            })
+            .filter_map(|overlay| {
+                let value = overlay.property(i, &Value::Sym(display_property));
+                let replacement = display_value_replacement(i, ctx, &value, bb.id)?;
+                Some((overlay.clone(), replacement))
+            })
+            .collect();
+        let mut order: Vec<_> = overlay_display
+            .iter()
+            .enumerate()
+            .map(|(index, (overlay, _))| (overlay, index))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        let property_count = properties.len();
+        for (priority, (_, index)) in order.into_iter().enumerate() {
+            let (overlay, replacement) = &overlay_display[index];
+            display_props.push((
+                overlay.start,
+                overlay.end,
+                Some(replacement.clone()),
+                property_count + priority,
+            ));
+        }
+    }
+    let composition_props: Vec<(usize, usize, Option<DisplayReplacement>, usize)> =
+        i.q_soft("composition").map_or_else(Vec::new, |composition| {
+            properties
+                .iter()
+                .enumerate()
+                .filter(|(_, tp)| tp.prop == composition)
+                .map(|(idx, tp)| {
+                    (
+                        tp.start,
+                        tp.end,
+                        composition_display_replacement(&tp.value),
+                        idx,
+                    )
+                })
+                .collect()
+        });
+    let invisible_props: Vec<(usize, usize, Value)> = properties
+        .iter()
+        .filter(|tp| tp.prop == ctx.invisible)
+        .map(|tp| (tp.start, tp.end, tp.value.clone()))
+        .collect();
+    let mouse_face_prop = mouse_position.and_then(|position| {
+        properties
+            .iter()
+            .enumerate()
+            .filter(|(_, tp)| {
+                tp.prop == ctx.mouse_face
+                    && !tp.value.is_nil()
+                    && position >= tp.start
+                    && position < tp.end
+            })
+            .max_by_key(|(index, _)| *index)
+            .map(|(_, tp)| (tp.start, tp.end, tp.value.clone()))
+    });
+    let mouse_face_overlay = mouse_position.and_then(|position| {
+        let candidates: Vec<_> = bb
+            .overlays
+            .iter()
+            .enumerate()
+            .filter(|(_, overlay)| {
+                overlay.buffer == Some(bb.id)
+                    && overlay.start <= position
+                    && position < overlay.end
+                    && overlay.matches_window(i, win)
+            })
+            .filter_map(|(slot, overlay)| {
+                let face = overlay.property(i, &Value::Sym(ctx.mouse_face));
+                (!face.is_nil()).then_some((overlay, slot, face))
+            })
+            .collect();
+        let mut order: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .map(|(candidate, (overlay, _, _))| (*overlay, candidate))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        order.last().map(|(_, candidate)| {
+            let (overlay, _, face) = &candidates[*candidate];
+            (overlay.start, overlay.end, face.clone())
+        })
+    });
+    let mouse_face = mouse_face_overlay.or(mouse_face_prop);
+    let pointer_prop = mouse_position.and_then(|position| {
+        properties
+            .iter()
+            .enumerate()
+            .filter(|(_, tp)| {
+                tp.prop == ctx.pointer
+                    && !tp.value.is_nil()
+                    && position >= tp.start
+                    && position < tp.end
+            })
+            .max_by_key(|(index, _)| *index)
+            .map(|(_, tp)| tp.value.clone())
+    });
+    let pointer_overlay = mouse_position.and_then(|position| {
+        let candidates: Vec<_> = bb
+            .overlays
+            .iter()
+            .enumerate()
+            .filter(|(_, overlay)| {
+                overlay.buffer == Some(bb.id)
+                    && overlay.start <= position
+                    && position < overlay.end
+                    && overlay.matches_window(i, win)
+            })
+            .filter_map(|(slot, overlay)| {
+                let shape = overlay.property(i, &Value::Sym(ctx.pointer));
+                (!shape.is_nil()).then_some((overlay, slot, shape))
+            })
+            .collect();
+        let mut order: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .map(|(candidate, (overlay, _, _))| (*overlay, candidate))
+            .collect();
+        crate::buffer::sort_overlays_by_priority(i, &mut order);
+        order.last().map(|(_, candidate)| candidates[*candidate].2.clone())
+    });
+    let pointer = pointer_overlay.or(pointer_prop);
+    let line_spacing_props = properties
+        .iter()
+        .enumerate()
+        .filter(|(_, tp)| tp.prop == ctx.line_spacing)
+        .map(|(index, tp)| (tp.start, tp.end, tp.value.clone(), index))
+        .collect();
+    let line_spacing_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| {
+            overlay.buffer == Some(bb.id)
+                && overlay.start < overlay.end
+                && overlay.matches_window(i, win)
+        })
+        .filter_map(|overlay| {
+            let spacing = overlay.property(i, &Value::Sym(ctx.line_spacing));
+            (!spacing.is_nil()).then(|| (overlay.clone(), spacing))
+        })
+        .collect();
+    let line_height_props = properties
+        .iter()
+        .enumerate()
+        .filter(|(_, tp)| tp.prop == ctx.line_height)
+        .map(|(index, tp)| (tp.start, tp.end, tp.value.clone(), index))
+        .collect();
+    let line_height_overlays: Vec<(crate::buffer::Overlay, Value)> = bb
+        .overlays
+        .iter()
+        .filter(|overlay| {
+            overlay.buffer == Some(bb.id)
+                && overlay.start < overlay.end
+                && overlay.matches_window(i, win)
+        })
+        .filter_map(|overlay| {
+            let height = overlay.property(i, &Value::Sym(ctx.line_height));
+            (!height.is_nil()).then(|| (overlay.clone(), height))
+        })
+        .collect();
+    let invisibility_spec = i
+        .buffer_local_toplevel_value(ctx.buffer_invisibility_spec, bb.id)
+        .or_else(|| i.default_toplevel_value(ctx.buffer_invisibility_spec))
+        .or_else(|| bb.locals.get(&ctx.buffer_invisibility_spec).cloned())
+        .unwrap_or(Value::Nil);
+    let window_display_table = match win {
+        Value::Window(window) => i
+            .q_soft("display-table")
+            .map(|property| crate::lisp::eval::plist_get(&window.borrow().params, property))
+            .unwrap_or(Value::Nil),
+        _ => Value::Nil,
+    };
+    let buffer_display_table = buffer_setting(i, "buffer-display-table", bb.id);
+    let standard_display_table = i
+        .q_soft("standard-display-table")
+        .and_then(|id| i.default_toplevel_value(id))
+        .unwrap_or(Value::Nil);
+    let display_tables = [
+        window_display_table,
+        buffer_display_table,
+        standard_display_table,
+    ]
+    .into_iter()
+    .filter(|table| crate::lisp::builtins::misc::is_char_table(i, table))
+    .collect();
+    WindowFaces {
+        window: win.clone(),
+        face_remappings,
+        overlays,
+        prop_faces,
+        mouse_face,
+        pointer,
+        line_spacing_props,
+        line_spacing_overlays,
+        line_height_props,
+        line_height_overlays,
+        help_echo_props,
+        help_echo_overlays,
+        display_props,
+        composition_props,
+        display_tables,
+        overlay_strings,
+        invisible_overlays,
+        invisible_props,
+        invisibility_spec,
+        region,
+        show_trailing_whitespace: buffer_setting(i, "show-trailing-whitespace", bb.id).truthy(),
+        trailing_whitespace: None,
+    }
+}
+
+fn overlay_strings_at(faces: &WindowFaces, position: usize) -> Vec<String> {
+    faces
+        .overlay_strings
+        .get(&position)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn help_echo_at(i: &Interp, faces: &WindowFaces, position: usize) -> Option<String> {
+    let mut overlays: Vec<_> = faces
+        .help_echo_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| position >= overlay.start && position < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    for (_, index) in overlays.into_iter().rev() {
+        let value = &faces.help_echo_overlays[index].1;
+        if let Value::Str(text) = value {
+            return Some(text.borrow().to_unicode_lossy());
+        }
+    }
+    faces
+        .help_echo_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| insertion)
+        .and_then(|(_, _, value, _)| match value {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        })
+}
+
+fn line_spacing_pixels(value: &Value, default_line_height: usize) -> Option<usize> {
+    match value {
+        Value::Int(pixels) => Some(usize::try_from((*pixels).max(0)).unwrap_or(usize::MAX)),
+        Value::Float(ratio) if ratio.is_finite() => {
+            let pixels = (ratio.max(0.0) * default_line_height as f64).round();
+            Some(pixels.min(usize::MAX as f64) as usize)
+        }
+        _ => None,
+    }
+}
+
+fn line_spacing_at_pos(
+    i: &Interp,
+    faces: &WindowFaces,
+    position: usize,
+    default_spacing: usize,
+    default_line_height: usize,
+) -> usize {
+    let mut overlays: Vec<_> = faces
+        .line_spacing_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| position >= overlay.start && position < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    let overlay_spacing = overlays
+        .last()
+        .and_then(|(_, index)| {
+            line_spacing_pixels(
+                &faces.line_spacing_overlays[*index].1,
+                default_line_height,
+            )
+        });
+    let property_spacing = faces
+        .line_spacing_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| *insertion)
+        .and_then(|(_, _, value, _)| line_spacing_pixels(value, default_line_height));
+    default_spacing.max(overlay_spacing.or(property_spacing).unwrap_or(default_spacing))
+}
+
+#[derive(Clone, Copy)]
+enum LineHeightProperty {
+    ContentsOnly,
+    Minimum(usize),
+    Total(usize),
+}
+
+fn height_spec_pixels(value: &Value, default_line_height: usize) -> Option<usize> {
+    match value {
+        Value::Int(height) if *height > 0 => usize::try_from(*height).ok(),
+        Value::Float(ratio) if (**ratio).is_finite() && **ratio > 0.0 => {
+            Some((**ratio * default_line_height as f64).round().min(usize::MAX as f64) as usize)
+        }
+        Value::Cons(_) => {
+            let Value::Cons(cons) = value else {
+                unreachable!()
+            };
+            let (face, ratio) = {
+                let cons = cons.borrow();
+                (cons.car.clone(), cons.cdr.clone())
+            };
+            let ratio = match ratio {
+                Value::Nil => 1.0,
+                Value::Int(ratio) => ratio as f64,
+                Value::Float(ratio) => *ratio,
+                _ => return None,
+            };
+            let _ = face;
+            (ratio.is_finite() && ratio > 0.0).then(|| {
+                (ratio * default_line_height as f64)
+                    .round()
+                    .min(usize::MAX as f64) as usize
+            })
+        }
+        _ => None,
+    }
+}
+
+fn line_height_property(value: &Value, default_line_height: usize) -> Option<LineHeightProperty> {
+    if matches!(value, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
+        return Some(LineHeightProperty::ContentsOnly);
+    }
+    if let Value::Cons(_) = value
+        && let Ok(items) = value.list_to_vec()
+        && items.len() == 2
+        && let Some(total) = height_spec_pixels(&items[1], default_line_height)
+    {
+        return Some(LineHeightProperty::Total(total));
+    }
+    height_spec_pixels(value, default_line_height).map(LineHeightProperty::Minimum)
+}
+
+fn line_height_at_pos(
+    i: &Interp,
+    faces: &WindowFaces,
+    position: usize,
+    default_line_height: usize,
+) -> Option<LineHeightProperty> {
+    let mut overlays: Vec<_> = faces
+        .line_height_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| position >= overlay.start && position < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    let overlay_value = overlays
+        .last()
+        .map(|(_, index)| &faces.line_height_overlays[*index].1);
+    let property_value = faces
+        .line_height_props
+        .iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| *insertion)
+        .map(|(_, _, value, _)| value);
+    overlay_value
+        .or(property_value)
+        .and_then(|value| line_height_property(value, default_line_height))
+}
+
+fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
+    i.q_soft(name)
+        .map(|property| crate::lisp::eval::plist_get(plist, property))
+        .unwrap_or(Value::Nil)
+}
+
+fn image_dimension(value: Value) -> Option<usize> {
+    match value {
+        Value::Int(n) if n > 0 => usize::try_from(n).ok(),
+        _ => None,
+    }
+}
+
+fn svg_pixel_dimension(value: &[u8]) -> Option<usize> {
+    let value = std::str::from_utf8(value).ok()?.trim();
+    let numeric_end = value
+        .char_indices()
+        .find(|(_, character)| {
+            !character.is_ascii_digit() && !matches!(character, '.' | '+' | '-' | 'e' | 'E')
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(value.len());
+    let number = value[..numeric_end].parse::<f64>().ok()?;
+    if !number.is_finite() || number <= 0.0 {
+        return None;
+    }
+    let pixels = match value[numeric_end..].trim() {
+        "" | "px" => number,
+        "pt" => number * (96.0 / 72.0),
+        "pc" => number * 16.0,
+        "in" => number * 96.0,
+        "cm" => number * (96.0 / 2.54),
+        "mm" => number * (96.0 / 25.4),
+        _ => return None,
+    };
+    (pixels < usize::MAX as f64).then_some(pixels.round() as usize)
+}
+
+fn svg_intrinsic_dimensions(bytes: &[u8]) -> (Option<usize>, Option<usize>) {
+    use quick_xml::events::Event;
+
+    let Ok(source) = std::str::from_utf8(bytes) else {
+        return (None, None);
+    };
+    let mut reader = quick_xml::Reader::from_str(source);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element))
+                if element
+                    .name()
+                    .as_ref()
+                    .rsplit(|byte| *byte == b':')
+                    .next()
+                    == Some(b"svg".as_slice()) =>
+            {
+                let mut width = None;
+                let mut height = None;
+                for attribute in element.attributes().flatten() {
+                    match attribute.key.as_ref() {
+                        b"width" => width = svg_pixel_dimension(attribute.value.as_ref()),
+                        b"height" => height = svg_pixel_dimension(attribute.value.as_ref()),
+                        _ => {}
+                    }
+                }
+                return (width, height);
+            }
+            Ok(Event::Eof) | Err(_) => return (None, None),
+            _ => {}
+        }
+    }
+}
+
+fn read_stipple_file(i: &Interp, file: &EmacsStr, default_directory: &EmacsStr) -> Option<GridStipple> {
+    let path = i.q_soft("x-bitmap-file-path")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    let mut directories = Vec::new();
+    if path.is_nil() {
+        directories.push(default_directory.to_string());
+    } else {
+        let mut cursor = path;
+        let mut visited = HashSet::new();
+        while let Value::Cons(cell) = cursor {
+            if !visited.insert(std::rc::Rc::as_ptr(&cell) as usize) {
+                break;
+            }
+            let (directory, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            let directory = match directory {
+                Value::Str(directory) => {
+                    crate::editor::expand_against_dir(i, &directory.borrow(), default_directory)
+                }
+                Value::Nil => default_directory.to_string(),
+                _ => EmacsText::from("/"),
+            };
+            directories.push(directory);
+            cursor = next;
+        }
+    }
+    let mut searched = HashSet::new();
+    for directory in directories {
+        let filename = crate::editor::expand_against_dir(i, file, &directory);
+        // GNU openp strips the local-file quoting prefix at the OS boundary.
+        let filename = filename.strip_prefix("/:").unwrap_or(&filename);
+        let Ok(native) = filename.to_os_string() else {
+            continue;
+        };
+        let path = std::path::PathBuf::from(native);
+        if !searched.insert(path.clone()) || !path.is_file() {
+            continue;
+        }
+        let Ok(contents) = std::fs::read(path) else {
+            continue;
+        };
+        // A readable file earlier in the search path shadows later entries,
+        // even if its contents are not a valid bitmap.
+        let bitmap = super::bitmap::parse_xbm(&contents)?;
+        return Some(GridStipple {
+            width: bitmap.width,
+            height: bitmap.height,
+            data: Arc::from(bitmap.data),
+        });
+    }
+    None
+}
+
+fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {
+    let file = file.to_unicode_lossy();
+    let path = std::path::Path::new(&file);
+    if path.is_absolute() {
+        return file;
+    }
+    let default_directory = i
+        .q_soft("default-directory")
+        .and_then(|id| {
+            i.buffer_local_toplevel_value(id, buffer_id)
+                .or_else(|| i.default_toplevel_value(id))
+        })
+        .and_then(|value| match value {
+            Value::Str(directory) => Some(directory.borrow().to_unicode_lossy()),
+            _ => None,
+        });
+    match default_directory {
+        Some(directory) => std::path::Path::new(&directory)
+            .join(path)
+            .to_string_lossy()
+            .into_owned(),
+        None => file,
+    }
+}
+
+fn append_image_load_path_directories(
+    i: &Interp,
+    buffer_id: usize,
+    value: Value,
+    directories: &mut Vec<String>,
+    visited: &mut HashSet<usize>,
+    depth: usize,
+) {
+    if depth > 16 {
+        return;
+    }
+    match value {
+        Value::Str(directory) => {
+            directories.push(image_file_for_buffer(i, buffer_id, &directory.borrow()));
+        }
+        Value::Sym(symbol) => append_image_load_path_directories(
+            i,
+            buffer_id,
+            i.symbol_value(symbol),
+            directories,
+            visited,
+            depth + 1,
+        ),
+        Value::Cons(cell) => {
+            let mut cursor = Value::Cons(cell);
+            let mut entered = Vec::new();
+            while let Value::Cons(cell) = cursor {
+                let identity = std::rc::Rc::as_ptr(&cell) as usize;
+                if !visited.insert(identity) {
+                    break;
+                }
+                entered.push(identity);
+                let (car, cdr) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                append_image_load_path_directories(
+                    i,
+                    buffer_id,
+                    car,
+                    directories,
+                    visited,
+                    depth + 1,
+                );
+                cursor = cdr;
+            }
+            for identity in entered {
+                visited.remove(&identity);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn image_file_from_load_path(i: &Interp, buffer_id: usize, file: &EmacsStr) -> Option<String> {
+    let file_name = file.to_unicode_lossy();
+    if std::path::Path::new(&file_name).is_absolute() {
+        return Some(file_name);
+    }
+    let image_load_path = i.q_soft("image-load-path")?;
+    let mut directories = Vec::new();
+    append_image_load_path_directories(
+        i,
+        buffer_id,
+        i.symbol_value(image_load_path),
+        &mut directories,
+        &mut HashSet::new(),
+        0,
+    );
+    directories.into_iter().find_map(|directory| {
+        let candidate = std::path::Path::new(&directory).join(&file_name);
+        (candidate.is_file() && std::fs::File::open(&candidate).is_ok())
+            .then(|| candidate.to_string_lossy().into_owned())
+    })
+}
+
+fn image_file_for_buffer_or_load_path(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {
+    image_file_from_load_path(i, buffer_id, file)
+        .unwrap_or_else(|| image_file_for_buffer(i, buffer_id, file))
+}
+
+fn svg_image_stylesheet(i: &Interp, plist: &Value) -> Option<String> {
+    let css = match image_property(i, plist, ":css") {
+        Value::Str(css) => Some(css.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+    let foreground = match image_property(i, plist, ":foreground") {
+        Value::Str(foreground) => Some(foreground.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+
+    match (css, foreground) {
+        (Some(mut css), Some(foreground)) => {
+            css.push_str("\nsvg { color: ");
+            css.push_str(&foreground);
+            css.push_str("; }\n");
+            Some(css)
+        }
+        (Some(css), None) => Some(css),
+        (None, Some(foreground)) => Some(format!("svg {{ color: {foreground}; }}")),
+        (None, None) => None,
+    }
+}
+
+fn image_display_replacement(
+    i: &Interp,
+    value: &Value,
+    buffer_id: usize,
+) -> Option<DisplayReplacement> {
+    let Value::Cons(cell) = value else {
+        return None;
+    };
+    let (head, plist) = {
+        let cell = cell.borrow();
+        (cell.car.clone(), cell.cdr.clone())
+    };
+    if !matches!(head, Value::Sym(id) if i.symbol_name(id) == "image") {
+        return None;
+    }
+
+    let width = image_dimension(image_property(i, &plist, ":width"));
+    let height = image_dimension(image_property(i, &plist, ":height"));
+    let masked = !image_property(i, &plist, ":mask").is_nil();
+    let file = image_property(i, &plist, ":file");
+    if let Value::Str(file) = file {
+        let path = image_file_for_buffer_or_load_path(i, buffer_id, &file.borrow());
+        let declared_svg =
+            matches!(image_property(i, &plist, ":type"), Value::Sym(id) if i.symbol_name(id) == "svg");
+        let is_svg = declared_svg || path.to_ascii_lowercase().ends_with(".svg");
+        let base_uri = if is_svg {
+            match image_property(i, &plist, ":base-uri") {
+                Value::Str(base_uri) => Some(image_file_for_buffer(
+                    i,
+                    buffer_id,
+                    &base_uri.borrow(),
+                )),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let css = if is_svg {
+            svg_image_stylesheet(i, &plist)
+        } else {
+            None
+        };
+        let source = if base_uri.is_some() || css.is_some() {
+            GridImageSource::FileWithSvgOptions {
+                path,
+                base_uri,
+                css,
+            }
+        } else {
+            GridImageSource::File(path)
+        };
+        return Some(DisplayReplacement::Image {
+            source,
+            width,
+            height,
+            masked,
+            intrinsic_width: None,
+            intrinsic_height: None,
+        });
+    }
+
+    let data = image_property(i, &plist, ":data");
+    let Value::Str(data) = data else {
+        return None;
+    };
+    let Value::Sym(format) = image_property(i, &plist, ":type") else {
+        return None;
+    };
+    let format = i.symbol_name(format).to_lowercase();
+    if !matches!(
+        format.as_str(),
+        "png" | "jpeg" | "jpg" | "webp" | "gif" | "svg" | "bmp" | "tiff" | "tif"
+    ) {
+        return None;
+    }
+    let bytes = if format == "svg" {
+        data.borrow()
+            .chars()
+            .try_fold(Vec::new(), |mut bytes, character| {
+                if let Some(byte) = character.byte8() {
+                    bytes.push(byte);
+                } else if let Some(unicode) = character.unicode() {
+                    let mut encoded = [0; 4];
+                    bytes.extend_from_slice(unicode.encode_utf8(&mut encoded).as_bytes());
+                } else if let Ok(byte) = u8::try_from(character.code()) {
+                    bytes.push(byte);
+                } else {
+                    return None;
+                }
+                Some(bytes)
+            })?
+    } else {
+        data.borrow()
+            .chars()
+            .map(|character| {
+                character
+                    .byte8()
+                    .or_else(|| u8::try_from(character.code()).ok())
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
+    let base_uri = if format == "svg" {
+        match image_property(i, &plist, ":base-uri") {
+            Value::Str(base_uri) => Some(image_file_for_buffer(
+                i,
+                buffer_id,
+                &base_uri.borrow(),
+            )),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let css = if format == "svg" {
+        svg_image_stylesheet(i, &plist)
+    } else {
+        None
+    };
+    let (intrinsic_width, intrinsic_height) = if format == "svg" {
+        svg_intrinsic_dimensions(&bytes)
+    } else {
+        (None, None)
+    };
+    let bytes = Arc::<[u8]>::from(bytes);
+    let source = if css.is_some() {
+        GridImageSource::DataWithSvgOptions {
+            format,
+            bytes,
+            base_uri,
+            css,
+        }
+    } else if let Some(base_uri) = base_uri {
+        GridImageSource::DataWithBaseUri {
+            format,
+            bytes,
+            base_uri,
+        }
+    } else {
+        GridImageSource::Data { format, bytes }
+    };
+    Some(DisplayReplacement::Image {
+        source,
+        width,
+        height,
+        masked,
+        intrinsic_width,
+        intrinsic_height,
+    })
+}
+
+fn display_value_replacement(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    value: &Value,
+    buffer_id: usize,
+) -> Option<DisplayReplacement> {
+    if let Value::Cons(spec) = value {
+        let (head, tail) = {
+            let spec = spec.borrow();
+            (spec.car.clone(), spec.cdr.clone())
+        };
+        if let Value::Sym(head) = head {
+            let name = i.symbol_name(head);
+            if matches!(name.as_str(), "left-fringe" | "right-fringe") {
+                let Value::Cons(arguments) = tail else {
+                    return None;
+                };
+                let (bitmap, tail) = {
+                    let arguments = arguments.borrow();
+                    (arguments.car.clone(), arguments.cdr.clone())
+                };
+                let bitmap = i
+                    .sym_id(&bitmap)
+                    .and_then(|symbol| {
+                        i.q_soft("fringe")
+                            .map(|property| i.get_prop(symbol, property))
+                    })
+                    .and_then(|index| index.int())
+                    .and_then(|index| usize::try_from(index).ok())
+                    .filter(|index| super::fringe::defined(*index));
+                let Some(bitmap) = bitmap else {
+                    return Some(DisplayReplacement::Hidden);
+                };
+                let mut style = faces.builtin(i, "default", 0);
+                style.merge(&faces.builtin(i, "fringe", 0));
+                if let Value::Cons(face) = tail {
+                    style.merge(&faces.face_value(i, &face.borrow().car, 0));
+                }
+                return Some(DisplayReplacement::Fringe(RenderedFringe {
+                    left: name == "left-fringe",
+                    bitmap,
+                    style: style.finish(),
+                }));
+            }
+        }
+    }
+    match value {
+        Value::Str(string) => Some(DisplayReplacement::Text(string.borrow().to_unicode_lossy())),
+        _ => image_display_replacement(i, value, buffer_id),
+    }
+}
+
+fn display_replacement_at(
+    faces: &WindowFaces,
+    position: usize,
+) -> Option<DisplayReplacement> {
+    fn from_property_run(
+        properties: &[(usize, usize, Option<DisplayReplacement>, usize)],
+        position: usize,
+    ) -> Option<DisplayReplacement> {
+        let (start, _, replacement, _) = properties
+            .iter()
+            .filter(|(start, end, _, _)| position >= *start && position < *end)
+            .max_by_key(|(_, _, _, insertion)| insertion)?;
+        let replacement = replacement.as_ref()?;
+        if position == *start {
+            Some(replacement.clone())
+        } else {
+            Some(DisplayReplacement::Hidden)
+        }
+    }
+
+    from_property_run(&faces.display_props, position)
+        .or_else(|| from_property_run(&faces.composition_props, position))
+}
+
+fn composition_display_replacement(value: &Value) -> Option<DisplayReplacement> {
+    let Value::Cons(outer) = value else {
+        return None;
+    };
+    let composition_spec = outer.borrow().car.clone();
+    let (width, components) = match composition_spec {
+        Value::Int(width) => (usize::try_from(width).ok()?, Value::Nil),
+        Value::Cons(spec) => {
+            let spec = spec.borrow();
+            let Value::Int(width) = &spec.car else {
+                return None;
+            };
+            (usize::try_from(*width).ok()?, spec.cdr.clone())
+        }
+        _ => return None,
+    };
+    if width == 0 {
+        return None;
+    }
+    if components.is_nil() {
+        return Some(DisplayReplacement::CompositionDefault(width));
+    }
+    let mut text = String::new();
+    fn append_character(text: &mut String, value: &Value) {
+        if let Value::Int(code) = value
+            && let Ok(code) = u32::try_from(*code)
+            && let Some(character) = EmacsChar::new(code).and_then(EmacsChar::unicode)
+        {
+            text.push(character);
+        }
+    }
+    match components {
+        Value::Int(code) => {
+            let code = u32::try_from(code).ok()?;
+            text.push(EmacsChar::new(code)?.unicode().unwrap_or('\u{fffd}'));
+        }
+        Value::Str(string) => text.push_str(&string.borrow().to_unicode_lossy()),
+        Value::Vec(vector) => {
+            for component in vector.borrow().iter() {
+                append_character(&mut text, component);
+            }
+        }
+        Value::Cons(_) => {
+            let components = components.list_to_vec().ok()?;
+            for component in &components {
+                append_character(&mut text, component);
+            }
+        }
+        _ => return None,
+    }
+    (!text.is_empty()).then_some(DisplayReplacement::Text(text))
+}
+
+fn raw_byte_text(i: &Interp, buffer_id: usize, byte: u8) -> String {
+    if buffer_setting(i, "display-raw-bytes-as-hex", buffer_id).truthy() {
+        format!("\\x{byte:02x}")
+    } else {
+        format!("\\{byte:03o}")
+    }
+}
+
+fn emacs_character_display_text(i: &Interp, buffer_id: usize, character: EmacsChar) -> String {
+    if let Some(byte) = character.byte8() {
+        raw_byte_text(i, buffer_id, byte)
+    } else {
+        character.unicode().unwrap_or('\u{fffd}').to_string()
+    }
+}
+
+fn display_table_text(i: &Interp, buffer_id: usize, value: &Value) -> Option<String> {
+    fn append_character(i: &Interp, buffer_id: usize, text: &mut String, value: &Value) {
+        if let Value::Int(code) = value
+            && let Ok(code) = u32::try_from(*code)
+            && let Some(character) = EmacsChar::new(code)
+        {
+            text.push_str(&emacs_character_display_text(i, buffer_id, character));
+        }
+    }
+    match value {
+        Value::Int(code) => {
+            let code = u32::try_from(*code).ok()?;
+            Some(emacs_character_display_text(i, buffer_id, EmacsChar::new(code)?))
+        }
+        Value::Str(string) => Some(
+            string
+                .borrow()
+                .chars()
+                .map(|character| emacs_character_display_text(i, buffer_id, character))
+                .collect(),
+        ),
+        Value::Vec(vector) => {
+            let mut text = String::new();
+            for character in vector.borrow().iter() {
+                append_character(i, buffer_id, &mut text, character);
+            }
+            Some(text)
+        }
+        Value::Cons(_) => {
+            let characters = value.list_to_vec().ok()?;
+            let mut text = String::new();
+            for character in &characters {
+                append_character(i, buffer_id, &mut text, character);
+            }
+            Some(text)
+        }
+        _ => None,
+    }
+}
+
+fn display_table_replacement(
+    i: &Interp,
+    buffer_id: usize,
+    faces: &WindowFaces,
+    character: EmacsChar,
+) -> Option<DisplayReplacement> {
+    for table in &faces.display_tables {
+        let replacement =
+            crate::lisp::builtins::misc::char_table_ref(i, table, character.code() as usize);
+        if replacement.is_nil() {
+            continue;
+        }
+        if let Some(text) = display_table_text(i, buffer_id, &replacement) {
+            return Some(DisplayReplacement::Text(text));
+        }
+    }
+    None
+}
+
+fn raw_byte_replacement(
+    i: &Interp,
+    buffer_id: usize,
+    character: EmacsChar,
+) -> Option<DisplayReplacement> {
+    character
+        .byte8()
+        .map(|byte| DisplayReplacement::Text(raw_byte_text(i, buffer_id, byte)))
+}
+
+fn glyphless_display_replacement(
+    i: &Interp,
+    buffer_id: usize,
+    character: EmacsChar,
+    graphical: bool,
+    glyphless_style: CellStyle,
+) -> Option<DisplayReplacement> {
+    let table = buffer_setting(i, "glyphless-char-display", buffer_id);
+    if !crate::lisp::builtins::misc::is_char_table(i, &table) {
+        return None;
+    }
+    let value = crate::lisp::builtins::misc::char_table_ref(
+        i,
+        &table,
+        character.code() as usize,
+    );
+    if value.is_nil() {
+        return None;
+    }
+
+    let value = match value {
+        Value::Cons(pair) => {
+            let pair = pair.borrow();
+            if graphical {
+                pair.car.clone()
+            } else {
+                pair.cdr.clone()
+            }
+        }
+        value => value,
+    };
+    if value.is_nil() {
+        return None;
+    }
+
+    let (text, boxed) = match value {
+        Value::Str(string) => (string.borrow().to_unicode_lossy(), true),
+        Value::Sym(method) => match i.symbol_name(method).as_str() {
+            "zero-width" => return Some(DisplayReplacement::Hidden),
+            "thin-space" => (" ".to_owned(), false),
+            "empty-box" => (" ".to_owned(), true),
+            "hex-code" => (format!("{:X}", character.code()), true),
+            "acronym" | "bidi-control" => {
+                let acronym = i
+                    .q_soft("char-acronym-table")
+                    .map(|id| i.symbol_value(id))
+                    .map(|table| {
+                        crate::lisp::builtins::misc::char_table_ref(
+                            i,
+                            &table,
+                            character.code() as usize,
+                        )
+                    })
+                    .and_then(|value| match value {
+                        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "UNK".to_owned());
+                (acronym, true)
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    if graphical {
+        let mut style = glyphless_style;
+        if boxed && style.box_style.is_none() {
+            style.box_style = Some(BoxStyle {
+                vertical_width: 1,
+                horizontal_width: 1,
+                color: style.fg,
+                kind: BoxStyleKind::Flat,
+            });
+        }
+        Some(DisplayReplacement::GlyphlessText(text, style))
+    } else if boxed {
+        Some(DisplayReplacement::Text(format!("[{text}]")))
+    } else {
+        Some(DisplayReplacement::Text(text))
+    }
+}
+
+fn nobreak_char_face(nobreak_display: &Value, character: EmacsChar) -> Option<&'static str> {
+    if nobreak_display.is_nil() {
+        return None;
+    }
+    let code = character.code();
+    let space = matches!(
+        code,
+        0x00a0 | 0x1680 | 0x2000..=0x200a | 0x202f | 0x205f | 0x3000
+    );
+    let hyphen = matches!(code, 0x00ad | 0x2010 | 0x2011);
+    if !space && !hyphen {
+        return None;
+    }
+    if matches!(nobreak_display, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T)
+    {
+        Some(if space {
+            "nobreak-space"
+        } else {
+            "nobreak-hyphen"
+        })
+    } else {
+        Some("escape-glyph")
+    }
+}
+
+fn nobreak_char_replacement(
+    nobreak_display: &Value,
+    character: EmacsChar,
+) -> Option<DisplayReplacement> {
+    if nobreak_display.is_nil() {
+        return None;
+    }
+    let code = character.code();
+    let space = matches!(
+        code,
+        0x00a0 | 0x1680 | 0x2000..=0x200a | 0x202f | 0x205f | 0x3000
+    );
+    let hyphen = matches!(code, 0x00ad | 0x2010 | 0x2011);
+    if !space && !hyphen {
+        return None;
+    }
+    let escaped = !matches!(
+        nobreak_display,
+        Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T
+    );
+    if escaped {
+        Some(DisplayReplacement::Text(if space {
+            "\\ ".to_owned()
+        } else {
+            "\\-".to_owned()
+        }))
+    } else if code == 0x00ad {
+        Some(DisplayReplacement::Text("-".to_owned()))
+    } else {
+        None
+    }
+}
+
+fn ctl_arrow_replacement(character: EmacsChar, ctl_arrow: bool) -> Option<DisplayReplacement> {
+    let code = character.code();
+    if !ctl_arrow || (code >= 0x20 && code != 0x7f) || matches!(code, 0x09 | 0x0a) {
+        return None;
+    }
+    let caret = char::from_u32(code ^ 0x40)?;
+    Some(DisplayReplacement::Text(format!("^{caret}")))
+}
+
+fn invisibility_for_property(property: &Value, spec: &Value) -> Visibility {
+    if matches!(spec, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
+        return if property.is_nil() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    fn match_spec(property: &Value, spec: &Value) -> Option<Visibility> {
+        let mut tail = spec.clone();
+        while let Value::Cons(cell) = tail {
+            let (entry, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if crate::lisp::builtins::eq_values(property, &entry) {
+                return Some(Visibility::Hidden);
+            }
+            if let Value::Cons(pair) = &entry {
+                let pair = pair.borrow();
+                if crate::lisp::builtins::eq_values(property, &pair.car) {
+                    return Some(if pair.cdr.is_nil() {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Ellipsis
+                    });
+                }
+            }
+            tail = next;
+        }
+        None
+    }
+
+    if let Some(visibility) = match_spec(property, spec) {
+        return visibility;
+    }
+    let mut property_tail = property.clone();
+    while let Value::Cons(cell) = property_tail {
+        let (element, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        if let Some(visibility) = match_spec(&element, spec) {
+            return visibility;
+        }
+        property_tail = next;
+    }
+    Visibility::Visible
+}
+
+fn visibility_at_pos(i: &Interp, faces: &WindowFaces, pos: usize) -> Visibility {
+    let mut overlays: Vec<_> = faces
+        .invisible_overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| pos >= overlay.start && pos < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    if let Some((_, index)) = overlays.into_iter().next_back() {
+        return invisibility_for_property(
+            &faces.invisible_overlays[index].1,
+            &faces.invisibility_spec,
+        );
+    }
+    if let Some((_, _, property)) = faces
+        .invisible_props
+        .iter()
+        .rev()
+        .find(|(start, end, _)| pos >= *start && pos < *end)
+    {
+        return invisibility_for_property(property, &faces.invisibility_spec);
+    }
+    Visibility::Visible
+}
+
+/// The merged face style for buffer position POS under WF.  GNU
+/// `compute_char_face' order: `default' seeds, the active `region'
+/// face, then text-property faces (insertion order — last write
+/// wins), then overlays in ascending priority.
+fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> CellStyle {
+    style_at_pos_with_named_face(i, ctx, wf, pos, None)
+}
+
+fn echo_message_style(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    properties: &[(usize, usize, Vec<Value>)],
+    position: usize,
+) -> CellStyle {
+    let face = ctx.face;
+    let font_lock_face = ctx.font_lock_face;
+    let mut mix = ctx.builtin(i, "default", 0);
+    for (_, _, plist) in properties
+        .iter()
+        .filter(|(start, end, _)| position >= *start && position < *end)
+    {
+        for pair in plist.chunks_exact(2) {
+            let Some(property) = i.sym_id(&pair[0]) else {
+                continue;
+            };
+            if property == face || property == font_lock_face {
+                mix.merge(&ctx.face_value(i, &pair[1], 0));
+            }
+        }
+    }
+    mix.finish()
+}
+
+fn style_at_pos_with_named_face(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    wf: &WindowFaces,
+    pos: usize,
+    extra_face: Option<&str>,
+) -> CellStyle {
+    let mut mix = remapped_named_face(i, ctx, wf, "default", 0);
+    if let Some((rs, re)) = wf.region {
+        if pos >= rs && pos < re {
+            mix.merge(&remapped_named_face(i, ctx, wf, "region", 0));
+        }
+    }
+    for (s, e, v, _) in &wf.prop_faces {
+        if pos >= *s && pos < *e {
+            let v = v.clone();
+            mix.merge(&face_value_with_remapping(
+                i,
+                ctx,
+                wf,
+                &v,
+                0,
+                &mut Vec::new(),
+            ));
+        }
+    }
+    let mut overlays: Vec<_> = wf
+        .overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, (overlay, _))| pos >= overlay.start && pos < overlay.end)
+        .map(|(index, (overlay, _))| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlays);
+    for (_, index) in overlays {
+        let face = wf.overlays[index].1.clone();
+        mix.merge(&face_value_with_remapping(
+            i,
+            ctx,
+            wf,
+            &face,
+            0,
+            &mut Vec::new(),
+        ));
+    }
+    if wf.show_trailing_whitespace
+        && wf
+            .trailing_whitespace
+            .as_ref()
+            .is_some_and(|range| pos >= range.start && pos < range.end)
+    {
+        mix.merge(&remapped_named_face(i, ctx, wf, "trailing-whitespace", 0));
+    }
+    if let Some((start, end, face)) = &wf.mouse_face
+        && pos >= *start
+        && pos < *end
+    {
+        let mut mouse_face = face_value_with_remapping(i, ctx, wf, face, 0, &mut Vec::new());
+        // GNU keeps the underlying text metrics while applying mouse-face.
+        mouse_face.font_family = None;
+        mouse_face.font_weight = None;
+        mouse_face.font_width = None;
+        mouse_face.font_height = None;
+        mouse_face.bold = None;
+        mouse_face.italic = None;
+        mix.merge(&mouse_face);
+    }
+    if let Some(face) = extra_face {
+        mix.merge(&remapped_named_face(i, ctx, wf, face, 0));
+    }
+    mix.finish()
+}
+
+/// Return the face specs in a `face-remap-add-relative' entry in the
+/// order the renderer must merge them. The helper stores relative specs
+/// before the base face, while the base has the lowest priority.
+fn face_remapping_specs(
+    i: &Interp,
+    remapping: &Value,
+    face: crate::lisp::value::SymId,
+) -> (Vec<Value>, bool) {
+    let Ok(specs) = remapping.list_to_vec() else {
+        return (vec![remapping.clone()], false);
+    };
+    let is_plist = specs
+        .first()
+        .and_then(|value| i.sym_id(value))
+        .is_some_and(|symbol| i.symbol_name(symbol).starts_with(':'));
+    if is_plist {
+        return (vec![remapping.clone()], false);
+    }
+    let is_relative_sequence =
+        specs.len() > 1 && matches!(specs.last(), Some(Value::Sym(symbol)) if *symbol == face);
+    if is_relative_sequence {
+        (specs, true)
+    } else {
+        (vec![remapping.clone()], false)
+    }
+}
+
+fn remapped_named_face(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    faces: &WindowFaces,
+    name: &str,
+    depth: u32,
+) -> StyleMix {
+    if let Some(face) = i.intern_soft(name) {
+        face_value_with_remapping(i, ctx, faces, &Value::Sym(face), depth, &mut Vec::new())
+    } else {
+        ctx.builtin(i, name, depth)
+    }
+}
+
+fn filtered_face_spec(i: &Interp, value: &Value) -> Option<(Value, Value)> {
+    let Value::Cons(_) = value else {
+        return None;
+    };
+    let items = value.list_to_vec().ok()?;
+    if items.len() != 3
+        || !i
+            .sym_id(&items[0])
+            .is_some_and(|symbol| i.symbol_name(symbol) == ":filtered")
+    {
+        return None;
+    }
+    Some((items[1].clone(), items[2].clone()))
+}
+
+fn face_filter_matches(i: &Interp, filter: &Value, window: &Value) -> bool {
+    if i.q_soft("face-filters-always-match")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+    {
+        return true;
+    }
+    let Value::Window(window) = window else {
+        return false;
+    };
+    let Ok(items) = filter.list_to_vec() else {
+        return false;
+    };
+    if items.len() != 3
+        || !i
+            .sym_id(&items[0])
+            .is_some_and(|symbol| i.symbol_name(symbol) == ":window")
+    {
+        return false;
+    }
+    let parameters = window.borrow().params.clone();
+    let actual = crate::lisp::eval::plist_get_v(&parameters, &items[1]);
+    crate::lisp::builtins::eq_values_with_interp(i, &actual, &items[2])
+}
+
+/// Resolve a face spec while replacing named faces through the current
+/// buffer's face-remapping-alist. A remapped face can refer to itself
+/// as its base; that reference must use the normal face definition.
+fn face_value_with_remapping(
+    i: &Interp,
+    ctx: &mut FaceCtx,
+    faces: &WindowFaces,
+    value: &Value,
+    depth: u32,
+    remapping_stack: &mut Vec<crate::lisp::value::SymId>,
+) -> StyleMix {
+    if depth >= 16 {
+        return StyleMix::default();
+    }
+    if let Some((filter, face_spec)) = filtered_face_spec(i, value) {
+        return if face_filter_matches(i, &filter, &faces.window) {
+            face_value_with_remapping(
+                i,
+                ctx,
+                faces,
+                &face_spec,
+                depth + 1,
+                remapping_stack,
+            )
+        } else {
+            StyleMix::default()
+        };
+    }
+    let face = crate::editor::face_symbol(i, value);
+    if let Some(face) = face {
+        if remapping_stack.contains(&face) {
+            return ctx.face_value(i, value, depth);
+        }
+        if let Some(remapping) = faces
+            .face_remappings
+            .iter()
+            .find(|(candidate, _)| *candidate == face)
+            .map(|(_, remapping)| remapping.clone())
+        {
+            let (specs, reverse) = face_remapping_specs(i, &remapping, face);
+            let mut mix = StyleMix::default();
+            remapping_stack.push(face);
+            if reverse {
+                for spec in specs.iter().rev() {
+                    mix.merge(&face_value_with_remapping(
+                        i,
+                        ctx,
+                        faces,
+                        spec,
+                        depth + 1,
+                        remapping_stack,
+                    ));
+                }
+            } else {
+                for spec in &specs {
+                    mix.merge(&face_value_with_remapping(
+                        i,
+                        ctx,
+                        faces,
+                        spec,
+                        depth + 1,
+                        remapping_stack,
+                    ));
+                }
+            }
+            remapping_stack.pop();
+            return mix;
+        }
+    }
+
+    if let Value::Cons(_) = value {
+        let Ok(items) = value.list_to_vec() else {
+            return ctx.face_value(i, value, depth);
+        };
+        let is_plist = items
+            .first()
+            .and_then(|item| i.sym_id(item))
+            .is_some_and(|symbol| i.symbol_name(symbol).starts_with(':'));
+        if is_plist {
+            let inherit = crate::lisp::eval::plist_get(value, ctx.inherit);
+            let mut mix = StyleMix::default();
+            if inherit.truthy() {
+                mix.merge(&face_value_with_remapping(
+                    i,
+                    ctx,
+                    faces,
+                    &inherit,
+                    depth + 1,
+                    remapping_stack,
+                ));
+            }
+            mix.merge(&ctx.attrs(i, value));
+            return mix;
+        }
+        let mut mix = StyleMix::default();
+        for spec in items.iter().rev() {
+            mix.merge(&face_value_with_remapping(
+                i,
+                ctx,
+                faces,
+                spec,
+                depth + 1,
+                remapping_stack,
+            ));
+        }
+        return mix;
+    }
+    ctx.face_value(i, value, depth)
+}
+
+fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
+    let Some(Value::Sym(symbol)) = value else {
+        return GridPointerShape::Text;
+    };
+    match i.symbol_name(*symbol).as_str() {
+        "text" | "nil" => GridPointerShape::Text,
+        "hand" => GridPointerShape::Hand,
+        "hourglass" => GridPointerShape::Hourglass,
+        "hdrag" => GridPointerShape::ResizeHorizontal,
+        "nhdrag" => GridPointerShape::ResizeVertical,
+        "arrow" | "vdrag" | "modeline" => GridPointerShape::Arrow,
+        _ => GridPointerShape::Arrow,
+    }
+}
+
+/// Compute the screen contents for the selected frame at `width` ×
+/// `height` text cells.  Like GNU's `redisplay_window' it also keeps
+/// each window's point on screen: a window's `start' is scrolled the
+/// minimal amount to show point, and recentered when point sits more
+/// than a window-height away (scrolling can't reach it cheaply).
+pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
+    render_grid_internal(i, width, height, false, None, None, None)
+}
+
+/// Render a GUI input grid, reusing TEXT from a previous snapshot when
+/// the same buffer has not changed.
+pub fn render_grid_with_input_cached(
+    i: &Interp,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+) -> Grid {
+    render_grid_internal(i, width, height, true, cached, None, None)
+}
+
+/// Render a GUI input grid with mouse-face highlighting at MOUSE_POSITION.
+pub fn render_grid_with_mouse_position_cached(
+    i: &Interp,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    render_grid_internal(i, width, height, true, cached, None, mouse_position)
+}
+
+/// Render FRAME without changing the interpreter's selected frame. This is
+/// used by multi-window front-ends to keep every native frame up to date.
+pub fn render_frame_grid_with_input_cached(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+) -> Grid {
+    render_grid_internal(i, width, height, true, cached, Some(frame), None)
+}
+
+/// Render FRAME with mouse-face highlighting at MOUSE_POSITION without
+/// changing the interpreter's selected frame.
+pub fn render_frame_grid_with_mouse_position_cached(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    render_grid_internal(
+        i,
+        width,
+        height,
+        true,
+        cached,
+        Some(frame),
+        mouse_position,
+    )
+}
+
+fn frame_gamma_exponent(i: &Interp, frame: &crate::editor::FrameRef) -> Option<f64> {
+    let parameter = i.intern_soft("screen-gamma")?;
+    let value = crate::lisp::eval::plist_get_v(
+        &frame.borrow().params,
+        &Value::Sym(parameter),
+    );
+    let screen_gamma = match value {
+        Value::Int(value) if value > 0 => value as f64,
+        Value::Float(value) if value.is_finite() && *value > 0.0 => *value,
+        _ => return None,
+    };
+    // GNU's viewing gamma is 0.4545. `screen-gamma' specifies the
+    // display's gamma, so a value of 2.2 leaves the colors unchanged.
+    let exponent = 1.0 / (0.4545 * screen_gamma);
+    exponent.is_finite().then_some(exponent)
+}
+
+fn face_near_same_color_threshold(i: &Interp) -> i128 {
+    i.intern_soft("face-near-same-color-threshold")
+        .and_then(|symbol| i.symbol_value(symbol).int())
+        .unwrap_or(30_000)
+}
+
+fn color_distance(first: CellColor, second: CellColor) -> i128 {
+    let channel = |value: u8| i64::from(value) * 257;
+    let red = channel(first.0) - channel(second.0);
+    let green = channel(first.1) - channel(second.1);
+    let blue = channel(first.2) - channel(second.2);
+    let red_mean = (channel(first.0) + channel(second.0)) >> 1;
+    let red_term = ((2 * 65_536 + red_mean) * red * red) >> 16;
+    let blue_term = ((2 * 65_536 + 65_535 - red_mean) * blue * blue) >> 16;
+    let distance = (red_term + 4 * green * green + blue_term) >> 16;
+    i128::from(distance)
+}
+
+fn gamma_correct_color(color: CellColor, exponent: f64) -> CellColor {
+    let channel = |value: u8| {
+        ((f64::from(value) / 255.0).powf(exponent) * 255.0 + 0.5)
+            .floor()
+            .clamp(0.0, 255.0) as u8
+    };
+    CellColor(channel(color.0), channel(color.1), channel(color.2))
+}
+
+fn gamma_correct_style(style: &mut CellStyle, exponent: f64) {
+    let correct = |color: &mut Option<CellColor>| {
+        if let Some(color) = color {
+            *color = gamma_correct_color(*color, exponent);
+        }
+    };
+    correct(&mut style.fg);
+    correct(&mut style.bg);
+    correct(&mut style.distant_foreground);
+    correct(&mut style.underline_color);
+    correct(&mut style.strike_color);
+    if let Some(box_style) = &mut style.box_style {
+        correct(&mut box_style.color);
+    }
+}
+
+fn resolve_grid_style(style: &mut CellStyle, exponent: Option<f64>, threshold: i128) {
+    if let Some(exponent) = exponent {
+        gamma_correct_style(style, exponent);
+    }
+    if let Some(distant_foreground) = style.distant_foreground.take() {
+        let (foreground, background) = if style.inverse {
+            (style.bg, style.fg)
+        } else {
+            (style.fg, style.bg)
+        };
+        if threshold > 0
+            && let (Some(foreground), Some(background)) = (foreground, background)
+            && color_distance(foreground, background) < threshold
+        {
+            if style.inverse {
+                style.bg = Some(distant_foreground);
+            } else {
+                style.fg = Some(distant_foreground);
+            }
+        }
+    }
+}
+
+fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) {
+    resolve_grid_style(&mut grid.default_style, exponent, threshold);
+    resolve_grid_style(&mut grid.internal_border_style, exponent, threshold);
+    if let Some(color) = &mut grid.default_bg {
+        if let Some(exponent) = exponent {
+            *color = gamma_correct_color(*color, exponent);
+        }
+    }
+    for row in &mut grid.attrs {
+        for style in row {
+            resolve_grid_style(style, exponent, threshold);
+        }
+    }
+    for row in &mut grid.char_attrs {
+        for style in row {
+            resolve_grid_style(style, exponent, threshold);
+        }
+    }
+    for indicator in &mut grid.fill_column_indicators {
+        resolve_grid_style(&mut indicator.style, exponent, threshold);
+    }
+    for bar in &mut grid.scroll_bars {
+        resolve_grid_style(&mut bar.style, exponent, threshold);
+    }
+    for bitmap in &mut grid.fringe_bitmaps {
+        resolve_grid_style(&mut bitmap.style, exponent, threshold);
+    }
+    for divider in &mut grid.bottom_dividers {
+        resolve_grid_style(&mut divider.style, exponent, threshold);
+        resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
+        resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
+    }
+    for divider in &mut grid.right_dividers {
+        resolve_grid_style(&mut divider.style, exponent, threshold);
+        resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
+        resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
+    }
+    for composition in &mut grid.compositions {
+        resolve_grid_style(&mut composition.style, exponent, threshold);
+    }
+    for cursor in &mut grid.cursors {
+        if let Some(color) = &mut cursor.color {
+            if let Some(exponent) = exponent {
+                *color = gamma_correct_color(*color, exponent);
+            }
+        }
+    }
+}
+
+fn minibuffer_display_rows(
+    characters: &[EmacsChar],
+    width: usize,
+    tab_width: usize,
+    wrap_lines: bool,
+    ctl_arrow: bool,
+) -> Vec<Range<usize>> {
+    let mut rows = Vec::new();
+    let mut line_start = 0;
+    for line_end in 0..=characters.len() {
+        if line_end != characters.len() && characters[line_end].unicode() != Some('\n') {
+            continue;
+        }
+        let line: EmacsText = characters[line_start..line_end].iter().copied().collect();
+        let ranges = if wrap_lines {
+            wrap_ranges(&line, width, tab_width, ctl_arrow)
+        } else {
+            vec![0..line.len()]
+        };
+        rows.extend(
+            ranges
+                .into_iter()
+                .map(|range| line_start + range.start..line_start + range.end),
+        );
+        line_start = line_end.saturating_add(1);
+    }
+    rows
+}
+
+fn minibuffer_display_height(
+    i: &Interp,
+    current_height: usize,
+    requested_rows: usize,
+    frame_height: usize,
+    chrome_rows: usize,
+) -> usize {
+    let available = frame_height.saturating_sub(chrome_rows);
+    if available == 0 {
+        return 0;
+    }
+    let current_height = current_height.max(1).min(available);
+    let resize_mode = i
+        .q_soft("resize-mini-windows")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    if resize_mode.is_nil() {
+        return current_height;
+    }
+
+    let configured_max = i
+        .q_soft("max-mini-window-height")
+        .map(|id| i.symbol_value(id))
+        .map_or(1, |value| match value {
+            Value::Int(lines) => usize::try_from(lines).unwrap_or(1),
+            Value::Float(ratio) if ratio.is_finite() => (ratio.max(0.0) * frame_height as f64)
+                .ceil()
+                .min(usize::MAX as f64)
+                as usize,
+            _ => 1,
+        });
+    let grow_capacity = available.saturating_sub(1).max(1).min(available);
+    let maximum = configured_max.max(1).min(grow_capacity);
+    let requested = requested_rows.max(1).min(maximum);
+    let grow_only = i.q_soft("grow-only");
+    if matches!(resize_mode, Value::Sym(id) if Some(id) == grow_only) {
+        current_height.max(requested).min(available)
+    } else {
+        requested
+    }
+}
+
+fn render_grid_internal(
+    i: &Interp,
+    width: usize,
+    height: usize,
+    include_input: bool,
+    cached_input: Option<&GridInput>,
+    frame_override: Option<&crate::editor::FrameRef>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
+    let frame_resize_pixelwise = i
+        .q_soft("frame-resize-pixelwise")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
+    let gamma_exponent = frame
+        .as_ref()
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+        .and_then(|frame| frame_gamma_exponent(i, frame));
+    let mut rows = vec![String::new(); height];
+    let mut fctx = FaceCtx::new(i, frame.as_ref());
+    let default_style = fctx.builtin(i, "default", 0).finish();
+    fctx.default_style = Some(default_style);
+    let internal_border_style = fctx.builtin(i, "internal-border", 0).finish();
+    let default_bg = default_style.bg;
+    let mut attrs = vec![vec![default_style; width]; height];
+    let mut row_heights = vec![19; height];
+    let mut default_line_height = 19;
+    let mut default_row_height = 19;
+    let mut char_attrs = vec![Vec::new(); height];
+    let mut images = Vec::new();
+    let mut bidi_disabled_cell_ranges = Vec::<(usize, usize, usize)>::new();
+    let mut fringe_bitmaps = Vec::new();
+    let mut bidi_paragraph_cell_ranges =
+        Vec::<(usize, usize, usize, GridBidiDirection)>::new();
+    let mut pending_compositions = Vec::<(usize, usize, Vec<char>, CellStyle)>::new();
+    let mut fill_column_indicators = Vec::new();
+    let menus = render_menu_bar(i);
+    let mut tool_bar_items = Vec::new();
+    let mut tab_bar_items = Vec::new();
+    let mut help_echoes = Vec::new();
+    let mut pointer_regions = Vec::new();
+    let tooltip = i.gui_tip.clone();
+    let mut popup_menu_items = Vec::new();
+    let mut scroll_bars = Vec::new();
+    let mut bottom_dividers = Vec::new();
+    let mut right_dividers = Vec::new();
+    let mut mode_lines = Vec::new();
+    let mut header_lines = Vec::new();
+    let mut window_text_areas = Vec::new();
+    let mut vscrolls = Vec::new();
+    let mut mode_rows = Vec::new();
+    let mut cursor_pos: Option<(usize, usize)> = None;
+    let mut positioned_cursors = Vec::new();
+    let mut input_screen_lefts = Vec::new();
+    let mut cursor_index = None;
+    let mut hover_cursor = None;
+    let dragging_symbol = i.q_soft("dragging");
+    let freeze_pointer_shape = i
+        .q_soft("track-mouse")
+        .map(|symbol| i.symbol_value(symbol))
+        .is_some_and(
+            |value| matches!(value, Value::Sym(symbol) if Some(symbol) == dragging_symbol),
+        );
+    let (blink_cursor, blink_interval, blink_delay, blink_blinks) = blink_cursor_settings(i);
+    let mut input = if include_input {
+        input_snapshot(i, frame.as_ref(), cached_input)
+    } else {
+        None
+    };
+    let frame = match frame {
+        Some(f) => f,
+        None => {
+            return Grid {
+                title: "Remacs".to_owned(),
+                font_families: fctx.font_families,
+                default_style,
+                internal_border_style,
+                rows,
+                images,
+                fringe_bitmaps,
+                fill_column_indicators,
+                stipples: fctx.stipples,
+                menus,
+                tool_bar_items,
+                tab_bar_items,
+                help_echoes,
+                pointer_regions,
+                tooltip,
+                popup_menu_items,
+                scroll_bars,
+                bottom_dividers,
+                right_dividers,
+                mode_lines,
+                header_lines,
+                window_text_areas,
+                vscrolls,
+                compositions: Vec::new(),
+                attrs,
+                char_attrs,
+                mode_rows,
+                cursor: cursor_pos,
+                cursors: Vec::new(),
+                cursor_index,
+                bidi_disabled_ranges: Vec::new(),
+                bidi_paragraph_ranges: Vec::new(),
+                frame_resize_pixelwise,
+                pixelwise_segments: Vec::new(),
+                blink_cursor,
+                blink_interval,
+                blink_delay,
+                blink_blinks,
+                blink_elapsed_since_input: 0.0,
+                default_bg,
+                gamma_exponent: None,
+                row_heights,
+                default_line_height,
+                default_row_height,
+                hover_cursor,
+                freeze_pointer_shape,
+                pointer_visible: true,
+                mouse_color: None,
+                input,
+            };
+        }
+    };
+    let selected_frame = i
+        .selected_frame
+        .as_ref()
+        .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame));
+    let fb = frame.borrow();
+    let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let cursor_color = frame_cursor_color(i, &mut fctx, &fb);
+    let scroll_bar_style = if graphical {
+        frame_scroll_bar_style(i, &mut fctx, &fb)
+    } else {
+        CellStyle::default()
+    };
+    let frame_char_width = i
+        .q_soft("char-width")
+        .map(|id| crate::lisp::eval::plist_get(&fb.params, id))
+        .and_then(|value| match value {
+            Value::Int(width) if width > 0 => usize::try_from(width).ok(),
+            _ => None,
+        })
+        .unwrap_or(8);
+    let frame_char_height = crate::editor::frame_char_height(i, &frame).max(1);
+    row_heights.fill(frame_char_height);
+    default_line_height = frame_char_height;
+    default_row_height = frame_char_height;
+    let bottom_divider_width = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "bottom-divider-width", 0)
+    } else {
+        0
+    };
+    let right_divider_width = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "right-divider-width", 0)
+    } else {
+        0
+    };
+    let bottom_divider_styles = (bottom_divider_width > 0).then(|| {
+        (
+            fctx.builtin(i, "window-divider", 0).finish(),
+            fctx.builtin(i, "window-divider-first-pixel", 0).finish(),
+            fctx.builtin(i, "window-divider-last-pixel", 0).finish(),
+        )
+    });
+    let right_divider_styles = (right_divider_width > 0).then(|| {
+        (
+            fctx.builtin(i, "window-divider", 0).finish(),
+            fctx.builtin(i, "window-divider-first-pixel", 0).finish(),
+            fctx.builtin(i, "window-divider-last-pixel", 0).finish(),
+        )
+    });
+    let frame_line_spacing = i
+        .q_soft("line-spacing")
+        .map(|property| crate::lisp::eval::plist_get(&fb.params, property))
+        .unwrap_or(Value::Nil);
+    let default_fringe_left = if graphical {
+        frame_fringe_pixels(i, &fb.params, "left-fringe")
+    } else {
+        0
+    };
+    let default_fringe_right = if graphical {
+        frame_fringe_pixels(i, &fb.params, "right-fringe")
+    } else {
+        0
+    };
+    let mini_buf = fb
+        .minibuffer
+        .as_ref()
+        .and_then(|w| i.buffers.get(w.borrow().buffer));
+    let mini_text = mini_buf
+        .as_ref()
+        .map(|buffer| buffer.borrow().text.text())
+        .unwrap_or_default();
+    let (mini_message, mini_styled) = if mini_text.is_empty() {
+        (i.echo_message.clone(), None)
+    } else {
+        (mini_text, mini_buf.as_ref())
+    };
+    let mini_tab_width = mini_buf
+        .as_ref()
+        .map(|buffer| buffer_tab_width(i, buffer.borrow().id))
+        .unwrap_or(8);
+    let mini_wrap_lines = if mini_styled.is_none() {
+        !i.q_soft("message-truncate-lines")
+            .is_some_and(|symbol| i.symbol_value(symbol).truthy())
+    } else {
+        mini_buf.as_ref().is_none_or(|buffer| {
+            !buffer_setting(i, "truncate-lines", buffer.borrow().id).truthy()
+        })
+    };
+    let mini_ctl_arrow = mini_buf
+        .as_ref()
+        .is_some_and(|buffer| buffer_setting(i, "ctl-arrow", buffer.borrow().id).truthy());
+    let mini_characters: Vec<_> = mini_message.chars().collect();
+    let mini_rows = minibuffer_display_rows(
+        &mini_characters,
+        width,
+        mini_tab_width,
+        mini_wrap_lines,
+        mini_ctl_arrow,
+    );
+    let tool_bar_rows = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0)
+            .min(height.saturating_sub(1))
+    } else {
+        0
+    };
+    let tab_bar_rows = if graphical {
+        crate::editor::frame_parameter_positive_size(i, &frame, "tab-bar-lines", 0)
+            .min(height.saturating_sub(1 + tool_bar_rows))
+    } else {
+        0
+    };
+    let chrome_rows = tool_bar_rows.saturating_add(tab_bar_rows);
+    let current_minibuffer_height = fb
+        .minibuffer
+        .as_ref()
+        .map(|window| window.borrow().height)
+        .unwrap_or(1);
+    let mini_height = minibuffer_display_height(
+        i,
+        current_minibuffer_height,
+        mini_rows.len(),
+        height,
+        chrome_rows,
+    );
+    let body_height = height
+        .saturating_sub(mini_height)
+        .saturating_sub(chrome_rows);
+    let mut popup_pixel_position = i
+        .gui_popup_menu
+        .as_ref()
+        .filter(|menu| {
+            menu.position.frame_id == fb.id && menu.position.anchor == super::PopupMenuAnchor::Frame
+        })
+        .map(|menu| (menu.position.x, menu.position.y));
+    let (root_left, root_top, root_width, root_height) = fb
+        .root
+        .as_ref()
+        .map(|root| {
+            let root = root.borrow();
+            (root.left, root.top, root.width, root.height)
+        })
+        .unwrap_or((0, 0, width, body_height));
+    let scale_x = if root_width > 0 {
+        width as f64 / root_width as f64
+    } else {
+        1.0
+    };
+    let scale_y = if root_height > 0 {
+        body_height as f64 / root_height as f64
+    } else {
+        1.0
+    };
+    let scale_edge = |position: usize, origin: usize, scale: f64, limit: usize| {
+        ((position.saturating_sub(origin) as f64 * scale).round() as usize).min(limit)
+    };
+    let mut screen_rows: Vec<Vec<ScreenCell>> = (0..height)
+        .map(|_| (0..width).map(|_| ScreenCell::new(default_style)).collect())
+        .collect();
+    let mut pixelwise_row_boundaries = Vec::<(usize, i128)>::new();
+    let mut pixelwise_cell_segments = Vec::<(usize, usize, usize, i128, i128)>::new();
+    if tab_bar_rows > 0 {
+        tab_bar_items = render_tab_bar(
+            i,
+            &fb.params,
+            width,
+            tab_bar_rows,
+            0,
+            default_style,
+            &mut fctx,
+            &mut screen_rows,
+        );
+    }
+    if tool_bar_rows > 0 {
+        tool_bar_items = render_tool_bar(
+            i,
+            &fb,
+            width,
+            tool_bar_rows,
+            tab_bar_rows,
+            default_style,
+            &mut fctx,
+            &mut screen_rows,
+        );
+    }
+    let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;
+    let mut pixelwise_windows = fb.root.iter().cloned().collect::<Vec<_>>();
+    while let Some(window) = pixelwise_windows.pop() {
+        let (top, window_height, children) = {
+            let window = window.borrow();
+            (
+                window.top,
+                window.height,
+                window.children.clone(),
+            )
+        };
+        pixelwise_windows.extend(children);
+        if window_height > 0 {
+            let top_row = scale_edge(top, root_top, scale_y, body_height)
+                .saturating_add(chrome_rows);
+            let bottom = scale_edge(
+                top.saturating_add(window_height),
+                root_top,
+                scale_y,
+                body_height,
+            )
+            .saturating_add(chrome_rows)
+            .min(height);
+            if bottom > top_row {
+                let (_, top_offset) =
+                    crate::editor::winxtra::pixelwise_window_origin_offset(&window);
+                let height_adjustment = crate::editor::winxtra::pixelwise_window_extent_adjustment(
+                    &window, false,
+                );
+                pixelwise_row_boundaries.push((bottom - 1, top_offset + height_adjustment));
+            }
+        }
+    }
+
+    for w in &fb.windows {
+        let (
+            window_id,
+            minibuffer_window,
+            buf_id,
+            start,
+            hscroll,
+            vscroll,
+            raw_left,
+            raw_top,
+            raw_width,
+            raw_height,
+            margins,
+            fringes,
+        ) = {
+            let wb = w.borrow();
+            (
+                wb.id,
+                wb.minibuffer,
+                wb.buffer,
+                wb.start,
+                wb.hscroll,
+                wb.vscroll,
+                wb.left,
+                wb.top,
+                wb.width,
+                wb.height,
+                wb.margins,
+                wb.fringes,
+            )
+        };
+        let raw_window_left = scale_edge(raw_left, root_left, scale_x, width);
+        let raw_window_top = scale_edge(raw_top, root_top, scale_y, body_height)
+            .saturating_add(chrome_rows);
+        let raw_window_right = scale_edge(
+            raw_left.saturating_add(raw_width),
+            root_left,
+            scale_x,
+            width,
+        );
+        let raw_window_bottom = scale_edge(
+            raw_top.saturating_add(raw_height),
+            root_top,
+            scale_y,
+            body_height,
+        )
+        .saturating_add(chrome_rows);
+        let raw_window_width = raw_window_right.saturating_sub(raw_window_left);
+        let raw_window_height = raw_window_bottom
+            .saturating_sub(raw_window_top)
+            .max(2)
+            .min(body_height.saturating_sub(raw_window_top));
+        if !minibuffer_window
+            && raw_window_width > 0
+            && raw_window_bottom > 0
+            && let Some((style, first_pixel_style, last_pixel_style)) = bottom_divider_styles
+        {
+            let (x_offset, _) =
+                crate::editor::winxtra::pixelwise_window_origin_offset(w);
+            let width_adjustment =
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, true);
+            bottom_dividers.push(GridBottomDivider {
+                row_boundary: raw_window_bottom,
+                left: raw_window_left,
+                width: raw_window_width,
+                x_offset,
+                width_adjustment,
+                thickness: bottom_divider_width,
+                style,
+                first_pixel_style,
+                last_pixel_style,
+            });
+        }
+        let has_right_neighbor = fb.windows.iter().any(|other| {
+            let other = other.borrow();
+            other.id != window_id
+                && !other.minibuffer
+                && other.left == raw_left.saturating_add(raw_width)
+                && other.top < raw_top.saturating_add(raw_height)
+                && raw_top < other.top.saturating_add(other.height)
+        });
+        if !minibuffer_window
+            && raw_window_width > 0
+            && raw_window_height > 0
+            && has_right_neighbor
+            && let Some((style, first_pixel_style, last_pixel_style)) = right_divider_styles
+        {
+            let (_, y_offset) = crate::editor::winxtra::pixelwise_window_origin_offset(w);
+            let width_adjustment =
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, true);
+            let height_adjustment =
+                crate::editor::winxtra::pixelwise_window_extent_adjustment(w, false)
+                    .saturating_sub(bottom_divider_width as i128);
+            right_dividers.push(GridRightDivider {
+                column_boundary: raw_window_right,
+                top: raw_window_top,
+                bottom: raw_window_bottom,
+                width_adjustment,
+                y_offset,
+                height_adjustment,
+                thickness: right_divider_width,
+                style,
+                first_pixel_style,
+                last_pixel_style,
+            });
+        }
+        let (
+            scroll_width,
+            vertical_scroll_side,
+            scroll_height,
+            horizontal_scroll_side,
+            _,
+        ) = crate::editor::winxtra::window_scroll_bar_settings(i, w);
+        let vertical_scroll_cells = if vertical_scroll_side.is_some() {
+            scroll_width
+                .unwrap_or(0)
+                .div_ceil(frame_char_width)
+                .min(raw_window_width)
+        } else {
+            0
+        };
+        let horizontal_scroll_rows = if horizontal_scroll_side.is_some() {
+            scroll_height
+                .unwrap_or(0)
+                .div_ceil(frame_char_height)
+                .min(raw_window_height)
+        } else {
+            0
+        };
+        let left_scroll_cells = if vertical_scroll_side == Some(true) {
+            vertical_scroll_cells
+        } else {
+            0
+        };
+        let top_scroll_rows = if horizontal_scroll_side == Some(true) {
+            horizontal_scroll_rows
+        } else {
+            0
+        };
+        let window_left = raw_window_left.saturating_add(left_scroll_cells);
+        let window_top = raw_window_top.saturating_add(top_scroll_rows);
+        let window_width = raw_window_width.saturating_sub(vertical_scroll_cells);
+        let window_height = raw_window_height.saturating_sub(horizontal_scroll_rows);
+        let (pixelwise_x_offset, _) =
+            crate::editor::winxtra::pixelwise_window_origin_offset(w);
+        let pixelwise_width_adjustment =
+            crate::editor::winxtra::pixelwise_window_extent_adjustment(w, true);
+        if pixelwise_x_offset != 0 || pixelwise_width_adjustment != 0 {
+            let left = window_left.min(width);
+            let right = window_left.saturating_add(window_width).min(width);
+            for row in window_top..window_top.saturating_add(window_height).min(height) {
+                pixelwise_cell_segments.push((
+                    row,
+                    left,
+                    right,
+                    pixelwise_x_offset,
+                    pixelwise_width_adjustment,
+                ));
+            }
+        }
+        let (fringe_left_pixels, fringe_right_pixels) = if graphical {
+            fringes
+                .map(|(left, right, _, _)| {
+                    (
+                        left.unwrap_or(default_fringe_left),
+                        right.unwrap_or(default_fringe_right),
+                    )
+                })
+                .unwrap_or((default_fringe_left, default_fringe_right))
+        } else {
+            (0, 0)
+        };
+        let fringe_left_cells = fringe_pixels_to_cells(fringe_left_pixels, frame_char_width)
+            .min(window_width.saturating_sub(1));
+        let fringe_right_cells = fringe_pixels_to_cells(fringe_right_pixels, frame_char_width)
+            .min(window_width.saturating_sub(fringe_left_cells.saturating_add(1)));
+        let right_fringe_left = window_left
+            .saturating_add(window_width.saturating_sub(fringe_right_cells));
+        let width_after_fringes =
+            window_width.saturating_sub(fringe_left_cells.saturating_add(fringe_right_cells));
+        let margin_left = margins.0.min(width_after_fringes.saturating_sub(1));
+        let margin_right = margins
+            .1
+            .min(width_after_fringes.saturating_sub(margin_left.saturating_add(1)));
+        let content_left_with_margin = window_left
+            .saturating_add(fringe_left_cells)
+            .saturating_add(margin_left);
+        let content_width_with_margins =
+            width_after_fringes.saturating_sub(margin_left.saturating_add(margin_right));
+        if window_width == 0 || window_height == 0 {
+            continue;
+        }
+        let selected_window = std::rc::Rc::ptr_eq(w, &fb.selected);
+        let use_buffer_point = selected_frame && selected_window;
+        // Untagged legacy input refers to this frame's selected window.
+        let mouse_position = mouse_position.filter(|position| {
+            position.buffer_id == buf_id
+                && position.window_id.map_or(selected_window, |id| id == window_id)
+        });
+        let cursor_style = cursor_type_for_window(i, w, buf_id, selected_frame && selected_window);
+        let bidi_display_reordering =
+            buffer_setting(i, "bidi-display-reordering", buf_id).truthy();
+        let bidi_paragraph_direction = match buffer_setting(i, "bidi-paragraph-direction", buf_id)
+        {
+            Value::Sym(symbol) if i.symbol_name(symbol) == "left-to-right" => {
+                Some(GridBidiDirection::LeftToRight)
+            }
+            Value::Sym(symbol) if i.symbol_name(symbol) == "right-to-left" => {
+                Some(GridBidiDirection::RightToLeft)
+            }
+            _ => None,
+        };
+        let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
+        let tab_width = buffer_tab_width(i, buf_id);
+        let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
+        let nobreak_char_display = buffer_setting(i, "nobreak-char-display", buf_id);
+        let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
+        let mode_line_format = super::mode_line::format(i, buf_id, window_id, "mode-line-format");
+        let mode_line_enabled = !buffer_setting(i, "mode-line-format", buf_id).is_nil();
+        let tab_line_format = super::mode_line::format(i, buf_id, window_id, "tab-line-format");
+        let tab_line_enabled = !buffer_setting(i, "tab-line-format", buf_id).is_nil();
+        let header_line_format = super::mode_line::format(i, buf_id, window_id, "header-line-format");
+        let header_line_enabled = !buffer_setting(i, "header-line-format", buf_id).is_nil();
+        let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
+        let (line_number_width, line_number_offset) =
+            line_number_display_settings(i, buf_id);
+        let gutter_width = if line_number_mode.truthy() {
+            line_number_width
+                .saturating_add(1)
+                .min(content_width_with_margins.saturating_sub(1))
+        } else {
+            0
+        };
+        let gutter_left = content_left_with_margin;
+        let content_left = gutter_left.saturating_add(gutter_width);
+        let content_width = content_width_with_margins.saturating_sub(gutter_width);
+        let fringe_style = fctx.builtin(i, "fringe", 0).finish();
+        let indicate_boundaries = buffer_setting(i, "indicate-buffer-boundaries", buf_id);
+        let show_left_boundaries = match &indicate_boundaries {
+            Value::Nil => false,
+            Value::Sym(symbol) => matches!(i.symbol_name(*symbol).as_str(), "t" | "left"),
+            _ => indicate_boundaries.truthy(),
+        };
+        let show_right_boundaries = matches!(
+            &indicate_boundaries,
+            Value::Sym(symbol) if matches!(i.symbol_name(*symbol).as_str(), "t" | "right")
+        );
+        let indicate_empty_lines = buffer_setting(i, "indicate-empty-lines", buf_id).truthy();
+        let overlay_arrows = overlay_arrow_positions(i, buf_id);
+        let (first_buffer_line, last_buffer_line) = i
+            .buffers
+            .get(buf_id)
+            .map(|buffer| {
+                let bb = buffer.borrow();
+                (bb.text.line_of_pos(bb.begv), bb.text.line_of_pos(bb.zv))
+            })
+            .unwrap_or((usize::MAX, usize::MAX));
+        let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
+        let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
+        let text_rows = window_height
+            .saturating_sub(top_rows + usize::from(mode_line_enabled));
+        let content_top = window_top + top_rows;
+        let content_bottom = content_top.saturating_add(text_rows);
+        if !minibuffer_window && text_rows > 0 && width_after_fringes > 0 {
+            window_text_areas.push(GridWindowTextArea {
+                window_id,
+                left: window_left.saturating_add(fringe_left_cells),
+                top: content_top,
+                width: width_after_fringes,
+                rows: text_rows,
+            });
+        }
+        if let Some(menu) = &i.gui_popup_menu
+            && menu.position.frame_id == fb.id
+        {
+            let position = &menu.position;
+            let origin = match position.anchor {
+                super::PopupMenuAnchor::Window(id) if id == window_id => {
+                    Some((raw_window_left, raw_window_top))
+                }
+                super::PopupMenuAnchor::TextArea(id) if id == window_id => {
+                    Some((content_left_with_margin, content_top))
                 }
                 _ => None,
             };
@@ -4145,6 +9776,7 @@ fn overlay_arrow_positions(i: &Interp, buffer_id: usize) -> Vec<(usize, String)>
             item.byte_range = Some((*start, *end));
         }
     }
+    let mouse_color = frame_mouse_color(i, &mut fctx, &frame.borrow());
     let mut grid = Grid {
         // Redisplay has now published each window's actual endpoint, including
         // wrapping, narrowing, header rows and scrolling in inactive frames.
@@ -4195,6 +9827,7 @@ fn overlay_arrow_positions(i: &Interp, buffer_id: usize) -> Vec<(usize, String)>
         hover_cursor,
         freeze_pointer_shape,
         pointer_visible: fb.pointer_visible,
+        mouse_color,
         input,
     };
     resolve_grid_colors(&mut grid, gamma_exponent, face_near_same_color_threshold(i));

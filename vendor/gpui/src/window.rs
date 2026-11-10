@@ -858,6 +858,7 @@ pub struct Window {
     mouse_hit_test: HitTest,
     last_visible_cursor_style: Cell<CursorStyle>,
     frozen_cursor_style: Option<CursorStyle>,
+    cursor_color: Option<[u8; 3]>,
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
@@ -1243,6 +1244,7 @@ impl Window {
             mouse_hit_test: HitTest::default(),
             last_visible_cursor_style: Cell::new(CursorStyle::Arrow),
             frozen_cursor_style: None,
+            cursor_color: None,
             modifiers,
             capslock,
             scale_factor,
@@ -2435,6 +2437,11 @@ impl Window {
         })
     }
 
+    /// Sets the native mouse pointer color for this window when it is hovered.
+    pub fn set_mouse_cursor_color(&mut self, color: Option<[u8; 3]>) {
+        self.cursor_color = color;
+    }
+
     /// Retains the current visible pointer shape while hover targets change.
     /// Cursor invisibility requests continue to apply while the shape is frozen.
     pub fn set_cursor_style_frozen(&mut self, frozen: bool) {
@@ -3614,6 +3621,7 @@ impl Window {
                 style = self.frozen_cursor_style.unwrap_or(style);
                 self.last_visible_cursor_style.set(style);
             }
+            cx.platform.set_cursor_color(self.cursor_color);
             cx.platform.set_cursor_style(style);
         }
     }

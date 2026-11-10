@@ -25,8 +25,8 @@ use cocoa::{
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSSize, NSString,
-        NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSPoint, NSProcessInfo, NSRange,
+        NSRect, NSSize, NSString, NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -51,6 +51,7 @@ use parking_lot::Mutex;
 use ptr::null_mut;
 use std::{
     cell::Cell,
+    collections::HashMap,
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -197,6 +198,100 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menu_bar_items: Option<Vec<OwnedMenuItem>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
+    cursor_color: Option<[u8; 3]>,
+    cursor_cache: HashMap<(CursorStyle, Option<[u8; 3]>), (id, bool)>,
+}
+
+fn native_cursor(style: CursorStyle) -> id {
+    unsafe {
+        match style {
+            CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+            CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+            CursorStyle::Wait => wait_cursor(),
+            CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
+            CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
+            CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
+            CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+            CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
+            CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
+            CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
+            CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+            CursorStyle::ResizeUpLeftDownRight => {
+                msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+            }
+            CursorStyle::ResizeUpRightDownLeft => {
+                msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+            }
+            CursorStyle::IBeamCursorForVerticalLayout => {
+                msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
+            }
+            CursorStyle::OperationNotAllowed => {
+                msg_send![class!(NSCursor), operationNotAllowedCursor]
+            }
+            CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
+            CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
+            CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+            CursorStyle::None => unreachable!(),
+        }
+    }
+}
+
+/// Builds a same-shape NSCursor whose opaque pixels use the requested RGB tint.
+/// Source-atop composition preserves the system cursor's alpha mask and hotspot.
+fn tint_cursor(cursor: id, rgb: [u8; 3]) -> id {
+    #[allow(non_upper_case_globals)]
+    const NSCompositingOperationCopy: NSInteger = 1;
+    #[allow(non_upper_case_globals)]
+    const NSCompositingOperationSourceAtop: NSInteger = 5;
+
+    unsafe {
+        let source_image: id = msg_send![cursor, image];
+        if source_image.is_null() {
+            return cursor;
+        }
+        let size: NSSize = msg_send![source_image, size];
+        if size.width <= 0.0 || size.height <= 0.0 {
+            return cursor;
+        }
+        let hotspot: NSPoint = msg_send![cursor, hotSpot];
+        let rect = NSRect::new(NSPoint::new(0.0, 0.0), size);
+        let tinted_image: id = msg_send![class!(NSImage), alloc];
+        let tinted_image: id = msg_send![tinted_image, initWithSize: size];
+        let _: () = msg_send![tinted_image, lockFocus];
+        let _: () = msg_send![
+            source_image,
+            drawAtPoint: NSPoint::new(0.0, 0.0)
+            fromRect: rect
+            operation: NSCompositingOperationCopy
+            fraction: 1.0
+        ];
+        let context: id = msg_send![class!(NSGraphicsContext), currentContext];
+        let _: () = msg_send![context, setCompositingOperation: NSCompositingOperationSourceAtop];
+        let color: id = msg_send![
+            class!(NSColor),
+            colorWithCalibratedRed: rgb[0] as f64 / 255.0
+            green: rgb[1] as f64 / 255.0
+            blue: rgb[2] as f64 / 255.0
+            alpha: 1.0
+        ];
+        let _: () = msg_send![color, set];
+        let path: id = msg_send![class!(NSBezierPath), bezierPathWithRect: rect];
+        let _: () = msg_send![path, fill];
+        let _: () = msg_send![tinted_image, unlockFocus];
+        let tinted_cursor: id = msg_send![class!(NSCursor), alloc];
+        let tinted_cursor: id =
+            msg_send![tinted_cursor, initWithImage: tinted_image hotSpot: hotspot];
+        let _: () = msg_send![tinted_image, release];
+        if tinted_cursor.is_null() {
+            cursor
+        } else {
+            tinted_cursor
+        }
+    }
 }
 
 impl Default for MacPlatform {
@@ -241,6 +336,8 @@ impl MacPlatform {
             on_keyboard_layout_change: None,
             menu_bar_items: None,
             keyboard_mapper,
+            cursor_color: None,
+            cursor_cache: HashMap::new(),
         }))
     }
 
@@ -1160,49 +1257,50 @@ impl Platform for MacPlatform {
                 return;
             }
 
-            let new_cursor: id = match style {
-                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-                CursorStyle::Wait => wait_cursor(),
-                CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
-                CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
-                CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
-                CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-
-                // Undocumented, private class methods:
-                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
-                CursorStyle::ResizeUpLeftDownRight => {
-                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+            let color = self.0.lock().cursor_color;
+            let new_cursor: id = {
+                let mut state = self.0.lock();
+                if let Some((cursor, _)) = state.cursor_cache.get(&(style, color)) {
+                    *cursor
+                } else {
+                    let cursor = native_cursor(style);
+                    let (cursor, owned) = color.map_or((cursor, false), |color| {
+                        let tinted = tint_cursor(cursor, color);
+                        (tinted, tinted != cursor)
+                    });
+                    state.cursor_cache.insert((style, color), (cursor, owned));
+                    cursor
                 }
-                CursorStyle::ResizeUpRightDownLeft => {
-                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
-                }
-
-                CursorStyle::IBeamCursorForVerticalLayout => {
-                    msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
-                }
-                CursorStyle::OperationNotAllowed => {
-                    msg_send![class!(NSCursor), operationNotAllowedCursor]
-                }
-                CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
-                CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
-                CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-                CursorStyle::None => unreachable!(),
             };
 
             let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
             if new_cursor != old_cursor {
                 let _: () = msg_send![new_cursor, set];
             }
+
+            let stale = {
+                let mut state = self.0.lock();
+                let stale_keys = state
+                    .cursor_cache
+                    .keys()
+                    .filter(|(_, cached_color)| *cached_color != color)
+                    .copied()
+                    .collect::<Vec<_>>();
+                stale_keys
+                    .into_iter()
+                    .filter_map(|key| state.cursor_cache.remove(&key))
+                    .collect::<Vec<_>>()
+            };
+            for (cursor, owned) in stale {
+                if owned && !cursor.is_null() {
+                    let _: () = msg_send![cursor, release];
+                }
+            }
         }
+    }
+
+    fn set_cursor_color(&self, color: Option<[u8; 3]>) {
+        self.0.lock().cursor_color = color;
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

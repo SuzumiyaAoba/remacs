@@ -783,7 +783,7 @@ impl EntityInputHandler for EditorView {
             });
         }
 
-        let base_range = self.input.base_range_for_virtual(requested);
+        let base_range = self.input.base_range_for_virtual(requested.clone());
         let (row, start_byte) = visible_input_position(&self.grid, base_range.start, false)?;
         let end_position = visible_input_position(&self.grid, base_range.end, true);
         let row_text = self.grid.rows.get(row)?;

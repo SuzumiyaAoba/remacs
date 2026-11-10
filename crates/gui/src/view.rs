@@ -1299,6 +1299,7 @@ impl Render for EditorView {
                 }));
         }
         window.set_cursor_style_frozen(self.grid.freeze_pointer_shape);
+        window.set_mouse_cursor_color(self.grid.mouse_color.map(|CellColor(r, g, b)| [r, g, b]));
         if self.grid.tooltip.is_none() {
             self.follow_tooltip_drag = false;
         }

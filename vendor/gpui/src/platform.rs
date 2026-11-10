@@ -276,6 +276,9 @@ pub(crate) trait Platform: 'static {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+    /// Sets an optional tint for the native mouse pointer. Platforms without
+    /// support may ignore the requested color.
+    fn set_cursor_color(&self, _color: Option<[u8; 3]>) {}
     fn should_auto_hide_scrollbars(&self) -> bool;
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
