@@ -1,6 +1,9 @@
 use remacs_runtime::{
     editor::{CHAR_CTL, CHAR_SHIFT, event_code_for},
-    frontend::{InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, run_editor_with},
+    frontend::{
+        InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, MouseWheelDirection,
+        run_editor_with,
+    },
     lisp::Interp,
 };
 use std::{collections::VecDeque, io, time::Duration};
@@ -108,9 +111,9 @@ fn navigation_buttons_run_lisp_bindings_with_click_drag_and_modifier_data() {
         ..drag
     }));
     events.push_back(InputEvent::Mouse(drag));
-    for up in [true, false] {
+    for direction in [MouseWheelDirection::Up, MouseWheelDirection::Down] {
         events.push_back(InputEvent::MouseWheel {
-            up,
+            direction,
             modifiers: 0,
             position,
             line_count: 1,

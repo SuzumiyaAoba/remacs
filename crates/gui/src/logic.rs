@@ -2,8 +2,8 @@
 use remacs_runtime::{
     frontend::{
         AppleScriptResult, DragAction, FrameVisibility, Grid, GridImageSource,
-        GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
-        MousePosition, NativeMenuCommandId, QuitRequest, fit_text_to_cells,
+        GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
+        MouseWheelDirection, NativeMenuCommandId, QuitRequest, fit_text_to_cells,
         render_frame_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
@@ -123,7 +123,8 @@ pub(super) enum GuiEvent {
         position: MousePosition,
     },
     Scroll {
-        delta_lines: f32,
+        delta: f32,
+        horizontal: bool,
         modifiers: i128,
         position: MousePosition,
     },
@@ -1317,8 +1318,8 @@ pub(super) struct ChanIo {
     /// Last frame-local mouse position, including transitions into and out of
     /// the frame content area.
     mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>, Option<usize>)>,
-    /// Fractional smooth-scroll rows kept separately for each frame.
-    pub(super) scroll_remainders: HashMap<Option<usize>, f32>,
+    /// Fractional smooth-scroll units kept separately for each frame and axis.
+    pub(super) scroll_remainders: HashMap<(Option<usize>, bool), f32>,
     last_input_at: Instant,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
 }
@@ -2188,7 +2189,8 @@ impl KeyIo for ChanIo {
         let result = match event {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
             GuiEvent::FrameDeleteRequest { frame_id } => {
-                self.scroll_remainders.remove(&Some(frame_id));
+                self.scroll_remainders
+                    .retain(|(id, _), _| *id != Some(frame_id));
                 self.pending_frame_delete = Some(frame_id);
                 self.render_requested = true;
                 Ok(None)
@@ -2375,26 +2377,36 @@ impl KeyIo for ChanIo {
                 position,
             )))),
             GuiEvent::Scroll {
-                delta_lines,
+                delta,
+                horizontal,
                 modifiers,
                 position,
             } => {
-                if !delta_lines.is_finite() {
+                if !delta.is_finite() {
                     return Ok(None);
                 }
                 let frame_id = self.active_frame_id.or(self.primary_frame_id);
-                let remainder = self.scroll_remainders.entry(frame_id).or_default();
-                let total_lines = *remainder + delta_lines;
-                let whole_lines = total_lines.trunc();
-                *remainder = total_lines - whole_lines;
-                if whole_lines == 0.0 {
+                let remainder = self
+                    .scroll_remainders
+                    .entry((frame_id, horizontal))
+                    .or_default();
+                let total = *remainder + delta;
+                let whole = total.trunc();
+                *remainder = total - whole;
+                if whole == 0.0 {
                     Ok(None)
                 } else {
+                    let direction = match (horizontal, whole < 0.0) {
+                        (false, true) => MouseWheelDirection::Up,
+                        (false, false) => MouseWheelDirection::Down,
+                        (true, true) => MouseWheelDirection::Left,
+                        (true, false) => MouseWheelDirection::Right,
+                    };
                     Ok(Some(InputEvent::MouseWheel {
-                        up: whole_lines < 0.0,
+                        direction,
                         modifiers,
                         position,
-                        line_count: whole_lines.abs() as usize,
+                        line_count: whole.abs() as usize,
                     }))
                 }
             }
@@ -2645,7 +2657,7 @@ impl KeyIo for ChanIo {
             .retain(|id, _| live_ids.contains(id));
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
         self.scroll_remainders
-            .retain(|frame_id, _| frame_id.is_none_or(|id| live_ids.contains(&id)));
+            .retain(|(frame_id, _), _| frame_id.is_none_or(|id| live_ids.contains(&id)));
         let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
         let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
         let mut selected_grid = None;

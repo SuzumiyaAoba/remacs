@@ -10,6 +10,15 @@ use std::sync::mpsc;
 
 #[test]
 fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner)
+        .expect("spawn header wheel test thread")
+        .join()
+        .expect("header wheel test thread");
+}
+
+fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner() {
     let mut i = Interp::new();
     i.eval_str(
         r#"(progn
@@ -34,6 +43,8 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix() {
               (event-line-count event))))))
         (global-set-key [header-line wheel-down] #'qa-ui-header-record)
         (global-set-key [header-line C-wheel-up] #'qa-ui-header-record)
+        (global-set-key [header-line wheel-left] #'qa-ui-header-record)
+        (global-set-key [header-line wheel-right] #'qa-ui-header-record)
         (global-set-key [wheel-down] #'qa-ui-header-record)
         (global-set-key [f12] (lambda () (interactive)
           (setq qa-ui-header-result (list qa-ui-header-wheels
@@ -87,6 +98,7 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix() {
                 .collect::<Vec<_>>()
         })
         .unwrap();
+    let horizontal_target = targets[0].clone();
     rx.try_iter().for_each(drop);
     let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
     for ((position, amount), modifiers) in targets.into_iter().zip([-2.0, 1.0, -1.0]).zip([
@@ -104,18 +116,29 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix() {
             ..Default::default()
         });
     }
+    for amount in [1.0, -1.0] {
+        visual.simulate_event(ScrollWheelEvent {
+            position: horizontal_target,
+            delta: ScrollDelta::Lines(point(amount, 0.0)),
+            modifiers: Modifiers::none(),
+            ..Default::default()
+        });
+    }
     let events: Vec<_> = rx
         .try_iter()
         .filter(|event| matches!(event, GuiEvent::Scroll { .. }))
         .collect();
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 5);
     let (bridge_tx, bridge_rx) = mpsc::channel();
-    for (event, (window, area, modifiers)) in events.into_iter().zip([
-        (right, Some(MouseArea::HeaderLine), 0),
-        (left, Some(MouseArea::HeaderLine), CHAR_CTL),
-        (right, None, 0),
+    for (event, (window, area, modifiers, horizontal)) in events.into_iter().zip([
+        (right, Some(MouseArea::HeaderLine), 0, false),
+        (left, Some(MouseArea::HeaderLine), CHAR_CTL, false),
+        (right, None, 0, false),
+        (right, Some(MouseArea::HeaderLine), 0, true),
+        (right, Some(MouseArea::HeaderLine), 0, true),
     ]) {
         let GuiEvent::Scroll {
+            horizontal: actual_horizontal,
             position,
             modifiers: actual,
             ..
@@ -126,6 +149,7 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix() {
         assert_eq!(position.window_id, Some(window));
         assert_eq!(position.area, area);
         assert_eq!(*actual, modifiers);
+        assert_eq!(*actual_horizontal, horizontal);
         bridge_tx.send(event).unwrap();
     }
     bridge_tx
@@ -138,6 +162,6 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix() {
     assert_eq!(
         i.prin1_to_string(&i.symbol_value(result))
             .to_unicode_lossy(),
-        "(((wheel-down header-line t 2) (C-wheel-up header-line nil 1) (wheel-down nil t 1)) t)"
+        "(((wheel-down header-line t 2) (C-wheel-up header-line nil 1) (wheel-down nil t 1) (wheel-left header-line t 1) (wheel-right header-line t 1)) t)"
     );
 }

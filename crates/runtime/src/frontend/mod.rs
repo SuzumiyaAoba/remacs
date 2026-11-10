@@ -309,6 +309,15 @@ pub trait XResourceBackend {
     fn get_string_resource(&self, name: &str, class: &str) -> Result<Option<String>, String>;
 }
 
+/// Direction of a wheel or trackpad scroll event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseWheelDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 /// Input from a front-end: key events, committed text, or mouse actions.
 pub enum InputEvent {
     Key(i128),
@@ -366,9 +375,9 @@ pub enum InputEvent {
         /// Emacs keyboard modifier bits held while the pointer moved.
         modifiers: i128,
     },
-    /// A wheel/trackpad event, with line count normalized by the front-end.
+    /// A wheel/trackpad event, with direction and line count normalized by the front-end.
     MouseWheel {
-        up: bool,
+        direction: MouseWheelDirection,
         modifiers: i128,
         position: MousePosition,
         line_count: usize,

@@ -1,8 +1,8 @@
 use remacs_runtime::{
     editor::{CHAR_CTL, event_code_for, reflow_frame_windows},
     frontend::{
-        GridHeaderLine, InputEvent, KeyIo, MouseArea, MousePosition, render_grid_with_input_cached,
-        run_editor_with,
+        GridHeaderLine, InputEvent, KeyIo, MouseArea, MousePosition, MouseWheelDirection,
+        render_grid_with_input_cached, run_editor_with,
     },
     lisp::{Interp, Value},
 };
@@ -118,20 +118,20 @@ fn header_wheel_uses_prefixed_bindings_and_real_mwheel_window_selection() {
     );
     let events = [
         InputEvent::MouseWheel {
-            up: false,
+            direction: MouseWheelDirection::Down,
             modifiers: 0,
             position: position(right),
             line_count: 2,
         },
         InputEvent::MouseWheel {
-            up: true,
+            direction: MouseWheelDirection::Up,
             modifiers: CHAR_CTL,
             position: position(left),
             line_count: 1,
         },
         InputEvent::Command("qa-header-default".into()),
         InputEvent::MouseWheel {
-            up: false,
+            direction: MouseWheelDirection::Down,
             modifiers: 0,
             position: position(right),
             line_count: 3,
@@ -140,7 +140,7 @@ fn header_wheel_uses_prefixed_bindings_and_real_mwheel_window_selection() {
         // GNU 31.1 falls back to the event window without mouse-wheel-frame
         // redirection, including when mouse-wheel-follow-mouse is nil.
         InputEvent::MouseWheel {
-            up: false,
+            direction: MouseWheelDirection::Down,
             modifiers: 0,
             position: position(right),
             line_count: 2,

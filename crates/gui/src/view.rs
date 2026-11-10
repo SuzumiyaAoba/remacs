@@ -2067,11 +2067,26 @@ impl Render for EditorView {
                     )
                     .or_else(|| input::header_line_mouse_position(&scroll_grid, point, cell_width))
                 }) {
-                    let delta = event.delta.pixel_delta(line_height);
-                    let delta_lines = -f32::from(delta.y) / f32::from(line_height);
+                    let vertical_delta = event.delta.pixel_delta(line_height);
+                    let horizontal_delta = event.delta.pixel_delta(cell_width);
+                    let delta_lines = -f32::from(vertical_delta.y) / f32::from(line_height);
+                    let delta_columns = -f32::from(horizontal_delta.x) / f32::from(cell_width);
                     if delta_lines != 0.0 {
                         let _ = scroll_tx.send(GuiEvent::Scroll {
-                            delta_lines,
+                            delta: delta_lines,
+                            horizontal: false,
+                            modifiers: mouse_modifier_bits(
+                                &event.modifiers,
+                                modifier_mapping,
+                                scroll_modifiers.get(),
+                            ),
+                            position,
+                        });
+                    }
+                    if delta_columns != 0.0 {
+                        let _ = scroll_tx.send(GuiEvent::Scroll {
+                            delta: delta_columns,
+                            horizontal: true,
                             modifiers: mouse_modifier_bits(
                                 &event.modifiers,
                                 modifier_mapping,

@@ -1,7 +1,10 @@
 //! Shared editor command dispatch and nested minibuffer input loops.
 #[cfg(test)]
 use super::render_grid;
-use super::{GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition};
+use super::{
+    GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
+    MouseWheelDirection,
+};
 use crate::lisp::Flow;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
@@ -642,14 +645,14 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 &mut arg_mode,
             )?,
             InputEvent::MouseWheel {
-                up,
+                direction,
                 modifiers,
                 position,
                 line_count,
             } => dispatch_mouse_wheel(
                 &term,
                 i,
-                up,
+                direction,
                 modifiers,
                 position,
                 line_count,
@@ -1744,14 +1747,19 @@ fn dispatch_mouse<T: KeyIo>(
 fn dispatch_mouse_wheel<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
-    up: bool,
+    direction: MouseWheelDirection,
     modifiers: i128,
     position: MousePosition,
     line_count: usize,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
-    let base = if up { "wheel-up" } else { "wheel-down" };
+    let base = match direction {
+        MouseWheelDirection::Up => "wheel-up",
+        MouseWheelDirection::Down => "wheel-down",
+        MouseWheelDirection::Left => "wheel-left",
+        MouseWheelDirection::Right => "wheel-right",
+    };
     let name = mouse_event_name(base, modifiers);
     let key = crate::editor::event_code_for(&name);
     let event = Value::list(vec![
@@ -2909,7 +2917,7 @@ fn minibuf_loop<T: KeyIo>(
             }
             InputEvent::Mouse(_) => {}
             InputEvent::MouseWheel {
-                up,
+                direction,
                 modifiers,
                 position,
                 line_count,
@@ -2917,7 +2925,7 @@ fn minibuf_loop<T: KeyIo>(
                 if let Err(e) = dispatch_mouse_wheel(
                     term,
                     i,
-                    up,
+                    direction,
                     modifiers,
                     position,
                     line_count,
