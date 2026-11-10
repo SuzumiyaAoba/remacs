@@ -217,6 +217,15 @@ Local to those buffers, as a function called that created it.")
 
 (defvar x-sensitive-text-pointer-shape)
 (defvar x-pointer-shape)
+(defvar-local dframe--saved-temp-buffer-show-function nil
+  "Original `temp-buffer-show-function' for a dframe buffer.")
+
+(defun dframe--install-temp-buffer-show-function ()
+  "Install dframe's wrapper while preserving the original callback."
+  (unless (eq temp-buffer-show-function #'dframe-temp-buffer-show-function)
+    (setq-local dframe--saved-temp-buffer-show-function
+                temp-buffer-show-function))
+  (setq-local temp-buffer-show-function #'dframe-temp-buffer-show-function))
 
 (defun dframe-frame-mode (arg frame-var cache-var buffer-var frame-name
 			      local-mode-fn
@@ -272,16 +281,11 @@ CREATE-HOOK is a hook to run after creating a frame."
       (if dframe-track-mouse-function
           (setq-local track-mouse t)) ;this could be messy.
 
-      ;; Override `temp-buffer-show-hook' so that help and such
+      ;; Override `temp-buffer-show-function' so that help and such
       ;; put their stuff into a frame other than our own.
-      ;; Correct use of `temp-buffer-show-function': Bob Weiner
       (if (and (boundp 'temp-buffer-show-hook)
 	       (boundp 'temp-buffer-show-function))
-	  ;; FIXME: Doesn't this get us into an inf-loop when the
-          ;; `temp-buffer-show-function' runs `temp-buffer-show-hook'
-          ;; (as is normally the case)?
-          (setq-local temp-buffer-show-hook temp-buffer-show-function))
-      (setq-local temp-buffer-show-function 'dframe-temp-buffer-show-function)
+          (dframe--install-temp-buffer-show-function))
       ;; If this buffer is killed, we must make sure that we destroy
       ;; the frame the dedicated window is in.
       (add-hook 'kill-buffer-hook (lambda ()
@@ -774,9 +778,11 @@ This should be bound to mouse event E."
 If a user requests help using \\[help-command] <Key> the temp BUFFER will be
 redirected into a window on the attached frame."
   (if dframe-attached-frame (dframe-select-attached-frame))
-  (pop-to-buffer buffer nil)
-  (other-window -1)
-  (run-hooks 'temp-buffer-show-hook))
+  (if dframe--saved-temp-buffer-show-function
+      (funcall dframe--saved-temp-buffer-show-function buffer)
+    (pop-to-buffer buffer nil)
+    (other-window -1)
+    (run-hooks 'temp-buffer-show-hook)))
 
 (defun dframe-hack-buffer-menu (_e)
   "Control mouse 1 is buffer menu.
