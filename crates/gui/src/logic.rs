@@ -1185,9 +1185,9 @@ struct GuiClipboardBackend {
 
 impl GuiClipboardBackend {
     fn read(&self, target: ClipboardTarget) -> Result<Option<String>, String> {
-        if !self.ready.load(Ordering::Acquire) {
-            return Ok(None);
-        }
+        // A startup read must wait for the UI service instead of looking
+        // like an empty clipboard.  The frame-size handshake lets the UI
+        // start servicing this request while startup Lisp is suspended.
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(ClipboardRequest::Read(target, reply))

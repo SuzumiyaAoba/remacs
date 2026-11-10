@@ -55,8 +55,6 @@ fn selection_writes_before_ui_startup_keep_the_target_without_waiting() {
         requests,
         ready: Arc::new(AtomicBool::new(false)),
     };
-    assert_eq!(backend.read_text().unwrap(), None);
-    assert_eq!(backend.read_primary_text().unwrap(), None);
     assert!(received.try_recv().is_err());
     backend.write_primary_text("queued primary".into()).unwrap();
     let ClipboardRequest::Write(target, text, reply) = received.try_recv().unwrap() else {
@@ -65,6 +63,29 @@ fn selection_writes_before_ui_startup_keep_the_target_without_waiting() {
     assert_eq!(target, ClipboardTarget::Primary);
     assert_eq!(text, "queued primary");
     assert!(reply.is_none());
+}
+
+#[test]
+fn startup_clipboard_reads_wait_for_the_service_response() {
+    let (requests, received) = smol::channel::unbounded();
+    let backend = GuiClipboardBackend {
+        requests,
+        ready: Arc::new(AtomicBool::new(false)),
+    };
+    let service = thread::spawn(move || {
+        let ClipboardRequest::Read(ClipboardTarget::Clipboard, reply) =
+            received.recv_blocking().unwrap()
+        else {
+            panic!("startup clipboard read request")
+        };
+        reply.send(Ok(Some("startup clipboard".into()))).unwrap();
+    });
+
+    assert_eq!(
+        backend.read_text().unwrap().as_deref(),
+        Some("startup clipboard")
+    );
+    service.join().unwrap();
 }
 
 #[test]
