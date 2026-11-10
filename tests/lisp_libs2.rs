@@ -5643,3 +5643,27 @@ fn r10_compat_libs_parity() {
         "(t t)"
     );
 }
+
+#[test]
+fn f90_indent_region_preserves_leading_blank_line() {
+    // Regression for #1885: searching for the first code line must not
+    // indent a blank line at the region start.
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'cus-edit)
+              (defmacro easy-menu-define (&rest _) nil)
+              (require 'f90)
+              (with-temp-buffer
+                (f90-mode)
+                (insert "program p\nif (x) then\n\n print *, x\nend if\nend program p\n")
+                (goto-char (point-min))
+                (forward-line 2)
+                (let ((beg (point)))
+                  (forward-line 2)
+                  (f90-indent-region beg (point))
+                  (save-excursion
+                    (goto-char beg)
+                    (= (point) (progn (end-of-line) (point)))))))"#),
+        "t"
+    );
+}

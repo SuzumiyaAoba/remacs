@@ -1915,7 +1915,6 @@ If run in the middle of a line, the line is not broken."
   (f90-indent-line 'no-update))         ; nothing to update
 
 
-;; TODO not add spaces to empty lines at the start.
 ;; Why is second line getting extra indent over first?
 (defun f90-indent-region (beg-region end-region)
   "Indent every line in region by forward parsing."
@@ -1928,7 +1927,8 @@ If run in the middle of a line, the line is not broken."
     ;; First find a line which is not a continuation line or comment.
     (beginning-of-line)
     (while (and (looking-at "[ \t]*[0-9]*\\(!\\|#\\|[ \t]*$\\)")
-                (progn (f90-indent-line 'no-update)
+                (progn (unless (looking-at "[ \t]*[0-9]*[ \t]*$")
+                         (f90-indent-line 'no-update))
                        (zerop (forward-line 1)))
                 (< (point) end-region-mark)))
     (setq cont (f90-present-statement-cont))
