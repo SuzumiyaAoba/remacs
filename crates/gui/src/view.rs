@@ -469,6 +469,23 @@ fn frame_content_point(
     Some(point(px(x - border), px(y - border)))
 }
 
+fn device_pixels(value: Pixels, scale_factor: f32) -> i128 {
+    (f32::from(value) * scale_factor).round() as i128
+}
+
+#[cfg(test)]
+mod device_pixel_tests {
+    use super::device_pixels;
+    use gpui::px;
+
+    #[test]
+    fn logical_frame_dimensions_convert_to_device_pixels() {
+        assert_eq!(device_pixels(px(960.0), 2.0), 1920);
+        assert_eq!(device_pixels(px(640.0), 2.0), 1280);
+        assert_eq!(device_pixels(px(8.0), 2.0), 16);
+    }
+}
+
 fn absolute_mouse_pixel_position(
     position: Point<Pixels>,
     screen_left: i128,
@@ -1396,12 +1413,13 @@ impl Render for EditorView {
             }
         }
         let scale_factor = window.scale_factor();
-        let to_pixels = |value: Pixels| f32::from(value).round() as i128;
+        let to_pixels = |value: Pixels| device_pixels(value, scale_factor);
+        let to_screen_coordinate = |value: Pixels| f32::from(value).round() as i128;
         let bounds = window.bounds();
         let current_display_id = window.display(cx).map(|display| u32::from(display.id()));
         let monitors = monitor_geometry(window, cx);
-        let frame_left = to_pixels(bounds.origin.x);
-        let frame_top = to_pixels(bounds.origin.y);
+        let frame_left = to_screen_coordinate(bounds.origin.x);
+        let frame_top = to_screen_coordinate(bounds.origin.y);
         // Translate GPUI's AppKit screen-relative bounds to Emacs's global
         // monitor coordinate system when the frame is on a secondary screen.
         #[cfg(target_os = "macos")]
