@@ -1294,3 +1294,56 @@ fn prefix_argument_before_isearch_selects_regexp_mode() {
     }
     assert_eq!(modes, vec![(false, false), (false, true), (true, true)]);
 }
+
+#[test]
+fn mouse_click_in_shared_buffer_targets_the_clicked_window() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut i = interp_with_frame("alpha beta\n");
+            i.eval_str(
+                "(require 'mouse) (setq mouse-1-click-follows-link nil) \
+                 (setq qa-click-first (selected-window) \
+                       qa-click-second (split-window-below 6)) \
+                 (set-window-buffer qa-click-second (window-buffer qa-click-first))",
+            )
+            .unwrap();
+            let Value::Window(second) = i.eval_str("qa-click-second").unwrap() else {
+                panic!("second window")
+            };
+            // The first window remains selected; only MousePosition.window_id
+            // identifies the target when both windows show the same buffer.
+            let position = MousePosition {
+                buffer_id: i.current_buffer_ref().unwrap().borrow().id,
+                buffer_position: 6,
+                utf16_offset: 6,
+                x: 6,
+                y: 0,
+                row: 0,
+                column: 6,
+                window_id: Some(second.borrow().id),
+                area: None,
+                mode_line_buffer_name: false,
+            };
+            dispatch_test_mouse(
+                &mut i,
+                MouseInput {
+                    button: MouseButton::Left,
+                    click_count: 1,
+                    modifiers: 0,
+                    start: position,
+                    end: position,
+                },
+            );
+            let state = i
+                .eval_str(
+                    "(list (eq (selected-window) qa-click-second) \
+                     (window-point qa-click-second) (window-point qa-click-first))",
+                )
+                .unwrap();
+            assert_eq!(i.prin1_to_string(&state), "(t 7 1)");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
