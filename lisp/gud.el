@@ -1896,6 +1896,37 @@ This should be an executable on your path, or an absolute file name."
   :version "25.1"
   :type 'string)
 
+(defun gud-guiler-set-breakpoint (&optional _arg)
+  "Set a Guile breakpoint at the current source location.
+Add the source directory to Guile's load path, then use the file name
+relative to that directory because `break-at-source' does not accept
+absolute file names."
+  (interactive "p")
+  (let* ((in-source-buffer (not (eq (current-buffer) gud-comint-buffer)))
+         (frame (or gud-last-frame gud-last-last-frame))
+         (file (if in-source-buffer
+                   (or buffer-file-name (car-safe frame))
+                 (car-safe frame)))
+         (line (if in-source-buffer
+                   (save-restriction
+                     (widen)
+                     (+ (count-lines (point-min) (point))
+                        (if (bolp) 1 0)))
+                 (cdr-safe frame))))
+    (unless (and file line)
+      (user-error "No source location for breakpoint"))
+    (setq file (file-local-name file))
+    (let ((directory (file-name-directory file)))
+      (when directory
+        (let ((quoted-directory (prin1-to-string directory)))
+          (gud-basic-call
+           (format (concat "(unless (member %s %%load-path) "
+                           "(add-to-load-path %s))")
+                   quoted-directory quoted-directory))))
+      (gud-basic-call
+       (format ",break-at-source %s %s"
+               (file-name-nondirectory file) line)))))
+
 ;;;###autoload
 (defun guiler (command-line)
   "Run guiler on program FILE in buffer `*gud-FILE*'.
@@ -1912,10 +1943,8 @@ and source-file directory for your debugger."
   (gud-common-init command-line nil 'gud-guiler-marker-filter)
   (setq-local gud-minor-mode 'guiler)
 
-;; FIXME: absolute file-names are not grokked yet by Guile's ,break-at-source
-;; and relative file names only when relative to %load-path.
-;;  (gud-def gud-break  ",break-at-source %d%f %l"  "\C-b" "Set breakpoint at current line.")
-  (gud-def gud-break  ",break-at-source %f %l"  "\C-b" "Set breakpoint at current line.")
+  (gud-def gud-break (gud-guiler-set-breakpoint arg)
+    "\C-b" "Set breakpoint at current line.")
 ;; FIXME: remove breakpoint with file-line not yet supported by Guile
 ;;  (gud-def gud-remove ",delete ---> %d%f:%l"  "\C-d" "Remove breakpoint at current line")
   (gud-def gud-step   ",step"         "\C-s" "Step one source line with display.")
