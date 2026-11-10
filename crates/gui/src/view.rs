@@ -95,6 +95,29 @@ const LINE_HEIGHT: f32 = 19.0;
 
 static FONT_FAMILY_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AccessibilityFrameKey {
+    left: i128,
+    top: i128,
+    width: i128,
+    height: i128,
+    scale_factor_bits: u64,
+    display_id: Option<u32>,
+}
+
+#[cfg(target_os = "macos")]
+fn accessibility_frame_key(geometry: &GuiGeometry) -> AccessibilityFrameKey {
+    AccessibilityFrameKey {
+        left: geometry.frame_left,
+        top: geometry.frame_top,
+        width: geometry.pixel_width,
+        height: geometry.pixel_height,
+        scale_factor_bits: geometry.scale_factor.to_bits(),
+        display_id: geometry.current_display_id,
+    }
+}
+
 pub(super) fn font_family(window: &mut Window, requested: Option<String>) -> String {
     let available = FONT_FAMILY_NAMES.get_or_init(|| {
         window
@@ -885,6 +908,8 @@ pub(super) struct EditorView {
         String,
         std::ops::Range<usize>,
     )>,
+    #[cfg(target_os = "macos")]
+    accessibility_geometry_snapshot: Option<AccessibilityFrameKey>,
 }
 
 impl EditorView {
@@ -970,6 +995,8 @@ impl EditorView {
             accessibility_screen_view: None,
             #[cfg(target_os = "macos")]
             accessibility_snapshot: None,
+            #[cfg(target_os = "macos")]
+            accessibility_geometry_snapshot: None,
         }
     }
 
@@ -982,6 +1009,10 @@ impl EditorView {
         self.geometry = None;
         self.runtime_frame_size = None;
         self.runtime_frame_position = None;
+        #[cfg(target_os = "macos")]
+        {
+            self.accessibility_geometry_snapshot = None;
+        }
     }
 
     pub(super) fn set_follow_tooltip_drag(&mut self, follow: bool) {
@@ -1405,6 +1436,8 @@ impl Render for EditorView {
             current_display_id,
             monitors,
         };
+        #[cfg(target_os = "macos")]
+        let accessibility_geometry = accessibility_frame_key(&geometry);
         if self.geometry.as_ref() != Some(&geometry) {
             self.geometry = Some(geometry.clone());
             if self.tx.frame_id().is_some() {
@@ -1455,6 +1488,11 @@ impl Render for EditorView {
                 );
                 self.accessibility_snapshot =
                     Some((buffer_text, buffer_selection, screen_text, screen_selection));
+            }
+            if self.accessibility_geometry_snapshot != Some(accessibility_geometry) {
+                super::accessibility::update_text_view_frame(self.accessibility_buffer_view);
+                super::accessibility::update_text_view_frame(self.accessibility_screen_view);
+                self.accessibility_geometry_snapshot = Some(accessibility_geometry);
             }
         }
 
@@ -4694,4 +4732,39 @@ pub(super) fn build_managed_editor_view(
         });
     }));
     view
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod accessibility_frame_key_tests {
+    use super::*;
+
+    fn geometry() -> GuiGeometry {
+        GuiGeometry {
+            cols: 80,
+            rows: 24,
+            pixel_width: 640,
+            pixel_height: 480,
+            char_width: 8,
+            char_height: 19,
+            scale_factor: 1.0,
+            frame_left: 10,
+            frame_top: 20,
+            current_display_id: Some(1),
+            monitors: Vec::new(),
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn key_changes_when_native_window_moves_or_resizes() {
+        let original = geometry();
+        let original_key = accessibility_frame_key(&original);
+
+        let mut moved = original.clone();
+        moved.frame_left += 100;
+        assert_ne!(accessibility_frame_key(&moved), original_key);
+
+        let mut resized = original;
+        resized.pixel_width += 100;
+        assert_ne!(accessibility_frame_key(&resized), original_key);
+    }
 }

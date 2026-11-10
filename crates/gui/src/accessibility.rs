@@ -104,3 +104,40 @@ pub(super) fn update_text_view(
         Some(view as usize)
     }
 }
+
+/// Refresh the screen-space frame after the native window moves or resizes.
+pub(super) fn update_text_view_frame(existing: Option<usize>) {
+    let Some(pointer) = existing else {
+        return;
+    };
+    unsafe {
+        let view = pointer as id;
+        let accessibility_window: id = msg_send![view, accessibilityWindow];
+        let window: id = if accessibility_window != nil {
+            accessibility_window
+        } else {
+            let app = NSApp();
+            if app == nil {
+                return;
+            }
+            let key_window: id = msg_send![app, keyWindow];
+            if key_window == nil {
+                msg_send![app, mainWindow]
+            } else {
+                key_window
+            }
+        };
+        if window == nil {
+            return;
+        }
+        let content: id = msg_send![window, contentView];
+        if content == nil {
+            return;
+        }
+        let bounds: NSRect = msg_send![content, bounds];
+        let _: () = msg_send![view, setFrame: bounds];
+        let screen_frame: NSRect = msg_send![content, convertRectToScreen: bounds];
+        let _: () = msg_send![view, setAccessibilityFrame: screen_frame];
+        NSAccessibilityPostNotification(view, NSAccessibilityLayoutChangedNotification);
+    }
+}
