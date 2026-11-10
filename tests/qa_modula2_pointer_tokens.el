@@ -1,4 +1,6 @@
-;;; Modula-2 pointer dereference and field selection are separate tokens.
+;;; qa_modula2_pointer_tokens.el --- Modula-2 pointer token boundaries -*- lexical-binding:t -*-
+
+;; The SMIE scanner must split "^." into distinct pointer and field tokens.
 
 (require 'modula2)
 
