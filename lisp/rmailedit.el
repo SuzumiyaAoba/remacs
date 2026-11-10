@@ -142,6 +142,11 @@ This function runs the hooks `text-mode-hook' and `rmail-edit-mode-hook'.
 (declare-function rmail-summary-enable "rmailsum" ())
 (declare-function rmail-summary-update-line "rmailsum" (n))
 
+(defun rmail-edit--text-changed-p (old)
+  "Return non-nil if the current edit buffer differs from OLD."
+  (not (and (= (length old) (- (point-max) (point-min)))
+            (string= old (buffer-substring (point-min) (point-max))))))
+
 (defun rmail-cease-edit (&optional abort)
   "Finish editing message; switch back to Rmail proper.
 If ABORT, this is the result of aborting an edit."
@@ -150,6 +155,10 @@ If ABORT, this is the result of aborting an edit."
       (with-current-buffer rmail-summary-buffer
 	(rmail-summary-enable)))
   (widen)
+  (rmail-cease-edit--finish abort
+                            (rmail-edit--text-changed-p rmail-old-text)))
+
+(defun rmail-cease-edit--finish (abort text-changed)
   (goto-char (point-min))
   ;; This is far from ideal.  The edit may have inadvertently
   ;; removed the blank line at the end of the headers, but there
@@ -181,8 +190,7 @@ If ABORT, this is the result of aborting an edit."
       (beginning-of-line)
       (insert ">")
       (forward-line)))
-  (let ((old rmail-old-text)
-	(pruned rmail-old-pruned)
+  (let ((pruned rmail-old-pruned)
 	(mime-state rmail-old-mime-state)
 	;; People who know what they are doing might have modified the
 	;; buffer's encoding if editing the message included inserting
@@ -207,10 +215,7 @@ If ABORT, this is the result of aborting an edit."
       (setq buffer-undo-list t)
       (rmail-variables))
     ;; If text has really changed, mark message as edited.
-    ;; FIXME we should do the comparison before escaping From lines.
-    (unless (and (= (length old) (- (point-max) (point-min)))
-		 (string= old (buffer-substring (point-min) (point-max))))
-      (setq old nil)
+    (when text-changed
       (goto-char (point-min))
       (search-forward "\n\n")
       (setq headers-end (point-marker)) ; first character of body
