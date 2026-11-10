@@ -1251,6 +1251,12 @@ RDATE and EXDATE values are ignored."
                       interval))
     interval))
 
+(defun icalendar-recur--rdate-start (rdate)
+  "Return the start date-time represented by RDATE."
+  (if (cl-typep rdate 'icalendar-period)
+      (icalendar-period-start rdate)
+    rdate))
+
 (defun icalendar-recur-recurrences-in-interval (interval component &optional vtimezone nmax)
   "Return a list of the recurrences of COMPONENT in INTERVAL.
 
@@ -1276,10 +1282,10 @@ are returned.  (The NMAX argument mainly exists to support recurrence
 rules with a COUNT clause; see `icalendar-recur-recurrences-to-count'.)
 
 The returned list is a list of `icalendar-date' or `icalendar-date-time'
-values representing the start times of recurrences.  Note that any
-values of type `icalendar-period' in COMPONENT's `icalendar-rdate'
-property (or properties) will NOT be included in the list; it is the
-callee's responsibility to handle any such values separately.
+values representing the start times of recurrences.  For `icalendar-period'
+values in COMPONENT's `icalendar-rdate' property, the period's start is
+included; use `icalendar-recur-recurrences-in-window-w/end-times' to get
+the period's end time as well.
 
 The computed recurrences for INTERVAL are cached in COMPONENT and
 retrieved on subsequent calls with the same arguments."
@@ -1321,16 +1327,17 @@ retrieved on subsequent calls with the same arguments."
                         (interval-rdates
                          (seq-filter
                           (lambda (rec)
-                            ;; only include icalendar-date and icalendar-date-time
-                            ;; values from RDATE; callee is responsible
-                            ;; for handling icalendar-period values
-                            (unless (cl-typep rec 'icalendar-period)
-                              (and (icalendar-date/time<= low rec)
-                                   (icalendar-date/time< rec high))))
+                            (let ((start (icalendar-recur--rdate-start rec)))
+                              (and (icalendar-date/time<= low start)
+                                   (icalendar-date/time< start high))))
                           rdates))
                         ;; Remacs: discard duplicates before limiting or
                         ;; caching the union of RRULE and RDATE instances.
-                        (included-recs (seq-uniq (append until-recs interval-rdates)))
+                        (included-recs
+                         (seq-uniq
+                          (append until-recs
+                                  (mapcar #'icalendar-recur--rdate-start
+                                          interval-rdates))))
                         ;; Exclude any values from the EXDATE property;
                         ;; this gives us the complete set of recurrences
                         ;; in this interval:
@@ -1436,10 +1443,7 @@ UTC offsets local to that time zone."
                                  (mapcar #'icalendar-ast-node-value exdate-nodes))))
                  (recs
                   (cons dtstart
-                        (seq-filter
-                         (lambda (rec)
-                           (not (cl-typep rec 'icalendar-period)))
-                         rdates))))
+                        (mapcar #'icalendar-recur--rdate-start rdates))))
             (sort
              (seq-uniq
               (seq-filter
@@ -1486,20 +1490,23 @@ the period."
                      (seq-filter
                       (lambda (node)
                         (eq 'icalendar-period (icalendar-ast-node-type node)))
-                      rdate-values)))))
+                      rdate-values))))
+           (period-starts (mapcar #'icalendar-period-start periods))
+           ;; PERIOD RDATEs supply the duration for their start, including
+           ;; when it duplicates an RRULE or DTSTART occurrence.
+           (regular-starts
+            (seq-filter (lambda (start) (not (member start period-starts)))
+                        starts)))
       (when (or starts periods)
         (seq-uniq
          (nconc (mapcar
                  (lambda (dt) (list dt (icalendar-date/time-add-duration
                                         dt duration vtimezone)))
-                 starts)
+                 regular-starts)
                 (mapcar
                  (lambda (p)
                    (let ((start (icalendar-period-start p)))
-                     (list start
-                           (or (icalendar-period-end p)
-                               (icalendar-date/time-add-duration
-                                start (icalendar-period-dur-value p) vtimezone)))))
+                     (list start (icalendar-period-end p vtimezone))))
                  periods)))))))
 
 (defun icalendar-recur-recurrences-to-count (component &optional vtimezone)
@@ -1556,9 +1563,7 @@ UTC offsets local to that time zone."
         (setq int (icalendar-recur-next-interval int rrule vtimezone)))
       (setq recs
             (append rule-recs
-                    (seq-filter (lambda (rec)
-                                  (not (cl-typep rec 'icalendar-period)))
-                                rdates)))
+                    (mapcar #'icalendar-recur--rdate-start rdates)))
       (setq recs
             (if exdates
                 (seq-filter (lambda (rec) (not (member rec exdates))) recs)

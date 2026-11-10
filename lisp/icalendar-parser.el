@@ -4669,15 +4669,29 @@ which see."
          ((and rrule (icalendar-rrule-count rrule))
           (let* ((tz (gethash (icalendar-with-param-of dtstart-node 'icalendar-tzidparam)
                               tzid-index))
+                 (periods
+                  (seq-filter
+                   (lambda (rec)
+                     (and (cl-typep rec 'icalendar-period)
+                          (not (member (icalendar-period-start rec) exdates))))
+                   rdates))
+                 (period-starts (mapcar #'icalendar-period-start periods))
                  (recs (cons dtstart (icalendar-recur-recurrences-to-count component tz))))
-            (dolist (rec recs)
+            (dolist (rec (seq-filter
+                          (lambda (rec) (not (member rec period-starts)))
+                          recs))
               (let ((end-time
                      (when duration (icalendar-date/time-add-duration rec duration))))
                 (setq dates
                       (append dates
                               (if end-time (icalendar-dates-until rec end-time t)
                                 (list (icalendar-date/time-to-date
-                                       (icalendar-date/time-to-local rec))))))))))
+                                       (icalendar-date/time-to-local rec))))))))
+            (dolist (period periods)
+              (let* ((start (icalendar-period-start period))
+                     (end (icalendar-period-end period)))
+                (when end
+                  (setq dates (append dates (icalendar-dates-until start end t)))))))
          ;; Same with RDATEs when there's no RRULE:
          ((and rdates (not rrule))
           (dolist (rec (cons dtstart rdates))
@@ -4695,7 +4709,8 @@ which see."
                      (end (or (icalendar-period-end rec)
                               (icalendar-date/time-add-duration
                                start (icalendar-period-dur-value rec)))))
-                (setq dates (append dates (icalendar-dates-until start end t)))))))
+                (unless (member start exdates)
+                  (setq dates (append dates (icalendar-dates-until start end t)))))))
          ;; A non-recurring event also gets an index entry for each date
          ;; until its end time:
          ((not rrule)
