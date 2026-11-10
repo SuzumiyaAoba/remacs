@@ -97,6 +97,13 @@ specified by the \"action\" element of the definition."
   "Non-nil means mail with no explicit To: or Cc: is spam."
   :type 'boolean)
 
+(defcustom rsf-no-blind-cc-action 'delete-spam
+  "Action to take for spam detected by `rsf-no-blind-cc'.
+Choose `delete-spam' to delete it or `output-and-delete' to save it
+to `rsf-file' before deletion."
+  :type '(choice (const :tag "Delete" delete-spam)
+                 (const :tag "Output and delete" output-and-delete)))
+
 (defcustom rsf-ignore-case nil
   "Non-nil means to ignore case in `rsf-definitions-alist'."
   :type 'boolean)
@@ -228,6 +235,7 @@ it from rmail file.  Called for each new message retrieved by
 	(maybe-spam '(nil . nil))
 	message-sender message-to message-cc message-recipients
 	message-subject message-content-type message-spam-status
+	(no-blind-cc-spam nil)
 	(num-spam-definition-elements (safe-length rsf-definitions-alist))
 	(num-element 0)
 	(exit-while-loop nil)
@@ -260,7 +268,8 @@ it from rmail file.  Called for each new message retrieved by
       (and rsf-no-blind-cc
            (null message-recipients)
            (setq exit-while-loop t
-                 maybe-spam '(t . t)))
+                 maybe-spam '(t . t)
+                 no-blind-cc-spam t))
       ;; Check white list, and likewise cause while loop bypass.
       (and message-sender
            (let ((white-list rsf-white-list)
@@ -331,8 +340,10 @@ it from rmail file.  Called for each new message retrieved by
       (if (and (car maybe-spam) (cdr maybe-spam))
           ;; Temporarily set rmail-current-message in order to output
           ;; and delete the spam msg if needed:
-          (let ((action (cdr (assq 'action
-                                   (nth num-element rsf-definitions-alist))))
+          (let ((action (if no-blind-cc-spam
+			    rsf-no-blind-cc-action
+			  (cdr (assq 'action
+				     (nth num-element rsf-definitions-alist)))))
                 (newfile (not (file-exists-p rsf-file))))
             ;; Check action item in rsf-definitions-alist and do it.
             (cond
