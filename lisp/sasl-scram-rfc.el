@@ -83,7 +83,7 @@ See https://www.rfc-editor.org/rfc/rfc5801#section-4.")
 
 (defun sasl-scram--client-final-message (hash-fun block-length hash-length client step)
   (unless (string-match
-	   "^r=\\([^,]+\\),s=\\([^,]+\\),i=\\([0-9]+\\)\\(?:$\\|,\\)"
+	   "^r=\\([^,]+\\),s=\\([^,]+\\),i=\\([1-9][0-9]*\\)\\(?:$\\|,\\)"
 	   (sasl-step-data step))
     (sasl-error "Unexpected server response"))
   (let* ((hmac-fun (lambda (text key)
