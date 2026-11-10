@@ -64,7 +64,8 @@ use dialog_items::dialog_prompt_items;
 use dialogs::dialog_prompt_buttons;
 use dialogs::dialog_prompt_level;
 use logic::{
-    ClipboardRequest, ClipboardTarget, FrameSnapshot, GuiEvent, GuiRequest, start_logic_with_frames,
+    ClipboardRequest, ClipboardTarget, FrameSnapshot, GuiEvent, GuiRequest,
+    start_logic_with_native_window,
 };
 use view::{EditorView, build_managed_editor_view};
 
@@ -424,7 +425,7 @@ pub fn run_gui_with_dump(
         clipboard_requests,
         initial_frame_size,
         logic_thread,
-    ) = start_logic_with_frames(
+    ) = start_logic_with_native_window(
         files.to_vec(),
         dump_file.map(str::to_owned),
         arguments.to_vec(),

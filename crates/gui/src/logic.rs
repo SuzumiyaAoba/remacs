@@ -1716,6 +1716,76 @@ impl ChanIo {
         }
     }
 
+    fn wait_for_initial_geometry(&mut self) -> io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut deferred_events = VecDeque::new();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.pending_events.extend(deferred_events);
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "initial GUI window geometry was not reported",
+                ));
+            }
+            let event = if let Some(event) = self.pending_events.pop_front() {
+                Some(event)
+            } else {
+                match self.events.recv_timeout(remaining.min(Duration::from_millis(50))) {
+                    Ok(event) => Some(event),
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        self.pending_events.extend(deferred_events);
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "GUI window closed before reporting initial geometry",
+                        ));
+                    }
+                }
+            };
+            let Some(event) = event else {
+                continue;
+            };
+            match self.unwrap_frame_event(event) {
+                GuiEvent::Resize(cols, rows) => {
+                    self.update_size(self.active_frame_id, cols, rows);
+                    deferred_events.push_back(GuiEvent::Resize(cols, rows));
+                }
+                GuiEvent::Geometry(geometry) => {
+                    let frame_id = self.active_frame_id;
+                    if let Some(frame_id) = frame_id {
+                        self.frame_geometries.insert(frame_id, geometry.clone());
+                    } else {
+                        self.geometry = Some(geometry.clone());
+                    }
+                    self.update_size(frame_id, geometry.cols, geometry.rows);
+                    deferred_events.push_back(GuiEvent::Geometry(geometry));
+                    self.pending_events.extend(deferred_events);
+                    return Ok(());
+                }
+                event @ GuiEvent::FrameDeleteRequest { frame_id }
+                    if Some(frame_id) == self.primary_frame_id =>
+                {
+                    deferred_events.push_back(event);
+                    self.pending_events.extend(deferred_events);
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "initial GUI window closed before reporting geometry",
+                    ));
+                }
+                GuiEvent::PowerOff => {
+                    deferred_events.push_back(GuiEvent::PowerOff);
+                    self.pending_events.extend(deferred_events);
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "system requested shutdown before GUI startup completed",
+                    ));
+                }
+                event => deferred_events.push_back(event),
+            }
+        }
+    }
+
     fn unwrap_frame_event(&mut self, event: GuiEvent) -> GuiEvent {
         match event {
             GuiEvent::ForFrame { frame_id, event } => {
@@ -2740,7 +2810,7 @@ pub(super) fn start_logic(
         _clipboard_requests,
         _initial_frame_size,
         _logic_thread,
-    ) = start_logic_inner(files, None, Vec::new(), false, true, false)?;
+    ) = start_logic_inner(files, None, Vec::new(), false, true, false, false)?;
     Ok((events, grids))
 }
 
@@ -2758,7 +2828,7 @@ pub(super) fn start_logic_with_dump_for_test(
         _clipboard_requests,
         _initial_frame_size,
         _logic_thread,
-    ) = start_logic_inner(files, dump_file, arguments, false, true, false)?;
+    ) = start_logic_inner(files, dump_file, arguments, false, true, false, false)?;
     Ok((events, grids))
 }
 
@@ -2862,7 +2932,7 @@ pub(super) fn start_logic_with_dump(
         clipboard,
         _initial_frame_size,
         _logic_thread,
-    ) = start_logic_inner(files, dump_file, arguments, true, true, false)?;
+    ) = start_logic_inner(files, dump_file, arguments, true, true, false, false)?;
     Ok((events, grids, clipboard))
 }
 
@@ -2870,6 +2940,37 @@ pub(super) fn start_logic_with_frames(
     files: Vec<String>,
     dump_file: Option<String>,
     arguments: Vec<String>,
+) -> io::Result<(
+    Sender<GuiEvent>,
+    Arc<QuitRequest>,
+    smol::channel::Receiver<GuiRequest>,
+    smol::channel::Receiver<ClipboardRequest>,
+    Option<InitialFrameSize>,
+    std::thread::JoinHandle<()>,
+)> {
+    start_logic_with_frames_inner(files, dump_file, arguments, false)
+}
+
+pub(super) fn start_logic_with_native_window(
+    files: Vec<String>,
+    dump_file: Option<String>,
+    arguments: Vec<String>,
+) -> io::Result<(
+    Sender<GuiEvent>,
+    Arc<QuitRequest>,
+    smol::channel::Receiver<GuiRequest>,
+    smol::channel::Receiver<ClipboardRequest>,
+    Option<InitialFrameSize>,
+    std::thread::JoinHandle<()>,
+)> {
+    start_logic_with_frames_inner(files, dump_file, arguments, true)
+}
+
+fn start_logic_with_frames_inner(
+    files: Vec<String>,
+    dump_file: Option<String>,
+    arguments: Vec<String>,
+    wait_for_native_geometry: bool,
 ) -> io::Result<(
     Sender<GuiEvent>,
     Arc<QuitRequest>,
@@ -2886,7 +2987,15 @@ pub(super) fn start_logic_with_frames(
         clipboard,
         initial_frame_size_rx,
         logic_thread,
-    ) = start_logic_inner(files, dump_file, arguments, true, false, true)?;
+    ) = start_logic_inner(
+        files,
+        dump_file,
+        arguments,
+        true,
+        false,
+        true,
+        wait_for_native_geometry,
+    )?;
     drop(grids);
     let initial_frame_size = initial_frame_size_rx
         .recv()
@@ -2908,6 +3017,7 @@ fn start_logic_inner(
     enable_gui_selections: bool,
     legacy_grid_output: bool,
     enable_gui_requests: bool,
+    wait_for_native_geometry: bool,
 ) -> io::Result<(
     Sender<GuiEvent>,
     Arc<QuitRequest>,
@@ -3007,14 +3117,6 @@ fn start_logic_inner(
                     requests: gui_requests_tx.clone(),
                 })));
             }
-            let initial_frame_dimensions = i
-                .frames
-                .iter()
-                .filter_map(|frame| {
-                    let frame = frame.borrow();
-                    (!frame.dead).then_some((frame.id, (frame.width, frame.height)))
-                })
-                .collect::<HashMap<_, _>>();
             let initial_frame_size = i.selected_frame.as_ref().map(|frame| {
                 let has_size_parameter = [
                     "initial-frame-alist",
@@ -3053,7 +3155,6 @@ fn start_logic_inner(
                     frame_sizes.insert(frame_id, (frame.width, frame.height));
                 }
             }
-            let startup_frame_sizes = frame_sizes.clone();
             let io = ChanIo {
                 events: event_rx,
                 quit_request: Some(logic_quit_request.clone()),
@@ -3115,6 +3216,27 @@ fn start_logic_inner(
                 // Lisp may now prompt through the installed reader.
                 let _ = startup_tx.send(Ok(()));
             }
+            if wait_for_native_geometry {
+                if let Err(error) = term.borrow_mut().wait_for_initial_geometry() {
+                    let message = format!("GUI startup: {error}");
+                    eprintln!("remacs: {message}");
+                    let _ = startup_tx.send(Err(message));
+                    return;
+                }
+                let (width, height) = term.borrow().size();
+                if let Some(frame) = i.selected_frame.as_ref() {
+                    remacs_runtime::editor::reflow_frame_windows(frame, width, height);
+                }
+            }
+            let initial_frame_dimensions = i
+                .frames
+                .iter()
+                .filter_map(|frame| {
+                    let frame = frame.borrow();
+                    (!frame.dead).then_some((frame.id, (frame.width, frame.height)))
+                })
+                .collect::<HashMap<_, _>>();
+            let startup_frame_sizes = term.borrow().frame_sizes.clone();
             let startup = apply_startup_arguments(&mut i, &files, &arguments, enable_gui_selections);
             if let Err(error) = startup {
                 let message = format!("GUI startup: {error:?}");
