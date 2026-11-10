@@ -6799,10 +6799,14 @@ pub(crate) fn frame_live_plain(i: &mut Interp, v: &Value) -> Result<FrameRef, Fl
 }
 fn f_frame_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fframe_edges (window.c): decode_live_frame-style plain
-    // error, then a tty frame has no recorded edges → nil; callers
-    // like `frame-outer-width' die on `wta number-or-marker-p nil'.
-    let _ = frame_live_plain(i, &arg(&a, 0))?;
-    let _ = arg(&a, 1); // TYPE (outer/native/inner) — all nil on tty.
+    // error, then a tty frame has no recorded edges → nil. NS frames
+    // obtain their native geometry from the GUI frontend's last bounds.
+    let frame = frame_live_plain(i, &arg(&a, 0))?;
+    if frame_is_nextstep(i, &frame) {
+        let ns_edges = i.q("ns-frame-edges");
+        let edge_type = a.get(1).cloned().unwrap_or(Value::Nil);
+        return i.apply(&Value::Sym(ns_edges), vec![Value::Frame(frame), edge_type]);
+    }
     Ok(Value::Nil)
 }
 

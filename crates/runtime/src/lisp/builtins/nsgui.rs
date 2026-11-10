@@ -517,6 +517,176 @@ macro_rules! winsys_fn {
     };
 }
 
+fn ns_frame_parameter(i: &Interp, frame: &crate::editor::FrameRef, name: &str) -> Value {
+    let Some(symbol) = i.intern_soft(name) else {
+        return Value::Nil;
+    };
+    let params = frame.borrow().params.clone();
+    crate::lisp::eval::plist_get(&params, symbol)
+}
+
+fn ns_geometry_entry(i: &mut Interp, name: &str, value: Value) -> Value {
+    Value::cons(Value::Sym(i.q(name)), value)
+}
+
+fn ns_frame_geometry_value(i: &mut Interp, frame: &crate::editor::FrameRef) -> Value {
+    let saved_geometry = {
+        let key = i.q("remacs--frame-geometry");
+        let params = frame.borrow().params.clone();
+        crate::lisp::eval::plist_get(&params, key)
+    };
+    if !saved_geometry.is_nil() {
+        return saved_geometry;
+    }
+
+    // Before the first GUI redisplay, report the frame parameters we have
+    // and mark decoration sizes as unavailable.
+    let outer_left = crate::editor::frame_pixel_left(i, frame);
+    let outer_top = crate::editor::frame_pixel_top(i, frame);
+    let outer_width = crate::editor::frame_pixel_width(i, frame) as i128;
+    let outer_height = crate::editor::frame_pixel_height(i, frame) as i128;
+    let internal_border = crate::editor::frame_internal_border_width(i, frame) as i128;
+    let tool_bar_lines = ns_frame_parameter(i, frame, "tool-bar-lines")
+        .int()
+        .unwrap_or(0)
+        .max(0);
+    let tool_bar_height = tool_bar_lines
+        .saturating_mul(crate::editor::frame_char_height(i, frame) as i128);
+    let tool_bar_width = if tool_bar_height > 0 {
+        outer_width
+            .saturating_sub(internal_border.saturating_mul(2))
+            .max(0)
+    } else {
+        0
+    };
+    let external_tool_bar = ns_frame_parameter(i, frame, "tool-bar-external");
+    let configured_tool_bar_position = ns_frame_parameter(i, frame, "tool-bar-position");
+    let tool_bar_position = if configured_tool_bar_position.is_nil() && tool_bar_height > 0 {
+        Value::Sym(i.q("top"))
+    } else {
+        configured_tool_bar_position
+    };
+    let pair = |left, right| Value::cons(Value::Int(left), Value::Int(right));
+    Value::list(vec![
+        ns_geometry_entry(i, "outer-position", pair(outer_left, outer_top)),
+        ns_geometry_entry(i, "outer-size", pair(outer_width, outer_height)),
+        ns_geometry_entry(i, "external-border-size", pair(0, 0)),
+        ns_geometry_entry(i, "title-bar-size", pair(0, 0)),
+        ns_geometry_entry(i, "menu-bar-external", Value::Nil),
+        ns_geometry_entry(i, "menu-bar-size", pair(0, 0)),
+        ns_geometry_entry(i, "tool-bar-external", external_tool_bar),
+        ns_geometry_entry(i, "tool-bar-position", tool_bar_position),
+        ns_geometry_entry(i, "tool-bar-size", pair(tool_bar_width, tool_bar_height)),
+        ns_geometry_entry(i, "internal-border-width", Value::Int(internal_border)),
+    ])
+}
+
+fn ns_geometry_attribute(i: &Interp, geometry: &Value, name: &str) -> Value {
+    let Some(key) = i.intern_soft(name) else {
+        return Value::Nil;
+    };
+    let mut tail = geometry.clone();
+    while let Value::Cons(cell) = tail {
+        let (entry, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        if let Value::Cons(pair) = entry {
+            let pair = pair.borrow();
+            if matches!(&pair.car, Value::Sym(symbol) if *symbol == key) {
+                return pair.cdr.clone();
+            }
+        }
+        tail = next;
+    }
+    Value::Nil
+}
+
+fn ns_geometry_pair(value: &Value) -> (i128, i128) {
+    if let Value::Cons(pair) = value {
+        let pair = pair.borrow();
+        (pair.car.int().unwrap_or(0), pair.cdr.int().unwrap_or(0))
+    } else {
+        (0, 0)
+    }
+}
+
+fn f_ns_frame_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame_arg = a.first().cloned().unwrap_or(Value::Nil);
+    let frame = crate::editor::frame_live(i, &frame_arg)?;
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_nextstep(i, &frame) {
+        return Err(winsys(i));
+    }
+    let geometry = ns_frame_geometry_value(i, &frame);
+    let (outer_left, outer_top) =
+        ns_geometry_pair(&ns_geometry_attribute(i, &geometry, "outer-position"));
+    let (outer_width, outer_height) =
+        ns_geometry_pair(&ns_geometry_attribute(i, &geometry, "outer-size"));
+    let (border_width, border_height) =
+        ns_geometry_pair(&ns_geometry_attribute(i, &geometry, "external-border-size"));
+    let (_, title_bar_height) =
+        ns_geometry_pair(&ns_geometry_attribute(i, &geometry, "title-bar-size"));
+    let (_, tool_bar_height) =
+        ns_geometry_pair(&ns_geometry_attribute(i, &geometry, "tool-bar-size"));
+    let internal_border = ns_geometry_attribute(i, &geometry, "internal-border-width")
+        .int()
+        .unwrap_or(0);
+
+    let native_left = outer_left.saturating_add(border_width);
+    let native_top = outer_top
+        .saturating_add(border_height)
+        .saturating_add(title_bar_height);
+    let native_right = outer_left
+        .saturating_add(outer_width)
+        .saturating_sub(border_width);
+    let native_bottom = outer_top
+        .saturating_add(outer_height)
+        .saturating_sub(border_height);
+    let outer_edges = {
+        let key = i.q("outer-edges");
+        matches!(a.get(1), Some(Value::Sym(symbol)) if *symbol == key)
+    };
+    let inner_edges = {
+        let key = i.q("inner-edges");
+        matches!(a.get(1), Some(Value::Sym(symbol)) if *symbol == key)
+    };
+    if outer_edges {
+        return Ok(Value::list(vec![
+            Value::Int(outer_left),
+            Value::Int(outer_top),
+            Value::Int(outer_left.saturating_add(outer_width)),
+            Value::Int(outer_top.saturating_add(outer_height)),
+        ]));
+    }
+    if inner_edges {
+        return Ok(Value::list(vec![
+            Value::Int(native_left.saturating_add(internal_border)),
+            Value::Int(
+                native_top
+                    .saturating_add(tool_bar_height)
+                    .saturating_add(internal_border),
+            ),
+            Value::Int(native_right.saturating_sub(internal_border)),
+            Value::Int(native_bottom.saturating_sub(internal_border)),
+        ]));
+    }
+    Ok(Value::list(vec![
+        Value::Int(native_left),
+        Value::Int(native_top),
+        Value::Int(native_right),
+        Value::Int(native_bottom),
+    ]))
+}
+
+fn f_ns_frame_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame_arg = a.first().cloned().unwrap_or(Value::Nil);
+    let frame = crate::editor::frame_live(i, &frame_arg)?;
+    if !cfg!(target_os = "macos") || !crate::editor::frame_is_nextstep(i, &frame) {
+        return Err(winsys(i));
+    }
+    Ok(ns_frame_geometry_value(i, &frame))
+}
+
 fn ns_window_system_in_use(i: &Interp) -> bool {
     cfg!(target_os = "macos")
         && i.selected_frame
@@ -613,9 +783,6 @@ fn f_ns_emacs_info_panel(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
         .map_err(|error| i.error(format!("Native About panel failed: {error}")))?;
     Ok(Value::Nil)
 }
-
-winsys_fn!(f_ns_frame_edges);
-winsys_fn!(f_ns_frame_geometry);
 
 fn f_ns_mouse_absolute_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let Some(frame) = i

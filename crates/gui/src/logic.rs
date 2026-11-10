@@ -567,6 +567,8 @@ pub(super) struct GuiGeometry {
     pub rows: usize,
     pub pixel_width: i128,
     pub pixel_height: i128,
+    pub outer_width: i128,
+    pub outer_height: i128,
     pub char_width: i128,
     pub char_height: i128,
     pub scale_factor: f64,
@@ -593,6 +595,18 @@ pub(super) struct GeometrySymbols {
     pub workarea: remacs_runtime::lisp::value::SymId,
     pub mm_size: remacs_runtime::lisp::value::SymId,
     pub frames: remacs_runtime::lisp::value::SymId,
+    pub frame_geometry: remacs_runtime::lisp::value::SymId,
+    pub outer_position: remacs_runtime::lisp::value::SymId,
+    pub outer_size: remacs_runtime::lisp::value::SymId,
+    pub external_border_size: remacs_runtime::lisp::value::SymId,
+    pub title_bar_size: remacs_runtime::lisp::value::SymId,
+    pub menu_bar_external: remacs_runtime::lisp::value::SymId,
+    pub menu_bar_size: remacs_runtime::lisp::value::SymId,
+    pub tool_bar_external: remacs_runtime::lisp::value::SymId,
+    pub tool_bar_position: remacs_runtime::lisp::value::SymId,
+    pub tool_bar_size: remacs_runtime::lisp::value::SymId,
+    pub top: remacs_runtime::lisp::value::SymId,
+    pub internal_border_width: remacs_runtime::lisp::value::SymId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1458,6 +1472,18 @@ impl GeometrySymbols {
             workarea: i.intern("workarea"),
             mm_size: i.intern("mm-size"),
             frames: i.intern("frames"),
+            frame_geometry: i.intern("remacs--frame-geometry"),
+            outer_position: i.intern("outer-position"),
+            outer_size: i.intern("outer-size"),
+            external_border_size: i.intern("external-border-size"),
+            title_bar_size: i.intern("title-bar-size"),
+            menu_bar_external: i.intern("menu-bar-external"),
+            menu_bar_size: i.intern("menu-bar-size"),
+            tool_bar_external: i.intern("tool-bar-external"),
+            tool_bar_position: i.intern("tool-bar-position"),
+            tool_bar_size: i.intern("tool-bar-size"),
+            top: i.intern("top"),
+            internal_border_width: i.intern("internal-border-width"),
         }
     }
 }
@@ -1514,6 +1540,18 @@ mod monitor_record_tests {
             workarea: 12,
             mm_size: 13,
             frames: 14,
+            frame_geometry: 15,
+            outer_position: 16,
+            outer_size: 17,
+            external_border_size: 18,
+            title_bar_size: 19,
+            menu_bar_external: 20,
+            menu_bar_size: 21,
+            tool_bar_external: 22,
+            tool_bar_position: 23,
+            tool_bar_size: 24,
+            top: 25,
+            internal_border_width: 26,
         };
         let monitor = MonitorGeometry {
             display_id: 42,
@@ -1546,6 +1584,68 @@ fn frame_parameter_value(
         return Value::Nil;
     };
     remacs_runtime::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(symbol))
+}
+
+fn native_frame_geometry_alist(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+    geometry: &GuiGeometry,
+    keys: GeometrySymbols,
+) -> Value {
+    let pair = |left, right| Value::cons(Value::Int(left), Value::Int(right));
+    let entry = |key, value| Value::cons(Value::Sym(key), value);
+    let internal_border = frame_parameter_value(i, frame, "internal-border-width")
+        .int()
+        .unwrap_or(0)
+        .max(0);
+    let tool_bar_lines = frame_parameter_value(i, frame, "tool-bar-lines")
+        .int()
+        .unwrap_or(0)
+        .max(0);
+    let tool_bar_height = tool_bar_lines.saturating_mul(geometry.char_height.max(0));
+    let tool_bar_width = if tool_bar_height > 0 {
+        geometry
+            .outer_width
+            .saturating_sub(2 * internal_border)
+            .max(0)
+    } else {
+        0
+    };
+    let title_bar_height = geometry
+        .outer_height
+        .saturating_sub(geometry.pixel_height)
+        .max(0);
+    let external_tool_bar = frame_parameter_value(i, frame, "tool-bar-external");
+    let configured_tool_bar_position = frame_parameter_value(i, frame, "tool-bar-position");
+    let tool_bar_position = if configured_tool_bar_position.is_nil() && tool_bar_height > 0 {
+        Value::Sym(keys.top)
+    } else {
+        configured_tool_bar_position
+    };
+
+    Value::list(vec![
+        entry(
+            keys.outer_position,
+            pair(geometry.frame_left, geometry.frame_top),
+        ),
+        entry(
+            keys.outer_size,
+            pair(geometry.outer_width, geometry.outer_height),
+        ),
+        entry(keys.external_border_size, pair(0, 0)),
+        // AppKit does not provide the title-bar width to Emacs, but its
+        // height is the difference between the window frame and viewport.
+        entry(keys.title_bar_size, pair(0, title_bar_height)),
+        entry(keys.menu_bar_external, Value::Nil),
+        entry(keys.menu_bar_size, pair(0, 0)),
+        entry(keys.tool_bar_external, external_tool_bar),
+        entry(keys.tool_bar_position, tool_bar_position),
+        entry(keys.tool_bar_size, pair(tool_bar_width, tool_bar_height)),
+        entry(
+            keys.internal_border_width,
+            Value::Int(internal_border),
+        ),
+    ])
 }
 
 fn frame_minimum(i: &Interp, frame: &remacs_runtime::editor::FrameRef, name: &str) -> Option<usize> {
@@ -2597,6 +2697,11 @@ impl KeyIo for ChanIo {
                     })
                     .collect::<Vec<_>>();
                 let mut params = frame.borrow().params.clone();
+                params = remacs_runtime::lisp::eval::plist_put_front(
+                    &params,
+                    &Value::Sym(keys.frame_geometry),
+                    native_frame_geometry_alist(i, frame, &geometry, keys),
+                );
                 for (key, value) in [
                     (keys.pixel_width, Value::Int(geometry.pixel_width)),
                     (keys.pixel_height, Value::Int(geometry.pixel_height)),
@@ -2900,6 +3005,74 @@ mod discard_input_tests {
         assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
         assert_eq!(io.pending_frame_visibility, Some((7, false)));
         assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod native_frame_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn ns_frame_geometry_and_edges_use_gpui_window_bounds() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut i = Interp::new();
+                i.eval_str(
+                    "(set-frame-parameter nil 'window-system 'ns) \
+                     (set-frame-parameter nil 'internal-border-width 2)",
+                )
+                .unwrap();
+                i.eval_str("(require 'frame)").unwrap();
+                let frame_id = i.selected_frame.as_ref().unwrap().borrow().id;
+                let (events, receiver) = mpsc::channel();
+                let (grids, _grid_receiver) = smol::channel::unbounded();
+                let mut io = ChanIo::new_for_test(receiver, grids);
+                io.active_frame_id = Some(frame_id);
+                io.primary_frame_id = Some(frame_id);
+                io.geometry_symbols = Some(GeometrySymbols::intern(&mut i));
+                io.geometry = Some(GuiGeometry {
+                    cols: 80,
+                    rows: 24,
+                    pixel_width: 640,
+                    pixel_height: 480,
+                    outer_width: 640,
+                    outer_height: 500,
+                    char_width: 8,
+                    char_height: 20,
+                    scale_factor: 1.0,
+                    frame_left: 10,
+                    frame_top: 20,
+                    current_display_id: None,
+                    monitors: Vec::new(),
+                });
+
+                io.render(&i).unwrap();
+                drop(events);
+
+                let frame_type = i.eval_str("(framep-on-display nil)").unwrap();
+                assert_eq!(i.prin1_to_string(&frame_type), "ns");
+                let geometry = i
+                    .eval_str(
+                        "(list (cdr (assq 'outer-position (frame-geometry nil))) \
+                              (cdr (assq 'outer-size (frame-geometry nil))) \
+                              (cdr (assq 'title-bar-size (frame-geometry nil))))",
+                    )
+                    .unwrap();
+                assert_eq!(i.prin1_to_string(&geometry), "((10 . 20) (640 . 500) (0 . 20))");
+                let outer_edges = i.eval_str("(frame-edges nil 'outer-edges)").unwrap();
+                assert_eq!(i.prin1_to_string(&outer_edges), "(10 20 650 520)");
+                let native_edges = i.eval_str("(frame-edges nil)").unwrap();
+                assert_eq!(i.prin1_to_string(&native_edges), "(10 40 650 520)");
+                let inner_edges = i.eval_str("(frame-edges nil 'inner-edges)").unwrap();
+                assert_eq!(i.prin1_to_string(&inner_edges), "(12 42 648 518)");
+                let outer_dimensions =
+                    i.eval_str("(list (frame-outer-width nil) (frame-outer-height nil))").unwrap();
+                assert_eq!(i.prin1_to_string(&outer_dimensions), "(640 500)");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
 

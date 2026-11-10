@@ -1584,7 +1584,11 @@ pub(super) fn f_display_monitor_attributes_list(
 /// `frame-geometry' — GNU frame.el: `window-normalize-frame' gates
 /// with the plain "X is not a live frame" error, then tty → nil.
 pub(super) fn f_frame_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
+    let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        let geometry = i.q("ns-frame-geometry");
+        return i.apply(&Value::Sym(geometry), vec![Value::Frame(frame)]);
+    }
     Ok(Value::Nil)
 }
 
@@ -1598,11 +1602,43 @@ pub(super) fn f_frame_height_val(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     Ok(Value::Int(crate::editor::frame_pixel_height(i, &frame) as i128))
 }
 
-/// `frame-outer-width'/`frame-outer-height' — GNU consults
-/// `frame-edges', which is nil on a tty batch frame; the arithmetic
-/// then signals `wrong-type-argument number-or-marker-p nil'.
-pub(super) fn f_frame_outer_dim(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
+/// GNU's outer dimension helpers compute from `frame-edges' and signal a
+/// `number-or-marker-p' error when a tty has no recorded geometry.
+pub(super) fn f_frame_outer_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_frame_outer_dimension(i, a, false)
+}
+
+pub(super) fn f_frame_outer_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_frame_outer_dimension(i, a, true)
+}
+
+fn f_frame_outer_dimension(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+    vertical: bool,
+) -> EvalResult {
+    let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_nextstep(i, &frame) {
+        let frame_edges = i.q("frame-edges");
+        let outer_edges = i.q("outer-edges");
+        let edges = i.apply(
+            &Value::Sym(frame_edges),
+            vec![Value::Frame(frame), Value::Sym(outer_edges)],
+        )?;
+        let values = edges
+            .list_to_vec()
+            .map_err(|_| i.wrong_type_mut("number-or-marker-p", &edges))?;
+        let (start, end) = if vertical { (1, 3) } else { (0, 2) };
+        let start = values
+            .get(start)
+            .and_then(Value::int)
+            .ok_or_else(|| i.wrong_type_mut("number-or-marker-p", &Value::Nil))?;
+        let end = values
+            .get(end)
+            .and_then(Value::int)
+            .ok_or_else(|| i.wrong_type_mut("number-or-marker-p", &Value::Nil))?;
+        return Ok(Value::Int(end - start));
+    }
     Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil))
 }
 
