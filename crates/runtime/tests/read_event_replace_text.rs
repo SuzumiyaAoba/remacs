@@ -1,5 +1,5 @@
 use remacs_runtime::{
-    frontend::{InputEvent, KeyIo, run_editor_with},
+    frontend::{InputEvent, KeyIo, MouseButton, MouseInput, MousePosition, run_editor_with},
     lisp::Interp,
 };
 use std::{collections::VecDeque, io, time::Duration};
@@ -68,4 +68,55 @@ fn read_event_and_read_char_skip_empty_replace_text() {
     assert_eq!(interp.prin1_to_string(&read_char), "121");
     let text = interp.buffers.get(buffer_id).unwrap().borrow().text.text();
     assert_eq!(format!("{text}"), "selected");
+}
+
+#[test]
+fn read_event_without_timeout_returns_mouse_click_and_position() {
+    let mut interp = Interp::new();
+    interp
+        .eval_str(
+            "(progn (erase-buffer) (insert \"clicked\") (goto-char (point-min)) (setq qa-read-event-result nil) (global-set-key [f8] (lambda () (interactive) (setq qa-read-event-result (read-event)) (kill-emacs))))",
+        )
+        .unwrap();
+    let window_id = interp
+        .selected_frame
+        .as_ref()
+        .unwrap()
+        .borrow()
+        .selected
+        .borrow()
+        .id;
+    let position = MousePosition {
+        buffer_id: interp.current_buffer,
+        buffer_position: 1,
+        utf16_offset: 1,
+        x: 8,
+        y: 0,
+        row: 0,
+        column: 1,
+        window_id: Some(window_id),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let mouse = MouseInput {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        start: position,
+        end: position,
+    };
+    let frontend = InputFrontend {
+        events: VecDeque::from([
+            InputEvent::Key(remacs_runtime::editor::event_code_for("f8")),
+            InputEvent::MouseDown(mouse),
+            InputEvent::Mouse(mouse),
+        ]),
+    };
+    run_editor_with(frontend, &mut interp).unwrap();
+
+    let event_id = interp.intern("qa-read-event-result");
+    let event = interp.symbol_value(event_id);
+    let printed = interp.prin1_to_string(&event);
+    assert!(printed.starts_with("(mouse-1 "), "unexpected event: {printed}");
+    assert!(printed.contains(" 2 "), "missing buffer position: {printed}");
 }
