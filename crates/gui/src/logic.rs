@@ -549,6 +549,7 @@ pub(super) enum GuiRequest {
 #[derive(Clone, PartialEq)]
 pub(super) struct MonitorGeometry {
     pub display_id: u32,
+    pub name: String,
     pub geometry: [i128; 4],
     pub workarea: [i128; 4],
     pub mm_size: [Option<i128>; 2],
@@ -583,6 +584,7 @@ pub(super) struct GeometrySymbols {
     pub frame_left: remacs_runtime::lisp::value::SymId,
     pub frame_top: remacs_runtime::lisp::value::SymId,
     pub monitor_attributes: remacs_runtime::lisp::value::SymId,
+    pub name: remacs_runtime::lisp::value::SymId,
     pub geometry: remacs_runtime::lisp::value::SymId,
     pub workarea: remacs_runtime::lisp::value::SymId,
     pub mm_size: remacs_runtime::lisp::value::SymId,
@@ -1431,11 +1433,87 @@ impl GeometrySymbols {
             frame_left: i.intern("left"),
             frame_top: i.intern("top"),
             monitor_attributes: i.intern("display-monitor-attributes-list"),
+            name: i.intern("name"),
             geometry: i.intern("geometry"),
             workarea: i.intern("workarea"),
             mm_size: i.intern("mm-size"),
             frames: i.intern("frames"),
         }
+    }
+}
+
+fn monitor_record(
+    monitor: &MonitorGeometry,
+    current_display_id: Option<u32>,
+    all_frames: &Value,
+    keys: GeometrySymbols,
+) -> Value {
+    let monitor_frames = if current_display_id.is_none_or(|id| id == monitor.display_id) {
+        all_frames.clone()
+    } else {
+        Value::Nil
+    };
+    let attr = |key, values: [i128; 4]| {
+        let mut fields = Vec::with_capacity(5);
+        fields.push(Value::Sym(key));
+        fields.extend(values.into_iter().map(Value::Int));
+        Value::list(fields)
+    };
+    Value::list(vec![
+        Value::cons(Value::Sym(keys.name), Value::string(monitor.name.clone())),
+        attr(keys.geometry, monitor.geometry),
+        attr(keys.workarea, monitor.workarea),
+        Value::list(vec![
+            Value::Sym(keys.mm_size),
+            monitor.mm_size[0].map(Value::Int).unwrap_or(Value::Nil),
+            monitor.mm_size[1].map(Value::Int).unwrap_or(Value::Nil),
+        ]),
+        Value::list(vec![Value::Sym(keys.frames), monitor_frames]),
+    ])
+}
+
+#[cfg(test)]
+mod monitor_record_tests {
+    use super::*;
+
+    #[test]
+    fn monitor_record_exposes_its_display_name() {
+        let keys = GeometrySymbols {
+            pixel_width: 0,
+            pixel_height: 1,
+            char_width: 2,
+            char_height: 3,
+            grid_cols: 4,
+            grid_rows: 5,
+            scale_factor: 6,
+            frame_left: 7,
+            frame_top: 8,
+            monitor_attributes: 9,
+            name: 10,
+            geometry: 11,
+            workarea: 12,
+            mm_size: 13,
+            frames: 14,
+        };
+        let monitor = MonitorGeometry {
+            display_id: 42,
+            name: "display-42".to_owned(),
+            geometry: [0, 0, 1920, 1080],
+            workarea: [0, 0, 1920, 1040],
+            mm_size: [Some(530), Some(300)],
+            native_origin: [0, 0],
+        };
+        let record = monitor_record(&monitor, Some(42), &Value::Nil, keys);
+        let fields = record.list_to_vec().unwrap();
+        let Value::Cons(name_attribute) = &fields[0] else {
+            panic!("monitor name attribute")
+        };
+        let name_attribute = name_attribute.borrow();
+        assert!(matches!(&name_attribute.car, Value::Sym(id) if *id == keys.name));
+        let Value::Str(name) = &name_attribute.cdr else {
+            panic!("monitor name string")
+        };
+        assert_eq!(name.borrow().to_unicode_lossy(), "display-42");
     }
 }
 
@@ -2396,33 +2474,18 @@ impl KeyIo for ChanIo {
                     .flatten()
             });
             if let (Some(geometry), Some(keys)) = (geometry, self.geometry_symbols) {
-                let mut monitors = Vec::with_capacity(geometry.monitors.len());
-                for monitor in &geometry.monitors {
-                    let monitor_frames = if geometry
-                        .current_display_id
-                        .is_none_or(|display_id| display_id == monitor.display_id)
-                    {
-                        all_frames.clone()
-                    } else {
-                        Value::Nil
-                    };
-                    let attr = |key, values: [i128; 4]| {
-                        let mut fields = Vec::with_capacity(5);
-                        fields.push(Value::Sym(key));
-                        fields.extend(values.into_iter().map(Value::Int));
-                        Value::list(fields)
-                    };
-                    monitors.push(Value::list(vec![
-                        attr(keys.geometry, monitor.geometry),
-                        attr(keys.workarea, monitor.workarea),
-                        Value::list(vec![
-                            Value::Sym(keys.mm_size),
-                            monitor.mm_size[0].map(Value::Int).unwrap_or(Value::Nil),
-                            monitor.mm_size[1].map(Value::Int).unwrap_or(Value::Nil),
-                        ]),
-                        Value::list(vec![Value::Sym(keys.frames), monitor_frames]),
-                    ]));
-                }
+                let monitors = geometry
+                    .monitors
+                    .iter()
+                    .map(|monitor| {
+                        monitor_record(
+                            monitor,
+                            geometry.current_display_id,
+                            &all_frames,
+                            keys,
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 let mut params = frame.borrow().params.clone();
                 for (key, value) in [
                     (keys.pixel_width, Value::Int(geometry.pixel_width)),

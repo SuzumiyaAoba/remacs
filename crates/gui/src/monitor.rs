@@ -3,6 +3,10 @@
 use super::logic::MonitorGeometry;
 use gpui::{App, Window};
 
+fn monitor_name(display_id: u32) -> String {
+    format!("display-{display_id}")
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn monitor_geometry(_window: &Window, _cx: &App) -> Vec<MonitorGeometry> {
     use cocoa::{
@@ -29,12 +33,14 @@ pub(super) fn monitor_geometry(_window: &Window, _cx: &App) -> Vec<MonitorGeomet
                 continue;
             }
             let display: CGDirectDisplayID = msg_send![number, unsignedIntValue];
+            let display_id = display;
             let bounds = CGDisplayBounds(display);
             let physical_size = CGDisplayScreenSize(display);
             let work_top =
                 frame.origin.y + frame.size.height - visible.origin.y - visible.size.height;
             monitors.push(MonitorGeometry {
-                display_id: display,
+                display_id,
+                name: monitor_name(display_id),
                 geometry: [
                     bounds.origin.x.round() as i128,
                     bounds.origin.y.round() as i128,
@@ -77,6 +83,7 @@ pub(super) fn monitor_geometry(_window: &Window, cx: &App) -> Vec<MonitorGeometr
             ];
             MonitorGeometry {
                 display_id,
+                name: monitor_name(display_id),
                 geometry,
                 workarea: geometry,
                 mm_size: [None, None],
