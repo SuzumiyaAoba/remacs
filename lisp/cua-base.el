@@ -1329,6 +1329,9 @@ If ARG is the atom `-', scroll upward by nearly full screen."
 ;; State prior to enabling cua-mode
 ;; Value is a list with the following elements:
 ;;   delete-selection-mode
+;;   whether cua-delete-copy-to-register-0 was enabled
+;;   whether delete-selection-save-to-register was bound
+;;   its value when bound
 
 (defvar cua--saved-state nil)
 (defvar delete-selection-save-to-register)
@@ -1389,7 +1392,11 @@ the prefix fallback behavior."
     (unless cua--saved-state
       (setq cua--saved-state
 	    (list
-	     (and (boundp 'delete-selection-mode) delete-selection-mode))))
+	     (and (boundp 'delete-selection-mode) delete-selection-mode)
+	     cua-delete-copy-to-register-0
+	     (boundp 'delete-selection-save-to-register)
+	     (and (boundp 'delete-selection-save-to-register)
+		  delete-selection-save-to-register)))
     (if cua-delete-selection
         (delete-selection-mode 1)
       (if (and (boundp 'delete-selection-mode) delete-selection-mode)
@@ -1403,6 +1410,10 @@ the prefix fallback behavior."
 	(delete-selection-mode 1)
       (if (and (boundp 'delete-selection-mode) delete-selection-mode)
           (delete-selection-mode -1)))
+    (when (nth 1 cua--saved-state)
+	(if (nth 2 cua--saved-state)
+	    (setq delete-selection-save-to-register (nth 3 cua--saved-state))
+	  (makunbound 'delete-selection-save-to-register)))
     (if (called-interactively-p 'interactive)
 	(message "CUA mode disabled.%s"
 		 (if (nth 0 cua--saved-state) " Delete-Selection enabled" "")))
