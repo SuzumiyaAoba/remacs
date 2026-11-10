@@ -231,8 +231,8 @@ For NODE, OVERRIDE, START, and END, see `treesit-font-lock-rules'."
 ;; This function signature complies with `treesit-simple-indent-rules'
 ;; ANCHOR.
 (defun mhtml-ts-mode--js-css-tag-bol (_node _parent &rest _)
-  "Find the first non-space characters of html tags <script> or <style>.
-Return `line-beginning-position' when `treesit-node-at' is html, or
+  "Find the start of the containing HTML <script> or <style> element.
+Return `line-beginning-position' when `treesit-language-at' is html, or
 `mhtml-ts-mode-tag-relative-indent' is equal to ignore.
 NODE and PARENT are ignored."
   (if (or (eq (treesit-language-at (point)) 'html)
@@ -240,7 +240,13 @@ NODE and PARENT are ignored."
       (line-beginning-position)
     ;; Ok, we are in js or css block.
     (save-excursion
-      (re-search-backward "<script.*>\\|<style.*>" nil t))))
+      (let ((node (treesit-node-at (point) 'html)))
+        (while (and node
+                    (not (member (treesit-node-type node)
+                                 '("script_element" "style_element"))))
+          (setq node (treesit-node-parent node)))
+        (when node
+          (treesit-node-start node))))))
 
 ;; Treesit supports 4 level of decoration, `treesit-font-lock-level'
 ;; define which level to use.  Major modes categorize their fontification
