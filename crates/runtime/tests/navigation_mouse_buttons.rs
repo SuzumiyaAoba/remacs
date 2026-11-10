@@ -43,7 +43,8 @@ fn navigation_buttons_run_lisp_bindings_with_click_drag_and_modifier_data() {
           (append remacs-navigation-events
             (list (list (car event) (posn-point (nth 1 event))
               (if (consp (nth 2 event)) (posn-point (nth 2 event)) (nth 2 event)))))))
-      (dolist (key '([down-mouse-4] [mouse-4] [down-mouse-5] [mouse-5]
+      (dolist (key '([down-mouse-1] [mouse-1]
+                    [down-mouse-4] [mouse-4] [down-mouse-5] [mouse-5]
                     [C-S-double-down-mouse-4] [C-S-double-mouse-4]
                     [triple-down-mouse-5] [triple-mouse-5] [drag-mouse-5]
                     [wheel-up] [wheel-down]))
@@ -73,6 +74,7 @@ fn navigation_buttons_run_lisp_bindings_with_click_drag_and_modifier_data() {
     };
     let mut events = VecDeque::new();
     for (button, click_count, modifiers) in [
+        (MouseButton::Left, 1, 0),
         (MouseButton::Back, 1, 0),
         (MouseButton::Forward, 1, 0),
         (MouseButton::Back, 2, CHAR_CTL | CHAR_SHIFT),
@@ -122,6 +124,6 @@ fn navigation_buttons_run_lisp_bindings_with_click_drag_and_modifier_data() {
         .to_unicode_lossy();
     assert_eq!(
         actual,
-        "((down-mouse-4 2 1) (mouse-4 2 1) (down-mouse-5 2 1) (mouse-5 2 1) (C-S-double-down-mouse-4 2 2) (C-S-double-mouse-4 2 2) (triple-down-mouse-5 2 3) (triple-mouse-5 2 3) (down-mouse-5 2 1) (drag-mouse-5 2 4) (wheel-up 2 nil) (wheel-down 2 nil))"
+        "((down-mouse-1 2 1) (mouse-1 2 1) (down-mouse-4 2 1) (mouse-4 2 1) (down-mouse-5 2 1) (mouse-5 2 1) (C-S-double-down-mouse-4 2 2) (C-S-double-mouse-4 2 2) (triple-down-mouse-5 2 3) (triple-mouse-5 2 3) (down-mouse-5 2 1) (drag-mouse-5 2 4) (wheel-up 2 nil) (wheel-down 2 nil))"
     );
 }
