@@ -22,6 +22,18 @@ pub(super) fn sync_mouse_absolute_pixel_position<T: KeyIo>(
     }
 }
 
+pub(super) fn sync_nested_frame_geometry<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) -> Result<(), crate::lisp::Flow> {
+    let (width, height) = term.borrow().size();
+    if let Some(frame) = i.selected_frame.as_ref() {
+        crate::editor::reflow_frame_windows(frame, width, height);
+    }
+    crate::editor::changes::run(i)?;
+    Ok(())
+}
+
 /// A batch startup can reach the command loop when a replacement for
 /// `kill-emacs' returns.  The threaded GNU event loop waits for queued
 /// events and timers here; it neither enters terminal mode nor consumes
@@ -2687,6 +2699,7 @@ fn minibuf_loop<T: KeyIo>(
         if let Some((frame_id, left, top)) = term.borrow_mut().take_frame_moved() {
             dispatch_frame_moved(i, frame_id, left, top)?;
         }
+        sync_nested_frame_geometry(term, i)?;
         let input = match polled {
             Ok(Some(input)) => input,
             Ok(None) => continue,

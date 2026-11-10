@@ -2812,6 +2812,9 @@ pub(super) fn isearch_loop<T: KeyIo>(
         let input = term.borrow_mut().poll_key_or_mouse(Duration::from_millis(50))?;
         apply_frame_selection(term, i);
         super::sync_mouse_absolute_pixel_position(term, i);
+        if let Err(flow) = super::sync_nested_frame_geometry(term, i) {
+            report_flow(i, flow);
+        }
         let key = match input {
             Some(InputEvent::Key(key)) => key,
             Some(InputEvent::SystemSleep { sleeping }) => {
