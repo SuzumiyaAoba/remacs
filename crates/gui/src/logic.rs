@@ -1409,6 +1409,7 @@ fn fit_echo_text_at_cursor(
     let mut source_column = 0usize;
     let mut rendered_columns = 0usize;
     let mut cursor_index = None;
+    let mut preceding_base_visible = false;
     for (index, raw_character) in text.chars().enumerate() {
         if index == cursor_character {
             cursor_index = Some(rendered.len());
@@ -1422,17 +1423,24 @@ fn fit_echo_text_at_cursor(
         let visible_start = source_column.max(scroll_start);
         let visible_end = char_end.min(scroll_end);
         if char_width == 0 {
-            if (scroll_start..=scroll_end).contains(&source_column) {
+            if preceding_base_visible {
                 rendered.push(character);
             }
         } else if visible_end > visible_start {
             let visible_width = visible_end - visible_start;
-            if raw_character == '\t' || visible_start != source_column || visible_end != char_end {
+            let whole_character_visible =
+                raw_character != '\t' && raw_character == character
+                    && visible_start == source_column
+                    && visible_end == char_end;
+            if !whole_character_visible {
                 rendered.push_str(&" ".repeat(visible_width));
             } else {
                 rendered.push(character);
             }
+            preceding_base_visible = whole_character_visible;
             rendered_columns = rendered_columns.saturating_add(visible_width);
+        } else {
+            preceding_base_visible = false;
         }
         source_column = char_end;
     }
@@ -1452,6 +1460,26 @@ fn fit_echo_text_at_cursor(
         cursor_column,
         cursor_index.min(visible_bytes),
     )
+}
+
+#[cfg(test)]
+mod echo_hscroll_tests {
+    use super::fit_echo_text_at_cursor;
+
+    #[test]
+    fn combining_marks_follow_their_base_across_scroll_edges() {
+        let text = "a\u{0301}bbb";
+        let (shown, columns, visible_bytes, _, _) =
+            fit_echo_text_at_cursor(text, 4, text.chars().count(), 4);
+        assert_eq!(shown, "bbb ");
+        assert_eq!(columns, 3);
+        assert_eq!(visible_bytes, 3);
+
+        let (shown, columns, visible_bytes, _, _) = fit_echo_text_at_cursor(text, 4, 2, 1);
+        assert_eq!(shown, text);
+        assert_eq!(columns, 4);
+        assert_eq!(visible_bytes, text.len());
+    }
 }
 
 impl GeometrySymbols {
