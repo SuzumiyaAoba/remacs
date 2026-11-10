@@ -1200,7 +1200,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("invert-face", 1, 2, f_invert_face, ""),
     S!("clear-face-cache", 0, 1, f_nil, ""),
     // ---------- windows ----------
-    S!("minibuffer-selected-window", 0, 0, f_nil, ""),
+    S!(
+        "minibuffer-selected-window",
+        0,
+        0,
+        display::f_minibuffer_selected_window,
+        ""
+    ),
     // GNU 31: `window-min-height'/`window-min-width' are Lisp functions in
     // window.el (not loaded at -Q); the variables exist.
     S!("window-sizable", 2, 5, f_window_sizable, ""),

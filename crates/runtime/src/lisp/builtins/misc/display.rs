@@ -1020,6 +1020,21 @@ pub(super) fn f_selected_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalRe
     }
 }
 
+/// Return the window selected before the active minibuffer window, if any,
+/// matching GNU `Fminibuffer_selected_window'.
+pub(super) fn f_minibuffer_selected_window(
+    i: &mut Interp,
+    _a: crate::lisp::Argv,
+) -> EvalResult {
+    if i.minibuf_level <= 0 || !i.selected_window_is_minibuffer() {
+        return Ok(Value::Nil);
+    }
+    match &i.minibuf_selected_window {
+        Some(window) if !window.borrow().dead => Ok(Value::Window(window.clone())),
+        _ => Ok(Value::Nil),
+    }
+}
+
 pub(super) fn f_line_number_display_width(
     i: &mut Interp,
     a: crate::lisp::Argv,

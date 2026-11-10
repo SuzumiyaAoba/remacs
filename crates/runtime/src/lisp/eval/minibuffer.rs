@@ -210,6 +210,24 @@ impl Interp {
             // with the minibuffer window selected (window-minibuffer-p,
             // minibuffer-selected-window & friends observe it).
             let caller = MinibufferCaller::capture(self, saved_buf);
+            let selected_window = self
+                .selected_frame
+                .as_ref()
+                .map(|frame| frame.borrow().selected.clone());
+            let minibuffer_window = self
+                .selected_frame
+                .as_ref()
+                .and_then(|frame| frame.borrow().minibuffer.clone());
+            let already_selected_minibuffer = match (&selected_window, &minibuffer_window) {
+                (Some(selected), Some(minibuffer)) => Rc::ptr_eq(selected, minibuffer),
+                _ => false,
+            };
+            // GNU preserves the original caller window during recursive
+            // reads in the same minibuffer window, and replaces it only
+            // for a new top-level read or a different minibuffer window.
+            if depth == 1 || !already_selected_minibuffer {
+                self.minibuf_selected_window = selected_window;
+            }
             if let Some(f) = &self.selected_frame {
                 let mbw = f.borrow().minibuffer.clone();
                 if let Some(w) = mbw {

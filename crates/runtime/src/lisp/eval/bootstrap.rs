@@ -185,6 +185,7 @@ impl Interp {
             x_resource_backend: None,
             nsgui_selections: HashMap::default(),
             unread_switch_frame: Value::Nil,
+            minibuf_selected_window: None,
             minibuf_level: 0,
             minibuf_list: Vec::new(),
             minibuf_cll: Vec::new(),

@@ -314,6 +314,9 @@ pub struct Interp {
     pub(crate) nsgui_selections: HashMap<SymId, Value>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.
     pub(crate) unread_switch_frame: Value,
+    /// The window selected before entering the active minibuffer, retained
+    /// for GNU `minibuffer-selected-window' (across recursive reads).
+    pub minibuf_selected_window: Option<crate::editor::WindowRef>,
     /// Nesting depth of active minibuffer reads (`minibuffer-depth').
     pub minibuf_level: i32,
     /// ` *Minibuf-N*' buffer ids by depth — GNU's `Vminibuffer_list'.

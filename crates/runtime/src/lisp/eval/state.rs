@@ -152,6 +152,7 @@ impl Interp {
         self.quit_editor = false;
         self.exit_status = None;
         self.unread_switch_frame = Value::Nil;
+        self.minibuf_selected_window = None;
         self.minibuf_level = 0;
         self.minibuf_cll.clear();
         self.minibuf_prompts.clear();
