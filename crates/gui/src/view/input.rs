@@ -110,12 +110,26 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
     let mapped = input.hit_test_position(row, column, byte)?;
+    let (origin_x, origin_y) = mapped
+        .window_id
+        .and_then(|window_id| {
+            grid.window_text_areas
+                .iter()
+                .find(|area| area.window_id == window_id)
+        })
+        .map(|area| {
+            (
+                px(f32::from(cell_width) * area.left as f32),
+                grid_row_top(grid, area.top, px(LINE_HEIGHT)),
+            )
+        })
+        .unwrap_or((px(0.0), px(0.0)));
     Some(MousePosition {
         buffer_id: mapped.buffer_id,
         buffer_position: mapped.buffer_position,
         utf16_offset: mapped.utf16_offset,
-        x: f32::from(point.x).round() as i128,
-        y: f32::from(point.y).round() as i128,
+        x: (f32::from(point.x) - f32::from(origin_x)).round() as i128,
+        y: (f32::from(point.y) - f32::from(origin_y)).round() as i128,
         row,
         column: mapped.column,
         window_id: mapped.window_id,

@@ -419,7 +419,7 @@ pub struct MousePosition {
     pub buffer_position: usize,
     /// UTF-16 offset used by the native text input APIs.
     pub utf16_offset: usize,
-    /// Pixel coordinates relative to the front-end's text area.
+    /// Pixel coordinates relative to the target window's text area.
     pub x: i128,
     pub y: i128,
     /// Display row and character column.
