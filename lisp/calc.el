@@ -1350,14 +1350,18 @@ Notations:  3.14e6     3.14 * 10^6
 
 \\{calc-mode-map}"
   (interactive)
-  (mapc (lambda (v)
-          ;; FIXME: Why (set-default v (symbol-value v)) ?!?!?
-          (set-default v (symbol-value v)))
-        calc-local-var-list)
-  (kill-all-local-variables)
+  (let ((local-values
+         (delq nil
+               (mapcar (lambda (v)
+                         (when (local-variable-p v)
+                           (cons v (symbol-value v))))
+                       calc-local-var-list))))
+    (kill-all-local-variables)
+    (mapc #'make-local-variable calc-local-var-list)
+    (dolist (entry local-values)
+      (set (car entry) (cdr entry))))
   (use-local-map (if (eq calc-algebraic-mode 'total)
 		     (progn (require 'calc-ext) calc-alg-map) calc-mode-map))
-  (mapc #'make-local-variable calc-local-var-list)
   (make-local-variable 'overlay-arrow-position)
   (make-local-variable 'overlay-arrow-string)
   (add-hook 'change-major-mode-hook #'font-lock-defontify nil t)

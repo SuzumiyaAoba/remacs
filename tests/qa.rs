@@ -630,6 +630,7 @@ qa!(qa_reader_error_context, "qa_reader_error_context.el");
 qa!(qa_reader_circles, "qa_reader_circles.el");
 qa!(qa_rect, "qa_rect.el");
 qa!(qa_rect_load, "qa_rect_load.el");
+qa!(qa_calc_mode_reentry_locals, "qa_calc_mode_reentry_locals.el");
 qa!(qa_regex, "qa_regex.el");
 qa!(qa_regex_properties, "qa_regex_properties.el");
 qa!(qa_regexp_classes, "qa_regexp_classes.el");
