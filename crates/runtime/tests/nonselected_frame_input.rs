@@ -89,6 +89,15 @@ fn nonselected_frame_grid_maps_input_to_its_selected_window() {
 
 #[test]
 fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(split_window_hit_test_maps_to_the_nonselected_buffer_and_window_inner)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window_inner() {
     let mut interp = Interp::new();
     let left_buffer = interp.create_buffer("left-frame-buffer");
     interp
@@ -145,6 +154,53 @@ fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window() {
     assert_eq!(position.buffer_position, 5);
     assert_eq!(position.utf16_offset, 5);
     assert_eq!(position.window_id, Some(right_window.borrow().id));
+
+    interp
+        .eval_str(
+            "(progn (setq qa-nonselected-click-result nil) (global-set-key [mouse-1] (lambda (event) (interactive \"e\") (mouse-set-point event) (setq qa-nonselected-click-result (list (eq (selected-window) (posn-window (event-start event))) (point))))) (global-set-key [f12] (lambda () (interactive) (kill-emacs))))",
+        )
+        .unwrap();
+    let mouse_position = MousePosition {
+        buffer_id: position.buffer_id,
+        buffer_position: position.buffer_position,
+        utf16_offset: position.utf16_offset,
+        x: 364,
+        y: 10,
+        row: 0,
+        column: position.column,
+        window_id: position.window_id,
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let mouse = MouseInput {
+        button: MouseButton::Left,
+        click_count: 1,
+        modifiers: 0,
+        start: mouse_position,
+        end: mouse_position,
+    };
+    let frontend = DropFrontend {
+        events: VecDeque::from([
+            InputEvent::MouseDown(mouse),
+            InputEvent::Mouse(mouse),
+            InputEvent::Key(remacs_runtime::editor::event_code_for("f12")),
+        ]),
+    };
+    run_editor_with(frontend, &mut interp).unwrap();
+    assert_eq!(
+        interp
+            .selected_frame
+            .as_ref()
+            .unwrap()
+            .borrow()
+            .selected
+            .borrow()
+            .id,
+        right_window.borrow().id
+    );
+    let click_result_symbol = interp.intern("qa-nonselected-click-result");
+    let click_result = interp.symbol_value(click_result_symbol);
+    assert_eq!(interp.prin1_to_string(&click_result), "(t 6)");
 }
 
 #[test]
