@@ -3172,7 +3172,9 @@ fn configure_gui_window_system(i: &mut Interp) {
     let initial_window_system = i.intern("initial-window-system");
     #[cfg(target_os = "macos")]
     let system = "ns";
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let system = "w32";
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let system = "gpui";
     let value = remacs_runtime::lisp::Value::Sym(i.intern(system));
     let _ = i.set_symbol_default(window_system, value.clone());
