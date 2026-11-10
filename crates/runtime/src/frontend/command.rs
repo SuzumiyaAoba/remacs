@@ -30,8 +30,58 @@ pub(super) fn sync_nested_frame_geometry<T: KeyIo>(
     if let Some(frame) = i.selected_frame.as_ref() {
         crate::editor::reflow_frame_windows(frame, width, height);
     }
-    crate::editor::changes::run(i)?;
+    run_frontend_changes(term, i)?;
     Ok(())
+}
+
+fn sync_frame_pixel_geometry<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) {
+    let geometry = term.borrow().frame_pixel_geometry();
+    if geometry.is_empty() {
+        return;
+    }
+    let pixel_width = i.q("pixel-width");
+    let pixel_height = i.q("pixel-height");
+    for (frame_id, width, height) in geometry {
+        let Some(frame) = i
+            .frames
+            .iter()
+            .find(|frame| frame.borrow().id == frame_id)
+            .cloned()
+        else {
+            continue;
+        };
+        let mut frame = frame.borrow_mut();
+        let width_changed = crate::lisp::eval::plist_get(&frame.params, pixel_width).int()
+            != Some(width);
+        let height_changed = crate::lisp::eval::plist_get(&frame.params, pixel_height).int()
+            != Some(height);
+        if !width_changed && !height_changed {
+            continue;
+        }
+        let mut params = frame.params.clone();
+        params = crate::lisp::eval::plist_put_front(
+            &params,
+            &Value::Sym(pixel_width),
+            Value::Int(width),
+        );
+        params = crate::lisp::eval::plist_put_front(
+            &params,
+            &Value::Sym(pixel_height),
+            Value::Int(height),
+        );
+        frame.params = params;
+    }
+}
+
+fn run_frontend_changes<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+) -> Result<bool, crate::lisp::Flow> {
+    sync_frame_pixel_geometry(term, i);
+    crate::editor::changes::run(i)
 }
 
 /// A batch startup can reach the command loop when a replacement for
@@ -188,14 +238,14 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
         loop {
             let thread_activity = crate::lisp::eval::threads::yield_now(interp)?;
             let event_activity = crate::lisp::builtins::evalfn::thread_wait_events(interp)?;
-            let window_activity = crate::editor::changes::run(interp)?;
+            let window_activity = run_frontend_changes(&t, interp)?;
             let render_requested = t.borrow_mut().take_render_request();
             render_needed |= thread_activity || event_activity || window_activity || render_requested;
             if render_needed {
                 if let Err(flow) = t.borrow_mut().run_pre_redisplay_functions(interp) {
                     return Err(flow);
                 }
-                crate::editor::changes::run(interp)?;
+                run_frontend_changes(&t, interp)?;
                 super::prepare_native_menus(interp)?;
                 t.borrow_mut()
                     .render(interp)
@@ -451,7 +501,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
         if i.quit_editor {
             break;
         }
-        let window_activity = match crate::editor::changes::run(i) {
+        let window_activity = match run_frontend_changes(&term, i) {
             Ok(activity) => activity,
             Err(flow) => {
                 report_flow(i, flow);
@@ -465,7 +515,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             if let Err(flow) = term.borrow_mut().run_pre_redisplay_functions(i) {
                 report_flow(i, flow);
             }
-            if let Err(flow) = crate::editor::changes::run(i) {
+            if let Err(flow) = run_frontend_changes(&term, i) {
                 report_flow(i, flow);
             }
             if let Err(flow) = super::prepare_native_menus(i) {
@@ -2639,7 +2689,7 @@ fn minibuf_loop<T: KeyIo>(
     loop {
         let thread_activity = crate::lisp::eval::threads::yield_now(i)?;
         let event_activity = crate::lisp::builtins::evalfn::thread_wait_events(i)?;
-        let window_activity = crate::editor::changes::run(i)?;
+        let window_activity = run_frontend_changes(term, i)?;
         let render_on_idle = term.borrow().render_on_idle();
         let render_requested = term.borrow_mut().take_render_request();
         render_needed |= thread_activity
@@ -2659,7 +2709,7 @@ fn minibuf_loop<T: KeyIo>(
                 if let Err(flow) = term.borrow_mut().run_pre_redisplay_functions(i) {
                     report_flow(i, flow);
                 }
-                if let Err(flow) = crate::editor::changes::run(i) {
+                if let Err(flow) = run_frontend_changes(term, i) {
                     report_flow(i, flow);
                 }
                 if let Err(flow) = super::prepare_native_menus(i) {

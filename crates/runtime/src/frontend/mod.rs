@@ -561,6 +561,12 @@ pub trait KeyIo {
     }
     /// Current frame size in text cells.
     fn size(&self) -> (usize, usize);
+    /// Native pixel geometry for the frames currently known to this
+    /// front-end. The shared command loop publishes these dimensions before
+    /// running frame-size change hooks.
+    fn frame_pixel_geometry(&self) -> Vec<(usize, i128, i128)> {
+        Vec::new()
+    }
 }
 
 mod bitmap;

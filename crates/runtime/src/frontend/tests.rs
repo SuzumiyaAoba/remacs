@@ -8,6 +8,7 @@ struct TestFrontend {
     height: usize,
     out: Rc<RefCell<Vec<u8>>>,
     pending: Vec<i128>,
+    frame_pixel_geometry: Vec<(usize, i128, i128)>,
 }
 impl KeyIo for TestFrontend {
     fn poll_key(&mut self, _: Duration) -> io::Result<Option<i128>> {
@@ -30,6 +31,9 @@ impl KeyIo for TestFrontend {
     fn size(&self) -> (usize, usize) {
         (self.width, self.height)
     }
+    fn frame_pixel_geometry(&self) -> Vec<(usize, i128, i128)> {
+        self.frame_pixel_geometry.clone()
+    }
 }
 fn test_term(width: usize, height: usize) -> (TestFrontend, Rc<RefCell<Vec<u8>>>) {
     let out = Rc::new(RefCell::new(Vec::new()));
@@ -39,6 +43,7 @@ fn test_term(width: usize, height: usize) -> (TestFrontend, Rc<RefCell<Vec<u8>>>
             height,
             out: out.clone(),
             pending: Vec::new(),
+            frame_pixel_geometry: Vec::new(),
         },
         out,
     )
@@ -1374,6 +1379,46 @@ fn horizontal_scroll_mouse_hit_test_skips_hidden_source_prefix() {
                 .hit_test_position(area.top, area.left, 0)
                 .unwrap();
             assert_eq!(position.buffer_position, 3);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn window_size_hooks_see_current_frontend_pixel_geometry() {
+    std::thread::Builder::new()
+        .stack_size(128 << 20)
+        .spawn(|| {
+            let mut i = interp_with_frame("");
+            let frame = i.selected_frame.as_ref().unwrap().clone();
+            let frame_id = frame.borrow().id;
+            let (frontend, _out) = test_term(80, 25);
+            let term = Rc::new(RefCell::new(frontend));
+
+            i.eval_str("(set-frame-parameter nil 'window-system 'ns)")
+                .unwrap();
+            run_frontend_changes(&term, &mut i).unwrap();
+            i.eval_str(
+                "(setq qa-window-pixel-hook-value nil) \
+                 (add-hook 'window-size-change-functions \
+                   (lambda (frame) \
+                     (setq qa-window-pixel-hook-value \
+                           (list (frame-width frame) \
+                                 (frame-pixel-width frame) \
+                                 (frame-pixel-height frame)))))",
+            )
+            .unwrap();
+            {
+                let mut frontend = term.borrow_mut();
+                frontend.width = 81;
+                frontend.frame_pixel_geometry = vec![(frame_id, 1234, 876)];
+            }
+            crate::editor::reflow_frame_windows(&frame, 81, 25);
+            run_frontend_changes(&term, &mut i).unwrap();
+
+            let observed = i.eval_str("qa-window-pixel-hook-value").unwrap();
+            assert_eq!(i.prin1_to_string(&observed), "(81 1234 876)");
         })
         .unwrap()
         .join()

@@ -2809,6 +2809,22 @@ impl KeyIo for ChanIo {
             .and_then(|frame_id| self.frame_sizes.get(&frame_id).copied())
             .unwrap_or((self.cols, self.rows))
     }
+
+    fn frame_pixel_geometry(&self) -> Vec<(usize, i128, i128)> {
+        let mut geometry = self
+            .frame_geometries
+            .iter()
+            .map(|(frame_id, geometry)| {
+                (*frame_id, geometry.pixel_width, geometry.pixel_height)
+            })
+            .collect::<Vec<_>>();
+        if let (Some(frame_id), Some(primary)) = (self.primary_frame_id, self.geometry.as_ref())
+            && !geometry.iter().any(|(id, _, _)| *id == frame_id)
+        {
+            geometry.push((frame_id, primary.pixel_width, primary.pixel_height));
+        }
+        geometry
+    }
 }
 
 /// Translate a gpui keystroke to an Emacs event code, mirroring
