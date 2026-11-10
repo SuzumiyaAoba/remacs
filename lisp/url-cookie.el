@@ -520,12 +520,27 @@ Compare names without regard to case.  With nil PREDICATE, accept any value."
 	 (domain (if domain-attribute
 		      (cdr-safe domain-attribute)
 		    (url-host url-current-object)))
+	 (domain-without-leading-dot
+	  (if (and (> (length domain) 0)
+	           (eq ?. (aref domain 0)))
+	      (substring domain 1)
+	    domain))
+	 ;; RFC 6265 §5.3 turns an exact-host public-suffix Domain attribute
+	 ;; into an empty attribute, making the cookie host-only.
+	 (host-only-domain
+	  (and domain-attribute
+	       (> (length domain-without-leading-dot) 0)
+	       (url-cookie--domain-match-p
+	        (url-host url-current-object) domain-without-leading-dot)
+	       (not (url-domsuf-cookie-allowed-p
+	             (downcase domain-without-leading-dot)))))
 	 ;; A leading dot records a Domain attribute; no dot means host-only.
-	 (stored-domain (if (and domain-attribute
-			  (> (length domain) 0)
-			  (not (eq ?. (aref domain 0))))
-		     (concat "." domain)
-		   domain))
+	 (stored-domain
+	  (if (and domain-attribute
+	           (> (length domain-without-leading-dot) 0)
+	           (not host-only-domain))
+	      (concat "." domain-without-leading-dot)
+	    domain-without-leading-dot))
 	 (current-url (url-view-url t))
 	 (trusted url-cookie-trusted-urls)
 	 (untrusted url-cookie-untrusted-urls)
