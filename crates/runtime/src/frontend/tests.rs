@@ -291,6 +291,36 @@ fn visual_line_mode_wraps_at_word_boundaries() {
 }
 
 #[test]
+fn visual_line_numbers_count_continuation_rows_only_in_visual_mode() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(setq-local truncate-lines nil\
+                     display-line-numbers 'visual\
+                     display-line-numbers-width 2)",
+    )
+    .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"x".repeat(200));
+
+    let visual = render_grid(&i, 20, 6);
+    assert_eq!(visual.rows[0].chars().take(3).collect::<String>(), " 1 ");
+    assert_eq!(visual.rows[1].chars().take(3).collect::<String>(), " 1 ");
+    assert_eq!(visual.rows[2].chars().take(3).collect::<String>(), " 2 ");
+
+    i.eval_str("(setq-local display-line-numbers t)").unwrap();
+    let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
+    window.borrow_mut().start = 17;
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .set_point(17);
+    let absolute = render_grid(&i, 20, 6);
+    assert_eq!(absolute.rows[0].chars().take(3).collect::<String>(), "   ");
+}
+
+#[test]
 fn vertical_motion_moves_through_wrapped_visual_rows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil line-move-visual t)")

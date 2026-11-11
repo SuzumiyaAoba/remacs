@@ -9098,6 +9098,46 @@ fn render_grid_internal(
         let gutter_left = content_left_with_margin;
         let content_left = gutter_left.saturating_add(gutter_width);
         let content_width = content_width_with_margins.saturating_sub(gutter_width);
+        let line_numbers_visual =
+            matches!(&line_number_mode, Value::Sym(symbol) if i.symbol_name(*symbol) == "visual");
+        let line_numbers_relative = matches!(
+            &line_number_mode,
+            Value::Sym(symbol) if i.symbol_name(*symbol) == "relative"
+        );
+        let line_numbers_current_absolute =
+            buffer_setting(i, "display-line-numbers-current-absolute", buf_id).truthy();
+        let point_position = i.buffers.get(buf_id).map_or(start, |buffer| {
+            let buffer = buffer.borrow();
+            let point = if use_buffer_point {
+                buffer.point()
+            } else {
+                w.borrow().point
+            };
+            point.clamp(buffer.begv, buffer.zv)
+        });
+        let visual_number_limit = 100_000usize;
+        let visual_point_absolute = if line_numbers_visual {
+            i.buffers.get(buf_id).map_or(1, |buffer| {
+                let buffer = buffer.borrow();
+                display_row_distance_from_start(
+                    &buffer.text,
+                    buffer.begv,
+                    buffer.zv,
+                    buffer.begv,
+                    point_position,
+                    wrap_lines,
+                    content_width,
+                    tab_width,
+                    ctl_arrow,
+                    visual_number_limit,
+                )
+                .max(0) as i128
+                    + 1
+                    + line_number_offset
+            })
+        } else {
+            0
+        };
         let fringe_style = fctx.builtin(i, "fringe", 0).finish();
         let indicate_boundaries = buffer_setting(i, "indicate-buffer-boundaries", buf_id);
         let show_left_boundaries = match &indicate_boundaries {
@@ -9983,18 +10023,52 @@ fn render_grid_internal(
                     hscroll
                 };
                 if gutter_width > 0 {
-                    let number_style = if point_line_number + 1 == line_number {
+                    let visual_distance = if line_numbers_visual {
+                        i.buffers.get(buf_id).map_or(0, |buffer| {
+                            let buffer = buffer.borrow();
+                            display_row_distance_from_start(
+                                &buffer.text,
+                                buffer.begv,
+                                buffer.zv,
+                                segment_pos,
+                                point_position,
+                                wrap_lines,
+                                content_width,
+                                tab_width,
+                                ctl_arrow,
+                                visual_number_limit,
+                            )
+                            .unsigned_abs() as i128
+                        })
+                    } else {
+                        0
+                    };
+                    let current_number_line = if line_numbers_visual {
+                        visual_distance == 0
+                    } else {
+                        point_line_number + 1 == line_number
+                    };
+                    let number_style = if current_number_line {
                         fctx.builtin(i, "line-number-current-line", 0).finish()
                     } else {
                         fctx.builtin(i, "line-number", 0).finish()
                     };
-                    let show_number = (segment_start == 0 || (row == 0 && start_offset > 0))
-                        && !plan.continued;
+                    let show_number = if line_numbers_visual {
+                        true
+                    } else {
+                        segment_start == 0 && !plan.continued && !plan.repeated_start
+                    };
                     let number = if show_number {
                         let absolute = (line_number as i128).saturating_add(line_number_offset);
-                        let value = if matches!(line_number_mode, Value::Sym(symbol) if i.symbol_name(symbol) == "relative")
-                            && point_line_number + 1 != line_number
-                        {
+                        let value = if line_numbers_visual && visual_distance == 0 {
+                            if line_numbers_current_absolute {
+                                visual_point_absolute
+                            } else {
+                                0
+                            }
+                        } else if line_numbers_visual {
+                            visual_distance
+                        } else if line_numbers_relative && point_line_number + 1 != line_number {
                             ((point_line_number as i128 + 1) - line_number as i128).abs()
                         } else {
                             absolute
