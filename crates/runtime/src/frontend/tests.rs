@@ -275,6 +275,22 @@ fn wrapped_continuations_render_string_and_space_wrap_prefixes() {
 }
 
 #[test]
+fn visual_line_mode_wraps_at_word_boundaries() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq-local truncate-partial-width-windows nil) (visual-line-mode 1)")
+        .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert("one two three four five");
+
+    let grid = render_grid(&i, 10, 6);
+    assert_eq!(grid.rows[0].trim_end(), "one two");
+    assert_eq!(grid.rows[1].trim(), "three four");
+    assert_eq!(grid.rows[2].trim(), "five");
+}
+
+#[test]
 fn partial_width_window_honors_truncate_partial_width_windows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil truncate-partial-width-windows 1000)")

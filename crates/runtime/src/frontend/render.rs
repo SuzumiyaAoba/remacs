@@ -1124,7 +1124,20 @@ fn wrap_ranges_with_prefix(
     continuation_prefix_width: usize,
     tab_width: usize,
     ctl_arrow: bool,
+    word_wrap: bool,
+    word_wrap_by_category: bool,
 ) -> Vec<Range<usize>> {
+    if word_wrap {
+        return wrap_ranges_by_word(
+            text,
+            width,
+            first_prefix_width,
+            continuation_prefix_width,
+            tab_width,
+            ctl_arrow,
+            word_wrap_by_category,
+        );
+    }
     if (first_prefix_width == 0 && continuation_prefix_width == 0) || width == 0 {
         return wrap_ranges(text, width, tab_width, ctl_arrow);
     }
@@ -1169,6 +1182,100 @@ fn wrap_ranges_with_prefix(
     }
     ranges.push(start..chars.len());
     ranges
+}
+
+fn wrap_ranges_by_word(
+    text: &EmacsText,
+    width: usize,
+    first_prefix_width: usize,
+    continuation_prefix_width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+    by_category: bool,
+) -> Vec<Range<usize>> {
+    let chars = text.chars().collect::<Vec<_>>();
+    if chars.is_empty() {
+        return vec![0..0];
+    }
+    if width == 0 {
+        return vec![0..chars.len()];
+    }
+    let tab_width = tab_width.max(1);
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let mut column = if start == 0 {
+            first_prefix_width
+        } else {
+            continuation_prefix_width
+        }
+        .min(width);
+        let mut end = start;
+        while end < chars.len() {
+            let character = chars[end];
+            let code = character.code();
+            let unicode = character.unicode().unwrap_or('\u{fffd}');
+            let char_width = if unicode == '\t' {
+                tab_width - column % tab_width
+            } else if character.byte8().is_some() {
+                4
+            } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+                2
+            } else {
+                display_char_width(unicode)
+            };
+            if end > start && column.saturating_add(char_width) > width {
+                break;
+            }
+            column = column.saturating_add(char_width);
+            end += 1;
+        }
+        if end == start {
+            end += 1;
+        }
+        if end < chars.len() {
+            let split_inside_word = word_wrap_categories_equal(chars[end - 1], chars[end]);
+            if split_inside_word {
+                let boundary = (start + 1..end)
+                    .rev()
+                    .find(|boundary| wrap_word_boundary_before(&chars, *boundary, by_category));
+                if let Some(boundary) = boundary {
+                    end = boundary;
+                }
+            } else if chars[end].unicode().is_some_and(char::is_whitespace) {
+                // The separator cannot fit at the right edge; consume it
+                // with this row so the next one starts at the following word.
+                end += 1;
+            }
+        }
+        ranges.push(start..end);
+        start = end;
+    }
+    ranges
+}
+
+fn wrap_word_boundary_before(chars: &[EmacsChar], boundary: usize, by_category: bool) -> bool {
+    if boundary == 0 || boundary >= chars.len() {
+        return false;
+    }
+    let previous = chars[boundary - 1].unicode().unwrap_or('\u{fffd}');
+    previous.is_whitespace()
+        || (by_category && !word_wrap_categories_equal(chars[boundary - 1], chars[boundary]))
+}
+
+fn word_wrap_categories_equal(left: EmacsChar, right: EmacsChar) -> bool {
+    fn category(character: char) -> u8 {
+        if character.is_whitespace() {
+            0
+        } else if character.is_alphanumeric() || character == '_' {
+            1
+        } else {
+            2
+        }
+    }
+    let left = left.unicode().unwrap_or('\u{fffd}');
+    let right = right.unicode().unwrap_or('\u{fffd}');
+    category(left) == category(right)
 }
 
 fn selective_display_hides_line(mode: &Value, text: &EmacsText, tab_width: usize) -> bool {
@@ -9586,6 +9693,8 @@ fn render_grid_internal(
                         0
                     },
                 ));
+            let word_wrap = buffer_setting(i, "word-wrap", buf_id).truthy();
+            let word_wrap_by_category = buffer_setting(i, "word-wrap-by-category", buf_id).truthy();
             let ranges = if wrap_lines {
                 wrap_ranges_with_prefix(
                     metric_line,
@@ -9594,6 +9703,8 @@ fn render_grid_internal(
                     wrap_prefix_width,
                     tab_width,
                     ctl_arrow,
+                    word_wrap,
+                    word_wrap_by_category,
                 )
             } else {
                 vec![0..line_len]
