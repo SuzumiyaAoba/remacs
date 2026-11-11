@@ -2,7 +2,9 @@
 mod read_event_tests;
 
 use super::*;
-use crate::frontend::{CellColor, MousePosition, render_grid_with_mouse_position_cached};
+use crate::frontend::{
+    CellColor, GridImageSource, MousePosition, render_grid_with_mouse_position_cached,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -402,6 +404,50 @@ fn invisible_text_does_not_consume_wrapped_rows() {
     let grid = render_grid(&i, 20, 6);
     assert!(grid.rows[0].starts_with("VISIBLE"));
     assert!(grid.rows[0].chars().all(|character| character != 'x'));
+}
+
+#[test]
+fn relative_image_file_is_searched_in_image_load_path() {
+    struct TempDir(std::path::PathBuf);
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "remacs-image-load-path-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let _cleanup = TempDir(directory.clone());
+    let image_path = directory.join("icon.svg");
+    std::fs::write(&image_path, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>").unwrap();
+
+    let mut i = interp_with_frame("x");
+    let search_path = i
+        .prin1_to_string(&crate::lisp::Value::string(directory.to_string_lossy().as_ref()))
+        .to_string();
+    let unrelated_directory = i
+        .prin1_to_string(&crate::lisp::Value::string("/definitely/not/the/image/directory/"))
+        .to_string();
+    i.eval_str(&format!(
+        "(setq image-load-path (list {search_path}))\
+         (setq-local default-directory {unrelated_directory})\
+         (put-text-property (point-min) (point-max) 'display\
+                            '(image :type svg :file \"icon.svg\"))"
+    ))
+    .unwrap();
+
+    let grid = render_grid(&i, 40, 4);
+    let expected = image_path.to_string_lossy().into_owned();
+    assert!(grid.images.iter().any(|image| {
+        matches!(&image.source, GridImageSource::File(path) if path == &expected)
+    }));
 }
 
 #[test]
