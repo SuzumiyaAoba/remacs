@@ -2450,6 +2450,31 @@ PREFER-ROMAN roman numbering is preferred over using letters."
 ;; FIXME: At least the continuation may be folded into
 ;;        'newline-and-indent'. However, this may not be wanted by everyone so
 ;;        it should be possible to switch this off.
+(defun rst--list-item-context-for-continuation ()
+  "Return the prefix, tag and suffix of the item enclosing this line."
+  (let ((continuation-indentation (current-indentation)))
+    (save-excursion
+      (beginning-of-line)
+      (let (context stop)
+        (while (and (not context) (not stop)
+                    (rst-forward-line-strict -1))
+          (cond
+           ((looking-at (rst-re 'lin-end))
+            nil)
+           ((looking-at (rst-re 'itmany-beg-1))
+            (if (< (current-indentation) continuation-indentation)
+                (setq context
+                      (list
+                       (buffer-substring-no-properties
+                        (match-beginning 0) (match-beginning 1))
+                       (match-string-no-properties 1)
+                       (buffer-substring-no-properties
+                        (match-end 1) (match-end 0))))
+              (setq stop t)))
+           ((< (current-indentation) continuation-indentation)
+            (setq stop t))))
+        context))))
+
 (defun rst-insert-list (&optional prefer-roman)
   ;; testcover: ok.
   "Insert a list item at the current point.
@@ -2482,17 +2507,19 @@ roman numerical list, just use a prefix to set PREFER-ROMAN."
   (save-match-data
     (1value
      (rst-forward-line-strict 0))
-    ;; FIXME: Finds only tags in single line items. Multi-line items should be
-    ;;        considered as well.
-    ;; Using `rst-forward-line-looking-at' is more complicated so don't do it.
-    (if (looking-at (rst-re 'itmany-beg-1))
-	(rst-insert-list-continue
-	 (buffer-substring-no-properties
-	  (match-beginning 0) (match-beginning 1))
-	 (match-string 1)
-	 (buffer-substring-no-properties (match-end 1) (match-end 0))
-	 prefer-roman)
-      (rst-insert-list-new-item))))
+    ;; Continuation lines inherit the marker and indentation of their item.
+    (let ((context
+           (if (looking-at (rst-re 'itmany-beg-1))
+               (list
+                (buffer-substring-no-properties
+                 (match-beginning 0) (match-beginning 1))
+                (match-string-no-properties 1)
+                (buffer-substring-no-properties (match-end 1) (match-end 0)))
+             (rst--list-item-context-for-continuation))))
+      (if context
+          (rst-insert-list-continue
+           (nth 0 context) (nth 1 context) (nth 2 context) prefer-roman)
+        (rst-insert-list-new-item)))))
 
 ;; FIXME: This is wrong because it misses prefixed lines without intervening
 ;;        new line. See `rst-straighten-bullets-region-BUGS' and

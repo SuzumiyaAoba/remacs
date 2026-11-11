@@ -1060,6 +1060,7 @@ qa!(
     "qa_sgml_parse_tag_backward_pi_cdata.el"
 );
 
+qa!(qa_rst_list_continuation, "qa_rst_list_continuation.el");
 qa!(qa_xml_namespace_attrs, "qa_xml_namespace_attrs.el");
 
 qa!(qa_xml_well_formed, "qa_xml_well_formed.el");
