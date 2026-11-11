@@ -1746,6 +1746,36 @@ fn dispatch_mouse<T: KeyIo>(
     result
 }
 
+fn mouse_wheel_event(
+    i: &mut Interp,
+    direction: MouseWheelDirection,
+    modifiers: i128,
+    position: MousePosition,
+    line_count: Option<usize>,
+    pixel_delta: Option<(i128, i128)>,
+) -> (i128, Value) {
+    let base = match direction {
+        MouseWheelDirection::Up => "wheel-up",
+        MouseWheelDirection::Down => "wheel-down",
+        MouseWheelDirection::Left => "wheel-left",
+        MouseWheelDirection::Right => "wheel-right",
+    };
+    let name = mouse_event_name(base, modifiers);
+    let key = crate::editor::event_code_for(&name);
+    let mut event_fields = vec![
+        Value::Sym(i.intern(&name)),
+        mouse_position_value(i, position).unwrap_or(Value::Nil),
+        Value::Nil,
+        line_count
+            .map(|count| Value::Int(count as i128))
+            .unwrap_or(Value::Nil),
+    ];
+    if let Some((x, y)) = pixel_delta {
+        event_fields.push(Value::cons(Value::Int(x), Value::Int(y)));
+    }
+    (key, Value::list(event_fields))
+}
+
 fn dispatch_mouse_wheel<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
@@ -1766,26 +1796,8 @@ fn dispatch_mouse_wheel<T: KeyIo>(
             return Ok(());
         }
     }
-    let base = match direction {
-        MouseWheelDirection::Up => "wheel-up",
-        MouseWheelDirection::Down => "wheel-down",
-        MouseWheelDirection::Left => "wheel-left",
-        MouseWheelDirection::Right => "wheel-right",
-    };
-    let name = mouse_event_name(base, modifiers);
-    let key = crate::editor::event_code_for(&name);
-    let mut event_fields = vec![
-        Value::Sym(i.intern(&name)),
-        mouse_position_value(i, position).unwrap_or(Value::Nil),
-        Value::Nil,
-        line_count
-            .map(|count| Value::Int(count as i128))
-            .unwrap_or(Value::Nil),
-    ];
-    if let Some((x, y)) = pixel_delta {
-        event_fields.push(Value::cons(Value::Int(x), Value::Int(y)));
-    }
-    let event = Value::list(event_fields);
+    let (key, event) =
+        mouse_wheel_event(i, direction, modifiers, position, line_count, pixel_delta);
     crate::editor::record_recent_input_event(i, event.clone());
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
@@ -2990,6 +3002,17 @@ fn minibuf_loop<T: KeyIo>(
 }
 
 /// The minibuffer's display text for the echo area: buffer text plus
+            InputEvent::MouseWheel {
+                direction,
+                modifiers,
+                position,
+                line_count,
+                pixel_delta,
+            } if single => {
+                let (_, event) =
+                    mouse_wheel_event(i, direction, modifiers, position, line_count, pixel_delta);
+                return Ok(MinibufInput::Event(event));
+            }
 /// overlay `before-string'/`after-string' contributions, like GNU's
 /// redisplay (icomplete shows its prospects through an `after-string'
 /// on `icomplete-overlay').

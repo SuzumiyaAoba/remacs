@@ -1,3 +1,6 @@
+#[path = "tests_read_event.rs"]
+mod read_event_tests;
+
 use super::*;
 use std::cell::RefCell;
 use std::rc::Rc;
