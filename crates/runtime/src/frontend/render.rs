@@ -5479,6 +5479,10 @@ fn window_faces(
     mouse_position: Option<MousePosition>,
 ) -> WindowFaces {
     let bb = b.borrow();
+    let default_font_height = ctx
+        .default_style
+        .and_then(|style| style.font_height)
+        .unwrap_or(140);
     let mouse_position = mouse_position
         .filter(|position| position.buffer_id == bb.id)
         .map(|position| position.buffer_position);
@@ -5711,7 +5715,13 @@ fn window_faces(
                 runs.push((
                     start,
                     end,
-                    display_value_replacement(i, ctx, &property.value, bb.id),
+                    display_value_replacement(
+                        i,
+                        ctx,
+                        &property.value,
+                        bb.id,
+                        default_font_height,
+                    ),
                     idx,
                 ));
                 previous_value = Some(&property.value);
@@ -5729,7 +5739,8 @@ fn window_faces(
             })
             .filter_map(|overlay| {
                 let value = overlay.property(i, &Value::Sym(display_property));
-                let replacement = display_value_replacement(i, ctx, &value, bb.id)?;
+                let replacement =
+                    display_value_replacement(i, ctx, &value, bb.id, default_font_height)?;
                 Some((overlay.clone(), replacement))
             })
             .collect();
@@ -6102,9 +6113,34 @@ fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
         .unwrap_or(Value::Nil)
 }
 
-fn image_dimension(value: Value) -> Option<usize> {
+fn image_dimension(i: &Interp, value: Value, default_font_height: u16) -> Option<usize> {
     match value {
         Value::Int(n) if n > 0 => usize::try_from(n).ok(),
+        Value::Cons(pair) => {
+            let (value, unit) = {
+                let pair = pair.borrow();
+                (pair.car.clone(), pair.cdr.clone())
+            };
+            let Value::Sym(unit) = unit else {
+                return None;
+            };
+            if i.symbol_name(unit) != "em" {
+                return None;
+            }
+            let ems = match value {
+                Value::Int(value) if value > 0 => value as f64,
+                Value::Float(value) if value.is_finite() && *value > 0.0 => *value,
+                _ => return None,
+            };
+            let points_to_logical_pixels = if cfg!(any(target_os = "linux", target_os = "windows")) {
+                96.0 / 72.0
+            } else {
+                1.0
+            };
+            let pixels = ems * (f64::from(default_font_height) / 10.0) * points_to_logical_pixels;
+            (pixels.is_finite() && pixels > 0.0 && pixels <= usize::MAX as f64)
+                .then_some(pixels.ceil() as usize)
+        }
         _ => None,
     }
 }
@@ -6357,6 +6393,7 @@ fn image_display_replacement(
     i: &Interp,
     value: &Value,
     buffer_id: usize,
+    default_font_height: u16,
 ) -> Option<DisplayReplacement> {
     let Value::Cons(cell) = value else {
         return None;
@@ -6369,8 +6406,16 @@ fn image_display_replacement(
         return None;
     }
 
-    let width = image_dimension(image_property(i, &plist, ":width"));
-    let height = image_dimension(image_property(i, &plist, ":height"));
+    let width = image_dimension(
+        i,
+        image_property(i, &plist, ":width"),
+        default_font_height,
+    );
+    let height = image_dimension(
+        i,
+        image_property(i, &plist, ":height"),
+        default_font_height,
+    );
     let masked = !image_property(i, &plist, ":mask").is_nil();
     let file = image_property(i, &plist, ":file");
     if let Value::Str(file) = file {
@@ -6508,6 +6553,7 @@ fn display_value_replacement(
     faces: &mut FaceCtx,
     value: &Value,
     buffer_id: usize,
+    default_font_height: u16,
 ) -> Option<DisplayReplacement> {
     if let Value::Cons(spec) = value {
         let (head, tail) = {
@@ -6551,7 +6597,7 @@ fn display_value_replacement(
     }
     match value {
         Value::Str(string) => Some(DisplayReplacement::Text(string.borrow().to_unicode_lossy())),
-        _ => image_display_replacement(i, value, buffer_id),
+        _ => image_display_replacement(i, value, buffer_id, default_font_height),
     }
 }
 
