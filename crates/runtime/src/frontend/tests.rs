@@ -254,6 +254,35 @@ fn horizontal_scroll_with_truncate_lines_nil_disables_wrapping() {
 }
 
 #[test]
+fn partial_width_window_honors_truncate_partial_width_windows() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq-local truncate-lines nil truncate-partial-width-windows 1000)")
+        .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"x".repeat(200));
+    i.eval_str("(split-window-right)").unwrap();
+
+    let grid = render_grid(&i, 80, 8);
+    assert_eq!(grid.window_text_areas.len(), 2);
+    for area in &grid.window_text_areas {
+        let first_row = grid.rows[area.top]
+            .chars()
+            .skip(area.left)
+            .take(area.width)
+            .collect::<String>();
+        let second_row = grid.rows[area.top + 1]
+            .chars()
+            .skip(area.left)
+            .take(area.width)
+            .collect::<String>();
+        assert!(first_row.contains('x'));
+        assert!(!second_row.contains('x'), "partial window wrapped: {second_row:?}");
+    }
+}
+
+#[test]
 fn wrapped_point_moving_to_earlier_visual_row_scrolls_back() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil)").unwrap();
