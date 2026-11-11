@@ -10,7 +10,7 @@ use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
-use remacs_runtime::frontend::{Grid, GridInput, MouseArea, MousePosition};
+use remacs_runtime::frontend::{CellStyle, Grid, GridInput, MouseArea, MousePosition};
 
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
@@ -110,7 +110,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         .map_or(0, |scroll| scroll.pixels);
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
     let line = grid.rows.get(row)?;
-    let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
+    let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
     let mapped = input.hit_test_position(row, column, byte)?;
     let (origin_x, origin_y) = mapped
         .window_id
@@ -239,7 +239,7 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         .map_or(0, |scroll| scroll.pixels);
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
     let line = grid.rows.get(row)?;
-    let byte = shape_grid_row(grid, window, line).closest_index_for_x(point.x);
+    let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
     let (source_start, source_end) = input.hit_test_source_range(row, column)?;
     (source_start..=source_end)
         .contains(&byte)
@@ -247,28 +247,133 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         .flatten()
 }
 
-fn grid_font_family(grid: &Grid, window: &mut Window) -> String {
-    let requested_family = grid
-        .default_style
+fn grid_base_font(grid: &Grid, window: &mut Window) -> (gpui::Font, Pixels) {
+    let style = grid.default_style;
+    let requested_family = style
         .font_family
         .and_then(|id| grid.font_families.get(id as usize))
         .cloned();
-    super::font_family(window, requested_family)
+    let mut base_font = font(super::font_family(window, requested_family));
+    if let Some(weight) = style.font_weight {
+        base_font.weight = gpui::FontWeight(weight as f32);
+    }
+    base_font.stretch = gpui::FontStretch::from_percentage(style.font_width.unwrap_or(100));
+    let font_size = style
+        .font_height
+        .map(|height| px(height as f32 / 10.0))
+        .unwrap_or(px(FONT_SIZE));
+    (base_font, font_size)
 }
 
-fn shape_grid_row(grid: &Grid, window: &mut Window, row: &str) -> gpui::ShapedLine {
-    let family = grid_font_family(grid, window);
-    window.text_system().shape_line(
-        row.to_owned().into(),
-        px(FONT_SIZE),
-        &[gpui::TextRun {
-            len: row.len(),
-            font: font(family),
+fn grid_font_for_style(
+    grid: &Grid,
+    window: &mut Window,
+    base_font: &gpui::Font,
+    style: CellStyle,
+) -> (gpui::Font, Option<Pixels>) {
+    let mut run_font = base_font.clone();
+    if let Some(family) = style
+        .font_family
+        .and_then(|id| grid.font_families.get(id as usize))
+    {
+        run_font.family = super::font_family(window, Some(family.clone())).into();
+    }
+    if let Some(weight) = style.font_weight {
+        run_font.weight = gpui::FontWeight(weight as f32);
+    } else if style.bold {
+        run_font = run_font.bold();
+    }
+    if let Some(width) = style.font_width {
+        run_font.stretch = gpui::FontStretch::from_percentage(width);
+    }
+    if style.italic {
+        run_font = run_font.italic();
+    }
+    (
+        run_font,
+        style.font_height.map(|height| px(height as f32 / 10.0)),
+    )
+}
+
+fn grid_style_at_char(grid: &Grid, row: usize, character: usize) -> CellStyle {
+    grid.char_attrs
+        .get(row)
+        .filter(|cells| !cells.is_empty())
+        .or_else(|| grid.attrs.get(row))
+        .and_then(|cells| cells.get(character))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn grid_style_at_byte(grid: &Grid, row: usize, text: &str, byte: usize) -> CellStyle {
+    let prefix = text.get(..byte.min(text.len())).unwrap_or("");
+    let character = prefix.chars().count().min(text.chars().count().saturating_sub(1));
+    grid_style_at_char(grid, row, character)
+}
+
+fn grid_font_at_byte(
+    grid: &Grid,
+    row: usize,
+    text: &str,
+    byte: usize,
+    window: &mut Window,
+) -> (gpui::Font, Pixels) {
+    let (base_font, base_size) = grid_base_font(grid, window);
+    let (font, size) = grid_font_for_style(
+        grid,
+        window,
+        &base_font,
+        grid_style_at_byte(grid, row, text, byte),
+    );
+    (font, size.unwrap_or(base_size))
+}
+
+pub(super) fn shape_grid_row(
+    grid: &Grid,
+    row_index: usize,
+    window: &mut Window,
+    row: &str,
+) -> gpui::ShapedLine {
+    let (base_font, base_size) = grid_base_font(grid, window);
+    let mut runs = Vec::<gpui::TextRun>::new();
+    let mut font_sizes = Vec::new();
+    let mut previous_style = None;
+    for (character, (_, ch)) in row.char_indices().enumerate() {
+        let style = grid_style_at_char(grid, row_index, character);
+        if previous_style == Some(style) {
+            if let Some(run) = runs.last_mut() {
+                run.len += ch.len_utf8();
+            }
+        } else {
+            let (run_font, run_size) = grid_font_for_style(grid, window, &base_font, style);
+            runs.push(gpui::TextRun {
+                len: ch.len_utf8(),
+                font: run_font,
+                color: rgb(FG).into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            });
+            font_sizes.push(run_size);
+            previous_style = Some(style);
+        }
+    }
+    if runs.is_empty() {
+        runs.push(gpui::TextRun {
+            len: 0,
+            font: base_font,
             color: rgb(FG).into(),
             background_color: None,
             underline: None,
             strikethrough: None,
-        }],
+        });
+        font_sizes.push(None);
+    }
+    window.text_system().shape_line_with_font_sizes(
+        row.to_owned().into(),
+        base_size,
+        &runs,
+        &font_sizes,
         None,
     )
 }
@@ -648,17 +753,24 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let family = grid_font_family(&self.grid, window);
         let Some(input) = self.grid.input.as_ref() else {
             let (column, row) = self.grid.cursor?;
+            let row_text = self.grid.rows.get(row)?;
+            let cursor_index = self.grid.cursor_index;
             let base_x = self
                 .grid
                 .cursor_index
                 .and_then(|index| {
-                    let row_text = self.grid.rows.get(row)?;
-                    Some(shape_grid_row(&self.grid, window, row_text).x_for_index(index))
+                    Some(shape_grid_row(&self.grid, row, window, row_text).x_for_index(index))
                 })
                 .unwrap_or(self.cell_width * column as f32);
+            let (composition_font, composition_font_size) = grid_font_at_byte(
+                &self.grid,
+                row,
+                row_text,
+                cursor_index.unwrap_or(0),
+                window,
+            );
             let mark_start = self
                 .input
                 .marked_range
@@ -678,10 +790,10 @@ impl EntityInputHandler for EditorView {
             .0;
             let composition_line = window.text_system().shape_line(
                 self.input.marked.clone().into(),
-                px(FONT_SIZE),
+                composition_font_size,
                 &[gpui::TextRun {
                     len: self.input.marked.len(),
-                    font: font(family.clone()),
+                    font: composition_font,
                     color: rgb(FG).into(),
                     background_color: None,
                     underline: Some(gpui::UnderlineStyle {
@@ -730,6 +842,9 @@ impl EntityInputHandler for EditorView {
             && !self.input.marked.is_empty()
         {
             let (row, base_byte) = visible_input_position(&self.grid, replacement.start, false)?;
+            let row_text = self.grid.rows.get(row)?;
+            let (composition_font, composition_font_size) =
+                grid_font_at_byte(&self.grid, row, row_text, base_byte, window);
             let local = requested.start - marked.start..requested.end - marked.start;
             let (bytes, _) = range(&self.input.marked, local);
             let prefix_byte = offset(
@@ -741,10 +856,10 @@ impl EntityInputHandler for EditorView {
             let composition = &self.input.marked;
             let composition_line = window.text_system().shape_line(
                 composition.clone().into(),
-                px(FONT_SIZE),
+                composition_font_size,
                 &[gpui::TextRun {
                     len: composition.len(),
-                    font: font(family.clone()),
+                    font: composition_font,
                     color: rgb(FG).into(),
                     background_color: None,
                     underline: Some(gpui::UnderlineStyle {
@@ -764,8 +879,7 @@ impl EntityInputHandler for EditorView {
             } else {
                 (end, start - end)
             };
-            let row_text = self.grid.rows.get(row)?;
-            let base_line = shape_grid_row(&self.grid, window, row_text);
+            let base_line = shape_grid_row(&self.grid, row, window, row_text);
             let base_x = base_line.x_for_index(base_byte);
             let column = (f32::from(base_x) / f32::from(self.cell_width)) as usize;
             return Some(Bounds {
@@ -789,7 +903,7 @@ impl EntityInputHandler for EditorView {
         let (row, start_byte) = visible_input_position(&self.grid, base_range.start, false)?;
         let end_position = visible_input_position(&self.grid, base_range.end, true);
         let row_text = self.grid.rows.get(row)?;
-        let layout = shape_grid_row(&self.grid, window, row_text);
+        let layout = shape_grid_row(&self.grid, row, window, row_text);
         let start = layout.x_for_index(start_byte);
         let end = match end_position {
             Some((end_row, end_byte)) if end_row == row => layout.x_for_index(end_byte),

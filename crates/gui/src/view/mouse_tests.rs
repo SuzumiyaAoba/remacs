@@ -4,7 +4,8 @@ use gpui::{Modifiers, MouseButton as GpuiMouseButton, NavigationDirection, point
 use remacs_runtime::{
     editor::{CHAR_CTL, CHAR_SHIFT, event_code_for, reflow_frame_windows},
     frontend::{
-        Grid, MouseArea, MouseButton as Button, render_grid_with_input_cached, run_editor_with,
+        CellStyle, Grid, MouseArea, MouseButton as Button, render_grid_with_input_cached,
+        run_editor_with,
     },
     lisp::Interp,
 };
@@ -49,6 +50,71 @@ fn mouse_drag_events_keep_current_modifiers() {
         event,
         GuiEvent::MouseDragMove { modifiers: CHAR_SHIFT, .. }
     )));
+}
+
+#[test]
+fn input_geometry_uses_default_and_per_run_font_metrics() {
+    let mut base = Grid::blank(4, 1);
+    base.rows[0] = "iiii".to_owned();
+    base.font_families = vec!["Menlo".to_owned(), "Arial".to_owned()];
+    base.default_style.font_family = Some(0);
+    base.default_style.font_height = Some(140);
+    base.default_style.font_width = Some(100);
+
+    let mut tall_default = base.clone();
+    tall_default.default_style.font_height = Some(280);
+
+    let mut expanded_run = base.clone();
+    expanded_run.char_attrs = vec![vec![
+        CellStyle {
+            font_family: Some(1),
+            font_height: Some(280),
+            font_width: Some(200),
+            ..Default::default()
+        };
+        4
+    ]];
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.grid = base.clone();
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    let widths = handle
+        .update(&mut app, |_, window, _| {
+            let base_width = f32::from(
+                super::input::shape_grid_row(&base, 0, window, &base.rows[0]).x_for_index(4),
+            );
+            let tall_width = f32::from(
+                super::input::shape_grid_row(
+                    &tall_default,
+                    0,
+                    window,
+                    &tall_default.rows[0],
+                )
+                .x_for_index(4),
+            );
+            let run_width = f32::from(
+                super::input::shape_grid_row(
+                    &expanded_run,
+                    0,
+                    window,
+                    &expanded_run.rows[0],
+                )
+                .x_for_index(4),
+            );
+            (base_width, tall_width, run_width)
+        })
+        .unwrap();
+    assert!(widths.1 > widths.0 * 1.5, "default face height affects shaping: {widths:?}");
+    assert!(widths.2 > widths.0 * 1.5, "run face metrics affect shaping: {widths:?}");
 }
 
 #[test]
