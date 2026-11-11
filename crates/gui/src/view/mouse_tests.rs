@@ -178,6 +178,46 @@ fn zwj_family_emoji_keeps_following_text_at_grid_column() {
 }
 
 #[test]
+fn display_image_dimensions_occupy_grid_columns_and_row_height() {
+    let mut i = Interp::new();
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (set-frame-parameter nil 'char-width 8)
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (setq-local mode-line-format nil header-line-format nil tab-line-format nil)
+          (erase-buffer)
+          (let ((start (point)))
+            (insert " X\nnext row")
+            (put-text-property
+             start (1+ start) 'display
+             (create-image
+              "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='100'><rect width='200' height='100' fill='red'/></svg>"
+              'svg t :width 200 :height 100))))"#,
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    reflow_frame_windows(&frame, 40, 12);
+    let grid = render_grid_with_input_cached(&i, 40, 12, None);
+
+    assert_eq!(grid.images.len(), 1);
+    assert_eq!(grid.images[0].row, 0);
+    assert_eq!(grid.images[0].column, 0);
+    assert_eq!(grid.images[0].width, Some(200));
+    assert_eq!(grid.images[0].height, Some(100));
+    let x_column = grid.rows[0]
+        .chars()
+        .position(|character| character == 'X');
+    assert_eq!(x_column, Some(25));
+    assert!(grid.row_heights[0] >= 100);
+    assert!(grid.row_heights[1] < grid.row_heights[0]);
+}
+
+#[test]
 fn trackpad_touch_end_reaches_the_lisp_keymap() {
     let mut i = Interp::new();
     i.eval_str(

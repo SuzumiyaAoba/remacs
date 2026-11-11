@@ -4255,6 +4255,7 @@ fn render_text_row<F, V, D, B>(
     text: &EmacsText,
     hscroll: usize,
     width: usize,
+    cell_width: usize,
     column_offset: usize,
     tab_width: usize,
     default_style: CellStyle,
@@ -4441,6 +4442,12 @@ where
                 intrinsic_height,
             }) => {
                 let image_column = column;
+                // Reserve full grid cells for the image before placing later text.
+                let image_columns = image_width
+                    .or(intrinsic_width)
+                    .map(|pixels| pixels.div_ceil(cell_width.max(1)))
+                    .unwrap_or(1)
+                    .max(1);
                 let visible = image_column >= hscroll && image_column < end_column;
                 if visible {
                     images.push(RenderedImage {
@@ -4453,20 +4460,27 @@ where
                         intrinsic_height,
                     });
                 }
-                append_rendered_character(
-                    ' ',
-                    style,
-                    hscroll,
-                    width,
-                    end_column,
-                    tab_width,
-                    &mut column,
-                    &mut visible_columns,
-                    &mut rendered,
-                    &mut cell_attrs,
-                    &mut char_attrs,
-                    &mut cell_offsets,
-                )
+                let mut keep_rendering = true;
+                for _ in 0..image_columns {
+                    if !append_rendered_character(
+                        ' ',
+                        style,
+                        hscroll,
+                        width,
+                        end_column,
+                        tab_width,
+                        &mut column,
+                        &mut visible_columns,
+                        &mut rendered,
+                        &mut cell_attrs,
+                        &mut char_attrs,
+                        &mut cell_offsets,
+                    ) {
+                        keep_rendering = false;
+                        break;
+                    }
+                }
+                keep_rendering
             }
             None => {
                 let display = if draw_ellipsis {
@@ -8950,6 +8964,7 @@ fn render_grid_internal(
                     &segment_text,
                     row_hscroll,
                     text_width,
+                    frame_char_width,
                     prefix_width,
                     tab_width,
                     default_style,
@@ -9032,6 +9047,13 @@ fn render_grid_internal(
                     plan.include_end_boundary,
                     graphical,
                 );
+                if let Some(row_height) = row_heights.get_mut(y) {
+                    for image in &rendered.images {
+                        if let Some(image_height) = image.height.or(image.intrinsic_height) {
+                            *row_height = (*row_height).max(image_height);
+                        }
+                    }
+                }
                 if prefix_width > 0
                     && let Some(prefix) = line_prefix.as_ref()
                 {
@@ -9644,6 +9666,7 @@ fn render_grid_internal(
                 &line,
                 0,
                 width,
+                frame_char_width,
                 0,
                 mini_tab_width,
                 default_style,
