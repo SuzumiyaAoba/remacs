@@ -442,6 +442,7 @@ qa!(qa_version_bigint_components, "qa_version_bigint_components.el");
 qa!(qa_version_list_bigint_comparisons, "qa_version_list_bigint_comparisons.el");
 qa!(qa_string_trim_text_properties, "qa_string_trim_text_properties.el");
 qa!(qa_info_batch_find_node, "qa_info_batch_find_node.el");
+qa!(qa_info_bookmark_jump_frames, "qa_info_bookmark_jump_frames.el");
 qa!(qa_format_string_substitution_properties, "qa_format_string_substitution_properties.el");
 qa!(qa_text_scale_buffer_local, "qa_text_scale_buffer_local.el");
 qa!(qa_symbol_with_pos_printing, "qa_symbol_with_pos_printing.el");

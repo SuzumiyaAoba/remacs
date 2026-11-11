@@ -5647,8 +5647,25 @@ for Info nodes."
 type returned by `Info-bookmark-make-record', which see."
   (let* ((file                   (bookmark-prop-get bmk 'filename))
          (info-node              (bookmark-prop-get bmk 'info-node))
-         (buf (save-window-excursion    ;FIXME: doesn't work with frames!
-                (Info-find-node file info-node) (current-buffer))))
+         (buf (if (derived-mode-p 'Info-mode)
+                  (current-buffer)
+                (get-buffer-create "*info*"))))
+    ;; Find the node in the Info buffer without displaying it.  In
+    ;; particular, `info-pop-to-buffer' would honor `display-buffer-alist'
+    ;; and could create a frame that `save-window-excursion' cannot remove.
+    (with-current-buffer buf
+      (unless (derived-mode-p 'Info-mode)
+        (Info-mode))
+      ;; Prevent the missing-file recovery in `Info-find-node' from
+      ;; displaying the Info directory when this buffer has no current
+      ;; file yet.
+      (let ((no-going-back (not Info-current-file)))
+        (when (and no-going-back file)
+          (setq Info-current-file t))
+        (unwind-protect
+            (Info-find-node file info-node no-going-back)
+          (when (and no-going-back (eq Info-current-file t))
+            (setq Info-current-file nil)))))
     ;; Use bookmark-default-handler to move to the appropriate location
     ;; within the node.
     (bookmark-default-handler
