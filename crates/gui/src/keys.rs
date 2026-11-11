@@ -419,7 +419,14 @@ pub(super) fn keystroke_to_code_with_mapping(
             mods &= !CHAR_CTL;
             10
         }
-        "space" => 32,
+        "space" => {
+            if mods & CHAR_CTL != 0 {
+                mods &= !CHAR_CTL;
+                0
+            } else {
+                32
+            }
+        }
         s if s.chars().count() == 1 => {
             let physical = s.chars().next().unwrap_or('\0');
             // For modified combos the physical key is the event base;

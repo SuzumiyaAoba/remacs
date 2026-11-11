@@ -473,6 +473,18 @@ fn keystroke_ctrl_folds_to_control_char() {
 }
 
 #[test]
+fn keystroke_ctrl_space_folds_to_nul_like_terminal() {
+    assert_eq!(
+        keystroke_to_code(&ks("space", Some(" "), true, false, false, false)),
+        Some(0)
+    );
+    assert_eq!(
+        keystroke_to_code(&ks("space", Some(" "), true, true, false, false)),
+        Some(CHAR_META)
+    );
+}
+
+#[test]
 fn keystroke_meta_and_super() {
     // M-f.
     let f = keystroke_to_code(&ks("f", None, false, true, false, false)).unwrap();
