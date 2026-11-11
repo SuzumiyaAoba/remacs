@@ -88,9 +88,9 @@ fn check_nonselected_wheel(stacked: bool, shared: bool, mode_line: bool) {
         })
         .unwrap();
     app.run_until_parked();
-    let position = handle
-        .update(&mut app, |view, _, _| {
-            if let Some(mode_line) = mode_line_area {
+    let (mouse_point, scale_factor) = handle
+        .update(&mut app, |view, window, _| {
+            let mouse_point = if let Some(mode_line) = mode_line_area {
                 point(
                     px(3.0) + view.cell_width * (mode_line.left + 2) as f32 + px(1.0),
                     px(3.0)
@@ -104,13 +104,14 @@ fn check_nonselected_wheel(stacked: bool, shared: bool, mode_line: bool) {
                         + super::grid_row_top(&view.grid, area.top + 1, view.line_height)
                         + px(5.0),
                 )
-            }
+            };
+            (mouse_point, window.scale_factor())
         })
         .unwrap();
     rx.try_iter().for_each(drop);
     let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
     visual.simulate_event(ScrollWheelEvent {
-        position,
+        position: mouse_point,
         delta: ScrollDelta::Lines(point(0.0, -3.0)),
         ..Default::default()
     });
@@ -139,6 +140,15 @@ fn check_nonselected_wheel(stacked: bool, shared: bool, mode_line: bool) {
                 None
             }
         );
+        if mode_line {
+            assert_eq!(
+                (position.x, position.y),
+                (
+                    super::device_pixels(mouse_point.x - px(3.0), scale_factor),
+                    super::device_pixels(mouse_point.y - px(3.0), scale_factor),
+                )
+            );
+        }
         bridge_tx.send(event).unwrap();
     }
     bridge_tx

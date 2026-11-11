@@ -1758,7 +1758,12 @@ impl Render for EditorView {
                         window,
                     )
                     .or_else(|| {
-                        input::mode_line_mouse_position(&left_mouse_down_grid, point, cell_width)
+                        input::mode_line_mouse_position(
+                            &left_mouse_down_grid,
+                            point,
+                            cell_width,
+                            window.scale_factor(),
+                        )
                     }) {
                         this.mouse_down_position = Some(position);
                         let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
@@ -1880,15 +1885,16 @@ impl Render for EditorView {
                                     &left_mouse_up_grid,
                                     point,
                                     cell_width,
+                                    window.scale_factor(),
                                 )
                             })
                         })
                         .or_else(|| {
                             this.mouse_down_position.map(|mut position| {
-                                position.x = (f32::from(event.position.x) - f32::from(border))
-                                    .round() as i128;
-                                position.y = (f32::from(event.position.y) - f32::from(border))
-                                    .round() as i128;
+                                position.x =
+                                    device_pixels(event.position.x - border, window.scale_factor());
+                                position.y =
+                                    device_pixels(event.position.y - border, window.scale_factor());
                                 position
                             })
                         });
@@ -1959,7 +1965,12 @@ impl Render for EditorView {
                                     &down_grid, point, cell_width, window,
                                 )
                                 .or_else(|| {
-                                    input::mode_line_mouse_position(&down_grid, point, cell_width)
+                                    input::mode_line_mouse_position(
+                                        &down_grid,
+                                        point,
+                                        cell_width,
+                                        window.scale_factor(),
+                                    )
                                 })
                             }) {
                                 let _ = down_tx.send(GuiEvent::MouseDown {
@@ -1993,7 +2004,12 @@ impl Render for EditorView {
                                     &up_grid, point, cell_width, window,
                                 )
                                 .or_else(|| {
-                                    input::mode_line_mouse_position(&up_grid, point, cell_width)
+                                    input::mode_line_mouse_position(
+                                        &up_grid,
+                                        point,
+                                        cell_width,
+                                        window.scale_factor(),
+                                    )
                                 })
                             }) {
                                 let _ = up_tx.send(GuiEvent::MouseUp {
@@ -2065,8 +2081,22 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
-                    .or_else(|| input::mode_line_mouse_position(&scroll_grid, point, cell_width))
-                    .or_else(|| input::header_line_mouse_position(&scroll_grid, point, cell_width))
+                    .or_else(|| {
+                        input::mode_line_mouse_position(
+                            &scroll_grid,
+                            point,
+                            cell_width,
+                            window.scale_factor(),
+                        )
+                    })
+                    .or_else(|| {
+                        input::header_line_mouse_position(
+                            &scroll_grid,
+                            point,
+                            cell_width,
+                            window.scale_factor(),
+                        )
+                    })
                 }) {
                     let vertical_delta = event.delta.pixel_delta(line_height);
                     let horizontal_delta = event.delta.pixel_delta(cell_width);

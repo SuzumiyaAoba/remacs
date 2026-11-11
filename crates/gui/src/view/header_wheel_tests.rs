@@ -83,9 +83,9 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
         })
         .unwrap();
     app.run_until_parked();
-    let targets = handle
-        .update(&mut app, |view, _, _| {
-            [right_header, left_header, right_header]
+    let (targets, scale_factor) = handle
+        .update(&mut app, |view, window, _| {
+            let targets = [right_header, left_header, right_header]
                 .into_iter()
                 .enumerate()
                 .map(|(index, header)| {
@@ -95,10 +95,12 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
                         px(3.0) + super::grid_row_top(&view.grid, row, view.line_height) + px(5.0),
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (targets, window.scale_factor())
         })
         .unwrap();
     let horizontal_target = targets[0].clone();
+    let header_targets = [targets[0].clone(), targets[1].clone()];
     rx.try_iter().for_each(drop);
     let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
     for ((position, amount), modifiers) in targets.into_iter().zip([-2.0, 1.0, -1.0]).zip([
@@ -136,14 +138,49 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
         .collect();
     assert_eq!(events.len(), 6);
     let (bridge_tx, bridge_rx) = mpsc::channel();
-    for (event, (window, area, modifiers, horizontal, expected_pixel_delta)) in
+    for (event, (window, area, modifiers, horizontal, expected_pixel_delta, expected_point)) in
         events.into_iter().zip([
-            (right, Some(MouseArea::HeaderLine), 0, false, None),
-            (left, Some(MouseArea::HeaderLine), CHAR_CTL, false, None),
-            (right, None, 0, false, None),
-            (right, Some(MouseArea::HeaderLine), 0, true, None),
-            (right, Some(MouseArea::HeaderLine), 0, true, None),
-            (right, Some(MouseArea::HeaderLine), 0, false, Some((0, 5))),
+            (
+                right,
+                Some(MouseArea::HeaderLine),
+                0,
+                false,
+                None,
+                Some(header_targets[0]),
+            ),
+            (
+                left,
+                Some(MouseArea::HeaderLine),
+                CHAR_CTL,
+                false,
+                None,
+                Some(header_targets[1]),
+            ),
+            (right, None, 0, false, None, None),
+            (
+                right,
+                Some(MouseArea::HeaderLine),
+                0,
+                true,
+                None,
+                Some(horizontal_target),
+            ),
+            (
+                right,
+                Some(MouseArea::HeaderLine),
+                0,
+                true,
+                None,
+                Some(horizontal_target),
+            ),
+            (
+                right,
+                Some(MouseArea::HeaderLine),
+                0,
+                false,
+                Some((0, 5)),
+                Some(horizontal_target),
+            ),
         ])
     {
         let GuiEvent::Scroll {
@@ -161,6 +198,15 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
         assert_eq!(*actual, modifiers);
         assert_eq!(*actual_horizontal, horizontal);
         assert_eq!(*actual_pixel_delta, expected_pixel_delta);
+        if let Some(expected_point) = expected_point {
+            assert_eq!(
+                (position.x, position.y),
+                (
+                    super::device_pixels(expected_point.x - px(3.0), scale_factor),
+                    super::device_pixels(expected_point.y - px(3.0), scale_factor),
+                )
+            );
+        }
         bridge_tx.send(event).unwrap();
     }
     bridge_tx

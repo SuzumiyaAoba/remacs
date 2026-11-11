@@ -130,8 +130,8 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         buffer_id: mapped.buffer_id,
         buffer_position: mapped.buffer_position,
         utf16_offset: mapped.utf16_offset,
-        x: (f32::from(point.x) - f32::from(origin_x)).round() as i128,
-        y: (f32::from(point.y) - f32::from(origin_y)).round() as i128,
+        x: super::device_pixels(point.x - origin_x, window.scale_factor()),
+        y: super::device_pixels(point.y - origin_y, window.scale_factor()),
         row,
         column: mapped.column,
         window_id: mapped.window_id,
@@ -144,6 +144,7 @@ pub(super) fn mode_line_mouse_position(
     grid: &Grid,
     point: Point<Pixels>,
     cell_width: Pixels,
+    scale_factor: f32,
 ) -> Option<MousePosition> {
     let row = grid_row_at_y(grid, point.y);
     let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
@@ -156,8 +157,8 @@ pub(super) fn mode_line_mouse_position(
         buffer_id: mode_line.buffer_id,
         buffer_position: 0,
         utf16_offset: 0,
-        x: f32::from(point.x).round() as i128,
-        y: f32::from(point.y).round() as i128,
+        x: super::device_pixels(point.x, scale_factor),
+        y: super::device_pixels(point.y, scale_factor),
         row,
         column: column.saturating_sub(mode_line.left),
         window_id: Some(mode_line.window_id),
@@ -172,6 +173,7 @@ pub(super) fn header_line_mouse_position(
     grid: &Grid,
     point: Point<Pixels>,
     cell_width: Pixels,
+    scale_factor: f32,
 ) -> Option<MousePosition> {
     let row = grid_row_at_y(grid, point.y);
     let column = (f32::from(point.x) / f32::from(cell_width))
@@ -186,8 +188,8 @@ pub(super) fn header_line_mouse_position(
         buffer_id: header.buffer_id,
         buffer_position: 0,
         utf16_offset: 0,
-        x: f32::from(point.x).round() as i128,
-        y: f32::from(point.y).round() as i128,
+        x: super::device_pixels(point.x, scale_factor),
+        y: super::device_pixels(point.y, scale_factor),
         row,
         column: column.saturating_sub(header.left),
         window_id: Some(header.window_id),

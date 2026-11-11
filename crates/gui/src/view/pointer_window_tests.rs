@@ -150,14 +150,16 @@ fn assert_mouse_position_is_relative_to_split_window(split_call: &str) {
         })
         .unwrap();
     app.run_until_parked();
-    let (cell, position) = handle
+    let (cell, scale_factor, position) = handle
         .update(&mut app, |view, window, _| {
             let cell = f32::from(view.cell_width);
+            let scale_factor = window.scale_factor();
             let origin_x = cell * area_left as f32;
             let origin_y = super::grid_row_top(&view.grid, area_top, px(super::LINE_HEIGHT));
             let point = point(px(origin_x + 2.0), origin_y + px(4.0));
             (
                 cell,
+                scale_factor,
                 super::input::mouse_position_for_point_with_cell_width(
                     &view.grid,
                     point,
@@ -169,7 +171,13 @@ fn assert_mouse_position_is_relative_to_split_window(split_call: &str) {
         .unwrap();
     let position = position.unwrap_or_else(|| panic!("no text hit, cell={cell}"));
     assert_eq!(position.window_id, Some(target_id));
-    assert_eq!((position.x, position.y), (2, 4));
+    assert_eq!(
+        (position.x, position.y),
+        (
+            super::device_pixels(px(2.0), scale_factor),
+            super::device_pixels(px(4.0), scale_factor)
+        )
+    );
 }
 
 #[test]
