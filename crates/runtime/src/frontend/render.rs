@@ -9214,9 +9214,15 @@ fn render_grid_internal(
                             style_at_pos(i, &mut fctx, wf, end_pos - 1)
                         };
                         if tail.extend {
+                            // `:extend` carries the background, while its
+                            // synthetic tail keeps the grid's base font metrics.
                             for cell in rendered.visible_columns..content_width {
                                 let mut t = tail;
                                 t.box_style = None;
+                                t.font_family = None;
+                                t.font_weight = None;
+                                t.font_width = None;
+                                t.font_height = None;
                                 t.fg = None;
                                 t.bold = false;
                                 t.italic = false;
@@ -9229,6 +9235,10 @@ fn render_grid_internal(
                             }
                             let mut tail = tail;
                             tail.box_style = None;
+                            tail.font_family = None;
+                            tail.font_weight = None;
+                            tail.font_width = None;
+                            tail.font_height = None;
                             tail.fg = None;
                             tail.bold = false;
                             tail.italic = false;

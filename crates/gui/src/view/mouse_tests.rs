@@ -202,6 +202,48 @@ fn trackpad_touch_end_reaches_the_lisp_keymap() {
 }
 
 #[test]
+fn extended_tail_padding_uses_default_face_font_metrics() {
+    let mut i = Interp::new();
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (setq-local mode-line-format nil header-line-format nil tab-line-format nil)
+          (make-face 'qa-extend-font)
+          (set-face-attribute 'qa-extend-font nil :family "Arial" :width 'expanded
+                              :weight 'bold :height 280 :background "yellow" :extend t)
+          (erase-buffer)
+          (insert (propertize "x\n" 'face 'qa-extend-font)))"#,
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap();
+    reflow_frame_windows(frame, 40, 12);
+    let grid = render_grid_with_input_cached(&i, 40, 12, None);
+    let text_style = grid.char_attrs[0][0];
+    assert!(text_style.font_family.is_some());
+    assert!(text_style.font_width.is_some());
+    assert!(text_style.font_weight.is_some());
+    assert_eq!(text_style.font_height, Some(280));
+
+    assert!(grid.char_attrs[0][1..].iter().all(|style| {
+        style.font_family.is_none()
+            && style.font_width.is_none()
+            && style.font_weight.is_none()
+            && style.font_height.is_none()
+    }));
+    assert!(grid.attrs[0][1..].iter().all(|style| {
+        style.font_family.is_none()
+            && style.font_width.is_none()
+            && style.font_weight.is_none()
+            && style.font_height.is_none()
+    }));
+}
+
+#[test]
 fn navigation_buttons_reach_the_gui_channel_with_position_and_modifiers() {
     let mut i = Interp::new();
     i.eval_str(
