@@ -1,6 +1,9 @@
 use super::{EditorView, GuiEvent};
 use crate::logic::ChanIo;
-use gpui::{Modifiers, MouseButton as GpuiMouseButton, NavigationDirection, point, px};
+use gpui::{
+    Modifiers, MouseButton as GpuiMouseButton, NavigationDirection, ScrollDelta, ScrollWheelEvent,
+    TouchPhase, point, px,
+};
 use remacs_runtime::{
     editor::{CHAR_CTL, CHAR_SHIFT, event_code_for, reflow_frame_windows},
     frontend::{
@@ -115,6 +118,87 @@ fn input_geometry_uses_default_and_per_run_font_metrics() {
         .unwrap();
     assert!(widths.1 > widths.0 * 1.5, "default face height affects shaping: {widths:?}");
     assert!(widths.2 > widths.0 * 1.5, "run face metrics affect shaping: {widths:?}");
+}
+
+#[test]
+fn trackpad_touch_end_reaches_the_lisp_keymap() {
+    let mut i = Interp::new();
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (setq-local mode-line-format nil header-line-format nil tab-line-format nil)
+          (erase-buffer) (insert "trackpad touch end")
+          (setq qa-touch-end nil)
+          (global-set-key [touch-end]
+            (lambda (event) (interactive "e") (setq qa-touch-end (car event))))
+          (global-set-key [f12] (lambda () (interactive) (kill-emacs))))"#,
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    reflow_frame_windows(&frame, 40, 12);
+    let window_id = frame.borrow().selected.borrow().id;
+    let buffer_id = i.current_buffer;
+    let grid = render_grid_with_input_cached(&i, 40, 12, None);
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let view_tx = tx.clone();
+    let handle = app.add_window(|_, cx| EditorView::new(view_tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(0);
+            view.grid = grid;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    let cell_width = handle
+        .update(&mut app, |view, _, _| {
+            view.geometry.as_ref().unwrap().char_width as f32
+        })
+        .unwrap();
+    rx.try_iter().for_each(drop);
+
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    visual.simulate_event(ScrollWheelEvent {
+        position: point(px(cell_width * 2.0), px(5.0)),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
+        touch_phase: TouchPhase::Ended,
+        ..Default::default()
+    });
+    let events: Vec<_> = rx.try_iter().collect();
+    let touch_end = events.iter().find_map(|event| match event {
+        GuiEvent::TouchEnd {
+            modifiers,
+            position,
+        } => Some((*modifiers, *position)),
+        _ => None,
+    });
+    let (modifiers, position) = touch_end.expect("touch-end should reach the GUI channel");
+    assert_eq!(position.buffer_id, buffer_id);
+    assert_eq!(position.window_id, Some(window_id));
+    assert_eq!(modifiers, 0);
+
+    tx.send(GuiEvent::TouchEnd {
+        modifiers,
+        position,
+    })
+    .unwrap();
+    tx.send(GuiEvent::Key(event_code_for("f12"))).unwrap();
+    let (grid_tx, _grid_rx) = smol::channel::bounded(1);
+    let result = run_editor_with(ChanIo::new_for_test(rx, grid_tx), &mut i);
+    if let Err(error) = result {
+        assert_eq!(error.to_string(), "Exit(0)");
+    }
+    let touch_end_symbol = i.intern("qa-touch-end");
+    let touch_end = i.symbol_value(touch_end_symbol);
+    assert_eq!(i.prin1_to_string(&touch_end).to_unicode_lossy(), "touch-end");
 }
 
 #[test]

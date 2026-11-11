@@ -123,6 +123,10 @@ pub(super) enum GuiEvent {
         modifiers: i128,
         position: MousePosition,
     },
+    TouchEnd {
+        modifiers: i128,
+        position: MousePosition,
+    },
     Scroll {
         delta: f32,
         horizontal: bool,
@@ -158,6 +162,7 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
         | GuiEvent::MouseDragMove { .. }
         | GuiEvent::MouseDown { .. }
         | GuiEvent::MouseUp { .. }
+        | GuiEvent::TouchEnd { .. }
         | GuiEvent::Scroll { .. }
         | GuiEvent::ScrollBar { .. } => true,
         #[cfg(target_os = "macos")]
@@ -2462,6 +2467,13 @@ impl KeyIo for ChanIo {
                 modifiers,
                 position,
             )))),
+            GuiEvent::TouchEnd {
+                modifiers,
+                position,
+            } => Ok(Some(InputEvent::TouchEnd {
+                modifiers,
+                position,
+            })),
             GuiEvent::Scroll {
                 delta,
                 horizontal,
@@ -2690,6 +2702,13 @@ impl KeyIo for ChanIo {
                 modifiers,
                 position,
             )))),
+            GuiEvent::TouchEnd {
+                modifiers,
+                position,
+            } => Ok(Some(InputEvent::TouchEnd {
+                modifiers,
+                position,
+            })),
             GuiEvent::ScrollBar { .. } => Ok(None),
             GuiEvent::Scroll { .. } => Ok(None),
         }

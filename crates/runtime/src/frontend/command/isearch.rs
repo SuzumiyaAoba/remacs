@@ -119,6 +119,10 @@ fn dispatch_isearch_mouse<T: KeyIo>(
     let result = match input {
         InputEvent::MouseDown(mouse) => dispatch_mouse_down(i, mouse, &mut keys, &mut arg_mode),
         InputEvent::Mouse(mouse) => dispatch_mouse(term, i, mouse, &mut keys, &mut arg_mode),
+        InputEvent::TouchEnd {
+            modifiers,
+            position,
+        } => dispatch_touch_end(term, i, modifiers, position, &mut keys, &mut arg_mode),
         _ => Ok(()),
     };
     if let Err(flow) = i.unbind_to(depth) {
@@ -2863,6 +2867,10 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     dispatch_isearch_mouse(term, i, InputEvent::Mouse(mouse))?;
                     continue;
                 }
+            }
+            Some(input @ InputEvent::TouchEnd { .. }) => {
+                dispatch_isearch_mouse(term, i, input)?;
+                continue;
             }
             _ => continue,
         };

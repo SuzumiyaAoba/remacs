@@ -2166,6 +2166,16 @@ impl Render for EditorView {
                             position,
                         });
                     }
+                    if matches!(event.touch_phase, TouchPhase::Ended) {
+                        let _ = scroll_tx.send(GuiEvent::TouchEnd {
+                            modifiers: mouse_modifier_bits(
+                                &event.modifiers,
+                                modifier_mapping,
+                                scroll_modifiers.get(),
+                            ),
+                            position,
+                        });
+                    }
                     window.prevent_default();
                     cx.stop_propagation();
                 }

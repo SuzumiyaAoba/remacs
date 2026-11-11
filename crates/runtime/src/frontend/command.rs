@@ -661,6 +661,17 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 &mut keys,
                 &mut arg_mode,
             )?,
+            InputEvent::TouchEnd {
+                modifiers,
+                position,
+            } => dispatch_touch_end(
+                &term,
+                i,
+                modifiers,
+                position,
+                &mut keys,
+                &mut arg_mode,
+            )?,
             InputEvent::ScrollBar {
                 window_id,
                 orientation,
@@ -1774,6 +1785,43 @@ fn mouse_wheel_event(
         event_fields.push(Value::cons(Value::Int(x), Value::Int(y)));
     }
     (key, Value::list(event_fields))
+}
+
+fn touch_end_event(i: &mut Interp, modifiers: i128, position: MousePosition) -> (i128, Value) {
+    let name = mouse_event_name("touch-end", modifiers);
+    let key = crate::editor::event_code_for(&name);
+    let event = Value::list(vec![
+        Value::Sym(i.intern(&name)),
+        mouse_position_value(i, position).unwrap_or(Value::Nil),
+    ]);
+    (key, event)
+}
+
+fn dispatch_touch_end<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    modifiers: i128,
+    position: MousePosition,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let (key, event) = touch_end_event(i, modifiers, position);
+    crate::editor::record_recent_input_event(i, event.clone());
+    let last_input = i.q("last-input-event");
+    i.store_internal_value(last_input, event.clone());
+    let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
+    if keys.is_empty() {
+        match position.area {
+            Some(super::MouseArea::ModeLine) => {
+                keys.push(crate::editor::event_code_for("mode-line"));
+            }
+            Some(super::MouseArea::HeaderLine) => {
+                keys.push(crate::editor::event_code_for("header-line"));
+            }
+            None => {}
+        }
+    }
+    dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
 }
 
 fn dispatch_mouse_wheel<T: KeyIo>(
@@ -2976,6 +3024,28 @@ fn minibuf_loop<T: KeyIo>(
                 }
             }
             InputEvent::MouseWheel { .. } => {}
+            InputEvent::TouchEnd {
+                modifiers,
+                position,
+            } if single => {
+                let (_, event) = touch_end_event(i, modifiers, position);
+                return Ok(MinibufInput::Event(event));
+            }
+            InputEvent::TouchEnd {
+                modifiers,
+                position,
+            } => {
+                if let Err(e) = dispatch_touch_end(
+                    term,
+                    i,
+                    modifiers,
+                    position,
+                    &mut keys,
+                    &mut arg_mode,
+                ) {
+                    return Err(i.error(format!("minibuffer input: {e}")));
+                }
+            }
             InputEvent::ScrollBar {
                 window_id,
                 orientation,

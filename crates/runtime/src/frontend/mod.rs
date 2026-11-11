@@ -385,6 +385,11 @@ pub enum InputEvent {
         /// Pixel delta (x, y) from a precise wheel/trackpad event.
         pixel_delta: Option<(i128, i128)>,
     },
+    /// A touchpad gesture ended, distinct from the final wheel delta.
+    TouchEnd {
+        modifiers: i128,
+        position: MousePosition,
+    },
     /// A native window manager moved a graphical frame.
     FrameMoved {
         frame_id: usize,
