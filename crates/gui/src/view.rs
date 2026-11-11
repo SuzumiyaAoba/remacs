@@ -2065,6 +2065,7 @@ impl Render for EditorView {
                         cell_width,
                         window,
                     )
+                    .or_else(|| input::mode_line_mouse_position(&scroll_grid, point, cell_width))
                     .or_else(|| input::header_line_mouse_position(&scroll_grid, point, cell_width))
                 }) {
                     let vertical_delta = event.delta.pixel_delta(line_height);

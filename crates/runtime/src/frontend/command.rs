@@ -1790,8 +1790,16 @@ fn dispatch_mouse_wheel<T: KeyIo>(
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
-    if position.area == Some(super::MouseArea::HeaderLine) && keys.is_empty() {
-        keys.push(crate::editor::event_code_for("header-line"));
+    if keys.is_empty() {
+        match position.area {
+            Some(super::MouseArea::ModeLine) => {
+                keys.push(crate::editor::event_code_for("mode-line"));
+            }
+            Some(super::MouseArea::HeaderLine) => {
+                keys.push(crate::editor::event_code_for("header-line"));
+            }
+            None => {}
+        }
     }
     dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event))
 }
