@@ -405,9 +405,9 @@ pub enum MouseButton {
     Left,
     Middle,
     Right,
-    /// GUI back navigation button, delivered as mouse-4.
+    /// GUI back navigation button, delivered as mouse-8.
     Back,
-    /// GUI forward navigation button, delivered as mouse-5.
+    /// GUI forward navigation button, delivered as mouse-9.
     Forward,
 }
 
@@ -417,8 +417,8 @@ impl MouseButton {
             Self::Left => 1,
             Self::Middle => 2,
             Self::Right => 3,
-            Self::Back => 4,
-            Self::Forward => 5,
+            Self::Back => 8,
+            Self::Forward => 9,
         }
     }
 }

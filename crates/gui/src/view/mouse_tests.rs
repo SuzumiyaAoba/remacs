@@ -71,8 +71,8 @@ fn navigation_buttons_reach_the_gui_channel_with_position_and_modifiers() {
           (append remacs-gui-navigation-events (list (car event)))))
       (dolist (key '([C-S-down-mouse-2] [C-S-mouse-2]
                     [C-S-down-mouse-3] [C-S-mouse-3]
-                    [C-S-down-mouse-4] [C-S-mouse-4]
-                    [C-S-down-mouse-5] [C-S-mouse-5]))
+                    [C-S-down-mouse-8] [C-S-mouse-8]
+                    [C-S-down-mouse-9] [C-S-mouse-9]))
         (global-set-key key #'remacs-gui-navigation-record))
       (global-set-key [f12] (lambda () (interactive) (kill-emacs))))"#,
     )
@@ -174,7 +174,7 @@ fn navigation_buttons_reach_the_gui_channel_with_position_and_modifiers() {
     assert_eq!(
         i.prin1_to_string(&i.symbol_value(symbol))
             .to_unicode_lossy(),
-        "(C-S-down-mouse-2 C-S-mouse-2 C-S-down-mouse-3 C-S-mouse-3 C-S-down-mouse-4 C-S-mouse-4 C-S-down-mouse-5 C-S-mouse-5)"
+        "(C-S-down-mouse-2 C-S-mouse-2 C-S-down-mouse-3 C-S-mouse-3 C-S-down-mouse-8 C-S-mouse-8 C-S-down-mouse-9 C-S-mouse-9)"
     );
 }
 
