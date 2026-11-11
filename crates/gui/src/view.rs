@@ -92,6 +92,38 @@ const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 19.0;
+const POINTS_TO_LOGICAL_PIXELS: f32 = if cfg!(any(target_os = "linux", target_os = "windows")) {
+    96.0 / 72.0
+} else {
+    1.0
+};
+
+fn point_size_to_logical_pixels(height_tenths: u16, pixels_per_point: f32) -> Pixels {
+    px(height_tenths as f32 / 10.0 * pixels_per_point)
+}
+
+pub(super) fn face_font_size(height_tenths: u16) -> Pixels {
+    point_size_to_logical_pixels(height_tenths, POINTS_TO_LOGICAL_PIXELS)
+}
+
+#[cfg(test)]
+mod face_font_size_tests {
+    use super::face_font_size;
+
+    #[test]
+    fn face_height_uses_platform_logical_pixel_scale() {
+        let expected = if cfg!(any(target_os = "linux", target_os = "windows")) {
+            16.0
+        } else {
+            12.0
+        };
+        let actual = f32::from(face_font_size(120));
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "got {actual}, expected {expected}"
+        );
+    }
+}
 
 static FONT_FAMILY_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
 
@@ -1180,7 +1212,7 @@ impl EditorView {
         text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
         let font_size = default_style
             .font_height
-            .map(|height| px(height as f32 / 10.0))
+            .map(face_font_size)
             .unwrap_or(px(FONT_SIZE));
         let font_id = window.text_system().resolve_font(&text_font);
         self.cell_width = window
@@ -1362,7 +1394,7 @@ impl Render for EditorView {
         text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
         let font_size = default_style
             .font_height
-            .map(|height| px(height as f32 / 10.0))
+            .map(face_font_size)
             .unwrap_or(px(FONT_SIZE));
         let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
         self.line_height = line_height;
@@ -2357,9 +2389,7 @@ impl Render for EditorView {
                                                     .map(|color| rgb(color_rgb(color)).into()),
                                             }),
                                         });
-                                        font_sizes.push(
-                                            st.font_height.map(|height| px(height as f32 / 10.0)),
-                                        );
+                                        font_sizes.push(st.font_height.map(face_font_size));
                                     };
                                 for (len, style) in styled_spans {
                                     push_run(style, len);

@@ -260,7 +260,7 @@ fn grid_base_font(grid: &Grid, window: &mut Window) -> (gpui::Font, Pixels) {
     base_font.stretch = gpui::FontStretch::from_percentage(style.font_width.unwrap_or(100));
     let font_size = style
         .font_height
-        .map(|height| px(height as f32 / 10.0))
+        .map(super::face_font_size)
         .unwrap_or(px(FONT_SIZE));
     (base_font, font_size)
 }
@@ -291,7 +291,7 @@ fn grid_font_for_style(
     }
     (
         run_font,
-        style.font_height.map(|height| px(height as f32 / 10.0)),
+        style.font_height.map(super::face_font_size),
     )
 }
 
