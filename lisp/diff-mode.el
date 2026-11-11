@@ -2559,11 +2559,36 @@ diff would remove (beginning with \"+\" or \"<\")."
             (save-window-excursion
               (save-excursion
                 (forward-line -1)
-                ;; FIXME: Detect if the line we jump to doesn't match
-                ;; the line in the diff.
-                (diff-goto-source t)
+                (let* ((diff-line
+                        (buffer-substring-no-properties
+                         (line-beginning-position) (line-end-position)))
+                       (style (save-excursion
+                                (diff-beginning-of-hunk)
+                                (diff-hunk-style)))
+                       (context-line
+                        (pcase style
+                          ('unified
+                           (cond ((and (> (length diff-line) 0)
+                                       (eq (aref diff-line 0) ?\s))
+                                  (substring diff-line 1))
+                                 ((and diff-valid-unified-empty-line
+                                       (zerop (length diff-line)))
+                                  "")))
+                          ('context
+                           (and (>= (length diff-line) 2)
+                                (eq (aref diff-line 0) ?\s)
+                                (eq (aref diff-line 1) ?\s)
+                                (substring diff-line 2))))))
+                  (diff-goto-source t)
+                  (when context-line
+                    (unless (equal context-line
+                                   (buffer-substring-no-properties
+                                    (line-beginning-position)
+                                    (line-end-position)))
+                      (user-error
+                       "Diff is stale: source context no longer matches")))
                 (forward-line +1)
-                (setq start (point))))
+                (setq start (point)))))
             (save-window-excursion
               (diff-goto-source t)
               (push (buffer-substring start (point))

@@ -802,6 +802,7 @@ qa!(
 qa!(qa_thing, "qa_thing.el");
 qa!(qa_thing2, "qa_thing2.el");
 qa!(qa_diffface, "qa_diffface.el");
+qa!(qa_diff_kill_ring_save_stale, "qa_diff_kill_ring_save_stale.el");
 qa!(qa_time, "qa_time.el");
 qa!(qa_iso8601_load, "qa_iso8601_load.el");
 qa!(qa_ietf_drums_load, "qa_ietf_drums_load.el");
