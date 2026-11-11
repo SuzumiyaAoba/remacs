@@ -1410,22 +1410,66 @@ Returns t if found, nil otherwise."
   "Return the enclosing CDATA or PI tag if point is inside one.
 LIMIT is the backward search limit used by `sgml-parse-tag-backward'."
   (let* ((here (point))
-         (special-start
+         (parse-start (or limit (point-min)))
+         (suffix
           (save-excursion
-            (when (re-search-backward "<!\\[[A-Z]+\\[\\|<\\?" limit t)
-              (point)))))
-    (when special-start
-      (let* ((context (sgml-lexical-context special-start))
-             (type (car context))
-             (start (cdr context)))
-        (when (memq type '(cdata pi))
-          (let ((end (save-excursion
-                       (goto-char here)
-                       (search-forward (if (eq type 'cdata) "]]>" "?>")
-                                       nil t))))
-            (when end
-              (goto-char start)
-              (sgml-make-tag type start end nil))))))))
+            (goto-char here)
+            (skip-chars-backward " \t\r\n")
+            (let ((end (point)))
+              (cond
+               ((and (>= (- end 3) parse-start)
+                     (string= (buffer-substring-no-properties (- end 3) end) "]]>"))
+                (list 'cdata end 3))
+               ((and (>= (- end 2) parse-start)
+                     (string= (buffer-substring-no-properties (- end 2) end) "?>"))
+                (list 'pi end 2))))))
+         (candidate
+          (or suffix
+              (save-excursion
+                (when (re-search-backward "<!\\[[A-Z]+\\[\\|<\\?" parse-start t)
+                  (point)))))
+         (probe (if suffix (- (nth 1 suffix) (nth 2 suffix)) here))
+         (scan-start (if suffix parse-start candidate))
+         (xml-mode-for-scan
+          (or sgml-xml-mode
+              (and suffix (eq (car suffix) 'pi))
+              (and (integerp candidate)
+                   (save-excursion
+                     (goto-char candidate)
+                     (search-forward "?>" nil t)))))
+         (local-context
+          (and scan-start
+               (save-excursion
+                 (goto-char probe)
+                 (let ((sgml-xml-mode xml-mode-for-scan))
+                   (sgml-lexical-context scan-start)))))
+         (context
+          (if (and (not suffix)
+                   (integerp candidate)
+                   (> candidate parse-start)
+                   (memq (car-safe local-context) '(cdata pi))
+                   (not
+                    (eq (car (save-excursion
+                               (goto-char (1- candidate))
+                               (sgml-lexical-context parse-start)))
+                         'text)))
+              (save-excursion
+                (goto-char here)
+                (let ((sgml-xml-mode xml-mode-for-scan))
+                  (sgml-lexical-context parse-start)))
+            local-context))
+         (type (car-safe context))
+         (start (cdr-safe context)))
+    (when (memq type '(cdata pi))
+      (let* ((terminator (if (eq type 'cdata) "]]>" "?>"))
+             (end (if (and suffix (eq type (car suffix)))
+                      (nth 1 suffix)
+                    (save-excursion
+                      (goto-char here)
+                      (search-forward terminator nil t)))))
+        (when end
+          (goto-char start)
+          (sgml-make-tag type start end nil))))))
 
 (defun sgml-parse-tag-backward (&optional limit)
   "Parse an SGML tag backward, and return information about the tag.
