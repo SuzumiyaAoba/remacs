@@ -3,7 +3,8 @@ use remacs_runtime::{
     frontend::{
         AppleScriptResult, DragAction, FrameVisibility, Grid, GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton, MouseInput,
-        MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest, fit_text_to_cells,
+        MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest,
+        fit_text_to_cells_with_tab_width,
         render_frame_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
@@ -1342,15 +1343,34 @@ pub(super) struct ChanIo {
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
 }
 
-fn echo_char_width(character: char, column: usize) -> usize {
+fn echo_tab_width(i: &Interp) -> usize {
+    i.intern_soft("tab-width")
+        .and_then(|id| {
+            i.buffer_local_toplevel_value(id, i.current_buffer)
+                .or_else(|| i.default_toplevel_value(id))
+        })
+        .and_then(|value| match value {
+            Value::Int(width) if width > 0 => usize::try_from(width).ok(),
+            _ => None,
+        })
+        .filter(|width| *width > 0)
+        .unwrap_or(8)
+}
+
+fn echo_char_width(character: char, column: usize, tab_width: usize) -> usize {
+    let tab_width = tab_width.max(1);
     match character {
         '\n' | '\r' => 1,
-        '\t' => 8 - column % 8,
+        '\t' => tab_width - column % tab_width,
         _ => UnicodeWidthChar::width(character).unwrap_or(1),
     }
 }
 
-fn echo_input_cursor(text: &str, cursor_utf16: usize) -> Option<(usize, usize)> {
+fn echo_input_cursor(
+    text: &str,
+    cursor_utf16: usize,
+    tab_width: usize,
+) -> Option<(usize, usize)> {
     let mut utf16 = 0usize;
     let mut characters = 0usize;
     let mut columns = 0usize;
@@ -1362,7 +1382,7 @@ fn echo_input_cursor(text: &str, cursor_utf16: usize) -> Option<(usize, usize)> 
         if next > cursor_utf16 {
             return None;
         }
-        columns = columns.saturating_add(echo_char_width(character, columns));
+        columns = columns.saturating_add(echo_char_width(character, columns, tab_width));
         characters += 1;
         utf16 = next;
     }
@@ -1373,8 +1393,9 @@ fn echo_input_cursor_in_display_text(
     display_text: &str,
     input_text: &str,
     cursor_utf16: usize,
+    tab_width: usize,
 ) -> Option<(usize, usize)> {
-    let (input_cursor_character, _) = echo_input_cursor(input_text, cursor_utf16)?;
+    let (input_cursor_character, _) = echo_input_cursor(input_text, cursor_utf16, tab_width)?;
     let input_start = display_text.rfind(input_text)?;
     let cursor_character = display_text[..input_start]
         .chars()
@@ -1384,12 +1405,12 @@ fn echo_input_cursor_in_display_text(
         .chars()
         .take(cursor_character)
         .fold(0usize, |column, character| {
-            column.saturating_add(echo_char_width(character, column))
+            column.saturating_add(echo_char_width(character, column, tab_width))
         });
     Some((cursor_character, cursor_column))
 }
 
-fn echo_message_end_position(text: &str, width: usize) -> (usize, usize) {
+fn echo_message_end_position(text: &str, width: usize, tab_width: usize) -> (usize, usize) {
     if width == 0 {
         return (0, 0);
     }
@@ -1401,11 +1422,11 @@ fn echo_message_end_position(text: &str, width: usize) -> (usize, usize) {
             byte_index = 0;
             continue;
         }
-        let mut char_width = echo_char_width(character, column);
+        let mut char_width = echo_char_width(character, column, tab_width);
         if column > 0 && column.saturating_add(char_width) > width {
             column = 0;
             byte_index = 0;
-            char_width = echo_char_width(character, column);
+            char_width = echo_char_width(character, column, tab_width);
         }
         byte_index = byte_index.saturating_add(character.len_utf8());
         column = column.saturating_add(char_width);
@@ -1418,6 +1439,7 @@ fn fit_echo_text_at_cursor(
     width: usize,
     cursor_character: usize,
     cursor_column: usize,
+    tab_width: usize,
 ) -> (String, usize, usize, usize, usize) {
     if width == 0 {
         return (String::new(), 0, 0, 0, 0);
@@ -1437,7 +1459,7 @@ fn fit_echo_text_at_cursor(
             '\n' | '\r' => ' ',
             other => other,
         };
-        let char_width = echo_char_width(raw_character, source_column);
+        let char_width = echo_char_width(raw_character, source_column, tab_width);
         let char_end = source_column.saturating_add(char_width);
         let visible_start = source_column.max(scroll_start);
         let visible_end = char_end.min(scroll_end);
@@ -1483,18 +1505,51 @@ fn fit_echo_text_at_cursor(
 
 #[cfg(test)]
 mod echo_hscroll_tests {
-    use super::fit_echo_text_at_cursor;
+    use super::{
+        Interp, Value, echo_input_cursor, echo_input_cursor_in_display_text, echo_tab_width,
+        fit_echo_text_at_cursor, fit_text_to_cells_with_tab_width,
+    };
+
+    #[test]
+    fn tabs_follow_the_active_buffer_tab_width() {
+        let mut i = Interp::new();
+        let tab_width_symbol = i.intern("tab-width");
+        let buffer = i.current_buffer;
+        i.set_buffer_local_toplevel_value(tab_width_symbol, buffer, Value::Int(4));
+        let tab_width = echo_tab_width(&i);
+        assert_eq!(tab_width, 4);
+
+        let text = "abc\tX";
+        assert_eq!(echo_input_cursor(text, 4, tab_width), Some((4, 4)));
+        assert_eq!(
+            echo_input_cursor_in_display_text(text, text, 4, tab_width),
+            Some((4, 4))
+        );
+        assert_eq!(
+            fit_echo_text_at_cursor(text, 4, 4, 4, tab_width),
+            ("bc X".to_string(), 4, 4, 3, 3)
+        );
+        assert_eq!(
+            fit_text_to_cells_with_tab_width(text, 6, tab_width),
+            ("abc X ".to_string(), 5, 5)
+        );
+    }
 
     #[test]
     fn combining_marks_follow_their_base_across_scroll_edges() {
         let text = "a\u{0301}bbb";
-        let (shown, columns, visible_bytes, _, _) =
-            fit_echo_text_at_cursor(text, 4, text.chars().count(), 4);
+        let (shown, columns, visible_bytes, _, _) = fit_echo_text_at_cursor(
+            text,
+            4,
+            text.chars().count(),
+            4,
+            8,
+        );
         assert_eq!(shown, "bbb ");
         assert_eq!(columns, 3);
         assert_eq!(visible_bytes, 3);
 
-        let (shown, columns, visible_bytes, _, _) = fit_echo_text_at_cursor(text, 4, 2, 1);
+        let (shown, columns, visible_bytes, _, _) = fit_echo_text_at_cursor(text, 4, 2, 1, 8);
         assert_eq!(shown, text);
         assert_eq!(columns, 4);
         assert_eq!(visible_bytes, text.len());
@@ -2066,6 +2121,7 @@ impl ChanIo {
         reset_styles: bool,
         use_grid_cursor: bool,
         move_cursor: bool,
+        tab_width: usize,
     ) -> Grid {
         let echo_row = self.rows.saturating_sub(1);
         let selected_cursor = use_grid_cursor
@@ -2077,7 +2133,12 @@ impl ChanIo {
         let fallback_cursor_index = use_grid_cursor.then_some(grid.cursor_index).flatten();
         let input_cursor = if use_grid_cursor {
             grid.input.as_ref().and_then(|input| {
-                echo_input_cursor_in_display_text(text, input.text.as_ref(), input.cursor)
+                echo_input_cursor_in_display_text(
+                    text,
+                    input.text.as_ref(),
+                    input.cursor,
+                    tab_width,
+                )
             })
         } else {
             None
@@ -2085,11 +2146,18 @@ impl ChanIo {
         let (shown, cursor_column, cursor_index) = match input_cursor {
             Some((cursor_character, cursor_column)) => {
                 let (shown, _, _, cursor_column, cursor_index) =
-                    fit_echo_text_at_cursor(text, self.cols, cursor_character, cursor_column);
+                    fit_echo_text_at_cursor(
+                        text,
+                        self.cols,
+                        cursor_character,
+                        cursor_column,
+                        tab_width,
+                    );
                 (shown, cursor_column, cursor_index)
             }
             None => {
-                let (shown, columns, visible_bytes) = fit_text_to_cells(text, self.cols);
+                let (shown, columns, visible_bytes) =
+                    fit_text_to_cells_with_tab_width(text, self.cols, tab_width);
                 let cursor_column = selected_cursor
                     .map(|cursor| cursor.column)
                     .or(fallback_cursor_column)
@@ -2927,12 +2995,13 @@ impl KeyIo for ChanIo {
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
-        let grid = self.echo_grid(grid, text, true, false, true);
+        let grid = self.echo_grid(grid, text, true, false, true, 8);
         self.send_grid(grid)
     }
 
     fn draw_echo_with_state(&mut self, i: &Interp, text: &str) -> io::Result<()> {
         let (cols, rows) = self.size();
+        let tab_width = echo_tab_width(i);
         let mut grid = if let Some(frame) = i.selected_frame.as_ref() {
             let frame_id = frame.borrow().id;
             let cached = self
@@ -2952,7 +3021,7 @@ impl KeyIo for ChanIo {
             render_grid_with_mouse_position_cached(i, cols, rows, cached, self.mouse_position)
         };
         grid.blink_elapsed_since_input = self.last_input_at.elapsed().as_secs_f64();
-        let grid = self.echo_grid(grid, text, false, true, true);
+        let grid = self.echo_grid(grid, text, false, true, true, tab_width);
         self.send_grid(grid)
     }
 
@@ -2967,7 +3036,7 @@ impl KeyIo for ChanIo {
         if move_cursor {
             let row = grid.rows.len().saturating_sub(1);
             let width = grid.attrs.get(row).map_or(self.cols, Vec::len);
-            let (column, index) = echo_message_end_position(text, width);
+            let (column, index) = echo_message_end_position(text, width, echo_tab_width(i));
             let selected_cursor = grid.cursors.iter().find(|cursor| cursor.selected).copied();
             let column = column.min(width.saturating_sub(1));
             let index = index.min(grid.rows.get(row).map_or(0, String::len));

@@ -4613,7 +4613,7 @@ pub fn fit_text_to_cells(text: &str, width: usize) -> (String, usize, usize) {
     fit_text_to_cells_with_tab_width(text, width, 8)
 }
 
-fn fit_text_to_cells_with_tab_width(
+pub fn fit_text_to_cells_with_tab_width(
     text: &str,
     width: usize,
     tab_width: usize,

@@ -609,7 +609,8 @@ pub use render::{
     GridPointerRegion,
     GridModeLine, GridHeaderLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
-    GridToolBarItem, fit_text_to_cells, render_frame_grid_with_input_cached,
+    GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,
+    render_frame_grid_with_input_cached,
     render_frame_grid_with_mouse_position_cached, render_grid, render_grid_with_input_cached,
     render_grid_with_mouse_position_cached,
 };
