@@ -2071,10 +2071,17 @@ impl Render for EditorView {
                     let horizontal_delta = event.delta.pixel_delta(cell_width);
                     let delta_lines = -f32::from(vertical_delta.y) / f32::from(line_height);
                     let delta_columns = -f32::from(horizontal_delta.x) / f32::from(cell_width);
+                    let pixel_delta = event.delta.precise().then(|| {
+                        (
+                            f32::from(vertical_delta.x).round() as i128,
+                            f32::from(vertical_delta.y).round() as i128,
+                        )
+                    });
                     if delta_lines != 0.0 {
                         let _ = scroll_tx.send(GuiEvent::Scroll {
                             delta: delta_lines,
                             horizontal: false,
+                            pixel_delta,
                             modifiers: mouse_modifier_bits(
                                 &event.modifiers,
                                 modifier_mapping,
@@ -2087,6 +2094,7 @@ impl Render for EditorView {
                         let _ = scroll_tx.send(GuiEvent::Scroll {
                             delta: delta_columns,
                             horizontal: true,
+                            pixel_delta: None,
                             modifiers: mouse_modifier_bits(
                                 &event.modifiers,
                                 modifier_mapping,

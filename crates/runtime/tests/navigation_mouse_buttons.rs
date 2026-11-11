@@ -116,7 +116,8 @@ fn navigation_buttons_run_lisp_bindings_with_click_drag_and_modifier_data() {
             direction,
             modifiers: 0,
             position,
-            line_count: 1,
+            line_count: Some(1),
+            pixel_delta: None,
         });
     }
     events.push_back(InputEvent::Key(event_code_for("f12")));

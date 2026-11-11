@@ -121,20 +121,23 @@ fn header_wheel_uses_prefixed_bindings_and_real_mwheel_window_selection() {
             direction: MouseWheelDirection::Down,
             modifiers: 0,
             position: position(right),
-            line_count: 2,
+            line_count: Some(2),
+            pixel_delta: None,
         },
         InputEvent::MouseWheel {
             direction: MouseWheelDirection::Up,
             modifiers: CHAR_CTL,
             position: position(left),
-            line_count: 1,
+            line_count: Some(1),
+            pixel_delta: None,
         },
         InputEvent::Command("qa-header-default".into()),
         InputEvent::MouseWheel {
             direction: MouseWheelDirection::Down,
             modifiers: 0,
             position: position(right),
-            line_count: 3,
+            line_count: Some(3),
+            pixel_delta: None,
         },
         InputEvent::Command("qa-header-follow-off".into()),
         // GNU 31.1 falls back to the event window without mouse-wheel-frame
@@ -143,7 +146,8 @@ fn header_wheel_uses_prefixed_bindings_and_real_mwheel_window_selection() {
             direction: MouseWheelDirection::Down,
             modifiers: 0,
             position: position(right),
-            line_count: 2,
+            line_count: Some(2),
+            pixel_delta: None,
         },
         InputEvent::Key(event_code_for("f12")),
     ];
@@ -153,5 +157,75 @@ fn header_wheel_uses_prefixed_bindings_and_real_mwheel_window_selection() {
         i.prin1_to_string(&i.symbol_value(result))
             .to_unicode_lossy(),
         "(((wheel-down header-line t 2 header-line) (C-wheel-up header-line nil 1 header-line)) t t t t t)"
+    );
+}
+
+#[test]
+fn pixel_scroll_precision_uses_precise_wheel_delta() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(pixel_scroll_precision_uses_precise_wheel_delta_inner)
+        .expect("spawn pixel wheel test thread")
+        .join()
+        .expect("pixel wheel test thread");
+}
+
+fn pixel_scroll_precision_uses_precise_wheel_delta_inner() {
+    let mut i = Interp::new();
+    i.eval_str(
+        r#"(progn
+        (set-frame-parameter nil 'window-system 'ns)
+        (set-frame-parameter nil 'menu-bar-lines 0)
+        (set-frame-parameter nil 'tool-bar-lines 0)
+        (set-frame-parameter nil 'tab-bar-lines 0)
+        (set-frame-parameter nil 'vertical-scroll-bars nil)
+        (set-frame-size nil 80 16) (set-window-fringes nil 0 0)
+        (setq-default header-line-format nil tab-line-format nil mode-line-format nil)
+        (switch-to-buffer (get-buffer-create "*pixel-wheel*"))
+        (erase-buffer) (dotimes (n 100) (insert (format "pixel line %d\n" n)))
+        (goto-char 1)
+        (require 'pixel-scroll)
+        (pixel-scroll-precision-mode 1)
+        (setq qa-pixel-scroll-event nil)
+        (defun qa-pixel-scroll-observer (event)
+          (setq qa-pixel-scroll-event (list (nth 3 event) (nth 4 event))))
+        (advice-add 'pixel-scroll-precision :before #'qa-pixel-scroll-observer)
+        (global-set-key [f12] (lambda () (interactive)
+          (setq qa-pixel-scroll-result
+            (list qa-pixel-scroll-event (window-vscroll nil t)))
+          (kill-emacs))))"#,
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    reflow_frame_windows(&frame, 80, 16);
+    let window_id = frame.borrow().selected.borrow().id;
+    let position = MousePosition {
+        buffer_id: i.current_buffer,
+        buffer_position: 1,
+        utf16_offset: 1,
+        x: 8,
+        y: 0,
+        row: 0,
+        column: 1,
+        window_id: Some(window_id),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let events = [
+        InputEvent::MouseWheel {
+            direction: MouseWheelDirection::Down,
+            modifiers: 0,
+            position,
+            line_count: None,
+            pixel_delta: Some((0, -5)),
+        },
+        InputEvent::Key(event_code_for("f12")),
+    ];
+    run_editor_with(Frontend(events.into()), &mut i).unwrap();
+    let result = i.intern("qa-pixel-scroll-result");
+    assert_eq!(
+        i.prin1_to_string(&i.symbol_value(result))
+            .to_unicode_lossy(),
+        "((nil (0 . -5)) 5)"
     );
 }

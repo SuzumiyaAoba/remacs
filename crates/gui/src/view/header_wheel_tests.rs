@@ -124,21 +124,31 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
             ..Default::default()
         });
     }
+    visual.simulate_event(ScrollWheelEvent {
+        position: horizontal_target,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(5.0))),
+        modifiers: Modifiers::none(),
+        ..Default::default()
+    });
     let events: Vec<_> = rx
         .try_iter()
         .filter(|event| matches!(event, GuiEvent::Scroll { .. }))
         .collect();
-    assert_eq!(events.len(), 5);
+    assert_eq!(events.len(), 6);
     let (bridge_tx, bridge_rx) = mpsc::channel();
-    for (event, (window, area, modifiers, horizontal)) in events.into_iter().zip([
-        (right, Some(MouseArea::HeaderLine), 0, false),
-        (left, Some(MouseArea::HeaderLine), CHAR_CTL, false),
-        (right, None, 0, false),
-        (right, Some(MouseArea::HeaderLine), 0, true),
-        (right, Some(MouseArea::HeaderLine), 0, true),
-    ]) {
+    for (event, (window, area, modifiers, horizontal, expected_pixel_delta)) in
+        events.into_iter().zip([
+            (right, Some(MouseArea::HeaderLine), 0, false, None),
+            (left, Some(MouseArea::HeaderLine), CHAR_CTL, false, None),
+            (right, None, 0, false, None),
+            (right, Some(MouseArea::HeaderLine), 0, true, None),
+            (right, Some(MouseArea::HeaderLine), 0, true, None),
+            (right, Some(MouseArea::HeaderLine), 0, false, Some((0, 5))),
+        ])
+    {
         let GuiEvent::Scroll {
             horizontal: actual_horizontal,
+            pixel_delta: actual_pixel_delta,
             position,
             modifiers: actual,
             ..
@@ -150,6 +160,7 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
         assert_eq!(position.area, area);
         assert_eq!(*actual, modifiers);
         assert_eq!(*actual_horizontal, horizontal);
+        assert_eq!(*actual_pixel_delta, expected_pixel_delta);
         bridge_tx.send(event).unwrap();
     }
     bridge_tx

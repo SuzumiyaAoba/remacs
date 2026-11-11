@@ -125,6 +125,7 @@ pub(super) enum GuiEvent {
     Scroll {
         delta: f32,
         horizontal: bool,
+        pixel_delta: Option<(i128, i128)>,
         modifiers: i128,
         position: MousePosition,
     },
@@ -1279,6 +1280,7 @@ pub(super) struct ScrollContext {
     mode_line_buffer_name: bool,
     modifiers: i128,
     negative_delta: bool,
+    pixel_precise: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2395,6 +2397,7 @@ impl KeyIo for ChanIo {
             GuiEvent::Scroll {
                 delta,
                 horizontal,
+                pixel_delta,
                 modifiers,
                 position,
             } => {
@@ -2409,6 +2412,7 @@ impl KeyIo for ChanIo {
                     mode_line_buffer_name: position.mode_line_buffer_name,
                     modifiers,
                     negative_delta: delta.is_sign_negative(),
+                    pixel_precise: pixel_delta.is_some(),
                 };
                 let remainder = self.scroll_remainders.entry((frame_id, horizontal)).or_default();
                 if remainder.context != Some(context) {
@@ -2418,10 +2422,16 @@ impl KeyIo for ChanIo {
                 let total = remainder.amount + delta;
                 let whole = total.trunc();
                 remainder.amount = total - whole;
-                if whole == 0.0 {
+                let line_count = (whole != 0.0).then_some(whole.abs() as usize);
+                if line_count.is_none() && pixel_delta.is_none() {
                     Ok(None)
                 } else {
-                    let direction = match (horizontal, whole < 0.0) {
+                    let negative = if whole == 0.0 {
+                        delta.is_sign_negative()
+                    } else {
+                        whole < 0.0
+                    };
+                    let direction = match (horizontal, negative) {
                         (false, true) => MouseWheelDirection::Up,
                         (false, false) => MouseWheelDirection::Down,
                         (true, true) => MouseWheelDirection::Left,
@@ -2431,7 +2441,8 @@ impl KeyIo for ChanIo {
                         direction,
                         modifiers,
                         position,
-                        line_count: whole.abs() as usize,
+                        line_count,
+                        pixel_delta,
                     }))
                 }
             }

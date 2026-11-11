@@ -649,6 +649,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 modifiers,
                 position,
                 line_count,
+                pixel_delta,
             } => dispatch_mouse_wheel(
                 &term,
                 i,
@@ -656,6 +657,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 modifiers,
                 position,
                 line_count,
+                pixel_delta,
                 &mut keys,
                 &mut arg_mode,
             )?,
@@ -1750,10 +1752,20 @@ fn dispatch_mouse_wheel<T: KeyIo>(
     direction: MouseWheelDirection,
     modifiers: i128,
     position: MousePosition,
-    line_count: usize,
+    line_count: Option<usize>,
+    pixel_delta: Option<(i128, i128)>,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
+    if line_count.is_none() {
+        let pixel_scroll_mode = i.q("pixel-scroll-precision-mode");
+        if pixel_delta.is_none()
+            || !i.bound_p(pixel_scroll_mode)
+            || !i.symbol_value(pixel_scroll_mode).truthy()
+        {
+            return Ok(());
+        }
+    }
     let base = match direction {
         MouseWheelDirection::Up => "wheel-up",
         MouseWheelDirection::Down => "wheel-down",
@@ -1762,12 +1774,18 @@ fn dispatch_mouse_wheel<T: KeyIo>(
     };
     let name = mouse_event_name(base, modifiers);
     let key = crate::editor::event_code_for(&name);
-    let event = Value::list(vec![
+    let mut event_fields = vec![
         Value::Sym(i.intern(&name)),
         mouse_position_value(i, position).unwrap_or(Value::Nil),
         Value::Nil,
-        Value::Int(line_count.max(1) as i128),
-    ]);
+        line_count
+            .map(|count| Value::Int(count as i128))
+            .unwrap_or(Value::Nil),
+    ];
+    if let Some((x, y)) = pixel_delta {
+        event_fields.push(Value::cons(Value::Int(x), Value::Int(y)));
+    }
+    let event = Value::list(event_fields);
     crate::editor::record_recent_input_event(i, event.clone());
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
@@ -2921,6 +2939,7 @@ fn minibuf_loop<T: KeyIo>(
                 modifiers,
                 position,
                 line_count,
+                pixel_delta,
             } if !single => {
                 if let Err(e) = dispatch_mouse_wheel(
                     term,
@@ -2929,6 +2948,7 @@ fn minibuf_loop<T: KeyIo>(
                     modifiers,
                     position,
                     line_count,
+                    pixel_delta,
                     &mut keys,
                     &mut arg_mode,
                 ) {

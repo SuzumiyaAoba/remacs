@@ -375,12 +375,15 @@ pub enum InputEvent {
         /// Emacs keyboard modifier bits held while the pointer moved.
         modifiers: i128,
     },
-    /// A wheel/trackpad event, with direction and line count normalized by the front-end.
+    /// A wheel/trackpad event, with direction and available deltas from the front-end.
     MouseWheel {
         direction: MouseWheelDirection,
         modifiers: i128,
         position: MousePosition,
-        line_count: usize,
+        /// Whole screen lines, or None for a pixel-only movement.
+        line_count: Option<usize>,
+        /// Pixel delta (x, y) from a precise wheel/trackpad event.
+        pixel_delta: Option<(i128, i128)>,
     },
     /// A native window manager moved a graphical frame.
     FrameMoved {

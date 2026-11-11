@@ -897,6 +897,7 @@ fn chanio_fractional_scroll_remainders_reset_when_input_context_changes() {
         tx.send(GuiEvent::Scroll {
             delta,
             horizontal: false,
+            pixel_delta: None,
             modifiers,
             position,
         })
@@ -916,7 +917,8 @@ fn chanio_fractional_scroll_remainders_reset_when_input_context_changes() {
             direction: MouseWheelDirection::Up,
             modifiers: CHAR_CTL,
             position: MousePosition { buffer_id: 2, .. },
-            line_count: 1,
+            line_count: Some(1),
+            pixel_delta: None,
         })
     ));
 
@@ -929,7 +931,44 @@ fn chanio_fractional_scroll_remainders_reset_when_input_context_changes() {
             direction: MouseWheelDirection::Down,
             modifiers: CHAR_CTL,
             position: MousePosition { buffer_id: 2, .. },
-            line_count: 1,
+            line_count: Some(1),
+            pixel_delta: None,
+        })
+    ));
+}
+
+#[test]
+fn chanio_forwards_pixel_only_wheel_events() {
+    let (mut io, tx, _grx) = chan_pair();
+    let position = MousePosition {
+        buffer_id: 7,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 8,
+        y: 8,
+        row: 0,
+        column: 1,
+        window_id: Some(11),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    tx.send(GuiEvent::Scroll {
+        delta: -0.25,
+        horizontal: false,
+        pixel_delta: Some((0, 5)),
+        modifiers: 0,
+        position,
+    })
+    .unwrap();
+
+    assert!(matches!(
+        io.poll_input(Duration::ZERO).unwrap(),
+        Some(InputEvent::MouseWheel {
+            direction: MouseWheelDirection::Up,
+            modifiers: 0,
+            position: MousePosition { buffer_id: 7, .. },
+            line_count: None,
+            pixel_delta: Some((0, 5)),
         })
     ));
 }
