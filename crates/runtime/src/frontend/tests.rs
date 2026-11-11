@@ -92,6 +92,56 @@ fn interp_with_frame(text: &str) -> crate::lisp::Interp {
 }
 
 #[test]
+fn explicit_posting_group_checks_group_parameter_without_buffer_name() {
+    let mut i = interp_with_frame("");
+    let source = include_str!("../../../../lisp/gnus-msg.el");
+    let start = source
+        .find("(defun gnus-configure-posting-styles")
+        .expect("gnus-configure-posting-styles definition");
+    let end = source[start..]
+        .find("\n(defun ")
+        .map(|offset| start + offset)
+        .expect("next top-level function");
+    let definition = &source[start..end];
+    let test_source = format!(
+        "(progn {definition}
+          (defvar gnus-newsgroup-name nil)
+          (defvar gnus-summary-buffer nil)
+          (defvar gnus-posting-styles nil)
+          (defvar gnus-inhibit-posting-styles nil)
+          (defvar qa-group-parameter-lookup nil)
+          (defun gnus-buffer-live-p (_buffer) nil)
+          (defun gnus-group-find-parameter (group parameter &rest _ignored)
+            (setq qa-group-parameter-lookup (list group parameter))
+            nil)
+          (let ((gnus-newsgroup-name nil)
+                (gnus-summary-buffer nil)
+                (gnus-posting-styles nil)
+                (gnus-inhibit-posting-styles nil))
+            (with-temp-buffer
+              (gnus-configure-posting-styles \"comp.test\")))
+          qa-group-parameter-lookup)"
+    );
+    let result = match i.eval_str(&test_source) {
+        Ok(result) => result,
+        Err(crate::lisp::Flow::Signal(signal)) => {
+            let symbol = signal.symbol();
+            let data = signal.data();
+            panic!(
+                "posting-style test eval failed: {} {}",
+                i.prin1_to_string(&symbol),
+                i.prin1_to_string(&data)
+            );
+        }
+        Err(flow) => panic!("posting-style test eval failed: {flow:?}"),
+    };
+    assert_eq!(
+        i.prin1_to_string(&result).to_unicode_lossy(),
+        "(\"comp.test\" posting-style)"
+    );
+}
+
+#[test]
 fn isearch_extends_match_in_place_and_overlays_paint() {
     let mut i = interp_with_frame("xxx yyy xxx\n");
     let mut st = Isearch::new(&mut i, false, false);

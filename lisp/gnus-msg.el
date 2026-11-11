@@ -1784,7 +1784,7 @@ this is a reply."
       ;; If the group has a posting-style parameter, add it at the end with a
       ;; regexp matching everything, to be sure it takes precedence over all
       ;; the others.
-      (when gnus-newsgroup-name
+      (when (or group-name gnus-newsgroup-name)
 	(let ((tmp-style (gnus-group-find-parameter group 'posting-style t)))
 	  (when tmp-style
 	    (dolist (style tmp-style)
