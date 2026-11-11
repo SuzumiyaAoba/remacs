@@ -8668,9 +8668,29 @@ fn render_grid_internal(
                 if wrap_lines && content_width > 0 && !suspend_vs {
                     let new_start_line = bb.text.line_of_pos(new_start);
                     let new_start_line_pos = bb.text.line_start(new_start_line).max(bb.begv);
-                    let start_offset = new_start.saturating_sub(new_start_line_pos);
+                    let mut start_offset = new_start.saturating_sub(new_start_line_pos);
                     let point_line_pos = bb.text.line_start(pt_line).max(bb.begv);
                     let point_index = pt.saturating_sub(point_line_pos);
+                    if new_start_line == pt_line && point_index < start_offset {
+                        // Point may move to an earlier visual row within the
+                        // same physical line. The physical-line scroll pass
+                        // above cannot move `start' back in that case, so
+                        // anchor it to the visual row containing point.
+                        let line_end = bb.text.line_end(point_line_pos).min(bb.zv);
+                        let line = bb.text.substring(point_line_pos, line_end);
+                        let line_len = line.chars().count();
+                        if let Some(range) = wrap_ranges(&line, content_width, tab_width, ctl_arrow)
+                            .into_iter()
+                            .find(|range| {
+                                point_index >= range.start
+                                    && (point_index < range.end
+                                        || (point_index == range.end && range.end == line_len))
+                            })
+                        {
+                            new_start = point_line_pos.saturating_add(range.start);
+                            start_offset = new_start.saturating_sub(new_start_line_pos);
+                        }
+                    }
                     let mut recent_starts = VecDeque::new();
                     let mut visual_row = 0usize;
                     let mut point_visual_row = None;

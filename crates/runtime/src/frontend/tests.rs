@@ -213,6 +213,27 @@ fn overlay_string_faces_style_before_and_after_text() {
 }
 
 #[test]
+fn wrapped_point_moving_to_earlier_visual_row_scrolls_back() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq-local truncate-lines nil)").unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"x".repeat(5000));
+    i.eval_str("(goto-char (point-max))").unwrap();
+
+    let at_end = render_grid(&i, 12, 4);
+    assert!(at_end.cursor.is_some());
+    let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
+    assert!(window.borrow().start > 0);
+
+    i.eval_str("(beginning-of-line)").unwrap();
+    let at_beginning = render_grid(&i, 12, 4);
+    assert!(at_beginning.cursor.is_some());
+    assert_eq!(window.borrow().start, 0);
+}
+
+#[test]
 fn isearch_extends_match_in_place_and_overlays_paint() {
     let mut i = interp_with_frame("xxx yyy xxx\n");
     let mut st = Isearch::new(&mut i, false, false);
