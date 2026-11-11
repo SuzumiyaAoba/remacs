@@ -5476,6 +5476,294 @@ pub(crate) fn scroll_arg(i: &mut Interp, v: &Value, default: i128) -> Result<i12
 /// screenful; it controls `scroll-preserve-screen-position' when set
 /// to t.  Returns false when the scroll hit the buffer boundary before
 /// N lines (partial scroll, like GNU).
+struct VisualRowLayout {
+    line_start: usize,
+    line_end: usize,
+    line: EmacsText,
+    ranges: Vec<std::ops::Range<usize>>,
+    row: usize,
+}
+
+impl VisualRowLayout {
+    fn row_start(&self) -> usize {
+        self.line_start.saturating_add(self.ranges[self.row].start)
+    }
+
+    fn row_end(&self) -> usize {
+        self.line_start.saturating_add(self.ranges[self.row].end)
+    }
+
+    fn row_ends_physical_line(&self) -> bool {
+        self.ranges[self.row].end == self.line.chars().count()
+    }
+}
+
+fn visual_row_layout_at(
+    i: &Interp,
+    buffer: &crate::buffer::Buffer,
+    window: &WindowRef,
+    position: usize,
+) -> Option<VisualRowLayout> {
+    let position = position.clamp(buffer.begv, buffer.zv);
+    let line_number = buffer.text.line_of_pos(position);
+    let line_start = buffer.text.line_start(line_number).max(buffer.begv);
+    let line_end = buffer.text.line_end(line_start).min(buffer.zv);
+    let line = buffer.text.substring(line_start, line_end);
+    let ranges = crate::frontend::visual_line_ranges_for_window(
+        i,
+        buffer.id,
+        window,
+        &line,
+        line_start,
+    )?;
+    let offset = position.saturating_sub(line_start);
+    let row = ranges.iter().position(|range| {
+        offset >= range.start
+            && (offset < range.end
+                || (offset == range.end && range.end == line.chars().count()))
+    })?;
+    Some(VisualRowLayout {
+        line_start,
+        line_end,
+        line,
+        ranges,
+        row,
+    })
+}
+
+fn visual_next_row_start(
+    i: &Interp,
+    buffer: &crate::buffer::Buffer,
+    window: &WindowRef,
+    position: usize,
+) -> Option<usize> {
+    let layout = visual_row_layout_at(i, buffer, window, position)?;
+    if let Some(next) = layout.ranges.get(layout.row + 1) {
+        Some(layout.line_start.saturating_add(next.start))
+    } else {
+        (layout.line_end < buffer.zv).then(|| layout.line_end.saturating_add(1))
+    }
+}
+
+fn visual_previous_row_start(
+    i: &Interp,
+    buffer: &crate::buffer::Buffer,
+    window: &WindowRef,
+    position: usize,
+) -> Option<usize> {
+    let layout = visual_row_layout_at(i, buffer, window, position)?;
+    if layout.row > 0 {
+        Some(layout.line_start.saturating_add(layout.ranges[layout.row - 1].start))
+    } else if layout.line_start > buffer.begv {
+        let previous_position = layout.line_start.saturating_sub(1);
+        let previous_line_number = buffer.text.line_of_pos(previous_position);
+        let previous_line_start = buffer
+            .text
+            .line_start(previous_line_number)
+            .max(buffer.begv);
+        let previous_line_end = buffer.text.line_end(previous_line_start).min(buffer.zv);
+        let previous_line = buffer.text.substring(previous_line_start, previous_line_end);
+        let previous_ranges = crate::frontend::visual_line_ranges_for_window(
+            i,
+            buffer.id,
+            window,
+            &previous_line,
+            previous_line_start,
+        )?;
+        previous_ranges
+            .last()
+            .map(|range| previous_line_start.saturating_add(range.start))
+    } else {
+        None
+    }
+}
+
+fn visual_row_distance(
+    i: &Interp,
+    buffer: &crate::buffer::Buffer,
+    window: &WindowRef,
+    from: usize,
+    to: usize,
+) -> Option<isize> {
+    if to >= from {
+        let mut position = from;
+        let mut distance = 0isize;
+        loop {
+            let layout = visual_row_layout_at(i, buffer, window, position)?;
+            let row_end = layout.row_end();
+            if to >= layout.row_start()
+                && (to < row_end || (to == row_end && layout.row_ends_physical_line()))
+            {
+                return Some(distance);
+            }
+            position = visual_next_row_start(i, buffer, window, position)?;
+            distance = distance.saturating_add(1);
+        }
+    } else {
+        let mut position = from;
+        let mut distance = 0isize;
+        loop {
+            let layout = visual_row_layout_at(i, buffer, window, position)?;
+            let row_start = layout.row_start();
+            if to >= row_start && to <= layout.row_end() {
+                return Some(-distance);
+            }
+            position = visual_previous_row_start(i, buffer, window, position)?;
+            distance = distance.saturating_add(1);
+        }
+    }
+}
+
+fn visual_position_at_column(
+    line: &EmacsText,
+    range: &std::ops::Range<usize>,
+    line_start: usize,
+    target_column: usize,
+    tab_width: usize,
+) -> usize {
+    let mut column = 0usize;
+    for (index, character) in line
+        .chars()
+        .enumerate()
+        .skip(range.start)
+        .take(range.end.saturating_sub(range.start))
+    {
+        if column >= target_column {
+            return line_start.saturating_add(index);
+        }
+        let width = if character.unicode() == Some('\t') {
+            tab_width.max(1) - column % tab_width.max(1)
+        } else {
+            crate::buffer::primitives::char_width(character).max(0) as usize
+        };
+        if column.saturating_add(width) > target_column {
+            return line_start.saturating_add(index);
+        }
+        column = column.saturating_add(width);
+    }
+    line_start.saturating_add(range.end)
+}
+
+fn window_scroll_visual(
+    i: &Interp,
+    buffer: &crate::buffer::Buffer,
+    window: &WindowRef,
+    start: usize,
+    point: usize,
+    n: i128,
+    text_rows: usize,
+    preserve_screen_position: bool,
+    preserve_always: bool,
+    whole: bool,
+) -> Option<(usize, Option<usize>, bool)> {
+    visual_row_layout_at(i, buffer, window, start)?;
+    if n == 0 {
+        return Some((start, None, false));
+    }
+    let direction = n.signum();
+    let mut new_start = start;
+    let mut remaining = n.unsigned_abs();
+    let mut moved = 0i128;
+    let mut hit_edge = false;
+    while remaining > 0 {
+        let next = if direction > 0 {
+            visual_next_row_start(i, buffer, window, new_start)
+        } else {
+            visual_previous_row_start(i, buffer, window, new_start)
+        };
+        let Some(next) = next else {
+            hit_edge = true;
+            break;
+        };
+        new_start = next;
+        moved = moved.saturating_add(direction);
+        remaining -= 1;
+    }
+
+    let mut last_visible_start = new_start;
+    for _ in 1..text_rows.max(1) {
+        let Some(next) = visual_next_row_start(i, buffer, window, last_visible_start) else {
+            break;
+        };
+        last_visible_start = next;
+    }
+    let last_layout = visual_row_layout_at(i, buffer, window, last_visible_start)?;
+    let after_last_visible = if last_layout.row_ends_physical_line() {
+        point > last_layout.row_end()
+    } else {
+        point >= last_layout.row_end()
+    };
+    let snapped_point = if direction > 0 && point < new_start {
+        Some(new_start)
+    } else if direction < 0 && after_last_visible {
+        Some(last_visible_start)
+    } else {
+        None
+    };
+    let new_point = if preserve_screen_position
+        && (whole || preserve_always || snapped_point.is_some())
+    {
+        let row_offset = visual_row_distance(i, buffer, window, start, point)
+            .unwrap_or(0)
+            .max(0) as usize;
+        let mut point_row_start = new_start;
+        for _ in 0..row_offset.min(text_rows.saturating_sub(1)) {
+            let Some(next) = visual_next_row_start(i, buffer, window, point_row_start) else {
+                break;
+            };
+            point_row_start = next;
+        }
+        let old_layout = visual_row_layout_at(i, buffer, window, point)?;
+        let point_column = vertical_display_column_for_row(
+            &old_layout.line,
+            &old_layout.ranges[old_layout.row],
+            point.saturating_sub(old_layout.line_start),
+            crate::frontend::buffer_setting(i, "tab-width", buffer.id)
+                .int()
+                .and_then(|width| usize::try_from(width).ok())
+                .filter(|width| *width > 0)
+                .unwrap_or(8),
+        );
+        let new_layout = visual_row_layout_at(i, buffer, window, point_row_start)?;
+        Some(visual_position_at_column(
+            &new_layout.line,
+            &new_layout.ranges[new_layout.row],
+            new_layout.line_start,
+            point_column,
+            crate::frontend::buffer_setting(i, "tab-width", buffer.id)
+                .int()
+                .and_then(|width| usize::try_from(width).ok())
+                .filter(|width| *width > 0)
+                .unwrap_or(8),
+        ))
+    } else {
+        snapped_point
+    };
+    Some((new_start, new_point, hit_edge))
+}
+
+fn vertical_display_column_for_row(
+    line: &EmacsText,
+    range: &std::ops::Range<usize>,
+    offset: usize,
+    tab_width: usize,
+) -> usize {
+    let mut column = 0usize;
+    for character in line
+        .chars()
+        .skip(range.start)
+        .take(offset.min(range.end).saturating_sub(range.start))
+    {
+        let width = if character.unicode() == Some('\t') {
+            tab_width.max(1) - column % tab_width.max(1)
+        } else {
+            crate::buffer::primitives::char_width(character).max(0) as usize
+        };
+        column = column.saturating_add(width);
+    }
+    column
+}
+
 fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128, whole: bool) -> bool {
     let (buf, selected, start, height) = {
         let sel = i
@@ -5500,6 +5788,39 @@ fn window_scroll(i: &mut Interp, w: &WindowRef, n: i128, whole: bool) -> bool {
     let preserve_screen_position = preserve_value.truthy();
     let preserve_always = preserve_screen_position
         && !matches!(&preserve_value, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T);
+    let visual_scroll = if i.noninteractive {
+        None
+    } else {
+        let bb = b.borrow();
+        let point = if selected {
+            bb.point()
+        } else {
+            w.borrow().point
+        };
+        window_scroll_visual(
+            i,
+            &bb,
+            w,
+            start,
+            point,
+            n,
+            text_rows,
+            preserve_screen_position,
+            preserve_always,
+            whole,
+        )
+    };
+    if let Some((new_start, new_point, hit_edge)) = visual_scroll {
+        w.borrow_mut().start = new_start;
+        if let Some(point) = new_point {
+            if selected {
+                b.borrow_mut().set_point(point);
+            } else {
+                w.borrow_mut().point = point;
+            }
+        }
+        return !hit_edge;
+    }
     let (new_start, new_point, hit_edge) = {
         let bb = b.borrow();
         let len = bb.text.len();

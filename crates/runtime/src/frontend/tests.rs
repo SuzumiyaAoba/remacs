@@ -322,6 +322,22 @@ fn invisible_text_does_not_consume_wrapped_rows() {
 }
 
 #[test]
+fn scroll_up_advances_within_a_wrapped_physical_line() {
+    let mut i = interp_with_frame("");
+    i.noninteractive = false;
+    i.eval_str("(setq-local truncate-lines nil)").unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"x".repeat(5000));
+    let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
+
+    i.eval_str("(scroll-up 1)").unwrap();
+    assert_eq!(window.borrow().start, 80);
+    assert_eq!(point(&i), 80);
+}
+
+#[test]
 fn partial_width_window_honors_truncate_partial_width_windows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil truncate-partial-width-windows 1000)")
