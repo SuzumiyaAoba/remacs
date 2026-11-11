@@ -291,6 +291,20 @@ fn visual_line_mode_wraps_at_word_boundaries() {
 }
 
 #[test]
+fn vertical_motion_moves_through_wrapped_visual_rows() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq-local truncate-lines nil line-move-visual t)")
+        .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"x".repeat(200));
+
+    i.eval_str("(vertical-motion 1)").unwrap();
+    assert_eq!(point(&i), 80);
+}
+
+#[test]
 fn partial_width_window_honors_truncate_partial_width_windows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil truncate-partial-width-windows 1000)")

@@ -3528,6 +3528,180 @@ fn f_compute_motion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     ]))
 }
 
+fn vertical_motion_column(
+    line: &EmacsText,
+    range: &std::ops::Range<usize>,
+    offset: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+) -> usize {
+    let mut column = 0usize;
+    for character in line
+        .chars()
+        .skip(range.start)
+        .take(offset.min(range.end).saturating_sub(range.start))
+    {
+        let columns = if character.unicode() == Some('\t') {
+            tab_width.max(1) - column % tab_width.max(1)
+        } else {
+            crate::buffer::primitives::char_width_with_ctl(character, ctl_arrow).max(0) as usize
+        };
+        column = column.saturating_add(columns);
+    }
+    column
+}
+
+fn vertical_motion_position_for_column(
+    line: &EmacsText,
+    range: &std::ops::Range<usize>,
+    line_start: usize,
+    goal_column: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+) -> usize {
+    let mut column = 0usize;
+    for (offset, character) in line
+        .chars()
+        .enumerate()
+        .skip(range.start)
+        .take(range.end.saturating_sub(range.start))
+    {
+        if column >= goal_column {
+            return line_start.saturating_add(offset);
+        }
+        let columns = if character.unicode() == Some('\t') {
+            tab_width.max(1) - column % tab_width.max(1)
+        } else {
+            crate::buffer::primitives::char_width_with_ctl(character, ctl_arrow).max(0) as usize
+        };
+        if column.saturating_add(columns) > goal_column {
+            return line_start.saturating_add(offset);
+        }
+        column = column.saturating_add(columns);
+    }
+    line_start.saturating_add(range.end)
+}
+
+fn visual_vertical_motion(
+    i: &Interp,
+    buffer: &crate::buffer::Buffer,
+    window: &crate::editor::WindowRef,
+    lines: i128,
+    explicit_column: Option<f64>,
+) -> Option<(usize, i128)> {
+    let point = buffer.point().clamp(buffer.begv, buffer.zv);
+    let line_number = buffer.text.line_of_pos(point);
+    let mut line_start = buffer.text.line_start(line_number).max(buffer.begv);
+    let mut line_end = buffer.text.line_end(line_start).min(buffer.zv);
+    let mut line = buffer.text.substring(line_start, line_end);
+    let mut ranges = crate::frontend::visual_line_ranges_for_window(
+        i,
+        buffer.id,
+        window,
+        &line,
+        line_start,
+    )?;
+    if ranges.is_empty() {
+        return None;
+    }
+    let tab_width = crate::frontend::buffer_setting(i, "tab-width", buffer.id)
+        .int()
+        .and_then(|width| usize::try_from(width).ok())
+        .filter(|width| *width > 0)
+        .unwrap_or(8);
+    let ctl_arrow = crate::frontend::buffer_setting(i, "ctl-arrow", buffer.id).truthy();
+    let point_offset = point.saturating_sub(line_start);
+    let mut row = ranges
+        .iter()
+        .position(|range| {
+            point_offset >= range.start
+                && (point_offset < range.end
+                    || (point_offset == range.end && range.end == line.chars().count()))
+        })
+        .unwrap_or_else(|| ranges.len().saturating_sub(1));
+    let current_column = vertical_motion_column(
+        &line,
+        &ranges[row],
+        point_offset,
+        tab_width,
+        ctl_arrow,
+    );
+    let goal_column = if lines == 0 {
+        explicit_column.unwrap_or(0.0)
+    } else {
+        explicit_column.unwrap_or(current_column as f64)
+    }
+    .round()
+    .max(0.0) as usize;
+    let direction = lines.signum();
+    let mut remaining = lines.unsigned_abs();
+    let mut moved = 0i128;
+    while remaining > 0 {
+        if direction > 0 {
+            if row + 1 < ranges.len() {
+                row += 1;
+            } else {
+                if line_end >= buffer.zv {
+                    break;
+                }
+                line_start = line_end.saturating_add(1);
+                line_end = buffer.text.line_end(line_start).min(buffer.zv);
+                line = buffer.text.substring(line_start, line_end);
+                ranges = crate::frontend::visual_line_ranges_for_window(
+                    i,
+                    buffer.id,
+                    window,
+                    &line,
+                    line_start,
+                )?;
+                if ranges.is_empty() {
+                    break;
+                }
+                row = 0;
+            }
+            moved = moved.saturating_add(1);
+        } else if row > 0 {
+            row -= 1;
+            moved = moved.saturating_sub(1);
+        } else {
+            if line_start <= buffer.begv {
+                break;
+            }
+            let previous_position = line_start.saturating_sub(1);
+            line_start = buffer
+                .text
+                .line_start(previous_position)
+                .max(buffer.begv);
+            line_end = buffer.text.line_end(line_start).min(buffer.zv);
+            line = buffer.text.substring(line_start, line_end);
+            ranges = crate::frontend::visual_line_ranges_for_window(
+                i,
+                buffer.id,
+                window,
+                &line,
+                line_start,
+            )?;
+            if ranges.is_empty() {
+                break;
+            }
+            row = ranges.len() - 1;
+            moved = moved.saturating_sub(1);
+        }
+        remaining -= 1;
+    }
+    Some((
+        vertical_motion_position_for_column(
+            &line,
+            &ranges[row],
+            line_start,
+            goal_column,
+            tab_width,
+            ctl_arrow,
+        ),
+        moved,
+    ))
+}
+
 fn f_vertical_motion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (vertical-motion LINES &optional WINDOW CUR-COL).  LINES may be a
     // cons (COLS . LINES); without a real display matrix (batch) GNU
@@ -3537,26 +3711,46 @@ fn f_vertical_motion(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (numberp CAR — floats allowed) for the columns and fixnump CDR
     // for the lines; a bare LINES must be a fixnum.  Then the optional
     // WINDOW decodes via `window-live-p'.
-    let lines = match &a[0] {
+    let (lines, lines_column) = match &a[0] {
         Value::Cons(c) => {
             let cc = c.borrow();
-            match &cc.car {
-                Value::Int(_) | Value::Float(_) => {}
+            let column = match &cc.car {
+                Value::Int(value) => *value as f64,
+                Value::Float(value) => **value,
                 other => return Err(i.wrong_type_mut("numberp", other)),
-            }
-            match &cc.cdr {
+            };
+            let lines = match &cc.cdr {
                 Value::Int(n) => *n,
                 other => return Err(i.wrong_type_mut("fixnump", other)),
-            }
+            };
+            (lines, Some(column))
         }
-        Value::Int(n) => *n,
+        Value::Int(n) => (*n, None),
         other => return Err(i.wrong_type_mut("fixnump", other)),
     };
-    if let Some(w) = a.get(1) {
-        let _ = crate::editor::win_live(i, w)?;
-    }
+    let window = if let Some(window) = a.get(1) {
+        Some(crate::editor::win_live(i, window)?)
+    } else {
+        crate::editor::sel_window(i)
+    };
+    let explicit_column = match a.get(2) {
+        None | Some(Value::Nil) => lines_column,
+        Some(Value::Int(value)) => Some(*value as f64),
+        Some(Value::Float(value)) => Some(**value),
+        Some(other) => return Err(i.wrong_type_mut("numberp", other)),
+    };
     let b = cur(i);
-    let (p, moved) = {
+    let visual_motion = if i.noninteractive {
+        None
+    } else {
+        window.as_ref().and_then(|window| {
+            let buffer = b.borrow();
+            visual_vertical_motion(i, &buffer, window, lines, explicit_column)
+        })
+    };
+    let (p, moved) = if let Some(visual_motion) = visual_motion {
+        visual_motion
+    } else {
         let bb = b.borrow();
         let len = bb.text_len();
         let mut p = bb.point();

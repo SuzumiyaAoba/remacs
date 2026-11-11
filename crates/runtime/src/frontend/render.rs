@@ -1278,6 +1278,111 @@ fn word_wrap_categories_equal(left: EmacsChar, right: EmacsChar) -> bool {
     category(left) == category(right)
 }
 
+fn display_prefix_value_width(i: &Interp, value: &Value, tab_width: usize) -> usize {
+    match value {
+        Value::Str(string) => display_columns_of(string.borrow().chars(), tab_width),
+        Value::Cons(spec) => {
+            let (head, tail) = {
+                let spec = spec.borrow();
+                (spec.car.clone(), spec.cdr.clone())
+            };
+            if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "space") {
+                display_space_spec_width(i, &tail)
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+pub(crate) fn visual_line_ranges_for_window(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
+    line: &EmacsText,
+    line_pos: usize,
+) -> Option<Vec<Range<usize>>> {
+    let (window_buffer, total_width, hscroll) = {
+        let window = window.borrow();
+        (window.buffer, window.width, window.hscroll)
+    };
+    if window_buffer != buffer_id {
+        return None;
+    }
+    let width = crate::editor::win_body_width(i, window).max(1);
+    let root_width = crate::editor::frame_of_window(i, window)
+        .map(|frame| {
+            let frame = frame.borrow();
+            frame
+                .root
+                .as_ref()
+                .map(|root| root.borrow().width)
+                .unwrap_or(frame.width)
+        })
+        .unwrap_or(total_width);
+    let partial_width = if total_width < root_width {
+        let setting = buffer_setting(i, "truncate-partial-width-windows", buffer_id);
+        match setting.as_bigint() {
+            Some(threshold) => num_bigint::BigInt::from(total_width) < threshold,
+            None => setting.truthy(),
+        }
+    } else {
+        false
+    };
+    if buffer_setting(i, "truncate-lines", buffer_id).truthy() || partial_width || hscroll > 0 {
+        return None;
+    }
+    let tab_width = buffer_setting(i, "tab-width", buffer_id)
+        .int()
+        .and_then(|width| usize::try_from(width).ok())
+        .filter(|width| *width > 0)
+        .unwrap_or(8);
+    let ctl_arrow = buffer_setting(i, "ctl-arrow", buffer_id).truthy();
+    let window_value = Value::Window(window.clone());
+    let line_prefix = line_prefix_at_pos(i, buffer_id, &window_value, line_pos);
+    let requested_prefix_width = line_prefix
+        .as_ref()
+        .map(|prefix| display_columns(prefix, tab_width))
+        .unwrap_or(0)
+        .min(width);
+    let first_character_width = line.chars().next().map_or(0, |character| {
+        let code = character.code();
+        let unicode = character.unicode().unwrap_or('\u{fffd}');
+        if unicode == '\t' {
+            tab_width - requested_prefix_width % tab_width.max(1)
+        } else if character.byte8().is_some() {
+            4
+        } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+            2
+        } else {
+            display_char_width(unicode)
+        }
+    });
+    let first_prefix_width = if !line.is_empty()
+        && requested_prefix_width.saturating_add(first_character_width) > width
+    {
+        0
+    } else {
+        requested_prefix_width
+    };
+    let wrap_prefix = prefix_value_at_pos(i, buffer_id, &window_value, line_pos, "wrap-prefix");
+    let wrap_prefix_width = display_prefix_value_width(i, &wrap_prefix, tab_width)
+        .min(width.saturating_sub(first_character_width.min(width)));
+    let word_wrap = buffer_setting(i, "word-wrap", buffer_id).truthy();
+    let word_wrap_by_category = buffer_setting(i, "word-wrap-by-category", buffer_id).truthy();
+    Some(wrap_ranges_with_prefix(
+        line,
+        width,
+        first_prefix_width,
+        wrap_prefix_width,
+        tab_width,
+        ctl_arrow,
+        word_wrap,
+        word_wrap_by_category,
+    ))
+}
+
 fn selective_display_hides_line(mode: &Value, text: &EmacsText, tab_width: usize) -> bool {
     let Value::Int(threshold) = mode else {
         return false;
