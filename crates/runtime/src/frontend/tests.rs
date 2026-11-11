@@ -321,6 +321,30 @@ fn visual_line_numbers_count_continuation_rows_only_in_visual_mode() {
 }
 
 #[test]
+fn relative_line_numbers_can_show_zero_on_the_current_line() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(setq-local display-line-numbers 'relative\
+                     display-line-numbers-width 2\
+                     display-line-numbers-current-absolute nil)",
+    )
+    .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert("one\ntwo\nthree");
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .set_point(4);
+
+    let grid = render_grid(&i, 20, 6);
+    assert_eq!(grid.rows[0].chars().take(3).collect::<String>(), " 1 ");
+    assert_eq!(grid.rows[1].chars().take(3).collect::<String>(), " 0 ");
+    assert_eq!(grid.rows[2].chars().take(3).collect::<String>(), " 1 ");
+}
+
+#[test]
 fn vertical_motion_moves_through_wrapped_visual_rows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil line-move-visual t)")

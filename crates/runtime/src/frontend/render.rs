@@ -10068,8 +10068,16 @@ fn render_grid_internal(
                             }
                         } else if line_numbers_visual {
                             visual_distance
-                        } else if line_numbers_relative && point_line_number + 1 != line_number {
-                            ((point_line_number as i128 + 1) - line_number as i128).abs()
+                        } else if line_numbers_relative {
+                            if point_line_number + 1 == line_number {
+                                if line_numbers_current_absolute {
+                                    absolute
+                                } else {
+                                    0
+                                }
+                            } else {
+                                ((point_line_number as i128 + 1) - line_number as i128).abs()
+                            }
                         } else {
                             absolute
                         };
