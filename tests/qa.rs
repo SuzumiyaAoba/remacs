@@ -81,6 +81,7 @@ qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");
 qa!(qa_diary_icalendar_all_day_duration, "qa_diary_icalendar_all_day_duration.el");
+qa!(qa_diary_icalendar_rdate_tzid, "qa_diary_icalendar_rdate_tzid.el");
 qa!(qa_treesit_font_lock_overrides, "qa_treesit_font_lock_overrides.el");
 qa!(qa_dframe_temp_buffer_show, "qa_dframe_temp_buffer_show.el");
 qa!(qa_dframe_temp_buffer_show_recursion, "qa_dframe_temp_buffer_show_recursion.el");
