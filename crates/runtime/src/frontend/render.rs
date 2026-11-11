@@ -2952,6 +2952,7 @@ fn format_mode_line_string(
             'c' => context.column.to_string(),
             'C' => context.column.saturating_add(1).to_string(),
             'L' => context.line_count.to_string(),
+            'i' => context.buffer_size.to_string(),
             'I' => readable_mode_line_size(context.buffer_size),
             'p' | 'P' | 'o' | 'q' => mode_line_position(context, specifier),
             '@' => {
@@ -11205,7 +11206,24 @@ fn render_grid_internal(
 
 #[cfg(test)]
 mod mode_line_size_tests {
-    use super::readable_mode_line_size;
+    use super::{ModeLineContext, format_mode_line_string, readable_mode_line_size};
+    use crate::lisp::{Interp, Value};
+
+    #[test]
+    fn short_and_readable_accessible_size_constructs() {
+        let i = Interp::new();
+        let Value::Str(format) = Value::string("%i/%I") else {
+            unreachable!();
+        };
+        let mut context = ModeLineContext::default();
+        context.buffer_size = 1234;
+        let mut fill_remaining = false;
+
+        assert_eq!(
+            format_mode_line_string(&i, 0, &format, &context, &mut fill_remaining),
+            "1234/1.2k"
+        );
+    }
 
     #[test]
     fn decimal_rounding_and_large_units() {
