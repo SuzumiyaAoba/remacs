@@ -11,7 +11,7 @@ use super::{
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::*;
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, Grid, GridBidiDirection, GridCursor, GridImage,
+    BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBidiDirection, GridCursor, GridImage,
     GridImageSource, GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
     NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
@@ -4101,13 +4101,12 @@ fn paint_grid_row(
                         origin: point(bounds.left() + left, overline_y),
                         size: size(width, px(1.0)),
                     },
-                    style_colors(
+                    overline_color(
                         style,
                         default_background,
                         background_alpha,
                         grid.gamma_exponent,
-                    )
-                    .0,
+                    ),
                 ));
             }
         }
@@ -4214,13 +4213,12 @@ fn paint_vscroll_regions(
                                     origin: point(bounds.left() + left, overline_y),
                                     size: size(width, px(1.0)),
                                 },
-                                style_colors(
+                                overline_color(
                                     *style,
                                     default_background,
                                     background_alpha,
                                     grid.gamma_exponent,
-                                )
-                                .0,
+                                ),
                             ));
                         }
                     }
@@ -4703,6 +4701,57 @@ fn style_colors(
         )
     } else {
         (foreground, background)
+    }
+}
+
+fn overline_color(
+    style: CellStyle,
+    default_background: u32,
+    background_alpha: u8,
+    gamma_exponent: Option<f64>,
+) -> Hsla {
+    style
+        .overline_color
+        .map(|color| rgb(color_rgb(color)).into())
+        .unwrap_or_else(|| {
+            style_colors(style, default_background, background_alpha, gamma_exponent).0
+        })
+}
+
+#[cfg(test)]
+mod overline_color_tests {
+    use super::overline_color;
+    use gpui::rgb;
+    use remacs_runtime::frontend::CellColor;
+    use remacs_runtime::lisp::Interp;
+
+    #[test]
+    fn explicit_overline_color_survives_face_resolution() {
+        let mut i = Interp::new();
+        i.eval_str(
+            r##"(progn
+              (make-face 'qa-overline-explicit)
+              (set-face-attribute 'qa-overline-explicit nil
+                                  :foreground "#00ff00" :overline "#ff0000")
+              (make-face 'qa-overline-foreground)
+              (set-face-attribute 'qa-overline-foreground nil
+                                  :foreground "#0000ff" :overline t)
+              (erase-buffer)
+              (insert (propertize "R" 'face 'qa-overline-explicit)
+                      (propertize "T" 'face 'qa-overline-foreground)))"##,
+        )
+        .unwrap();
+        let grid = remacs_runtime::frontend::render_grid(&i, 20, 4);
+        let styles = &grid.char_attrs[0];
+        let explicit = styles[0];
+        let foreground = styles[1];
+
+        assert!(explicit.overline);
+        assert_eq!(explicit.overline_color, Some(CellColor(255, 0, 0)));
+        assert!(foreground.overline);
+        assert_eq!(foreground.overline_color, None);
+        assert_eq!(overline_color(explicit, 0, 255, None), rgb(0xff0000).into());
+        assert_eq!(overline_color(foreground, 0, 255, None), rgb(0x0000ff).into());
     }
 }
 

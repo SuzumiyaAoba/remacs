@@ -72,6 +72,7 @@ pub struct CellStyle {
     pub underline_color: Option<CellColor>,
     pub underline_wave: bool,
     pub overline: bool,
+    pub overline_color: Option<CellColor>,
     pub strike: bool,
     pub strike_color: Option<CellColor>,
     /// `:inverse-video': swap foreground/background.  Front-ends invert
@@ -442,6 +443,7 @@ struct StyleMix {
     underline_color: Option<Option<CellColor>>,
     underline_wave: Option<bool>,
     overline: Option<bool>,
+    overline_color: Option<Option<CellColor>>,
     strike: Option<bool>,
     strike_color: Option<Option<CellColor>>,
     inverse: Option<bool>,
@@ -483,6 +485,7 @@ impl StyleMix {
             underline_color,
             underline_wave,
             overline,
+            overline_color,
             strike,
             strike_color,
             inverse,
@@ -507,6 +510,7 @@ impl StyleMix {
             underline_color: self.underline_color.flatten(),
             underline_wave: self.underline_wave.unwrap_or(false),
             overline: self.overline.unwrap_or(false),
+            overline_color: self.overline_color.flatten(),
             strike: self.strike.unwrap_or(false),
             strike_color: self.strike_color.flatten(),
             inverse: self.inverse.unwrap_or(false),
@@ -541,6 +545,7 @@ impl PartialEq for StyleMix {
             && self.underline_color == o.underline_color
             && self.underline_wave == o.underline_wave
             && self.overline == o.overline
+            && self.overline_color == o.overline_color
             && self.strike == o.strike
             && self.strike_color == o.strike_color
             && self.inverse == o.inverse
@@ -5172,8 +5177,10 @@ impl FaceCtx {
                 ":overline" => {
                     if is_reset {
                         mix.overline = Some(default_style.overline);
+                        mix.overline_color = Some(default_style.overline_color);
                     } else if !is_unspecified {
                         mix.overline = Some(v.truthy());
+                        mix.overline_color = Some(self.decoration_color(v));
                     }
                 }
                 ":strike-through" => {
