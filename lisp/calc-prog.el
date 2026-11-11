@@ -141,12 +141,17 @@
   (let ((key (read-char)))
     (if (= (calc-user-function-classify key) 0)
 	(error "Can't undefine \"?\" key"))
-    (let* ((kmap (calc-user-key-map)))
-      (delq (or (assq key kmap)
-		(assq (upcase key) kmap)
-		(assq (downcase key) kmap)
-		(error "No such user key is defined"))
-	    kmap))))
+    (let* ((zmap (lookup-key calc-mode-map "z"))
+           (entries (cdr zmap))
+           (kmap (calc-user-key-map))
+           (kmap-parent (if (eq kmap entries) zmap entries))
+           (definition (or (assq key kmap)
+                           (assq (upcase key) kmap)
+                           (assq (downcase key) kmap)
+                           (error "No such user key is defined"))))
+      ;; `delq' returns a new head when removing the first entry.  Store
+      ;; that head back in the z-prefix map (or its ESC submap).
+      (setcdr kmap-parent (delq definition kmap)))))
 
 
 ;; math-integral-cache-state is originally declared in calcalg2.el,
