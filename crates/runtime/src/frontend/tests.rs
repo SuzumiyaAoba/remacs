@@ -189,6 +189,30 @@ fn display_replacement_string_faces_style_its_own_text() {
 }
 
 #[test]
+fn overlay_string_faces_style_before_and_after_text() {
+    let mut i = interp_with_frame("x");
+    i.eval_str(
+        r##"(progn
+          (make-face 'qa-overlay-before-face)
+          (set-face-attribute 'qa-overlay-before-face nil :foreground "#ff0000")
+          (make-face 'qa-overlay-after-face)
+          (set-face-attribute 'qa-overlay-after-face nil :foreground "#0000ff")
+          (erase-buffer)
+          (insert "x")
+          (let ((overlay (make-overlay (point-min) (point-max))))
+            (overlay-put overlay 'before-string
+                         (propertize "B" 'face 'qa-overlay-before-face))
+            (overlay-put overlay 'after-string
+                         (propertize "A" 'face 'qa-overlay-after-face))))"##,
+    )
+    .unwrap();
+    let grid = render_grid(&i, 40, 4);
+    assert!(grid.rows[0].starts_with("BxA"));
+    assert_eq!(grid.char_attrs[0][0].fg, Some(CellColor(255, 0, 0)));
+    assert_eq!(grid.char_attrs[0][2].fg, Some(CellColor(0, 0, 255)));
+}
+
+#[test]
 fn isearch_extends_match_in_place_and_overlays_paint() {
     let mut i = interp_with_frame("xxx yyy xxx\n");
     let mut st = Isearch::new(&mut i, false, false);

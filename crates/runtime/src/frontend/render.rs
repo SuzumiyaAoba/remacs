@@ -3797,10 +3797,37 @@ struct DisplayText {
     text: String,
     face_styles: Vec<StyleMix>,
     mouse_face_styles: Vec<StyleMix>,
-    mouse_face_active: bool,
+    mouse_face_active: Vec<bool>,
 }
 
 impl DisplayText {
+    fn plain(text: String) -> DisplayText {
+        let char_count = text.chars().count();
+        DisplayText {
+            text,
+            face_styles: vec![StyleMix::default(); char_count],
+            mouse_face_styles: vec![StyleMix::default(); char_count],
+            mouse_face_active: vec![false; char_count],
+        }
+    }
+
+    fn concat(parts: Vec<DisplayText>) -> DisplayText {
+        let char_count = parts.iter().map(|part| part.text.chars().count()).sum();
+        let mut combined = DisplayText {
+            text: String::new(),
+            face_styles: Vec::with_capacity(char_count),
+            mouse_face_styles: Vec::with_capacity(char_count),
+            mouse_face_active: Vec::with_capacity(char_count),
+        };
+        for part in parts {
+            combined.text.push_str(&part.text);
+            combined.face_styles.extend(part.face_styles);
+            combined.mouse_face_styles.extend(part.mouse_face_styles);
+            combined.mouse_face_active.extend(part.mouse_face_active);
+        }
+        combined
+    }
+
     fn contains_newline(&self) -> bool {
         self.text.contains('\n')
     }
@@ -3810,25 +3837,27 @@ impl DisplayText {
         let mut text = String::new();
         let mut face_styles = Vec::new();
         let mut mouse_face_styles = Vec::new();
+        let mut mouse_face_active = Vec::new();
         for (index, character) in self.text.chars().enumerate() {
             if character == '\n' {
                 parts.push(DisplayText {
                     text: std::mem::take(&mut text),
                     face_styles: std::mem::take(&mut face_styles),
                     mouse_face_styles: std::mem::take(&mut mouse_face_styles),
-                    mouse_face_active: self.mouse_face_active,
+                    mouse_face_active: std::mem::take(&mut mouse_face_active),
                 });
             } else {
                 text.push(character);
                 face_styles.push(self.face_styles[index]);
                 mouse_face_styles.push(self.mouse_face_styles[index]);
+                mouse_face_active.push(self.mouse_face_active[index]);
             }
         }
         parts.push(DisplayText {
             text,
             face_styles,
             mouse_face_styles,
-            mouse_face_active: self.mouse_face_active,
+            mouse_face_active,
         });
         parts
     }
@@ -3866,7 +3895,7 @@ impl DisplayReplacement {
 struct DisplayRowPlan {
     range: Range<usize>,
     replacements: HashMap<usize, DisplayReplacement>,
-    boundaries: HashMap<usize, Vec<String>>,
+    boundaries: HashMap<usize, Vec<DisplayText>>,
     include_end_boundary: bool,
     hard_break: bool,
     repeated_start: bool,
@@ -3910,7 +3939,7 @@ fn display_row_plans(
                 .is_some_and(DisplayReplacement::contains_newline)
     }) || faces.overlay_strings.iter().any(|(position, strings)| {
         *position >= first && (*position < end || (*position == end && range.end == line_len))
-            && strings.iter().any(|text| text.contains('\n'))
+            && strings.iter().any(DisplayText::contains_newline)
     });
     if !has_newline {
         return vec![DisplayRowPlan::new(range, line_len)];
@@ -3925,11 +3954,11 @@ fn display_row_plans(
         }
         let position = line_pos + index;
         let strings = overlay_strings_at(faces, position);
-        if strings.iter().any(|text| text.contains('\n')) {
-            let text = strings.concat();
-            let mut parts = text.split('\n').peekable();
+        if strings.iter().any(DisplayText::contains_newline) {
+            let text = DisplayText::concat(strings);
+            let mut parts = text.split_newlines().into_iter().peekable();
             while let Some(part) = parts.next() {
-                current.boundaries.insert(index, vec![part.to_owned()]);
+                current.boundaries.insert(index, vec![part]);
                 if parts.peek().is_some() {
                     current.range.end = index;
                     current.include_end_boundary = true;
@@ -4376,7 +4405,12 @@ fn append_rendered_styled_text(
             .copied()
             .unwrap_or_default()
             .overlay_on(base_style);
-        if text.mouse_face_active {
+        if text
+            .mouse_face_active
+            .get(index)
+            .copied()
+            .unwrap_or(false)
+        {
             style = text
                 .mouse_face_styles
                 .get(index)
@@ -4427,7 +4461,7 @@ where
     F: FnMut(usize) -> CellStyle,
     V: FnMut(usize) -> Visibility,
     D: FnMut(usize) -> Option<DisplayReplacement>,
-    B: FnMut(usize) -> Vec<String>,
+    B: FnMut(usize) -> Vec<DisplayText>,
 {
     let chars: Vec<_> = text.chars().collect();
     let mut rendered = String::new();
@@ -4449,7 +4483,7 @@ where
     for (index, ch) in chars.iter().enumerate() {
         let mut keep_rendering = true;
         for string in boundary_strings_at(index) {
-            if !append_rendered_text(
+            if !append_rendered_styled_text(
                 &string,
                 default_style,
                 hscroll,
@@ -4692,7 +4726,7 @@ where
 
     if include_end_boundary {
         for string in boundary_strings_at(chars.len()) {
-            if !append_rendered_text(
+            if !append_rendered_styled_text(
                 &string,
                 default_style,
                 hscroll,
@@ -5623,7 +5657,7 @@ struct WindowFaces {
     /// Per-window, per-buffer, and standard display tables in precedence order.
     display_tables: Vec<Value>,
     /// Overlay strings positioned at the overlay's start/end boundaries.
-    overlay_strings: HashMap<usize, Vec<String>>,
+    overlay_strings: HashMap<usize, Vec<DisplayText>>,
     /// Invisible text ranges and visible overlays carrying `invisible`.
     invisible_overlays: Vec<(crate::buffer::Overlay, Value)>,
     invisible_props: Vec<(usize, usize, Value)>,
@@ -5640,8 +5674,8 @@ struct WindowFaces {
 struct OverlayStrings {
     start: usize,
     end: usize,
-    before: Option<String>,
-    after: Option<String>,
+    before: Option<DisplayText>,
+    after: Option<DisplayText>,
 }
 
 fn window_faces(
@@ -5782,9 +5816,14 @@ fn window_faces(
         .iter()
         .filter(|overlay| overlay.buffer == Some(bb.id) && overlay.matches_window(i, win))
         .filter_map(|overlay| {
-            let string_value = |property: Option<crate::lisp::value::SymId>| {
+            let mouse_face_active = mouse_position.is_some_and(|position| {
+                position >= overlay.start && position < overlay.end
+            });
+            let mut string_value = |property: Option<crate::lisp::value::SymId>| {
                 property.and_then(|property| match overlay.property(i, &Value::Sym(property)) {
-                    Value::Str(value) => Some(value.borrow().to_unicode_lossy()),
+                    Value::Str(value) => {
+                        Some(display_text_from_string(i, ctx, &value, mouse_face_active).0)
+                    }
                     _ => None,
                 })
             };
@@ -5808,8 +5847,8 @@ fn window_faces(
         .into_iter()
         .map(|(_, index)| overlay_strings[index].1.clone())
         .collect();
-    let mut ending_strings: HashMap<usize, Vec<String>> = HashMap::new();
-    let mut starting_strings: HashMap<usize, Vec<(Option<String>, Option<String>)>> =
+    let mut ending_strings: HashMap<usize, Vec<DisplayText>> = HashMap::new();
+    let mut starting_strings: HashMap<usize, Vec<(Option<DisplayText>, Option<DisplayText>)>> =
         HashMap::new();
     for overlay in overlay_strings {
         if overlay.start < overlay.end
@@ -6135,7 +6174,7 @@ fn window_faces(
     }
 }
 
-fn overlay_strings_at(faces: &WindowFaces, position: usize) -> Vec<String> {
+fn overlay_strings_at(faces: &WindowFaces, position: usize) -> Vec<DisplayText> {
     faces
         .overlay_strings
         .get(&position)
@@ -6783,61 +6822,78 @@ fn display_value_replacement(
     }
     match value {
         Value::Str(string) => {
-            let text = string.borrow().to_unicode_lossy();
-            let properties = i.str_props(string).to_vec();
-            let char_count = text.chars().count();
-            let mut face_styles = vec![StyleMix::default(); char_count];
-            let mut mouse_face_styles = vec![StyleMix::default(); char_count];
-            let mut has_face = false;
-            let mut has_mouse_face = false;
-            for (start, end, plist) in properties {
-                let mut face_style = StyleMix::default();
-                let mut mouse_face_style = StyleMix::default();
-                for pair in plist.chunks_exact(2) {
-                    let Some(property) = i.sym_id(&pair[0]) else {
-                        continue;
-                    };
-                    if property == faces.face {
-                        has_face = true;
-                        face_style.merge(&faces.face_value(i, &pair[1], 0));
-                    } else if mouse_face_active && property == faces.mouse_face {
-                        has_mouse_face = true;
-                        let mut style = faces.face_value(i, &pair[1], 0);
-                        style.font_family = None;
-                        style.font_weight = None;
-                        style.font_width = None;
-                        style.font_height = None;
-                        style.font_height_scale = None;
-                        style.bold = None;
-                        style.italic = None;
-                        mouse_face_style.merge(&style);
-                    }
-                }
-                let start = start.min(char_count);
-                let end = end.min(char_count);
-                if start >= end {
-                    continue;
-                }
-                for style in &mut face_styles[start..end] {
-                    style.merge(&face_style);
-                }
-                for style in &mut mouse_face_styles[start..end] {
-                    style.merge(&mouse_face_style);
-                }
-            }
-            if has_face || has_mouse_face {
-                Some(DisplayReplacement::StyledText(DisplayText {
-                    text,
-                    face_styles,
-                    mouse_face_styles,
-                    mouse_face_active,
-                }))
+            let (display_text, has_styles) =
+                display_text_from_string(i, faces, string, mouse_face_active);
+            if has_styles {
+                Some(DisplayReplacement::StyledText(display_text))
             } else {
-                Some(DisplayReplacement::Text(text))
+                Some(DisplayReplacement::Text(display_text.text))
             }
         }
         _ => image_display_replacement(i, value, buffer_id, default_font_height),
     }
+}
+
+fn display_text_from_string(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    string: &crate::lisp::value::StrRef,
+    mouse_face_active: bool,
+) -> (DisplayText, bool) {
+    let text = string.borrow().to_unicode_lossy();
+    let properties = i.str_props(string).to_vec();
+    let char_count = text.chars().count();
+    let mut face_styles = vec![StyleMix::default(); char_count];
+    let mut mouse_face_styles = vec![StyleMix::default(); char_count];
+    let mouse_face_active = vec![mouse_face_active; char_count];
+    let mut has_face = false;
+    let mut has_mouse_face = false;
+    for (start, end, plist) in properties {
+        let mut face_style = StyleMix::default();
+        let mut mouse_face_style = StyleMix::default();
+        for pair in plist.chunks_exact(2) {
+            let Some(property) = i.sym_id(&pair[0]) else {
+                continue;
+            };
+            if property == faces.face {
+                has_face = true;
+                face_style.merge(&faces.face_value(i, &pair[1], 0));
+            } else if mouse_face_active.first().copied().unwrap_or(false)
+                && property == faces.mouse_face
+            {
+                has_mouse_face = true;
+                let mut style = faces.face_value(i, &pair[1], 0);
+                style.font_family = None;
+                style.font_weight = None;
+                style.font_width = None;
+                style.font_height = None;
+                style.font_height_scale = None;
+                style.bold = None;
+                style.italic = None;
+                mouse_face_style.merge(&style);
+            }
+        }
+        let start = start.min(char_count);
+        let end = end.min(char_count);
+        if start >= end {
+            continue;
+        }
+        for style in &mut face_styles[start..end] {
+            style.merge(&face_style);
+        }
+        for style in &mut mouse_face_styles[start..end] {
+            style.merge(&mouse_face_style);
+        }
+    }
+    (
+        DisplayText {
+            text,
+            face_styles,
+            mouse_face_styles,
+            mouse_face_active,
+        },
+        has_face || has_mouse_face,
+    )
 }
 
 fn display_replacement_at(
@@ -9107,7 +9163,7 @@ fn render_grid_internal(
                 plan.boundaries
                     .entry(line_len)
                     .or_default()
-                    .push("…".to_owned());
+                    .push(DisplayText::plain("…".to_owned()));
             }
             for plan in plans {
                 let range = &plan.range;
