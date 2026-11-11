@@ -450,6 +450,35 @@ fn partial_width_window_honors_truncate_partial_width_windows() {
 }
 
 #[test]
+fn header_and_tab_lines_reserve_body_and_mode_line_rows() {
+    let mut i = interp_with_frame("body\n");
+    i.eval_str(
+        "(setq-local tab-line-format \"TAB\"\
+                     header-line-format \"HEADER\"\
+                     mode-line-format \"MODE\")",
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let window_id = frame.borrow().selected.borrow().id;
+
+    let grid = render_grid(&i, 20, 8);
+    let area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == window_id)
+        .unwrap();
+    let mode_line = grid
+        .mode_lines
+        .iter()
+        .find(|line| line.window_id == window_id)
+        .unwrap();
+    assert!(grid.rows[0].starts_with("TAB"));
+    assert!(grid.rows[1].starts_with("HEADER"));
+    assert_eq!(area.top, 2);
+    assert_eq!(mode_line.row, area.top + area.rows);
+}
+
+#[test]
 fn wrapped_point_moving_to_earlier_visual_row_scrolls_back() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil)").unwrap();
