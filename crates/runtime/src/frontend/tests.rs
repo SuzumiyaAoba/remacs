@@ -2,6 +2,7 @@
 mod read_event_tests;
 
 use super::*;
+use crate::frontend::{CellColor, MousePosition, render_grid_with_mouse_position_cached};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -139,6 +140,52 @@ fn explicit_posting_group_checks_group_parameter_without_buffer_name() {
         i.prin1_to_string(&result).to_unicode_lossy(),
         "(\"comp.test\" posting-style)"
     );
+}
+
+#[test]
+fn display_replacement_string_faces_style_its_own_text() {
+    let mut i = interp_with_frame("x");
+    i.eval_str(
+        r##"(progn
+          (make-face 'qa-display-source-face)
+          (set-face-attribute 'qa-display-source-face nil :background "#00ff00")
+          (make-face 'qa-display-replacement-face)
+          (set-face-attribute 'qa-display-replacement-face nil
+                              :foreground "#ff0000" :weight 'bold)
+          (erase-buffer)
+          (let ((start (point)))
+            (insert "x")
+            (put-text-property start (1+ start) 'face 'qa-display-source-face)
+            (put-text-property
+             start (1+ start) 'display
+             (propertize "replacement"
+                         'face 'qa-display-replacement-face
+                         'mouse-face 'highlight))))"##,
+    )
+    .unwrap();
+    let grid = render_grid(&i, 40, 4);
+    assert!(grid.rows[0].starts_with("replacement"));
+    let style = grid.char_attrs[0][0];
+    assert_eq!(style.fg, Some(CellColor(255, 0, 0)));
+    assert_eq!(style.bg, Some(CellColor(0, 255, 0)));
+    assert!(style.bold);
+    assert!(!style.inverse);
+
+    let frame = i.selected_frame.as_ref().unwrap();
+    let mouse_position = MousePosition {
+        buffer_id: i.current_buffer,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 0,
+        y: 0,
+        row: 0,
+        column: 0,
+        window_id: Some(frame.borrow().selected.borrow().id),
+        area: None,
+        mode_line_buffer_name: false,
+    };
+    let hovered = render_grid_with_mouse_position_cached(&i, 40, 4, None, Some(mouse_position));
+    assert!(hovered.char_attrs[0][0].inverse);
 }
 
 #[test]

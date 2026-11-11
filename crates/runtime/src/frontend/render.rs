@@ -451,6 +451,38 @@ struct StyleMix {
 }
 
 impl StyleMix {
+    fn from_cell_style(style: CellStyle) -> StyleMix {
+        StyleMix {
+            fg: Some(style.fg),
+            bg: Some(style.bg),
+            distant_foreground: Some(style.distant_foreground),
+            font_family: Some(style.font_family),
+            font_weight: Some(style.font_weight),
+            font_width: Some(style.font_width),
+            font_height: Some(style.font_height),
+            font_height_scale: None,
+            box_style: Some(style.box_style),
+            stipple: Some(style.stipple),
+            bold: Some(style.bold),
+            italic: Some(style.italic),
+            underline: Some(style.underline),
+            underline_color: Some(style.underline_color),
+            underline_wave: Some(style.underline_wave),
+            overline: Some(style.overline),
+            overline_color: Some(style.overline_color),
+            strike: Some(style.strike),
+            strike_color: Some(style.strike_color),
+            inverse: Some(style.inverse),
+            extend: Some(style.extend),
+        }
+    }
+
+    fn overlay_on(&self, base: CellStyle) -> CellStyle {
+        let mut mix = Self::from_cell_style(base);
+        mix.merge(self);
+        mix.finish()
+    }
+
     /// Later (higher-priority) layer wins wherever it specifies a value.
     fn merge(&mut self, other: &StyleMix) {
         if other.font_height.is_some() {
@@ -3741,9 +3773,10 @@ enum Visibility {
     Ellipsis,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 enum DisplayReplacement {
     Text(String),
+    StyledText(DisplayText),
     Fringe(RenderedFringe),
     GlyphlessText(String, CellStyle),
     CompositionDefault(usize),
@@ -3757,6 +3790,75 @@ enum DisplayReplacement {
     },
     /// Another character in a run already replaced by its first character.
     Hidden,
+}
+
+#[derive(Clone)]
+struct DisplayText {
+    text: String,
+    face_styles: Vec<StyleMix>,
+    mouse_face_styles: Vec<StyleMix>,
+    mouse_face_active: bool,
+}
+
+impl DisplayText {
+    fn contains_newline(&self) -> bool {
+        self.text.contains('\n')
+    }
+
+    fn split_newlines(&self) -> Vec<DisplayText> {
+        let mut parts = Vec::new();
+        let mut text = String::new();
+        let mut face_styles = Vec::new();
+        let mut mouse_face_styles = Vec::new();
+        for (index, character) in self.text.chars().enumerate() {
+            if character == '\n' {
+                parts.push(DisplayText {
+                    text: std::mem::take(&mut text),
+                    face_styles: std::mem::take(&mut face_styles),
+                    mouse_face_styles: std::mem::take(&mut mouse_face_styles),
+                    mouse_face_active: self.mouse_face_active,
+                });
+            } else {
+                text.push(character);
+                face_styles.push(self.face_styles[index]);
+                mouse_face_styles.push(self.mouse_face_styles[index]);
+            }
+        }
+        parts.push(DisplayText {
+            text,
+            face_styles,
+            mouse_face_styles,
+            mouse_face_active: self.mouse_face_active,
+        });
+        parts
+    }
+}
+
+impl DisplayReplacement {
+    fn contains_newline(&self) -> bool {
+        match self {
+            DisplayReplacement::Text(text) => text.contains('\n'),
+            DisplayReplacement::StyledText(text) => text.contains_newline(),
+            _ => false,
+        }
+    }
+
+    fn split_text_newlines(&self) -> Option<Vec<DisplayReplacement>> {
+        match self {
+            DisplayReplacement::Text(text) => Some(
+                text.split('\n')
+                    .map(|part| DisplayReplacement::Text(part.to_owned()))
+                    .collect(),
+            ),
+            DisplayReplacement::StyledText(text) => Some(
+                text.split_newlines()
+                    .into_iter()
+                    .map(DisplayReplacement::StyledText)
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
 }
 
 /// A display row can reuse a source character while continuing the string
@@ -3803,7 +3905,9 @@ fn display_row_plans(
     let end = line_pos + range.end;
     let has_newline = faces.display_props.iter().any(|(start, stop, replacement, _)| {
         *start < end && *stop > first
-            && matches!(replacement, Some(DisplayReplacement::Text(text)) if text.contains('\n'))
+            && replacement
+                .as_ref()
+                .is_some_and(DisplayReplacement::contains_newline)
     }) || faces.overlay_strings.iter().any(|(position, strings)| {
         *position >= first && (*position < end || (*position == end && range.end == line_len))
             && strings.iter().any(|text| text.contains('\n'))
@@ -3845,14 +3949,13 @@ fn display_row_plans(
         if visibility_at_pos(i, faces, position) != Visibility::Visible {
             continue;
         }
-        if let Some(DisplayReplacement::Text(text)) = display_replacement_at(faces, position)
-            && text.contains('\n')
+        if let Some(replacement) = display_replacement_at(faces, position)
+            && replacement.contains_newline()
+            && let Some(parts) = replacement.split_text_newlines()
         {
-            let mut parts = text.split('\n').peekable();
+            let mut parts = parts.into_iter().peekable();
             while let Some(part) = parts.next() {
-                current
-                    .replacements
-                    .insert(index, DisplayReplacement::Text(part.to_owned()));
+                current.replacements.insert(index, part);
                 if parts.peek().is_some() {
                     current.range.end = index + 1;
                     current.include_end_boundary = false;
@@ -4251,6 +4354,60 @@ fn append_rendered_text(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
+fn append_rendered_styled_text(
+    text: &DisplayText,
+    base_style: CellStyle,
+    hscroll: usize,
+    width: usize,
+    end_column: usize,
+    tab_width: usize,
+    column: &mut usize,
+    visible_columns: &mut usize,
+    rendered: &mut String,
+    cell_attrs: &mut [CellStyle],
+    char_attrs: &mut Vec<CellStyle>,
+    cell_offsets: &mut [usize],
+) -> bool {
+    for (index, raw_display) in text.text.chars().enumerate() {
+        let mut style = text
+            .face_styles
+            .get(index)
+            .copied()
+            .unwrap_or_default()
+            .overlay_on(base_style);
+        if text.mouse_face_active {
+            style = text
+                .mouse_face_styles
+                .get(index)
+                .copied()
+                .unwrap_or_default()
+                .overlay_on(style);
+        }
+        let display = match raw_display {
+            '\n' | '\r' => ' ',
+            other => other,
+        };
+        if !append_rendered_character(
+            display,
+            style,
+            hscroll,
+            width,
+            end_column,
+            tab_width,
+            column,
+            visible_columns,
+            rendered,
+            cell_attrs,
+            char_attrs,
+            cell_offsets,
+        ) {
+            return false;
+        }
+    }
+    true
+}
+
 fn render_text_row<F, V, D, B>(
     text: &EmacsText,
     hscroll: usize,
@@ -4343,6 +4500,22 @@ where
             }
             Some(DisplayReplacement::Text(replacement)) => {
                 append_rendered_text(
+                    &replacement,
+                    style,
+                    hscroll,
+                    width,
+                    end_column,
+                    tab_width,
+                    &mut column,
+                    &mut visible_columns,
+                    &mut rendered,
+                    &mut cell_attrs,
+                    &mut char_attrs,
+                    &mut cell_offsets,
+                )
+            }
+            Some(DisplayReplacement::StyledText(replacement)) => {
+                append_rendered_styled_text(
                     &replacement,
                     style,
                     hscroll,
@@ -5721,6 +5894,9 @@ fn window_faces(
                         &property.value,
                         bb.id,
                         default_font_height,
+                        mouse_position.is_some_and(|position| {
+                            position >= start && position < end
+                        }),
                     ),
                     idx,
                 ));
@@ -5739,8 +5915,17 @@ fn window_faces(
             })
             .filter_map(|overlay| {
                 let value = overlay.property(i, &Value::Sym(display_property));
-                let replacement =
-                    display_value_replacement(i, ctx, &value, bb.id, default_font_height)?;
+                let mouse_face_active = mouse_position.is_some_and(|position| {
+                    position >= overlay.start && position < overlay.end
+                });
+                let replacement = display_value_replacement(
+                    i,
+                    ctx,
+                    &value,
+                    bb.id,
+                    default_font_height,
+                    mouse_face_active,
+                )?;
                 Some((overlay.clone(), replacement))
             })
             .collect();
@@ -6554,6 +6739,7 @@ fn display_value_replacement(
     value: &Value,
     buffer_id: usize,
     default_font_height: u16,
+    mouse_face_active: bool,
 ) -> Option<DisplayReplacement> {
     if let Value::Cons(spec) = value {
         let (head, tail) = {
@@ -6596,7 +6782,60 @@ fn display_value_replacement(
         }
     }
     match value {
-        Value::Str(string) => Some(DisplayReplacement::Text(string.borrow().to_unicode_lossy())),
+        Value::Str(string) => {
+            let text = string.borrow().to_unicode_lossy();
+            let properties = i.str_props(string).to_vec();
+            let char_count = text.chars().count();
+            let mut face_styles = vec![StyleMix::default(); char_count];
+            let mut mouse_face_styles = vec![StyleMix::default(); char_count];
+            let mut has_face = false;
+            let mut has_mouse_face = false;
+            for (start, end, plist) in properties {
+                let mut face_style = StyleMix::default();
+                let mut mouse_face_style = StyleMix::default();
+                for pair in plist.chunks_exact(2) {
+                    let Some(property) = i.sym_id(&pair[0]) else {
+                        continue;
+                    };
+                    if property == faces.face {
+                        has_face = true;
+                        face_style.merge(&faces.face_value(i, &pair[1], 0));
+                    } else if mouse_face_active && property == faces.mouse_face {
+                        has_mouse_face = true;
+                        let mut style = faces.face_value(i, &pair[1], 0);
+                        style.font_family = None;
+                        style.font_weight = None;
+                        style.font_width = None;
+                        style.font_height = None;
+                        style.font_height_scale = None;
+                        style.bold = None;
+                        style.italic = None;
+                        mouse_face_style.merge(&style);
+                    }
+                }
+                let start = start.min(char_count);
+                let end = end.min(char_count);
+                if start >= end {
+                    continue;
+                }
+                for style in &mut face_styles[start..end] {
+                    style.merge(&face_style);
+                }
+                for style in &mut mouse_face_styles[start..end] {
+                    style.merge(&mouse_face_style);
+                }
+            }
+            if has_face || has_mouse_face {
+                Some(DisplayReplacement::StyledText(DisplayText {
+                    text,
+                    face_styles,
+                    mouse_face_styles,
+                    mouse_face_active,
+                }))
+            } else {
+                Some(DisplayReplacement::Text(text))
+            }
+        }
         _ => image_display_replacement(i, value, buffer_id, default_font_height),
     }
 }
