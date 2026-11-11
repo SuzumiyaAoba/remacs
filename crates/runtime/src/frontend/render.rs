@@ -1454,13 +1454,20 @@ pub(crate) fn line_number_display_settings(i: &Interp, buffer: usize) -> (usize,
         Value::Int(offset) => offset,
         _ => 0,
     };
+    let widen = buffer_setting(i, "display-line-numbers-widen", buffer).truthy()
+        || line_number_offset != 0;
     let default_width = i
         .buffers
         .get(buffer)
         .map(|buffer| {
             let buffer = buffer.borrow();
-            let last_line = buffer.text.line_of_pos(buffer.zv.min(buffer.text_len())) + 1;
-            (last_line as i128)
+            let first_line = if widen {
+                0
+            } else {
+                buffer.text.line_of_pos(buffer.begv)
+            };
+            let last_line = buffer.text.line_of_pos(buffer.zv.min(buffer.text_len()));
+            (last_line.saturating_sub(first_line).saturating_add(1) as i128)
                 .saturating_add(line_number_offset)
                 .to_string()
                 .chars()
@@ -9089,6 +9096,9 @@ fn render_grid_internal(
         let line_number_mode = buffer_setting(i, "display-line-numbers", buf_id);
         let (line_number_width, line_number_offset) =
             line_number_display_settings(i, buf_id);
+        let line_numbers_widen =
+            buffer_setting(i, "display-line-numbers-widen", buf_id).truthy()
+                || line_number_offset != 0;
         let gutter_width = if line_number_mode.truthy() {
             line_number_width
                 .saturating_add(1)
@@ -9120,11 +9130,17 @@ fn render_grid_internal(
         let visual_point_absolute = if line_numbers_visual {
             i.buffers.get(buf_id).map_or(1, |buffer| {
                 let buffer = buffer.borrow();
+                let visual_begv = if line_numbers_widen { 0 } else { buffer.begv };
+                let visual_zv = if line_numbers_widen {
+                    buffer.text_len()
+                } else {
+                    buffer.zv
+                };
                 display_row_distance_from_start(
                     &buffer.text,
-                    buffer.begv,
-                    buffer.zv,
-                    buffer.begv,
+                    visual_begv,
+                    visual_zv,
+                    visual_begv,
                     point_position,
                     wrap_lines,
                     content_width,
@@ -9664,7 +9680,15 @@ fn render_grid_internal(
                         w.borrow().point
                     }
                     .clamp(bb.begv, bb.zv);
-                    let point_line_number = bb.text.line_of_pos(point);
+                    let line_number_base = if line_numbers_widen {
+                        0
+                    } else {
+                        first_buffer_line
+                    };
+                    let point_line_number = bb
+                        .text
+                        .line_of_pos(point)
+                        .saturating_sub(line_number_base);
                     let point_index = (point_line_number == line_index && point >= ls)
                         .then(|| point - ls);
                     (
@@ -9672,7 +9696,9 @@ fn render_grid_internal(
                         ls,
                         row_end,
                         point_index,
-                        line_index + 1,
+                        line_index
+                            .saturating_sub(line_number_base)
+                            .saturating_add(1),
                         point_line_number,
                         line_is_complete,
                     )

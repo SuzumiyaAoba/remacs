@@ -345,6 +345,35 @@ fn relative_line_numbers_can_show_zero_on_the_current_line() {
 }
 
 #[test]
+fn line_numbers_start_at_narrowing_unless_widen_is_set() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(setq-local display-line-numbers t\
+                     display-line-numbers-width 2\
+                     display-line-numbers-widen nil)",
+    )
+    .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert("one\ntwo\nthree\nfour\nfive\n");
+    i.eval_str(
+        "(goto-char (point-min))\
+         (forward-line 3)\
+         (narrow-to-region (point) (point-max))",
+    )
+    .unwrap();
+
+    let narrowed = render_grid(&i, 20, 6);
+    assert_eq!(narrowed.rows[0].chars().take(3).collect::<String>(), " 1 ");
+
+    i.eval_str("(setq-local display-line-numbers-widen t)")
+        .unwrap();
+    let widened = render_grid(&i, 20, 6);
+    assert_eq!(widened.rows[0].chars().take(3).collect::<String>(), " 4 ");
+}
+
+#[test]
 fn vertical_motion_moves_through_wrapped_visual_rows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil line-move-visual t)")
