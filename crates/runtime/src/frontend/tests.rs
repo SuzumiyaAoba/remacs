@@ -235,6 +235,25 @@ fn long_display_replacement_wraps_across_continuation_rows() {
 }
 
 #[test]
+fn horizontal_scroll_with_truncate_lines_nil_disables_wrapping() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq-local truncate-lines nil auto-hscroll-mode nil)")
+        .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"0123456789".repeat(20));
+    i.eval_str("(set-window-hscroll (selected-window) 23)")
+        .unwrap();
+    let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
+
+    let grid = render_grid(&i, 10, 4);
+    assert_eq!(window.borrow().hscroll, 23);
+    assert_eq!(grid.rows[0], "3456789012");
+    assert!(grid.rows[1].trim().is_empty());
+}
+
+#[test]
 fn wrapped_point_moving_to_earlier_visual_row_scrolls_back() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil)").unwrap();

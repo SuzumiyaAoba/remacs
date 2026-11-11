@@ -8709,7 +8709,7 @@ fn render_grid_internal(
         let tab_width = buffer_tab_width(i, buf_id);
         let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
         let nobreak_char_display = buffer_setting(i, "nobreak-char-display", buf_id);
-        let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy();
+        let wrap_lines = !buffer_setting(i, "truncate-lines", buf_id).truthy() && hscroll == 0;
         let mode_line_format = super::mode_line::format(i, buf_id, window_id, "mode-line-format");
         let mode_line_enabled = !buffer_setting(i, "mode-line-format", buf_id).is_nil();
         let tab_line_format = super::mode_line::format(i, buf_id, window_id, "tab-line-format");
