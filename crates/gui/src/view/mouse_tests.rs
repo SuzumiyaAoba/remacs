@@ -244,6 +244,32 @@ fn extended_tail_padding_uses_default_face_font_metrics() {
 }
 
 #[test]
+fn negative_single_box_width_splits_vertical_and_horizontal_signs() {
+    let mut i = Interp::new();
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (setq-local mode-line-format nil header-line-format nil tab-line-format nil)
+          (erase-buffer) (insert "boxed")
+          (set-face-attribute 'default nil :box '(:line-width -2)))"#,
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap();
+    reflow_frame_windows(frame, 40, 12);
+    let grid = render_grid_with_input_cached(&i, 40, 12, None);
+    let box_style = grid.char_attrs[0][0]
+        .box_style
+        .expect("default face box should be rendered");
+    assert_eq!(box_style.vertical_width, 2);
+    assert_eq!(box_style.horizontal_width, -2);
+}
+
+#[test]
 fn navigation_buttons_reach_the_gui_channel_with_position_and_modifiers() {
     let mut i = Interp::new();
     i.eval_str(

@@ -4929,7 +4929,7 @@ impl FaceCtx {
                 let line_width = crate::lisp::eval::plist_get(value, self.box_line_width);
                 if let Value::Int(width) = line_width {
                     let width = width.clamp(i16::MIN as i128, i16::MAX as i128) as i16;
-                    style.vertical_width = width;
+                    style.vertical_width = width.saturating_abs();
                     style.horizontal_width = width;
                 } else if let Value::Cons(widths) = line_width {
                     let (vertical, horizontal) = {
