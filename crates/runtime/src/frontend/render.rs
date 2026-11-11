@@ -4532,7 +4532,10 @@ where
     for cell in visible_columns..width {
         cell_offsets[cell] = rendered.len();
         rendered.push(' ');
-        char_attrs.push(default_style);
+        cell_attrs[cell].box_style = None;
+        let mut padding_style = default_style;
+        padding_style.box_style = None;
+        char_attrs.push(padding_style);
         cell_offsets[cell + 1] = rendered.len();
     }
     cell_offsets[width] = rendered.len();
@@ -9213,6 +9216,7 @@ fn render_grid_internal(
                         if tail.extend {
                             for cell in rendered.visible_columns..content_width {
                                 let mut t = tail;
+                                t.box_style = None;
                                 t.fg = None;
                                 t.bold = false;
                                 t.italic = false;
@@ -9224,6 +9228,7 @@ fn render_grid_internal(
                                 rendered.cell_attrs[cell] = t;
                             }
                             let mut tail = tail;
+                            tail.box_style = None;
                             tail.fg = None;
                             tail.bold = false;
                             tail.italic = false;
@@ -10017,5 +10022,42 @@ mod mode_line_size_tests {
                 assert_eq!(readable_mode_line_size(size), expected, "{size}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod box_padding_tests {
+    use super::render_grid;
+    use crate::{editor::Frame, lisp::Interp};
+
+    fn interp_with_frame(text: &str) -> Interp {
+        let mut i = Interp::new();
+        let buffer_id = i.create_buffer("test-buf");
+        {
+            let buffer = i.buffers.get(buffer_id).unwrap();
+            buffer.borrow_mut().insert(text);
+            buffer.borrow_mut().set_point(0);
+        }
+        let minibuffer_id = i.create_buffer(" *Minibuf-0*");
+        let frame = Frame::new_tty(buffer_id, minibuffer_id, 80, 25);
+        i.selected_frame = Some(frame.clone());
+        i.frames.push(frame);
+        i.set_current_buffer(buffer_id);
+        i
+    }
+
+    #[test]
+    fn synthetic_row_padding_does_not_inherit_face_box() {
+        let mut i = interp_with_frame("x\n");
+        i.eval_str("(set-face-attribute 'default nil :box t :extend t)")
+            .unwrap();
+
+        let grid = render_grid(&i, 6, 24);
+        let chars = &grid.char_attrs[0];
+        assert!(chars[0].box_style.is_some());
+        assert!(chars[1..].iter().all(|style| style.box_style.is_none()));
+        assert!(grid.attrs[0][1..]
+            .iter()
+            .all(|style| style.box_style.is_none()));
     }
 }
