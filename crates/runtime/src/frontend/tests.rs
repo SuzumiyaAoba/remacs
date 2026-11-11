@@ -254,6 +254,27 @@ fn horizontal_scroll_with_truncate_lines_nil_disables_wrapping() {
 }
 
 #[test]
+fn wrapped_continuations_render_string_and_space_wrap_prefixes() {
+    let mut i = interp_with_frame("");
+    i.eval_str("(setq-local truncate-lines nil wrap-prefix \"  \")")
+        .unwrap();
+    i.current_buffer_ref()
+        .unwrap()
+        .borrow_mut()
+        .insert(&"0123456789".repeat(10));
+
+    let string_prefix = render_grid(&i, 8, 6);
+    assert_eq!(string_prefix.rows[0], "01234567");
+    assert_eq!(string_prefix.rows[1], "  890123");
+
+    i.eval_str("(setq-local wrap-prefix '(space :width 2))")
+        .unwrap();
+    let display_prefix = render_grid(&i, 8, 6);
+    assert_eq!(display_prefix.rows[0], "01234567");
+    assert_eq!(display_prefix.rows[1], "  890123");
+}
+
+#[test]
 fn partial_width_window_honors_truncate_partial_width_windows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil truncate-partial-width-windows 1000)")

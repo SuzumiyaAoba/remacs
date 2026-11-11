@@ -5,6 +5,7 @@ use crate::{
     buffer::Buffer,
     lisp::{Interp, Value},
 };
+use num_traits::ToPrimitive;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::Range,
@@ -1120,10 +1121,11 @@ fn wrap_ranges_with_prefix(
     text: &EmacsText,
     width: usize,
     first_prefix_width: usize,
+    continuation_prefix_width: usize,
     tab_width: usize,
     ctl_arrow: bool,
 ) -> Vec<Range<usize>> {
-    if first_prefix_width == 0 || width == 0 {
+    if (first_prefix_width == 0 && continuation_prefix_width == 0) || width == 0 {
         return wrap_ranges(text, width, tab_width, ctl_arrow);
     }
     let chars: Vec<_> = text.chars().collect();
@@ -1149,13 +1151,19 @@ fn wrap_ranges_with_prefix(
         } else {
             display_char_width(character)
         };
-        if column > 0 && column.saturating_add(character_width) > width {
+        if index > start && column > 0 && column.saturating_add(character_width) > width {
             ranges.push(start..index);
             start = index;
-            column = 0;
-            if character == '\t' {
-                character_width = tab_width;
-            }
+            column = continuation_prefix_width.min(width);
+            character_width = if character == '\t' {
+                tab_width - column % tab_width
+            } else if byte8 {
+                4
+            } else if ctl_arrow && control_character {
+                2
+            } else {
+                display_char_width(character)
+            };
         }
         column = column.saturating_add(character_width);
     }
@@ -1803,13 +1811,14 @@ fn buffer_fill_column_indicator(
     Some((column, character, style))
 }
 
-fn line_prefix_at_pos(
+fn prefix_value_at_pos(
     i: &Interp,
     buffer_id: usize,
     window: &Value,
     position: usize,
-) -> Option<EmacsText> {
-    let property = i.q_soft("line-prefix");
+    variable: &str,
+) -> Value {
+    let property = i.q_soft(variable);
     let (overlay_value, text_value) = if let (Some(property), Some(buffer)) =
         (property, i.buffers.get(buffer_id))
     {
@@ -1853,9 +1862,18 @@ fn line_prefix_at_pos(
     } else {
         (None, None)
     };
-    let value = overlay_value
+    overlay_value
         .or(text_value)
-        .unwrap_or_else(|| buffer_setting(i, "line-prefix", buffer_id));
+        .unwrap_or_else(|| buffer_setting(i, variable, buffer_id))
+}
+
+fn line_prefix_at_pos(
+    i: &Interp,
+    buffer_id: usize,
+    window: &Value,
+    position: usize,
+) -> Option<EmacsText> {
+    let value = prefix_value_at_pos(i, buffer_id, window, position, "line-prefix");
     match value {
         Value::Str(string) => Some(string.borrow().chars().collect()),
         _ => None,
@@ -3777,6 +3795,7 @@ enum Visibility {
 enum DisplayReplacement {
     Text(String),
     StyledText(DisplayText),
+    Space(usize),
     Fringe(RenderedFringe),
     GlyphlessText(String, CellStyle),
     CompositionDefault(usize),
@@ -3890,7 +3909,6 @@ impl DisplayText {
                         column,
                     ));
                     column = 0;
-                    first_row = false;
                     columns = if display == '\t' { tab_width } else { columns };
                 }
             }
@@ -3987,6 +4005,7 @@ impl DisplayReplacement {
             DisplayReplacement::CompositionDefault(source_width) => {
                 column.saturating_add(*source_width)
             }
+            DisplayReplacement::Space(columns) => column.saturating_add(*columns),
             DisplayReplacement::Image {
                 width,
                 intrinsic_width,
@@ -4076,6 +4095,7 @@ fn display_row_plans(
     max_rows: usize,
     width: usize,
     first_prefix_width: usize,
+    continuation_prefix_width: usize,
     tab_width: usize,
     cell_width: usize,
     ctl_arrow: bool,
@@ -4112,7 +4132,7 @@ fn display_row_plans(
     let mut column = if range.start == 0 {
         first_prefix_width
     } else {
-        0
+        continuation_prefix_width
     };
     let characters = line.chars().collect::<Vec<_>>();
 
@@ -4127,7 +4147,7 @@ fn display_row_plans(
             }
             current = DisplayRowPlan::new($index..source_end, line_len);
             current.continued = true;
-            column = 0;
+            column = continuation_prefix_width;
         }};
     }
 
@@ -4144,7 +4164,7 @@ fn display_row_plans(
             current.boundaries.insert($index, Vec::new());
             current.repeated_start = true;
             current.continued = true;
-            column = 0;
+            column = continuation_prefix_width;
         }};
     }
 
@@ -4172,7 +4192,7 @@ fn display_row_plans(
                     }
                     current = DisplayRowPlan::new(index..source_end, line_len);
                     current.continued = true;
-                    column = 0;
+                    column = continuation_prefix_width;
                 }
             }
         } else {
@@ -4821,6 +4841,29 @@ where
                     &mut cell_offsets,
                 )
             }
+            Some(DisplayReplacement::Space(columns)) => {
+                let mut keep_rendering = true;
+                for _ in 0..columns {
+                    if !append_rendered_character(
+                        ' ',
+                        style,
+                        hscroll,
+                        width,
+                        end_column,
+                        tab_width,
+                        &mut column,
+                        &mut visible_columns,
+                        &mut rendered,
+                        &mut cell_attrs,
+                        &mut char_attrs,
+                        &mut cell_offsets,
+                    ) {
+                        keep_rendering = false;
+                        break;
+                    }
+                }
+                keep_rendering
+            }
             Some(DisplayReplacement::GlyphlessText(replacement, glyphless_style)) => {
                 append_rendered_text(
                     &replacement,
@@ -5030,6 +5073,80 @@ where
         compositions,
         fringes,
     }
+}
+
+fn render_display_prefix(
+    replacement: &DisplayReplacement,
+    width: usize,
+    cell_width: usize,
+    tab_width: usize,
+    default_style: CellStyle,
+    graphical: bool,
+) -> RenderedRow {
+    render_text_row(
+        &EmacsText::from(" "),
+        0,
+        width,
+        cell_width,
+        0,
+        tab_width,
+        default_style,
+        |_| default_style,
+        |_| Visibility::Visible,
+        |_| Some(replacement.clone()),
+        |_| Vec::new(),
+        false,
+        graphical,
+    )
+}
+
+fn prepend_rendered_prefix_row(
+    mut prefix: RenderedRow,
+    prefix_width: usize,
+    mut row: RenderedRow,
+) -> RenderedRow {
+    if prefix_width == 0 {
+        return row;
+    }
+    let prefix_bytes = prefix.text.len();
+    let prefix_char_count = prefix.char_attrs.len();
+    let mut text = String::with_capacity(prefix_bytes.saturating_add(row.text.len()));
+    text.push_str(&prefix.text);
+    text.push_str(&row.text);
+    row.text = text;
+
+    prefix.cell_attrs.truncate(prefix_width);
+    prefix.cell_attrs.extend(row.cell_attrs);
+    row.cell_attrs = prefix.cell_attrs;
+    prefix.char_attrs.extend(row.char_attrs);
+    row.char_attrs = prefix.char_attrs;
+    row.source_offsets
+        .iter_mut()
+        .for_each(|offset| *offset = offset.saturating_add(prefix_bytes));
+
+    prefix.cell_offsets.truncate(prefix_width);
+    prefix.cell_offsets.extend(
+        row.cell_offsets
+            .iter()
+            .map(|offset| offset.saturating_add(prefix_bytes)),
+    );
+    row.cell_offsets = prefix.cell_offsets;
+    row.visible_columns = row.visible_columns.saturating_add(prefix_width);
+    row.padding_char_start = prefix_char_count.saturating_add(row.padding_char_start);
+
+    for image in &mut row.images {
+        image.column = image.column.saturating_add(prefix_width);
+    }
+    prefix.images.append(&mut row.images);
+    row.images = prefix.images;
+    for composition in &mut row.compositions {
+        composition.column = composition.column.saturating_add(prefix_width);
+    }
+    prefix.compositions.append(&mut row.compositions);
+    row.compositions = prefix.compositions;
+    prefix.fringes.append(&mut row.fringes);
+    row.fringes = prefix.fringes;
+    row
 }
 
 fn prepend_rendered_prefix(
@@ -7029,6 +7146,31 @@ fn image_display_replacement(
     })
 }
 
+fn display_spec_number(i: &Interp, value: &Value, depth: usize) -> Option<f64> {
+    if depth >= 8 {
+        return None;
+    }
+    match value {
+        Value::Int(number) => Some(*number as f64),
+        Value::BigInt(number) => number.to_f64(),
+        Value::Float(number) if number.is_finite() => Some(**number),
+        Value::Sym(symbol) => {
+            display_spec_number(i, &i.symbol_value(*symbol), depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn display_space_spec_width(i: &Interp, plist: &Value) -> usize {
+    let width = image_property(i, plist, ":width");
+    let align_to = image_property(i, plist, ":align-to");
+    let value = if width.is_nil() { &align_to } else { &width };
+    display_spec_number(i, value, 0)
+        .unwrap_or(1.0)
+        .ceil()
+        .clamp(0.0, 1_000_000.0) as usize
+}
+
 fn display_value_replacement(
     i: &Interp,
     faces: &mut FaceCtx,
@@ -7074,6 +7216,9 @@ fn display_value_replacement(
                     bitmap,
                     style: style.finish(),
                 }));
+            }
+            if name == "space" {
+                return Some(DisplayReplacement::Space(display_space_spec_width(i, &tail)));
             }
         }
     }
@@ -9411,11 +9556,42 @@ fn render_grid_internal(
             } else {
                 requested_prefix_width
             };
+            let wrap_prefix_replacement = if wrap_lines {
+                let value = prefix_value_at_pos(
+                    i,
+                    buf_id,
+                    &Value::Window(w.clone()),
+                    line_pos,
+                    "wrap-prefix",
+                );
+                display_value_replacement(
+                    i,
+                    &mut fctx,
+                    &value,
+                    buf_id,
+                    default_style.font_height.unwrap_or(140),
+                    false,
+                )
+            } else {
+                None
+            };
+            let wrap_prefix_width = wrap_prefix_replacement
+                .as_ref()
+                .map(|prefix| prefix.columns_after(0, tab_width, frame_char_width))
+                .unwrap_or(0)
+                .min(content_width.saturating_sub(
+                    if line_len > 0 {
+                        first_character_width.min(content_width)
+                    } else {
+                        0
+                    },
+                ));
             let ranges = if wrap_lines {
                 wrap_ranges_with_prefix(
                     metric_line,
                     content_width,
                     line_prefix_width,
+                    wrap_prefix_width,
                     tab_width,
                     ctl_arrow,
                 )
@@ -9445,6 +9621,7 @@ fn render_grid_internal(
                     max_rows - plans.len(),
                     content_width,
                     line_prefix_width,
+                    wrap_prefix_width,
                     tab_width,
                     frame_char_width,
                     ctl_arrow,
@@ -9476,7 +9653,11 @@ fn render_grid_internal(
                 let segment_start = range.start.max(start_offset);
                 let segment_end = range.end;
                 let segment_len = segment_end.saturating_sub(segment_start);
-                let prefix_width = if segment_start == 0 && !plan.continued {
+                let continuation_row =
+                    segment_start > 0 || plan.continued || plan.repeated_start;
+                let prefix_width = if continuation_row {
+                    wrap_prefix_width
+                } else if segment_start == 0 {
                     line_prefix_width
                 } else {
                     0
@@ -9685,22 +9866,38 @@ fn render_grid_internal(
                     plan.include_end_boundary,
                     graphical,
                 );
+                if prefix_width > 0 {
+                    if continuation_row {
+                        if let Some(prefix) = wrap_prefix_replacement.as_ref() {
+                            let prefix_row = render_display_prefix(
+                                prefix,
+                                prefix_width,
+                                frame_char_width,
+                                tab_width,
+                                default_style,
+                                graphical,
+                            );
+                            rendered = prepend_rendered_prefix_row(
+                                prefix_row,
+                                prefix_width,
+                                rendered,
+                            );
+                        }
+                    } else if let Some(prefix) = line_prefix.as_ref() {
+                        rendered = prepend_rendered_prefix(
+                            prefix,
+                            prefix_width,
+                            tab_width,
+                            rendered,
+                        );
+                    }
+                }
                 if let Some(row_height) = row_heights.get_mut(y) {
                     for image in &rendered.images {
                         if let Some(image_height) = image.height.or(image.intrinsic_height) {
                             *row_height = (*row_height).max(image_height);
                         }
                     }
-                }
-                if prefix_width > 0
-                    && let Some(prefix) = line_prefix.as_ref()
-                {
-                    rendered = prepend_rendered_prefix(
-                        prefix,
-                        prefix_width,
-                        tab_width,
-                        rendered,
-                    );
                 }
                 if segment_end == line_len
                     && !wrap_lines
