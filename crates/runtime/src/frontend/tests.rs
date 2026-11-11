@@ -213,6 +213,28 @@ fn overlay_string_faces_style_before_and_after_text() {
 }
 
 #[test]
+fn long_display_replacement_wraps_across_continuation_rows() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(progn\
+           (setq-local truncate-lines nil)\
+           (let ((start (point)))\
+             (insert \"X\")\
+             (put-text-property start (1+ start) 'display (make-string 32 ?y))))",
+    )
+    .unwrap();
+
+    let grid = render_grid(&i, 8, 6);
+    for row in 0..4 {
+        assert!(
+            grid.rows[row].starts_with("yyyyyyyy"),
+            "display replacement continuation row {row}: {:?}",
+            grid.rows[row]
+        );
+    }
+}
+
+#[test]
 fn wrapped_point_moving_to_earlier_visual_row_scrolls_back() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil)").unwrap();

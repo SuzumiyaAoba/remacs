@@ -3828,6 +3828,91 @@ impl DisplayText {
         combined
     }
 
+    fn columns_after(&self, mut column: usize, tab_width: usize) -> usize {
+        for character in self.text.chars() {
+            let display = match character {
+                '\n' | '\r' => ' ',
+                other => other,
+            };
+            let columns = if display == '\t' {
+                tab_width.max(1) - column % tab_width.max(1)
+            } else {
+                display_char_width(display)
+            };
+            column = column.saturating_add(columns);
+        }
+        column
+    }
+
+    fn split_to_columns(
+        &self,
+        start_column: usize,
+        width: usize,
+        tab_width: usize,
+    ) -> (bool, Vec<(DisplayText, usize)>) {
+        if width == 0 || self.text.is_empty() {
+            return (false, vec![(self.clone(), self.columns_after(start_column, tab_width))]);
+        }
+        let mut parts = Vec::new();
+        let mut text = String::new();
+        let mut face_styles = Vec::new();
+        let mut mouse_face_styles = Vec::new();
+        let mut mouse_face_active = Vec::new();
+        let mut column = start_column;
+        let mut first_row = true;
+        let mut leading_break = false;
+        let tab_width = tab_width.max(1);
+        for (index, character) in self.text.chars().enumerate() {
+            let display = match character {
+                '\n' | '\r' => ' ',
+                other => other,
+            };
+            let mut columns = if display == '\t' {
+                tab_width - column % tab_width
+            } else {
+                display_char_width(display)
+            };
+            if column.saturating_add(columns) > width && column > 0 {
+                if text.is_empty() {
+                    if first_row && start_column > 0 {
+                        leading_break = true;
+                        column = 0;
+                        columns = if display == '\t' { tab_width } else { columns };
+                    }
+                } else {
+                    parts.push((
+                        DisplayText {
+                            text: std::mem::take(&mut text),
+                            face_styles: std::mem::take(&mut face_styles),
+                            mouse_face_styles: std::mem::take(&mut mouse_face_styles),
+                            mouse_face_active: std::mem::take(&mut mouse_face_active),
+                        },
+                        column,
+                    ));
+                    column = 0;
+                    first_row = false;
+                    columns = if display == '\t' { tab_width } else { columns };
+                }
+            }
+            text.push(character);
+            face_styles.push(self.face_styles[index]);
+            mouse_face_styles.push(self.mouse_face_styles[index]);
+            mouse_face_active.push(self.mouse_face_active[index]);
+            column = column.saturating_add(columns);
+            first_row = false;
+        }
+        parts.push((
+            DisplayText {
+                text,
+                face_styles,
+                mouse_face_styles,
+                mouse_face_active,
+            },
+            column,
+        ));
+        (leading_break, parts)
+    }
+
     fn contains_newline(&self) -> bool {
         self.text.contains('\n')
     }
@@ -3864,6 +3949,10 @@ impl DisplayText {
 }
 
 impl DisplayReplacement {
+    fn is_text(&self) -> bool {
+        matches!(self, DisplayReplacement::Text(_) | DisplayReplacement::StyledText(_))
+    }
+
     fn contains_newline(&self) -> bool {
         match self {
             DisplayReplacement::Text(text) => text.contains('\n'),
@@ -3885,6 +3974,66 @@ impl DisplayReplacement {
                     .map(DisplayReplacement::StyledText)
                     .collect(),
             ),
+            _ => None,
+        }
+    }
+
+    fn columns_after(&self, column: usize, tab_width: usize, cell_width: usize) -> usize {
+        match self {
+            DisplayReplacement::Text(text) | DisplayReplacement::GlyphlessText(text, _) => {
+                DisplayText::plain(text.clone()).columns_after(column, tab_width)
+            }
+            DisplayReplacement::StyledText(text) => text.columns_after(column, tab_width),
+            DisplayReplacement::CompositionDefault(source_width) => {
+                column.saturating_add(*source_width)
+            }
+            DisplayReplacement::Image {
+                width,
+                intrinsic_width,
+                ..
+            } => column.saturating_add(
+                width
+                    .or(*intrinsic_width)
+                    .map(|pixels| pixels.div_ceil(cell_width.max(1)))
+                    .unwrap_or(1)
+                    .max(1),
+            ),
+            DisplayReplacement::Fringe(_) | DisplayReplacement::Hidden => column,
+        }
+    }
+
+    fn split_to_columns(
+        &self,
+        start_column: usize,
+        width: usize,
+        tab_width: usize,
+    ) -> Option<(bool, Vec<(DisplayReplacement, usize)>)> {
+        match self {
+            DisplayReplacement::Text(text) => {
+                let (leading_break, parts) = DisplayText::plain(text.clone()).split_to_columns(
+                    start_column,
+                    width,
+                    tab_width,
+                );
+                Some((
+                    leading_break,
+                    parts
+                        .into_iter()
+                        .map(|(part, column)| (DisplayReplacement::Text(part.text), column))
+                        .collect(),
+                ))
+            }
+            DisplayReplacement::StyledText(text) => {
+                let (leading_break, parts) =
+                    text.split_to_columns(start_column, width, tab_width);
+                Some((
+                    leading_break,
+                    parts
+                        .into_iter()
+                        .map(|(part, column)| (DisplayReplacement::StyledText(part), column))
+                        .collect(),
+                ))
+            }
             _ => None,
         }
     }
@@ -3919,10 +4068,18 @@ impl DisplayRowPlan {
 fn display_row_plans(
     i: &Interp,
     faces: Option<&WindowFaces>,
+    line: &EmacsText,
+    buffer_id: usize,
     line_pos: usize,
     range: Range<usize>,
     line_len: usize,
     max_rows: usize,
+    width: usize,
+    first_prefix_width: usize,
+    tab_width: usize,
+    cell_width: usize,
+    ctl_arrow: bool,
+    wrap_lines: bool,
 ) -> Vec<DisplayRowPlan> {
     if max_rows == 0 {
         return Vec::new();
@@ -3941,12 +4098,56 @@ fn display_row_plans(
         *position >= first && (*position < end || (*position == end && range.end == line_len))
             && strings.iter().any(DisplayText::contains_newline)
     });
-    if !has_newline {
+    let has_display_text = faces.display_props.iter().any(|(start, stop, replacement, _)| {
+        *start < end
+            && *stop > first
+            && replacement.as_ref().is_some_and(DisplayReplacement::is_text)
+    });
+    if !has_newline && !has_display_text {
         return vec![DisplayRowPlan::new(range, line_len)];
     }
     let source_end = range.end;
     let mut current = DisplayRowPlan::new(range.clone(), line_len);
     let mut rows = Vec::new();
+    let mut column = if range.start == 0 {
+        first_prefix_width
+    } else {
+        0
+    };
+    let characters = line.chars().collect::<Vec<_>>();
+
+    macro_rules! finish_before_source {
+        ($index:expr) => {{
+            current.range.end = $index;
+            current.include_end_boundary = false;
+            current.hard_break = true;
+            rows.push(current);
+            if rows.len() == max_rows {
+                return rows;
+            }
+            current = DisplayRowPlan::new($index..source_end, line_len);
+            current.continued = true;
+            column = 0;
+        }};
+    }
+
+    macro_rules! finish_after_replacement {
+        ($index:expr) => {{
+            current.range.end = $index + 1;
+            current.include_end_boundary = false;
+            current.hard_break = true;
+            rows.push(current);
+            if rows.len() == max_rows {
+                return rows;
+            }
+            current = DisplayRowPlan::new($index..source_end, line_len);
+            current.boundaries.insert($index, Vec::new());
+            current.repeated_start = true;
+            current.continued = true;
+            column = 0;
+        }};
+    }
+
     for index in range.start..=source_end {
         let at_end = index == source_end;
         if at_end && source_end != line_len {
@@ -3956,10 +4157,12 @@ fn display_row_plans(
         let strings = overlay_strings_at(faces, position);
         if strings.iter().any(DisplayText::contains_newline) {
             let text = DisplayText::concat(strings);
-            let mut parts = text.split_newlines().into_iter().peekable();
-            while let Some(part) = parts.next() {
+            let parts = text.split_newlines();
+            let part_count = parts.len();
+            for (part_index, part) in parts.into_iter().enumerate() {
+                column = part.columns_after(column, tab_width);
                 current.boundaries.insert(index, vec![part]);
-                if parts.peek().is_some() {
+                if part_index + 1 < part_count {
                     current.range.end = index;
                     current.include_end_boundary = true;
                     current.hard_break = true;
@@ -3969,36 +4172,90 @@ fn display_row_plans(
                     }
                     current = DisplayRowPlan::new(index..source_end, line_len);
                     current.continued = true;
+                    column = 0;
                 }
+            }
+        } else {
+            for string in strings {
+                column = string.columns_after(column, tab_width);
             }
         }
         if at_end {
             break;
         }
-        if visibility_at_pos(i, faces, position) != Visibility::Visible {
+        let visibility = visibility_at_pos(i, faces, position);
+        if visibility != Visibility::Visible {
+            if visibility == Visibility::Ellipsis {
+                column = column.saturating_add(1);
+            }
             continue;
         }
-        if let Some(replacement) = display_replacement_at(faces, position)
-            && replacement.contains_newline()
-            && let Some(parts) = replacement.split_text_newlines()
-        {
-            let mut parts = parts.into_iter().peekable();
-            while let Some(part) = parts.next() {
-                current.replacements.insert(index, part);
-                if parts.peek().is_some() {
-                    current.range.end = index + 1;
-                    current.include_end_boundary = false;
-                    current.hard_break = true;
-                    rows.push(current);
-                    if rows.len() == max_rows {
-                        return rows;
+        let character = characters.get(index).copied();
+        let replacement = display_replacement_at(faces, position).or_else(|| {
+            character.and_then(|character| {
+                display_table_replacement(i, buffer_id, faces, character)
+            })
+        });
+        if let Some(replacement) = replacement {
+            let parts = replacement
+                .split_text_newlines()
+                .unwrap_or_else(|| vec![replacement]);
+            let part_count = parts.len();
+            for (part_index, part) in parts.into_iter().enumerate() {
+                let break_after_part = part_index + 1 < part_count;
+                if wrap_lines
+                    && let Some((leading_break, fragments)) =
+                        part.split_to_columns(column, width, tab_width)
+                {
+                    if leading_break {
+                        finish_before_source!(index);
                     }
-                    current = DisplayRowPlan::new(index..source_end, line_len);
-                    current.boundaries.insert(index, Vec::new());
-                    current.repeated_start = true;
-                    current.continued = true;
+                    let fragment_count = fragments.len();
+                    for (fragment_index, (fragment, end_column)) in
+                        fragments.into_iter().enumerate()
+                    {
+                        current.replacements.insert(index, fragment);
+                        column = end_column;
+                        if fragment_index + 1 < fragment_count || break_after_part {
+                            finish_after_replacement!(index);
+                        }
+                    }
+                } else {
+                    let mut end_column = part.columns_after(column, tab_width, cell_width);
+                    if wrap_lines && column > 0 && end_column > width {
+                        finish_before_source!(index);
+                        end_column = part.columns_after(column, tab_width, cell_width);
+                    }
+                    current.replacements.insert(index, part);
+                    column = end_column;
+                    if break_after_part {
+                        finish_after_replacement!(index);
+                    }
                 }
             }
+        } else if let Some(character) = character {
+            let mut columns = if character.unicode() == Some('\t') {
+                tab_width.max(1) - column % tab_width.max(1)
+            } else if character.byte8().is_some() {
+                4
+            } else if ctl_arrow && (character.code() < 0x20 || character.code() == 0x7f) {
+                2
+            } else {
+                display_char_width(character.unicode().unwrap_or('\u{fffd}'))
+            };
+            if wrap_lines && column > 0 && column.saturating_add(columns) > width {
+                finish_before_source!(index);
+                columns = if character.unicode() == Some('\t') {
+                    tab_width.max(1)
+                } else if character.byte8().is_some() {
+                    4
+                } else if ctl_arrow && (character.code() < 0x20 || character.code() == 0x7f) {
+                    2
+                } else {
+                    display_char_width(character.unicode().unwrap_or('\u{fffd}'))
+                };
+            }
+            column = column.saturating_add(columns);
         }
     }
     rows.push(current);
@@ -9168,10 +9425,18 @@ fn render_grid_internal(
                 plans.extend(display_row_plans(
                     i,
                     wf.as_ref(),
+                    &line,
+                    buf_id,
                     line_pos,
                     range,
                     line_len,
                     max_rows - plans.len(),
+                    content_width,
+                    line_prefix_width,
+                    tab_width,
+                    frame_char_width,
+                    ctl_arrow,
+                    wrap_lines,
                 ));
             }
             if selective_ellipsis
