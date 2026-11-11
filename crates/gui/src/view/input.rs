@@ -358,6 +358,12 @@ pub(super) fn shape_grid_row(
             previous_style = Some(style);
         }
     }
+    let font_id = window.text_system().resolve_font(&base_font);
+    let cell_width = window
+        .text_system()
+        .advance(font_id, base_size, '0')
+        .map(|metrics| metrics.width)
+        .unwrap_or(px(8.0));
     if runs.is_empty() {
         runs.push(gpui::TextRun {
             len: 0,
@@ -369,13 +375,16 @@ pub(super) fn shape_grid_row(
         });
         font_sizes.push(None);
     }
-    window.text_system().shape_line_with_font_sizes(
+    let line = window.text_system().shape_line_with_font_sizes(
         row.to_owned().into(),
         base_size,
         &runs,
         &font_sizes,
         None,
-    )
+    );
+    super::align_zwj_glyph_positions(line, row, cell_width, |byte_index| {
+        byte_index
+    })
 }
 
 impl TextInputState {

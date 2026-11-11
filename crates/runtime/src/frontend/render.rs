@@ -6703,6 +6703,28 @@ fn raw_byte_replacement(
         .map(|byte| DisplayReplacement::Text(raw_byte_text(i, buffer_id, byte)))
 }
 
+fn emoji_zwj_joiner(chars: &[EmacsChar], index: usize) -> bool {
+    if chars.get(index).is_none_or(|character| character.code() != 0x200d) {
+        return false;
+    }
+    let pictographic = |character: EmacsChar| {
+        matches!(character.code(), 0x1f000..=0x1faff)
+    };
+    let extender = |character: EmacsChar| {
+        matches!(character.code(), 0xfe0e..=0xfe0f | 0x1f3fb..=0x1f3ff)
+    };
+    let previous = chars[..index]
+        .iter()
+        .rev()
+        .map(|character| *character)
+        .find(|character| !extender(*character));
+    let next = chars[index + 1..]
+        .iter()
+        .copied()
+        .find(|character| !extender(*character));
+    previous.is_some_and(pictographic) && next.is_some_and(pictographic)
+}
+
 fn glyphless_display_replacement(
     i: &Interp,
     buffer_id: usize,
@@ -8977,13 +8999,15 @@ fn render_grid_internal(
                             })
                             .or_else(|| {
                                 let character = *segment_chars.get(index)?;
-                                glyphless_display_replacement(
-                                    i,
-                                    buf_id,
-                                    character,
-                                    graphical,
-                                    glyphless_style,
-                                )
+                                (!(graphical && emoji_zwj_joiner(&segment_chars, index))).then(|| {
+                                    glyphless_display_replacement(
+                                        i,
+                                        buf_id,
+                                        character,
+                                        graphical,
+                                        glyphless_style,
+                                    )
+                                })?
                             })
                             .or_else(|| {
                                 let character = *segment_chars.get(index)?;

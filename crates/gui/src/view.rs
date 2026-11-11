@@ -26,6 +26,7 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
+use unicode_width::UnicodeWidthChar;
 #[cfg(test)]
 mod autoselect_tests;
 #[cfg(all(test, target_os = "macos"))]
@@ -252,6 +253,58 @@ fn grid_layout_index(grid: &Grid, row: usize, byte_index: usize) -> usize {
         }
     }
     index
+}
+
+fn gui_display_char_width(ch: char) -> usize {
+    if matches!(ch as u32, 0x80..=0x9f) {
+        4
+    } else {
+        UnicodeWidthChar::width(ch).unwrap_or(1)
+    }
+}
+
+pub(super) fn align_zwj_glyph_positions<F>(
+    mut line: ShapedLine,
+    row: &str,
+    cell_width: Pixels,
+    layout_index_for_byte: F,
+) -> ShapedLine
+where
+    F: Fn(usize) -> usize,
+{
+    if cell_width <= px(0.0) || !row.contains('\u{200d}') {
+        return line;
+    }
+
+    let characters: Vec<_> = row.char_indices().collect();
+    let mut columns = 0usize;
+    let mut in_joined_sequence = false;
+    for (index, (byte, character)) in characters.iter().enumerate() {
+        if *character == '\u{200d}' {
+            in_joined_sequence = true;
+            continue;
+        }
+        columns = columns.saturating_add(gui_display_char_width(*character));
+        if !in_joined_sequence {
+            continue;
+        }
+        let next_character = characters.get(index + 1).map(|(_, character)| *character);
+        if next_character.is_some_and(|next| {
+            next == '\u{200d}' || gui_display_char_width(next) == 0
+        }) {
+            continue;
+        }
+
+        let byte_end = *byte + character.len_utf8();
+        let layout_index = layout_index_for_byte(byte_end);
+        let target_x = cell_width * columns as f32;
+        let delta = target_x - line.x_for_index(layout_index);
+        if f32::from(delta).abs() > 1.0 {
+            line.shift_glyphs_from_index(layout_index, delta);
+        }
+        in_joined_sequence = false;
+    }
+    line
 }
 
 fn grid_pixelwise_x_offset(grid: &Grid, row: usize, byte_index: usize) -> i128 {
@@ -2416,12 +2469,18 @@ impl Render for EditorView {
                                     });
                                     font_sizes.push(None);
                                 }
-                                window.text_system().shape_line_with_font_sizes(
+                                let line = window.text_system().shape_line_with_font_sizes(
                                     shaping_text.into(),
                                     font_size,
                                     &runs,
                                     &font_sizes,
                                     None,
+                                );
+                                align_zwj_glyph_positions(
+                                    line,
+                                    row,
+                                    cell_width,
+                                    |byte_index| grid_layout_index(&grid, y, byte_index),
                                 )
                             })
                             .collect();

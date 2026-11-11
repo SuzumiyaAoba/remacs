@@ -120,6 +120,63 @@ fn input_geometry_uses_default_and_per_run_font_metrics() {
     assert!(widths.2 > widths.0 * 1.5, "run face metrics affect shaping: {widths:?}");
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn zwj_family_emoji_keeps_following_text_at_grid_column() {
+    let mut i = Interp::new();
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (setq-local mode-line-format nil header-line-format nil tab-line-format nil)
+          (set-face-attribute 'default nil :family "Menlo" :height 140)
+          (erase-buffer) (insert "👨‍👩‍👧‍👦X"))"#,
+    )
+    .unwrap();
+    assert_eq!(
+        i.eval_str("(string-width \"👨‍👩‍👧‍👦\")")
+            .unwrap()
+            .int(),
+        Some(8)
+    );
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    reflow_frame_windows(&frame, 40, 12);
+    let grid = render_grid_with_input_cached(&i, 40, 12, None);
+    assert!(grid.rows[0].contains('\u{200d}'), "grid row lost the ZWJ joiners");
+
+    let mut app = gpui::TestAppContext::single_with_native_text_system();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(0);
+            view.grid = grid.clone();
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    let x_byte = grid.rows[0].find('X').unwrap();
+    let (actual, expected) = handle
+        .update(&mut app, |view, window, _| {
+            let line = super::input::shape_grid_row(&grid, 0, window, &grid.rows[0]);
+            (
+                f32::from(line.x_for_index(x_byte)),
+                f32::from(view.cell_width) * 8.0,
+            )
+        })
+        .unwrap();
+    assert!(
+        (actual - expected).abs() < 1.0,
+        "X starts at {actual}px, expected grid column 8 at {expected}px"
+    );
+}
+
 #[test]
 fn trackpad_touch_end_reaches_the_lisp_keymap() {
     let mut i = Interp::new();

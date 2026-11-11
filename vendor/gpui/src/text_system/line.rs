@@ -59,6 +59,22 @@ impl ShapedLine {
         self
     }
 
+    /// Shift every glyph at or after the given UTF-8 byte index by DELTA.
+    /// This is useful when a frontend's cell grid has a different advance
+    /// than the shaped glyph sequence, while preserving the glyph shaping.
+    pub fn shift_glyphs_from_index(&mut self, index: usize, delta: Pixels) {
+        if delta == px(0.0) {
+            return;
+        }
+        let layout = Arc::make_mut(&mut self.layout);
+        for glyph in layout.runs.iter_mut().flat_map(|run| run.glyphs.iter_mut()) {
+            if glyph.index >= index {
+                glyph.position.x = glyph.position.x + delta;
+            }
+        }
+        layout.width = (layout.width + delta).max(px(0.0));
+    }
+
     /// Paint the line of text to the window.
     pub fn paint(
         &self,
