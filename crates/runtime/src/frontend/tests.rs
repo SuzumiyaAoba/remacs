@@ -305,6 +305,23 @@ fn vertical_motion_moves_through_wrapped_visual_rows() {
 }
 
 #[test]
+fn invisible_text_does_not_consume_wrapped_rows() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(progn\
+           (setq-local truncate-lines nil)\
+           (let ((start (point)))\
+             (insert (make-string 200 ?x) \"VISIBLE\")\
+             (put-text-property start (+ start 200) 'invisible t)))",
+    )
+    .unwrap();
+
+    let grid = render_grid(&i, 20, 6);
+    assert!(grid.rows[0].starts_with("VISIBLE"));
+    assert!(grid.rows[0].chars().all(|character| character != 'x'));
+}
+
+#[test]
 fn partial_width_window_honors_truncate_partial_width_windows() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil truncate-partial-width-windows 1000)")

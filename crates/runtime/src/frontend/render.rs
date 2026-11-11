@@ -9720,12 +9720,36 @@ fn render_grid_internal(
                                     Some(DisplayReplacement::Fringe(_) | DisplayReplacement::Hidden)
                                 )
                         })
+                        || faces
+                            .invisible_props
+                            .iter()
+                            .any(|(start, end, _)| {
+                                *start < line_pos.saturating_add(line_len) && *end > line_pos
+                            })
+                        || faces.invisible_overlays.iter().any(|(overlay, _)| {
+                            overlay.start < line_pos.saturating_add(line_len)
+                                && overlay.end > line_pos
+                        })
                 })
                 .map(|faces| {
+                    let mut hidden_run = false;
                     line.chars()
                         .enumerate()
                         .map(|(index, character)| {
                             let position = line_pos + index;
+                            let visibility = visibility_at_pos(i, faces, position);
+                            if visibility != Visibility::Visible {
+                                let replacement = if visibility == Visibility::Ellipsis
+                                    && !hidden_run
+                                {
+                                    EmacsChar::new('…' as u32).unwrap()
+                                } else {
+                                    EmacsChar::new(0x200b).unwrap()
+                                };
+                                hidden_run = true;
+                                return replacement;
+                            }
+                            hidden_run = false;
                             let zero_width = faces
                                 .display_props
                                 .iter()
