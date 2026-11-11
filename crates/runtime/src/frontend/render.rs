@@ -2655,8 +2655,7 @@ fn mode_line_context(
     let point_line_start = buffer.text.line_start(point_line);
     let mode_name = match buffer_setting(i, "mode-name", buffer_id) {
         Value::Str(name) => name.borrow().to_unicode_lossy(),
-        Value::Sym(name) => i.symbol_name(name),
-        value => i.princ_to_string(&value).to_unicode_lossy(),
+        _ => String::new(),
     };
     ModeLineContext {
         buffer_name: buffer.name.to_unicode_lossy(),

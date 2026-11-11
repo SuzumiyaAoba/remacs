@@ -479,6 +479,22 @@ fn header_and_tab_lines_reserve_body_and_mode_line_rows() {
 }
 
 #[test]
+fn mode_line_m_is_empty_for_non_string_mode_name() {
+    let mut i = interp_with_frame("x");
+    i.eval_str("(setq-local mode-line-format \"%m\" mode-name '(\"Mode\" (:eval \"extra\")))")
+        .unwrap();
+    let window_id = i.selected_frame.as_ref().unwrap().borrow().selected.borrow().id;
+
+    let grid = render_grid(&i, 40, 4);
+    let mode_line = grid
+        .mode_lines
+        .iter()
+        .find(|line| line.window_id == window_id)
+        .unwrap();
+    assert!(grid.rows[mode_line.row].trim().is_empty());
+}
+
+#[test]
 fn wrapped_point_moving_to_earlier_visual_row_scrolls_back() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil)").unwrap();
