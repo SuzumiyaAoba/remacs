@@ -125,6 +125,77 @@ pub(super) fn composition_origin(
     }
 }
 
+impl TextInputState {
+    pub(super) fn accessibility_buffer_projection(
+        &self,
+        base: &str,
+        fallback_selection: Range<usize>,
+    ) -> (String, Range<usize>) {
+        let selection = self
+            .marked_range
+            .as_ref()
+            .filter(|_| !self.marked.is_empty())
+            .map(|marked| {
+                marked.start.saturating_add(self.selection.start)
+                    ..marked.start.saturating_add(self.selection.end)
+            })
+            .unwrap_or(fallback_selection);
+        (self.virtual_text(base), selection)
+    }
+
+    pub(super) fn accessibility_screen_projection(
+        &self,
+        grid: &Grid,
+        fallback_selection: Range<usize>,
+    ) -> (String, Range<usize>) {
+        let mut rows = grid.rows.clone();
+        let fallback_text = rows.join("\n");
+        let Some(replacement) = self.replacement_range.as_ref() else {
+            return (fallback_text, fallback_selection);
+        };
+        if self.marked.is_empty() {
+            return (fallback_text, fallback_selection);
+        }
+        let Some((row, start)) = composition_origin(grid, Some(replacement)) else {
+            return (fallback_text, fallback_selection);
+        };
+        let Some(line) = rows.get(row) else {
+            return (fallback_text, fallback_selection);
+        };
+        if start > line.len() || !line.is_char_boundary(start) {
+            return (fallback_text, fallback_selection);
+        }
+
+        let prefix_units = rows
+            .iter()
+            .take(row)
+            .map(|line| line.encode_utf16().count() + 1)
+            .sum::<usize>()
+            + line[..start].encode_utf16().count();
+        let mut end = start;
+        if !cursor_moved_to_echo_area(grid)
+            && let Some((end_row, end_index)) =
+                visible_input_position(grid, replacement.end, true)
+            && end_row == row
+            && end_index >= start
+            && end_index <= line.len()
+            && line.is_char_boundary(end_index)
+        {
+            end = end_index;
+        }
+        rows[row].replace_range(start..end, &self.marked);
+
+        let marked_len = self.marked.encode_utf16().count();
+        let selection_start = self.selection.start.min(marked_len);
+        let selection_end = self.selection.end.min(marked_len).max(selection_start);
+        (
+            rows.join("\n"),
+            prefix_units.saturating_add(selection_start)
+                ..prefix_units.saturating_add(selection_end),
+        )
+    }
+}
+
 pub(super) fn mouse_position_for_point_with_cell_width(
     grid: &Grid,
     point: Point<Pixels>,
@@ -1079,6 +1150,74 @@ mod tests {
             composition_origin(&grid, Some(&replacement)),
             Some((echo_row, echo_index))
         );
+    }
+
+    #[test]
+    fn accessibility_projections_include_marked_text_and_selection() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(accessibility_projections_include_marked_text_and_selection_inner)
+            .expect("spawn accessibility composition test thread")
+            .join()
+            .expect("accessibility composition test thread");
+    }
+
+    fn accessibility_projections_include_marked_text_and_selection_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str("(erase-buffer) (insert \"abcdef\") (goto-char 4)")
+            .unwrap();
+        let mut grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        let replacement = 3..4;
+        grid.input.as_mut().unwrap().cursor = replacement.start;
+        let (row, start) = visible_input_position(&grid, replacement.start, false).unwrap();
+        let (_, end) = visible_input_position(&grid, replacement.end, true).unwrap();
+        grid.cursor = Some((start, row));
+        grid.cursor_index = Some(start);
+
+        let mut input = TextInputState::default();
+        input.mark_document(
+            Some(replacement.clone()),
+            "かな",
+            Some(1..2),
+            replacement.clone(),
+        );
+        let base = grid.input.as_ref().unwrap().text.as_ref();
+        let (buffer_text, buffer_selection) =
+            input.accessibility_buffer_projection(base, 0..0);
+        assert_eq!(buffer_text, "abcかなef");
+        assert_eq!(buffer_selection, 4..5);
+
+        let mut expected_rows = grid.rows.clone();
+        expected_rows[row].replace_range(start..end, "かな");
+        let prefix_units = grid.rows[..row]
+            .iter()
+            .map(|line| line.encode_utf16().count() + 1)
+            .sum::<usize>()
+            + grid.rows[row][..start].encode_utf16().count();
+        let (screen_text, screen_selection) = input.accessibility_screen_projection(&grid, 0..0);
+        assert_eq!(screen_text, expected_rows.join("\n"));
+        assert_eq!(screen_selection, prefix_units + 1..prefix_units + 2);
+
+        let mut echo_grid = grid.clone();
+        echo_grid.rows.push("I-search: ".to_owned());
+        let echo_row = echo_grid.rows.len() - 1;
+        let echo_index = echo_grid.rows[echo_row].len();
+        echo_grid.cursor = Some((echo_index, echo_row));
+        echo_grid.cursor_index = Some(echo_index);
+        let mut expected_echo_rows = echo_grid.rows.clone();
+        expected_echo_rows[echo_row].insert_str(echo_index, "かな");
+        let echo_prefix_units = echo_grid.rows[..echo_row]
+            .iter()
+            .map(|line| line.encode_utf16().count() + 1)
+            .sum::<usize>()
+            + echo_grid.rows[echo_row].encode_utf16().count();
+        let (screen_text, screen_selection) =
+            input.accessibility_screen_projection(&echo_grid, 0..0);
+        assert_eq!(screen_text, expected_echo_rows.join("\n"));
+        assert_eq!(screen_selection, echo_prefix_units + 1..echo_prefix_units + 2);
     }
 
 }

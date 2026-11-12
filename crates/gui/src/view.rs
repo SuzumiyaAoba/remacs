@@ -1559,17 +1559,23 @@ impl Render for EditorView {
 
         #[cfg(target_os = "macos")]
         {
-            let screen_text = self.grid.rows.join("\n");
-            let screen_selection = visible_grid_selection(&self.grid);
+            let (screen_text, screen_selection) = self.input.accessibility_screen_projection(
+                &self.grid,
+                visible_grid_selection(&self.grid),
+            );
             let (buffer_text, buffer_selection) = self.grid.input.as_ref().map_or_else(
-                || (screen_text.clone(), screen_selection.clone()),
+                || {
+                    self.input
+                        .accessibility_buffer_projection(&screen_text, screen_selection.clone())
+                },
                 |input| {
                     let selection = input
                         .selection
                         .as_ref()
                         .map(|selection| selection.range.clone())
                         .unwrap_or(input.cursor..input.cursor);
-                    (input.text.to_string(), selection)
+                    self.input
+                        .accessibility_buffer_projection(&input.text, selection)
                 },
             );
             let changed = self.accessibility_snapshot.as_ref().is_none_or(
