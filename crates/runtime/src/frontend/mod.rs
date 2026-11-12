@@ -11,7 +11,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::lisp::Interp;
+use crate::lisp::{Interp, value::SymId};
 
 /// Platform clipboard access used by window-system selection primitives.
 pub trait ClipboardBackend {
@@ -432,6 +432,7 @@ impl MouseButton {
 pub enum MouseArea {
     ModeLine,
     HeaderLine,
+    ImageMap(SymId),
 }
 
 /// A text position mapped from the front-end's most recent grid snapshot.
@@ -607,7 +608,7 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
     GridCursorShape, GridFringeBitmap, GridFringeBitmapAlign, GridHelpEcho, GridImage,
-    GridImageSource, GridInput, GridInputPosition,
+    GridImageMapArea, GridImageMapShape, GridImageSource, GridInput, GridInputPosition,
     GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,

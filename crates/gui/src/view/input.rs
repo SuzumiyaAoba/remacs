@@ -136,6 +136,42 @@ pub(super) fn composition_origin(
     }
 }
 
+fn image_map_area_at_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+) -> Option<remacs_runtime::lisp::value::SymId> {
+    for image in &grid.images {
+        if image.map.is_empty() {
+            continue;
+        }
+        let (Some(width), Some(height)) = (
+            image.width.or(image.intrinsic_width),
+            image.height.or(image.intrinsic_height),
+        ) else {
+            continue;
+        };
+        let left = f32::from(cell_width) * image.column as f32;
+        let top = f32::from(grid_row_top(grid, image.row, px(LINE_HEIGHT)))
+            - super::vscroll_pixels_for_cell(grid, image.row, image.column) as f32;
+        let local_x = f32::from(point.x) - left;
+        let local_y = f32::from(point.y) - top;
+        if local_x < 0.0
+            || local_y < 0.0
+            || local_x >= width as f32
+            || local_y >= height as f32
+        {
+            continue;
+        }
+        let x = local_x.floor() as i128;
+        let y = local_y.floor() as i128;
+        if let Some(area) = image.map.iter().find(|area| area.contains(x, y)) {
+            return Some(area.id);
+        }
+    }
+    None
+}
+
 impl TextInputState {
     pub(super) fn accessibility_buffer_projection(
         &self,
@@ -230,6 +266,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
     let mapped = input.hit_test_position(row, column, byte)?;
+    let area = image_map_area_at_point(grid, point, cell_width).map(MouseArea::ImageMap);
     let (origin_x, origin_y) = mapped
         .window_id
         .and_then(|window_id| {
@@ -253,7 +290,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         row,
         column: mapped.column,
         window_id: mapped.window_id,
-        area: None,
+        area,
         mode_line_buffer_name: false,
     })
 }
@@ -1334,6 +1371,54 @@ mod tests {
         assert_eq!(
             visible_input_position(&grid, input.cursor, false),
             grid.cursor.map(|(_, row)| (row, grid.cursor_index.unwrap_or(0)))
+        );
+    }
+
+    #[test]
+    fn image_map_hotspots_are_hit_tested_in_image_pixels() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(image_map_hotspots_are_hit_tested_in_image_pixels_inner)
+            .expect("spawn image map test thread")
+            .join()
+            .expect("image map test thread");
+    }
+
+    fn image_map_hotspots_are_hit_tested_in_image_pixels_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        let form = r#"(progn
+                  (erase-buffer)
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image
+                           :type 'svg
+                           :data "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='20'><rect width='40' height='20' fill='red'/></svg>"
+                           :map '(((rect . ((0 . 0) . (20 . 20))) area1 nil))))))"#;
+        if let Err(flow) = interp.eval_str(form) {
+            let detail = match &flow {
+                remacs_runtime::lisp::error::Flow::Signal(signal) => format!(
+                    "{} {}",
+                    interp.prin1_to_string(&signal.symbol()).to_unicode_lossy(),
+                    interp.prin1_to_string(&signal.data()).to_unicode_lossy()
+                ),
+                _ => format!("{flow:?}"),
+            };
+            panic!("image descriptor evaluation failed: {detail}");
+        }
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        let image = grid.images.first().expect("rendered SVG image");
+        assert_eq!(image.map.len(), 1);
+        let area1 = interp.intern("area1");
+        let x = px(10.0) + px(8.0 * image.column as f32);
+        let y = px(10.0) + grid_row_top(&grid, image.row, px(LINE_HEIGHT));
+        assert_eq!(image_map_area_at_point(&grid, point(x, y), px(8.0)), Some(area1));
+        assert_eq!(
+            image_map_area_at_point(&grid, point(x + px(25.0), y), px(8.0)),
+            None
         );
     }
 

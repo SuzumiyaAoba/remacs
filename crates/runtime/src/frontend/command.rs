@@ -1718,6 +1718,9 @@ fn dispatch_mouse<T: KeyIo>(
             }
         }
     }
+    if let Some(super::MouseArea::ImageMap(area)) = mouse.end.area {
+        keys.push(crate::editor::event_code_for(&i.symbol_name(area)));
+    }
 
     // The normal mouse-1 command moves point.  For an otherwise-unbound
     // double/triple click, preserve that binding and supply its existing
@@ -1818,6 +1821,7 @@ fn dispatch_touch_end<T: KeyIo>(
             Some(super::MouseArea::HeaderLine) => {
                 keys.push(crate::editor::event_code_for("header-line"));
             }
+            Some(super::MouseArea::ImageMap(_)) => {}
             None => {}
         }
     }
@@ -1858,6 +1862,7 @@ fn dispatch_mouse_wheel<T: KeyIo>(
             Some(super::MouseArea::HeaderLine) => {
                 keys.push(crate::editor::event_code_for("header-line"));
             }
+            Some(super::MouseArea::ImageMap(_)) => {}
             None => {}
         }
     }
@@ -2214,6 +2219,11 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
     let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
     if let Some(area) = position.area {
         let buffer_id = window.borrow().buffer;
+        let area_symbol = match area {
+            super::MouseArea::ModeLine => Value::Sym(i.intern("mode-line")),
+            super::MouseArea::HeaderLine => Value::Sym(i.intern("header-line")),
+            super::MouseArea::ImageMap(id) => Value::Sym(id),
+        };
         let mode_line_string = (position.mode_line_buffer_name && area == super::MouseArea::ModeLine)
             .then(|| i.q_soft("mode-line-buffer-identification"))
             .flatten()
@@ -2231,14 +2241,15 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             .unwrap_or(Value::Nil);
         Some(Value::list(vec![
             Value::Window(window),
-            Value::Sym(i.intern(match area {
-                super::MouseArea::ModeLine => "mode-line",
-                super::MouseArea::HeaderLine => "header-line",
-            })),
+            area_symbol,
             coordinates,
             Value::Int(0),
             mode_line_string,
-            Value::Nil,
+            if matches!(area, super::MouseArea::ImageMap(_)) {
+                Value::Int(position.buffer_position.saturating_add(1) as i128)
+            } else {
+                Value::Nil
+            },
             Value::cons(
                 Value::Int(position.column as i128),
                 Value::Int(position.row as i128),
@@ -3178,5 +3189,88 @@ mod wide_echo_text_tests {
         let logical = splice_echo_text(text.clone(), Vec::new());
         assert_eq!(logical.to_unicode_lossy(), "\u{f0100}\u{fffd}");
         assert_eq!(logical, text);
+    }
+}
+
+#[cfg(test)]
+mod image_map_mouse_tests {
+    use super::*;
+
+    struct NoopKeyIo;
+
+    impl KeyIo for NoopKeyIo {
+        fn poll_key(&mut self, _dur: Duration) -> io::Result<Option<i128>> {
+            Ok(None)
+        }
+
+        fn unread(&mut self, _key: i128) {}
+
+        fn render(&mut self, _interp: &Interp) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn draw_echo(&mut self, _text: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn size(&self) -> (usize, usize) {
+            (80, 25)
+        }
+    }
+
+    #[test]
+    fn image_map_click_dispatches_the_hotspot_prefix_and_position() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(image_map_click_dispatches_the_hotspot_prefix_and_position_inner)
+            .expect("spawn image map dispatch test thread")
+            .join()
+            .expect("image map dispatch test thread");
+    }
+
+    fn image_map_click_dispatches_the_hotspot_prefix_and_position_inner() {
+        let mut interp = Interp::new();
+        let buffer_id = interp.create_buffer("image-map-test");
+        let minibuffer_id = interp.create_buffer(" *Minibuf-0*");
+        let frame = crate::editor::Frame::new_tty(buffer_id, minibuffer_id, 80, 25);
+        let window_id = frame.borrow().selected.borrow().id;
+        interp.selected_frame = Some(frame.clone());
+        interp.frames.push(frame);
+        interp.set_current_buffer(buffer_id);
+        interp
+            .eval_str(
+                "(defvar qa-image-map-area nil)\
+                 (defun qa-image-map-command ()\
+                   (interactive)\
+                   (setq qa-image-map-area (posn-area (event-start last-input-event))))\
+                 (global-set-key [area1 mouse-1] #'qa-image-map-command)",
+            )
+            .unwrap();
+
+        let area1 = interp.intern("area1");
+        let position = MousePosition {
+            buffer_id,
+            buffer_position: 0,
+            utf16_offset: 0,
+            x: 10,
+            y: 10,
+            row: 0,
+            column: 0,
+            window_id: Some(window_id),
+            area: Some(super::super::MouseArea::ImageMap(area1)),
+            mode_line_buffer_name: false,
+        };
+        let mouse = MouseInput {
+            button: MouseButton::Left,
+            click_count: 1,
+            modifiers: 0,
+            start: position,
+            end: position,
+        };
+        let term = std::rc::Rc::new(std::cell::RefCell::new(NoopKeyIo));
+        dispatch_mouse(&term, &mut interp, mouse, &mut Vec::new(), &mut false).unwrap();
+
+        let area_variable = interp.intern("qa-image-map-area");
+        assert!(matches!(interp.symbol_value(area_variable), Value::Sym(id) if id == area1));
     }
 }

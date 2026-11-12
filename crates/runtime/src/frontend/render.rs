@@ -3,7 +3,7 @@ use super::MousePosition;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
-    lisp::{Interp, Value},
+    lisp::{Interp, Value, value::SymId},
 };
 use num_traits::ToPrimitive;
 use std::{
@@ -131,6 +131,82 @@ pub struct GridImage {
     /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
+    /// Intrinsic dimensions available for SVG images.
+    pub intrinsic_width: Option<usize>,
+    pub intrinsic_height: Option<usize>,
+    /// Image-map hotspots, in the displayed image's pixel coordinates.
+    pub map: Vec<GridImageMapArea>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridImageMapArea {
+    pub id: SymId,
+    pub shape: GridImageMapShape,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum GridImageMapShape {
+    Rectangle {
+        left: i128,
+        top: i128,
+        right: i128,
+        bottom: i128,
+    },
+    Circle {
+        x: i128,
+        y: i128,
+        radius_bits: u64,
+    },
+    Polygon(Vec<(i128, i128)>),
+}
+
+impl GridImageMapArea {
+    pub fn contains(&self, x: i128, y: i128) -> bool {
+        match &self.shape {
+            GridImageMapShape::Rectangle {
+                left,
+                top,
+                right,
+                bottom,
+            } => x >= *left && y >= *top && x <= *right && y <= *bottom,
+            GridImageMapShape::Circle {
+                x: center_x,
+                y: center_y,
+                radius_bits,
+            } => {
+                let radius = f64::from_bits(*radius_bits);
+                let dx = (center_x - x) as f64;
+                let dy = (center_y - y) as f64;
+                dx * dx + dy * dy <= radius * radius
+            }
+            GridImageMapShape::Polygon(points) => {
+                let Some(&(mut x0, mut y0)) = points.last() else {
+                    return false;
+                };
+                let mut inside = false;
+                for &(x1, y1) in points {
+                    let previous_x = x0;
+                    let previous_y = y0;
+                    x0 = x1;
+                    y0 = y1;
+                    if x0 >= x {
+                        if previous_x >= x {
+                            continue;
+                        }
+                    } else if previous_x < x {
+                        continue;
+                    }
+                    if y > y0 && y > previous_y {
+                        continue;
+                    }
+                    if y < y0 + ((previous_y - y0) * (x - x0)) / (previous_x - x0) {
+                        inside = !inside;
+                    }
+                }
+                inside
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -3958,6 +4034,7 @@ struct RenderedImage {
     masked: bool,
     intrinsic_width: Option<usize>,
     intrinsic_height: Option<usize>,
+    map: Vec<GridImageMapArea>,
 }
 
 impl RenderedImage {
@@ -4025,6 +4102,7 @@ enum DisplayReplacement {
         masked: bool,
         intrinsic_width: Option<usize>,
         intrinsic_height: Option<usize>,
+        map: Vec<GridImageMapArea>,
     },
     /// Another character in a run already replaced by its first character.
     Hidden,
@@ -5166,6 +5244,7 @@ where
                 masked,
                 intrinsic_width,
                 intrinsic_height,
+                map,
             }) => {
                 let image_column = column;
                 // Reserve full grid cells for the image before placing later text.
@@ -5184,6 +5263,7 @@ where
                         masked,
                         intrinsic_width,
                         intrinsic_height,
+                        map,
                     });
                 }
                 let mut keep_rendering = true;
@@ -7206,6 +7286,97 @@ fn svg_image_stylesheet(i: &Interp, plist: &Value) -> Option<String> {
     }
 }
 
+fn image_map_pair(value: &Value) -> Option<(Value, Value)> {
+    let Value::Cons(cell) = value else {
+        return None;
+    };
+    let cell = cell.borrow();
+    Some((cell.car.clone(), cell.cdr.clone()))
+}
+
+fn image_map_point(value: &Value) -> Option<(i128, i128)> {
+    let (x, y) = image_map_pair(value)?;
+    Some((x.int()?, y.int()?))
+}
+
+fn image_map_shape(i: &Interp, area: &Value) -> Option<GridImageMapShape> {
+    let (tag, body) = image_map_pair(area)?;
+    let Value::Sym(tag) = tag else {
+        return None;
+    };
+    match i.symbol_name(tag).as_str() {
+        "rect" => {
+            let (top_left, bottom_right) = image_map_pair(&body)?;
+            let (left, top) = image_map_point(&top_left)?;
+            let (right, bottom) = image_map_point(&bottom_right)?;
+            Some(GridImageMapShape::Rectangle {
+                left,
+                top,
+                right,
+                bottom,
+            })
+        }
+        "circle" => {
+            let (center, radius) = image_map_pair(&body)?;
+            let (x, y) = image_map_point(&center)?;
+            let radius = match radius {
+                Value::Int(radius) => radius as f64,
+                Value::Float(radius) => *radius,
+                _ => return None,
+            };
+            Some(GridImageMapShape::Circle {
+                x,
+                y,
+                radius_bits: radius.to_bits(),
+            })
+        }
+        "poly" => {
+            let Value::Vec(vertices) = body else {
+                return None;
+            };
+            let vertices = vertices.borrow();
+            if vertices.len() < 6 || vertices.len() % 2 != 0 {
+                return None;
+            }
+            let points = vertices
+                .chunks_exact(2)
+                .map(|pair| Some((pair[0].int()?, pair[1].int()?)))
+                .collect::<Option<Vec<_>>>()?;
+            Some(GridImageMapShape::Polygon(points))
+        }
+        _ => None,
+    }
+}
+
+fn image_map_areas(i: &Interp, value: &Value) -> Vec<GridImageMapArea> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::<usize>::default();
+    let mut entries = value.clone();
+    while let Value::Cons(cell) = entries.clone() {
+        if !seen.insert(std::rc::Rc::as_ptr(&cell) as usize) {
+            break;
+        }
+        let (entry, rest) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        entries = rest;
+        let Some((area, tail)) = image_map_pair(&entry) else {
+            continue;
+        };
+        let Some((id, _properties)) = image_map_pair(&tail) else {
+            continue;
+        };
+        let Value::Sym(id) = id else {
+            continue;
+        };
+        if let Some(shape) = image_map_shape(i, &area) {
+            result.push(GridImageMapArea { id, shape });
+        }
+    }
+    result
+}
+
 fn image_display_replacement(
     i: &Interp,
     value: &Value,
@@ -7234,6 +7405,7 @@ fn image_display_replacement(
         default_font_height,
     );
     let masked = !image_property(i, &plist, ":mask").is_nil();
+    let map = image_map_areas(i, &image_property(i, &plist, ":map"));
     let file = image_property(i, &plist, ":file");
     if let Value::Str(file) = file {
         let path = image_file_for_buffer_or_load_path(i, buffer_id, &file.borrow());
@@ -7273,6 +7445,7 @@ fn image_display_replacement(
             masked,
             intrinsic_width: None,
             intrinsic_height: None,
+            map,
         });
     }
 
@@ -7362,6 +7535,7 @@ fn image_display_replacement(
         masked,
         intrinsic_width,
         intrinsic_height,
+        map,
     })
 }
 
@@ -10428,6 +10602,9 @@ fn render_grid_internal(
                         source: image.source.clone(),
                         width: image.width,
                         height: image.height,
+                        intrinsic_width: image.intrinsic_width,
+                        intrinsic_height: image.intrinsic_height,
+                        map: image.map.clone(),
                     })
                 }));
                 // Empty tail of the row: the line-end face extends its
@@ -10900,6 +11077,9 @@ fn render_grid_internal(
                     source: image.source.clone(),
                     width: image.width,
                     height: image.height,
+                    intrinsic_width: image.intrinsic_width,
+                    intrinsic_height: image.intrinsic_height,
+                    map: image.map.clone(),
                 }
             }));
             if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref()) {
