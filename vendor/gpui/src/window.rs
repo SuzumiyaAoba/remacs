@@ -3134,7 +3134,7 @@ impl Window {
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
-                grayscale: false,
+                flags: 0,
                 bounds,
                 corner_radii: Default::default(),
                 content_mask,
@@ -3219,6 +3219,7 @@ impl Window {
         data: Arc<RenderImage>,
         frame_index: usize,
         grayscale: bool,
+        transform_smoothing: Option<bool>,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
@@ -3248,7 +3249,7 @@ impl Window {
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
-            grayscale,
+            flags: u32::from(grayscale) | (u32::from(transform_smoothing == Some(false)) << 8),
             bounds: bounds
                 .map_origin(|origin| origin.floor())
                 .map_size(|size| size.ceil()),

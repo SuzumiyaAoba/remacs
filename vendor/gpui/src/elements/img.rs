@@ -152,6 +152,7 @@ where
 /// The style of an image element.
 pub struct ImageStyle {
     grayscale: bool,
+    transform_smoothing: Option<bool>,
     object_fit: ObjectFit,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
@@ -161,6 +162,7 @@ impl Default for ImageStyle {
     fn default() -> Self {
         Self {
             grayscale: false,
+            transform_smoothing: None,
             object_fit: ObjectFit::Contain,
             loading: None,
             fallback: None,
@@ -335,6 +337,13 @@ impl Img {
     /// Apply a 3×3 edge-detection matrix before displaying the image.
     pub fn edge_detection(mut self, matrix: [i32; 9], color_adjust: i32) -> Self {
         self.edge_detection = Some((matrix, color_adjust));
+        self
+    }
+
+    /// Set whether transformed pixels are smoothed with bilinear sampling.
+    /// `false` uses nearest-neighbor sampling; `true` uses linear sampling.
+    pub fn transform_smoothing(mut self, smoothing: bool) -> Self {
+        self.style.transform_smoothing = Some(smoothing);
         self
     }
 }
@@ -627,6 +636,7 @@ impl Element for Img {
                             data,
                             layout_state.frame_index,
                             self.style.grayscale,
+                            self.style.transform_smoothing,
                         )
                         .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {

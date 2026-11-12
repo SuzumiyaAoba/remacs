@@ -3573,6 +3573,7 @@ fn grid_image_element(
     let cache_key = image.source.clone();
     let frame_index = image.index;
     let conversion = image.conversion;
+    let transform_smoothing = image.transform_smoothing;
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::FileWithSvgOptions {
@@ -3634,6 +3635,10 @@ fn grid_image_element(
             matrix,
             color_adjust,
         }) => source.edge_detection(matrix, color_adjust),
+        None => source,
+    };
+    let source = match transform_smoothing {
+        Some(smoothing) => source.transform_smoothing(smoothing),
         None => source,
     };
     let source = match (image.width, image.height) {

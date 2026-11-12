@@ -700,15 +700,27 @@ fragment float4 polychrome_sprite_fragment(
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
-  constexpr sampler atlas_texture_sampler(mag_filter::linear,
-                                          min_filter::linear);
-  float4 sample =
-      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+  float4 sample;
+  if ((sprite.flags & 0x100u) != 0u) {
+    float2 atlas_size = float2((float)atlas_texture.get_width(),
+                               (float)atlas_texture.get_height());
+    int2 tile_origin = int2(sprite.tile.bounds.origin.x,
+                            sprite.tile.bounds.origin.y);
+    int2 tile_size = int2(sprite.tile.bounds.size.width,
+                          sprite.tile.bounds.size.height);
+    int2 texel = clamp(int2(floor(input.tile_position * atlas_size)),
+                       tile_origin, tile_origin + tile_size - int2(1));
+    sample = atlas_texture.read(uint2(texel));
+  } else {
+    constexpr sampler atlas_texture_sampler(mag_filter::linear,
+                                            min_filter::linear);
+    sample = atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+  }
   float distance =
       quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
   float4 color = sample;
-  if (sprite.grayscale) {
+  if ((sprite.flags & 0xFFu) != 0u) {
     float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
     color.r = grayscale;
     color.g = grayscale;

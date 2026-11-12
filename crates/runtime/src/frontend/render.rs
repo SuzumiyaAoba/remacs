@@ -132,6 +132,8 @@ pub struct GridImage {
     pub index: Option<usize>,
     /// Conversion requested by the image descriptor.
     pub conversion: Option<GridImageConversion>,
+    /// Whether transformed pixels should be smoothed, when explicitly set.
+    pub transform_smoothing: Option<bool>,
     /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
@@ -4044,6 +4046,7 @@ struct RenderedImage {
     source: GridImageSource,
     index: Option<usize>,
     conversion: Option<GridImageConversion>,
+    transform_smoothing: Option<bool>,
     width: Option<usize>,
     height: Option<usize>,
     masked: bool,
@@ -4114,6 +4117,7 @@ enum DisplayReplacement {
         source: GridImageSource,
         index: Option<usize>,
         conversion: Option<GridImageConversion>,
+        transform_smoothing: Option<bool>,
         width: Option<usize>,
         height: Option<usize>,
         masked: bool,
@@ -5258,6 +5262,7 @@ where
                 source,
                 index,
                 conversion,
+                transform_smoothing,
                 width: image_width,
                 height: image_height,
                 masked,
@@ -5279,6 +5284,7 @@ where
                         source,
                         index,
                         conversion,
+                        transform_smoothing,
                         width: image_width,
                         height: image_height,
                         masked,
@@ -7031,6 +7037,11 @@ fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
         .unwrap_or(Value::Nil)
 }
 
+fn image_transform_smoothing(i: &Interp, plist: &Value) -> Option<bool> {
+    let property = i.q_soft(":transform-smoothing")?;
+    crate::lisp::eval::plist_lookup(plist, property).map(|value| value.truthy())
+}
+
 fn image_dimension(i: &Interp, value: Value, default_font_height: u16) -> Option<usize> {
     match value {
         Value::Int(n) if n > 0 => usize::try_from(n).ok(),
@@ -7509,6 +7520,7 @@ fn image_display_replacement(
         .int()
         .and_then(|index| usize::try_from(index).ok());
     let conversion = image_conversion(i, image_property(i, &plist, ":conversion"));
+    let transform_smoothing = image_transform_smoothing(i, &plist);
     let masked = !image_property(i, &plist, ":mask").is_nil();
     let map = image_map_areas(i, &image_property(i, &plist, ":map"));
     let file = image_property(i, &plist, ":file");
@@ -7547,6 +7559,7 @@ fn image_display_replacement(
             source,
             index,
             conversion,
+            transform_smoothing,
             width,
             height,
             masked,
@@ -7639,6 +7652,7 @@ fn image_display_replacement(
         source,
         index,
         conversion,
+        transform_smoothing,
         width,
         height,
         masked,
@@ -10711,6 +10725,7 @@ fn render_grid_internal(
                         source: image.source.clone(),
                         index: image.index,
                         conversion: image.conversion,
+                        transform_smoothing: image.transform_smoothing,
                         width: image.width,
                         height: image.height,
                         intrinsic_width: image.intrinsic_width,
@@ -11188,6 +11203,7 @@ fn render_grid_internal(
                     source: image.source.clone(),
                     index: image.index,
                     conversion: image.conversion,
+                    transform_smoothing: image.transform_smoothing,
                     width: image.width,
                     height: image.height,
                     intrinsic_width: image.intrinsic_width,

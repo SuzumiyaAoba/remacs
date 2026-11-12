@@ -639,7 +639,7 @@ impl From<MonochromeSprite> for Primitive {
 pub(crate) struct PolychromeSprite {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
-    pub grayscale: bool,
+    pub flags: u32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,

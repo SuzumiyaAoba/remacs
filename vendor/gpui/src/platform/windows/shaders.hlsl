@@ -1128,7 +1128,7 @@ float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Targe
 struct PolychromeSprite {
     uint order;
     uint pad;
-    uint grayscale;
+    uint flags;
     float opacity;
     Bounds bounds;
     Bounds content_mask;
@@ -1170,10 +1170,21 @@ PolychromeSpriteVertexOutput polychrome_sprite_vertex(uint vertex_id: SV_VertexI
 float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Target {
     PolychromeSprite sprite = poly_sprites[input.sprite_id];
     float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
+    if ((sprite.flags & 0x100u) != 0u) {
+        uint atlas_width;
+        uint atlas_height;
+        t_sprite.GetDimensions(atlas_width, atlas_height);
+        float2 atlas_size = float2(atlas_width, atlas_height);
+        int2 min_coord = sprite.tile.bounds.origin;
+        int2 max_coord = min_coord + sprite.tile.bounds.size - 1;
+        int2 texel = clamp(
+            int2(floor(input.tile_position * atlas_size)), min_coord, max_coord);
+        sample = t_sprite.Load(int3(texel, 0));
+    }
     float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
     float4 color = sample;
-    if ((sprite.grayscale & 0xFFu) != 0u) {
+    if ((sprite.flags & 0xFFu) != 0u) {
         float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = float4(grayscale, sample.a);
     }
