@@ -985,6 +985,7 @@ pub(super) struct EditorView {
     scroll_bar_drag: Option<ScrollBarDrag>,
     follow_tooltip_drag: bool,
     mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
+    mouse_position_poll_started: bool,
     consumed_mouse_buttons: HashSet<MouseButton>,
     pressed_button: Option<PressedButton>,
     button_activation_subscription: Option<Subscription>,
@@ -1083,6 +1084,7 @@ impl EditorView {
             scroll_bar_drag: None,
             follow_tooltip_drag: false,
             mouse_down_position: None,
+            mouse_position_poll_started: false,
             consumed_mouse_buttons: HashSet::new(),
             pressed_button: None,
             button_activation_subscription: None,
@@ -1386,6 +1388,68 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.mouse_position_poll_started {
+            self.mouse_position_poll_started = true;
+            cx.spawn_in(window, async move |this, cx| {
+                let mut previous = None;
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(50))
+                        .await;
+                    let result = cx.update_root(|_, window, app| {
+                        let mouse = window.mouse_position();
+                        let viewport = window.viewport_size();
+                        let bounds = window.bounds();
+                        this.update(app, |view, _cx| {
+                            let point = frame_content_point(
+                                mouse,
+                                viewport,
+                                px(view.internal_border_width as f32),
+                            );
+                            let position = point.and_then(|point| {
+                                input::mouse_position_for_text_point_with_cell_width(
+                                    &view.grid,
+                                    point,
+                                    view.cell_width,
+                                    window,
+                                )
+                            });
+                            let text_window_id = point.and_then(|point| {
+                                input::text_window_at_point(&view.grid, point, view.cell_width)
+                            });
+                            let screen_origin = view
+                                .geometry
+                                .as_ref()
+                                .map(|geometry| (geometry.frame_left, geometry.frame_top))
+                                .unwrap_or((0, 0));
+                            let content_top_offset = (f32::from(bounds.size.height)
+                                - f32::from(viewport.height))
+                            .round() as i128;
+                            let absolute_position = absolute_mouse_pixel_position(
+                                mouse,
+                                screen_origin.0,
+                                screen_origin.1,
+                                content_top_offset,
+                            );
+                            let current = (position, absolute_position, text_window_id);
+                            if previous.is_some_and(|previous| previous != current) {
+                                let _ = view.tx.send_mouse_move_for_window(
+                                    position,
+                                    Some(absolute_position),
+                                    text_window_id,
+                                    0,
+                                );
+                            }
+                            previous = Some(current);
+                        })
+                    });
+                    if !matches!(result, Ok(Ok(()))) {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
         if self.button_activation_subscription.is_none() {
             self.button_activation_subscription =
                 Some(cx.observe_window_activation(window, |view, window, _cx| {
