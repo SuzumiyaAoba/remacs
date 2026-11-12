@@ -146,6 +146,93 @@ pub struct GridImage {
     pub intrinsic_height: Option<usize>,
     /// Image-map hotspots, in the displayed image's pixel coordinates.
     pub map: Vec<GridImageMapArea>,
+    /// Optional source rectangle selected by a `display` slice specification.
+    pub slice: Option<GridImageSlice>,
+}
+
+/// One coordinate in GNU's `(slice X Y WIDTH HEIGHT)` image specification.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GridImageSlicePart {
+    Pixels(usize),
+    /// IEEE-754 bits for a fraction of the corresponding image dimension.
+    Fraction(u64),
+}
+
+impl GridImageSlicePart {
+    fn resolve(self, extent: Option<usize>) -> Option<usize> {
+        match self {
+            Self::Pixels(pixels) => Some(pixels),
+            Self::Fraction(bits) => {
+                let extent = extent?;
+                let fraction = f64::from_bits(bits);
+                (fraction.is_finite() && (0.0..=1.0).contains(&fraction))
+                    .then(|| (extent as f64 * fraction).round() as usize)
+            }
+        }
+    }
+}
+
+/// Source rectangle selected by a `display` slice specification.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridImageSlice {
+    pub x: GridImageSlicePart,
+    pub y: GridImageSlicePart,
+    pub width: GridImageSlicePart,
+    pub height: GridImageSlicePart,
+}
+
+/// Pixel coordinates resolved against an image's displayed dimensions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridImageSlicePixels {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl GridImageSlice {
+    pub fn resolve(
+        self,
+        image_width: Option<usize>,
+        image_height: Option<usize>,
+    ) -> Option<GridImageSlicePixels> {
+        let pixels = GridImageSlicePixels {
+            x: self.x.resolve(image_width)?,
+            y: self.y.resolve(image_height)?,
+            width: self.width.resolve(image_width)?,
+            height: self.height.resolve(image_height)?,
+        };
+        (pixels.width > 0 && pixels.height > 0).then_some(pixels)
+    }
+}
+
+impl GridImage {
+    /// Full displayed size before applying an optional source slice.
+    pub fn display_dimensions(&self) -> (Option<usize>, Option<usize>) {
+        image_display_dimensions(
+            self.width,
+            self.height,
+            self.intrinsic_width,
+            self.intrinsic_height,
+        )
+    }
+
+    /// Visible size after applying an optional source slice.
+    pub fn visible_dimensions(&self) -> (Option<usize>, Option<usize>) {
+        image_visible_dimensions(
+            self.width,
+            self.height,
+            self.intrinsic_width,
+            self.intrinsic_height,
+            self.slice,
+        )
+    }
+
+    /// Resolve the source rectangle against the full displayed image size.
+    pub fn resolved_slice(&self) -> Option<GridImageSlicePixels> {
+        let dimensions = self.display_dimensions();
+        self.slice?.resolve(dimensions.0, dimensions.1)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -4088,11 +4175,38 @@ struct RenderedImage {
     intrinsic_width: Option<usize>,
     intrinsic_height: Option<usize>,
     map: Vec<GridImageMapArea>,
+    slice: Option<GridImageSlice>,
 }
 
 impl RenderedImage {
+    fn visible_dimensions(&self) -> (Option<usize>, Option<usize>) {
+        image_visible_dimensions(
+            self.width,
+            self.height,
+            self.intrinsic_width,
+            self.intrinsic_height,
+            self.slice,
+        )
+    }
+
+    fn resolved_slice(&self) -> Option<GridImageSlicePixels> {
+        self.slice?.resolve(
+            self.display_dimensions().0,
+            self.display_dimensions().1,
+        )
+    }
+
+    fn display_dimensions(&self) -> (Option<usize>, Option<usize>) {
+        image_display_dimensions(
+            self.width,
+            self.height,
+            self.intrinsic_width,
+            self.intrinsic_height,
+        )
+    }
+
     fn cursor_dimensions(&self) -> (Option<f64>, Option<f64>) {
-        match (
+        let dimensions = match (
             self.width,
             self.height,
             self.intrinsic_width,
@@ -4115,7 +4229,10 @@ impl RenderedImage {
                     .map(|height| height as f64)
                     .or_else(|| intrinsic_height.map(|height| height as f64)),
             ),
-        }
+        };
+        self.resolved_slice().map_or(dimensions, |slice| {
+            (Some(slice.width as f64), Some(slice.height as f64))
+        })
     }
 }
 
@@ -4124,6 +4241,44 @@ fn scale_image_dimension(value: usize, scale: usize, basis: usize) -> Option<f64
         return None;
     }
     Some(value as f64 * scale as f64 / basis as f64)
+}
+
+fn image_display_dimensions(
+    width: Option<usize>,
+    height: Option<usize>,
+    intrinsic_width: Option<usize>,
+    intrinsic_height: Option<usize>,
+) -> (Option<usize>, Option<usize>) {
+    match (width, height, intrinsic_width, intrinsic_height) {
+        (Some(width), Some(height), _, _) => (Some(width), Some(height)),
+        (Some(width), None, Some(intrinsic_width), Some(intrinsic_height)) => (
+            Some(width),
+            scale_image_dimension(intrinsic_height, width, intrinsic_width)
+                .map(|height| height.round() as usize),
+        ),
+        (None, Some(height), Some(intrinsic_width), Some(intrinsic_height)) => (
+            scale_image_dimension(intrinsic_width, height, intrinsic_height)
+                .map(|width| width.round() as usize),
+            Some(height),
+        ),
+        (width, height, intrinsic_width, intrinsic_height) => (
+            width.or(intrinsic_width),
+            height.or(intrinsic_height),
+        ),
+    }
+}
+
+fn image_visible_dimensions(
+    width: Option<usize>,
+    height: Option<usize>,
+    intrinsic_width: Option<usize>,
+    intrinsic_height: Option<usize>,
+    slice: Option<GridImageSlice>,
+) -> (Option<usize>, Option<usize>) {
+    let dimensions = image_display_dimensions(width, height, intrinsic_width, intrinsic_height);
+    slice
+        .and_then(|slice| slice.resolve(dimensions.0, dimensions.1))
+        .map_or(dimensions, |slice| (Some(slice.width), Some(slice.height)))
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -4160,6 +4315,7 @@ enum DisplayReplacement {
         intrinsic_width: Option<usize>,
         intrinsic_height: Option<usize>,
         map: Vec<GridImageMapArea>,
+        slice: Option<GridImageSlice>,
     },
     /// Another character in a run already replaced by its first character.
     Hidden,
@@ -4374,11 +4530,20 @@ impl DisplayReplacement {
             DisplayReplacement::Space(columns) => column.saturating_add(*columns),
             DisplayReplacement::Image {
                 width,
+                height,
                 intrinsic_width,
+                intrinsic_height,
+                slice,
                 ..
             } => column.saturating_add(
-                width
-                    .or(*intrinsic_width)
+                image_visible_dimensions(
+                    *width,
+                    *height,
+                    *intrinsic_width,
+                    *intrinsic_height,
+                    *slice,
+                )
+                    .0
                     .map(|pixels| pixels.div_ceil(cell_width.max(1)))
                     .unwrap_or(1)
                     .max(1),
@@ -5345,11 +5510,18 @@ where
                 intrinsic_width,
                 intrinsic_height,
                 map,
+                slice,
             }) => {
                 let image_column = column;
                 // Reserve full grid cells for the image before placing later text.
-                let image_columns = image_width
-                    .or(intrinsic_width)
+                let image_columns = image_visible_dimensions(
+                    image_width,
+                    image_height,
+                    intrinsic_width,
+                    intrinsic_height,
+                    slice,
+                )
+                    .0
                     .map(|pixels| pixels.div_ceil(cell_width.max(1)))
                     .unwrap_or(1)
                     .max(1);
@@ -5368,6 +5540,7 @@ where
                         intrinsic_width,
                         intrinsic_height,
                         map,
+                        slice,
                     });
                 }
                 let mut keep_rendering = true;
@@ -7607,6 +7780,8 @@ fn image_display_replacement(
     value: &Value,
     buffer_id: usize,
     default_font_height: u16,
+    object_source: Option<MouseObjectSource>,
+    slice: Option<GridImageSlice>,
 ) -> Option<DisplayReplacement> {
     let Value::Cons(cell) = value else {
         return None;
@@ -7670,7 +7845,7 @@ fn image_display_replacement(
         };
         return Some(DisplayReplacement::Image {
             source,
-            object_source: None,
+            object_source,
             index,
             conversion,
             transform_smoothing,
@@ -7680,6 +7855,7 @@ fn image_display_replacement(
             intrinsic_width: None,
             intrinsic_height: None,
             map,
+            slice,
         });
     }
 
@@ -7764,7 +7940,7 @@ fn image_display_replacement(
     };
     Some(DisplayReplacement::Image {
         source,
-        object_source: None,
+        object_source,
         index,
         conversion,
         transform_smoothing,
@@ -7774,6 +7950,7 @@ fn image_display_replacement(
         intrinsic_width,
         intrinsic_height,
         map,
+        slice,
     })
 }
 
@@ -7802,6 +7979,43 @@ fn display_space_spec_width(i: &Interp, plist: &Value) -> usize {
         .clamp(0.0, 1_000_000.0) as usize
 }
 
+fn image_slice_part(value: &Value) -> Option<GridImageSlicePart> {
+    match value {
+        Value::Int(pixels) => usize::try_from(*pixels).ok().map(GridImageSlicePart::Pixels),
+        Value::BigInt(pixels) => pixels.to_usize().map(GridImageSlicePart::Pixels),
+        Value::Float(fraction) if fraction.is_finite() && (0.0..=1.0).contains(&**fraction) => {
+            Some(GridImageSlicePart::Fraction(fraction.to_bits()))
+        }
+        _ => None,
+    }
+}
+
+fn image_slice_spec(i: &Interp, value: &Value) -> Option<(GridImageSlice, Value)> {
+    let mut elements = value.list_to_vec().ok()?.into_iter();
+    let slice_spec = elements.next()?;
+    let image_desc = elements.next()?;
+    if elements.next().is_some() {
+        return None;
+    }
+    let mut parts = slice_spec.list_to_vec().ok()?.into_iter();
+    let Value::Sym(name) = parts.next()? else {
+        return None;
+    };
+    if i.symbol_name(name) != "slice" {
+        return None;
+    }
+    let slice = GridImageSlice {
+        x: image_slice_part(&parts.next()?)?,
+        y: image_slice_part(&parts.next()?)?,
+        width: image_slice_part(&parts.next()?)?,
+        height: image_slice_part(&parts.next()?)?,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((slice, image_desc))
+}
+
 fn display_value_replacement(
     i: &Interp,
     faces: &mut FaceCtx,
@@ -7811,6 +8025,16 @@ fn display_value_replacement(
     mouse_face_active: bool,
     object_source: Option<MouseObjectSource>,
 ) -> Option<DisplayReplacement> {
+    if let Some((slice, image_desc)) = image_slice_spec(i, value) {
+        return image_display_replacement(
+            i,
+            &image_desc,
+            buffer_id,
+            default_font_height,
+            object_source,
+            Some(slice),
+        );
+    }
     if let Value::Cons(spec) = value {
         let (head, tail) = {
             let spec = spec.borrow();
@@ -7869,8 +8093,14 @@ fn display_value_replacement(
             }
         }
         _ => {
-            let mut replacement =
-                image_display_replacement(i, value, buffer_id, default_font_height)?;
+            let mut replacement = image_display_replacement(
+                i,
+                value,
+                buffer_id,
+                default_font_height,
+                object_source,
+                None,
+            )?;
             if let DisplayReplacement::Image {
                 object_source: image_source,
                 ..
@@ -10673,7 +10903,7 @@ fn render_grid_internal(
                 }
                 if let Some(row_height) = row_heights.get_mut(y) {
                     for image in &rendered.images {
-                        if let Some(image_height) = image.height.or(image.intrinsic_height) {
+                        if let Some(image_height) = image.visible_dimensions().1 {
                             *row_height = (*row_height).max(image_height);
                         }
                     }
@@ -10867,6 +11097,7 @@ fn render_grid_internal(
                         intrinsic_width: image.intrinsic_width,
                         intrinsic_height: image.intrinsic_height,
                         map: image.map.clone(),
+                        slice: image.slice,
                     })
                 }));
                 // Empty tail of the row: the line-end face extends its
@@ -11348,6 +11579,7 @@ fn render_grid_internal(
                     intrinsic_width: image.intrinsic_width,
                     intrinsic_height: image.intrinsic_height,
                     map: image.map.clone(),
+                    slice: image.slice,
                 }
             }));
             if let (Some(snapshot), Some(buffer)) = (input.as_mut(), mini_buf.as_ref()) {

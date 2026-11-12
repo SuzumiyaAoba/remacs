@@ -632,7 +632,7 @@ pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
     GridCursorShape, GridFringeBitmap, GridFringeBitmapAlign, GridHelpEcho, GridImage,
     GridImageConversion, GridImageMapArea, GridImageMapShape, GridImageSizeLimit,
-    GridImageSource, GridInput,
+    GridImageSlice, GridImageSlicePart, GridImageSlicePixels, GridImageSource, GridInput,
     GridInputPosition,
     GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,

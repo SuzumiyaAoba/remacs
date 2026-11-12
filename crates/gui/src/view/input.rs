@@ -159,12 +159,10 @@ fn image_map_area_at_point(
         if image.map.is_empty() {
             continue;
         }
-        let (Some(width), Some(height)) = (
-            image.width.or(image.intrinsic_width),
-            image.height.or(image.intrinsic_height),
-        ) else {
+        let (Some(width), Some(height)) = image.visible_dimensions() else {
             continue;
         };
+        let slice = image.resolved_slice();
         let left = f32::from(cell_width) * image.column as f32;
         let top = f32::from(grid_row_top(grid, image.row, px(LINE_HEIGHT)))
             - super::vscroll_pixels_for_cell(grid, image.row, image.column) as f32;
@@ -177,8 +175,8 @@ fn image_map_area_at_point(
         {
             continue;
         }
-        let x = local_x.floor() as i128;
-        let y = local_y.floor() as i128;
+        let x = local_x.floor() as i128 + slice.map_or(0, |slice| slice.x as i128);
+        let y = local_y.floor() as i128 + slice.map_or(0, |slice| slice.y as i128);
         if let Some(area) = image.map.iter().find(|area| area.contains(x, y)) {
             return Some(area.id);
         }
@@ -196,13 +194,13 @@ fn image_object_at_point(
             continue;
         };
         let width = image
-            .width
-            .or(image.intrinsic_width)
+            .visible_dimensions()
+            .0
             .map(|width| width as f32)
             .unwrap_or_else(|| f32::from(cell_width));
         let height = image
-            .height
-            .or(image.intrinsic_height)
+            .visible_dimensions()
+            .1
             .map(|height| height as f32)
             .unwrap_or_else(|| {
                 f32::from(grid_row_height(grid, image.row, px(LINE_HEIGHT))).max(1.0)

@@ -3571,6 +3571,7 @@ fn grid_image_element(
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
     image_cache_size: Arc<AtomicUsize>,
 ) -> AnyElement {
+    let slice = image.resolved_slice();
     let cache_key = image.source.clone();
     let frame_index = image.index;
     let conversion = image.conversion;
@@ -3658,6 +3659,7 @@ fn grid_image_element(
         (None, Some(height)) => source.h(px(height as f32)),
         (None, None) => source,
     };
+    let source = grid_image_slice_element(source.into_any_element(), slice);
     let image_left = border + cell_width * image.column as f32;
     let image_column = image.column;
     let image_top =
@@ -3719,6 +3721,28 @@ fn grid_image_element(
         }
         image_element.into_any_element()
     }
+}
+
+fn grid_image_slice_element(
+    source: AnyElement,
+    slice: Option<remacs_runtime::frontend::GridImageSlicePixels>,
+) -> AnyElement {
+    let Some(slice) = slice else {
+        return source;
+    };
+    div()
+        .relative()
+        .w(px(slice.width as f32))
+        .h(px(slice.height as f32))
+        .overflow_hidden()
+        .child(
+            div()
+                .absolute()
+                .left(px(-(slice.x as f32)))
+                .top(px(-(slice.y as f32)))
+                .child(source),
+        )
+        .into_any_element()
 }
 
 fn grid_cursor_blink_visible(grid: &Grid) -> bool {
