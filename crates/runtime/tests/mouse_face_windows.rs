@@ -47,6 +47,7 @@ fn shared_buffer_mouse_faces_follow_the_hovered_window() {
             window_id: mapped.window_id,
             area: None,
             mode_line_buffer_name: false,
+            object: None,
         };
         let hovered = render_grid_with_mouse_position_cached(
             &interp,

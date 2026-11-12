@@ -2217,6 +2217,9 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
     };
     let window = window?;
     let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
+    let object = position
+        .object
+        .and_then(|object| mouse_object_value(i, position.buffer_id, object));
     if let Some(area) = position.area {
         let buffer_id = window.borrow().buffer;
         let area_symbol = match area {
@@ -2239,7 +2242,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                 _ => None,
             })
             .unwrap_or(Value::Nil);
-        Some(Value::list(vec![
+        let mut fields = vec![
             Value::Window(window),
             area_symbol,
             coordinates,
@@ -2254,6 +2257,30 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                 Value::Int(position.column as i128),
                 Value::Int(position.row as i128),
             ),
+        ];
+        if matches!(position.object, Some(super::MouseObject::Image { .. })) {
+            fields.push(object.unwrap_or(Value::Nil));
+        }
+        Some(Value::list(fields))
+    } else if let Some(super::MouseObject::String { .. }) = position.object {
+        let object = object?;
+        Some(Value::list(vec![
+            Value::Window(window),
+            Value::Int(position.buffer_position.saturating_add(1) as i128),
+            coordinates,
+            Value::Int(0),
+            object,
+        ]))
+    } else if matches!(position.object, Some(super::MouseObject::Image { .. })) {
+        Some(Value::list(vec![
+            Value::Window(window),
+            Value::Int(position.buffer_position.saturating_add(1) as i128),
+            coordinates,
+            Value::Int(0),
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+            object.unwrap_or(Value::Nil),
         ]))
     } else {
         Some(Value::list(vec![
@@ -2262,6 +2289,53 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             coordinates,
             Value::Int(0),
         ]))
+    }
+}
+
+fn mouse_object_value(i: &Interp, buffer_id: usize, object: super::MouseObject) -> Option<Value> {
+    fn source_value(
+        i: &Interp,
+        buffer_id: usize,
+        source: super::MouseObjectSource,
+    ) -> Option<Value> {
+        let buffer = i.buffers.get(buffer_id)?;
+        match source {
+            super::MouseObjectSource::TextProperty { position, property } => buffer
+                .borrow()
+                .text
+                .props
+                .borrow()
+                .iter()
+                .rev()
+                .find(|text_property| {
+                    text_property.prop == property
+                        && position >= text_property.start
+                        && position < text_property.end
+                })
+                .map(|text_property| text_property.value.clone()),
+            super::MouseObjectSource::OverlayProperty { index, property } => {
+                let overlay = buffer.borrow().overlays.get(index)?.clone();
+                (overlay.buffer == Some(buffer_id))
+                    .then(|| overlay.property(i, &Value::Sym(property)))
+            }
+        }
+    }
+
+    match object {
+        super::MouseObject::String { source, position } => {
+            match source_value(i, buffer_id, source)? {
+                value @ Value::Str(_) => Some(Value::cons(value, Value::Int(position as i128))),
+                _ => None,
+            }
+        }
+        super::MouseObject::Image { source } => {
+            let value = source_value(i, buffer_id, source)?;
+            let Value::Cons(cell) = &value else {
+                return None;
+            };
+            let head = cell.borrow().car.clone();
+            matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "image").then_some(value)
+        }
     }
 }
 
@@ -3218,6 +3292,98 @@ mod image_map_mouse_tests {
         }
     }
 
+    fn interp_with_mouse_object_buffer() -> (Interp, usize, usize) {
+        let mut interp = Interp::new();
+        let buffer_id = interp.create_buffer("*mouse-object-test*");
+        let minibuffer_id = interp.create_buffer(" *Minibuf-0*");
+        let frame = crate::editor::Frame::new_tty(buffer_id, minibuffer_id, 80, 25);
+        let window_id = frame.borrow().selected.borrow().id;
+        interp.selected_frame = Some(frame.clone());
+        interp.frames.push(frame);
+        interp.set_current_buffer(buffer_id);
+        (interp, buffer_id, window_id)
+    }
+
+    fn mouse_position_with_object(
+        buffer_id: usize,
+        window_id: usize,
+        object: super::super::MouseObject,
+    ) -> MousePosition {
+        MousePosition {
+            buffer_id,
+            buffer_position: 0,
+            utf16_offset: 0,
+            x: 0,
+            y: 0,
+            row: 0,
+            column: 0,
+            window_id: Some(window_id),
+            area: None,
+            object: Some(object),
+            mode_line_buffer_name: false,
+        }
+    }
+
+    #[test]
+    fn position_value_retains_display_string_and_character_index() {
+        let (mut interp, buffer_id, window_id) = interp_with_mouse_object_buffer();
+        interp
+            .eval_str("(insert \"X\") (put-text-property 1 2 'display \"AB\")")
+            .unwrap();
+        let display = interp.q("display");
+        let expected = interp.eval_str("(get-text-property 1 'display)").unwrap();
+        let position = mouse_position_with_object(
+            buffer_id,
+            window_id,
+            super::super::MouseObject::String {
+                source: super::super::MouseObjectSource::TextProperty {
+                    position: 0,
+                    property: display,
+                },
+                position: 1,
+            },
+        );
+
+        let position = mouse_position_value(&mut interp, position).unwrap();
+        let fields = position.list_to_vec().unwrap();
+        let Value::Cons(object) = &fields[4] else {
+            panic!("string object pair")
+        };
+        let object = object.borrow();
+        assert!(crate::lisp::builtins::eq_values(&object.car, &expected));
+        assert!(matches!(object.cdr, Value::Int(1)));
+    }
+
+    #[test]
+    fn position_value_places_image_descriptor_in_image_slot() {
+        let (mut interp, buffer_id, window_id) = interp_with_mouse_object_buffer();
+        interp
+            .eval_str(
+                "(insert \"X\")\
+                 (put-text-property 1 2 'display\
+                   (create-image\
+                     \"<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'/>\"\
+                     'svg t))",
+            )
+            .unwrap();
+        let display = interp.q("display");
+        let expected = interp.eval_str("(get-text-property 1 'display)").unwrap();
+        let position = mouse_position_with_object(
+            buffer_id,
+            window_id,
+            super::super::MouseObject::Image {
+                source: super::super::MouseObjectSource::TextProperty {
+                    position: 0,
+                    property: display,
+                },
+            },
+        );
+
+        let position = mouse_position_value(&mut interp, position).unwrap();
+        let fields = position.list_to_vec().unwrap();
+        assert!(crate::lisp::builtins::eq_values(&fields[7], &expected));
+    }
+
     #[test]
     fn image_map_click_dispatches_the_hotspot_prefix_and_position() {
         std::thread::Builder::new()
@@ -3259,6 +3425,7 @@ mod image_map_mouse_tests {
             window_id: Some(window_id),
             area: Some(super::super::MouseArea::ImageMap(area1)),
             mode_line_buffer_name: false,
+            object: None,
         };
         let mouse = MouseInput {
             button: MouseButton::Left,

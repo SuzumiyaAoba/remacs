@@ -96,6 +96,7 @@ fn middle_click_during_isearch_dispatches_the_mouse2_binding() {
         window_id: Some(window_id),
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let mouse = MouseInput {
         button: MouseButton::Middle,

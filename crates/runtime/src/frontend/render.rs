@@ -1,5 +1,5 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
-use super::MousePosition;
+use super::{MouseObject, MouseObjectSource, MousePosition};
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
@@ -127,6 +127,8 @@ pub struct GridStipple {
 pub struct GridImage {
     pub row: usize,
     pub column: usize,
+    /// Source Lisp property for `posn-image` hit testing.
+    pub object_source: Option<MouseObjectSource>,
     pub source: GridImageSource,
     /// Selected zero-based frame for multi-frame images.
     pub index: Option<usize>,
@@ -801,6 +803,14 @@ pub struct GridInputPosition {
     pub utf16_offset: usize,
     pub column: usize,
     pub window_id: Option<usize>,
+    pub object: Option<MouseObject>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GridInputObjectHit {
+    left: usize,
+    right: usize,
+    object: MouseObject,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -815,6 +825,7 @@ struct GridInputHitTestRow {
     left: usize,
     right: usize,
     screen_left: usize,
+    object_hits: Vec<GridInputObjectHit>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -894,6 +905,12 @@ impl GridInput {
             utf16_offset,
             column: character,
             window_id: row.window_id,
+            object: row
+                .object_hits
+                .iter()
+                .rev()
+                .find(|hit| column >= hit.left && column < hit.right)
+                .map(|hit| hit.object),
         })
     }
 
@@ -909,6 +926,7 @@ impl GridInput {
         left: usize,
         right: usize,
         screen_left: usize,
+        mut object_hits: Vec<GridInputObjectHit>,
     ) {
         let char_offsets = if buffer_id == self.buffer_id {
             self.char_offsets.clone()
@@ -938,6 +956,11 @@ impl GridInput {
                 offsets
             }
         };
+        for hit in &mut object_hits {
+            hit.left = hit.left.saturating_add(screen_left);
+            hit.right = hit.right.saturating_add(screen_left);
+        }
+        object_hits.retain(|hit| hit.left < right && hit.right > left);
         self.hit_test_rows.push(GridInputHitTestRow {
             row,
             buffer_id,
@@ -949,6 +972,7 @@ impl GridInput {
             left,
             right,
             screen_left,
+            object_hits,
         });
     }
 }
@@ -4038,6 +4062,7 @@ struct RenderedRow {
     visible_columns: usize,
     padding_char_start: usize,
     images: Vec<RenderedImage>,
+    object_hits: Vec<GridInputObjectHit>,
     compositions: Vec<RenderedComposition>,
     fringes: Vec<RenderedFringe>,
 }
@@ -4052,6 +4077,7 @@ struct RenderedFringe {
 #[derive(Clone, PartialEq, Eq)]
 struct RenderedImage {
     column: usize,
+    object_source: Option<MouseObjectSource>,
     source: GridImageSource,
     index: Option<usize>,
     conversion: Option<GridImageConversion>,
@@ -4124,6 +4150,7 @@ enum DisplayReplacement {
     CompositionDefault(usize),
     Image {
         source: GridImageSource,
+        object_source: Option<MouseObjectSource>,
         index: Option<usize>,
         conversion: Option<GridImageConversion>,
         transform_smoothing: Option<bool>,
@@ -4144,6 +4171,7 @@ struct DisplayText {
     face_styles: Vec<StyleMix>,
     mouse_face_styles: Vec<StyleMix>,
     mouse_face_active: Vec<bool>,
+    mouse_sources: Vec<Option<MouseObjectSource>>,
 }
 
 impl DisplayText {
@@ -4154,6 +4182,7 @@ impl DisplayText {
             face_styles: vec![StyleMix::default(); char_count],
             mouse_face_styles: vec![StyleMix::default(); char_count],
             mouse_face_active: vec![false; char_count],
+            mouse_sources: vec![None; char_count],
         }
     }
 
@@ -4164,12 +4193,14 @@ impl DisplayText {
             face_styles: Vec::with_capacity(char_count),
             mouse_face_styles: Vec::with_capacity(char_count),
             mouse_face_active: Vec::with_capacity(char_count),
+            mouse_sources: Vec::with_capacity(char_count),
         };
         for part in parts {
             combined.text.push_str(&part.text);
             combined.face_styles.extend(part.face_styles);
             combined.mouse_face_styles.extend(part.mouse_face_styles);
             combined.mouse_face_active.extend(part.mouse_face_active);
+            combined.mouse_sources.extend(part.mouse_sources);
         }
         combined
     }
@@ -4204,6 +4235,7 @@ impl DisplayText {
         let mut face_styles = Vec::new();
         let mut mouse_face_styles = Vec::new();
         let mut mouse_face_active = Vec::new();
+        let mut mouse_sources = Vec::new();
         let mut column = start_column;
         let mut first_row = true;
         let mut leading_break = false;
@@ -4232,6 +4264,7 @@ impl DisplayText {
                             face_styles: std::mem::take(&mut face_styles),
                             mouse_face_styles: std::mem::take(&mut mouse_face_styles),
                             mouse_face_active: std::mem::take(&mut mouse_face_active),
+                            mouse_sources: std::mem::take(&mut mouse_sources),
                         },
                         column,
                     ));
@@ -4243,6 +4276,7 @@ impl DisplayText {
             face_styles.push(self.face_styles[index]);
             mouse_face_styles.push(self.mouse_face_styles[index]);
             mouse_face_active.push(self.mouse_face_active[index]);
+            mouse_sources.push(self.mouse_sources[index]);
             column = column.saturating_add(columns);
             first_row = false;
         }
@@ -4252,6 +4286,7 @@ impl DisplayText {
                 face_styles,
                 mouse_face_styles,
                 mouse_face_active,
+                mouse_sources,
             },
             column,
         ));
@@ -4268,6 +4303,7 @@ impl DisplayText {
         let mut face_styles = Vec::new();
         let mut mouse_face_styles = Vec::new();
         let mut mouse_face_active = Vec::new();
+        let mut mouse_sources = Vec::new();
         for (index, character) in self.text.chars().enumerate() {
             if character == '\n' {
                 parts.push(DisplayText {
@@ -4275,12 +4311,14 @@ impl DisplayText {
                     face_styles: std::mem::take(&mut face_styles),
                     mouse_face_styles: std::mem::take(&mut mouse_face_styles),
                     mouse_face_active: std::mem::take(&mut mouse_face_active),
+                    mouse_sources: std::mem::take(&mut mouse_sources),
                 });
             } else {
                 text.push(character);
                 face_styles.push(self.face_styles[index]);
                 mouse_face_styles.push(self.mouse_face_styles[index]);
                 mouse_face_active.push(self.mouse_face_active[index]);
+                mouse_sources.push(self.mouse_sources[index]);
             }
         }
         parts.push(DisplayText {
@@ -4288,6 +4326,7 @@ impl DisplayText {
             face_styles,
             mouse_face_styles,
             mouse_face_active,
+            mouse_sources,
         });
         parts
     }
@@ -5001,6 +5040,7 @@ fn append_rendered_styled_text(
     cell_attrs: &mut [CellStyle],
     char_attrs: &mut Vec<CellStyle>,
     cell_offsets: &mut [usize],
+    object_hits: &mut Vec<GridInputObjectHit>,
 ) -> bool {
     for (index, raw_display) in text.text.chars().enumerate() {
         let mut style = text
@@ -5026,6 +5066,7 @@ fn append_rendered_styled_text(
             '\n' | '\r' => ' ',
             other => other,
         };
+        let column_before = *column;
         if !append_rendered_character(
             display,
             style,
@@ -5041,6 +5082,28 @@ fn append_rendered_styled_text(
             cell_offsets,
         ) {
             return false;
+        }
+        if let Some(source) = text.mouse_sources.get(index).copied().flatten() {
+            let start = column_before.max(hscroll);
+            let end = (*column).min(end_column);
+            let (left, right) = if start < end {
+                (start - hscroll, end - hscroll)
+            } else if column_before == *column && column_before > hscroll {
+                // A combining character occupies the preceding base cell.
+                (column_before - hscroll - 1, column_before - hscroll)
+            } else {
+                continue;
+            };
+            if left < width && right > left {
+                object_hits.push(GridInputObjectHit {
+                    left,
+                    right: right.min(width),
+                    object: MouseObject::String {
+                        source,
+                        position: index,
+                    },
+                });
+            }
         }
     }
     true
@@ -5081,6 +5144,7 @@ where
     let tab_width = tab_width.max(1);
     let mut hidden_run = false;
     let mut images = Vec::new();
+    let mut object_hits = Vec::new();
     let mut compositions = Vec::new();
     let mut fringes = Vec::new();
 
@@ -5100,6 +5164,7 @@ where
                 &mut cell_attrs,
                 &mut char_attrs,
                 &mut cell_offsets,
+                &mut object_hits,
             ) {
                 keep_rendering = false;
                 break;
@@ -5166,6 +5231,7 @@ where
                     &mut cell_attrs,
                     &mut char_attrs,
                     &mut cell_offsets,
+                    &mut object_hits,
                 )
             }
             Some(DisplayReplacement::Space(columns)) => {
@@ -5269,6 +5335,7 @@ where
             }
             Some(DisplayReplacement::Image {
                 source,
+                object_source,
                 index,
                 conversion,
                 transform_smoothing,
@@ -5290,6 +5357,7 @@ where
                 if visible {
                     images.push(RenderedImage {
                         column: image_column - hscroll,
+                        object_source,
                         source,
                         index,
                         conversion,
@@ -5374,6 +5442,7 @@ where
                 &mut cell_attrs,
                 &mut char_attrs,
                 &mut cell_offsets,
+                &mut object_hits,
             ) {
                 break;
             }
@@ -5405,6 +5474,7 @@ where
         visible_columns,
         padding_char_start,
         images,
+        object_hits,
         compositions,
         fringes,
     }
@@ -6520,18 +6590,27 @@ fn window_faces(
         .collect();
     let before_string = i.q_soft("before-string");
     let after_string = i.q_soft("after-string");
-    let mut overlay_strings: Vec<(crate::buffer::Overlay, OverlayStrings)> = bb
+    let mut overlay_strings: Vec<(usize, crate::buffer::Overlay, OverlayStrings)> = bb
         .overlays
         .iter()
-        .filter(|overlay| overlay.buffer == Some(bb.id) && overlay.matches_window(i, win))
-        .filter_map(|overlay| {
+        .enumerate()
+        .filter(|(_, overlay)| {
+            overlay.buffer == Some(bb.id) && overlay.matches_window(i, win)
+        })
+        .filter_map(|(overlay_index, overlay)| {
             let mouse_face_active = mouse_position.is_some_and(|position| {
                 position >= overlay.start && position < overlay.end
             });
             let mut string_value = |property: Option<crate::lisp::value::SymId>| {
                 property.and_then(|property| match overlay.property(i, &Value::Sym(property)) {
                     Value::Str(value) => {
-                        Some(display_text_from_string(i, ctx, &value, mouse_face_active).0)
+                        let mut text =
+                            display_text_from_string(i, ctx, &value, mouse_face_active).0;
+                        text.mouse_sources.fill(Some(MouseObjectSource::OverlayProperty {
+                            index: overlay_index,
+                            property,
+                        }));
+                        Some(text)
                     }
                     _ => None,
                 })
@@ -6543,18 +6622,18 @@ fn window_faces(
                 after: string_value(after_string),
             };
             (strings.before.is_some() || strings.after.is_some())
-                .then(|| (overlay.clone(), strings))
+                .then(|| (overlay_index, overlay.clone(), strings))
         })
         .collect();
     let mut overlay_order: Vec<_> = overlay_strings
         .iter()
         .enumerate()
-        .map(|(index, (overlay, _))| (overlay, index))
+        .map(|(index, (_, overlay, _))| (overlay, index))
         .collect();
     crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
     let overlay_strings: Vec<OverlayStrings> = overlay_order
         .into_iter()
-        .map(|(_, index)| overlay_strings[index].1.clone())
+        .map(|(_, index)| overlay_strings[index].2.clone())
         .collect();
     let mut ending_strings: HashMap<usize, Vec<DisplayText>> = HashMap::new();
     let mut starting_strings: HashMap<usize, Vec<(Option<DisplayText>, Option<DisplayText>)>> =
@@ -6645,6 +6724,10 @@ fn window_faces(
                         mouse_position.is_some_and(|position| {
                             position >= start && position < end
                         }),
+                        Some(MouseObjectSource::TextProperty {
+                            position: start,
+                            property: display,
+                        }),
                     ),
                     idx,
                 ));
@@ -6656,12 +6739,13 @@ fn window_faces(
         let overlay_display: Vec<_> = bb
             .overlays
             .iter()
-            .filter(|overlay| {
+            .enumerate()
+            .filter(|(_, overlay)| {
                 overlay.buffer == Some(bb.id)
                     && overlay.start < overlay.end
                     && overlay.matches_window(i, win)
             })
-            .filter_map(|overlay| {
+            .filter_map(|(overlay_index, overlay)| {
                 let value = overlay.property(i, &Value::Sym(display_property));
                 let mouse_face_active = mouse_position.is_some_and(|position| {
                     position >= overlay.start && position < overlay.end
@@ -6673,19 +6757,23 @@ fn window_faces(
                     bb.id,
                     default_font_height,
                     mouse_face_active,
+                    Some(MouseObjectSource::OverlayProperty {
+                        index: overlay_index,
+                        property: display_property,
+                    }),
                 )?;
-                Some((overlay.clone(), replacement))
+                Some((overlay.clone(), replacement, overlay_index))
             })
             .collect();
         let mut order: Vec<_> = overlay_display
             .iter()
             .enumerate()
-            .map(|(index, (overlay, _))| (overlay, index))
+            .map(|(index, (overlay, _, _))| (overlay, index))
             .collect();
         crate::buffer::sort_overlays_by_priority(i, &mut order);
         let property_count = properties.len();
         for (priority, (_, index)) in order.into_iter().enumerate() {
-            let (overlay, replacement) = &overlay_display[index];
+            let (overlay, replacement, _) = &overlay_display[index];
             display_props.push((
                 overlay.start,
                 overlay.end,
@@ -7582,6 +7670,7 @@ fn image_display_replacement(
         };
         return Some(DisplayReplacement::Image {
             source,
+            object_source: None,
             index,
             conversion,
             transform_smoothing,
@@ -7675,6 +7764,7 @@ fn image_display_replacement(
     };
     Some(DisplayReplacement::Image {
         source,
+        object_source: None,
         index,
         conversion,
         transform_smoothing,
@@ -7719,6 +7809,7 @@ fn display_value_replacement(
     buffer_id: usize,
     default_font_height: u16,
     mouse_face_active: bool,
+    object_source: Option<MouseObjectSource>,
 ) -> Option<DisplayReplacement> {
     if let Value::Cons(spec) = value {
         let (head, tail) = {
@@ -7765,15 +7856,30 @@ fn display_value_replacement(
     }
     match value {
         Value::Str(string) => {
-            let (display_text, has_styles) =
+            let (mut display_text, has_styles) =
                 display_text_from_string(i, faces, string, mouse_face_active);
+            if let Some(source) = object_source {
+                display_text.mouse_sources.fill(Some(source));
+                return Some(DisplayReplacement::StyledText(display_text));
+            }
             if has_styles {
                 Some(DisplayReplacement::StyledText(display_text))
             } else {
                 Some(DisplayReplacement::Text(display_text.text))
             }
         }
-        _ => image_display_replacement(i, value, buffer_id, default_font_height),
+        _ => {
+            let mut replacement =
+                image_display_replacement(i, value, buffer_id, default_font_height)?;
+            if let DisplayReplacement::Image {
+                object_source: image_source,
+                ..
+            } = &mut replacement
+            {
+                *image_source = object_source;
+            }
+            Some(replacement)
+        }
     }
 }
 
@@ -7834,6 +7940,7 @@ fn display_text_from_string(
             face_styles,
             mouse_face_styles,
             mouse_face_active,
+            mouse_sources: vec![None; char_count],
         },
         has_face || has_mouse_face,
     )
@@ -10196,6 +10303,7 @@ fn render_grid_internal(
                     buf_id,
                     default_style.font_height.unwrap_or(140),
                     false,
+                    None,
                 )
             } else {
                 None
@@ -10748,6 +10856,7 @@ fn render_grid_internal(
                     Some(GridImage {
                         row: y,
                         column,
+                        object_source: image.object_source,
                         source: image.source.clone(),
                         index: image.index,
                         conversion: image.conversion,
@@ -10918,6 +11027,7 @@ fn render_grid_internal(
                         content_left,
                         content_left.saturating_add(content_width),
                         content_left,
+                        rendered.object_hits.clone(),
                     );
                 }
                 if selected_window
@@ -11227,6 +11337,7 @@ fn render_grid_internal(
                 GridImage {
                     row: y,
                     column: image.column,
+                    object_source: image.object_source,
                     source: image.source.clone(),
                     index: image.index,
                     conversion: image.conversion,
@@ -11260,6 +11371,7 @@ fn render_grid_internal(
                     0,
                     width,
                     0,
+                    rendered.object_hits.clone(),
                 );
                 if snapshot.buffer_id == buffer_id {
                     snapshot.rows.push(GridInputRow {

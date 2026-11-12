@@ -171,6 +171,7 @@ fn split_window_hit_test_maps_to_the_nonselected_buffer_and_window_inner() {
         window_id: position.window_id,
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let mouse = MouseInput {
         button: MouseButton::Left,
@@ -274,6 +275,7 @@ fn same_buffer_hit_test_identifies_the_selected_split_window() {
         window_id: position.window_id,
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let frontend = DropFrontend {
         events: VecDeque::from([
@@ -374,6 +376,7 @@ fn split_window_drops_use_the_target_buffer_and_window() {
         window_id: Some(right_window.borrow().id),
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let frontend = DropFrontend {
         events: VecDeque::from([
@@ -389,6 +392,7 @@ fn split_window_drops_use_the_target_buffer_and_window() {
                     window_id: Some(right_window.borrow().id),
                     area: None,
                     mode_line_buffer_name: false,
+                    object: None,
                 }),
                 color: "ff0000".to_owned(),
                 background: false,

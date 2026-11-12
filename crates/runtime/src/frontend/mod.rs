@@ -435,6 +435,25 @@ pub enum MouseArea {
     ImageMap(SymId),
 }
 
+/// Identifies the Lisp value rendered as a mouse event object. These are
+/// stable references into the source buffer snapshot, rather than Lisp values,
+/// so a position can cross the GUI thread boundary safely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseObjectSource {
+    TextProperty { position: usize, property: SymId },
+    OverlayProperty { index: usize, property: SymId },
+}
+
+/// Lisp object and character position under a mouse event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseObject {
+    Image { source: MouseObjectSource },
+    String {
+        source: MouseObjectSource,
+        position: usize,
+    },
+}
+
 /// A text position mapped from the front-end's most recent grid snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MousePosition {
@@ -454,6 +473,8 @@ pub struct MousePosition {
     pub window_id: Option<usize>,
     /// Window area under the pointer; nil denotes buffer text.
     pub area: Option<MouseArea>,
+    /// Display image or string under the pointer, if any.
+    pub object: Option<MouseObject>,
     /// The pointer is over the mode-line buffer-identification field.
     pub mode_line_buffer_name: bool,
 }

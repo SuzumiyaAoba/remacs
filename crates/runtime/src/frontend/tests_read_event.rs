@@ -52,6 +52,7 @@ fn single_event_reader_returns_wheel_events_with_position() {
         window_id: Some(window_id),
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let pending = VecDeque::from([
         InputEvent::MouseWheel {

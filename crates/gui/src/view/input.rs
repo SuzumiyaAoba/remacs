@@ -10,7 +10,7 @@ use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
-use remacs_runtime::frontend::{CellStyle, Grid, GridInput, MouseArea, MousePosition};
+use remacs_runtime::frontend::{CellStyle, Grid, GridInput, MouseArea, MouseObject, MousePosition};
 
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
@@ -172,6 +172,39 @@ fn image_map_area_at_point(
     None
 }
 
+fn image_object_at_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+) -> Option<MouseObject> {
+    for image in grid.images.iter().rev() {
+        let Some(source) = image.object_source else {
+            continue;
+        };
+        let width = image
+            .width
+            .or(image.intrinsic_width)
+            .map(|width| width as f32)
+            .unwrap_or_else(|| f32::from(cell_width));
+        let height = image
+            .height
+            .or(image.intrinsic_height)
+            .map(|height| height as f32)
+            .unwrap_or_else(|| {
+                f32::from(grid_row_height(grid, image.row, px(LINE_HEIGHT))).max(1.0)
+            });
+        let left = f32::from(cell_width) * image.column as f32;
+        let top = f32::from(grid_row_top(grid, image.row, px(LINE_HEIGHT)))
+            - super::vscroll_pixels_for_cell(grid, image.row, image.column) as f32;
+        let local_x = f32::from(point.x) - left;
+        let local_y = f32::from(point.y) - top;
+        if local_x >= 0.0 && local_y >= 0.0 && local_x < width && local_y < height {
+            return Some(MouseObject::Image { source });
+        }
+    }
+    None
+}
+
 impl TextInputState {
     pub(super) fn accessibility_buffer_projection(
         &self,
@@ -267,6 +300,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
     let mapped = input.hit_test_position(row, column, byte)?;
     let area = image_map_area_at_point(grid, point, cell_width).map(MouseArea::ImageMap);
+    let object = image_object_at_point(grid, point, cell_width).or(mapped.object);
     let (origin_x, origin_y) = mapped
         .window_id
         .and_then(|window_id| {
@@ -291,6 +325,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         column: mapped.column,
         window_id: mapped.window_id,
         area,
+        object,
         mode_line_buffer_name: false,
     })
 }
@@ -318,6 +353,7 @@ pub(super) fn mode_line_mouse_position(
         column: column.saturating_sub(mode_line.left),
         window_id: Some(mode_line.window_id),
         area: Some(MouseArea::ModeLine),
+        object: None,
         mode_line_buffer_name: mode_line
             .buffer_name_range
             .is_some_and(|(left, right)| column >= left && column < right),
@@ -349,6 +385,7 @@ pub(super) fn header_line_mouse_position(
         column: column.saturating_sub(header.left),
         window_id: Some(header.window_id),
         area: Some(MouseArea::HeaderLine),
+        object: None,
         mode_line_buffer_name: false,
     })
 }

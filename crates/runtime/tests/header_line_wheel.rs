@@ -43,6 +43,7 @@ fn position(header: GridHeaderLine) -> MousePosition {
         window_id: Some(header.window_id),
         area: Some(MouseArea::HeaderLine),
         mode_line_buffer_name: false,
+        object: None,
     }
 }
 
@@ -210,6 +211,7 @@ fn pixel_scroll_precision_uses_precise_wheel_delta_inner() {
         window_id: Some(window_id),
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let events = [
         InputEvent::MouseWheel {

@@ -74,6 +74,7 @@ fn navigation_buttons_run_lisp_bindings_with_click_drag_and_modifier_data() {
         window_id: Some(window),
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let mut events = VecDeque::new();
     for (button, click_count, modifiers) in [

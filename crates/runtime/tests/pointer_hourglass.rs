@@ -45,6 +45,7 @@ fn hourglass_text_and_overlay_properties_request_a_busy_pointer() {
             window_id: mapped.window_id,
             area: None,
             mode_line_buffer_name: false,
+            object: None,
         };
         let grid =
             render_grid_with_mouse_position_cached(&i, 40, 12, base.input.as_ref(), Some(position));

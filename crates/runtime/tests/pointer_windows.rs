@@ -24,6 +24,7 @@ fn hover(i: &Interp, column: usize, expected_window: usize) -> MousePosition {
         window_id: mapped.window_id,
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     }
 }
 

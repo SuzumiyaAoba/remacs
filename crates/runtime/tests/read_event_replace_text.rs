@@ -97,6 +97,7 @@ fn read_event_without_timeout_returns_mouse_click_and_position() {
         window_id: Some(window_id),
         area: None,
         mode_line_buffer_name: false,
+        object: None,
     };
     let mouse = MouseInput {
         button: MouseButton::Left,
