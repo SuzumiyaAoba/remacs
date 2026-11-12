@@ -608,7 +608,9 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
     GridCursorShape, GridFringeBitmap, GridFringeBitmapAlign, GridHelpEcho, GridImage,
-    GridImageMapArea, GridImageMapShape, GridImageSource, GridInput, GridInputPosition,
+    GridImageConversion, GridImageMapArea, GridImageMapShape, GridImageSizeLimit,
+    GridImageSource, GridInput,
+    GridInputPosition,
     GridInputRow,
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,

@@ -5,7 +5,7 @@ use crate::{
     buffer::Buffer,
     lisp::{Interp, Value, value::SymId},
 };
-use num_traits::ToPrimitive;
+use num_traits::{Signed, ToPrimitive};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::Range,
@@ -134,6 +134,8 @@ pub struct GridImage {
     pub conversion: Option<GridImageConversion>,
     /// Whether transformed pixels should be smoothed, when explicitly set.
     pub transform_smoothing: Option<bool>,
+    /// Source pixel limit captured from `max-image-size` for this render.
+    pub max_image_size: Option<GridImageSizeLimit>,
     /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
@@ -151,6 +153,13 @@ pub enum GridImageConversion {
         matrix: [i32; 9],
         color_adjust: i32,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GridImageSizeLimit {
+    Pixels(u64),
+    /// The IEEE-754 bits of the frame width/height ratio.
+    FrameRatioBits(u64),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -7042,6 +7051,22 @@ fn image_transform_smoothing(i: &Interp, plist: &Value) -> Option<bool> {
     crate::lisp::eval::plist_lookup(plist, property).map(|value| value.truthy())
 }
 
+fn image_size_limit(i: &Interp) -> Option<GridImageSizeLimit> {
+    let variable = i.q_soft("max-image-size")?;
+    match i.symbol_value(variable) {
+        Value::Int(limit) => Some(GridImageSizeLimit::Pixels(limit.max(0) as u64)),
+        Value::BigInt(limit) => Some(GridImageSizeLimit::Pixels(if limit.is_negative() {
+            0
+        } else {
+            limit.to_u64().unwrap_or(u64::MAX)
+        })),
+        Value::Float(limit) if limit.is_finite() => Some(
+            GridImageSizeLimit::FrameRatioBits(limit.max(0.0).to_bits()),
+        ),
+        _ => None,
+    }
+}
+
 fn image_dimension(i: &Interp, value: Value, default_font_height: u16) -> Option<usize> {
     match value {
         Value::Int(n) if n > 0 => usize::try_from(n).ok(),
@@ -8822,6 +8847,7 @@ fn render_grid_internal(
     frame_override: Option<&crate::editor::FrameRef>,
     mouse_position: Option<MousePosition>,
 ) -> Grid {
+    let max_image_size = image_size_limit(i);
     let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
     let frame_resize_pixelwise = i
         .q_soft("frame-resize-pixelwise")
@@ -10726,6 +10752,7 @@ fn render_grid_internal(
                         index: image.index,
                         conversion: image.conversion,
                         transform_smoothing: image.transform_smoothing,
+                        max_image_size,
                         width: image.width,
                         height: image.height,
                         intrinsic_width: image.intrinsic_width,
@@ -11204,6 +11231,7 @@ fn render_grid_internal(
                     index: image.index,
                     conversion: image.conversion,
                     transform_smoothing: image.transform_smoothing,
+                    max_image_size,
                     width: image.width,
                     height: image.height,
                     intrinsic_width: image.intrinsic_width,

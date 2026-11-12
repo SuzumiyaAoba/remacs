@@ -1567,4 +1567,52 @@ mod tests {
         assert_eq!(grid.images[2].transform_smoothing, Some(true));
     }
 
+    #[test]
+    fn max_image_size_reaches_the_grid() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(max_image_size_reaches_the_grid_inner)
+            .expect("spawn image size limit test thread")
+            .join()
+            .expect("image size limit test thread");
+    }
+
+    fn max_image_size_reaches_the_grid_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str(
+                r#"(progn
+                  (setq max-image-size 64)
+                  (erase-buffer)
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image :type 'png :data "x"))))"#,
+            )
+            .unwrap();
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        assert_eq!(
+            grid.images[0].max_image_size,
+            Some(remacs_runtime::frontend::GridImageSizeLimit::Pixels(64))
+        );
+
+        interp.eval_str("(setq max-image-size 0.5)").unwrap();
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        assert_eq!(
+            grid.images[0].max_image_size,
+            Some(remacs_runtime::frontend::GridImageSizeLimit::FrameRatioBits(0.5f64.to_bits()))
+        );
+
+        interp.eval_str("(setq max-image-size nil)").unwrap();
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        assert_eq!(grid.images[0].max_image_size, None);
+    }
+
 }

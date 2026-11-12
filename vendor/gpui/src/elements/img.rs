@@ -2,7 +2,8 @@ use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
     ImageId, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
+    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgRenderer,
+    SvgSize, Task,
     Window, px, swap_rgba_pa_to_bgra,
 };
 use anyhow::{Context as _, Result};
@@ -158,6 +159,41 @@ pub struct ImageStyle {
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
 }
 
+/// Limit the source image size before it is fully decoded.
+#[derive(Clone, Copy, Debug)]
+pub enum ImageSizeLimit {
+    /// Maximum width and height in source pixels.
+    Pixels(u64),
+    /// Maximum fraction of the current window's pixel dimensions.
+    FrameRatio(f64),
+}
+
+impl ImageSizeLimit {
+    fn resolve(self, window: &Window) -> (u64, u64) {
+        match self {
+            Self::Pixels(limit) => (limit, limit),
+            Self::FrameRatio(ratio) => {
+                let ratio = if ratio.is_finite() {
+                    ratio.max(0.0)
+                } else if ratio.is_sign_positive() {
+                    f64::MAX
+                } else {
+                    0.0
+                };
+                let scale = f64::from(window.scale_factor());
+                let viewport = window.viewport_size();
+                let width = (f64::from(viewport.width.0) * scale * ratio)
+                    .floor()
+                    .clamp(0.0, u64::MAX as f64) as u64;
+                let height = (f64::from(viewport.height.0) * scale * ratio)
+                    .floor()
+                    .clamp(0.0, u64::MAX as f64) as u64;
+                (width, height)
+            }
+        }
+    }
+}
+
 impl Default for ImageStyle {
     fn default() -> Self {
         Self {
@@ -223,6 +259,7 @@ pub struct Img {
     frame_index: Option<usize>,
     disabled_conversion: bool,
     edge_detection: Option<([i32; 9], i32)>,
+    max_image_size: Option<ImageSizeLimit>,
 }
 
 /// Create a new image element.
@@ -237,6 +274,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         frame_index: None,
         disabled_conversion: false,
         edge_detection: None,
+        max_image_size: None,
     }
 }
 
@@ -346,6 +384,12 @@ impl Img {
         self.style.transform_smoothing = Some(smoothing);
         self
     }
+
+    /// Refuse to decode images whose source dimensions exceed `limit`.
+    pub fn max_image_size(mut self, limit: ImageSizeLimit) -> Self {
+        self.max_image_size = Some(limit);
+        self
+    }
 }
 
 impl Deref for Stateful<Img> {
@@ -368,6 +412,7 @@ struct ImgState {
     last_frame_time: Option<Instant>,
     started_loading: Option<(Instant, Task<()>)>,
     converted_image: Option<(ImageId, ImageConversion, Arc<RenderImage>)>,
+    loaded_image: Option<(ImageDimensionsSource, Arc<RenderImage>)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -384,6 +429,7 @@ pub struct ImgLayoutState {
     frame_index: usize,
     replacement: Option<AnyElement>,
     image_data: Option<Arc<RenderImage>>,
+    max_image_size: Option<(u64, u64)>,
 }
 
 impl Element for Img {
@@ -409,15 +455,19 @@ impl Element for Img {
             frame_index: 0,
             replacement: None,
             image_data: None,
+            max_image_size: None,
         };
 
         window.with_optional_element_state(global_id, |state, window| {
+            let max_image_size = self.max_image_size.map(|limit| limit.resolve(window));
+            layout_state.max_image_size = max_image_size;
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
                     last_frame_time: None,
                     started_loading: None,
                     converted_image: None,
+                    loaded_image: None,
                 })
             });
 
@@ -425,6 +475,23 @@ impl Element for Img {
                 .frame_index
                 .unwrap_or_else(|| state.as_ref().map(|state| state.frame_index).unwrap_or(0));
             let conversion = self.image_conversion();
+            let source_key = self.source.image_dimensions_source();
+            if let Some(state) = &mut state
+                && state
+                    .loaded_image
+                    .as_ref()
+                    .is_some_and(|(key, _)| Some(key) != source_key.as_ref())
+            {
+                state.loaded_image = None;
+                state.converted_image = None;
+            }
+            let mut cached_image = state.as_ref().and_then(|state| {
+                state
+                    .loaded_image
+                    .as_ref()
+                    .filter(|(key, _)| Some(key) == source_key.as_ref())
+                    .map(|(_, image)| Arc::clone(image))
+            });
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
@@ -434,16 +501,24 @@ impl Element for Img {
                 |mut style, window, cx| {
                     let mut replacement_id = None;
 
-                    match self.source.use_data(
-                        self.image_cache
-                            .clone()
-                            .or_else(|| window.image_cache_stack.last().cloned()),
-                        window,
-                        cx,
-                    ) {
+                    let loaded_data = match cached_image.take() {
+                        Some(image) => Some(Ok(image)),
+                        None => self.source.use_data_with_size_limit(
+                            self.image_cache
+                                .clone()
+                                .or_else(|| window.image_cache_stack.last().cloned()),
+                            max_image_size,
+                            window,
+                            cx,
+                        ),
+                    };
+                    match loaded_data {
                         Some(Ok(data)) => {
                             if let Some(on_loaded) = &self.on_render_image_loaded {
                                 on_loaded(&data);
+                            }
+                            if let (Some(key), Some(state)) = (source_key.as_ref(), state.as_mut()) {
+                                state.loaded_image = Some((key.clone(), Arc::clone(&data)));
                             }
                             let data = Self::convert_image(data, conversion, &mut state);
                             layout_state.image_data = Some(Arc::clone(&data));
@@ -606,10 +681,11 @@ impl Element for Img {
                 let image_data = match layout_state.image_data.clone() {
                     Some(data) => Some(Ok(data)),
                     None => source
-                        .use_data(
+                        .use_data_with_size_limit(
                             self.image_cache
                                 .clone()
                                 .or_else(|| window.image_cache_stack.last().cloned()),
+                            layout_state.max_image_size,
                             window,
                             cx,
                         )
@@ -669,6 +745,140 @@ impl IntoElement for Img {
 
 impl StatefulInteractiveElement for Img {}
 
+#[derive(Clone, Hash, PartialEq, Eq)]
+enum ImageDimensionsSource {
+    Resource {
+        resource: Resource,
+        base_uri: Option<PathBuf>,
+        css: Option<String>,
+    },
+    Image {
+        image: Arc<Image>,
+        base_uri: Option<PathBuf>,
+        css: Option<String>,
+    },
+}
+
+#[derive(Clone)]
+enum ImageDimensionsLoader {}
+
+impl Asset for ImageDimensionsLoader {
+    type Source = ImageDimensionsSource;
+    type Output = Result<(u32, u32), ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+        let svg_renderer = cx.svg_renderer();
+        let asset_source = cx.asset_source().clone();
+        async move {
+            if let ImageDimensionsSource::Resource {
+                resource: Resource::Path(path),
+                ..
+            } = &source
+            {
+                let reader = image::ImageReader::open(path.as_ref())?.with_guessed_format()?;
+                if reader.format().is_some() {
+                    return Ok(reader.into_dimensions()?);
+                }
+            }
+
+            let (bytes, format_hint, base_uri, css) = match source {
+                ImageDimensionsSource::Resource {
+                    resource,
+                    base_uri,
+                    css,
+                } => {
+                    let bytes = match resource.clone() {
+                        Resource::Path(path) => fs::read(path.as_ref())?,
+                        Resource::Uri(uri) => {
+                            let mut response = client
+                                .get(uri.as_ref(), ().into(), true)
+                                .await
+                                .with_context(|| format!("loading image asset from {uri:?}"))?;
+                            let mut body = Vec::new();
+                            response.body_mut().read_to_end(&mut body).await?;
+                            if !response.status().is_success() {
+                                let mut body = String::from_utf8_lossy(&body).into_owned();
+                                let first_line = body.lines().next().unwrap_or("").trim_end();
+                                body.truncate(first_line.len());
+                                return Err(ImageCacheError::BadStatus {
+                                    uri,
+                                    status: response.status(),
+                                    body,
+                                });
+                            }
+                            body
+                        }
+                        Resource::Embedded(path) => {
+                            let data = asset_source.load(&path).ok().flatten();
+                            if let Some(data) = data {
+                                data.to_vec()
+                            } else {
+                                return Err(ImageCacheError::Asset(
+                                    format!("Embedded resource not found: {}", path).into(),
+                                ));
+                            }
+                        }
+                    };
+                    (bytes, None, base_uri, css)
+                }
+                ImageDimensionsSource::Image {
+                    image,
+                    base_uri,
+                    css,
+                } => (image.bytes.clone(), Some(image.format), base_uri, css),
+            };
+
+            image_dimensions_from_bytes(
+                &bytes,
+                format_hint,
+                &svg_renderer,
+                base_uri.as_deref(),
+                css.as_deref(),
+            )
+        }
+    }
+}
+
+fn image_decoder_format(format: crate::ImageFormat) -> Option<image::ImageFormat> {
+    match format {
+        crate::ImageFormat::Png => Some(image::ImageFormat::Png),
+        crate::ImageFormat::Jpeg => Some(image::ImageFormat::Jpeg),
+        crate::ImageFormat::Webp => Some(image::ImageFormat::WebP),
+        crate::ImageFormat::Gif => Some(image::ImageFormat::Gif),
+        crate::ImageFormat::Svg => None,
+        crate::ImageFormat::Bmp => Some(image::ImageFormat::Bmp),
+        crate::ImageFormat::Tiff => Some(image::ImageFormat::Tiff),
+    }
+}
+
+fn image_dimensions_from_bytes(
+    bytes: &[u8],
+    format_hint: Option<crate::ImageFormat>,
+    svg_renderer: &SvgRenderer,
+    base_uri: Option<&Path>,
+    css: Option<&str>,
+) -> Result<(u32, u32), ImageCacheError> {
+    let is_svg = matches!(format_hint, Some(crate::ImageFormat::Svg))
+        || (format_hint.is_none() && image::guess_format(bytes).is_err());
+    if is_svg {
+        return Ok(svg_renderer.intrinsic_dimensions_with_svg_options(bytes, base_uri, css)?);
+    }
+
+    let format = format_hint
+        .and_then(image_decoder_format)
+        .or_else(|| image::guess_format(bytes).ok())
+        .context("unrecognized image format")?;
+    Ok(image::ImageReader::with_format(Cursor::new(bytes), format).into_dimensions()?)
+}
+
+fn image_exceeds_limit(width: u32, height: u32, limit: (u64, u64)) -> bool {
+    u64::from(width) > limit.0 || u64::from(height) > limit.1
+}
+
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
@@ -707,6 +917,94 @@ impl ImageSource {
                 let source = (image.clone(), base_uri.clone(), css.clone());
                 window.use_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
             }
+        }
+    }
+
+    pub(crate) fn use_data_with_size_limit(
+        &self,
+        cache: Option<AnyImageCache>,
+        limit: Option<(u64, u64)>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        let Some(limit) = limit else {
+            return self.use_data(cache, window, cx);
+        };
+
+        if let Some(source) = self.image_dimensions_source() {
+            return match window.use_asset::<AssetLogger<ImageDimensionsLoader>>(&source, cx) {
+                None => None,
+                Some(Err(error)) => Some(Err(error)),
+                Some(Ok((width, height))) if image_exceeds_limit(width, height, limit) => {
+                    Some(Err(ImageCacheError::ImageTooLarge {
+                        width,
+                        height,
+                        max_width: limit.0,
+                        max_height: limit.1,
+                    }))
+                }
+                Some(Ok(_)) => self.use_data(cache, window, cx),
+            };
+        }
+
+        self.use_data(cache, window, cx).map(|result| {
+            result.and_then(|image| {
+                if image.frame_count() == 0 {
+                    return Ok(image);
+                }
+                let size = image.size(0);
+                if image_exceeds_limit(size.width.0 as u32, size.height.0 as u32, limit) {
+                    Err(ImageCacheError::ImageTooLarge {
+                        width: size.width.0 as u32,
+                        height: size.height.0 as u32,
+                        max_width: limit.0,
+                        max_height: limit.1,
+                    })
+                } else {
+                    Ok(image)
+                }
+            })
+        })
+    }
+
+    fn image_dimensions_source(&self) -> Option<ImageDimensionsSource> {
+        match self {
+            ImageSource::Resource(resource) => Some(ImageDimensionsSource::Resource {
+                resource: resource.clone(),
+                base_uri: None,
+                css: None,
+            }),
+            ImageSource::ResourceWithSvgOptions {
+                resource,
+                base_uri,
+                css,
+            } => Some(ImageDimensionsSource::Resource {
+                resource: resource.clone(),
+                base_uri: base_uri.clone(),
+                css: css.clone(),
+            }),
+            ImageSource::Image(image) => Some(ImageDimensionsSource::Image {
+                image: image.clone(),
+                base_uri: None,
+                css: None,
+            }),
+            ImageSource::ImageWithBaseUri { image, base_uri } => {
+                Some(ImageDimensionsSource::Image {
+                    image: image.clone(),
+                    base_uri: Some(base_uri.clone()),
+                    css: None,
+                })
+            }
+            ImageSource::ImageWithSvgOptions {
+                image,
+                base_uri,
+                css,
+            } => Some(ImageDimensionsSource::Image {
+                image: image.clone(),
+                base_uri: base_uri.clone(),
+                css: css.clone(),
+            }),
+            ImageSource::Render(_) | ImageSource::Custom(_) => None,
         }
     }
 
@@ -1025,6 +1323,18 @@ impl Asset for ImageAssetLoaderWithSvgOptions {
 /// An error that can occur when interacting with the image cache.
 #[derive(Debug, Error, Clone)]
 pub enum ImageCacheError {
+    /// The image dimensions exceed the configured `max-image-size` value.
+    #[error("image {width}x{height} exceeds max-image-size {max_width}x{max_height}")]
+    ImageTooLarge {
+        /// Actual image width in pixels.
+        width: u32,
+        /// Actual image height in pixels.
+        height: u32,
+        /// Maximum allowed width in pixels.
+        max_width: u64,
+        /// Maximum allowed height in pixels.
+        max_height: u64,
+    },
     /// Some other kind of error occurred
     #[error("error: {0}")]
     Other(#[from] Arc<anyhow::Error>),
@@ -1073,5 +1383,35 @@ impl From<usvg::Error> for ImageCacheError {
 impl From<image::ImageError> for ImageCacheError {
     fn from(value: image::ImageError) -> Self {
         Self::Image(Arc::new(value))
+    }
+}
+
+#[cfg(test)]
+mod image_size_tests {
+    use super::*;
+
+    #[test]
+    fn image_dimensions_can_be_checked_against_pixel_limits() {
+        let pixels = ImageBuffer::from_pixel(32, 16, Rgba([0, 0, 0, 255]));
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+
+        let svg_renderer = SvgRenderer::new(Arc::new(()));
+        // The signature, IHDR and first IDAT header are sufficient; no pixel
+        // data needs to be decoded before the max-size check.
+        let header_only = &encoded.get_ref()[..41];
+        let (width, height) = image_dimensions_from_bytes(
+            header_only,
+            None,
+            &svg_renderer,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!((width, height), (32, 16));
+        assert!(!image_exceeds_limit(width, height, (32, 16)));
+        assert!(image_exceeds_limit(width, height, (31, 16)));
     }
 }

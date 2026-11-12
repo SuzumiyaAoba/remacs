@@ -12,7 +12,8 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use gpui::*;
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBidiDirection, GridCursor, GridImage,
-    GridImageConversion, GridImageSource, GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
+    GridImageConversion, GridImageSizeLimit, GridImageSource, GridMenu, GridMenuItem,
+    GridPointerShape, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
     NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
 };
@@ -3574,6 +3575,12 @@ fn grid_image_element(
     let frame_index = image.index;
     let conversion = image.conversion;
     let transform_smoothing = image.transform_smoothing;
+    let max_image_size = image.max_image_size.map(|limit| match limit {
+        GridImageSizeLimit::Pixels(pixels) => ImageSizeLimit::Pixels(pixels),
+        GridImageSizeLimit::FrameRatioBits(bits) => {
+            ImageSizeLimit::FrameRatio(f64::from_bits(bits))
+        }
+    });
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::FileWithSvgOptions {
@@ -3639,6 +3646,10 @@ fn grid_image_element(
     };
     let source = match transform_smoothing {
         Some(smoothing) => source.transform_smoothing(smoothing),
+        None => source,
+    };
+    let source = match max_image_size {
+        Some(limit) => source.max_image_size(limit),
         None => source,
     };
     let source = match (image.width, image.height) {

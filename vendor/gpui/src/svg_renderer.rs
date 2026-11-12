@@ -130,4 +130,17 @@ impl SvgRenderer {
 
         Ok(pixmap)
     }
+
+    pub(crate) fn intrinsic_dimensions_with_svg_options(
+        &self,
+        bytes: &[u8],
+        base_uri: Option<&Path>,
+        css: Option<&str>,
+    ) -> Result<(u32, u32), usvg::Error> {
+        let resources_dir = base_uri.and_then(Path::parent).map(Path::to_path_buf);
+        let options = Self::options(resources_dir, css.map(str::to_owned));
+        let tree = usvg::Tree::from_data(bytes, &options)?;
+        let size = tree.size();
+        Ok((size.width().ceil() as u32, size.height().ceil() as u32))
+    }
 }
