@@ -80,13 +80,24 @@ pub(super) fn visible_input_position(
 ) -> Option<(usize, usize)> {
     let input = grid.input.as_ref()?;
     let char_offset = input.character_index_for_utf16_offset(utf16_offset, round_up);
-    input.rows.iter().find_map(|row| {
-        let relative = char_offset.checked_sub(row.buffer_start)?;
-        row.source_offsets
-            .get(relative)
-            .copied()
-            .map(|byte| (row.row, byte))
-    })
+    let mut position = None;
+    for row in &input.rows {
+        let Some(relative) = char_offset.checked_sub(row.buffer_start) else {
+            continue;
+        };
+        let Some(byte) = row.source_offsets.get(relative).copied() else {
+            continue;
+        };
+        let mapped = (row.row, byte);
+        if round_up {
+            return Some(mapped);
+        }
+        // Wrapped segment boundaries occur in both adjacent rows. A point
+        // or range start belongs to the next row; range ends keep the prior
+        // row's trailing boundary.
+        position = Some(mapped);
+    }
+    position
 }
 
 fn cursor_moved_to_echo_area(grid: &Grid) -> bool {
@@ -1218,6 +1229,67 @@ mod tests {
             input.accessibility_screen_projection(&echo_grid, 0..0);
         assert_eq!(screen_text, expected_echo_rows.join("\n"));
         assert_eq!(screen_selection, echo_prefix_units + 1..echo_prefix_units + 2);
+    }
+
+    #[test]
+    fn wrapped_boundary_maps_points_to_the_continuation_row() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(wrapped_boundary_maps_points_to_the_continuation_row_inner)
+            .expect("spawn wrapped input position test thread")
+            .join()
+            .expect("wrapped input position test thread");
+    }
+
+    fn wrapped_boundary_maps_points_to_the_continuation_row_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp.eval_str("(erase-buffer) (insert \"abcdefghij\")").unwrap();
+        let mut grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        let character = {
+            let input = grid.input.as_mut().unwrap();
+            input.cursor = 4;
+            input.character_index_for_utf16_offset(input.cursor, false)
+        };
+        grid.input.as_mut().unwrap().rows = vec![
+            remacs_runtime::frontend::GridInputRow {
+                row: 0,
+                buffer_start: character - 4,
+                source_offsets: vec![0, 1, 2, 3, 4],
+            },
+            remacs_runtime::frontend::GridInputRow {
+                row: 1,
+                buffer_start: character,
+                source_offsets: vec![0],
+            },
+        ];
+        grid.rows = vec!["abcd".to_owned(), "efgh".to_owned()];
+        grid.cursor = Some((0, 1));
+        grid.cursor_index = Some(0);
+        let input = grid.input.as_ref().unwrap();
+        let candidates = input
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let relative = character.checked_sub(row.buffer_start)?;
+                Some((row.row, *row.source_offsets.get(relative)?))
+            })
+            .collect::<Vec<_>>();
+        assert!(candidates.len() >= 2, "boundary mappings: {candidates:?}");
+
+        assert_eq!(
+            visible_input_position(&grid, input.cursor, true),
+            Some((0, 4))
+        );
+        assert_eq!(
+            visible_input_position(&grid, input.cursor, false),
+            Some((1, 0))
+        );
+        assert_eq!(
+            visible_input_position(&grid, input.cursor, false),
+            grid.cursor.map(|(_, row)| (row, grid.cursor_index.unwrap_or(0)))
+        );
     }
 
 }
