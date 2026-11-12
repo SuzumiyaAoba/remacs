@@ -435,3 +435,64 @@ fn split_window_drops_use_the_target_buffer_and_window() {
     let face_changed = interp.symbol_value(face_changed_symbol);
     assert_eq!(interp.prin1_to_string(&face_changed), "t");
 }
+
+#[cfg(unix)]
+#[test]
+fn file_drop_opens_local_file_in_the_target_window() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(file_drop_opens_local_file_in_the_target_window_inner)
+        .expect("spawn file drop test thread")
+        .join()
+        .expect("file drop test thread");
+}
+
+#[cfg(unix)]
+fn file_drop_opens_local_file_in_the_target_window_inner() {
+    let file_path = std::env::temp_dir().join(format!(
+        "remacs-file-drop-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&file_path, "dropped contents\n").unwrap();
+    let _temp_file = TempFile(file_path.clone());
+
+    let mut interp = Interp::new();
+    let target_buffer = interp.create_buffer("file-drop-target");
+    let minibuffer = interp.create_buffer(" *Minibuf-0*");
+    let frame = Frame::new_tty(target_buffer, minibuffer, 80, 25);
+    let target_window = frame.borrow().selected.clone();
+    interp.selected_frame = Some(frame.clone());
+    interp.frames.push(frame);
+    interp.set_current_buffer(target_buffer);
+    interp
+        .eval_str(
+            "(global-set-key [f12] (lambda () (interactive) (kill-emacs)))",
+        )
+        .unwrap();
+
+    let frontend = DropFrontend {
+        events: VecDeque::from([
+            InputEvent::Drop {
+                position: None,
+                urls: vec![format!("file://{}", file_path.display())],
+                action: "copy".to_owned(),
+            },
+            InputEvent::Key(remacs_runtime::editor::event_code_for("f12")),
+        ]),
+    };
+    run_editor_with(frontend, &mut interp).unwrap();
+
+    let opened_buffer = target_window.borrow().buffer;
+    assert_ne!(opened_buffer, target_buffer);
+    let opened_buffer = interp.buffers.get(opened_buffer).unwrap();
+    let opened_buffer = opened_buffer.borrow();
+    assert_eq!(
+        opened_buffer.file_name.as_ref().unwrap().to_unicode_lossy(),
+        file_path.to_string_lossy()
+    );
+    assert_eq!(opened_buffer.text.text().to_string(), "dropped contents\n");
+}

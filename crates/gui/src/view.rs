@@ -5099,3 +5099,17 @@ mod accessibility_frame_key_tests {
         assert_ne!(accessibility_frame_key(&resized), original_key);
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod file_drop_uri_tests {
+    use super::file_drop_uri;
+    use std::path::Path;
+
+    #[test]
+    fn file_drop_uri_escapes_utf8_paths() {
+        assert_eq!(
+            file_drop_uri(Path::new("/tmp/remacs drop/日本.txt")),
+            "file:///tmp/remacs%20drop/%E6%97%A5%E6%9C%AC.txt"
+        );
+    }
+}
