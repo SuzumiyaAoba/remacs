@@ -12,7 +12,7 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use gpui::*;
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBidiDirection, GridCursor, GridImage,
-    GridImageSource, GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
+    GridImageConversion, GridImageSource, GridMenu, GridMenuItem, GridPointerShape, GridScrollBar,
     GridScrollBarOrientation, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
     NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
 };
@@ -3572,6 +3572,7 @@ fn grid_image_element(
 ) -> AnyElement {
     let cache_key = image.source.clone();
     let frame_index = image.index;
+    let conversion = image.conversion;
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::FileWithSvgOptions {
@@ -3625,6 +3626,14 @@ fn grid_image_element(
     });
     let source = match frame_index {
         Some(index) => source.frame_index(index),
+        None => source,
+    };
+    let source = match conversion {
+        Some(GridImageConversion::Disabled) => source.disabled_conversion(),
+        Some(GridImageConversion::EdgeDetection {
+            matrix,
+            color_adjust,
+        }) => source.edge_detection(matrix, color_adjust),
         None => source,
     };
     let source = match (image.width, image.height) {

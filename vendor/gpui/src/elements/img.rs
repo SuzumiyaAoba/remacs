@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    ImageId, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
     Window, px, swap_rgba_pa_to_bgra,
 };
@@ -219,6 +219,8 @@ pub struct Img {
     on_render_image_loaded: Option<Box<dyn Fn(&Arc<RenderImage>) + 'static>>,
     /// Fixed frame for multi-frame images; `None` preserves animation.
     frame_index: Option<usize>,
+    disabled_conversion: bool,
+    edge_detection: Option<([i32; 9], i32)>,
 }
 
 /// Create a new image element.
@@ -231,10 +233,58 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         image_cache: None,
         on_render_image_loaded: None,
         frame_index: None,
+        disabled_conversion: false,
+        edge_detection: None,
     }
 }
 
 impl Img {
+    fn image_conversion(&self) -> Option<ImageConversion> {
+        if self.disabled_conversion {
+            Some(ImageConversion::Disabled)
+        } else {
+            self.edge_detection
+                .map(|(matrix, color_adjust)| ImageConversion::EdgeDetection {
+                    matrix,
+                    color_adjust,
+                })
+        }
+    }
+
+    fn convert_image(
+        image: Arc<RenderImage>,
+        conversion: Option<ImageConversion>,
+        state: &mut Option<ImgState>,
+    ) -> Arc<RenderImage> {
+        let Some(conversion) = conversion else {
+            if let Some(state) = state {
+                state.converted_image = None;
+            }
+            return image;
+        };
+
+        if let Some((image_id, cached_conversion, converted)) = state
+            .as_ref()
+            .and_then(|state| state.converted_image.as_ref())
+        {
+            if *image_id == image.id && *cached_conversion == conversion {
+                return Arc::clone(converted);
+            }
+        }
+
+        let converted = Arc::new(match conversion {
+            ImageConversion::Disabled => image.disabled_conversion(),
+            ImageConversion::EdgeDetection {
+                matrix,
+                color_adjust,
+            } => image.edge_detected(matrix, color_adjust),
+        });
+        if let Some(state) = state {
+            state.converted_image = Some((image.id, conversion, Arc::clone(&converted)));
+        }
+        converted
+    }
+
     /// A list of all format extensions currently supported by this img element
     pub fn extensions() -> &'static [&'static str] {
         // This is the list in [image::ImageFormat::from_extension] + `svg`
@@ -275,6 +325,18 @@ impl Img {
         self.frame_index = Some(frame_index);
         self
     }
+
+    /// Apply GNU Emacs' disabled-image conversion before displaying the image.
+    pub fn disabled_conversion(mut self) -> Self {
+        self.disabled_conversion = true;
+        self
+    }
+
+    /// Apply a 3×3 edge-detection matrix before displaying the image.
+    pub fn edge_detection(mut self, matrix: [i32; 9], color_adjust: i32) -> Self {
+        self.edge_detection = Some((matrix, color_adjust));
+        self
+    }
 }
 
 impl Deref for Stateful<Img> {
@@ -296,12 +358,23 @@ struct ImgState {
     frame_index: usize,
     last_frame_time: Option<Instant>,
     started_loading: Option<(Instant, Task<()>)>,
+    converted_image: Option<(ImageId, ImageConversion, Arc<RenderImage>)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageConversion {
+    Disabled,
+    EdgeDetection {
+        matrix: [i32; 9],
+        color_adjust: i32,
+    },
 }
 
 /// The image layout state between frames
 pub struct ImgLayoutState {
     frame_index: usize,
     replacement: Option<AnyElement>,
+    image_data: Option<Arc<RenderImage>>,
 }
 
 impl Element for Img {
@@ -326,6 +399,7 @@ impl Element for Img {
         let mut layout_state = ImgLayoutState {
             frame_index: 0,
             replacement: None,
+            image_data: None,
         };
 
         window.with_optional_element_state(global_id, |state, window| {
@@ -334,12 +408,14 @@ impl Element for Img {
                     frame_index: 0,
                     last_frame_time: None,
                     started_loading: None,
+                    converted_image: None,
                 })
             });
 
             let mut frame_index = self
                 .frame_index
                 .unwrap_or_else(|| state.as_ref().map(|state| state.frame_index).unwrap_or(0));
+            let conversion = self.image_conversion();
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
@@ -360,6 +436,8 @@ impl Element for Img {
                             if let Some(on_loaded) = &self.on_render_image_loaded {
                                 on_loaded(&data);
                             }
+                            let data = Self::convert_image(data, conversion, &mut state);
+                            layout_state.image_data = Some(Arc::clone(&data));
                             let frame_count = data.frame_count().max(1);
                             frame_index = self
                                 .frame_index
@@ -507,6 +585,7 @@ impl Element for Img {
         cx: &mut App,
     ) {
         let source = self.source.clone();
+        let conversion = self.image_conversion();
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -515,13 +594,24 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                if let Some(Ok(data)) = source.use_data(
-                    self.image_cache
-                        .clone()
-                        .or_else(|| window.image_cache_stack.last().cloned()),
-                    window,
-                    cx,
-                ) {
+                let image_data = match layout_state.image_data.clone() {
+                    Some(data) => Some(Ok(data)),
+                    None => source
+                        .use_data(
+                            self.image_cache
+                                .clone()
+                                .or_else(|| window.image_cache_stack.last().cloned()),
+                            window,
+                            cx,
+                        )
+                        .map(|result| {
+                            result.map(|data| {
+                                let mut state = None;
+                                Self::convert_image(data, conversion, &mut state)
+                            })
+                        }),
+                };
+                if let Some(Ok(data)) = image_data {
                     let new_bounds = self
                         .style
                         .object_fit

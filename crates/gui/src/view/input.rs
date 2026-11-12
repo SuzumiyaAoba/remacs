@@ -1451,4 +1451,76 @@ mod tests {
         assert_eq!(grid.images.first().expect("rendered image").index, Some(1));
     }
 
+    #[test]
+    fn image_descriptor_conversion_reaches_the_grid() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(image_descriptor_conversion_reaches_the_grid_inner)
+            .expect("spawn image conversion test thread")
+            .join()
+            .expect("image conversion test thread");
+    }
+
+    fn image_descriptor_conversion_reaches_the_grid_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str(
+                r#"(progn
+                  (erase-buffer)
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image :type 'png :data "x" :conversion 'laplace)))
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image :type 'png :data "x" :conversion 'emboss)))
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image :type 'png :data "x"
+                           :conversion
+                           '(edge-detection :matrix [1 2 3 4 5 6 7 8 9]
+                                            :color-adjust 12))))
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image :type 'png :data "x" :conversion 'disabled))))"#,
+            )
+            .unwrap();
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        assert_eq!(grid.images.len(), 4);
+        assert_eq!(
+            grid.images[0].conversion,
+            Some(remacs_runtime::frontend::GridImageConversion::EdgeDetection {
+                matrix: [1, 0, 0, 0, 0, 0, 0, 0, -1],
+                color_adjust: 45_000,
+            })
+        );
+        assert_eq!(
+            grid.images[1].conversion,
+            Some(remacs_runtime::frontend::GridImageConversion::EdgeDetection {
+                matrix: [2, -1, 0, -1, 0, 1, 0, 1, -2],
+                color_adjust: 32_767,
+            })
+        );
+        assert_eq!(
+            grid.images[2].conversion,
+            Some(remacs_runtime::frontend::GridImageConversion::EdgeDetection {
+                matrix: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                color_adjust: 12,
+            })
+        );
+        assert_eq!(
+            grid.images[3].conversion,
+            Some(remacs_runtime::frontend::GridImageConversion::Disabled)
+        );
+    }
+
 }

@@ -130,6 +130,8 @@ pub struct GridImage {
     pub source: GridImageSource,
     /// Selected zero-based frame for multi-frame images.
     pub index: Option<usize>,
+    /// Conversion requested by the image descriptor.
+    pub conversion: Option<GridImageConversion>,
     /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
@@ -138,6 +140,15 @@ pub struct GridImage {
     pub intrinsic_height: Option<usize>,
     /// Image-map hotspots, in the displayed image's pixel coordinates.
     pub map: Vec<GridImageMapArea>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GridImageConversion {
+    Disabled,
+    EdgeDetection {
+        matrix: [i32; 9],
+        color_adjust: i32,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -4032,6 +4043,7 @@ struct RenderedImage {
     column: usize,
     source: GridImageSource,
     index: Option<usize>,
+    conversion: Option<GridImageConversion>,
     width: Option<usize>,
     height: Option<usize>,
     masked: bool,
@@ -4101,6 +4113,7 @@ enum DisplayReplacement {
     Image {
         source: GridImageSource,
         index: Option<usize>,
+        conversion: Option<GridImageConversion>,
         width: Option<usize>,
         height: Option<usize>,
         masked: bool,
@@ -5244,6 +5257,7 @@ where
             Some(DisplayReplacement::Image {
                 source,
                 index,
+                conversion,
                 width: image_width,
                 height: image_height,
                 masked,
@@ -5264,6 +5278,7 @@ where
                         column: image_column - hscroll,
                         source,
                         index,
+                        conversion,
                         width: image_width,
                         height: image_height,
                         masked,
@@ -7383,6 +7398,86 @@ fn image_map_areas(i: &Interp, value: &Value) -> Vec<GridImageMapArea> {
     result
 }
 
+fn image_conversion_number(value: &Value) -> Option<i32> {
+    match value {
+        Value::Int(number) => i32::try_from(*number).ok(),
+        Value::Float(number) if number.is_finite() => Some((**number) as i32),
+        _ => None,
+    }
+}
+
+fn image_conversion_matrix(value: &Value) -> Option<[i32; 9]> {
+    let mut values = Vec::with_capacity(9);
+    match value {
+        Value::Vec(vector) => values.extend(vector.borrow().iter().take(9).cloned()),
+        Value::Cons(_) => {
+            let mut tail = value.clone();
+            let mut seen = HashSet::<usize>::default();
+            while values.len() < 9 {
+                let Value::Cons(cell) = tail.clone() else {
+                    break;
+                };
+                if !seen.insert(std::rc::Rc::as_ptr(&cell) as usize) {
+                    return None;
+                }
+                let (car, cdr) = {
+                    let cell = cell.borrow();
+                    (cell.car.clone(), cell.cdr.clone())
+                };
+                values.push(car);
+                tail = cdr;
+            }
+        }
+        _ => return None,
+    }
+    if values.len() < 9 {
+        return None;
+    }
+    let mut matrix = [0; 9];
+    for (index, value) in values.iter().take(9).enumerate() {
+        matrix[index] = image_conversion_number(value)?;
+    }
+    Some(matrix)
+}
+
+fn image_conversion(i: &Interp, value: Value) -> Option<GridImageConversion> {
+    match value {
+        Value::Sym(symbol) => match i.symbol_name(symbol).as_str() {
+            "disabled" => Some(GridImageConversion::Disabled),
+            "laplace" => Some(GridImageConversion::EdgeDetection {
+                matrix: [1, 0, 0, 0, 0, 0, 0, 0, -1],
+                color_adjust: 45_000,
+            }),
+            "emboss" => Some(GridImageConversion::EdgeDetection {
+                matrix: [2, -1, 0, -1, 0, 1, 0, 1, -2],
+                color_adjust: 32_767,
+            }),
+            _ => None,
+        },
+        Value::Cons(cell) => {
+            let (kind, properties) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if !matches!(kind, Value::Sym(symbol) if i.symbol_name(symbol) == "edge-detection") {
+                return None;
+            }
+            let matrix = image_conversion_matrix(&image_property(i, &properties, ":matrix"))?;
+            let adjustment = image_property(i, &properties, ":color-adjust");
+            let color_adjust = if adjustment.is_nil() {
+                32_767
+            } else {
+                image_conversion_number(&adjustment)?
+            };
+            Some(GridImageConversion::EdgeDetection {
+                matrix,
+                color_adjust,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn image_display_replacement(
     i: &Interp,
     value: &Value,
@@ -7413,6 +7508,7 @@ fn image_display_replacement(
     let index = image_property(i, &plist, ":index")
         .int()
         .and_then(|index| usize::try_from(index).ok());
+    let conversion = image_conversion(i, image_property(i, &plist, ":conversion"));
     let masked = !image_property(i, &plist, ":mask").is_nil();
     let map = image_map_areas(i, &image_property(i, &plist, ":map"));
     let file = image_property(i, &plist, ":file");
@@ -7450,6 +7546,7 @@ fn image_display_replacement(
         return Some(DisplayReplacement::Image {
             source,
             index,
+            conversion,
             width,
             height,
             masked,
@@ -7541,6 +7638,7 @@ fn image_display_replacement(
     Some(DisplayReplacement::Image {
         source,
         index,
+        conversion,
         width,
         height,
         masked,
@@ -10612,6 +10710,7 @@ fn render_grid_internal(
                         column,
                         source: image.source.clone(),
                         index: image.index,
+                        conversion: image.conversion,
                         width: image.width,
                         height: image.height,
                         intrinsic_width: image.intrinsic_width,
@@ -11088,6 +11187,7 @@ fn render_grid_internal(
                     column: image.column,
                     source: image.source.clone(),
                     index: image.index,
+                    conversion: image.conversion,
                     width: image.width,
                     height: image.height,
                     intrinsic_width: image.intrinsic_width,
