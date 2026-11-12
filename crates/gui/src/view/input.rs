@@ -595,6 +595,37 @@ impl TextInputState {
         text
     }
 
+    fn virtual_position_for_base(&self, position: usize) -> usize {
+        if self.marked.is_empty() {
+            return position;
+        }
+        let (Some(marked), Some(replacement)) =
+            (&self.marked_range, &self.replacement_range)
+        else {
+            return position;
+        };
+        if position <= replacement.start {
+            position
+        } else if position >= replacement.end {
+            position
+                .saturating_sub(replacement.end)
+                .saturating_add(marked.end)
+        } else {
+            marked
+                .start
+                .saturating_add(position.saturating_sub(replacement.start))
+                .min(marked.end)
+        }
+    }
+
+    fn virtual_position_for_buffer(&self, buffer_id: usize, position: usize) -> usize {
+        if self.composition_buffer_id == Some(buffer_id) {
+            self.virtual_position_for_base(position)
+        } else {
+            position
+        }
+    }
+
     fn base_range_for_virtual(&self, requested: Range<usize>) -> Range<usize> {
         let (Some(marked), Some(replacement)) = (&self.marked_range, &self.replacement_range)
         else {
@@ -1077,7 +1108,10 @@ impl EntityInputHandler for EditorView {
             px(self.internal_border_width as f32),
         )?;
         mouse_position_for_text_point_with_cell_width(&self.grid, point, self.cell_width, window)
-            .map(|position| position.utf16_offset)
+            .map(|position| {
+                self.input
+                    .virtual_position_for_buffer(position.buffer_id, position.utf16_offset)
+            })
     }
 }
 
@@ -1098,6 +1132,17 @@ mod tests {
         assert_eq!(input.commit(None, "日本語"), "日本語");
         assert!(input.marked.is_empty());
         assert_eq!(input.selection, 0..0);
+    }
+
+    #[test]
+    fn point_hit_testing_maps_base_offsets_into_the_virtual_document() {
+        let mut input = TextInputState::default();
+        input.record_composition_buffer(Some(17));
+        input.mark_document(Some(3..4), "かな", Some(1..2), 3..4);
+
+        assert_eq!(input.virtual_position_for_buffer(17, 3), 3);
+        assert_eq!(input.virtual_position_for_buffer(17, 6), 7);
+        assert_eq!(input.virtual_position_for_buffer(18, 6), 6);
     }
 
     #[test]
