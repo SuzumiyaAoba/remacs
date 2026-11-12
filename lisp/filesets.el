@@ -2000,7 +2000,8 @@ LOOKUP-NAME is used as lookup name for retrieving fileset specific settings."
 	  (count    0)
 	  (rv       nil))
       (if cmdpatts
-	  (dolist (this-def cmdpatts rv)
+	  (dolist (this-def cmdpatts
+		    (if rv (apply #'nconc (nreverse rv)) nil))
 	    (let* ((this-patt (filesets-alist-get this-def ':pattern nil t))
 		   (this-name (filesets-alist-get this-def ':name "" t))
 		   (this-pp   (filesets-alist-get this-def ':preprocess nil t))
@@ -2047,16 +2048,13 @@ LOOKUP-NAME is used as lookup name for retrieving fileset specific settings."
 			    (filesets-ingroup-cache-put master f))
 			  (push f lst))))))
 		(when lst
-		  (setq rv
-			;; FIXME: O(n²) performance bug because of repeated
-			;; `nconc'.
-			(nconc rv
-			       (mapcar (lambda (this)
-					 `((,this ,this-name)
-					   ,@(filesets-ingroup-collect-files
-					      fs remdupl-flag this
-					      (- this-sd 1))))
-				       (nreverse lst)))))))))
+		  (push (mapcar (lambda (this)
+				  `((,this ,this-name)
+				    ,@(filesets-ingroup-collect-files
+				       fs remdupl-flag this
+				       (- this-sd 1))))
+				(nreverse lst))
+			rv))))))
 	(filesets-message 2 "Filesets: no patterns defined for %S" master)))))
 
 (defun filesets-ingroup-collect-build-menu (fs flist &optional other-count)
