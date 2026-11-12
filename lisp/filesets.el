@@ -1872,40 +1872,29 @@ If no fileset name is provided, prompt for NAME."
 				      x
 				    nil)))))
 	    (when sl
-	      ;; FIXME: O(n²) performance bug because of repeated `append':
-              ;; use `mapcan'?
-	      (setq result
-		    (append
-		     result
+	      (let ((items
 		     (if (= (length sl) 1)
 			 (if filesets-menu-shortcuts-flag
 			     (list (filesets-remake-shortcut n (car sl)))
 			   sl)
 		       `((,(concat
 			    (filesets-get-shortcut n)
-			    (let ((rv ""))
-			      (cl-do ((x sl (cdr x)))
-				  ((null x))
-				(let ((y (concat (elt (car x) 0)
-						 (if (null (cdr x))
-						     ""
-						   ", "))))
-				  ;; FIXME: O(n²) performance bug because of
-				  ;; repeated `concat': use `mapconcat'?
-				  (setq rv
-					(concat
-					 rv
-					 (if filesets-menu-shortcuts-flag
-					     (substring y 2)
-					   y)))))
-			      (if (> (length rv)
-				     filesets-max-entry-length)
+			    (let ((rv
+				   (mapconcat
+				    (lambda (item)
+				      (let ((label (elt item 0)))
+					(if filesets-menu-shortcuts-flag
+					    (substring label 2)
+					  label)))
+				    sl ", ")))
+			      (if (> (length rv) filesets-max-entry-length)
 				  (concat
 				   (substring rv 0 filesets-max-entry-length)
 				   " ...")
 				rv)))
-			  ,@sl))))))))
-	result))))
+			  ,@sl)))))
+		(push (car items) result)))))
+	(nreverse result)))))
 
 (defun filesets-get-menu-epilog (something &optional
 					   mode lookup-name rebuild-flag)
