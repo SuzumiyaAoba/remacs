@@ -2217,6 +2217,10 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
     };
     let window = window?;
     let coordinates = Value::cons(Value::Int(position.x), Value::Int(position.y));
+    let actual_col_row = Value::cons(
+        Value::Int(position.column as i128),
+        Value::Int(position.row as i128),
+    );
     let object = position
         .object
         .and_then(|object| mouse_object_value(i, position.buffer_id, object));
@@ -2253,10 +2257,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             } else {
                 Value::Nil
             },
-            Value::cons(
-                Value::Int(position.column as i128),
-                Value::Int(position.row as i128),
-            ),
+            actual_col_row.clone(),
         ];
         if matches!(position.object, Some(super::MouseObject::Image { .. })) {
             fields.push(object.unwrap_or(Value::Nil));
@@ -2270,6 +2271,8 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             coordinates,
             Value::Int(0),
             object,
+            Value::Nil,
+            actual_col_row.clone(),
         ]))
     } else if matches!(position.object, Some(super::MouseObject::Image { .. })) {
         Some(Value::list(vec![
@@ -2279,7 +2282,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             Value::Int(0),
             Value::Nil,
             Value::Nil,
-            Value::Nil,
+            actual_col_row.clone(),
             object.unwrap_or(Value::Nil),
         ]))
     } else {
@@ -2288,6 +2291,9 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             Value::Int(position.buffer_position.saturating_add(1) as i128),
             coordinates,
             Value::Int(0),
+            Value::Nil,
+            Value::Nil,
+            actual_col_row,
         ]))
     }
 }
@@ -3382,6 +3388,33 @@ mod image_map_mouse_tests {
         let position = mouse_position_value(&mut interp, position).unwrap();
         let fields = position.list_to_vec().unwrap();
         assert!(crate::lisp::builtins::eq_values(&fields[7], &expected));
+    }
+
+    #[test]
+    fn position_value_includes_actual_display_column_and_row() {
+        let (mut interp, buffer_id, window_id) = interp_with_mouse_object_buffer();
+        let position = MousePosition {
+            buffer_id,
+            buffer_position: 0,
+            utf16_offset: 0,
+            x: 0,
+            y: 0,
+            row: 3,
+            column: 7,
+            window_id: Some(window_id),
+            area: None,
+            object: None,
+            mode_line_buffer_name: false,
+        };
+
+        let position = mouse_position_value(&mut interp, position).unwrap();
+        let fields = position.list_to_vec().unwrap();
+        let Value::Cons(actual_col_row) = &fields[6] else {
+            panic!("actual column and row pair")
+        };
+        let actual_col_row = actual_col_row.borrow();
+        assert!(matches!(actual_col_row.car, Value::Int(7)));
+        assert!(matches!(actual_col_row.cdr, Value::Int(3)));
     }
 
     #[test]
