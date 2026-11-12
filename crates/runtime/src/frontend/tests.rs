@@ -186,6 +186,7 @@ fn display_replacement_string_faces_style_its_own_text() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     let hovered = render_grid_with_mouse_position_cached(&i, 40, 4, None, Some(mouse_position));
     assert!(hovered.char_attrs[0][0].inverse);
@@ -756,6 +757,7 @@ fn mouse_position(i: &Interp, character: usize) -> MousePosition {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     }
 }
 
@@ -1805,6 +1807,7 @@ fn mouse_click_in_shared_buffer_targets_the_clicked_window() {
                 area: None,
                 mode_line_buffer_name: false,
                 object: None,
+                timestamp: 0,
             };
             dispatch_test_mouse(
                 &mut i,

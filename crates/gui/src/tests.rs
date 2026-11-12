@@ -903,6 +903,7 @@ fn chanio_fractional_scroll_remainders_reset_when_input_context_changes() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     let buffer_a = position(1, 11);
     let buffer_b = position(2, 22);
@@ -965,6 +966,7 @@ fn chanio_forwards_pixel_only_wheel_events() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     tx.send(GuiEvent::Scroll {
         delta: -0.25,
@@ -1022,6 +1024,7 @@ fn chanio_mouse_click_keeps_down_position_and_modifiers() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     let end = MousePosition {
         buffer_position: 9,
@@ -1083,6 +1086,7 @@ fn chanio_mouse_movement_keeps_shift_modifiers() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     tx.send(GuiEvent::MouseMove {
         frame_id: None,
@@ -1130,6 +1134,7 @@ fn chanio_navigation_buttons_keep_down_data_on_release() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     let end = MousePosition {
         buffer_position: 9,
@@ -1806,6 +1811,7 @@ fn isearch_mouse_poll_keeps_clicks_and_defers_file_open() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     tx.send(GuiEvent::OpenFiles(vec![("later.txt".into(), Some(3))]))
         .unwrap();
@@ -1902,6 +1908,7 @@ fn isearch_mouse_echo_area_click_edits_query_and_swallows_release() {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     };
     let body_position = MousePosition {
         buffer_id: frame.selected.borrow().buffer,

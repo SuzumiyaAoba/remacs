@@ -25,6 +25,7 @@ fn hover(i: &Interp, column: usize, expected_window: usize) -> MousePosition {
         area: None,
         mode_line_buffer_name: false,
         object: None,
+        timestamp: 0,
     }
 }
 

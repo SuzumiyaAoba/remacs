@@ -475,6 +475,8 @@ pub struct MousePosition {
     pub area: Option<MouseArea>,
     /// Display image or string under the pointer, if any.
     pub object: Option<MouseObject>,
+    /// Milliseconds since this front-end's monotonic mouse-event epoch.
+    pub timestamp: i128,
     /// The pointer is over the mode-line buffer-identification field.
     pub mode_line_buffer_name: bool,
 }

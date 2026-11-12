@@ -1,7 +1,11 @@
 //! OS text input for the command-loop front-end. The input client owns the
 //! provisional composition; committed text belongs to the editor logic thread.
 
-use std::ops::Range;
+use std::{
+    ops::Range,
+    sync::OnceLock,
+    time::Instant,
+};
 
 use super::{
     EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT, grid_row_height, grid_row_top,
@@ -11,6 +15,16 @@ use gpui::{
     rgb, size,
 };
 use remacs_runtime::frontend::{CellStyle, Grid, GridInput, MouseArea, MouseObject, MousePosition};
+
+fn mouse_timestamp_ms() -> i128 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis()
+        .saturating_add(1)
+        .min(i128::MAX as u128) as i128
+}
 
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
@@ -327,6 +341,7 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         area,
         object,
         mode_line_buffer_name: false,
+        timestamp: mouse_timestamp_ms(),
     })
 }
 
@@ -357,6 +372,7 @@ pub(super) fn mode_line_mouse_position(
         mode_line_buffer_name: mode_line
             .buffer_name_range
             .is_some_and(|(left, right)| column >= left && column < right),
+        timestamp: mouse_timestamp_ms(),
     })
 }
 
@@ -387,6 +403,7 @@ pub(super) fn header_line_mouse_position(
         area: Some(MouseArea::HeaderLine),
         object: None,
         mode_line_buffer_name: false,
+        timestamp: mouse_timestamp_ms(),
     })
 }
 

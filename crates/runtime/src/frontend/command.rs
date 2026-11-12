@@ -2250,7 +2250,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             Value::Window(window),
             area_symbol,
             coordinates,
-            Value::Int(0),
+            Value::Int(position.timestamp),
             mode_line_string,
             if matches!(area, super::MouseArea::ImageMap(_)) {
                 Value::Int(position.buffer_position.saturating_add(1) as i128)
@@ -2269,7 +2269,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             Value::Window(window),
             Value::Int(position.buffer_position.saturating_add(1) as i128),
             coordinates,
-            Value::Int(0),
+            Value::Int(position.timestamp),
             object,
             Value::Nil,
             actual_col_row.clone(),
@@ -2279,7 +2279,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             Value::Window(window),
             Value::Int(position.buffer_position.saturating_add(1) as i128),
             coordinates,
-            Value::Int(0),
+            Value::Int(position.timestamp),
             Value::Nil,
             Value::Nil,
             actual_col_row.clone(),
@@ -2290,7 +2290,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             Value::Window(window),
             Value::Int(position.buffer_position.saturating_add(1) as i128),
             coordinates,
-            Value::Int(0),
+            Value::Int(position.timestamp),
             Value::Nil,
             Value::Nil,
             actual_col_row,
@@ -3327,6 +3327,7 @@ mod image_map_mouse_tests {
             area: None,
             object: Some(object),
             mode_line_buffer_name: false,
+            timestamp: 0,
         }
     }
 
@@ -3405,6 +3406,7 @@ mod image_map_mouse_tests {
             area: None,
             object: None,
             mode_line_buffer_name: false,
+            timestamp: 0,
         };
 
         let position = mouse_position_value(&mut interp, position).unwrap();
@@ -3415,6 +3417,29 @@ mod image_map_mouse_tests {
         let actual_col_row = actual_col_row.borrow();
         assert!(matches!(actual_col_row.car, Value::Int(7)));
         assert!(matches!(actual_col_row.cdr, Value::Int(3)));
+    }
+
+    #[test]
+    fn position_value_preserves_mouse_event_timestamp() {
+        let (mut interp, buffer_id, window_id) = interp_with_mouse_object_buffer();
+        let position = MousePosition {
+            buffer_id,
+            buffer_position: 0,
+            utf16_offset: 0,
+            x: 0,
+            y: 0,
+            row: 3,
+            column: 7,
+            window_id: Some(window_id),
+            area: None,
+            object: None,
+            timestamp: 12_345,
+            mode_line_buffer_name: false,
+        };
+
+        let position = mouse_position_value(&mut interp, position).unwrap();
+        let fields = position.list_to_vec().unwrap();
+        assert!(matches!(fields[3], Value::Int(12_345)));
     }
 
     #[test]
@@ -3459,6 +3484,7 @@ mod image_map_mouse_tests {
             area: Some(super::super::MouseArea::ImageMap(area1)),
             mode_line_buffer_name: false,
             object: None,
+            timestamp: 0,
         };
         let mouse = MouseInput {
             button: MouseButton::Left,
