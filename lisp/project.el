@@ -395,7 +395,7 @@ to find the list of ignores for each directory."
    (or dirs
        (list (project-root project)))))
 
-(defun project--files-in-directory (dir ignores &optional files)
+(defun project--files-in-directory (dir ignores &optional files directories-only)
   (require 'find-dired)
   (require 'xref)
   (let* ((dir (file-name-as-directory dir))
@@ -404,9 +404,11 @@ to find the list of ignores for each directory."
          ;; expanded and not left for the shell command
          ;; to interpret.
          (localdir (file-name-unquote (file-local-name (expand-file-name dir))))
-         (command (format "%s -H . %s -type f %s -print0"
+         (command (format "%s -H . %s%s-type %s %s -print0"
                           find-program
+                          (if directories-only "-mindepth 1 " "")
                           (xref--find-ignores-arguments ignores "./")
+                          (if directories-only "d" "f")
                           (if files
                               (concat (shell-quote-argument "(")
                                       " -name "
@@ -442,6 +444,15 @@ to find the list of ignores for each directory."
       (project--remote-file-names
        (mapcar (lambda (s) (concat localdir s))
                (sort res #'string<))))))
+
+(defun project--directories-in-directory (project dir)
+  "Return the non-ignored directories below DIR in PROJECT.
+The returned directory names are relative and end in a slash."
+  (let ((project-files-relative-names t))
+    (mapcar (lambda (relative-dir)
+              (file-name-as-directory (concat "./" relative-dir)))
+            (project--files-in-directory
+             dir (project--dir-ignores project dir) nil t))))
 
 (defun project--remote-file-names (local-files)
   "Return LOCAL-FILES as if they were on the system of `default-directory'.
@@ -1635,24 +1646,27 @@ The current buffer's `default-directory' is available as part of
          (root (project-root project))
          (all-files (project-files project))
          (completion-ignore-case read-file-name-completion-ignore-case)
-         (all-dirs (cons "./"
-                         (delete-dups
-                          (apply #'append
-                                 (mapcar
-                                  (lambda (file)
-                                    (let* ((file (if (file-name-absolute-p file)
-                                                     (file-relative-name file root)
-                                                   file))
-                                           (dir (file-name-directory file))
-                                           dirs)
-                                      (while (and dir
-                                                  (not (string-prefix-p "../" dir)))
-                                        (push dir dirs)
-                                        (setq dir
-                                              (file-name-directory
-                                               (directory-file-name dir))))
-                                      (nreverse dirs)))
-                                  all-files))))
+         (all-file-dirs
+          (apply #'append
+                 (mapcar
+                  (lambda (file)
+                    (let* ((file (if (file-name-absolute-p file)
+                                     (file-relative-name file root)
+                                   file))
+                           (dir (file-name-directory file))
+                           dirs)
+                      (while (and dir (not (string-prefix-p "../" dir)))
+                        (push dir dirs)
+                        (setq dir
+                              (file-name-directory
+                               (directory-file-name dir))))
+                      (nreverse dirs)))
+                  all-files)))
+         (all-dirs
+          (cons "./"
+                (delete-dups
+                 (append (project--directories-in-directory project root)
+                         all-file-dirs))))
          (default-directory root)
          (dir (project--read-file-name
                project "Dired"
