@@ -217,6 +217,8 @@ pub struct Img {
     style: ImageStyle,
     image_cache: Option<AnyImageCache>,
     on_render_image_loaded: Option<Box<dyn Fn(&Arc<RenderImage>) + 'static>>,
+    /// Fixed frame for multi-frame images; `None` preserves animation.
+    frame_index: Option<usize>,
 }
 
 /// Create a new image element.
@@ -228,6 +230,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         style: ImageStyle::default(),
         image_cache: None,
         on_render_image_loaded: None,
+        frame_index: None,
     }
 }
 
@@ -264,6 +267,12 @@ impl Img {
         callback: impl Fn(&Arc<RenderImage>) + 'static,
     ) -> Self {
         self.on_render_image_loaded = Some(Box::new(callback));
+        self
+    }
+
+    /// Display one frame of a multi-frame image instead of animating it.
+    pub fn frame_index(mut self, frame_index: usize) -> Self {
+        self.frame_index = Some(frame_index);
         self
     }
 }
@@ -328,7 +337,9 @@ impl Element for Img {
                 })
             });
 
-            let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
+            let mut frame_index = self
+                .frame_index
+                .unwrap_or_else(|| state.as_ref().map(|state| state.frame_index).unwrap_or(0));
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
@@ -349,9 +360,14 @@ impl Element for Img {
                             if let Some(on_loaded) = &self.on_render_image_loaded {
                                 on_loaded(&data);
                             }
+                            let frame_count = data.frame_count().max(1);
+                            frame_index = self
+                                .frame_index
+                                .map(|index| index.min(frame_count - 1))
+                                .unwrap_or_else(|| frame_index.min(frame_count - 1));
                             if let Some(state) = &mut state {
-                                let frame_count = data.frame_count();
-                                if frame_count > 1 {
+                                if self.frame_index.is_none() && frame_count > 1 {
+                                    state.frame_index = state.frame_index.min(frame_count - 1);
                                     let current_time = Instant::now();
                                     if let Some(last_frame_time) = state.last_frame_time {
                                         let elapsed = current_time - last_frame_time;
@@ -402,7 +418,10 @@ impl Element for Img {
                                 };
                             }
 
-                            if global_id.is_some() && data.frame_count() > 1 {
+                            if global_id.is_some()
+                                && self.frame_index.is_none()
+                                && frame_count > 1
+                            {
                                 window.request_animation_frame();
                             }
                         }

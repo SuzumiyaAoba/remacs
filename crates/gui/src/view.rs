@@ -3571,6 +3571,7 @@ fn grid_image_element(
     image_cache_size: Arc<AtomicUsize>,
 ) -> AnyElement {
     let cache_key = image.source.clone();
+    let frame_index = image.index;
     let source = match image.source {
         GridImageSource::File(path) => img(std::path::PathBuf::from(path)),
         GridImageSource::FileWithSvgOptions {
@@ -3622,6 +3623,10 @@ fn grid_image_element(
             image_cache_size.store(total, Ordering::Release);
         }
     });
+    let source = match frame_index {
+        Some(index) => source.frame_index(index),
+        None => source,
+    };
     let source = match (image.width, image.height) {
         (Some(width), Some(height)) => source.w(px(width as f32)).h(px(height as f32)),
         (Some(width), None) => source.w(px(width as f32)),

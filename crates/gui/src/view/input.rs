@@ -1422,4 +1422,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn image_descriptor_frame_index_reaches_the_grid() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(image_descriptor_frame_index_reaches_the_grid_inner)
+            .expect("spawn image frame index test thread")
+            .join()
+            .expect("image frame index test thread");
+    }
+
+    fn image_descriptor_frame_index_reaches_the_grid_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str(
+                r#"(progn
+                  (erase-buffer)
+                  (let ((start (point)))
+                    (insert " ")
+                    (put-text-property
+                     start (1+ start) 'display
+                     (list 'image :type 'gif :data "x" :index 1))))"#,
+            )
+            .unwrap();
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        assert_eq!(grid.images.first().expect("rendered image").index, Some(1));
+    }
+
 }

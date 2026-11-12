@@ -128,6 +128,8 @@ pub struct GridImage {
     pub row: usize,
     pub column: usize,
     pub source: GridImageSource,
+    /// Selected zero-based frame for multi-frame images.
+    pub index: Option<usize>,
     /// Dimensions explicitly requested by the image descriptor.
     pub width: Option<usize>,
     pub height: Option<usize>,
@@ -4029,6 +4031,7 @@ struct RenderedFringe {
 struct RenderedImage {
     column: usize,
     source: GridImageSource,
+    index: Option<usize>,
     width: Option<usize>,
     height: Option<usize>,
     masked: bool,
@@ -4097,6 +4100,7 @@ enum DisplayReplacement {
     CompositionDefault(usize),
     Image {
         source: GridImageSource,
+        index: Option<usize>,
         width: Option<usize>,
         height: Option<usize>,
         masked: bool,
@@ -5239,6 +5243,7 @@ where
             }
             Some(DisplayReplacement::Image {
                 source,
+                index,
                 width: image_width,
                 height: image_height,
                 masked,
@@ -5258,6 +5263,7 @@ where
                     images.push(RenderedImage {
                         column: image_column - hscroll,
                         source,
+                        index,
                         width: image_width,
                         height: image_height,
                         masked,
@@ -7404,6 +7410,9 @@ fn image_display_replacement(
         image_property(i, &plist, ":height"),
         default_font_height,
     );
+    let index = image_property(i, &plist, ":index")
+        .int()
+        .and_then(|index| usize::try_from(index).ok());
     let masked = !image_property(i, &plist, ":mask").is_nil();
     let map = image_map_areas(i, &image_property(i, &plist, ":map"));
     let file = image_property(i, &plist, ":file");
@@ -7440,6 +7449,7 @@ fn image_display_replacement(
         };
         return Some(DisplayReplacement::Image {
             source,
+            index,
             width,
             height,
             masked,
@@ -7530,6 +7540,7 @@ fn image_display_replacement(
     };
     Some(DisplayReplacement::Image {
         source,
+        index,
         width,
         height,
         masked,
@@ -10600,6 +10611,7 @@ fn render_grid_internal(
                         row: y,
                         column,
                         source: image.source.clone(),
+                        index: image.index,
                         width: image.width,
                         height: image.height,
                         intrinsic_width: image.intrinsic_width,
@@ -11075,6 +11087,7 @@ fn render_grid_internal(
                     row: y,
                     column: image.column,
                     source: image.source.clone(),
+                    index: image.index,
                     width: image.width,
                     height: image.height,
                     intrinsic_width: image.intrinsic_width,
