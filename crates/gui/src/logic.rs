@@ -1439,6 +1439,21 @@ fn echo_message_end_position(text: &str, width: usize, tab_width: usize) -> (usi
     (column, byte_index)
 }
 
+fn echo_byte_index_for_column(text: &str, target_column: usize, tab_width: usize) -> usize {
+    let mut column = 0usize;
+    for (byte_index, character) in text.char_indices() {
+        if column >= target_column {
+            return byte_index;
+        }
+        let next_column = column.saturating_add(echo_char_width(character, column, tab_width));
+        if next_column > target_column {
+            return byte_index;
+        }
+        column = next_column;
+    }
+    text.len()
+}
+
 fn fit_echo_text_at_cursor(
     text: &str,
     width: usize,
@@ -1496,15 +1511,21 @@ fn fit_echo_text_at_cursor(
     let cursor_column = cursor_column
         .saturating_sub(scroll_start)
         .min(width.saturating_sub(1));
-    let cursor_index = cursor_index.unwrap_or(rendered.len());
     let visible_bytes = rendered.len();
+    let mut cursor_index = cursor_index.unwrap_or(visible_bytes).min(visible_bytes);
     rendered.push_str(&" ".repeat(width.saturating_sub(rendered_columns)));
+    if cursor_character >= text.chars().count()
+        && cursor_column == width.saturating_sub(1)
+        && cursor_index == visible_bytes
+    {
+        cursor_index = echo_byte_index_for_column(&rendered, cursor_column, tab_width);
+    }
     (
         rendered,
         rendered_columns,
         visible_bytes,
         cursor_column,
-        cursor_index.min(visible_bytes),
+        cursor_index,
     )
 }
 
@@ -1558,6 +1579,16 @@ mod echo_hscroll_tests {
         assert_eq!(shown, text);
         assert_eq!(columns, 4);
         assert_eq!(visible_bytes, text.len());
+    }
+
+    #[test]
+    fn end_cursor_byte_index_stays_inside_the_last_cell() {
+        let (shown, _, visible_bytes, cursor_column, cursor_index) =
+            fit_echo_text_at_cursor("abcd", 4, 4, 3, 8);
+        assert_eq!(shown, "abcd");
+        assert_eq!(visible_bytes, 4);
+        assert_eq!(cursor_column, 3);
+        assert_eq!(cursor_index, 3);
     }
 }
 
