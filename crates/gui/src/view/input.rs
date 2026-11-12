@@ -89,26 +89,33 @@ pub(super) fn visible_input_position(
     })
 }
 
+fn cursor_moved_to_echo_area(grid: &Grid) -> bool {
+    let Some((_, cursor_row)) = grid.cursor else {
+        return false;
+    };
+    let echo_area_row = grid.rows.len().saturating_sub(1);
+    if cursor_row != echo_area_row {
+        return false;
+    }
+    let input_cursor = grid.input.as_ref().and_then(|input| {
+        visible_input_position(grid, input.cursor, false)
+    });
+    input_cursor.is_some_and(|position| {
+        position.0 != cursor_row
+            || grid
+                .cursor_index
+                .is_some_and(|cursor_index| position.1 != cursor_index)
+    })
+}
+
 pub(super) fn composition_origin(
     grid: &Grid,
     replacement_range: Option<&Range<usize>>,
 ) -> Option<(usize, usize)> {
     let replacement = replacement_range?;
     let source_origin = visible_input_position(grid, replacement.start, false)?;
-    let input_cursor = grid
-        .input
-        .as_ref()
-        .and_then(|input| visible_input_position(grid, input.cursor, false));
-    let (cursor_row, _) = grid.cursor?;
-    let echo_area_row = grid.rows.len().saturating_sub(1);
-    let cursor_was_moved_to_echo_area = cursor_row == echo_area_row
-        && input_cursor.is_some_and(|position| {
-            position.0 != cursor_row
-                || grid
-                    .cursor_index
-                    .is_some_and(|cursor_index| position.1 != cursor_index)
-        });
-    if cursor_was_moved_to_echo_area {
+    let (_, cursor_row) = grid.cursor?;
+    if cursor_moved_to_echo_area(grid) {
         // Echo-area rendering moves the visual cursor but leaves GridInput's
         // document rows anchored to the source buffer.  Use the rendered
         // cursor position instead of the stale source-buffer position.
@@ -1063,7 +1070,7 @@ mod tests {
 
         grid.input.as_mut().unwrap().cursor = replacement.start;
         let source_origin = visible_input_position(&grid, replacement.start, false).unwrap();
-        grid.rows.push(String::new());
+        grid.rows.extend([String::new(), String::new()]);
         let echo_row = grid.rows.len() - 1;
         let echo_index = source_origin.1 + 1;
         grid.cursor = Some((echo_index, echo_row));
