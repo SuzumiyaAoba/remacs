@@ -546,6 +546,12 @@ pub trait KeyIo {
     }
     /// Repaint the whole frame.
     fn render(&mut self, i: &Interp) -> io::Result<()>;
+    /// Repaint with mutable runtime access for redisplay forms that evaluate Lisp.
+    /// Existing front-ends keep the read-only renderer unless they override this.
+    fn render_mut(&mut self, i: &mut Interp) -> io::Result<()> {
+        let _condition_cache = render::prepare_display_condition_cache(i);
+        self.render(i)
+    }
     /// Most recently observed native pointer position, in the display-relative
     /// pixel coordinates of the selected frame, when the frontend has one.
     fn mouse_absolute_pixel_position(&self, _i: &Interp) -> Option<(i128, i128)> {
@@ -641,8 +647,8 @@ pub use render::{
     GridModeLine, GridHeaderLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,
-    render_frame_grid_with_input_cached,
-    render_frame_grid_with_mouse_position_cached, render_grid, render_grid_with_input_cached,
+    render_frame_grid_with_input_cached, render_frame_grid_with_mouse_position_cached,
+    render_grid, render_grid_mut, render_grid_with_input_cached,
     render_grid_with_mouse_position_cached,
 };
 pub(crate) use render::{position_at_display_cell, position_display_cell};

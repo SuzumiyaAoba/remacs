@@ -7,6 +7,7 @@ use crate::{
 };
 use num_traits::{Signed, ToPrimitive};
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     sync::Arc,
@@ -6893,6 +6894,7 @@ fn window_faces(
                         ctx,
                         &property.value,
                         bb.id,
+                        start,
                         default_font_height,
                         mouse_position.is_some_and(|position| {
                             position >= start && position < end
@@ -6928,6 +6930,7 @@ fn window_faces(
                     ctx,
                     &value,
                     bb.id,
+                    overlay.start,
                     default_font_height,
                     mouse_face_active,
                     Some(MouseObjectSource::OverlayProperty {
@@ -8016,15 +8019,264 @@ fn image_slice_spec(i: &Interp, value: &Value) -> Option<(GridImageSlice, Value)
     Some((slice, image_desc))
 }
 
+fn display_when_spec(i: &Interp, value: &Value) -> Option<(Value, Value)> {
+    let Value::Cons(cell) = value else {
+        return None;
+    };
+    let (head, tail) = {
+        let cell = cell.borrow();
+        (cell.car.clone(), cell.cdr.clone())
+    };
+    let Value::Sym(head) = head else {
+        return None;
+    };
+    if i.symbol_name(head) != "when" {
+        return None;
+    }
+    let Value::Cons(arguments) = tail else {
+        return None;
+    };
+    let arguments = arguments.borrow();
+    Some((arguments.car.clone(), arguments.cdr.clone()))
+}
+
+#[derive(Clone)]
+struct DisplayConditionResult {
+    buffer_id: usize,
+    position: usize,
+    condition: Value,
+    applies: bool,
+}
+
+thread_local! {
+    static DISPLAY_CONDITION_CACHE: RefCell<HashMap<usize, Vec<DisplayConditionResult>>> =
+        RefCell::new(HashMap::new());
+}
+
+pub(crate) struct DisplayConditionCacheGuard {
+    interpreter_key: usize,
+}
+
+impl Drop for DisplayConditionCacheGuard {
+    fn drop(&mut self) {
+        DISPLAY_CONDITION_CACHE.with(|cache| {
+            cache.borrow_mut().remove(&self.interpreter_key);
+        });
+    }
+}
+
+fn display_condition_cache_key(i: &Interp) -> usize {
+    i as *const Interp as usize
+}
+
+fn evaluate_display_condition(
+    i: &mut Interp,
+    condition: &Value,
+    object: Value,
+    buffer_id: usize,
+    position: usize,
+) -> bool {
+    let let_symbol = i.q("let");
+    let object_symbol = i.q("object");
+    let position_symbol = i.q("position");
+    let buffer_position_symbol = i.q("buffer-position");
+    let position = Value::Int(position.saturating_add(1) as i128);
+    let bindings = Value::list(vec![
+        Value::list(vec![Value::Sym(object_symbol), object]),
+        Value::list(vec![Value::Sym(position_symbol), position.clone()]),
+        Value::list(vec![Value::Sym(buffer_position_symbol), position]),
+    ]);
+    let form = Value::list(vec![Value::Sym(let_symbol), bindings, condition.clone()]);
+    let current_buffer = i.current_buffer;
+    i.set_current_buffer(buffer_id);
+    let applies = i.eval(&form).is_ok_and(|value| value.truthy());
+    i.set_current_buffer(current_buffer);
+    applies
+}
+
+fn collect_display_condition_results(
+    i: &mut Interp,
+    results: &mut Vec<DisplayConditionResult>,
+    buffer_id: usize,
+    position: usize,
+    object: &Value,
+    spec: &Value,
+) {
+    let Some((condition, inner)) = display_when_spec(i, spec) else {
+        return;
+    };
+    let applies = evaluate_display_condition(i, &condition, object.clone(), buffer_id, position);
+    results.push(DisplayConditionResult {
+        buffer_id,
+        position,
+        condition,
+        applies,
+    });
+    if applies {
+        collect_display_condition_results(i, results, buffer_id, position, object, &inner);
+    }
+}
+
+/// Evaluate the conditional display specifications in buffers that may be
+/// rendered, before the read-only grid renderer borrows their text.
+pub(crate) fn prepare_display_condition_cache(
+    i: &mut Interp,
+) -> DisplayConditionCacheGuard {
+    let interpreter_key = display_condition_cache_key(i);
+    let mut results = Vec::new();
+    let Some(display_property) = i.q_soft("display") else {
+        DISPLAY_CONDITION_CACHE.with(|cache| {
+            cache.borrow_mut().insert(interpreter_key, results);
+        });
+        return DisplayConditionCacheGuard { interpreter_key };
+    };
+
+    let mut buffers = HashMap::new();
+    for frame in &i.frames {
+        let frame = frame.borrow();
+        if frame.dead {
+            continue;
+        }
+        for window in frame.windows.iter().chain(frame.minibuffer.iter()) {
+            let window_state = window.borrow();
+            if window_state.dead {
+                continue;
+            }
+            let buffer_id = window_state.buffer;
+            drop(window_state);
+            if let Some(buffer) = i.buffers.get(buffer_id) {
+                buffers
+                    .entry(buffer_id)
+                    .or_insert_with(|| (buffer.clone(), Vec::new()))
+                    .1
+                    .push(window.clone());
+            }
+        }
+    }
+    if let Some(buffer) = i.buffers.get(i.current_buffer) {
+        buffers
+            .entry(i.current_buffer)
+            .or_insert_with(|| (buffer.clone(), Vec::new()));
+    }
+
+    for (buffer_id, (buffer, windows)) in buffers {
+        let (begv, zv, text_properties, overlays) = {
+            let buffer_state = buffer.borrow();
+            let text_properties = buffer_state
+                .text
+                .props
+                .borrow()
+                .iter()
+                .filter(|property| {
+                    property.prop == display_property
+                        && property.start < buffer_state.zv
+                        && property.end > buffer_state.begv
+                })
+                .map(|property| (property.start, property.value.clone()))
+                .collect::<Vec<_>>();
+            (
+                buffer_state.begv,
+                buffer_state.zv,
+                text_properties,
+                buffer_state.overlays.clone(),
+            )
+        };
+        let object = Value::Buffer(buffer.clone());
+        for (position, value) in text_properties {
+            collect_display_condition_results(
+                i,
+                &mut results,
+                buffer_id,
+                position.max(begv).min(zv),
+                &object,
+                &value,
+            );
+        }
+        for overlay in overlays {
+            if overlay.buffer != Some(buffer_id)
+                || overlay.start >= overlay.end
+                || (!windows.is_empty()
+                    && !windows.iter().any(|window| {
+                        overlay.matches_window(i, &Value::Window(window.clone()))
+                    }))
+            {
+                continue;
+            }
+            let value = overlay.property(i, &Value::Sym(display_property));
+            if !value.is_nil() {
+                collect_display_condition_results(
+                    i,
+                    &mut results,
+                    buffer_id,
+                    overlay.start,
+                    &object,
+                    &value,
+                );
+            }
+        }
+    }
+
+    DISPLAY_CONDITION_CACHE.with(|cache| {
+        cache.borrow_mut().insert(interpreter_key, results);
+    });
+    DisplayConditionCacheGuard { interpreter_key }
+}
+
+fn display_condition_result(
+    i: &Interp,
+    buffer_id: usize,
+    position: usize,
+    condition: &Value,
+) -> Option<bool> {
+    let interpreter_key = display_condition_cache_key(i);
+    DISPLAY_CONDITION_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(&interpreter_key)?
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.buffer_id == buffer_id
+                    && entry.position == position
+                    && crate::lisp::eq_values(&entry.condition, condition)
+            })
+            .map(|entry| entry.applies)
+    })
+}
+
 fn display_value_replacement(
     i: &Interp,
     faces: &mut FaceCtx,
     value: &Value,
     buffer_id: usize,
+    position: usize,
     default_font_height: u16,
     mouse_face_active: bool,
     object_source: Option<MouseObjectSource>,
 ) -> Option<DisplayReplacement> {
+    if let Some((condition, spec)) = display_when_spec(i, value) {
+        let applies = display_condition_result(i, buffer_id, position, &condition).unwrap_or_else(|| {
+            match &condition {
+                Value::Nil => false,
+                Value::Sym(symbol) => i.symbol_name(*symbol) == "t",
+                Value::Cons(_) => false,
+                _ => true,
+            }
+        });
+        if !applies {
+            return None;
+        }
+        return display_value_replacement(
+            i,
+            faces,
+            &spec,
+            buffer_id,
+            position,
+            default_font_height,
+            mouse_face_active,
+            object_source,
+        );
+    }
     if let Some((slice, image_desc)) = image_slice_spec(i, value) {
         return image_display_replacement(
             i,
@@ -8915,6 +9167,12 @@ fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
 /// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     render_grid_internal(i, width, height, false, None, None, None)
+}
+
+/// Render the selected frame while allowing display conditions to evaluate Lisp.
+pub fn render_grid_mut(i: &mut Interp, width: usize, height: usize) -> Grid {
+    let _condition_cache = prepare_display_condition_cache(i);
+    render_grid(i, width, height)
 }
 
 /// Render a GUI input grid, reusing TEXT from a previous snapshot when
@@ -10531,6 +10789,7 @@ fn render_grid_internal(
                     &mut fctx,
                     &value,
                     buf_id,
+                    line_pos,
                     default_style.font_height.unwrap_or(140),
                     false,
                     None,

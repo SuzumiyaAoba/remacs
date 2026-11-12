@@ -2809,7 +2809,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 report_flow(i, flow);
             }
             let mut t = term.borrow_mut();
-            let _ = t.render(i);
+            let _ = t.render_mut(i);
             let _ = t.draw_echo_message_with_state(i, &label);
             render_needed = false;
         }

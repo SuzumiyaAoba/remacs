@@ -354,7 +354,7 @@ fn popup_loop<T: KeyIo>(
         render_needed |= term.borrow_mut().take_render_request();
         if render_needed {
             term.borrow_mut()
-                .render(i)
+                .render_mut(i)
                 .map_err(|error| i.error(format!("popup menu: {error}")))?;
             render_needed = false;
         }
@@ -524,7 +524,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             if let Err(flow) = super::prepare_native_menus(i) {
                 report_flow(i, flow);
             }
-            term.borrow_mut().render(i)?;
+            term.borrow_mut().render_mut(i)?;
             render_needed = false;
         }
         if let Some((key, event)) = pop_unread_key_event(i) {
