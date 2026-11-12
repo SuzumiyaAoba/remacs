@@ -89,6 +89,35 @@ pub(super) fn visible_input_position(
     })
 }
 
+pub(super) fn composition_origin(
+    grid: &Grid,
+    replacement_range: Option<&Range<usize>>,
+) -> Option<(usize, usize)> {
+    let replacement = replacement_range?;
+    let source_origin = visible_input_position(grid, replacement.start, false)?;
+    let input_cursor = grid
+        .input
+        .as_ref()
+        .and_then(|input| visible_input_position(grid, input.cursor, false));
+    let (cursor_row, _) = grid.cursor?;
+    let echo_area_row = grid.rows.len().saturating_sub(1);
+    let cursor_was_moved_to_echo_area = cursor_row == echo_area_row
+        && input_cursor.is_some_and(|position| {
+            position.0 != cursor_row
+                || grid
+                    .cursor_index
+                    .is_some_and(|cursor_index| position.1 != cursor_index)
+        });
+    if cursor_was_moved_to_echo_area {
+        // Echo-area rendering moves the visual cursor but leaves GridInput's
+        // document rows anchored to the source buffer.  Use the rendered
+        // cursor position instead of the stale source-buffer position.
+        grid.cursor_index.map(|index| (cursor_row, index))
+    } else {
+        Some(source_origin)
+    }
+}
+
 pub(super) fn mouse_position_for_point_with_cell_width(
     grid: &Grid,
     point: Point<Pixels>,
@@ -1010,6 +1039,39 @@ mod tests {
         assert!(input.marked_range.is_none());
         assert!(input.replacement_range.is_none());
         assert!(input.is_discarded_replacement(Some(&stale_range)));
+    }
+
+    #[test]
+    fn echo_area_composition_uses_the_visible_cursor() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(echo_area_composition_uses_the_visible_cursor_inner)
+            .expect("spawn IME composition test thread")
+            .join()
+            .expect("IME composition test thread");
+    }
+
+    fn echo_area_composition_uses_the_visible_cursor_inner() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str("(erase-buffer) (insert \"abcdef\") (goto-char 4)")
+            .unwrap();
+        let mut grid = remacs_runtime::frontend::render_grid_with_input_cached(
+            &interp, 40, 4, None,
+        );
+        let replacement = 3..3;
+
+        grid.input.as_mut().unwrap().cursor = replacement.start;
+        let source_origin = visible_input_position(&grid, replacement.start, false).unwrap();
+        grid.rows.push(String::new());
+        let echo_row = grid.rows.len() - 1;
+        let echo_index = source_origin.1 + 1;
+        grid.cursor = Some((echo_index, echo_row));
+        grid.cursor_index = Some(echo_index);
+        assert_eq!(
+            composition_origin(&grid, Some(&replacement)),
+            Some((echo_row, echo_index))
+        );
     }
 
 }

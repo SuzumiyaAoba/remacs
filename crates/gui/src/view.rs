@@ -1697,11 +1697,8 @@ impl Render for EditorView {
         let marked_selection = self.input.selection_byte_range();
         let marked_cursor = self.input.selection_byte_end();
         let marked_replacement = self.input.replacement_range.clone();
-        let marked_origin = self
-            .input
-            .replacement_range
-            .as_ref()
-            .and_then(|range| input::visible_input_position(&self.grid, range.start, false));
+        let marked_origin =
+            input::composition_origin(&self.grid, self.input.replacement_range.as_ref());
         let composition_font = text_font.clone();
         let mouse_face_exit_position = self.mouse_face_position.clone();
         let mouse_face_exit_tx = self.tx.clone();
