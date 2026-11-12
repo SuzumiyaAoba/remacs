@@ -2967,12 +2967,25 @@ Keybindings:
   "Summarize basic Dired commands and show recent Dired errors."
   (interactive)
   (dired-why)
-  ;; FIXME this should check the key-bindings and use
-  ;; substitute-command-keys if non-standard
-  (message
-   (substitute-command-keys
-    (concat "\\`d'-elete, \\`u'-ndelete, \\`x'-punge, \\`f'-ind, "
-            "\\`o'-ther window, \\`R'-ename, \\`C'-opy, \\`h'-elp"))))
+  ;;Remacs: derive the help keys from the current Dired map, since users
+  ;; can rebind any of these commands.
+  (let ((commands '((dired-flag-file-deletion . "delete")
+                    (dired-unmark . "unmark")
+                    (dired-do-flagged-delete . "expunge")
+                    (dired-find-file . "find")
+                    (dired-find-file-other-window . "other window")
+                    (dired-do-rename . "rename")
+                    (dired-do-copy . "copy")
+                    (dired-summary . "help"))))
+    (message
+     "%s"
+     (mapconcat
+      (lambda (entry)
+        (let ((keys (where-is-internal (car entry) dired-mode-map)))
+          (format "%s %s"
+                  (if keys (key-description (car keys)) "unbound")
+                  (cdr entry))))
+      commands ", "))))
 
 (defun dired-undo (&optional arg)
   "Undo in a Dired buffer.
