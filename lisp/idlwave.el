@@ -2808,6 +2808,56 @@ Inserts spaces before markers at point."
       (idlwave-end-of-statement)
       (indent-region beg (point) nil))))
 
+;; Remacs: Account for every block transition on an ampersand-separated line
+;; when calculating the indentation of the following statement.
+(defun idlwave-multi-command-separator-p (beg end)
+  "Return non-nil if the statement between BEG and END has an unpaired `&'."
+  (save-excursion
+    (goto-char beg)
+    (catch 'found
+      (while (idlwave-find-key "&" 1 'nomark end)
+        (let ((pos (point)))
+          (if (or (eq (char-before pos) ?&)
+                  (eq (char-after (1+ pos)) ?&))
+              (goto-char (1+ pos))
+            (throw 'found t))))
+      nil)))
+
+(defun idlwave-multi-command-block-delta (beg end)
+  "Return block starts minus block ends between BEG and END."
+  (let ((block-regexp (concat "\\(?:" idlwave-begin-block-reg "\\|"
+                              idlwave-end-block-reg "\\)"))
+        (case-fold-search t)
+        (delta 0))
+    (save-excursion
+      (goto-char beg)
+      (while (idlwave-find-key block-regexp 1 'nomark end)
+        (let* ((token (match-string-no-properties 0))
+               (next (match-end 0)))
+          (setq delta (+ delta
+                         (if (string-match-p idlwave-begin-block-reg token)
+                             1 -1)))
+          (goto-char next))))
+    delta))
+
+(defun idlwave-multi-command-block-indent (beg)
+  "Return indentation after a multi-command statement starting at BEG."
+  (save-excursion
+    (goto-char beg)
+    (let ((end (idlwave-end-of-statement)))
+      (when (idlwave-multi-command-separator-p beg end)
+        (let* ((first-type
+                (save-excursion
+                  (goto-char beg)
+                  (caar (idlwave-statement-type))))
+               (start-indent (idlwave-min-current-statement-indent end))
+               (delta (idlwave-multi-command-block-delta beg end)))
+          ;; An END statement is indented at its opener's level.  Add one
+          ;; block back to recover the depth before this physical line.
+          (when (memq first-type '(end endelse))
+            (setq delta (1+ delta)))
+          (max 0 (+ start-indent (* idlwave-block-indent delta))))))))
+
 (defun idlwave-calculate-indent ()
   "Return appropriate indentation for current line as IDL code."
   (save-excursion
@@ -2853,6 +2903,14 @@ Inserts spaces before markers at point."
 
 		   ;; Default to current indent
 		   ((idlwave-current-statement-indent))))))
+          ;; A physical line may contain several block statements separated
+          ;; by `&'.  The ordinary branches above classify one block token;
+          ;; use the full line's net block depth for the following statement.
+          (when (and beg-prev-pos
+                     (< beg-prev-pos (line-beginning-position)))
+            (setq the-indent
+                  (or (idlwave-multi-command-block-indent beg-prev-pos)
+                      the-indent)))
           ;; adjust the indentation based on the current statement
           (cond
            ;; End block
