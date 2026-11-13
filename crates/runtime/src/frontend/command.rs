@@ -1769,6 +1769,12 @@ fn dispatch_mouse<T: KeyIo>(
         Some(super::MouseArea::RightMargin) => {
             keys.push(crate::editor::event_code_for("right-margin"));
         }
+        Some(super::MouseArea::LeftFringe) => {
+            keys.push(crate::editor::event_code_for("left-fringe"));
+        }
+        Some(super::MouseArea::RightFringe) => {
+            keys.push(crate::editor::event_code_for("right-fringe"));
+        }
         Some(super::MouseArea::VerticalScrollBar) => {
             keys.push(crate::editor::event_code_for("vertical-scroll-bar"));
         }
@@ -1886,6 +1892,12 @@ fn dispatch_touch_end<T: KeyIo>(
             Some(super::MouseArea::RightMargin) => {
                 keys.push(crate::editor::event_code_for("right-margin"));
             }
+            Some(super::MouseArea::LeftFringe) => {
+                keys.push(crate::editor::event_code_for("left-fringe"));
+            }
+            Some(super::MouseArea::RightFringe) => {
+                keys.push(crate::editor::event_code_for("right-fringe"));
+            }
             Some(
                 super::MouseArea::VerticalScrollBar
                 | super::MouseArea::HorizontalScrollBar
@@ -1939,6 +1951,12 @@ fn dispatch_mouse_wheel<T: KeyIo>(
             }
             Some(super::MouseArea::RightMargin) => {
                 keys.push(crate::editor::event_code_for("right-margin"));
+            }
+            Some(super::MouseArea::LeftFringe) => {
+                keys.push(crate::editor::event_code_for("left-fringe"));
+            }
+            Some(super::MouseArea::RightFringe) => {
+                keys.push(crate::editor::event_code_for("right-fringe"));
             }
             Some(super::MouseArea::VerticalScrollBar) => {
                 keys.push(crate::editor::event_code_for("vertical-scroll-bar"));
@@ -2360,6 +2378,8 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             super::MouseArea::TabLine => Value::Sym(i.intern("tab-line")),
             super::MouseArea::LeftMargin => Value::Sym(i.intern("left-margin")),
             super::MouseArea::RightMargin => Value::Sym(i.intern("right-margin")),
+            super::MouseArea::LeftFringe => Value::Sym(i.intern("left-fringe")),
+            super::MouseArea::RightFringe => Value::Sym(i.intern("right-fringe")),
             super::MouseArea::VerticalScrollBar => {
                 Value::Sym(i.intern("vertical-scroll-bar"))
             }

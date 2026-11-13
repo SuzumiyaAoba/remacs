@@ -476,6 +476,8 @@ pub enum MouseArea {
     TabLine,
     LeftMargin,
     RightMargin,
+    LeftFringe,
+    RightFringe,
     VerticalScrollBar,
     HorizontalScrollBar,
     ImageMap(SymId),

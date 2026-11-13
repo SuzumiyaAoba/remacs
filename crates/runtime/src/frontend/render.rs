@@ -561,6 +561,9 @@ pub struct GridWindowTextArea {
     pub top: usize,
     pub width: usize,
     pub rows: usize,
+    /// Left and right fringe widths in display cells.
+    pub left_fringe: usize,
+    pub right_fringe: usize,
     /// First cell occupied by buffer text, after margins and line-number gutter.
     pub text_left: usize,
     /// Number of cells available to buffer text.
@@ -10618,6 +10621,8 @@ fn render_grid_internal(
                 top: content_top,
                 width: width_after_fringes,
                 rows: text_rows,
+                left_fringe: fringe_left_cells,
+                right_fringe: fringe_right_cells,
                 text_left: content_left,
                 text_width: content_width,
                 left_margin: margin_left,
@@ -12458,6 +12463,8 @@ fn render_grid_internal(
             top: mini_top,
             width,
             rows: minibuffer_text_height,
+            left_fringe: 0,
+            right_fringe: 0,
             text_left: 0,
             text_width: width,
             left_margin: 0,

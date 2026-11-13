@@ -144,6 +144,36 @@ fn margin_area_hit(grid: &Grid, row: usize, column: usize) -> Option<(MouseArea,
     None
 }
 
+fn fringe_area_hit(grid: &Grid, row: usize, column: usize) -> Option<(MouseArea, usize)> {
+    let area = grid.window_text_areas.iter().find(|area| {
+        row >= area.top
+            && row < area.top.saturating_add(area.rows)
+            && ((area.left_fringe > 0
+                && column >= area.left.saturating_sub(area.left_fringe)
+                && column < area.left)
+                || (area.right_fringe > 0
+                    && column >= area.left.saturating_add(area.width)
+                    && column
+                        < area
+                            .left
+                            .saturating_add(area.width)
+                            .saturating_add(area.right_fringe)))
+    })?;
+    let input = grid.input.as_ref()?;
+    let text_columns = area.left..area.left.saturating_add(area.width);
+    if column < area.left {
+        let nearest_text_column = text_columns
+            .clone()
+            .find(|column| input.hit_test_source_range(row, *column).is_some())?;
+        Some((MouseArea::LeftFringe, nearest_text_column))
+    } else {
+        let nearest_text_column = text_columns
+            .rev()
+            .find(|column| input.hit_test_source_range(row, *column).is_some())?;
+        Some((MouseArea::RightFringe, nearest_text_column))
+    }
+}
+
 fn cursor_moved_to_echo_area(grid: &Grid) -> bool {
     let Some((_, cursor_row)) = grid.cursor else {
         return false;
@@ -354,12 +384,12 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         })
         .map_or(0, |scroll| scroll.pixels);
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
-    let margin = margin_area_hit(grid, row, column);
-    let hit_column = margin.map_or(column, |(_, column)| column);
+    let area_hit = fringe_area_hit(grid, row, column).or_else(|| margin_area_hit(grid, row, column));
+    let hit_column = area_hit.map_or(column, |(_, column)| column);
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
     let mapped = input.hit_test_position(row, hit_column, byte)?;
-    let area = margin
+    let area = area_hit
         .map(|(area, _)| area)
         .or_else(|| image_map_area_at_point(grid, point, cell_width).map(MouseArea::ImageMap));
     let object = image_object_at_point(grid, point, cell_width).or(mapped.object);
@@ -1320,6 +1350,8 @@ mod tests {
             top: 1,
             width: 18,
             rows: 2,
+            left_fringe: 0,
+            right_fringe: 0,
             text_left: 7,
             text_width: 9,
             left_margin: 5,
