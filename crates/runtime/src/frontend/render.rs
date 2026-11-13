@@ -541,6 +541,16 @@ pub struct GridHeaderLine {
     pub width: usize,
 }
 
+/// A window's visible tab-line hit area.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GridTabLine {
+    pub window_id: usize,
+    pub buffer_id: usize,
+    pub row: usize,
+    pub left: usize,
+    pub width: usize,
+}
+
 /// A visible window text rectangle, including blank space and margins.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridWindowTextArea {
@@ -810,6 +820,7 @@ pub struct Grid {
     pub right_dividers: Vec<GridRightDivider>,
     pub mode_lines: Vec<GridModeLine>,
     pub header_lines: Vec<GridHeaderLine>,
+    pub tab_lines: Vec<GridTabLine>,
     pub window_text_areas: Vec<GridWindowTextArea>,
     pub vscrolls: Vec<GridVScroll>,
     pub compositions: Vec<GridComposition>,
@@ -1124,6 +1135,7 @@ impl Grid {
             right_dividers: Vec::new(),
             mode_lines: Vec::new(),
             header_lines: Vec::new(),
+            tab_lines: Vec::new(),
             window_text_areas: Vec::new(),
             vscrolls: Vec::new(),
             compositions: Vec::new(),
@@ -9875,6 +9887,7 @@ fn render_grid_internal(
     let mut right_dividers = Vec::new();
     let mut mode_lines = Vec::new();
     let mut header_lines = Vec::new();
+    let mut tab_lines = Vec::new();
     let mut window_text_areas = Vec::new();
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
@@ -9921,6 +9934,7 @@ fn render_grid_internal(
                 right_dividers,
                 mode_lines,
                 header_lines,
+                tab_lines,
                 window_text_areas,
                 vscrolls,
                 compositions: Vec::new(),
@@ -12250,6 +12264,13 @@ fn render_grid_internal(
                 &mut help_echoes,
                 &mut pointer_regions,
             );
+            tab_lines.push(GridTabLine {
+                window_id,
+                buffer_id: buf_id,
+                row: auxiliary_row,
+                left: window_left,
+                width: window_width,
+            });
             auxiliary_row += 1;
         }
         if header_line_enabled && auxiliary_row < content_top {
@@ -12784,6 +12805,7 @@ fn render_grid_internal(
         right_dividers,
         mode_lines,
         header_lines,
+        tab_lines,
         window_text_areas,
         vscrolls,
         compositions,

@@ -1853,6 +1853,9 @@ fn dispatch_touch_end<T: KeyIo>(
             Some(super::MouseArea::HeaderLine) => {
                 keys.push(crate::editor::event_code_for("header-line"));
             }
+            Some(super::MouseArea::TabLine) => {
+                keys.push(crate::editor::event_code_for("tab-line"));
+            }
             Some(super::MouseArea::LeftMargin) => {
                 keys.push(crate::editor::event_code_for("left-margin"));
             }
@@ -1903,6 +1906,9 @@ fn dispatch_mouse_wheel<T: KeyIo>(
             }
             Some(super::MouseArea::HeaderLine) => {
                 keys.push(crate::editor::event_code_for("header-line"));
+            }
+            Some(super::MouseArea::TabLine) => {
+                keys.push(crate::editor::event_code_for("tab-line"));
             }
             Some(super::MouseArea::LeftMargin) => {
                 keys.push(crate::editor::event_code_for("left-margin"));
@@ -2327,6 +2333,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
         let area_symbol = match area {
             super::MouseArea::ModeLine => Value::Sym(i.intern("mode-line")),
             super::MouseArea::HeaderLine => Value::Sym(i.intern("header-line")),
+            super::MouseArea::TabLine => Value::Sym(i.intern("tab-line")),
             super::MouseArea::LeftMargin => Value::Sym(i.intern("left-margin")),
             super::MouseArea::RightMargin => Value::Sym(i.intern("right-margin")),
             super::MouseArea::VerticalScrollBar => {

@@ -473,6 +473,7 @@ impl MouseButton {
 pub enum MouseArea {
     ModeLine,
     HeaderLine,
+    TabLine,
     LeftMargin,
     RightMargin,
     VerticalScrollBar,
@@ -689,7 +690,7 @@ pub use render::{
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
     GridPointerRegion,
-    GridModeLine, GridHeaderLine, GridVScroll, GridWindowTextArea,
+    GridModeLine, GridHeaderLine, GridTabLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,
     render_frame_grid_with_input_cached, render_frame_grid_with_mouse_position_cached,

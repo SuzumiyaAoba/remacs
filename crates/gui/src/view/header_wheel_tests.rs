@@ -1,9 +1,11 @@
 use super::{EditorView, GuiEvent};
 use crate::logic::ChanIo;
-use gpui::{Modifiers, ScrollDelta, ScrollWheelEvent, point, px};
+use gpui::{MouseButton as GpuiMouseButton, Modifiers, ScrollDelta, ScrollWheelEvent, point, px};
 use remacs_runtime::{
     editor::{CHAR_CTL, event_code_for, reflow_frame_windows},
-    frontend::{MouseArea, render_grid_with_input_cached, run_editor_with},
+    frontend::{
+        Grid, GridHeaderLine, GridTabLine, MouseArea, render_grid_with_input_cached, run_editor_with,
+    },
     lisp::{Interp, Value},
 };
 use std::sync::mpsc;
@@ -221,4 +223,72 @@ fn header_wheel_hit_testing_uses_row_heights_and_reaches_its_lisp_prefix_inner()
             .to_unicode_lossy(),
         "(((wheel-down header-line t 2) (C-wheel-up header-line nil 1) (wheel-down nil t 1) (wheel-left header-line t 1) (wheel-right header-line t 1)) t)"
     );
+}
+
+#[test]
+fn header_and_tab_line_hit_areas_map_to_their_lisp_positions() {
+    let mut grid = Grid::blank(20, 2);
+    grid.row_heights = vec![19, 19];
+    grid.header_lines.push(GridHeaderLine {
+        window_id: 1,
+        buffer_id: 2,
+        row: 1,
+        left: 3,
+        width: 10,
+    });
+    grid.tab_lines.push(GridTabLine {
+        window_id: 1,
+        buffer_id: 2,
+        row: 0,
+        left: 3,
+        width: 10,
+    });
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(0);
+            view.grid = grid;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    let points = handle
+        .update(&mut app, |view, _, _| {
+            let point_for = |row, left| {
+                point(
+                    view.cell_width * (left + 2) as f32 + px(1.0),
+                    super::grid_row_top(&view.grid, row, view.line_height) + px(5.0),
+                )
+            };
+            (point_for(0, 3), point_for(1, 3))
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    for position in [points.0, points.1] {
+        visual.simulate_mouse_down(position, GpuiMouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_up(position, GpuiMouseButton::Left, Modifiers::none());
+    }
+    let events: Vec<_> = rx
+        .try_iter()
+        .filter(|event| matches!(event, GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. }))
+        .collect();
+    assert_eq!(events.len(), 4);
+    for (pair, expected_area) in events
+        .chunks_exact(2)
+        .zip([MouseArea::TabLine, MouseArea::HeaderLine])
+    {
+        for event in pair {
+            let position = match event {
+                GuiEvent::MouseDown { position, .. } | GuiEvent::MouseUp { position, .. } => {
+                    position
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(position.area, Some(expected_area));
+            assert_eq!(position.window_id, Some(1));
+        }
+    }
 }

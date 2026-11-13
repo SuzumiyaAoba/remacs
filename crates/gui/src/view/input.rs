@@ -324,6 +324,22 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     cell_width: Pixels,
     window: &mut Window,
 ) -> Option<MousePosition> {
+    if let Some(position) = header_line_mouse_position(
+        grid,
+        point,
+        cell_width,
+        window.scale_factor(),
+    ) {
+        return Some(position);
+    }
+    if let Some(position) = tab_line_mouse_position(
+        grid,
+        point,
+        cell_width,
+        window.scale_factor(),
+    ) {
+        return Some(position);
+    }
     let input = grid.input.as_ref()?;
     let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
     let row = grid_row_at_y(grid, point.y);
@@ -433,6 +449,37 @@ pub(super) fn header_line_mouse_position(
         column: column.saturating_sub(header.left),
         window_id: Some(header.window_id),
         area: Some(MouseArea::HeaderLine),
+        object: None,
+        mode_line_buffer_name: false,
+        timestamp: mouse_timestamp_ms(),
+    })
+}
+
+pub(super) fn tab_line_mouse_position(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    scale_factor: f32,
+) -> Option<MousePosition> {
+    let row = grid_row_at_y(grid, point.y);
+    let column = (f32::from(point.x) / f32::from(cell_width))
+        .floor()
+        .max(0.0) as usize;
+    let tab = grid.tab_lines.iter().find(|tab| {
+        row == tab.row
+            && column >= tab.left
+            && column < tab.left.saturating_add(tab.width)
+    })?;
+    Some(MousePosition {
+        buffer_id: tab.buffer_id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: super::device_pixels(point.x, scale_factor),
+        y: super::device_pixels(point.y, scale_factor),
+        row,
+        column: column.saturating_sub(tab.left),
+        window_id: Some(tab.window_id),
+        area: Some(MouseArea::TabLine),
         object: None,
         mode_line_buffer_name: false,
         timestamp: mouse_timestamp_ms(),
