@@ -13,10 +13,24 @@ use std::time::Duration;
 
 use crate::lisp::{Interp, value::SymId};
 
+/// Clipboard metadata exposed to Lisp selection queries.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClipboardInfo {
+    /// Whether the host clipboard currently advertises any data types.
+    pub has_data: bool,
+    /// Lisp-facing target names for the host clipboard's known data types.
+    pub targets: Vec<String>,
+}
+
 /// Platform clipboard access used by window-system selection primitives.
 pub trait ClipboardBackend {
     fn read_text(&self) -> Result<Option<String>, String>;
     fn write_text(&self, text: String) -> Result<(), String>;
+
+    /// Return native clipboard metadata when the host exposes it.
+    fn clipboard_info(&self) -> Result<Option<ClipboardInfo>, String> {
+        Ok(None)
+    }
 
     /// Return the host clipboard generation when the platform exposes one.
     /// Implementations use this to distinguish identical data from a new owner.

@@ -1046,6 +1046,24 @@ fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     }
     if target_name == "TARGETS" {
+        if matches!(
+            HostSelection::for_symbol(i, backend.as_ref(), selection),
+            Some(HostSelection::Clipboard)
+        ) && let Some(info) = backend
+            .clipboard_info()
+            .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+        {
+            let mut targets = vec![target];
+            for name in info.targets {
+                let target = i.q(&name);
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+            return Ok(Value::vector(
+                targets.into_iter().map(Value::Sym).collect(),
+            ));
+        }
         let string = i.q("STRING");
         return Ok(Value::vector(vec![Value::Sym(string)]));
     }
@@ -1078,9 +1096,22 @@ fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     };
     let exists = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
-        host.read(backend.as_ref())
-            .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
-            .is_some()
+        if matches!(&host, HostSelection::Clipboard) {
+            if let Some(info) = backend
+                .clipboard_info()
+                .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+            {
+                info.has_data
+            } else {
+                host.read(backend.as_ref())
+                    .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+                    .is_some()
+            }
+        } else {
+            host.read(backend.as_ref())
+                .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+                .is_some()
+        }
     } else {
         i.nsgui_selections.contains_key(&selection)
     };

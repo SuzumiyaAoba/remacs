@@ -13,7 +13,12 @@ mod accessibility_tree;
 #[cfg(target_os = "macos")]
 mod applescript;
 #[cfg(target_os = "macos")]
-use cocoa::appkit::{NSPasteboard, NSPasteboardTypeString, NSStringPboardType};
+use cocoa::appkit::{
+    NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeHTML,
+    NSPasteboardTypeMultipleTextSelection, NSPasteboardTypePDF, NSPasteboardTypePNG,
+    NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
+    NSPasteboardTypeTabularText, NSPasteboardTypeTIFF, NSStringPboardType, NSURLPboardType,
+};
 #[cfg(target_os = "macos")]
 use cocoa::base::{NO, id, nil};
 #[cfg(target_os = "macos")]
@@ -117,6 +122,51 @@ fn native_clipboard_change_count() -> Option<u64> {
 
 #[cfg(not(target_os = "macos"))]
 fn native_clipboard_change_count() -> Option<u64> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn native_clipboard_info() -> Option<remacs_runtime::frontend::ClipboardInfo> {
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard(nil) };
+    let types: id = unsafe { msg_send![pasteboard, types] };
+    let count: usize = unsafe { msg_send![types, count] };
+    let mappings = unsafe {
+        [
+            (NSPasteboardTypeString, "STRING"),
+            (NSStringPboardType, "STRING"),
+            (NSPasteboardTypePDF, "application/pdf"),
+            (NSPasteboardTypeTIFF, "image/tiff"),
+            (NSPasteboardTypePNG, "image/png"),
+            (NSPasteboardTypeRTF, "application/rtf"),
+            (NSPasteboardTypeRTFD, "application/rtfd"),
+            (NSPasteboardTypeHTML, "text/html"),
+            (NSPasteboardTypeTabularText, "text/plain"),
+            (NSPasteboardTypeMultipleTextSelection, "text/plain"),
+            (NSFilenamesPboardType, "text/plain"),
+            (NSURLPboardType, "text/plain"),
+        ]
+    };
+    let mut targets = Vec::new();
+    for index in 0..count {
+        let native_type: id = unsafe { msg_send![types, objectAtIndex: index] };
+        for (native_target, target) in mappings {
+            let matches: BOOL = unsafe { msg_send![native_type, isEqualToString: native_target] };
+            if matches == YES {
+                if !targets.iter().any(|existing| existing == target) {
+                    targets.push(target.to_owned());
+                }
+                break;
+            }
+        }
+    }
+    Some(remacs_runtime::frontend::ClipboardInfo {
+        has_data: count > 0,
+        targets,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_clipboard_info() -> Option<remacs_runtime::frontend::ClipboardInfo> {
     None
 }
 
@@ -534,6 +584,13 @@ pub fn run_gui_with_dump(
                         if let Some(reply) = reply {
                             let _ = reply.send(result);
                         }
+                    }
+                    ClipboardRequest::ReadInfo(reply) => {
+                        let result = cx
+                            .update(|_| Ok::<_, String>(native_clipboard_info()))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
                     }
                     ClipboardRequest::ReadChangeCount(reply) => {
                         let result = cx

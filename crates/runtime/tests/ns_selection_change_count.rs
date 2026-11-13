@@ -1,10 +1,14 @@
-use remacs_runtime::{frontend::ClipboardBackend, lisp::Interp};
+use remacs_runtime::{
+    frontend::{ClipboardBackend, ClipboardInfo},
+    lisp::Interp,
+};
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
 struct ClipboardState {
     text: Option<String>,
     change_count: u64,
+    info: Option<ClipboardInfo>,
 }
 
 #[derive(Default)]
@@ -15,6 +19,17 @@ impl TestClipboard {
         let mut state = self.0.borrow_mut();
         state.text = Some(text.to_owned());
         state.change_count += 1;
+        state.info = Some(ClipboardInfo {
+            has_data: true,
+            targets: vec!["STRING".to_owned()],
+        });
+    }
+
+    fn external_set_info(&self, has_data: bool, targets: Vec<String>) {
+        let mut state = self.0.borrow_mut();
+        state.text = None;
+        state.change_count += 1;
+        state.info = Some(ClipboardInfo { has_data, targets });
     }
 }
 
@@ -27,7 +42,15 @@ impl ClipboardBackend for TestClipboard {
         let mut state = self.0.borrow_mut();
         state.text = Some(text);
         state.change_count += 1;
+        state.info = Some(ClipboardInfo {
+            has_data: true,
+            targets: vec!["STRING".to_owned()],
+        });
         Ok(())
+    }
+
+    fn clipboard_info(&self) -> Result<Option<ClipboardInfo>, String> {
+        Ok(self.0.borrow().info.clone())
     }
 
     fn clipboard_change_count(&self) -> Result<Option<u64>, String> {
@@ -38,6 +61,10 @@ impl ClipboardBackend for TestClipboard {
         let mut state = self.0.borrow_mut();
         state.text = Some(text);
         state.change_count += 1;
+        state.info = Some(ClipboardInfo {
+            has_data: true,
+            targets: vec!["STRING".to_owned()],
+        });
         Ok(Some(state.change_count))
     }
 
@@ -46,6 +73,10 @@ impl ClipboardBackend for TestClipboard {
         if state.change_count == expected {
             state.text = Some(String::new());
             state.change_count += 1;
+            state.info = Some(ClipboardInfo {
+                has_data: true,
+                targets: vec!["STRING".to_owned()],
+            });
         }
         Ok(())
     }
@@ -123,6 +154,18 @@ fn clipboard_ownership_uses_change_count_and_disowns_conditionally() {
                 &mut interp,
                 "(gui-get-selection 'CLIPBOARD 'STRING)",
                 "\"external clipboard\"",
+            );
+
+            host.external_set_info(true, vec!["image/png".to_owned()]);
+            expect(
+                &mut interp,
+                "(equal (gui-get-selection 'CLIPBOARD 'TARGETS) [TARGETS image/png])",
+                "t",
+            );
+            expect(
+                &mut interp,
+                "(gui-backend-selection-exists-p 'CLIPBOARD)",
+                "t",
             );
         })
         .unwrap()

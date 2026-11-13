@@ -1,5 +1,5 @@
 use super::{ClipboardRequest, ClipboardTarget, GuiClipboardBackend};
-use remacs_runtime::frontend::ClipboardBackend;
+use remacs_runtime::frontend::{ClipboardBackend, ClipboardInfo};
 use std::{
     sync::{Arc, atomic::AtomicBool},
     thread,
@@ -154,5 +154,34 @@ fn clipboard_change_count_requests_run_through_the_ui_service() {
     );
     assert_eq!(backend.clipboard_change_count(), Ok(Some(17)));
     assert_eq!(backend.clear_text_if_change_count(17), Ok(()));
+    service.join().unwrap();
+}
+
+#[test]
+fn clipboard_metadata_requests_are_forwarded_to_the_ui_service() {
+    let (requests, received) = smol::channel::unbounded();
+    let backend = GuiClipboardBackend {
+        requests,
+        ready: Arc::new(AtomicBool::new(true)),
+    };
+    let service = thread::spawn(move || {
+        let ClipboardRequest::ReadInfo(reply) = received.recv_blocking().unwrap() else {
+            panic!("clipboard metadata request")
+        };
+        reply
+            .send(Ok(Some(ClipboardInfo {
+                has_data: true,
+                targets: vec!["image/png".to_owned()],
+            })))
+            .unwrap();
+    });
+
+    assert_eq!(
+        backend.clipboard_info(),
+        Ok(Some(ClipboardInfo {
+            has_data: true,
+            targets: vec!["image/png".to_owned()],
+        }))
+    );
     service.join().unwrap();
 }

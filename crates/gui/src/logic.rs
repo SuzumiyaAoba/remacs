@@ -1,7 +1,7 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        AppleScriptResult, DragAction, FrameVisibility, Grid, GridImageSource,
+        AppleScriptResult, ClipboardInfo, DragAction, FrameVisibility, Grid, GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton, MouseInput,
         MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest,
         fit_text_to_cells_with_tab_width,
@@ -637,6 +637,7 @@ pub(super) enum ClipboardTarget {
 pub(super) enum ClipboardRequest {
     Ready(Arc<AtomicBool>),
     Read(ClipboardTarget, SyncSender<Result<Option<String>, String>>),
+    ReadInfo(SyncSender<Result<Option<ClipboardInfo>, String>>),
     Write(ClipboardTarget, String, Option<SyncSender<Result<(), String>>>),
     ReadChangeCount(SyncSender<Result<Option<u64>, String>>),
     WriteWithChangeCount(String, SyncSender<Result<Option<u64>, String>>),
@@ -1282,6 +1283,19 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
 
     fn write_text(&self, text: String) -> Result<(), String> {
         self.write(ClipboardTarget::Clipboard, text)
+    }
+
+    fn clipboard_info(&self) -> Result<Option<ClipboardInfo>, String> {
+        if !self.ready.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::ReadInfo(reply))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
     }
 
     fn clipboard_change_count(&self) -> Result<Option<u64>, String> {
