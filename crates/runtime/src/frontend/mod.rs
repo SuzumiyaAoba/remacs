@@ -163,6 +163,10 @@ pub trait FrameWindowBackend {
     }
     fn raise(&self, frame_id: usize) -> Result<(), String>;
     fn lower(&self, frame_id: usize) -> Result<(), String>;
+    /// Return native frame IDs from topmost to bottommost.
+    fn frame_list_z_order(&self) -> Result<Vec<usize>, String> {
+        Err("native frame stacking order is unavailable".to_owned())
+    }
     /// Move the pointer to pixel coordinates relative to FRAME's native area.
     fn warp_pointer_in_frame(
         &self,

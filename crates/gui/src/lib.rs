@@ -1028,6 +1028,28 @@ pub fn run_gui_with_dump(
                             });
                         }
                     }
+                    GuiRequest::FrameListZOrder { reply } => {
+                        let result = cx
+                            .update(|app| app.window_stack())
+                            .map_err(|error| error.to_string())
+                            .and_then(|stack| {
+                                stack.ok_or_else(|| {
+                                    "GUI platform does not provide frame stacking order".to_owned()
+                                })
+                            })
+                            .map(|stack| {
+                                stack
+                                    .into_iter()
+                                    .filter_map(|window| {
+                                        windows.iter().find_map(|(frame_id, handle)| {
+                                            let any_window: AnyWindowHandle = (*handle).into();
+                                            (any_window == window).then_some(*frame_id)
+                                        })
+                                    })
+                                    .collect()
+                            });
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::WarpPointer {
                         frame_id,
                         x,

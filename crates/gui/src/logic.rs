@@ -465,8 +465,17 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<bool, String>>,
     },
-    FrameVisibility { frame_id: usize, visibility: FrameVisibility },
-    FrameOrder { frame_id: usize, raise: bool },
+    FrameVisibility {
+        frame_id: usize,
+        visibility: FrameVisibility,
+    },
+    FrameOrder {
+        frame_id: usize,
+        raise: bool,
+    },
+    FrameListZOrder {
+        reply: SyncSender<Result<Vec<usize>, String>>,
+    },
     WarpPointer {
         frame_id: usize,
         x: i128,
@@ -921,12 +930,17 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
             .map_err(|_| "GUI window service is unavailable".to_owned())
     }
 
-    fn warp_pointer_in_frame(
-        &self,
-        frame_id: usize,
-        x: i128,
-        y: i128,
-    ) -> Result<(), String> {
+    fn frame_list_z_order(&self) -> Result<Vec<usize>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FrameListZOrder { reply })
+            .map_err(|_| "GUI window service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI window service stopped".to_owned())?
+    }
+
+    fn warp_pointer_in_frame(&self, frame_id: usize, x: i128, y: i128) -> Result<(), String> {
         self.warp_pointer(frame_id, x, y, false)
     }
 

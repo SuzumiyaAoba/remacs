@@ -1289,13 +1289,86 @@ fn f_ns_do_applescript(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 // ---------------------------------------------------------------------------
-// nil-returning functions (GNU batch behavior)
+// Native frame ordering and window-system queries
 // ---------------------------------------------------------------------------
 
+fn frame_parent(frame: &crate::editor::FrameRef, parent_key: &Value) -> Option<crate::editor::FrameRef> {
+    match crate::lisp::eval::plist_get_v(&frame.borrow().params, parent_key) {
+        Value::Frame(parent) => Some(parent),
+        _ => None,
+    }
+}
+
+fn frame_is_child_of(
+    frame: &crate::editor::FrameRef,
+    ancestor_id: usize,
+    parent_key: &Value,
+) -> bool {
+    let mut current = frame.clone();
+    let mut visited = Vec::new();
+    while let Some(parent) = frame_parent(&current, parent_key) {
+        let id = parent.borrow().id;
+        if id == ancestor_id {
+            return true;
+        }
+        if visited.contains(&id) {
+            return false;
+        }
+        visited.push(id);
+        current = parent;
+    }
+    false
+}
+
 fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // GNU: nil when no ns frames exist.
-    let _ = (i, a);
-    Ok(Value::Nil)
+    let parent_id = match a.get(0) {
+        Some(Value::Frame(parent)) if !parent.borrow().dead => Some(parent.borrow().id),
+        _ => None,
+    };
+    let order = if let Some(backend) = i.frame_window_backend.clone() {
+        backend
+            .frame_list_z_order()
+            .map_err(|error| i.error(format!("Unable to read native frame order: {error}")))?
+    } else {
+        // The fallback is useful for headless tests and frame-list queries
+        // before a native backend has been installed.
+        let mut order = Vec::new();
+        if let Some(frame) = i.selected_frame.as_ref()
+            && !frame.borrow().dead
+            && crate::editor::frame_is_nextstep(i, frame)
+        {
+            order.push(frame.borrow().id);
+        }
+        for frame in &i.frames {
+            let frame_ref = frame.borrow();
+            if !frame_ref.dead
+                && crate::editor::frame_is_nextstep(i, frame)
+                && !order.contains(&frame_ref.id)
+            {
+                order.push(frame_ref.id);
+            }
+        }
+        order
+    };
+
+    let parent_key = Value::Sym(i.intern("parent-frame"));
+    let frames = i.frames.clone();
+    let frames = order
+        .into_iter()
+        .filter_map(|id| {
+            let frame = frames
+                .iter()
+                .find(|frame| frame.borrow().id == id && !frame.borrow().dead)?
+                .clone();
+            if !crate::editor::frame_is_nextstep(i, &frame)
+                || parent_id.is_some_and(|parent| !frame_is_child_of(&frame, parent, &parent_key))
+            {
+                return None;
+            }
+            Some(Value::Frame(frame))
+        })
+        .collect();
+    Ok(Value::list(frames))
 }
 
 fn f_ns_display_monitor_attributes_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
