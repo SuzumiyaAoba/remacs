@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 mod accessibility;
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+mod accessibility_tree;
 #[cfg(target_os = "macos")]
 mod applescript;
 #[cfg(target_os = "macos")]

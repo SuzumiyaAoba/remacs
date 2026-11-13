@@ -178,6 +178,8 @@ Windows GUI の resource lookup は logic thread から registry backend を使�
 共通の window-system resource interface を呼び出す。
 `view.rs` が GPUI のレイアウトと描画を行い、`view/input.rs` が IME と UTF-16 の
 OS テキスト入力を扱う。確定前の入力は view、確定したテキストは評価スレッドが所有する。
+Linux / Windows では view が buffer text と visible frame text の accessibility snapshot を作り、
+GPUI が AT-SPI / UI Automation へ公開する。macOS は AppKit の accessibility text surface を使う。
 `gpui` は workspace の `vendor/gpui` パッチを使い、Font stretch を各 OS の font selector に渡す。
 GPUI はフォント選択・描画 API とネイティブダイアログ／メニューの状態を扱い、
 Lisp の face 解決やメニュー属性の評価は runtime が所有する。

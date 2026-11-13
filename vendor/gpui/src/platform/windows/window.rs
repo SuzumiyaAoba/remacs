@@ -76,6 +76,7 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) platform_window_handle: HWND,
+    pub(crate) accessibility: RefCell<crate::window::accessibility::WindowsAdapter>,
 }
 
 impl WindowsWindowState {
@@ -236,6 +237,10 @@ impl WindowsWindowInner {
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
             system_settings: RefCell::new(WindowsSystemSettings::new(context.display)),
+            accessibility: RefCell::new(crate::window::accessibility::WindowsAdapter::new(
+                accesskit_windows::HWND(hwnd.0),
+                unsafe { GetForegroundWindow() } == hwnd,
+            )),
         }))
     }
 
@@ -520,6 +525,10 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
+    fn set_accessibility_tree(&mut self, tree: accesskit::TreeUpdate) {
+        self.0.accessibility.borrow_mut().update_tree(tree);
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.state.borrow().bounds()
     }

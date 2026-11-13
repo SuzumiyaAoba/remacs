@@ -14,6 +14,7 @@ remacs-cli = { path = "crates/cli", default-features = false }
 remacs-gui = { path = "crates/gui" }
 crossterm = "0.29.0"
 gpui = { path = "vendor/gpui", version = "0.2.2", features = ["runtime_shaders"] }
+accesskit = "0.25.2"
 smol = "2.0.2"
 num-bigint = "0.4.8"
 num-integer = "0.1.46"

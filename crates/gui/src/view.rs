@@ -1014,6 +1014,8 @@ pub(super) struct EditorView {
     )>,
     #[cfg(target_os = "macos")]
     accessibility_geometry_snapshot: Option<AccessibilityFrameKey>,
+    #[cfg(any(target_os = "linux", target_os = "windows", test))]
+    accessibility_tree_snapshot: Option<(String, String, String, std::ops::Range<usize>)>,
 }
 
 impl EditorView {
@@ -1108,6 +1110,8 @@ impl EditorView {
             accessibility_snapshot: None,
             #[cfg(target_os = "macos")]
             accessibility_geometry_snapshot: None,
+            #[cfg(any(target_os = "linux", target_os = "windows", test))]
+            accessibility_tree_snapshot: None,
         }
     }
 
@@ -1123,6 +1127,10 @@ impl EditorView {
         #[cfg(target_os = "macos")]
         {
             self.accessibility_geometry_snapshot = None;
+        }
+        #[cfg(any(target_os = "linux", target_os = "windows", test))]
+        {
+            self.accessibility_tree_snapshot = None;
         }
     }
 
@@ -1676,6 +1684,47 @@ impl Render for EditorView {
                 super::accessibility::update_text_view_frame(self.accessibility_buffer_view);
                 super::accessibility::update_text_view_frame(self.accessibility_screen_view);
                 self.accessibility_geometry_snapshot = Some(accessibility_geometry);
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "windows", test))]
+        {
+            let (screen_text, screen_selection) = self
+                .input
+                .accessibility_screen_projection(&self.grid, 0..0);
+            let (buffer_text, buffer_selection) = self.grid.input.as_ref().map_or_else(
+                || {
+                    self.input
+                        .accessibility_buffer_projection(&screen_text, screen_selection.clone())
+                },
+                |input| {
+                    let selection = input
+                        .selection
+                        .as_ref()
+                        .map(|selection| selection.range.clone())
+                        .unwrap_or(input.cursor..input.cursor);
+                    self.input
+                        .accessibility_buffer_projection(&input.text, selection)
+                },
+            );
+            let title = self.grid.title.clone();
+            let changed = self.accessibility_tree_snapshot.as_ref().is_none_or(
+                |(old_title, old_buffer, old_screen, old_buffer_selection)| {
+                    old_title != &title
+                        || old_buffer != &buffer_text
+                        || old_screen != &screen_text
+                        || old_buffer_selection != &buffer_selection
+                },
+            );
+            if changed {
+                window.set_accessibility_tree(super::accessibility_tree::update(
+                    &title,
+                    &buffer_text,
+                    buffer_selection.clone(),
+                    &screen_text,
+                ));
+                self.accessibility_tree_snapshot =
+                    Some((title, buffer_text, screen_text, buffer_selection));
             }
         }
 

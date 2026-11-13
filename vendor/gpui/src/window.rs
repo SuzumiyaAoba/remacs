@@ -1,5 +1,7 @@
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) mod accessibility;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
@@ -878,6 +880,8 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    #[cfg(target_os = "linux")]
+    accessibility_adapter: Option<accessibility::UnixAdapter>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
 }
@@ -1101,6 +1105,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        window.update_accessibility_focus_state(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
                         window
@@ -1210,6 +1215,9 @@ impl Window {
 
         platform_window.map_window().unwrap();
 
+        #[cfg(target_os = "linux")]
+        let accessibility_adapter = None;
+
         Ok(Window {
             handle,
             invalidator,
@@ -1264,6 +1272,8 @@ impl Window {
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
+            #[cfg(target_os = "linux")]
+            accessibility_adapter,
             image_cache_stack: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
@@ -1847,6 +1857,27 @@ impl Window {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.platform_window.set_title(title);
+    }
+
+    /// Update the semantic contents exposed to assistive technology.
+    pub fn set_accessibility_tree(&mut self, tree: accesskit::TreeUpdate) {
+        #[cfg(target_os = "linux")]
+        {
+            let adapter = self
+                .accessibility_adapter
+                .get_or_insert_with(accessibility::UnixAdapter::new);
+            adapter.update_tree(tree);
+            adapter.update_window_focus_state(self.is_window_active());
+        }
+        #[cfg(not(target_os = "linux"))]
+        self.platform_window.set_accessibility_tree(tree);
+    }
+
+    fn update_accessibility_focus_state(&mut self, is_focused: bool) {
+        #[cfg(target_os = "linux")]
+        if let Some(adapter) = &mut self.accessibility_adapter {
+            adapter.update_window_focus_state(is_focused);
+        }
     }
 
     /// Sets the application identifier.

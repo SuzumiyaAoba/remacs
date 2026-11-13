@@ -40,7 +40,16 @@ impl WindowsWindowInner {
         lparam: LPARAM,
     ) -> LRESULT {
         let handled = match msg {
-            WM_ACTIVATE => self.handle_activate_msg(wparam),
+            WM_ACTIVATE => {
+                self.accessibility
+                    .borrow_mut()
+                    .update_window_focus_state(wparam.loword() > 0);
+                self.handle_activate_msg(wparam)
+            }
+            WM_GETOBJECT => self
+                .accessibility
+                .borrow_mut()
+                .handle_wm_getobject(wparam.0, lparam.0),
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
