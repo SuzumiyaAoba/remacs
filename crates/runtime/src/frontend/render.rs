@@ -561,6 +561,13 @@ pub struct GridWindowTextArea {
     pub top: usize,
     pub width: usize,
     pub rows: usize,
+    /// First cell occupied by buffer text, after margins and line-number gutter.
+    pub text_left: usize,
+    /// Number of cells available to buffer text.
+    pub text_width: usize,
+    /// Buffer-local margins in display cells.
+    pub left_margin: usize,
+    pub right_margin: usize,
 }
 
 /// A window body whose contents are raised by a pixel scroll offset.
@@ -10611,6 +10618,10 @@ fn render_grid_internal(
                 top: content_top,
                 width: width_after_fringes,
                 rows: text_rows,
+                text_left: content_left,
+                text_width: content_width,
+                left_margin: margin_left,
+                right_margin: margin_right,
             });
         }
         if let Some(menu) = &i.gui_popup_menu
@@ -12447,6 +12458,10 @@ fn render_grid_internal(
             top: mini_top,
             width,
             rows: minibuffer_text_height,
+            text_left: 0,
+            text_width: width,
+            left_margin: 0,
+            right_margin: 0,
         });
     }
     if let Some(menu) = &i.gui_popup_menu
@@ -12967,18 +12982,3 @@ mod box_padding_tests {
             .all(|style| style.box_style.is_none()));
     }
 }
-    /// First cell occupied by buffer text, after margins and line-number gutter.
-    pub text_left: usize,
-    /// Number of cells available to buffer text.
-    pub text_width: usize,
-    /// Buffer-local margins in display cells.
-    pub left_margin: usize,
-    pub right_margin: usize,
-                text_left: content_left,
-                text_width: content_width,
-                left_margin: margin_left,
-                right_margin: margin_right,
-            text_left: 0,
-            text_width: width,
-            left_margin: 0,
-            right_margin: 0,
