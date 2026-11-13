@@ -2294,6 +2294,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                 frame
                     .windows
                     .iter()
+                    .chain(frame.minibuffer.iter())
                     .find(|window| window.borrow().id == window_id)
                     .cloned()
             })
@@ -2307,6 +2308,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                 frame
                     .windows
                     .iter()
+                    .chain(frame.minibuffer.iter())
                     .find(|window| window.borrow().buffer == position.buffer_id)
                     .cloned()
             })

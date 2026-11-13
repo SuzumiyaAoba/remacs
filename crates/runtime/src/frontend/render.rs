@@ -9806,6 +9806,27 @@ fn minibuffer_display_height(
     }
 }
 
+fn minibuffer_horizontal_scroll_bar_explicit(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+    buffer_id: usize,
+) -> bool {
+    match window.borrow().scroll_bars {
+        Some((
+            _,
+            _,
+            _,
+            crate::editor::HorizontalScrollBarType::Bottom,
+            _,
+        )) => true,
+        Some(_) => false,
+        None => matches!(
+            buffer_setting(i, "horizontal-scroll-bar", buffer_id),
+            Value::Sym(symbol) if i.symbol_name(symbol) == "bottom"
+        ),
+    }
+}
+
 fn render_grid_internal(
     i: &Interp,
     width: usize,
@@ -10054,6 +10075,60 @@ fn render_grid_internal(
         height,
         chrome_rows,
     );
+    let minibuffer_scroll_bar = fb.minibuffer.as_ref().and_then(|window| {
+        if !graphical || i.minibuf_level == 0 || mini_wrap_lines {
+            return None;
+        }
+        let buffer_id = window.borrow().buffer;
+        if !minibuffer_horizontal_scroll_bar_explicit(i, window, buffer_id) {
+            return None;
+        }
+        let (_, _, scroll_height, horizontal_side, _) =
+            crate::editor::winxtra::window_scroll_bar_settings(i, window);
+        if horizontal_side != Some(false) || width == 0 || mini_height == 0 {
+            return None;
+        }
+        let bar_height = scroll_height
+            .unwrap_or(0)
+            .min(mini_height.saturating_mul(frame_char_height));
+        if bar_height == 0 {
+            return None;
+        }
+        let bar_rows = bar_height.div_ceil(frame_char_height);
+        if bar_rows >= mini_height {
+            return None;
+        }
+        let max_columns = mini_rows
+            .iter()
+            .map(|range| {
+                let line: EmacsText = mini_characters[range.clone()].iter().copied().collect();
+                display_columns(&line, mini_tab_width)
+            })
+            .max()
+            .unwrap_or(0);
+        let track_width = width.saturating_mul(frame_char_width);
+        let hscroll = window.borrow().hscroll;
+        let (thumb_start, thumb_size) = scroll_thumb(
+            track_width,
+            max_columns,
+            width,
+            hscroll,
+            frame_char_width.saturating_mul(2),
+        )?;
+        Some((
+            window.borrow().id,
+            buffer_id,
+            bar_height,
+            bar_rows,
+            thumb_start,
+            thumb_size,
+            max_columns.saturating_sub(width),
+        ))
+    });
+    let minibuffer_scroll_bar_rows = minibuffer_scroll_bar
+        .as_ref()
+        .map_or(0, |(_, _, _, bar_rows, _, _, _)| *bar_rows);
+    let minibuffer_text_height = mini_height.saturating_sub(minibuffer_scroll_bar_rows);
     let body_height = height
         .saturating_sub(mini_height)
         .saturating_sub(chrome_rows);
@@ -10796,7 +10871,9 @@ fn render_grid_internal(
             }
             _ => (start, hscroll),
         };
-        if graphical && !minibuffer_window {
+        if graphical {
+            let minibuffer_horizontal_scroll_bar_enabled = !minibuffer_window
+                || minibuffer_horizontal_scroll_bar_explicit(i, w, buf_id);
             let (first_line, last_line) = i
                 .buffers
                 .get(buf_id)
@@ -10812,6 +10889,7 @@ fn render_grid_internal(
                 .map(|buffer| buffer.borrow().text.line_of_pos(start));
             if let (Some(side), Some(bar_width), Some(top_line)) =
                 (vertical_scroll_side, scroll_width, top_line)
+                && !minibuffer_window
                 && bar_width > 0
                 && text_rows > 0
             {
@@ -10846,6 +10924,7 @@ fn render_grid_internal(
                 }
             }
             if let (Some(side), Some(bar_height)) = (horizontal_scroll_side, scroll_height)
+                && minibuffer_horizontal_scroll_bar_enabled
                 && bar_height > 0
                 && content_width > 0
                 && text_rows > 0
@@ -12257,7 +12336,7 @@ fn render_grid_internal(
     // Render visible minibuffer lines at the bottom of the frame. When
     // sourced from the minibuffer buffer, styles and input positions keep
     // offsets relative to the full buffer.
-    let mini_visible_rows = mini_height.min(mini_rows.len());
+    let mini_visible_rows = minibuffer_text_height.min(mini_rows.len());
     let mini_point = if mini_styled.is_some() {
         mini_buf
             .as_ref()
@@ -12282,13 +12361,32 @@ fn render_grid_internal(
         .saturating_sub(mini_visible_rows.saturating_sub(1))
         .min(mini_rows.len().saturating_sub(mini_visible_rows));
     let mini_top = rows.len().saturating_sub(mini_height);
+    if let Some((window_id, buffer_id, bar_height, _, thumb_start, thumb_size, max_offset)) =
+        minibuffer_scroll_bar
+    {
+        scroll_bars.push(GridScrollBar {
+            window_id,
+            buffer_id,
+            orientation: GridScrollBarOrientation::Horizontal,
+            style: scroll_bar_style,
+            left: 0,
+            top: mini_top
+                .saturating_add(minibuffer_text_height)
+                .saturating_mul(frame_char_height),
+            width: width.saturating_mul(frame_char_width),
+            height: bar_height,
+            thumb_start,
+            thumb_size,
+            max_offset,
+        });
+    }
     if i.minibuf_level > 0 && mini_height > 0 && let Some(minibuffer) = &fb.minibuffer {
         window_text_areas.push(GridWindowTextArea {
             window_id: minibuffer.borrow().id,
             left: 0,
             top: mini_top,
             width,
-            rows: mini_height,
+            rows: minibuffer_text_height,
         });
     }
     if let Some(menu) = &i.gui_popup_menu

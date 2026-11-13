@@ -2130,3 +2130,6 @@ fn range_replacement_text_records_keyboard_macro_events() {
 
 #[path = "scroll_bar_event_tests.rs"]
 mod scroll_bar_event_tests;
+
+#[path = "minibuffer_scroll_bar_tests.rs"]
+mod minibuffer_scroll_bar_tests;
