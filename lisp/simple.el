@@ -11512,7 +11512,22 @@ too short to have a dst element.
   "Switch to the *scratch* buffer.
 If the buffer doesn't exist, create it first."
   (interactive)
-  (pop-to-buffer-same-window (get-scratch-buffer-create)))
+  (let ((buffer (get-scratch-buffer-create)))
+    (if (window-dedicated-p (selected-window))
+        (let* ((selected (selected-window))
+               (window (or (get-lru-window nil nil t)
+                           (get-lru-window 0 nil t))))
+          (unless (and window (not (window-dedicated-p window)))
+            (setq window (split-window-sensibly selected)))
+          (unless (and window (not (window-dedicated-p window)))
+            (setq window (condition-case nil (split-window selected) (error nil))))
+          (if window
+              (progn
+                (set-window-buffer window buffer)
+                (select-window window)
+                buffer)
+            (pop-to-buffer buffer)))
+      (pop-to-buffer-same-window buffer))))
 
 (defun kill-buffer--possibly-save (buffer)
   "Ask the user to confirm killing of a modified BUFFER.
