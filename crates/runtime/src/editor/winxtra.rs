@@ -3876,13 +3876,21 @@ fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         Value::Int(width) => Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX)),
         other => return Err(i.wrong_type_mut("integer-or-nil", &other)),
     };
-    let vertical = window_vertical_scroll_type_argument(i, &arg(&a, 2))?;
+    let vertical = if width == Some(0) {
+        VerticalScrollBarType::Disabled
+    } else {
+        window_vertical_scroll_type_argument(i, &arg(&a, 2))?
+    };
     let height = match arg(&a, 3) {
         Value::Nil => None,
         Value::Int(height) => Some(usize::try_from(height.max(0)).unwrap_or(usize::MAX)),
         other => return Err(i.wrong_type_mut("integer-or-nil", &other)),
     };
-    let horizontal = window_horizontal_scroll_type_argument(i, &arg(&a, 4))?;
+    let horizontal = if height == Some(0) {
+        HorizontalScrollBarType::Disabled
+    } else {
+        window_horizontal_scroll_type_argument(i, &arg(&a, 4))?
+    };
     let (vertical_fits, horizontal_fits) =
         scroll_bar_dimensions_fit(i, &window, width, height)?;
     let all_fit = vertical_fits && horizontal_fits;
