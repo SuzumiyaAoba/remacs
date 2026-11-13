@@ -2061,12 +2061,15 @@ is non-nil, call `f90-update-line' after inserting the continuation marker."
         ((f90-in-comment)
          (delete-horizontal-space) ; remove trailing whitespace
          (insert "\n" (f90-get-present-comment-type)))
-        (t (insert "&")
-           (or no-update (f90-update-line))
-           (newline 1)
-           ;; FIXME also need leading ampersand if split lexical token (eg ==).
-           ;; Or respect f90-no-break-re.
-           (if f90-beginning-ampersand (insert "&"))))
+        (t (let ((token-continues
+                  (and (char-before) (char-after)
+                       (string-match-p f90-no-break-re
+                                       (string (char-before) (char-after))))))
+             (insert "&")
+             (or no-update (f90-update-line))
+             (newline 1)
+             (if (or f90-beginning-ampersand token-continues)
+                 (insert "&")))))
   (indent-according-to-mode))
 
 (defun f90-find-breakpoint ()
