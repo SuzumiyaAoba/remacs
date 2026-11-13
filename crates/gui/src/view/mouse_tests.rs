@@ -612,3 +612,97 @@ fn mode_line_middle_clicks_send_mode_line_mouse_events() {
         assert_eq!(position.window_id, Some(mode_line.window_id));
     }
 }
+
+#[test]
+fn margin_clicks_send_left_and_right_margin_areas() {
+    std::thread::Builder::new()
+        .name("margin-mouse-clicks".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(margin_clicks_send_left_and_right_margin_areas_inner)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn margin_clicks_send_left_and_right_margin_areas_inner() {
+    let mut interp = Interp::new();
+    interp
+        .eval_str(
+            r#"(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (set-frame-parameter nil 'menu-bar-lines 0)
+          (set-frame-parameter nil 'tool-bar-lines 0)
+          (set-frame-parameter nil 'tab-bar-lines 0)
+          (set-frame-parameter nil 'vertical-scroll-bars nil)
+          (set-frame-size nil 40 12) (set-window-fringes nil 0 0)
+          (set-window-margins nil 3 2)
+          (setq-local mode-line-format nil header-line-format nil tab-line-format nil)
+          (erase-buffer) (insert "margin target"))"#,
+        )
+        .unwrap();
+    let frame = interp.selected_frame.as_ref().unwrap();
+    reflow_frame_windows(frame, 40, 12);
+    let grid = render_grid_with_input_cached(&interp, 40, 12, None);
+    let text_area = *grid
+        .window_text_areas
+        .first()
+        .expect("buffer text area should be rendered");
+    assert_eq!(text_area.left_margin, 3);
+    assert_eq!(text_area.right_margin, 2);
+
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(0);
+            view.grid = grid.clone();
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+    let row_top = super::grid_row_top(&grid, text_area.top, px(super::LINE_HEIGHT));
+    let row_height = super::grid_row_height(&grid, text_area.top, px(super::LINE_HEIGHT));
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    let right_margin_start = text_area.left + text_area.width - text_area.right_margin;
+    for (column, expected_area) in [
+        (text_area.left + 1, MouseArea::LeftMargin),
+        (right_margin_start + 1, MouseArea::RightMargin),
+    ] {
+        let (point, probe) = handle
+            .update(&mut app, |view, window, _| {
+                let point = point(
+                    px((column as f32 + 0.5) * f32::from(view.cell_width)),
+                    px(f32::from(row_top) + f32::from(row_height) / 2.0),
+                );
+                let position = super::input::mouse_position_for_point_with_cell_width(
+                    &grid,
+                    point,
+                    view.cell_width,
+                    window,
+                );
+                (point, position)
+            })
+            .unwrap();
+        assert_eq!(probe.map(|position| position.area), Some(Some(expected_area)));
+        visual.simulate_mouse_down(point, GpuiMouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_up(point, GpuiMouseButton::Left, Modifiers::none());
+
+        let events: Vec<_> = rx
+            .try_iter()
+            .filter(|event| matches!(event, GuiEvent::MouseDown { .. } | GuiEvent::MouseUp { .. }))
+            .collect();
+        assert_eq!(events.len(), 2);
+        for event in events {
+            let position = match event {
+                GuiEvent::MouseDown { position, .. } | GuiEvent::MouseUp { position, .. } => {
+                    position
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(position.area, Some(expected_area));
+            assert_eq!(position.window_id, Some(text_area.window_id));
+        }
+    }
+}

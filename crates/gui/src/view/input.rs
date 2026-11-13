@@ -14,7 +14,9 @@ use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
-use remacs_runtime::frontend::{CellStyle, Grid, GridInput, MouseArea, MouseObject, MousePosition};
+use remacs_runtime::frontend::{
+    CellStyle, Grid, GridInput, GridWindowTextArea, MouseArea, MouseObject, MousePosition,
+};
 
 fn mouse_timestamp_ms() -> i128 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
@@ -112,6 +114,34 @@ pub(super) fn visible_input_position(
         position = Some(mapped);
     }
     position
+}
+
+fn margin_area_hit(grid: &Grid, row: usize, column: usize) -> Option<(MouseArea, usize)> {
+    let area = grid.window_text_areas.iter().find(|area| {
+        row >= area.top
+            && row < area.top.saturating_add(area.rows)
+            && column >= area.left
+            && column < area.left.saturating_add(area.width)
+    })?;
+    if area.left_margin > 0
+        && column >= area.left
+        && column < area.left.saturating_add(area.left_margin)
+        && area.text_width > 0
+    {
+        return Some((MouseArea::LeftMargin, area.text_left));
+    }
+    let right_margin_start = area.left.saturating_add(area.width.saturating_sub(area.right_margin));
+    if area.right_margin > 0
+        && column >= right_margin_start
+        && column < area.left.saturating_add(area.width)
+        && area.text_width > 0
+    {
+        return Some((
+            MouseArea::RightMargin,
+            area.text_left.saturating_add(area.text_width.saturating_sub(1)),
+        ));
+    }
+    None
 }
 
 fn cursor_moved_to_echo_area(grid: &Grid) -> bool {
@@ -308,10 +338,14 @@ pub(super) fn mouse_position_for_point_with_cell_width(
         })
         .map_or(0, |scroll| scroll.pixels);
     let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
+    let margin = margin_area_hit(grid, row, column);
+    let hit_column = margin.map_or(column, |(_, column)| column);
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
-    let mapped = input.hit_test_position(row, column, byte)?;
-    let area = image_map_area_at_point(grid, point, cell_width).map(MouseArea::ImageMap);
+    let mapped = input.hit_test_position(row, hit_column, byte)?;
+    let area = margin
+        .map(|(area, _)| area)
+        .or_else(|| image_map_area_at_point(grid, point, cell_width).map(MouseArea::ImageMap));
     let object = image_object_at_point(grid, point, cell_width).or(mapped.object);
     let (origin_x, origin_y) = mapped
         .window_id
@@ -1207,6 +1241,33 @@ impl EntityInputHandler for EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn margin_hits_keep_area_and_nearest_buffer_cell() {
+        let mut grid = Grid::blank(20, 4);
+        grid.window_text_areas.push(GridWindowTextArea {
+            window_id: 7,
+            left: 2,
+            top: 1,
+            width: 18,
+            rows: 2,
+            text_left: 7,
+            text_width: 9,
+            left_margin: 5,
+            right_margin: 4,
+        });
+
+        assert_eq!(
+            margin_area_hit(&grid, 1, 4),
+            Some((MouseArea::LeftMargin, 7))
+        );
+        assert_eq!(
+            margin_area_hit(&grid, 1, 18),
+            Some((MouseArea::RightMargin, 15))
+        );
+        assert_eq!(margin_area_hit(&grid, 1, 10), None);
+        assert_eq!(margin_area_hit(&grid, 0, 4), None);
+    }
 
     #[test]
     fn composition_uses_utf16_without_splitting_surrogates() {

@@ -12342,3 +12342,18 @@ mod box_padding_tests {
             .all(|style| style.box_style.is_none()));
     }
 }
+    /// First cell occupied by buffer text, after margins and line-number gutter.
+    pub text_left: usize,
+    /// Number of cells available to buffer text.
+    pub text_width: usize,
+    /// Buffer-local margins in display cells.
+    pub left_margin: usize,
+    pub right_margin: usize,
+                text_left: content_left,
+                text_width: content_width,
+                left_margin: margin_left,
+                right_margin: margin_right,
+            text_left: 0,
+            text_width: width,
+            left_margin: 0,
+            right_margin: 0,

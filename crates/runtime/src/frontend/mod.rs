@@ -664,3 +664,5 @@ pub(crate) fn gui_face_attributes_supported(
 ) -> bool {
     render::gui_face_attributes_supported(i, frame, attributes)
 }
+    LeftMargin,
+    RightMargin,

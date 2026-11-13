@@ -1718,8 +1718,17 @@ fn dispatch_mouse<T: KeyIo>(
             }
         }
     }
-    if let Some(super::MouseArea::ImageMap(area)) = mouse.end.area {
-        keys.push(crate::editor::event_code_for(&i.symbol_name(area)));
+    match mouse.end.area {
+        Some(super::MouseArea::ImageMap(area)) => {
+            keys.push(crate::editor::event_code_for(&i.symbol_name(area)));
+        }
+        Some(super::MouseArea::LeftMargin) => {
+            keys.push(crate::editor::event_code_for("left-margin"));
+        }
+        Some(super::MouseArea::RightMargin) => {
+            keys.push(crate::editor::event_code_for("right-margin"));
+        }
+        _ => {}
     }
 
     // The normal mouse-1 command moves point.  For an otherwise-unbound
@@ -1821,6 +1830,12 @@ fn dispatch_touch_end<T: KeyIo>(
             Some(super::MouseArea::HeaderLine) => {
                 keys.push(crate::editor::event_code_for("header-line"));
             }
+            Some(super::MouseArea::LeftMargin) => {
+                keys.push(crate::editor::event_code_for("left-margin"));
+            }
+            Some(super::MouseArea::RightMargin) => {
+                keys.push(crate::editor::event_code_for("right-margin"));
+            }
             Some(super::MouseArea::ImageMap(_)) => {}
             None => {}
         }
@@ -1861,6 +1876,12 @@ fn dispatch_mouse_wheel<T: KeyIo>(
             }
             Some(super::MouseArea::HeaderLine) => {
                 keys.push(crate::editor::event_code_for("header-line"));
+            }
+            Some(super::MouseArea::LeftMargin) => {
+                keys.push(crate::editor::event_code_for("left-margin"));
+            }
+            Some(super::MouseArea::RightMargin) => {
+                keys.push(crate::editor::event_code_for("right-margin"));
             }
             Some(super::MouseArea::ImageMap(_)) => {}
             None => {}
@@ -2229,6 +2250,8 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
         let area_symbol = match area {
             super::MouseArea::ModeLine => Value::Sym(i.intern("mode-line")),
             super::MouseArea::HeaderLine => Value::Sym(i.intern("header-line")),
+            super::MouseArea::LeftMargin => Value::Sym(i.intern("left-margin")),
+            super::MouseArea::RightMargin => Value::Sym(i.intern("right-margin")),
             super::MouseArea::ImageMap(id) => Value::Sym(id),
         };
         let mode_line_string = (position.mode_line_buffer_name && area == super::MouseArea::ModeLine)
@@ -2252,7 +2275,12 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             coordinates,
             Value::Int(position.timestamp),
             mode_line_string,
-            if matches!(area, super::MouseArea::ImageMap(_)) {
+            if matches!(
+                area,
+                super::MouseArea::ImageMap(_)
+                    | super::MouseArea::LeftMargin
+                    | super::MouseArea::RightMargin
+            ) {
                 Value::Int(position.buffer_position.saturating_add(1) as i128)
             } else {
                 Value::Nil
@@ -3498,5 +3526,74 @@ mod image_map_mouse_tests {
 
         let area_variable = interp.intern("qa-image-map-area");
         assert!(matches!(interp.symbol_value(area_variable), Value::Sym(id) if id == area1));
+    }
+
+    #[test]
+    fn margin_click_dispatches_area_and_buffer_position() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(margin_click_dispatches_area_and_buffer_position_inner)
+            .expect("spawn margin click test thread")
+            .join()
+            .expect("margin click test thread");
+    }
+
+    fn margin_click_dispatches_area_and_buffer_position_inner() {
+        let mut interp = Interp::new();
+        let buffer_id = interp.create_buffer("margin-click-test");
+        let minibuffer_id = interp.create_buffer(" *Minibuf-0*");
+        let frame = crate::editor::Frame::new_tty(buffer_id, minibuffer_id, 80, 25);
+        let window_id = frame.borrow().selected.borrow().id;
+        interp.selected_frame = Some(frame.clone());
+        interp.frames.push(frame);
+        interp.set_current_buffer(buffer_id);
+        interp
+            .eval_str(
+                "(defvar qa-margin-position nil)\
+                 (defun qa-margin-command () (interactive)\
+                   (let ((position (event-start last-input-event)))\
+                     (setq qa-margin-position\
+                           (list (posn-area position) (posn-point position)))))\
+                 (global-set-key [left-margin mouse-1] #'qa-margin-command)\
+                 (global-set-key [right-margin mouse-1] #'qa-margin-command)",
+            )
+            .unwrap();
+
+        let term = std::rc::Rc::new(std::cell::RefCell::new(NoopKeyIo));
+        for (area, expected_area) in [
+            (super::super::MouseArea::LeftMargin, "left-margin"),
+            (super::super::MouseArea::RightMargin, "right-margin"),
+        ] {
+            let position = MousePosition {
+                buffer_id,
+                buffer_position: 5,
+                utf16_offset: 5,
+                x: 0,
+                y: 0,
+                row: 0,
+                column: 0,
+                window_id: Some(window_id),
+                area: Some(area),
+                object: None,
+                mode_line_buffer_name: false,
+                timestamp: 0,
+            };
+            let mouse = MouseInput {
+                button: MouseButton::Left,
+                click_count: 1,
+                modifiers: 0,
+                start: position,
+                end: position,
+            };
+            dispatch_mouse(&term, &mut interp, mouse, &mut Vec::new(), &mut false).unwrap();
+
+            let values = interp
+                .eval_str("qa-margin-position")
+                .unwrap()
+                .list_to_vec()
+                .unwrap();
+            assert!(matches!(values[0], Value::Sym(id) if interp.symbol_name(id) == expected_area));
+            assert!(matches!(values[1], Value::Int(6)));
+        }
     }
 }
