@@ -18,6 +18,48 @@ fn reset(interp: &mut Interp, source: &str) -> Grid {
     render_grid(interp, 40, 12)
 }
 
+#[test]
+fn indicate_buffer_boundaries_alist_places_indicators_independently() {
+    let mut interp = Interp::new();
+    eval(
+        &mut interp,
+        r#"(progn
+      (set-frame-parameter nil 'window-system 'ns)
+      (set-frame-parameter nil 'char-width 8)
+      (set-frame-parameter nil 'char-height 16)
+      (set-frame-parameter nil 'menu-bar-lines 0)
+      (set-frame-parameter nil 'tool-bar-lines 0)
+      (set-frame-parameter nil 'tab-bar-lines 0)
+      (set-frame-parameter nil 'vertical-scroll-bars nil)
+      (set-frame-parameter nil 'horizontal-scroll-bars nil)
+      (set-frame-size nil 40 12)
+      (setq-local mode-line-format nil header-line-format nil tab-line-format nil
+                  indicate-empty-lines nil)
+      (set-window-fringes nil 8 8))"#,
+    );
+    remacs_runtime::editor::reflow_frame_windows(interp.selected_frame.as_ref().unwrap(), 40, 12);
+
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+      (insert "top\nmiddle\nbottom")
+      (setq-local indicate-buffer-boundaries '((top . left) (t . right)))
+      (goto-char (point-min)))"#,
+    );
+    assert_eq!(grid.rows[0].chars().next(), Some('↑'));
+    assert_eq!(grid.rows[2].chars().nth(39), Some('↓'));
+
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+      (insert "top\nmiddle\nbottom")
+      (setq-local indicate-buffer-boundaries '((top . nil) (t . right)))
+      (goto-char (point-min)))"#,
+    );
+    assert_ne!(grid.rows[0].chars().next(), Some('↑'));
+    assert_eq!(grid.rows[2].chars().nth(39), Some('↓'));
+}
+
 fn body(grid: &Grid, row: usize) -> String {
     grid.rows[row]
         .chars()

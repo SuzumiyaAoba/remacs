@@ -4908,6 +4908,92 @@ fn place_fringe_glyph(
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FringeIndicatorPosition {
+    Hidden,
+    Left,
+    Right,
+    Both,
+}
+
+fn indicate_buffer_boundary_position(
+    i: &Interp,
+    setting: &Value,
+    indicator: &str,
+) -> FringeIndicatorPosition {
+    fn alist_position(i: &Interp, value: &Value) -> FringeIndicatorPosition {
+        match value {
+            Value::Nil => FringeIndicatorPosition::Hidden,
+            Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+                "left" => FringeIndicatorPosition::Left,
+                "right" => FringeIndicatorPosition::Right,
+                _ => FringeIndicatorPosition::Hidden,
+            },
+            _ => FringeIndicatorPosition::Hidden,
+        }
+    }
+
+    match setting {
+        Value::Nil => FringeIndicatorPosition::Hidden,
+        Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+            "left" => FringeIndicatorPosition::Left,
+            "right" => FringeIndicatorPosition::Right,
+            "t" => FringeIndicatorPosition::Both,
+            _ => FringeIndicatorPosition::Hidden,
+        },
+        Value::Cons(_) => {
+            let Ok(entries) = setting.list_to_vec() else {
+                return FringeIndicatorPosition::Hidden;
+            };
+            let mut explicit_position = None;
+            let mut default_position = None;
+            for entry in entries {
+                let Value::Cons(pair) = entry else {
+                    continue;
+                };
+                let (key, value) = {
+                    let pair = pair.borrow();
+                    (pair.car.clone(), pair.cdr.clone())
+                };
+                let Value::Sym(key) = key else {
+                    continue;
+                };
+                let key = i.symbol_name(key);
+                if key == indicator && explicit_position.is_none() {
+                    explicit_position = Some(value);
+                } else if key == "t" && default_position.is_none() {
+                    default_position = Some(value);
+                }
+            }
+            explicit_position
+                .or(default_position)
+                .as_ref()
+                .map_or(FringeIndicatorPosition::Hidden, |position| {
+                    alist_position(i, position)
+                })
+        }
+        value if value.truthy() => FringeIndicatorPosition::Left,
+        _ => FringeIndicatorPosition::Hidden,
+    }
+}
+
+fn set_fringe_indicator(
+    left: &mut String,
+    right: &mut String,
+    position: FringeIndicatorPosition,
+    glyph: &str,
+) {
+    match position {
+        FringeIndicatorPosition::Hidden => {}
+        FringeIndicatorPosition::Left => *left = glyph.to_owned(),
+        FringeIndicatorPosition::Right => *right = glyph.to_owned(),
+        FringeIndicatorPosition::Both => {
+            *left = glyph.to_owned();
+            *right = glyph.to_owned();
+        }
+    }
+}
+
 fn place_formatted_window_row(
     i: &Interp,
     faces: &mut FaceCtx,
@@ -10223,15 +10309,10 @@ fn render_grid_internal(
         };
         let fringe_style = fctx.builtin(i, "fringe", 0).finish();
         let indicate_boundaries = buffer_setting(i, "indicate-buffer-boundaries", buf_id);
-        let show_left_boundaries = match &indicate_boundaries {
-            Value::Nil => false,
-            Value::Sym(symbol) => matches!(i.symbol_name(*symbol).as_str(), "t" | "left"),
-            _ => indicate_boundaries.truthy(),
-        };
-        let show_right_boundaries = matches!(
-            &indicate_boundaries,
-            Value::Sym(symbol) if matches!(i.symbol_name(*symbol).as_str(), "t" | "right")
-        );
+        let top_boundary_position =
+            indicate_buffer_boundary_position(i, &indicate_boundaries, "top");
+        let bottom_boundary_position =
+            indicate_buffer_boundary_position(i, &indicate_boundaries, "bottom");
         let indicate_empty_lines = buffer_setting(i, "indicate-empty-lines", buf_id).truthy();
         let overlay_arrows = overlay_arrow_positions(i, buf_id);
         let (first_buffer_line, last_buffer_line) = i
@@ -11394,20 +11475,33 @@ fn render_grid_internal(
                     String::new()
                 };
                 let mut right_indicator = String::new();
-                if show_left_boundaries {
+                if first_line
+                    && last_line
+                    && top_boundary_position != FringeIndicatorPosition::Hidden
+                    && top_boundary_position == bottom_boundary_position
+                {
+                    set_fringe_indicator(
+                        &mut left_indicator,
+                        &mut right_indicator,
+                        top_boundary_position,
+                        "↕",
+                    );
+                } else {
                     if first_line {
-                        left_indicator = "↑".to_owned();
+                        set_fringe_indicator(
+                            &mut left_indicator,
+                            &mut right_indicator,
+                            top_boundary_position,
+                            "↑",
+                        );
                     }
                     if last_line {
-                        left_indicator = if first_line { "↕" } else { "↓" }.to_owned();
-                    }
-                }
-                if show_right_boundaries {
-                    if first_line {
-                        right_indicator = "↑".to_owned();
-                    }
-                    if last_line {
-                        right_indicator = if first_line { "↕" } else { "↓" }.to_owned();
+                        set_fringe_indicator(
+                            &mut left_indicator,
+                            &mut right_indicator,
+                            bottom_boundary_position,
+                            "↓",
+                        );
                     }
                 }
                 if indicate_empty_lines && line_len == 0 && last_line {
