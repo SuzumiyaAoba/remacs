@@ -1212,3 +1212,5 @@ qa!(qa_tempo_completion_mouse, "qa_tempo_completion_mouse.el");
 qa!(qa_gnus_sieve_quoting, "qa_gnus_sieve_quoting.el");
 
 qa!(qa_gnus_summary_next_window, "qa_gnus_summary_next_window.el");
+
+qa!(qa_gnus_encoded_header_search, "qa_gnus_encoded_header_search.el");

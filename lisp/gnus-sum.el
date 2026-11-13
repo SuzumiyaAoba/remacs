@@ -9578,10 +9578,9 @@ fetched headers for, whether they are displayed or not."
 	(func (intern (concat "mail-header-" header)))
 	(case-fold-search t))
     (dolist (header gnus-newsgroup-headers)
-      ;; FIXME: when called from gnus-summary-limit-include-thread via
-      ;; gnus-summary-limit-include-matching-articles, `regexp' is a decoded
-      ;; string whereas the header isn't decoded.
-      (when (string-match regexp (funcall func header))
+      (when (string-match regexp
+		  (funcall gnus-decode-encoded-word-function
+			   (funcall func header)))
 	(push (mail-header-number header) articles)))
     (nreverse articles)))
 
