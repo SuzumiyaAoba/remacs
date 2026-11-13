@@ -1,4 +1,4 @@
-use super::GridMenuItem;
+use super::{GridImage, GridMenuItem};
 use crate::lisp::{Value, builtins::eq_values};
 use std::sync::{Arc, Weak};
 
@@ -41,7 +41,7 @@ impl WeakNativeMenuCommandId {
 #[derive(Default)]
 pub(crate) struct NativeMenuCommands {
     entries: Vec<(WeakNativeMenuCommandId, NativeMenuBinding)>,
-    tool_bars: Vec<(usize, Vec<GridMenuItem>)>,
+    tool_bars: Vec<(usize, Vec<PreparedToolBarItem>)>,
 }
 
 #[derive(Clone)]
@@ -50,15 +50,21 @@ pub(crate) struct NativeMenuBinding {
     pub(crate) keys: Vec<Value>,
 }
 
+#[derive(Clone)]
+pub(crate) struct PreparedToolBarItem {
+    pub(crate) item: GridMenuItem,
+    pub(crate) image: Option<GridImage>,
+}
+
 impl NativeMenuCommands {
-    pub(crate) fn tool_bar(&self, frame: usize) -> Option<&[GridMenuItem]> {
+    pub(crate) fn tool_bar(&self, frame: usize) -> Option<&[PreparedToolBarItem]> {
         self.tool_bars
             .iter()
             .find(|(id, _)| *id == frame)
             .map(|(_, items)| items.as_slice())
     }
 
-    pub(crate) fn set_tool_bars(&mut self, tool_bars: Vec<(usize, Vec<GridMenuItem>)>) {
+    pub(crate) fn set_tool_bars(&mut self, tool_bars: Vec<(usize, Vec<PreparedToolBarItem>)>) {
         self.tool_bars = tool_bars;
     }
 

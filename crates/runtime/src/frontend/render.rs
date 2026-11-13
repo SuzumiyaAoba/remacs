@@ -3628,9 +3628,12 @@ fn render_tool_bar(
     width: usize,
     rows: usize,
     row_offset: usize,
+    cell_width: usize,
     default_style: CellStyle,
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
+    row_heights: &mut [usize],
+    images: &mut Vec<GridImage>,
 ) -> Vec<GridToolBarItem> {
     let mut background = faces.builtin(i, "tool-bar", 0).finish();
     if background.fg.is_none() {
@@ -3683,21 +3686,25 @@ fn render_tool_bar(
                         label = value.borrow().to_unicode_lossy();
                     }
                 }
-                Some(GridMenuItem {
-                    label,
-                    help: None,
-                    command: name,
-                    command_id: None,
-                    items: Vec::new(),
-                    separator,
-                    checked: false,
-                    key_hint: None,
+                Some(super::menu_commands::PreparedToolBarItem {
+                    item: GridMenuItem {
+                        label,
+                        help: None,
+                        command: name,
+                        command_id: None,
+                        items: Vec::new(),
+                        separator,
+                        checked: false,
+                        key_hint: None,
+                    },
+                    image: None,
                 })
             })
             .collect::<Vec<_>>();
         &fallback
     };
-    for binding in bindings {
+    for prepared in bindings {
+        let binding = &prepared.item;
         let label = &binding.label;
         let separator = binding.separator;
         if separator {
@@ -3710,7 +3717,19 @@ fn render_tool_bar(
             continue;
         }
         let label_width = label.chars().map(display_char_width).sum::<usize>().max(1);
-        let button_width = label_width.saturating_add(2).min(width.max(1));
+        let image_width = prepared
+            .image
+            .as_ref()
+            .map(|image| image.width.unwrap_or(24));
+        let image_height = prepared
+            .image
+            .as_ref()
+            .map(|image| image.height.unwrap_or(24));
+        let image_columns = image_width.map(|pixels| pixels.div_ceil(cell_width.max(1)));
+        let button_width = image_columns
+            .map(|columns| columns.saturating_add(2))
+            .unwrap_or_else(|| label_width.saturating_add(2))
+            .min(width.max(1));
         if column.saturating_add(button_width) > width {
             row = row.saturating_add(1);
             column = 0;
@@ -3718,7 +3737,12 @@ fn render_tool_bar(
         if row >= rows || width == 0 {
             break;
         }
-        let text = fit_text_to_cells_with_tab_width(&format!(" {label} "), button_width, 8).0;
+        let button_text = if prepared.image.is_some() {
+            " ".repeat(button_width)
+        } else {
+            format!(" {label} ")
+        };
+        let text = fit_text_to_cells_with_tab_width(&button_text, button_width, 8).0;
         let enabled = binding.command.is_some() || binding.command_id.is_some();
         let mut button_style = background;
         if !enabled {
@@ -3748,6 +3772,18 @@ fn render_tool_bar(
         let screen_row_index = row_offset.saturating_add(row);
         if let Some(screen_row) = screen.get_mut(screen_row_index) {
             place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
+        }
+        if let (Some(image), Some(image_width), Some(image_height)) =
+            (&prepared.image, image_width, image_height)
+        {
+            if let Some(row_height) = row_heights.get_mut(screen_row_index) {
+                *row_height = (*row_height).max(image_height);
+            }
+            let image_columns = image_width.div_ceil(cell_width.max(1));
+            let mut image = image.clone();
+            image.row = screen_row_index;
+            image.column = column.saturating_add(button_width.saturating_sub(image_columns) / 2);
+            images.push(image);
         }
         items.push(GridToolBarItem {
             row: screen_row_index,
@@ -8228,6 +8264,49 @@ fn image_display_replacement(
     })
 }
 
+pub(super) fn toolbar_grid_image(
+    i: &Interp,
+    value: &Value,
+    buffer_id: usize,
+    default_font_height: u16,
+) -> Option<GridImage> {
+    let DisplayReplacement::Image {
+        source,
+        object_source,
+        index,
+        conversion,
+        transform_smoothing,
+        width,
+        height,
+        intrinsic_width,
+        intrinsic_height,
+        map,
+        slice,
+        ..
+    } = image_display_replacement(i, value, buffer_id, default_font_height, None, None)?
+    else {
+        return None;
+    };
+    let (width, height) =
+        image_display_dimensions(width, height, intrinsic_width, intrinsic_height);
+    Some(GridImage {
+        row: 0,
+        column: 0,
+        object_source,
+        source,
+        index,
+        conversion,
+        transform_smoothing,
+        max_image_size: image_size_limit(i),
+        width: Some(width.unwrap_or(24)),
+        height: Some(height.unwrap_or(24)),
+        intrinsic_width,
+        intrinsic_height,
+        map,
+        slice,
+    })
+}
+
 fn display_spec_number(i: &Interp, value: &Value, depth: usize) -> Option<f64> {
     if depth >= 8 {
         return None;
@@ -10109,7 +10188,7 @@ fn render_grid_internal(
             .map(|items| {
                 items
                     .iter()
-                    .filter(|item| item.separator && item.label.is_empty())
+                    .filter(|item| item.item.separator && item.item.label.is_empty())
                     .count()
             })
             .unwrap_or(0);
@@ -10247,9 +10326,12 @@ fn render_grid_internal(
             width,
             tool_bar_rows,
             tab_bar_rows,
+            frame_char_width,
             default_style,
             &mut fctx,
             &mut screen_rows,
+            &mut row_heights,
+            &mut images,
         );
     }
     let mut selected_cursor: Option<(usize, usize, usize, usize)> = None;

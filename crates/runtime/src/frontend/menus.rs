@@ -1,5 +1,6 @@
 use super::{
     GridMenu, GridMenuItem,
+    menu_commands::PreparedToolBarItem,
     popup::{keymap_item, safe_menu_call},
     render::{menu_keymap_from_definition, menu_separator_name_p},
 };
@@ -363,7 +364,7 @@ fn prepare_menu_bar(i: &mut Interp) -> Result<(), Flow> {
 fn tool_bar_items(
     i: &mut Interp,
     frame: &crate::editor::FrameRef,
-) -> Result<Vec<GridMenuItem>, Flow> {
+) -> Result<Vec<PreparedToolBarItem>, Flow> {
     let map_symbol = i.q("tool-bar-map");
     let primary_map = i.symbol_value(map_symbol);
     let secondary_map = i
@@ -377,6 +378,9 @@ fn tool_bar_items(
     let at_bottom = matches!(&position, Value::Sym(symbol) if i.symbol_name(*symbol) == "bottom");
     let at_top = position.is_nil()
         || matches!(&position, Value::Sym(symbol) if i.symbol_name(*symbol) == "top");
+    let buffer_id = frame.borrow().selected.borrow().buffer;
+    let default_font_height =
+        crate::editor::frame_char_height(i, frame).min(u16::MAX as usize) as u16;
     let secondary_visible = secondary_map.truthy() && (at_top || at_bottom);
     // GNU's `tool-bar-make-keymap' joins the two maps with a row break;
     // retain that ordering in the immutable snapshot prepared for rendering.
@@ -453,30 +457,42 @@ fn tool_bar_items(
             item.enabled && !item.separator,
             &keys,
         );
+        let image_spec = super::popup::evaluated_menu_image(i, &item.image)?;
+        let image =
+            super::render::toolbar_grid_image(i, &image_spec, buffer_id, default_font_height);
         if wrap_pending {
-            if items.iter().any(|item: &GridMenuItem| !item.separator) {
-                items.push(GridMenuItem {
-                    label: String::new(),
-                    help: None,
-                    command: None,
-                    command_id: None,
-                    items: Vec::new(),
-                    separator: true,
-                    checked: false,
-                    key_hint: None,
+            if items
+                .iter()
+                .any(|item: &PreparedToolBarItem| !item.item.separator)
+            {
+                items.push(PreparedToolBarItem {
+                    item: GridMenuItem {
+                        label: String::new(),
+                        help: None,
+                        command: None,
+                        command_id: None,
+                        items: Vec::new(),
+                        separator: true,
+                        checked: false,
+                        key_hint: None,
+                    },
+                    image: None,
                 });
             }
             wrap_pending = false;
         }
-        items.push(GridMenuItem {
-            label,
-            help: item.help_text(),
-            command,
-            command_id,
-            items: Vec::new(),
-            separator: item.separator,
-            checked: false,
-            key_hint: None,
+        items.push(PreparedToolBarItem {
+            item: GridMenuItem {
+                label,
+                help: item.help_text(),
+                command,
+                command_id,
+                items: Vec::new(),
+                separator: item.separator,
+                checked: false,
+                key_hint: None,
+            },
+            image,
         });
     }
     Ok(items)
@@ -497,7 +513,7 @@ fn modifier_bar_toolbar_command(i: &Interp, definition: &Value) -> Option<Value>
     i.fbound_p(wrapper).then_some(Value::Sym(wrapper))
 }
 
-fn prepare_tool_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<GridMenuItem>)>, Flow> {
+fn prepare_tool_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<PreparedToolBarItem>)>, Flow> {
     let mut tool_bars = Vec::new();
     for frame in i.frames.clone() {
         if frame.borrow().dead

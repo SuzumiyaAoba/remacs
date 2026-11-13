@@ -78,6 +78,21 @@ fn eval_property(i: &mut Interp, form: &Value) -> EvalResult {
     })
 }
 
+/// Evaluate a toolbar image expression while retaining literal `(image ...)' specs.
+pub(super) fn evaluated_menu_image(i: &mut Interp, form: &Value) -> EvalResult {
+    let Value::Cons(cell) = form else {
+        return Ok(form.clone());
+    };
+    let head = cell.borrow().car.clone();
+    if matches!(head, Value::Sym(symbol)
+        if i.symbol_name(symbol) != "image" && i.fbound_p(symbol))
+    {
+        eval_property(i, form)
+    } else {
+        Ok(form.clone())
+    }
+}
+
 /// GNU safe_funcall: errors and quits are logged without opening the debugger.
 pub(super) fn safe_menu_call(i: &mut Interp, function: Value, args: Vec<Value>) -> EvalResult {
     protected_menu_eval(i, Some((function.clone(), args.clone())), |i| {
@@ -142,6 +157,7 @@ fn protected_menu_eval(
 struct MenuProperties {
     help: Value,
     enable: Value,
+    image: Value,
     /// Retain the value cell, since a dynamic name can replace its function.
     filter: Option<Value>,
     selected: Value,
@@ -152,6 +168,7 @@ struct MenuProperties {
 /// Check :visible in source order and retain the final property fields.
 fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuProperties>, Flow> {
     let help_property = i.q(":help");
+    let image_property = i.q(":image");
     let enable = i.q(":enable");
     let visible = i.q(":visible");
     let filter = i.q(":filter");
@@ -163,6 +180,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     let force = i.q("enable-disabled-menus-and-buttons");
     let mut enable_form = Value::t();
     let mut help = Value::Nil;
+    let mut image = Value::Nil;
     let mut filter_cell = None;
     let mut selected = Value::Nil;
     let mut keys = Value::Nil;
@@ -204,6 +222,8 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
             return Ok(None);
         } else if matches!(property, Value::Sym(symbol) if symbol == help_property) {
             help = substitute_help(i, form)?;
+        } else if matches!(property, Value::Sym(symbol) if symbol == image_property) {
+            image = form;
         } else if matches!(property, Value::Sym(symbol) if symbol == filter) {
             filter_cell = Some(Value::Cons(value.clone()));
         } else if matches!(property, Value::Sym(symbol) if symbol == keys_property) {
@@ -237,6 +257,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     Ok(Some(MenuProperties {
         help,
         enable: enable_form,
+        image,
         filter: filter_cell,
         selected,
         keys,
@@ -267,6 +288,7 @@ fn substitute_help(i: &mut Interp, help: Value) -> Result<Value, Flow> {
 
 pub(super) struct ParsedMenuItem {
     help: Value,
+    pub(super) image: Value,
     pub(super) label: String,
     pub(super) name: Value,
     pub(super) definition: Value,
@@ -412,6 +434,7 @@ pub(super) fn keymap_item(
             let separator = menu_separator_name_p(&label);
             return Ok(Some(ParsedMenuItem {
                 help: properties.help,
+                image: properties.image,
                 label,
                 name: Value::Str(name),
                 definition,
@@ -452,6 +475,7 @@ pub(super) fn keymap_item(
     };
     Ok(Some(ParsedMenuItem {
         help,
+        image: Value::Nil,
         label,
         name,
         definition,
