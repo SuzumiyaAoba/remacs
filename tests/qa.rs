@@ -1219,4 +1219,6 @@ qa!(qa_calc_fraction_integerp, "qa_calc_fraction_integerp.el");
 
 qa!(qa_set_window_scroll_bars_change, "qa_set_window_scroll_bars_change.el");
 
+qa!(qa_window_scroll_bar_size_validation, "qa_window_scroll_bar_size_validation.el");
+
 qa!(qa_gnus_encoded_header_search, "qa_gnus_encoded_header_search.el");

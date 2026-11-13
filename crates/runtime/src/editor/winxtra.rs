@@ -3792,6 +3792,81 @@ fn f_set_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::t())
 }
 
+fn scroll_bar_dimensions_fit(
+    i: &mut Interp,
+    window: &WindowRef,
+    width: Option<usize>,
+    height: Option<usize>,
+) -> Result<(bool, bool), Flow> {
+    let Some(frame) = crate::editor::frame_of_window(i, window) else {
+        return Ok((false, false));
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok((false, false));
+    }
+
+    let (left, top, right, bottom) = pixel_edges_of(i, &Value::Window(window.clone()))?;
+    let window_width = usize::try_from(right.saturating_sub(left).max(0)).unwrap_or(0);
+    let window_height = usize::try_from(bottom.saturating_sub(top).max(0)).unwrap_or(0);
+    let char_width = window_pixel_scale_x(i, window).round().max(1.0) as usize;
+    let char_height = window_pixel_scale_y(i, window).round().max(1.0) as usize;
+
+    let frame_scroll_bar_width = frame_scroll_parameter(i, &frame, "scroll-bar-width")
+        .and_then(|value| value.int())
+        .and_then(|value| usize::try_from(value.max(0)).ok())
+        .unwrap_or(16);
+    let requested_width = width.unwrap_or(frame_scroll_bar_width);
+    let (margins, left_fringe, right_fringe, minibuffer, leaf) = {
+        let window = window.borrow();
+        (
+            window.margins,
+            window.fringes.and_then(|fringes| fringes.0),
+            window.fringes.and_then(|fringes| fringes.1),
+            window.minibuffer,
+            window.horiz.is_none(),
+        )
+    };
+    let frame_left_fringe = frame_scroll_parameter(i, &frame, "left-fringe")
+        .and_then(|value| value.int())
+        .and_then(|value| usize::try_from(value.max(0)).ok())
+        .unwrap_or(8);
+    let frame_right_fringe = frame_scroll_parameter(i, &frame, "right-fringe")
+        .and_then(|value| value.int())
+        .and_then(|value| usize::try_from(value.max(0)).ok())
+        .unwrap_or(8);
+    let margins_width = margins
+        .0
+        .saturating_add(margins.1)
+        .saturating_mul(char_width);
+    let fringes_width = left_fringe
+        .unwrap_or(frame_left_fringe)
+        .saturating_add(right_fringe.unwrap_or(frame_right_fringe));
+    let vertical_fits = window_width
+        .saturating_sub(margins_width)
+        .saturating_sub(fringes_width)
+        .saturating_sub(requested_width)
+        >= char_width.saturating_mul(2);
+
+    let frame_scroll_bar_height = frame_scroll_parameter(i, &frame, "scroll-bar-height")
+        .and_then(|value| value.int())
+        .and_then(|value| usize::try_from(value.max(0)).ok())
+        .unwrap_or(8);
+    let requested_height = height.unwrap_or(frame_scroll_bar_height);
+    let decoration_lines = if leaf && !minibuffer {
+        window_format_line_height(i, window, "header-line-format")?
+            .saturating_add(window_format_line_height(i, window, "tab-line-format")?)
+            .saturating_add(window_mode_line_height(i, window)?)
+    } else {
+        0
+    };
+    let horizontal_fits = window_height
+        .saturating_sub(decoration_lines.saturating_mul(char_height))
+        .saturating_sub(requested_height)
+        >= char_height;
+
+    Ok((vertical_fits, horizontal_fits))
+}
+
 /// `set-window-scroll-bars' — window-live-p check; return whether the
 /// effective scroll bar settings changed.
 fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3808,16 +3883,61 @@ fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         other => return Err(i.wrong_type_mut("integer-or-nil", &other)),
     };
     let horizontal = window_horizontal_scroll_type_argument(i, &arg(&a, 4))?;
+    let (vertical_fits, horizontal_fits) =
+        scroll_bar_dimensions_fit(i, &window, width, height)?;
+    let all_fit = vertical_fits && horizontal_fits;
     let previous = window_scroll_bar_settings(i, &window);
-    window.borrow_mut().scroll_bars =
-        Some((width, vertical, height, horizontal, arg(&a, 5).truthy()));
+    let previous_raw = window.borrow().scroll_bars;
+    let (previous_width, previous_vertical, previous_height, previous_horizontal, persistent) =
+        previous_raw.unwrap_or((
+            previous.0,
+            previous.1.map_or(VerticalScrollBarType::Disabled, |left| {
+                if left {
+                    VerticalScrollBarType::Left
+                } else {
+                    VerticalScrollBarType::Right
+                }
+            }),
+            previous.2,
+            previous.3.map_or(HorizontalScrollBarType::Disabled, |_| {
+                HorizontalScrollBarType::Bottom
+            }),
+            previous.4,
+        ));
+    let next = (
+        if vertical_fits { width } else { previous_width },
+        if vertical_fits {
+            vertical
+        } else {
+            previous_vertical
+        },
+        if horizontal_fits {
+            height
+        } else {
+            previous_height
+        },
+        if horizontal_fits {
+            horizontal
+        } else {
+            previous_horizontal
+        },
+        if all_fit {
+            arg(&a, 5).truthy()
+        } else {
+            persistent
+        },
+    );
+    window.borrow_mut().scroll_bars = Some(next);
     let current = window_scroll_bar_settings(i, &window);
-    Ok(Value::from_bool(
+    let changed =
         previous.0 != current.0
             || previous.1 != current.1
             || previous.2 != current.2
-            || previous.3 != current.3,
-    ))
+            || previous.3 != current.3;
+    if !all_fit && !changed {
+        window.borrow_mut().scroll_bars = previous_raw;
+    }
+    Ok(Value::from_bool(changed))
 }
 
 fn f_raise_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
