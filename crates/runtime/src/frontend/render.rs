@@ -4918,6 +4918,94 @@ enum FringeIndicatorPosition {
     Both,
 }
 
+#[derive(Clone, Copy, Default)]
+struct FringeIndicatorBitmaps {
+    left: Option<usize>,
+    right: Option<usize>,
+    left1: Option<Option<usize>>,
+    right1: Option<Option<usize>>,
+}
+
+fn fringe_bitmap_index(i: &Interp, value: &Value) -> Option<usize> {
+    let Value::Sym(symbol) = value else {
+        return None;
+    };
+    let fringe_property = i.q_soft("fringe")?;
+    i.get_prop(*symbol, fringe_property)
+        .int()
+        .and_then(|index| usize::try_from(index).ok())
+        .filter(|index| super::fringe::defined(*index))
+}
+
+fn fringe_indicator_alist_value(i: &Interp, alist: &Value, name: &str) -> Option<Value> {
+    for entry in alist.list_to_vec().ok()? {
+        let Value::Cons(pair) = entry else {
+            continue;
+        };
+        let (key, value) = {
+            let pair = pair.borrow();
+            (pair.car.clone(), pair.cdr.clone())
+        };
+        let Value::Sym(key) = key else {
+            continue;
+        };
+        if i.symbol_name(key) == name {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn fringe_indicator_bitmaps(
+    i: &Interp,
+    buffer_id: usize,
+    indicator: &str,
+) -> Option<FringeIndicatorBitmaps> {
+    fn inherits_default(i: &Interp, value: &Value) -> bool {
+        matches!(value, Value::Sym(symbol) if i.symbol_name(*symbol) == "t")
+    }
+
+    fn parse_bitmaps(i: &Interp, value: &Value) -> Option<FringeIndicatorBitmaps> {
+        match value {
+            Value::Nil => Some(FringeIndicatorBitmaps::default()),
+            Value::Sym(symbol) if i.symbol_name(*symbol) == "t" => None,
+            Value::Sym(_) => {
+                let bitmap = fringe_bitmap_index(i, value);
+                Some(FringeIndicatorBitmaps {
+                    left: bitmap,
+                    right: bitmap,
+                    left1: None,
+                    right1: None,
+                })
+            }
+            Value::Cons(_) => {
+                let bitmaps = value.list_to_vec().ok()?;
+                Some(FringeIndicatorBitmaps {
+                    left: bitmaps.first().and_then(|bitmap| fringe_bitmap_index(i, bitmap)),
+                    right: bitmaps.get(1).and_then(|bitmap| fringe_bitmap_index(i, bitmap)),
+                    left1: bitmaps.get(2).map(|bitmap| fringe_bitmap_index(i, bitmap)),
+                    right1: bitmaps.get(3).map(|bitmap| fringe_bitmap_index(i, bitmap)),
+                })
+            }
+            _ => Some(FringeIndicatorBitmaps::default()),
+        }
+    }
+
+    let variable = i.q_soft("fringe-indicator-alist")?;
+    let local_alist = i.buffer_local_toplevel_value(variable, buffer_id);
+    let default_alist = i.default_toplevel_value(variable).unwrap_or(Value::Nil);
+    let local_value = local_alist
+        .as_ref()
+        .and_then(|alist| fringe_indicator_alist_value(i, alist, indicator));
+    if let Some(value) = local_value.as_ref()
+        && !inherits_default(i, value)
+    {
+        return parse_bitmaps(i, value);
+    }
+    fringe_indicator_alist_value(i, &default_alist, indicator)
+        .and_then(|value| parse_bitmaps(i, &value))
+}
+
 fn indicate_buffer_boundary_position(
     i: &Interp,
     setting: &Value,
@@ -4994,6 +5082,52 @@ fn set_fringe_indicator(
             *right = glyph.to_owned();
         }
     }
+}
+
+fn remove_fringe_bitmap_at(bitmaps: &mut Vec<GridFringeBitmap>, row: usize, column: usize) {
+    bitmaps.retain(|bitmap| bitmap.row != row || bitmap.column != column);
+}
+
+fn place_fringe_bitmap(
+    screen_rows: &mut [Vec<ScreenCell>],
+    bitmaps: &mut Vec<GridFringeBitmap>,
+    row: usize,
+    column: usize,
+    fringe_cells: usize,
+    fringe_pixels: usize,
+    frame_char_width: usize,
+    bitmap_index: usize,
+    style: CellStyle,
+) -> bool {
+    if fringe_cells == 0 {
+        return false;
+    }
+    let Some(bitmap) = super::fringe::get(bitmap_index) else {
+        return false;
+    };
+    if let Some(screen_row) = screen_rows.get_mut(row) {
+        for cell in screen_row.iter_mut().skip(column).take(fringe_cells) {
+            *cell = ScreenCell::new(style);
+        }
+    }
+    let bitmap = GridFringeBitmap {
+        row,
+        column,
+        pixel_width: fringe_pixels.min(fringe_cells.saturating_mul(frame_char_width)),
+        bits: Arc::from(bitmap.rows),
+        align: bitmap.align,
+        repeat: bitmap.repeat,
+        style,
+    };
+    if let Some(existing) = bitmaps
+        .iter_mut()
+        .find(|existing| existing.row == row && existing.column == column)
+    {
+        *existing = bitmap;
+    } else {
+        bitmaps.push(bitmap);
+    }
+    true
 }
 
 fn place_formatted_window_row(
@@ -11471,7 +11605,19 @@ fn render_grid_internal(
                 }
                 let first_line = line_number.saturating_sub(1) == first_buffer_line;
                 let last_line = line_number.saturating_sub(1) == last_buffer_line;
-                let mut left_indicator = if wrap_lines && segment_start > 0 {
+                let last_line_without_newline = last_line
+                    && i.buffers.get(buf_id).is_some_and(|buffer| {
+                        let buffer = buffer.borrow();
+                        buffer.zv == buffer.text_len()
+                            && buffer.zv > 0
+                            && buffer.text.char_at(buffer.zv - 1).unicode() != Some('\n')
+                    });
+                let continuation_indicator = wrap_lines && segment_start > 0;
+                let empty_line_indicator = indicate_empty_lines && line_len == 0 && last_line;
+                let truncation_indicator = !wrap_lines
+                    && display_columns(metric_line, tab_width)
+                        > row_hscroll.saturating_add(text_width);
+                let mut left_indicator = if continuation_indicator {
                     "↪".to_owned()
                 } else {
                     String::new()
@@ -11506,12 +11652,10 @@ fn render_grid_internal(
                         );
                     }
                 }
-                if indicate_empty_lines && line_len == 0 && last_line {
+                if empty_line_indicator {
                     right_indicator = "·".to_owned();
                 }
-                if !wrap_lines
-                    && display_columns(metric_line, tab_width) > row_hscroll.saturating_add(text_width)
-                {
+                if truncation_indicator {
                     right_indicator = "›".to_owned();
                 }
                 let overlay_arrow = overlay_arrows.iter().find(|(position, _)| {
@@ -11524,6 +11668,108 @@ fn render_grid_internal(
                 });
                 if let Some((_, arrow)) = overlay_arrow {
                     left_indicator = arrow.clone();
+                    if graphical {
+                        remove_fringe_bitmap_at(&mut fringe_bitmaps, y, window_left);
+                    }
+                }
+                if graphical {
+                    let mut place_bitmap =
+                        |indicator: &str,
+                         position: FringeIndicatorPosition,
+                         use_last_line_bitmaps: bool|
+                         -> bool {
+                            let Some(bitmaps) = fringe_indicator_bitmaps(i, buf_id, indicator)
+                            else {
+                                return false;
+                            };
+                            if matches!(
+                                position,
+                                FringeIndicatorPosition::Left | FringeIndicatorPosition::Both
+                            ) {
+                                left_indicator.clear();
+                                remove_fringe_bitmap_at(&mut fringe_bitmaps, y, window_left);
+                                let bitmap = if use_last_line_bitmaps {
+                                    bitmaps.left1.unwrap_or(bitmaps.left)
+                                } else {
+                                    bitmaps.left
+                                };
+                                if let Some(bitmap) = bitmap {
+                                    place_fringe_bitmap(
+                                        &mut screen_rows,
+                                        &mut fringe_bitmaps,
+                                        y,
+                                        window_left,
+                                        fringe_left_cells,
+                                        fringe_left_pixels,
+                                        frame_char_width,
+                                        bitmap,
+                                        fringe_style,
+                                    );
+                                }
+                            }
+                            if matches!(
+                                position,
+                                FringeIndicatorPosition::Right | FringeIndicatorPosition::Both
+                            ) {
+                                right_indicator.clear();
+                                remove_fringe_bitmap_at(&mut fringe_bitmaps, y, right_fringe_left);
+                                let bitmap = if use_last_line_bitmaps {
+                                    bitmaps.right1.unwrap_or(bitmaps.right)
+                                } else {
+                                    bitmaps.right
+                                };
+                                if let Some(bitmap) = bitmap {
+                                    place_fringe_bitmap(
+                                        &mut screen_rows,
+                                        &mut fringe_bitmaps,
+                                        y,
+                                        right_fringe_left,
+                                        fringe_right_cells,
+                                        fringe_right_pixels,
+                                        frame_char_width,
+                                        bitmap,
+                                        fringe_style,
+                                    );
+                                }
+                            }
+                            true
+                        };
+                    if continuation_indicator {
+                        place_bitmap("continuation", FringeIndicatorPosition::Left, false);
+                    }
+                    if first_line
+                        && last_line
+                        && top_boundary_position != FringeIndicatorPosition::Hidden
+                        && top_boundary_position == bottom_boundary_position
+                    {
+                        place_bitmap(
+                            "top-bottom",
+                            top_boundary_position,
+                            last_line_without_newline,
+                        );
+                    } else {
+                        if first_line {
+                            place_bitmap("top", top_boundary_position, false);
+                        }
+                        if last_line {
+                            place_bitmap(
+                                "bottom",
+                                bottom_boundary_position,
+                                last_line_without_newline,
+                            );
+                        }
+                    }
+                    if empty_line_indicator {
+                        place_bitmap("empty-line", FringeIndicatorPosition::Right, false);
+                    }
+                    if truncation_indicator {
+                        place_bitmap("truncation", FringeIndicatorPosition::Right, false);
+                    }
+                    if let Some((_, arrow)) = overlay_arrow
+                        && !arrow.is_empty()
+                    {
+                        place_bitmap("overlay-arrow", FringeIndicatorPosition::Left, false);
+                    }
                 }
                 place_fringe_glyph(
                     &mut screen_rows,
@@ -11822,15 +12068,37 @@ fn render_grid_internal(
             }
         }
         if indicate_empty_lines && fringe_right_cells > 0 {
+            let empty_line_bitmaps = if graphical {
+                fringe_indicator_bitmaps(i, buf_id, "empty-line")
+            } else {
+                None
+            };
             for row in screen_row..content_bottom.min(body_height) {
-                place_fringe_glyph(
-                    &mut screen_rows,
-                    row,
-                    right_fringe_left,
-                    fringe_right_cells,
-                    "·",
-                    fringe_style,
-                );
+                if let Some(bitmaps) = empty_line_bitmaps {
+                    remove_fringe_bitmap_at(&mut fringe_bitmaps, row, right_fringe_left);
+                    if let Some(bitmap) = bitmaps.right {
+                        place_fringe_bitmap(
+                            &mut screen_rows,
+                            &mut fringe_bitmaps,
+                            row,
+                            right_fringe_left,
+                            fringe_right_cells,
+                            fringe_right_pixels,
+                            frame_char_width,
+                            bitmap,
+                            fringe_style,
+                        );
+                    }
+                } else {
+                    place_fringe_glyph(
+                        &mut screen_rows,
+                        row,
+                        right_fringe_left,
+                        fringe_right_cells,
+                        "·",
+                        fringe_style,
+                    );
+                }
             }
         }
         let tick = i

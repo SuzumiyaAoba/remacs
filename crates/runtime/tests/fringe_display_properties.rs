@@ -18,6 +18,132 @@ fn reset(interp: &mut Interp, source: &str) -> Grid {
     render_grid(interp, 40, 12)
 }
 
+fn graphical_fringe_interpreter() -> Interp {
+    let mut interp = Interp::new();
+    eval(
+        &mut interp,
+        r#"(progn
+      (set-frame-parameter nil 'window-system 'ns)
+      (set-frame-parameter nil 'char-width 8)
+      (set-frame-parameter nil 'char-height 16)
+      (set-frame-parameter nil 'menu-bar-lines 0)
+      (set-frame-parameter nil 'tool-bar-lines 0)
+      (set-frame-parameter nil 'tab-bar-lines 0)
+      (set-frame-parameter nil 'vertical-scroll-bars nil)
+      (set-frame-parameter nil 'horizontal-scroll-bars nil)
+      (set-frame-size nil 40 12)
+      (setq-local mode-line-format nil header-line-format nil tab-line-format nil
+                  indicate-empty-lines nil)
+      (set-window-fringes nil 8 8))"#,
+    );
+    remacs_runtime::editor::reflow_frame_windows(interp.selected_frame.as_ref().unwrap(), 40, 12);
+    interp
+}
+
+fn fringe_bitmap_at(grid: &Grid, row: usize, column: usize) -> &remacs_runtime::frontend::GridFringeBitmap {
+    grid.fringe_bitmaps
+        .iter()
+        .find(|bitmap| bitmap.row == row && bitmap.column == column)
+        .unwrap_or_else(|| panic!("missing fringe bitmap at row {row}, column {column}"))
+}
+
+#[test]
+fn fringe_indicator_alist_selects_boundary_bitmaps() {
+    let mut interp = graphical_fringe_interpreter();
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+      (insert "top\nmiddle\nbottom")
+      (setq-local fringe-indicator-alist
+                  '((up . right-arrow)
+                    (down . left-arrow)
+                    (top . right-triangle)
+                    (bottom . left-triangle)))
+      (setq-local indicate-buffer-boundaries '((top . left) (t . right)))
+      (goto-char (point-min)))"#,
+    );
+    assert_eq!(grid.fringe_bitmaps.len(), 2);
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, 0, 0).bits,
+        &[0xc0, 0xf0, 0xf8, 0xfc, 0xfc, 0xf8, 0xf0, 0xc0]
+    );
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, 2, 39).bits,
+        &[0x03, 0x0f, 0x1f, 0x3f, 0x3f, 0x1f, 0x0f, 0x03]
+    );
+}
+
+#[test]
+fn fringe_indicator_alist_selects_truncation_continuation_empty_line_and_overlay_bitmaps() {
+    let mut interp = graphical_fringe_interpreter();
+    let alist = "((truncation . (left-arrow right-arrow)) \
+                  (continuation . (left-triangle right-triangle)) \
+                  (empty-line . right-arrow) \
+                  (overlay-arrow . left-arrow))";
+
+    let grid = reset(
+        &mut interp,
+        &format!(
+            r#"(progn
+              (setq-local fringe-indicator-alist '{alist}
+                          indicate-buffer-boundaries nil truncate-lines t)
+              (insert (make-string 50 ?x))
+              (goto-char (point-min)))"#
+        ),
+    );
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, 0, 39).bits,
+        &[0x18, 0x0c, 0x06, 0x3f, 0x3f, 0x06, 0x0c, 0x18]
+    );
+
+    let grid = reset(
+        &mut interp,
+        &format!(
+            r#"(progn
+              (setq-local fringe-indicator-alist '{alist}
+                          indicate-buffer-boundaries nil truncate-lines nil)
+              (insert (make-string 50 ?x))
+              (goto-char (point-min)))"#
+        ),
+    );
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, 1, 0).bits,
+        &[0x03, 0x0f, 0x1f, 0x3f, 0x3f, 0x1f, 0x0f, 0x03]
+    );
+
+    let grid = reset(
+        &mut interp,
+        &format!(
+            r#"(progn
+              (setq-local fringe-indicator-alist '{alist}
+                          indicate-buffer-boundaries nil indicate-empty-lines t)
+              (insert "line")
+              (goto-char (point-min)))"#
+        ),
+    );
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, 1, 39).bits,
+        &[0x18, 0x0c, 0x06, 0x3f, 0x3f, 0x06, 0x0c, 0x18]
+    );
+
+    let grid = reset(
+        &mut interp,
+        &format!(
+            r#"(progn
+              (setq-local fringe-indicator-alist '{alist}
+                          indicate-buffer-boundaries nil
+                          overlay-arrow-position (copy-marker (point-min))
+                          overlay-arrow-string ">")
+              (insert "line")
+              (goto-char (point-min)))"#
+        ),
+    );
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, 0, 0).bits,
+        &[0x18, 0x30, 0x60, 0xfc, 0xfc, 0x60, 0x30, 0x18]
+    );
+}
+
 #[test]
 fn indicate_buffer_boundaries_alist_places_indicators_independently() {
     let mut interp = Interp::new();
@@ -46,8 +172,19 @@ fn indicate_buffer_boundaries_alist_places_indicators_independently() {
       (setq-local indicate-buffer-boundaries '((top . left) (t . right)))
       (goto-char (point-min)))"#,
     );
-    assert_eq!(grid.rows[0].chars().next(), Some('↑'));
-    assert_eq!(grid.rows[2].chars().nth(39), Some('↓'));
+    assert_eq!(grid.fringe_bitmaps.len(), 2);
+    let top = grid
+        .fringe_bitmaps
+        .iter()
+        .find(|bitmap| bitmap.row == 0 && bitmap.column == 0)
+        .unwrap();
+    assert_eq!(&*top.bits, &[0xfc, 0xfc, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0x00]);
+    let bottom = grid
+        .fringe_bitmaps
+        .iter()
+        .find(|bitmap| bitmap.row == 2 && bitmap.column == 39)
+        .unwrap();
+    assert_eq!(&*bottom.bits, &[0xfc, 0xfc, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0x00]);
 
     let grid = reset(
         &mut interp,
@@ -56,8 +193,9 @@ fn indicate_buffer_boundaries_alist_places_indicators_independently() {
       (setq-local indicate-buffer-boundaries '((top . nil) (t . right)))
       (goto-char (point-min)))"#,
     );
-    assert_ne!(grid.rows[0].chars().next(), Some('↑'));
-    assert_eq!(grid.rows[2].chars().nth(39), Some('↓'));
+    assert_eq!(grid.fringe_bitmaps.len(), 1);
+    assert_eq!(grid.fringe_bitmaps[0].row, 2);
+    assert_eq!(grid.fringe_bitmaps[0].column, 39);
 }
 
 #[test]
@@ -192,8 +330,12 @@ fn fringe_display_replaces_text_with_positioned_bitmaps_and_face_colors() {
       (setq-local overlay-arrow-position (copy-marker 1) overlay-arrow-string "=>"))"#,
     );
     assert_eq!(body(&grid, 0), "ok");
-    assert!(grid.rows[0].starts_with('>'));
-    assert!(grid.fringe_bitmaps.is_empty());
+    assert_eq!(grid.fringe_bitmaps.len(), 1);
+    assert_eq!(grid.fringe_bitmaps[0].column, 0);
+    assert_eq!(
+        &*grid.fringe_bitmaps[0].bits,
+        &[0xc0, 0xf0, 0xf8, 0xfc, 0xfc, 0xf8, 0xf0, 0xc0]
+    );
 
     for specification in [
         "(left-fringe missing-bitmap)",
