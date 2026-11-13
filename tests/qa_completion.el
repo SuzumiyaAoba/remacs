@@ -212,7 +212,8 @@
                                   "|" '("foo" "fie"))))
   (qa (try-completion "foo" qacmp-tab) "foo|")
   (qa (try-completion "f" qacmp-tab) "f")
-  (qa (all-completions "f" qacmp-tab) '("foo" "fie")))
+  (qa (all-completions "f" qacmp-tab) '("foo|" "fie|"))
+  (qa (all-completions "" qacmp-tab) '("foo|" "fie|")))
 ;; with-predicate: STRICT nil falls back to unfiltered result when the
 ;; predicate would reduce the completion set to nothing.
 (let ((qacmp-tab (apply-partially #'completion-table-with-predicate

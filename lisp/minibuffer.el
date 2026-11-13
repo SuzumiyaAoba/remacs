@@ -418,10 +418,8 @@ distinguish occurrences of the TERMINATOR strings which are really terminators
 from others (e.g. escaped).  In this form, the car of TERMINATOR can also be,
 instead of a string, a function that takes the completion and returns the
 \"terminated\" string."
-  ;; FIXME: This implementation is not right since it only adds the terminator
-  ;; in try-completion, so any completion-style that builds the completion via
-  ;; all-completions won't get the terminator, and selecting an entry in
-  ;; *Completions* won't get the terminator added either.
+  ;; `all-completions'-based styles use the candidates directly, so
+  ;; terminate those as well as the `try-completion' result.
   (cond
    ((eq (car-safe action) 'boundaries)
     (let* ((suffix (cdr action))
@@ -451,6 +449,13 @@ instead of a string, a function that takes the completion and returns the
                 (funcall terminator comp)
               (concat comp terminator))
           comp))))
+   ((eq action t)
+    (let ((terminator (if (consp terminator) (car terminator) terminator)))
+      (mapcar (lambda (comp)
+                (if (functionp terminator)
+                    (funcall terminator comp)
+                  (concat comp terminator)))
+              (complete-with-action action table string pred))))
    ;; completion-table-with-terminator is always used for
    ;; "sub-completions" so it's only called if the terminator is missing,
    ;; in which case `test-completion' should return nil.
