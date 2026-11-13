@@ -139,6 +139,7 @@ pub(super) enum GuiEvent {
         orientation: GridScrollBarOrientation,
         offset: usize,
         max_offset: usize,
+        mouse: Option<MouseInput>,
     },
 }
 
@@ -164,7 +165,8 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
         | GuiEvent::MouseUp { .. }
         | GuiEvent::TouchEnd { .. }
         | GuiEvent::Scroll { .. }
-        | GuiEvent::ScrollBar { .. } => true,
+        | GuiEvent::ScrollBar { mouse: None, .. } => true,
+        GuiEvent::ScrollBar { mouse: Some(_), .. } => false,
         #[cfg(target_os = "macos")]
         GuiEvent::NativeService { .. } => true,
         GuiEvent::FrameVisibility { .. }
@@ -2562,11 +2564,13 @@ impl KeyIo for ChanIo {
                 orientation,
                 offset,
                 max_offset,
+                mouse,
             } => Ok(Some(InputEvent::ScrollBar {
                 window_id,
                 orientation,
                 offset,
                 max_offset,
+                mouse,
             })),
         };
         if let Ok(Some(input)) = &result {

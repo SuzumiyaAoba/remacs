@@ -18,7 +18,7 @@ use remacs_runtime::frontend::{
     CellStyle, Grid, GridInput, GridWindowTextArea, MouseArea, MouseObject, MousePosition,
 };
 
-fn mouse_timestamp_ms() -> i128 {
+pub(super) fn mouse_timestamp_ms() -> i128 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
     EPOCH
         .get_or_init(Instant::now)

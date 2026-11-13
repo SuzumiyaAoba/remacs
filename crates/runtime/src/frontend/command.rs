@@ -677,7 +677,18 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 orientation,
                 offset,
                 max_offset,
-            } => dispatch_scroll_bar(i, window_id, orientation, offset, max_offset),
+                mouse,
+            } => dispatch_scroll_bar_input(
+                &term,
+                i,
+                window_id,
+                orientation,
+                offset,
+                max_offset,
+                mouse,
+                &mut keys,
+                &mut arg_mode,
+            )?,
             InputEvent::FrameMoved {
                 frame_id,
                 left,
@@ -1710,7 +1721,13 @@ fn dispatch_mouse<T: KeyIo>(
         }
     }
     let click_count = mouse.click_count.max(1);
-    if mouse.button == MouseButton::Left && !drag {
+    if mouse.button == MouseButton::Left
+        && !drag
+        && !matches!(
+            mouse.end.area,
+            Some(super::MouseArea::VerticalScrollBar | super::MouseArea::HorizontalScrollBar)
+        )
+    {
         if let Some(translated) = translate_mouse_click(i) {
             event = translated;
             if let Some(translated_key) = event_key_code(i, &event) {
@@ -1727,6 +1744,12 @@ fn dispatch_mouse<T: KeyIo>(
         }
         Some(super::MouseArea::RightMargin) => {
             keys.push(crate::editor::event_code_for("right-margin"));
+        }
+        Some(super::MouseArea::VerticalScrollBar) => {
+            keys.push(crate::editor::event_code_for("vertical-scroll-bar"));
+        }
+        Some(super::MouseArea::HorizontalScrollBar) => {
+            keys.push(crate::editor::event_code_for("horizontal-scroll-bar"));
         }
         _ => {}
     }
@@ -1836,7 +1859,11 @@ fn dispatch_touch_end<T: KeyIo>(
             Some(super::MouseArea::RightMargin) => {
                 keys.push(crate::editor::event_code_for("right-margin"));
             }
-            Some(super::MouseArea::ImageMap(_)) => {}
+            Some(
+                super::MouseArea::VerticalScrollBar
+                | super::MouseArea::HorizontalScrollBar
+                | super::MouseArea::ImageMap(_),
+            ) => {}
             None => {}
         }
     }
@@ -1882,6 +1909,12 @@ fn dispatch_mouse_wheel<T: KeyIo>(
             }
             Some(super::MouseArea::RightMargin) => {
                 keys.push(crate::editor::event_code_for("right-margin"));
+            }
+            Some(super::MouseArea::VerticalScrollBar) => {
+                keys.push(crate::editor::event_code_for("vertical-scroll-bar"));
+            }
+            Some(super::MouseArea::HorizontalScrollBar) => {
+                keys.push(crate::editor::event_code_for("horizontal-scroll-bar"));
             }
             Some(super::MouseArea::ImageMap(_)) => {}
             None => {}
@@ -1978,6 +2011,48 @@ fn dispatch_scroll_bar(
             wb.redisplay_end = None;
         }
     }
+}
+
+fn scrollbar_mouse_binding(i: &mut Interp, mouse: MouseInput, prefix_keys: &[i128]) -> bool {
+    let Some((key, event)) = mouse_event(i, mouse) else {
+        return false;
+    };
+    let Some(area) = mouse.end.area else {
+        return false;
+    };
+    let area_key = match area {
+        super::MouseArea::VerticalScrollBar => "vertical-scroll-bar",
+        super::MouseArea::HorizontalScrollBar => "horizontal-scroll-bar",
+        _ => return false,
+    };
+    let mut sequence = prefix_keys.iter().copied().map(Value::Int).collect::<Vec<_>>();
+    sequence.push(Value::Int(crate::editor::event_code_for(area_key)));
+    sequence.push(Value::Int(key));
+    let sequence = Value::vector(sequence);
+    !matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None)
+}
+
+fn dispatch_scroll_bar_input<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    window_id: usize,
+    orientation: GridScrollBarOrientation,
+    offset: usize,
+    max_offset: usize,
+    mouse: Option<MouseInput>,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let has_mouse_binding = mouse
+        .as_ref()
+        .is_some_and(|mouse| scrollbar_mouse_binding(i, *mouse, keys));
+    if !has_mouse_binding {
+        dispatch_scroll_bar(i, window_id, orientation, offset, max_offset);
+    }
+    if let Some(mouse) = mouse {
+        dispatch_mouse(term, i, mouse, keys, arg_mode)?;
+    }
+    Ok(())
 }
 
 fn dispatch_drop(
@@ -2252,6 +2327,12 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             super::MouseArea::HeaderLine => Value::Sym(i.intern("header-line")),
             super::MouseArea::LeftMargin => Value::Sym(i.intern("left-margin")),
             super::MouseArea::RightMargin => Value::Sym(i.intern("right-margin")),
+            super::MouseArea::VerticalScrollBar => {
+                Value::Sym(i.intern("vertical-scroll-bar"))
+            }
+            super::MouseArea::HorizontalScrollBar => {
+                Value::Sym(i.intern("horizontal-scroll-bar"))
+            }
             super::MouseArea::ImageMap(id) => Value::Sym(id),
         };
         let mode_line_string = (position.mode_line_buffer_name && area == super::MouseArea::ModeLine)
@@ -3170,7 +3251,22 @@ fn minibuf_loop<T: KeyIo>(
                 orientation,
                 offset,
                 max_offset,
-            } => dispatch_scroll_bar(i, window_id, orientation, offset, max_offset),
+                mouse,
+            } => {
+                if let Err(error) = dispatch_scroll_bar_input(
+                    term,
+                    i,
+                    window_id,
+                    orientation,
+                    offset,
+                    max_offset,
+                    mouse,
+                    &mut keys,
+                    &mut arg_mode,
+                ) {
+                    return Err(i.error(format!("minibuffer input: {error}")));
+                }
+            }
             InputEvent::FrameMoved {
                 frame_id,
                 left,

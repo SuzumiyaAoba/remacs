@@ -13,9 +13,9 @@ use gpui::*;
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBidiDirection, GridCursor, GridImage,
     GridImageConversion, GridImageSizeLimit, GridImageSource, GridMenu, GridMenuItem,
-    GridPointerShape, GridScrollBar,
-    GridScrollBarOrientation, GridStipple, GridVScroll, MouseButton as RemacsMouseButton,
-    NativeMenuCommandId, QuitRequest, WeakNativeMenuCommandId,
+    GridPointerShape, GridScrollBar, GridScrollBarOrientation, GridStipple, GridVScroll, MouseArea,
+    MouseButton as RemacsMouseButton, MouseInput, MousePosition, NativeMenuCommandId,
+    QuitRequest, WeakNativeMenuCommandId,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{
@@ -515,6 +515,10 @@ struct ScrollBarDrag {
     window_id: usize,
     orientation: GridScrollBarOrientation,
     pointer_offset: f32,
+    start_position: MousePosition,
+    click_count: usize,
+    modifiers: i128,
+    dragged: bool,
 }
 
 struct HelpTooltipView {
@@ -625,17 +629,53 @@ fn scroll_bar_offset(bar: &GridScrollBar, point: Point<Pixels>, pointer_offset: 
         .clamp(0.0, bar.max_offset as f32) as usize
 }
 
+fn scroll_bar_mouse_position(
+    bar: &GridScrollBar,
+    point: Point<Pixels>,
+    pointer_offset: f32,
+    scale_factor: f32,
+) -> MousePosition {
+    let offset = scroll_bar_offset(bar, point, pointer_offset);
+    MousePosition {
+        buffer_id: bar.buffer_id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: device_pixels(point.x - px(bar.left as f32), scale_factor),
+        y: device_pixels(point.y - px(bar.top as f32), scale_factor),
+        row: if bar.orientation == GridScrollBarOrientation::Vertical {
+            offset
+        } else {
+            0
+        },
+        column: if bar.orientation == GridScrollBarOrientation::Horizontal {
+            offset
+        } else {
+            0
+        },
+        window_id: Some(bar.window_id),
+        area: Some(match bar.orientation {
+            GridScrollBarOrientation::Vertical => MouseArea::VerticalScrollBar,
+            GridScrollBarOrientation::Horizontal => MouseArea::HorizontalScrollBar,
+        }),
+        object: None,
+        timestamp: input::mouse_timestamp_ms(),
+        mode_line_buffer_name: false,
+    }
+}
+
 fn send_scroll_bar_event(
     tx: &FrameEventSender,
     bar: &GridScrollBar,
     point: Point<Pixels>,
     pointer_offset: f32,
+    mouse: Option<MouseInput>,
 ) {
     let _ = tx.send(GuiEvent::ScrollBar {
         window_id: bar.window_id,
         orientation: bar.orientation,
         offset: scroll_bar_offset(bar, point, pointer_offset),
         max_offset: bar.max_offset,
+        mouse,
     });
 }
 
@@ -2041,7 +2081,17 @@ impl Render for EditorView {
                         if let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
                             bar.window_id == drag.window_id && bar.orientation == drag.orientation
                         }) {
-                            send_scroll_bar_event(&scroll_bar_tx, bar, point, drag.pointer_offset);
+                            this.scroll_bar_drag = Some(ScrollBarDrag {
+                                dragged: true,
+                                ..drag
+                            });
+                            send_scroll_bar_event(
+                                &scroll_bar_tx,
+                                bar,
+                                point,
+                                drag.pointer_offset,
+                                None,
+                            );
                             window.prevent_default();
                             cx.stop_propagation();
                         }
@@ -2068,7 +2118,39 @@ impl Render for EditorView {
                         cx.stop_propagation();
                         return;
                     }
-                    if this.scroll_bar_drag.take().is_some() {
+                    if let Some(drag) = this.scroll_bar_drag.take() {
+                        if let Some(point) =
+                            frame_content_point(event.position, window.viewport_size(), border)
+                            && let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
+                                bar.window_id == drag.window_id
+                                    && bar.orientation == drag.orientation
+                            })
+                        {
+                            let end_position = if drag.dragged {
+                                scroll_bar_mouse_position(
+                                    bar,
+                                    point,
+                                    drag.pointer_offset,
+                                    window.scale_factor(),
+                                )
+                            } else {
+                                drag.start_position
+                            };
+                            let mouse = MouseInput {
+                                button: RemacsMouseButton::Left,
+                                click_count: drag.click_count,
+                                modifiers: drag.modifiers,
+                                start: drag.start_position,
+                                end: end_position,
+                            };
+                            send_scroll_bar_event(
+                                &left_mouse_up_tx,
+                                bar,
+                                point,
+                                drag.pointer_offset,
+                                Some(mouse),
+                            );
+                        }
                         window.prevent_default();
                         cx.stop_propagation();
                         return;

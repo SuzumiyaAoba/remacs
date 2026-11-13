@@ -2127,3 +2127,6 @@ fn range_replacement_text_records_keyboard_macro_events() {
         Value::Int(code) if *code == 'あ' as i128
     ));
 }
+
+#[path = "scroll_bar_event_tests.rs"]
+mod scroll_bar_event_tests;

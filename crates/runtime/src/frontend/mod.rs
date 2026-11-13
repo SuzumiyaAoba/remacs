@@ -402,6 +402,8 @@ pub enum InputEvent {
         orientation: GridScrollBarOrientation,
         offset: usize,
         max_offset: usize,
+        /// Mouse click or completed drag associated with this scroll update.
+        mouse: Option<MouseInput>,
     },
 }
 
@@ -432,6 +434,10 @@ impl MouseButton {
 pub enum MouseArea {
     ModeLine,
     HeaderLine,
+    LeftMargin,
+    RightMargin,
+    VerticalScrollBar,
+    HorizontalScrollBar,
     ImageMap(SymId),
 }
 
