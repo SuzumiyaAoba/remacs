@@ -127,14 +127,27 @@ Return nil if no rule could be guessed."
 
 ;; Internals
 
-;; FIXME: do proper quoting of " etc
+(defun gnus-sieve-quote-string (string)
+  "Return STRING as a quoted Sieve string.
+Escape double quotes and backslashes as required by RFC 5228."
+  (concat
+   "\""
+   (mapconcat (lambda (character)
+                (let ((text (string character)))
+                  (if (memq character '(?\" ?\\))
+                      (concat "\\" text)
+                    text)))
+              (string-to-list string)
+              "")
+   "\""))
+
 (defun gnus-sieve-string-list (list)
   "Convert an elisp string list to a Sieve string list.
 
 For example:
 \(gnus-sieve-string-list \\='(\"to\" \"cc\"))
   => \"[\\\"to\\\", \\\"cc\\\"]\""
-  (concat "[\"" (mapconcat #'identity list "\", \"") "\"]"))
+  (concat "[" (mapconcat #'gnus-sieve-quote-string list ", ") "]"))
 
 (defun gnus-sieve-test-list (list)
   "Convert an elisp test list to a Sieve test list.
@@ -144,7 +157,6 @@ For example:
   => \"(address \\\"sender\\\" \\\"boss@company.com\\\", size :over 4K)\""
   (concat "(" (mapconcat #'gnus-sieve-test list ", ") ")"))
 
-;; FIXME: do proper quoting
 (defun gnus-sieve-test-token (token)
   "Convert an elisp test token to a Sieve test token.
 
@@ -162,7 +174,7 @@ For example:
     (symbol-name token))
 
    ((stringp token)            ;; String
-    (concat "\"" token "\""))
+    (gnus-sieve-quote-string token))
 
    ((and (listp token)         ;; String list
 	 (stringp (car token)))
