@@ -38,6 +38,8 @@ fn suffix_is_expanded_by_easy_menu_and_ignored_as_a_raw_property() {
                 prepare_native_menus(&mut interp).unwrap();
                 assert_eq!(labels(&interp, "QA Raw Suffix"), ["Mode"]);
                 assert_eq!(labels(&interp, "QA Easy Suffix"), expected);
+                // GNU defines :suffix for Easy Menu vectors, not the raw
+                // extended-menu-item property list.
                 assert!(
                     interp
                         .eval_str("(= qa-raw-suffix-calls 0)")
