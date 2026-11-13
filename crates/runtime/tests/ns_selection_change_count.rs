@@ -66,6 +66,11 @@ fn clipboard_ownership_uses_change_count_and_disowns_conditionally() {
             let mut interp = Interp::new();
             let host = Rc::new(TestClipboard::default());
             interp.set_clipboard_backend(Some(host.clone()));
+            expect(
+                &mut interp,
+                "(progn (setq window-system 'ns initial-window-system 'ns) (set-frame-parameter nil 'window-system 'ns))",
+                "nil",
+            );
 
             expect(
                 &mut interp,
@@ -90,6 +95,35 @@ fn clipboard_ownership_uses_change_count_and_disowns_conditionally() {
             expect(&mut interp, "(ns-selection-owner-p 'CLIPBOARD)", "t");
             expect(&mut interp, "(ns-disown-selection-internal 'CLIPBOARD)", "nil");
             assert_eq!(host.0.borrow().text.as_deref(), Some(""));
+
+            expect(
+                &mut interp,
+                "(progn (ns-own-selection-internal 'CLIPBOARD (propertize \"probe\" 'qa-selection-property t)) t)",
+                "t",
+            );
+            expect(
+                &mut interp,
+                "(get-text-property 0 'qa-selection-property (gui-get-selection 'CLIPBOARD 'STRING))",
+                "t",
+            );
+            expect(
+                &mut interp,
+                "(ns-own-selection-internal 'PRIMARY 'qa-local-selection)",
+                "qa-local-selection",
+            );
+            expect(
+                &mut interp,
+                "(gui-get-selection 'PRIMARY 'STRING)",
+                "qa-local-selection",
+            );
+
+            host.external_write("external clipboard");
+            expect(&mut interp, "(ns-selection-owner-p 'CLIPBOARD)", "nil");
+            expect(
+                &mut interp,
+                "(gui-get-selection 'CLIPBOARD 'STRING)",
+                "\"external clipboard\"",
+            );
         })
         .unwrap()
         .join()

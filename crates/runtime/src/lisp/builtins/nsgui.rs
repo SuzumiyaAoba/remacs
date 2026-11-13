@@ -1052,6 +1052,13 @@ fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !matches!(target_name.as_str(), "STRING" | "TEXT" | "UTF8_STRING") {
         return Ok(Value::Nil);
     }
+    if nsgui_selection_is_owned(i, selection, backend.as_ref())? {
+        return Ok(i
+            .nsgui_selections
+            .get(&selection)
+            .cloned()
+            .unwrap_or(Value::Nil));
+    }
     if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
         let text = host
             .read(backend.as_ref())
@@ -1080,10 +1087,12 @@ fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(exists))
 }
 
-fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
-    let backend = require_selection_backend(i)?;
-    let owns = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
+fn nsgui_selection_is_owned(
+    i: &mut Interp,
+    selection: SymId,
+    backend: &dyn crate::frontend::ClipboardBackend,
+) -> Result<bool, Flow> {
+    let owns = if let Some(host) = HostSelection::for_symbol(i, backend, selection) {
         if matches!(&host, HostSelection::Clipboard)
             && let Some(expected) = i.nsgui_selection_change_counts.get(&selection).copied()
         {
@@ -1098,7 +1107,7 @@ fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .and_then(selection_data_text);
             match selected {
                 Some(selected) => host
-                    .read(backend.as_ref())
+                    .read(backend)
                     .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
                     .is_some_and(|current| current == selected),
                 None => false,
@@ -1107,6 +1116,13 @@ fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         i.nsgui_selections.contains_key(&selection)
     };
+    Ok(owns)
+}
+
+fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
+    let backend = require_selection_backend(i)?;
+    let owns = nsgui_selection_is_owned(i, selection, backend.as_ref())?;
     Ok(Value::from_bool(owns))
 }
 
