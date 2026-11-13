@@ -134,6 +134,20 @@
 
 ;; Interactive functions
 
+(defun handwrite--check-postscript-text (text)
+  "Signal an error if TEXT contains a character handwrite cannot encode."
+  (let ((index 0)
+        (length (length text))
+        unsupported)
+    (while (and (< index length) (not unsupported))
+      (let ((character (aref text index)))
+        (unless (or (= character ?\n)
+                    (<= ?\s character ?~))
+          (setq unsupported character)))
+      (setq index (1+ index)))
+    (when unsupported
+      (error "handwrite cannot encode character U+%04X" unsupported))))
+
 ;;;###autoload
 (defun handwrite ()
   "Turn the buffer into a \"handwritten\" document.
@@ -215,6 +229,7 @@ Variables: `handwrite-linespace'     (default 12)
 		(setq line (replace-regexp-in-string (car trans)
 						     (concat "\\\\" (cdr trans))
 						     line)))
+	      (handwrite--check-postscript-text line)
 	      (switch-to-buffer ps-buf-name)
 	      (insert (string-replace "\n" "" line))
 	      (message "write write write...")
