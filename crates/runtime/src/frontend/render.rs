@@ -399,6 +399,8 @@ pub struct GridToolBarItem {
     pub row: usize,
     pub left: usize,
     pub width: usize,
+    /// Whether the menu item can be activated in the current Lisp state.
+    pub enabled: bool,
     /// UTF-8 byte range of the painted button in the composed row.
     pub byte_range: Option<(usize, usize)>,
     pub command: String,
@@ -3702,7 +3704,24 @@ fn render_tool_bar(
             break;
         }
         let text = fit_text_to_cells_with_tab_width(&format!(" {label} "), button_width, 8).0;
+        let enabled = binding.command.is_some() || binding.command_id.is_some();
         let mut button_style = background;
+        if !enabled {
+            let disabled_foreground = faces.builtin(i, "shadow", 0).finish().fg;
+            let foreground = button_style.fg;
+            button_style.fg = disabled_foreground
+                .filter(|disabled| Some(*disabled) != foreground)
+                .or_else(|| {
+                    foreground.zip(button_style.bg).map(|(foreground, background)| {
+                        CellColor(
+                            ((foreground.0 as u16 + background.0 as u16) / 2) as u8,
+                            ((foreground.1 as u16 + background.1 as u16) / 2) as u8,
+                            ((foreground.2 as u16 + background.2 as u16) / 2) as u8,
+                        )
+                    })
+                })
+                .or(foreground);
+        }
         button_style.box_style = Some(BoxStyle {
             vertical_width: 1,
             horizontal_width: 1,
@@ -3720,6 +3739,7 @@ fn render_tool_bar(
             byte_range: None,
             left: column,
             width: button_width,
+            enabled,
             command: binding.command.clone().unwrap_or_default(),
             command_id: binding.command_id.clone(),
         });

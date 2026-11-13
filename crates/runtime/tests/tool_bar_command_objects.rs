@@ -141,7 +141,21 @@ fn tool_bar_objects_keep_captures_keys_and_snapshot_lifetimes() {
             refreshed.rows[item.row][a..b].trim() == "Disabled"
         })
         .unwrap();
+    assert!(!disabled.enabled, "disabled toolbar item must remain disabled");
     assert!(disabled.command.is_empty() && disabled.command_id.is_none());
+    let enabled = refreshed
+        .tool_bar_items
+        .iter()
+        .find(|item| {
+            let (a, b) = item.byte_range.unwrap();
+            refreshed.rows[item.row][a..b].trim() == "Symbol"
+        })
+        .unwrap();
+    assert_ne!(
+        refreshed.attrs[disabled.row][disabled.left + 1].fg,
+        refreshed.attrs[enabled.row][enabled.left + 1].fg,
+        "disabled toolbar item must use the shadow foreground"
+    );
     drop((captured, first, refreshed));
     let frontend = Rc::new(RefCell::new(Frontend {
         grid: Grid::blank(120, 24),

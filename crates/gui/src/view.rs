@@ -808,7 +808,7 @@ fn tool_bar_hit_regions(
     grid.tool_bar_items
         .iter()
         .filter_map(|item| {
-            if item.command.is_empty() && item.command_id.is_none() {
+            if !item.enabled || (item.command.is_empty() && item.command_id.is_none()) {
                 return None;
             }
             Some(CommandHitRegion {
