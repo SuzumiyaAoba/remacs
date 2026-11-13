@@ -3960,12 +3960,11 @@ of groups killed."
 		 (gnus-group-yank-group)))
 	    (push (cons (car entry) (nth 1 entry))
 		  gnus-list-of-killed-groups))
-	  (gnus-group-change-level
-	   (if entry entry group) gnus-level-killed (if entry nil level))
-	  ;; FIXME: Since the group has already been removed from
-	  ;; `gnus-newsrc-hashtb', this check will always return nil.
-	  (when (numberp (gnus-group-unread group))
-	    (gnus-request-update-group-status group 'unsubscribe))
+	  (let ((unread (gnus-group-unread group)))
+	    (gnus-group-change-level
+	     (if entry entry group) gnus-level-killed (if entry nil level))
+	    (when (numberp unread)
+	      (gnus-request-update-group-status group 'unsubscribe)))
 	  (message "Killed group %s" group))
       ;; If there are lots and lots of groups to be killed, we use
       ;; this thing instead.
