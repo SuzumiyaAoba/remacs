@@ -284,6 +284,57 @@ fn horizontal_scroll_with_truncate_lines_nil_disables_wrapping() {
 }
 
 #[test]
+fn horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs_inner)
+        .expect("spawn wide horizontal scroll bar test thread")
+        .join()
+        .expect("wide horizontal scroll bar test thread");
+}
+
+fn horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs_inner() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'gpui)
+          (set-frame-parameter nil 'horizontal-scroll-bars 'bottom)
+          (set-window-scroll-bars (selected-window) nil nil nil 'bottom t)
+          (setq-local truncate-lines t)
+          (erase-buffer)
+          (insert (make-string 100 ?漢) "\t" (make-string 20 ?x))
+          (goto-char (point-min)))"#,
+    )
+    .unwrap();
+
+    let grid = render_grid(&i, 80, 25);
+    let (window_id, max_offset) = grid
+        .scroll_bars
+        .iter()
+        .find(|bar| bar.orientation == GridScrollBarOrientation::Horizontal)
+        .map(|bar| (bar.window_id, bar.max_offset))
+        .expect("graphical frame has a horizontal scroll bar");
+    assert!(max_offset > 100, "display-column max offset: {max_offset}");
+
+    dispatch_scroll_bar(
+        &mut i,
+        window_id,
+        GridScrollBarOrientation::Horizontal,
+        max_offset,
+        max_offset,
+    );
+    let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
+    assert_eq!(window.borrow().hscroll, max_offset);
+
+    let scrolled = render_grid(&i, 80, 25);
+    assert!(
+        scrolled.rows[0].trim_end().ends_with(&"x".repeat(20)),
+        "rightmost text should be visible: {:?}",
+        scrolled.rows[0]
+    );
+}
+
+#[test]
 fn wrapped_continuations_render_string_and_space_wrap_prefixes() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil wrap-prefix \"  \")")
