@@ -638,6 +638,9 @@ pub(super) enum ClipboardRequest {
     Ready(Arc<AtomicBool>),
     Read(ClipboardTarget, SyncSender<Result<Option<String>, String>>),
     Write(ClipboardTarget, String, Option<SyncSender<Result<(), String>>>),
+    ReadChangeCount(SyncSender<Result<Option<u64>, String>>),
+    WriteWithChangeCount(String, SyncSender<Result<Option<u64>, String>>),
+    ClearIfChangeCount(u64, SyncSender<Result<(), String>>),
 }
 
 #[cfg(test)]
@@ -1279,6 +1282,46 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
 
     fn write_text(&self, text: String) -> Result<(), String> {
         self.write(ClipboardTarget::Clipboard, text)
+    }
+
+    fn clipboard_change_count(&self) -> Result<Option<u64>, String> {
+        if !self.ready.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::ReadChangeCount(reply))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
+    }
+
+    fn write_text_with_change_count(&self, text: String) -> Result<Option<u64>, String> {
+        if !self.ready.load(Ordering::Acquire) {
+            self.write(ClipboardTarget::Clipboard, text)?;
+            return Ok(None);
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::WriteWithChangeCount(text, reply))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
+    }
+
+    fn clear_text_if_change_count(&self, expected: u64) -> Result<(), String> {
+        if !self.ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::ClearIfChangeCount(expected, reply))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
     }
 
     fn supports_primary_selection(&self) -> bool {

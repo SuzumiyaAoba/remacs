@@ -18,6 +18,27 @@ pub trait ClipboardBackend {
     fn read_text(&self) -> Result<Option<String>, String>;
     fn write_text(&self, text: String) -> Result<(), String>;
 
+    /// Return the host clipboard generation when the platform exposes one.
+    /// Implementations use this to distinguish identical data from a new owner.
+    fn clipboard_change_count(&self) -> Result<Option<u64>, String> {
+        Ok(None)
+    }
+
+    /// Write clipboard text and return the generation produced by that write.
+    /// GUI backends should perform both operations on their UI thread.
+    fn write_text_with_change_count(&self, text: String) -> Result<Option<u64>, String> {
+        self.write_text(text)?;
+        self.clipboard_change_count()
+    }
+
+    /// Clear the clipboard only when it still has the generation we own.
+    fn clear_text_if_change_count(&self, expected: u64) -> Result<(), String> {
+        if self.clipboard_change_count()? == Some(expected) {
+            self.write_text(String::new())?;
+        }
+        Ok(())
+    }
+
     /// Whether the host has a PRIMARY selection separate from its clipboard.
     fn supports_primary_selection(&self) -> bool {
         false

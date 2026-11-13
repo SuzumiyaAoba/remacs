@@ -967,11 +967,26 @@ fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     let selection = selection_symbol(i, &a[0])?;
     let value = a[1].clone();
     let backend = require_selection_backend(i)?;
-    if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection)
+    let change_count = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection)
         && let Some(text) = selection_data_text(&value)
     {
-        host.write(backend.as_ref(), text)
-            .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+        if matches!(&host, HostSelection::Clipboard) {
+            backend
+                .write_text_with_change_count(text)
+                .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?
+        } else {
+            host.write(backend.as_ref(), text)
+                .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(change_count) = change_count {
+        i.nsgui_selection_change_counts
+            .insert(selection, change_count);
+    } else {
+        i.nsgui_selection_change_counts.remove(&selection);
     }
     i.nsgui_selections.insert(selection, value.clone());
     Ok(value)
@@ -980,20 +995,41 @@ fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 fn f_ns_disown_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let selection = selection_symbol(i, &a[0])?;
     let backend = require_selection_backend(i)?;
-    if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection)
-        && let Some(owned_text) = i
+    let change_count = i.nsgui_selection_change_counts.get(&selection).copied();
+    if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
+        if matches!(&host, HostSelection::Clipboard) {
+            if let Some(change_count) = change_count {
+                backend
+                    .clear_text_if_change_count(change_count)
+                    .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+            } else if let Some(owned_text) = i
+                .nsgui_selections
+                .get(&selection)
+                .and_then(selection_data_text)
+            {
+                let current = host
+                    .read(backend.as_ref())
+                    .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
+                if current.as_deref() == Some(owned_text.as_str()) {
+                    host.write(backend.as_ref(), String::new())
+                        .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+                }
+            }
+        } else if let Some(owned_text) = i
             .nsgui_selections
             .get(&selection)
             .and_then(selection_data_text)
-    {
-        let current = host
-            .read(backend.as_ref())
-            .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
-        if current.as_deref() == Some(owned_text.as_str()) {
-            host.write(backend.as_ref(), String::new())
-                .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+        {
+            let current = host
+                .read(backend.as_ref())
+                .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
+            if current.as_deref() == Some(owned_text.as_str()) {
+                host.write(backend.as_ref(), String::new())
+                    .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+            }
         }
     }
+    i.nsgui_selection_change_counts.remove(&selection);
     i.nsgui_selections.remove(&selection);
     Ok(Value::Nil)
 }
@@ -1048,16 +1084,25 @@ fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
     let backend = require_selection_backend(i)?;
     let owns = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
-        let selected = i
-            .nsgui_selections
-            .get(&selection)
-            .and_then(selection_data_text);
-        match selected {
-            Some(selected) => host
-                .read(backend.as_ref())
+        if matches!(&host, HostSelection::Clipboard)
+            && let Some(expected) = i.nsgui_selection_change_counts.get(&selection).copied()
+        {
+            backend
+                .clipboard_change_count()
                 .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
-                .is_some_and(|current| current == selected),
-            None => false,
+                .is_some_and(|current| current == expected)
+        } else {
+            let selected = i
+                .nsgui_selections
+                .get(&selection)
+                .and_then(selection_data_text);
+            match selected {
+                Some(selected) => host
+                    .read(backend.as_ref())
+                    .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?
+                    .is_some_and(|current| current == selected),
+                None => false,
+            }
         }
     } else {
         i.nsgui_selections.contains_key(&selection)

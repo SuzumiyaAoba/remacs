@@ -185,6 +185,7 @@ impl Interp {
             native_service_backend: None,
             x_resource_backend: None,
             nsgui_selections: HashMap::default(),
+            nsgui_selection_change_counts: HashMap::default(),
             unread_switch_frame: Value::Nil,
             minibuf_selected_window: None,
             minibuf_level: 0,

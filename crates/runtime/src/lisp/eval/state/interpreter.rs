@@ -314,6 +314,8 @@ pub struct Interp {
     pub(crate) x_resource_backend: Option<Rc<dyn crate::frontend::XResourceBackend>>,
     /// NS selection values retained for local selection reads and ownership checks.
     pub(crate) nsgui_selections: HashMap<SymId, Value>,
+    /// Native clipboard change counts captured when Remacs acquired ownership.
+    pub(crate) nsgui_selection_change_counts: HashMap<SymId, u64>,
     /// Keyboard.c keeps a deferred switch-frame outside the public queues.
     pub(crate) unread_switch_frame: Value,
     /// The window selected before entering the active minibuffer, retained

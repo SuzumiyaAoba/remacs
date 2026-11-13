@@ -118,3 +118,41 @@ fn primary_selection_service_failures_reach_the_caller() {
     assert!(backend.read_primary_text().is_err());
     assert!(backend.write_primary_text("text".into()).is_err());
 }
+
+#[test]
+fn clipboard_change_count_requests_run_through_the_ui_service() {
+    let (requests, received) = smol::channel::unbounded();
+    let backend = GuiClipboardBackend {
+        requests,
+        ready: Arc::new(AtomicBool::new(true)),
+    };
+    let service = thread::spawn(move || {
+        let ClipboardRequest::WriteWithChangeCount(text, reply) = received.recv_blocking().unwrap()
+        else {
+            panic!("clipboard write with change count")
+        };
+        assert_eq!(text, "owned clipboard");
+        reply.send(Ok(Some(17))).unwrap();
+
+        let ClipboardRequest::ReadChangeCount(reply) = received.recv_blocking().unwrap() else {
+            panic!("clipboard change count")
+        };
+        reply.send(Ok(Some(17))).unwrap();
+
+        let ClipboardRequest::ClearIfChangeCount(expected, reply) =
+            received.recv_blocking().unwrap()
+        else {
+            panic!("conditional clipboard clear")
+        };
+        assert_eq!(expected, 17);
+        reply.send(Ok(())).unwrap();
+    });
+
+    assert_eq!(
+        backend.write_text_with_change_count("owned clipboard".into()),
+        Ok(Some(17))
+    );
+    assert_eq!(backend.clipboard_change_count(), Ok(Some(17)));
+    assert_eq!(backend.clear_text_if_change_count(17), Ok(()));
+    service.join().unwrap();
+}

@@ -109,6 +109,33 @@ fn write_host_selection(app: &App, target: ClipboardTarget, text: String) -> Res
 }
 
 #[cfg(target_os = "macos")]
+fn native_clipboard_change_count() -> Option<u64> {
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard(nil) };
+    let count: NSInteger = unsafe { msg_send![pasteboard, changeCount] };
+    u64::try_from(count).ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_clipboard_change_count() -> Option<u64> {
+    None
+}
+
+fn write_host_clipboard_with_change_count(
+    app: &App,
+    text: String,
+) -> Result<Option<u64>, String> {
+    write_host_selection(app, ClipboardTarget::Clipboard, text)?;
+    Ok(native_clipboard_change_count())
+}
+
+fn clear_host_clipboard_if_change_count(app: &App, expected: u64) -> Result<(), String> {
+    if native_clipboard_change_count() == Some(expected) {
+        write_host_selection(app, ClipboardTarget::Clipboard, String::new())?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
 #[cfg(target_os = "macos")]
 static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
@@ -507,6 +534,27 @@ pub fn run_gui_with_dump(
                         if let Some(reply) = reply {
                             let _ = reply.send(result);
                         }
+                    }
+                    ClipboardRequest::ReadChangeCount(reply) => {
+                        let result = cx
+                            .update(|_| Ok::<_, String>(native_clipboard_change_count()))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
+                    }
+                    ClipboardRequest::WriteWithChangeCount(text, reply) => {
+                        let result = cx
+                            .update(|app| write_host_clipboard_with_change_count(app, text))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
+                    }
+                    ClipboardRequest::ClearIfChangeCount(expected, reply) => {
+                        let result = cx
+                            .update(|app| clear_host_clipboard_if_change_count(app, expected))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        let _ = reply.send(result);
                     }
                 }
             }
