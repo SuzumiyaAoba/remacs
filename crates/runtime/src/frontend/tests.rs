@@ -3,7 +3,8 @@ mod read_event_tests;
 
 use super::*;
 use crate::frontend::{
-    CellColor, GridImageSource, MousePosition, render_grid_with_mouse_position_cached,
+    CellColor, GridImageSource, MousePosition, render_grid_mut,
+    render_grid_with_mouse_position_cached,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -190,6 +191,31 @@ fn display_replacement_string_faces_style_its_own_text() {
     };
     let hovered = render_grid_with_mouse_position_cached(&i, 40, 4, None, Some(mouse_position));
     assert!(hovered.char_attrs[0][0].inverse);
+}
+
+#[test]
+fn disable_eval_display_wrapper_applies_inner_spec_without_evaluation() {
+    let mut i = interp_with_frame("X");
+    i.eval_str(
+        "(put-text-property (point-min) (point-max) 'display\
+                           '(disable-eval \"Y\"))",
+    )
+    .unwrap();
+
+    let grid = render_grid_mut(&mut i, 40, 4);
+    assert!(grid.rows[0].starts_with("Y"));
+
+    i.eval_str(
+        "(setq qa-disable-eval-ran nil)\
+         (put-text-property\
+          (point-min) (point-max) 'display\
+          '(disable-eval\
+            (when (progn (setq qa-disable-eval-ran t) t) \"Z\")))",
+    )
+    .unwrap();
+    let grid = render_grid_mut(&mut i, 40, 4);
+    assert!(grid.rows[0].starts_with("X"));
+    assert!(i.eval_str("qa-disable-eval-ran").unwrap().is_nil());
 }
 
 #[test]

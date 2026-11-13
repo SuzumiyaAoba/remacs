@@ -8040,6 +8040,27 @@ fn display_when_spec(i: &Interp, value: &Value) -> Option<(Value, Value)> {
     Some((arguments.car.clone(), arguments.cdr.clone()))
 }
 
+fn display_disable_eval_spec(i: &Interp, value: &Value) -> Option<Value> {
+    let Value::Cons(cell) = value else {
+        return None;
+    };
+    let (head, tail) = {
+        let cell = cell.borrow();
+        (cell.car.clone(), cell.cdr.clone())
+    };
+    let Value::Sym(head) = head else {
+        return None;
+    };
+    if i.symbol_name(head) != "disable-eval" {
+        return None;
+    }
+    let Value::Cons(argument) = tail else {
+        return None;
+    };
+    let argument = argument.borrow();
+    argument.cdr.is_nil().then(|| argument.car.clone())
+}
+
 #[derive(Clone)]
 struct DisplayConditionResult {
     buffer_id: usize,
@@ -8102,6 +8123,9 @@ fn collect_display_condition_results(
     object: &Value,
     spec: &Value,
 ) {
+    if display_disable_eval_spec(i, spec).is_some() {
+        return;
+    }
     let Some((condition, inner)) = display_when_spec(i, spec) else {
         return;
     };
@@ -8254,7 +8278,47 @@ fn display_value_replacement(
     mouse_face_active: bool,
     object_source: Option<MouseObjectSource>,
 ) -> Option<DisplayReplacement> {
+    display_value_replacement_with_eval(
+        i,
+        faces,
+        value,
+        buffer_id,
+        position,
+        default_font_height,
+        mouse_face_active,
+        object_source,
+        true,
+    )
+}
+
+fn display_value_replacement_with_eval(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    value: &Value,
+    buffer_id: usize,
+    position: usize,
+    default_font_height: u16,
+    mouse_face_active: bool,
+    object_source: Option<MouseObjectSource>,
+    eval_enabled: bool,
+) -> Option<DisplayReplacement> {
+    if let Some(spec) = display_disable_eval_spec(i, value) {
+        return display_value_replacement_with_eval(
+            i,
+            faces,
+            &spec,
+            buffer_id,
+            position,
+            default_font_height,
+            mouse_face_active,
+            object_source,
+            false,
+        );
+    }
     if let Some((condition, spec)) = display_when_spec(i, value) {
+        if !eval_enabled {
+            return None;
+        }
         let applies = display_condition_result(i, buffer_id, position, &condition).unwrap_or_else(|| {
             match &condition {
                 Value::Nil => false,
@@ -8266,7 +8330,7 @@ fn display_value_replacement(
         if !applies {
             return None;
         }
-        return display_value_replacement(
+        return display_value_replacement_with_eval(
             i,
             faces,
             &spec,
@@ -8275,6 +8339,7 @@ fn display_value_replacement(
             default_font_height,
             mouse_face_active,
             object_source,
+            eval_enabled,
         );
     }
     if let Some((slice, image_desc)) = image_slice_spec(i, value) {
