@@ -45,6 +45,7 @@ fn adjacent_tab_clicks_follow_native_face_glyph_boundaries() {
                     width: 6,
                     byte_range: Some((0, 6)),
                     command: "tab-bar-select-tab".into(),
+                    command_id: None,
                     argument: Some(1),
                 },
                 GridTabBarItem {
@@ -53,6 +54,7 @@ fn adjacent_tab_clicks_follow_native_face_glyph_boundaries() {
                     width: 6,
                     byte_range: Some((7, 13)),
                     command: "tab-bar-select-tab".into(),
+                    command_id: None,
                     argument: Some(2),
                 },
             ];

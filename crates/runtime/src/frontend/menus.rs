@@ -1,6 +1,6 @@
 use super::{
     GridMenu, GridMenuItem,
-    menu_commands::PreparedToolBarItem,
+    menu_commands::{PreparedTabBarItem, PreparedToolBarItem},
     popup::{keymap_item, safe_menu_call},
     render::{menu_keymap_from_definition, menu_separator_name_p},
 };
@@ -542,6 +542,153 @@ fn prepare_tool_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<PreparedToolBarIt
     Ok(tool_bars)
 }
 
+fn tab_bar_key_name(i: &Interp, key: &Value) -> String {
+    match key {
+        Value::Sym(symbol) => i.symbol_name(*symbol),
+        Value::Int(code) => crate::editor::key_name_for(*code).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn tab_bar_key_index(name: &str) -> Option<i128> {
+    ["tab-", "C-tab-"]
+        .into_iter()
+        .find_map(|prefix| name.strip_prefix(prefix))
+        .and_then(|index| index.parse::<i128>().ok())
+}
+
+fn current_tab_index(i: &Interp, frame: &crate::editor::FrameRef) -> Option<i128> {
+    let tabs_property = i.q_soft("tabs")?;
+    let tabs = crate::lisp::eval::plist_get(&frame.borrow().params, tabs_property);
+    tabs.list_to_vec()
+        .ok()?
+        .iter()
+        .position(|tab| {
+            matches!(tab, Value::Cons(cell)
+                if matches!(cell.borrow().car, Value::Sym(symbol)
+                    if i.symbol_name(symbol) == "current-tab"))
+        })
+        .and_then(|index| i128::try_from(index.saturating_add(1)).ok())
+}
+
+fn tab_bar_items(
+    i: &mut Interp,
+    frame: &crate::editor::FrameRef,
+) -> Result<Vec<PreparedTabBarItem>, Flow> {
+    let format = i
+        .q_soft("tab-bar-format")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    let formatter = Value::Sym(i.q("tab-bar-format-list"));
+    let entries = super::popup::safe_menu_call(i, formatter, vec![format])?;
+    let Ok(entries) = entries.list_to_vec() else {
+        return Ok(Vec::new());
+    };
+    let current_index = current_tab_index(i, frame);
+    let prefix = Value::Sym(i.q("tab-bar"));
+    let mut prepared = Vec::new();
+    for entry in entries {
+        let Value::Cons(cell) = entry else {
+            continue;
+        };
+        let (key, binding) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        let Some(item) = keymap_item(i, &key, &binding)? else {
+            continue;
+        };
+        let definition = crate::editor::keymap_def(i, item.definition.clone())?;
+        let name = tab_bar_key_name(i, &key);
+        let current = matches!(name.as_str(), "current-tab" | "current-group");
+        let close = name == "C-current-tab" || name.starts_with("C-tab-");
+        let tab_index = tab_bar_key_index(&name).or_else(|| {
+            matches!(name.as_str(), "current-tab" | "C-current-tab")
+                .then_some(current_index)
+                .flatten()
+        });
+        let text_only = item.separator
+            || name.starts_with("str-")
+            || name.starts_with("sep-")
+            || name == "align-right";
+        let keys = vec![
+            prefix.clone(),
+            menu_key(i, &key),
+            Value::Frame(frame.clone()),
+        ];
+        let (mut command, mut command_id) =
+            command_binding(i, &definition, item.enabled && !item.separator, &keys);
+        let mut argument = None;
+        if close && (definition.is_nil() || command.as_deref() == Some("tab-bar-close-tab")) {
+            command = Some("tab-bar-close-tab".to_owned());
+            command_id = None;
+            argument = tab_index;
+        } else if name.starts_with("tab-")
+            && (definition.is_nil() || command.as_deref() == Some("tab-bar-select-tab"))
+        {
+            command = Some("tab-bar-select-tab".to_owned());
+            command_id = None;
+            argument = tab_index;
+        } else if current || command.as_deref() == Some("ignore") {
+            command = None;
+            command_id = None;
+        }
+        let label = item.label.clone();
+        let help = item.help_text();
+        prepared.push(PreparedTabBarItem {
+            item: GridMenuItem {
+                label,
+                help,
+                command,
+                command_id,
+                items: Vec::new(),
+                separator: item.separator,
+                checked: false,
+                key_hint: None,
+            },
+            current,
+            button: !text_only,
+            close,
+            tab_index,
+            argument,
+        });
+    }
+    Ok(prepared)
+}
+
+fn prepare_tab_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<PreparedTabBarItem>)>, Flow> {
+    let mut tab_bars = Vec::new();
+    for frame in i.frames.clone() {
+        if frame.borrow().dead
+            || !crate::editor::frame_is_graphical(i, &frame)
+            || crate::editor::frame_parameter_positive_size(i, &frame, "tab-bar-lines", 0) == 0
+            || i.q_soft("tab-bar-format").is_none()
+            || !i
+                .q_soft("tab-bar-format-list")
+                .is_some_and(|symbol| i.fbound_p(symbol))
+        {
+            continue;
+        }
+        let window = frame.borrow().selected.clone();
+        if !i.buffer_live(window.borrow().buffer) {
+            continue;
+        }
+        let items = super::mode_line::with_window(i, &window, |i| {
+            let mark = i.specbind_depth();
+            let updating = i.q("menu-updating-frame");
+            let result = i
+                .specbind(updating, Value::Frame(frame.clone()))
+                .and_then(|_| tab_bar_items(i, &frame));
+            let unwind = i.unbind_to(mark);
+            unwind?;
+            let items = result?;
+            Ok(items)
+        })?;
+        tab_bars.push((frame.borrow().id, items));
+    }
+    Ok(tab_bars)
+}
+
 /// Prepare value-free menu and toolbar snapshots on the Lisp thread. Command
 /// objects stay in the runtime registry while any snapshot/input owns its ID.
 pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
@@ -549,8 +696,13 @@ pub fn prepare_native_menus(i: &mut Interp) -> Result<(), Flow> {
         return Ok(());
     }
     i.preparing_native_menus = true;
-    let result = prepare_menu_bar(i).and_then(|_| prepare_tool_bars(i));
-    let result = result.map(|tool_bars| i.native_menu_commands.set_tool_bars(tool_bars));
+    let result = prepare_menu_bar(i)
+        .and_then(|_| prepare_tool_bars(i))
+        .and_then(|tool_bars| prepare_tab_bars(i).map(|tab_bars| (tool_bars, tab_bars)));
+    let result = result.map(|(tool_bars, tab_bars)| {
+        i.native_menu_commands.set_tool_bars(tool_bars);
+        i.native_menu_commands.set_tab_bars(tab_bars);
+    });
     i.preparing_native_menus = false;
     i.native_menu_commands.prune();
     result

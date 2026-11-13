@@ -416,6 +416,8 @@ pub struct GridTabBarItem {
     /// UTF-8 byte range of the visible item in the composed row.
     pub byte_range: Option<(usize, usize)>,
     pub command: String,
+    /// Runtime-owned command object for function-valued format items.
+    pub command_id: Option<super::NativeMenuCommandId>,
     pub argument: Option<i128>,
 }
 
@@ -3819,8 +3821,162 @@ fn tab_entry_parameter(i: &Interp, entry: &Value, name: &str) -> Value {
         .unwrap_or(Value::Nil)
 }
 
+fn render_prepared_tab_bar(
+    i: &Interp,
+    prepared: &[super::menu_commands::PreparedTabBarItem],
+    width: usize,
+    rows: usize,
+    row_offset: usize,
+    default_style: CellStyle,
+    faces: &mut FaceCtx,
+    screen: &mut [Vec<ScreenCell>],
+) -> Vec<GridTabBarItem> {
+    let mut background = faces.builtin(i, "tab-bar", 0).finish();
+    if background.fg.is_none() {
+        background.fg = default_style.fg;
+    }
+    if background.bg.is_none() {
+        background.bg = default_style.bg.or(Some(CellColor(0x2d, 0x30, 0x33)));
+    }
+    let close_button = mode_line_variable(i, i.current_buffer, "tab-bar-close-button")
+        .and_then(|value| match value {
+            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+            _ => None,
+        })
+        .unwrap_or_else(|| " ×".to_owned());
+    let close_width = close_button.chars().map(display_char_width).sum::<usize>();
+    let close_entries = prepared
+        .iter()
+        .filter_map(|item| item.close.then_some(item.tab_index).flatten())
+        .collect::<HashSet<_>>();
+    let mut items = Vec::new();
+    let mut row = 0usize;
+    let mut column = 0usize;
+    let mut previous_tab: Option<(usize, usize, usize, usize, i128)> = None;
+
+    for prepared in prepared {
+        let item = &prepared.item;
+        if prepared.close {
+            if let Some((tab_row, tab_left, tab_width, tab_close_width, tab_index)) = previous_tab
+                && prepared.tab_index == Some(tab_index)
+                && tab_close_width > 0
+            {
+                items.push(GridTabBarItem {
+                    row: tab_row,
+                    byte_range: None,
+                    left: tab_left.saturating_add(tab_width.saturating_sub(tab_close_width)),
+                    width: tab_close_width,
+                    command: item
+                        .command
+                        .clone()
+                        .unwrap_or_else(|| "tab-bar-close-tab".to_owned()),
+                    command_id: item.command_id.clone(),
+                    argument: prepared.argument.or(Some(tab_index)),
+                });
+            }
+            continue;
+        }
+        let label = &item.label;
+        let label_width = label.chars().map(display_char_width).sum::<usize>();
+        let tab_close_width = if prepared.tab_index.is_some() && label.ends_with(&close_button) {
+            close_width
+        } else {
+            0
+        };
+        let button_width = label_width.saturating_add(2).min(width.max(1));
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row >= rows || width == 0 {
+            break;
+        }
+        let mut style = if prepared.button {
+            faces
+                .builtin(
+                    i,
+                    if prepared.current {
+                        "tab-bar-tab"
+                    } else {
+                        "tab-bar-tab-inactive"
+                    },
+                    0,
+                )
+                .finish()
+        } else {
+            background
+        };
+        if style.fg.is_none() {
+            style.fg = background.fg;
+        }
+        if style.bg.is_none() {
+            style.bg = background.bg;
+        }
+        if prepared.button {
+            style.box_style = Some(BoxStyle {
+                vertical_width: 1,
+                horizontal_width: 1,
+                color: style.fg,
+                kind: BoxStyleKind::Released,
+            });
+        }
+        let text = if prepared.button {
+            format!(" {label} ")
+        } else {
+            label.clone()
+        };
+        let text = fit_text_to_cells_with_tab_width(&text, button_width, 8).0;
+        let cell_styles = vec![style; button_width];
+        let character_styles = text.chars().map(|_| style).collect::<Vec<_>>();
+        let screen_row = row_offset.saturating_add(row);
+        if let Some(screen_row) = screen.get_mut(screen_row) {
+            place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
+        }
+        if item.command.is_some() || item.command_id.is_some() {
+            let selection_width = if tab_close_width > 0 {
+                button_width.saturating_sub(tab_close_width)
+            } else {
+                button_width
+            };
+            if selection_width > 0 {
+                items.push(GridTabBarItem {
+                    row: screen_row,
+                    byte_range: None,
+                    left: column,
+                    width: selection_width,
+                    command: item.command.clone().unwrap_or_default(),
+                    command_id: item.command_id.clone(),
+                    argument: prepared.argument,
+                });
+            }
+        }
+        if tab_close_width > 0
+            && let Some(tab_index) = prepared.tab_index
+            && !close_entries.contains(&tab_index)
+        {
+            items.push(GridTabBarItem {
+                row: screen_row,
+                byte_range: None,
+                left: column.saturating_add(button_width.saturating_sub(tab_close_width)),
+                width: tab_close_width,
+                command: "tab-bar-close-tab".to_owned(),
+                command_id: None,
+                argument: Some(tab_index),
+            });
+        }
+        if let Some(tab_index) = prepared.tab_index
+            && !prepared.close
+        {
+            previous_tab = Some((screen_row, column, button_width, tab_close_width, tab_index));
+        }
+        column = column.saturating_add(button_width).saturating_add(1);
+    }
+    items
+}
+
 fn render_tab_bar(
     i: &Interp,
+    frame_id: usize,
     frame_params: &Value,
     width: usize,
     rows: usize,
@@ -3845,6 +4001,19 @@ fn render_tab_bar(
                 continuation: false,
             };
         }
+    }
+
+    if let Some(prepared) = i.native_menu_commands.tab_bar(frame_id) {
+        return render_prepared_tab_bar(
+            i,
+            prepared,
+            width,
+            rows,
+            row_offset,
+            default_style,
+            faces,
+            screen,
+        );
     }
 
     let tabs = i
@@ -3943,6 +4112,7 @@ fn render_tab_bar(
             left: column,
             width: label_width.min(button_width),
             command: "tab-bar-select-tab".to_owned(),
+            command_id: None,
             argument: Some(index.saturating_add(1) as i128),
         });
         if close_visible && close_width > 0 {
@@ -3952,6 +4122,7 @@ fn render_tab_bar(
                 left: column.saturating_add(label_width.min(button_width)),
                 width: close_width.min(button_width.saturating_sub(label_width.min(button_width))),
                 command: "tab-bar-close-tab".to_owned(),
+                command_id: None,
                 argument: Some(index.saturating_add(1) as i128),
             });
         }
@@ -4005,6 +4176,7 @@ fn render_tab_bar(
                 left: column,
                 width: button_width,
                 command: "tab-bar-new-tab".to_owned(),
+                command_id: None,
                 argument: None,
             });
         }
@@ -10310,6 +10482,7 @@ fn render_grid_internal(
     if tab_bar_rows > 0 {
         tab_bar_items = render_tab_bar(
             i,
+            fb.id,
             &fb.params,
             width,
             tab_bar_rows,

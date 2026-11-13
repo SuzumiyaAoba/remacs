@@ -42,6 +42,7 @@ impl WeakNativeMenuCommandId {
 pub(crate) struct NativeMenuCommands {
     entries: Vec<(WeakNativeMenuCommandId, NativeMenuBinding)>,
     tool_bars: Vec<(usize, Vec<PreparedToolBarItem>)>,
+    tab_bars: Vec<(usize, Vec<PreparedTabBarItem>)>,
 }
 
 #[derive(Clone)]
@@ -56,6 +57,16 @@ pub(crate) struct PreparedToolBarItem {
     pub(crate) image: Option<GridImage>,
 }
 
+#[derive(Clone)]
+pub(crate) struct PreparedTabBarItem {
+    pub(crate) item: GridMenuItem,
+    pub(crate) current: bool,
+    pub(crate) button: bool,
+    pub(crate) close: bool,
+    pub(crate) tab_index: Option<i128>,
+    pub(crate) argument: Option<i128>,
+}
+
 impl NativeMenuCommands {
     pub(crate) fn tool_bar(&self, frame: usize) -> Option<&[PreparedToolBarItem]> {
         self.tool_bars
@@ -66,6 +77,17 @@ impl NativeMenuCommands {
 
     pub(crate) fn set_tool_bars(&mut self, tool_bars: Vec<(usize, Vec<PreparedToolBarItem>)>) {
         self.tool_bars = tool_bars;
+    }
+
+    pub(crate) fn tab_bar(&self, frame: usize) -> Option<&[PreparedTabBarItem]> {
+        self.tab_bars
+            .iter()
+            .find(|(id, _)| *id == frame)
+            .map(|(_, items)| items.as_slice())
+    }
+
+    pub(crate) fn set_tab_bars(&mut self, tab_bars: Vec<(usize, Vec<PreparedTabBarItem>)>) {
+        self.tab_bars = tab_bars;
     }
 
     pub(crate) fn register(&mut self, value: &Value, keys: &[Value]) -> NativeMenuCommandId {

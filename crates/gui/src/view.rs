@@ -725,6 +725,7 @@ enum ButtonAction {
     },
     Tab {
         command: String,
+        command_id: Option<NativeMenuCommandId>,
         argument: Option<i128>,
     },
     Popup {
@@ -760,7 +761,15 @@ impl PressedButton {
                 Some(command_id) => GuiEvent::NativeMenuCommand(command_id),
                 None => GuiEvent::MenuCommand(command),
             },
-            ButtonAction::Tab { command, argument } => GuiEvent::CommandArgs {
+            ButtonAction::Tab {
+                command_id: Some(command_id),
+                ..
+            } => GuiEvent::NativeMenuCommand(command_id),
+            ButtonAction::Tab {
+                command,
+                argument,
+                ..
+            } => GuiEvent::CommandArgs {
                 command,
                 args: argument.into_iter().collect(),
             },
@@ -844,7 +853,7 @@ fn tab_bar_hit_regions(
                     line_height,
                 )?,
                 command: item.command.clone(),
-                command_id: None,
+                command_id: item.command_id.clone(),
                 argument: item.argument,
             })
         })
@@ -1219,6 +1228,7 @@ impl EditorView {
             bounds: item.bounds,
             action: ButtonAction::Tab {
                 command: item.command.clone(),
+                command_id: item.command_id.clone(),
                 argument: item.argument,
             },
         })

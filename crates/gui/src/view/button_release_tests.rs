@@ -31,6 +31,7 @@ fn grid(kind: Kind) -> Grid {
                 width: end - left,
                 byte_range: Some((left, end)),
                 command: "tab-bar-select-tab".into(),
+                command_id: None,
                 argument: Some(index as i128 + 1),
             }),
             Kind::Popup => grid.popup_menu_items.push(GridPopupMenuItem {
