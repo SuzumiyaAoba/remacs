@@ -88,8 +88,6 @@
 ;; The 'o tag is also a problem when including the region. This will
 ;; be looked into.
 
-;; Clicking mouse-2 in the completion buffer gives strange results.
-
 ;; There is a bug in some emacs versions that prevents completion from
 ;; working. If it doesn't work for you, send me a note indicating your
 ;; emacs version and your problems.
@@ -684,25 +682,47 @@ non-nil, a buffer containing possible completions is displayed."
 	       (or silent (ding))
 	       (if tempo-show-completion-buffer
 		   (tempo-display-completions match-string
-					      collection)))))))
+					      collection
+					      (list match-start (point)))))))))
 
 
 ;;;
 ;;; tempo-display-completions
 
-(defun tempo-display-completions (string tag-list)
-  "Show a buffer containing possible completions for STRING."
-  (if tempo-leave-completion-buffer
-      (with-output-to-temp-buffer "*Completions*"
-	(display-completion-list
-	 (completion-hilit-commonality (all-completions string tag-list)
-				       (length string))))
-    (save-window-excursion
-      (with-output-to-temp-buffer "*Completions*"
-	(display-completion-list
-	 (completion-hilit-commonality (all-completions string tag-list)
-				       (length string))))
-      (sit-for 32767))))
+(defun tempo-completion-list-insert-choice (beg end tag)
+  "Replace BEG to END with the Tempo template for TAG."
+  (let ((template (assoc tag (tempo-build-collection))))
+    (unless template
+      (error "No Tempo template for tag %s" tag))
+    (delete-region beg end)
+    (goto-char beg)
+    (tempo-insert-template (cdr template) nil)))
+
+(defun tempo--display-completions (string tag-list reference-buffer
+					   base-position)
+  (with-output-to-temp-buffer "*Completions*"
+    (display-completion-list
+     (completion-hilit-commonality (all-completions string tag-list)
+				   (length string)))
+    (with-current-buffer standard-output
+      (setq-local completion-reference-buffer reference-buffer)
+      (setq-local completion-base-position base-position)
+      (setq-local completion-list-insert-choice-function
+		  #'tempo-completion-list-insert-choice))))
+
+(defun tempo-display-completions (string tag-list &optional base-position)
+  "Show a buffer containing possible completions for STRING.
+BASE-POSITION, when non-nil, is the source text to replace when a
+completion is chosen."
+  (let ((reference-buffer (current-buffer))
+	(base-position (or base-position (list (point)))))
+    (if tempo-leave-completion-buffer
+	(tempo--display-completions string tag-list reference-buffer
+				    base-position)
+      (save-window-excursion
+	(tempo--display-completions string tag-list reference-buffer
+				    base-position)
+	(sit-for 32767)))))
 
 ;;;
 ;;; tempo-expand-if-complete

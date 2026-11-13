@@ -1206,3 +1206,5 @@ qa!(qa_load_filename_identity, "qa_load_filename_identity.el");
 qa!(qa_load_source_characters, "qa_load_source_characters.el");
 
 qa!(qa_load_oversized_codes, "qa_load_oversized_codes.el");
+
+qa!(qa_tempo_completion_mouse, "qa_tempo_completion_mouse.el");
