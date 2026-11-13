@@ -335,6 +335,57 @@ fn horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs_inner
 }
 
 #[test]
+fn vertical_scroll_bar_reaches_buffer_end_with_header_and_tab_lines() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(vertical_scroll_bar_reaches_buffer_end_with_header_and_tab_lines_inner)
+        .expect("spawn vertical scroll bar test thread")
+        .join()
+        .expect("vertical scroll bar test thread");
+}
+
+fn vertical_scroll_bar_reaches_buffer_end_with_header_and_tab_lines_inner() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        r#"(progn
+          (set-frame-parameter nil 'window-system 'gpui)
+          (set-frame-parameter nil 'vertical-scroll-bars 'right)
+          (set-window-scroll-bars (selected-window) nil 'right nil nil t)
+          (setq-local header-line-format "header"
+                      tab-line-format "tabs"
+                      mode-line-format "mode")
+          (erase-buffer)
+          (dotimes (line 100)
+            (insert (format "line-%03d" line))
+            (unless (= line 99) (insert "\n")))
+          (goto-char (point-min)))"#,
+    )
+    .unwrap();
+
+    let grid = render_grid(&i, 80, 25);
+    let (window_id, max_offset) = grid
+        .scroll_bars
+        .iter()
+        .find(|bar| bar.orientation == GridScrollBarOrientation::Vertical)
+        .map(|bar| (bar.window_id, bar.max_offset))
+        .expect("graphical frame has a vertical scroll bar");
+    assert!(max_offset > 0);
+
+    dispatch_scroll_bar(
+        &mut i,
+        window_id,
+        GridScrollBarOrientation::Vertical,
+        max_offset,
+        max_offset,
+    );
+    let scrolled = render_grid(&i, 80, 25);
+    assert!(
+        scrolled.rows.iter().any(|row| row.contains("line-099")),
+        "last buffer line should be visible after scrolling to max_offset {max_offset}"
+    );
+}
+
+#[test]
 fn wrapped_continuations_render_string_and_space_wrap_prefixes() {
     let mut i = interp_with_frame("");
     i.eval_str("(setq-local truncate-lines nil wrap-prefix \"  \")")
