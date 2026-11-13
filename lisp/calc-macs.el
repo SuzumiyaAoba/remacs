@@ -130,9 +130,9 @@
   (eq (car-safe a) 'vec))
 
 (defsubst Math-messy-integerp (a)
-  (and (consp a)
-       (eq (car a) 'float)
-       (>= (nth 2 a) 0)))
+  (cond
+   ((eq (car-safe a) 'float) (>= (nth 2 a) 0))
+   ((eq (car-safe a) 'frac) (Math-integerp (math-normalize a)))))
 
 (defsubst Math-objectp (a)		;  [Public]
   (or (not (consp a))
@@ -162,9 +162,7 @@
 
 (defsubst Math-num-integerp (a)
   (or (integerp a)
-      (and (consp a)
-           (eq (car a) 'float)
-	   (>= (nth 2 a) 0))))
+      (Math-messy-integerp a)))
 
 (defsubst Math-equal-int (a b)
   (or (eq a b)

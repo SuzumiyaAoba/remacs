@@ -2154,20 +2154,21 @@ calc-kill calc-kill-region calc-yank))))
 (defun math-messy-integerp (a)
   (cond
    ((eq (car-safe a) 'float) (>= (nth 2 a) 0))
-   ;; FIXME: Math-messy-integerp does not include this case!
    ((eq (car-safe a) 'frac) (Math-integerp (math-normalize a)))))
 
 ;;; True if A is numerically an integer.  [P x] [Public]
 (defun math-num-integerp (a)
   (or (integerp a)
-      (Math-messy-integerp a)))
+      (math-messy-integerp a)))
 
 ;;; True if A is (numerically) a non-negative integer.  [P N] [Public]
 (defun math-num-natnump (a)
   (or (natnump a)
       (and (eq (car-safe a) 'float)
 	   (Math-natnump (nth 1 a))
-	   (>= (nth 2 a) 0))))
+	   (>= (nth 2 a) 0))
+      (and (eq (car-safe a) 'frac)
+	   (natnump (math-normalize a)))))
 
 ;;; True if A is an integer or will evaluate to an integer.  [P x] [Public]
 (defun math-provably-integerp (a)
