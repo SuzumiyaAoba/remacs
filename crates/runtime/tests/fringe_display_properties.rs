@@ -60,6 +60,37 @@ fn indicate_buffer_boundaries_alist_places_indicators_independently() {
     assert_eq!(grid.rows[2].chars().nth(39), Some('↓'));
 }
 
+#[test]
+fn overlay_arrow_string_nil_suppresses_the_fringe_arrow() {
+    let mut interp = Interp::new();
+    eval(
+        &mut interp,
+        r#"(progn
+      (set-frame-parameter nil 'window-system 'ns)
+      (set-frame-parameter nil 'char-width 8)
+      (set-frame-parameter nil 'char-height 16)
+      (set-frame-parameter nil 'menu-bar-lines 0)
+      (set-frame-parameter nil 'tool-bar-lines 0)
+      (set-frame-parameter nil 'tab-bar-lines 0)
+      (set-frame-parameter nil 'vertical-scroll-bars nil)
+      (set-frame-parameter nil 'horizontal-scroll-bars nil)
+      (set-frame-size nil 40 12)
+      (setq-local mode-line-format nil header-line-format nil tab-line-format nil
+                  indicate-empty-lines nil)
+      (set-window-fringes nil 8 8))"#,
+    );
+    remacs_runtime::editor::reflow_frame_windows(interp.selected_frame.as_ref().unwrap(), 40, 12);
+
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+      (insert "line")
+      (setq-local overlay-arrow-position (copy-marker (point-min))
+                  overlay-arrow-string nil))"#,
+    );
+    assert_eq!(grid.rows[0].chars().next(), Some(' '));
+}
+
 fn body(grid: &Grid, row: usize) -> String {
     grid.rows[row]
         .chars()

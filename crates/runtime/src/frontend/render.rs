@@ -2986,9 +2986,11 @@ fn overlay_arrow_positions(i: &Interp, buffer_id: usize) -> Vec<(usize, String)>
         }
     }
 
-    let default_string = mode_line_variable(i, buffer_id, "overlay-arrow-string")
-        .map(|value| arrow_string(i, value, ">"))
-        .unwrap_or_else(|| ">".to_owned());
+    let default_string = match mode_line_variable(i, buffer_id, "overlay-arrow-string") {
+        Some(Value::Nil) => String::new(),
+        Some(value) => arrow_string(i, value, ">"),
+        None => ">".to_owned(),
+    };
     let mut arrows = Vec::new();
     if let Some(position) = mode_line_variable(i, buffer_id, "overlay-arrow-position")
         .as_ref()
