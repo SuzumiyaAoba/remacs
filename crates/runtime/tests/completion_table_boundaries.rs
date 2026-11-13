@@ -19,6 +19,20 @@ const CASES: &str = r#"
     (if (eq (car-safe action) 'boundaries)
         '(boundaries 0 . 0)
       (complete-with-action action remacs-test-completion-candidates string pred)))
+  ;; #2169: an empty earlier table must not supply later candidates' bounds.
+  (let* ((empty
+          (lambda (_string _pred action)
+            (when (consp action) '(boundaries 0 . 0))))
+         (active
+          (lambda (_string _pred action)
+            (cond ((eq action t) '("candidate"))
+                  ((consp action) '(boundaries 2 . 0)))))
+         (table (completion-table-in-turn empty active)))
+    (remacs-test-completion-equal
+     'issue-2169
+     (list (completion-boundaries "prefix" table nil "")
+           (all-completions "prefix" table nil))
+     '((2 . 0) ("candidate"))))
   (dolist (constructor '(completion-table-in-turn completion-table-merge))
     (let ((table (funcall constructor #'remacs-test-completion-empty
                           #'remacs-test-completion-prefixed)))
