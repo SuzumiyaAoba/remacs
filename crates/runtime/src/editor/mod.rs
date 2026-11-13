@@ -2890,6 +2890,13 @@ pub(crate) fn f_set_window_buffer(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
                     .collect(),
             );
         }
+        if arg(&a, 2).is_nil()
+            && wb
+                .scroll_bars
+                .is_some_and(|(_, _, _, _, persistent)| !persistent)
+        {
+            wb.scroll_bars = None;
+        }
         wb.buffer = bid;
         if old_bid != bid || arg(&a, 2).is_nil() {
             wb.point = target_point;

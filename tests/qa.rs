@@ -1213,4 +1213,6 @@ qa!(qa_gnus_sieve_quoting, "qa_gnus_sieve_quoting.el");
 
 qa!(qa_gnus_summary_next_window, "qa_gnus_summary_next_window.el");
 
+qa!(qa_window_buffer_scroll_bars, "qa_window_buffer_scroll_bars.el");
+
 qa!(qa_gnus_encoded_header_search, "qa_gnus_encoded_header_search.el");
