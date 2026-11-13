@@ -5313,10 +5313,17 @@ fn f_subr_native_lambda_list(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
         other => Err(i.wrong_type_mut("subrp", other)),
     }
 }
-/// `internal--track-mouse` — GNU enters mouse-tracking mode then calls
-/// BODYFN; tracking is a no-op without a window system, so just apply.
+/// `internal--track-mouse` — GNU temporarily enables `track-mouse' while
+/// calling BODYFN, then restores the previous value even when BODYFN signals.
 fn f_internal_track_mouse(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    i.apply(&a[0], vec![])
+    let track_mouse = i.q("track-mouse");
+    let previous = i.symbol_value(track_mouse);
+    // GNU's keyboard.c updates this forwarded variable directly and restores
+    // it with an unwind-protect, so avoid Lisp-level variable watcher calls.
+    i.store_internal_value(track_mouse, Value::t());
+    let result = i.apply(&a[0], vec![]);
+    i.store_internal_value(track_mouse, previous);
+    result
 }
 
 /// `save-mark-and-excursion--save` → (MARKER . ACTIVE) — `(nil)' when
