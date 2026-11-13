@@ -5028,7 +5028,7 @@ fn indicate_buffer_boundary_position(
         Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
             "left" => FringeIndicatorPosition::Left,
             "right" => FringeIndicatorPosition::Right,
-            "t" => FringeIndicatorPosition::Both,
+            _ if matches!(indicator, "top" | "bottom") => FringeIndicatorPosition::Left,
             _ => FringeIndicatorPosition::Hidden,
         },
         Value::Cons(_) => {
@@ -5062,7 +5062,9 @@ fn indicate_buffer_boundary_position(
                     alist_position(i, position)
                 })
         }
-        value if value.truthy() => FringeIndicatorPosition::Left,
+        value if value.truthy() && matches!(indicator, "top" | "bottom") => {
+            FringeIndicatorPosition::Left
+        }
         _ => FringeIndicatorPosition::Hidden,
     }
 }
@@ -10449,16 +10451,25 @@ fn render_grid_internal(
             indicate_buffer_boundary_position(i, &indicate_boundaries, "top");
         let bottom_boundary_position =
             indicate_buffer_boundary_position(i, &indicate_boundaries, "bottom");
+        let up_boundary_position =
+            indicate_buffer_boundary_position(i, &indicate_boundaries, "up");
+        let down_boundary_position =
+            indicate_buffer_boundary_position(i, &indicate_boundaries, "down");
         let indicate_empty_lines = buffer_setting(i, "indicate-empty-lines", buf_id).truthy();
         let overlay_arrows = overlay_arrow_positions(i, buf_id);
-        let (first_buffer_line, last_buffer_line) = i
+        let (buffer_begv, buffer_zv, first_buffer_line, last_buffer_line) = i
             .buffers
             .get(buf_id)
             .map(|buffer| {
                 let bb = buffer.borrow();
-                (bb.text.line_of_pos(bb.begv), bb.text.line_of_pos(bb.zv))
+                (
+                    bb.begv,
+                    bb.zv,
+                    bb.text.line_of_pos(bb.begv),
+                    bb.text.line_of_pos(bb.zv),
+                )
             })
-            .unwrap_or((usize::MAX, usize::MAX));
+            .unwrap_or((usize::MAX, usize::MAX, usize::MAX, usize::MAX));
         let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
         let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
         let text_rows = window_height
@@ -11605,6 +11616,10 @@ fn render_grid_internal(
                 }
                 let first_line = line_number.saturating_sub(1) == first_buffer_line;
                 let last_line = line_number.saturating_sub(1) == last_buffer_line;
+                let scrolls_above = y == content_top && start > buffer_begv;
+                let scrolls_below = content_bottom > content_top
+                    && y.saturating_add(1) == content_bottom
+                    && (segment_end < line_len || row_end < buffer_zv);
                 let last_line_without_newline = last_line
                     && i.buffers.get(buf_id).is_some_and(|buffer| {
                         let buffer = buffer.borrow();
@@ -11651,6 +11666,22 @@ fn render_grid_internal(
                             "↓",
                         );
                     }
+                }
+                if scrolls_above {
+                    set_fringe_indicator(
+                        &mut left_indicator,
+                        &mut right_indicator,
+                        up_boundary_position,
+                        "↑",
+                    );
+                }
+                if scrolls_below {
+                    set_fringe_indicator(
+                        &mut left_indicator,
+                        &mut right_indicator,
+                        down_boundary_position,
+                        "↓",
+                    );
                 }
                 if empty_line_indicator {
                     right_indicator = "·".to_owned();
@@ -11758,6 +11789,12 @@ fn render_grid_internal(
                                 last_line_without_newline,
                             );
                         }
+                    }
+                    if scrolls_above {
+                        place_bitmap("up", up_boundary_position, false);
+                    }
+                    if scrolls_below {
+                        place_bitmap("down", down_boundary_position, false);
                     }
                     if empty_line_indicator {
                         place_bitmap("empty-line", FringeIndicatorPosition::Right, false);

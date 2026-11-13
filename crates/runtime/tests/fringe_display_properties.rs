@@ -145,6 +145,43 @@ fn fringe_indicator_alist_selects_truncation_continuation_empty_line_and_overlay
 }
 
 #[test]
+fn indicate_buffer_boundaries_shows_scroll_arrows_at_window_edges() {
+    let mut interp = graphical_fringe_interpreter();
+    eval(&mut interp, "(set-frame-size nil 40 6)");
+    remacs_runtime::editor::reflow_frame_windows(interp.selected_frame.as_ref().unwrap(), 40, 6);
+
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+      (setq-local indicate-buffer-boundaries 'left)
+      (dotimes (_ 30) (insert "line\n"))
+      (goto-char 61)
+      (set-window-start nil 51 t))"#,
+    );
+    let area = grid.window_text_areas.first().unwrap();
+    assert!(area.rows >= 3);
+    assert_eq!(grid.fringe_bitmaps.len(), 2);
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, area.top, 0).bits,
+        &[0x18, 0x3c, 0x7e, 0xff, 0x18, 0x18, 0x18, 0x18]
+    );
+    assert_eq!(
+        &*fringe_bitmap_at(&grid, area.top + area.rows - 1, 0).bits,
+        &[0x18, 0x18, 0x18, 0x18, 0xff, 0x7e, 0x3c, 0x18]
+    );
+
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+      (insert "top\nmiddle\nbottom")
+      (setq-local indicate-buffer-boundaries t)
+      (goto-char (point-min)))"#,
+    );
+    assert_eq!(grid.fringe_bitmaps.len(), 2);
+    assert!(grid.fringe_bitmaps.iter().all(|bitmap| bitmap.column == 0));
+}
+
+#[test]
 fn indicate_buffer_boundaries_alist_places_indicators_independently() {
     let mut interp = Interp::new();
     eval(
