@@ -20,6 +20,7 @@ fn grid(kind: Kind) -> Grid {
                 row: 1,
                 left,
                 width: end - left,
+                enabled: true,
                 byte_range: Some((left, end)),
                 command: "same-tool-command".into(),
                 command_id: None,
