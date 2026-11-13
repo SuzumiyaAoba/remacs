@@ -365,9 +365,57 @@ fn tool_bar_items(
     frame: &crate::editor::FrameRef,
 ) -> Result<Vec<GridMenuItem>, Flow> {
     let map_symbol = i.q("tool-bar-map");
-    let map = i.symbol_value(map_symbol);
+    let primary_map = i.symbol_value(map_symbol);
+    let secondary_map = i
+        .q_soft("secondary-tool-bar-map")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    let position = crate::lisp::eval::plist_get_v(
+        &frame.borrow().params,
+        &Value::Sym(i.q("tool-bar-position")),
+    );
+    let at_bottom = matches!(&position, Value::Sym(symbol) if i.symbol_name(*symbol) == "bottom");
+    let at_top = position.is_nil()
+        || matches!(&position, Value::Sym(symbol) if i.symbol_name(*symbol) == "top");
+    let secondary_visible = secondary_map.truthy() && (at_top || at_bottom);
+    // GNU's `tool-bar-make-keymap' joins the two maps with a row break;
+    // retain that ordering in the immutable snapshot prepared for rendering.
+    let primary_bindings = crate::editor::keymap_own_bindings(i, &primary_map);
+    let mut bindings = Vec::new();
+    let mut wrap_at = None;
+    if secondary_visible && at_bottom {
+        bindings.extend(
+            crate::editor::keymap_own_bindings(i, &secondary_map)
+                .into_iter()
+                .map(|(key, binding)| (key, binding, true)),
+        );
+        wrap_at = Some(bindings.len());
+        bindings.extend(
+            primary_bindings
+                .into_iter()
+                .map(|(key, binding)| (key, binding, false)),
+        );
+    } else {
+        bindings.extend(
+            primary_bindings
+                .into_iter()
+                .map(|(key, binding)| (key, binding, false)),
+        );
+        if secondary_visible {
+            wrap_at = Some(bindings.len());
+            bindings.extend(
+                crate::editor::keymap_own_bindings(i, &secondary_map)
+                    .into_iter()
+                    .map(|(key, binding)| (key, binding, true)),
+            );
+        }
+    }
     let mut items = Vec::new();
-    for (key, binding) in crate::editor::keymap_own_bindings(i, &map) {
+    let mut wrap_pending = false;
+    for (index, (key, binding, is_secondary)) in bindings.into_iter().enumerate() {
+        if wrap_at == Some(index) {
+            wrap_pending = true;
+        }
         let Some(item) = keymap_item(i, &key, &binding)? else {
             continue;
         };
@@ -394,8 +442,32 @@ fn tool_bar_items(
         // Keep stable key objects for registry identity. Dispatch materializes
         // GNU's parameterized toolbar event using the originating frame.
         let keys = vec![prefix, key, Value::Frame(frame.clone())];
-        let (command, command_id) =
-            command_binding(i, &definition, item.enabled && !item.separator, &keys);
+        let toolbar_definition = if is_secondary {
+            modifier_bar_toolbar_command(i, &definition).unwrap_or_else(|| definition.clone())
+        } else {
+            definition.clone()
+        };
+        let (command, command_id) = command_binding(
+            i,
+            &toolbar_definition,
+            item.enabled && !item.separator,
+            &keys,
+        );
+        if wrap_pending {
+            if items.iter().any(|item: &GridMenuItem| !item.separator) {
+                items.push(GridMenuItem {
+                    label: String::new(),
+                    help: None,
+                    command: None,
+                    command_id: None,
+                    items: Vec::new(),
+                    separator: true,
+                    checked: false,
+                    key_hint: None,
+                });
+            }
+            wrap_pending = false;
+        }
         items.push(GridMenuItem {
             label,
             help: item.help_text(),
@@ -408,6 +480,21 @@ fn tool_bar_items(
         });
     }
     Ok(items)
+}
+
+/// The modifier toolbar keymap's commands are unused by GNU; input decoding
+/// calls these wrappers so multiple modifier buttons can be combined.
+fn modifier_bar_toolbar_command(i: &Interp, definition: &Value) -> Option<Value> {
+    let Value::Sym(symbol) = definition else {
+        return None;
+    };
+    let name = i.symbol_name(*symbol);
+    let modifier = name
+        .strip_prefix("event-apply-")?
+        .strip_suffix("-modifier")?;
+    let wrapper_name = format!("tool-bar-event-apply-{modifier}-modifier");
+    let wrapper = i.intern_soft(&wrapper_name)?;
+    i.fbound_p(wrapper).then_some(Value::Sym(wrapper))
 }
 
 fn prepare_tool_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<GridMenuItem>)>, Flow> {

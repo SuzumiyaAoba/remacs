@@ -1289,6 +1289,30 @@ fn dispatch_native_menu_command(
     arg_mode: &mut bool,
 ) {
     if let Some(binding) = i.native_menu_commands.resolve(token) {
+        if matches!(&binding.command, Value::Sym(symbol)
+            if i.symbol_name(*symbol).starts_with("tool-bar-event-apply-")
+                && i.symbol_name(*symbol).ends_with("-modifier"))
+        {
+            // Modifier-bar buttons are input decoders, not commands. Their
+            // wrapper reads the next event and returns the translated event
+            // vector, which GNU's input-decode-map would put back on the
+            // command queue.
+            match i.apply(&binding.command, vec![Value::Nil]) {
+                Ok(Value::Vec(events)) => {
+                    let unread_symbol = i.q("unread-command-events");
+                    let mut unread = i.symbol_value(unread_symbol);
+                    for event in events.borrow().iter().rev() {
+                        unread = Value::cons(event.clone(), unread);
+                    }
+                    if let Err(flow) = i.set_symbol(unread_symbol, unread) {
+                        report_flow(i, flow);
+                    }
+                }
+                Ok(_) => {}
+                Err(flow) => report_flow(i, flow),
+            }
+            return;
+        }
         let mut events = binding.keys;
         if events.len() == 3
             && matches!(events.first(), Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "tool-bar")

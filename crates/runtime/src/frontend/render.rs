@@ -3691,7 +3691,12 @@ fn render_tool_bar(
         let label = &binding.label;
         let separator = binding.separator;
         if separator {
-            column = column.saturating_add(1);
+            if label.is_empty() {
+                row = row.saturating_add(1);
+                column = 0;
+            } else {
+                column = column.saturating_add(1);
+            }
             continue;
         }
         let label_width = label.chars().map(display_char_width).sum::<usize>().max(1);
@@ -10085,7 +10090,21 @@ fn render_grid_internal(
         mini_ctl_arrow,
     );
     let tool_bar_rows = if graphical {
-        crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0)
+        let configured =
+            crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0);
+        // An empty separator in a prepared toolbar snapshot marks a secondary row.
+        let wrapped_rows = i
+            .native_menu_commands
+            .tool_bar(frame.borrow().id)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item.separator && item.label.is_empty())
+                    .count()
+            })
+            .unwrap_or(0);
+        configured
+            .saturating_add(wrapped_rows)
             .min(height.saturating_sub(1))
     } else {
         0
