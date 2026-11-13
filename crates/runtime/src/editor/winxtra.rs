@@ -2358,13 +2358,26 @@ fn f_posn_at_point(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let x = left_fringe
         .saturating_add(left_margin.saturating_mul(char_width))
         .saturating_add(column.saturating_mul(char_width));
-    // `posn-x-y' is relative to the window's text area; header and tab
-    // lines are already accounted for by `window-inside-pixel-edges'.
-    let y = row.saturating_mul(line_height);
+    // `posn-x-y' is relative to the window's text area.  Image rows can be
+    // much taller than the default font line, so use the same rendered row
+    // heights as the GUI when available.
+    let y = if crate::editor::frame_is_graphical(i, &frame) {
+        crate::frontend::window_text_pixel_rows(i, &win)
+            .map(|(_, row_heights)| {
+                let y = row_heights.iter().take(row).fold(0usize, |total, height| {
+                    total.saturating_add(*height)
+                });
+                let vscroll = win.borrow().vscroll.min(i128::MAX as usize) as i128;
+                (y as i128).saturating_sub(vscroll)
+            })
+            .unwrap_or_else(|| row.saturating_mul(line_height) as i128)
+    } else {
+        row.saturating_mul(line_height) as i128
+    };
     Ok(Value::list(vec![
         Value::Window(win),
         Value::Int(pos),
-        Value::cons(Value::Int(x as i128), Value::Int(y as i128)),
+        Value::cons(Value::Int(x as i128), Value::Int(y)),
         Value::Int(0),
     ]))
 }
@@ -2416,16 +2429,45 @@ fn posn_at_xy_graphical(
     }
 
     let column = (text_x / char_width) as usize;
-    let row = (y / line_height) as usize;
     let width = crate::editor::win_body_width(i, window);
     if column >= width {
         return Ok(outside());
     }
+    let (row, offset_y, row_height) =
+        if let Some((prefix_height, row_heights)) =
+            crate::frontend::window_text_pixel_rows(i, window)
+        {
+            let prefix_height = prefix_height as i128;
+            if y < prefix_height {
+                return Ok(outside());
+            }
+            let vscroll = window.borrow().vscroll;
+            let mut offset = (y - prefix_height) as usize;
+            offset = offset.saturating_add(vscroll);
+            let mut found = None;
+            for (index, height) in row_heights.iter().copied().enumerate() {
+                if offset < height {
+                    found = Some((index, offset, height));
+                    break;
+                }
+                offset -= height;
+            }
+            match found {
+                Some((row, offset_y, height)) => (row, offset_y as i128, height as i128),
+                None => return Ok(outside()),
+            }
+        } else {
+            let row = (y / line_height) as usize;
+            (
+                row,
+                y - row as i128 * line_height,
+                line_height,
+            )
+        };
     let Some(position) = crate::frontend::position_at_display_cell(i, window, row, column) else {
         return Ok(outside());
     };
     let offset_x = text_x - column as i128 * char_width;
-    let offset_y = y - row as i128 * line_height;
     let position = position as i128 + 1;
     Ok(Value::list(vec![
         Value::Window(window.clone()),
@@ -2437,7 +2479,7 @@ fn posn_at_xy_graphical(
         Value::cons(Value::Int(column as i128), Value::Int(row as i128)),
         Value::Nil,
         Value::cons(Value::Int(offset_x), Value::Int(offset_y)),
-        Value::cons(Value::Int(char_width), Value::Int(line_height)),
+        Value::cons(Value::Int(char_width), Value::Int(row_height)),
     ]))
 }
 
@@ -4137,6 +4179,113 @@ fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (u
     (visible_columns, first_visible_columns)
 }
 
+/// Find the last display row before POSITION and its pixel height.  Render a
+/// temporary view from the preceding physical line so image row heights come
+/// from the same display pipeline as the GUI.
+fn previous_display_row_start_and_height(
+    i: &mut Interp,
+    window: &WindowRef,
+    position: usize,
+) -> Option<(usize, usize)> {
+    let buffer_id = window.borrow().buffer;
+    let buffer = i.buffers.get(buffer_id)?.clone();
+    let (seed, saved_buffer_point) = {
+        let buffer = buffer.borrow();
+        let position = position.clamp(buffer.begv, buffer.zv);
+        if position <= buffer.begv {
+            return None;
+        }
+        let line = buffer.text.line_of_pos(position);
+        let line_start = buffer.text.line_start(line).max(buffer.begv);
+        let seed = if position > line_start {
+            line_start
+        } else {
+            let first_line = buffer.text.line_of_pos(buffer.begv);
+            if line <= first_line {
+                return None;
+            }
+            buffer.text.line_start(line - 1).max(buffer.begv)
+        };
+        (seed, buffer.point())
+    };
+    let display_property = i.q_soft("display")?;
+    let line_has_display = {
+        let buffer = buffer.borrow();
+        let line = buffer.text.line_of_pos(seed);
+        let line_start = buffer.text.line_start(line).max(buffer.begv);
+        let line_end = buffer.text.line_end(line_start).min(buffer.zv);
+        buffer
+            .text
+            .props
+            .borrow()
+            .iter()
+            .any(|property| {
+                property.prop == display_property
+                    && property.start < line_end
+                    && property.end > line_start
+            })
+            || buffer.overlays.iter().any(|overlay| {
+                overlay.buffer == Some(buffer_id)
+                    && overlay.start < line_end
+                    && overlay.end > line_start
+                    && !overlay
+                        .property(i, &Value::Sym(display_property))
+                        .is_nil()
+            })
+    };
+    if !line_has_display {
+        return None;
+    }
+    let (saved_start, saved_vscroll, saved_suspend_vscroll, saved_point, saved_old_point, saved_old_point_marker) = {
+        let mut window = window.borrow_mut();
+        let saved = (
+            window.start,
+            window.vscroll,
+            window.suspend_vscroll,
+            window.point,
+            window.old_point,
+            window.old_point_marker.clone(),
+        );
+        window.start = seed;
+        window.vscroll = 0;
+        window.suspend_vscroll = true;
+        window.point = seed;
+        window.old_point = seed;
+        window.old_point_marker = Value::Nil;
+        saved
+    };
+    buffer.borrow_mut().set_point(seed);
+
+    let candidate = crate::frontend::window_text_pixel_rows(i, window).and_then(
+        |(_, row_heights)| {
+            let mut candidate = None;
+            for (row, height) in row_heights.into_iter().enumerate() {
+                let Some(row_start) = crate::frontend::position_at_display_cell(i, window, row, 0)
+                else {
+                    break;
+                };
+                if row_start >= position {
+                    break;
+                }
+                candidate = Some((row_start, height));
+            }
+            candidate
+        },
+    );
+
+    buffer.borrow_mut().set_point(saved_buffer_point);
+    {
+        let mut window = window.borrow_mut();
+        window.start = saved_start;
+        window.vscroll = saved_vscroll;
+        window.suspend_vscroll = saved_suspend_vscroll;
+        window.point = saved_point;
+        window.old_point = saved_old_point;
+        window.old_point_marker = saved_old_point_marker;
+    }
+    candidate
+}
+
 fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     let (buffer, height, minibuffer, params) = {
@@ -4178,6 +4327,40 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
     let start0 = start.saturating_sub(1).max(0) as usize;
     let end0 = to_position.saturating_sub(1).max(start0 as i128) as usize;
+    let window_start = w.borrow().start;
+    let graphical_window = crate::editor::frame_of_window(i, &w)
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, &frame));
+    if offset < 0
+        && a.get(6).is_some_and(Value::truthy)
+        && to_position == start
+        && start0 == window_start
+        && graphical_window
+    {
+        let mut position = start0;
+        let mut height = 0usize;
+        let wanted_height = offset.unsigned_abs() as usize;
+        let mut measured = false;
+        while height < wanted_height {
+            let Some((previous, row_height)) =
+                previous_display_row_start_and_height(i, &w, position)
+            else {
+                break;
+            };
+            if previous >= position {
+                break;
+            }
+            height = height.saturating_add(row_height.max(1));
+            position = previous;
+            measured = true;
+        }
+        if measured {
+            return Ok(Value::list(vec![
+                Value::Int(0),
+                Value::Int(height as i128),
+                Value::Int(position as i128 + 1),
+            ]));
+        }
+    }
     let segment = i
         .buffers
         .get(buffer)

@@ -9209,6 +9209,90 @@ pub fn render_frame_grid_with_input_cached(
     render_grid_internal(i, width, height, true, cached, Some(frame), None)
 }
 
+fn window_has_visible_display_property(i: &Interp, window: &crate::editor::WindowRef) -> bool {
+    let Some(display) = i.q_soft("display") else {
+        return false;
+    };
+    let (buffer_id, start, height) = {
+        let window = window.borrow();
+        (window.buffer, window.start, window.height)
+    };
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return false;
+    };
+    let (range_start, range_end, text_has_display, overlays) = {
+        let buffer = buffer.borrow();
+        let start = start.clamp(buffer.begv, buffer.zv);
+        let first_line = buffer.text.line_of_pos(start);
+        let last_line = first_line
+            .saturating_add(height.max(1))
+            .min(buffer.text.line_of_pos(buffer.zv));
+        let range_start = buffer.text.line_start(first_line).max(buffer.begv);
+        let range_end = buffer.text.line_end(last_line).min(buffer.zv);
+        let text_has_display = buffer.text.props.borrow().iter().any(|property| {
+            property.prop == display
+                && property.start < range_end
+                && property.end > range_start
+        });
+        (
+            range_start,
+            range_end,
+            text_has_display,
+            buffer.overlays.clone(),
+        )
+    };
+    text_has_display
+        || overlays.iter().any(|overlay| {
+            overlay.buffer == Some(buffer_id)
+                && overlay.start < range_end
+                && overlay.end > range_start
+                && overlay.matches_window(i, &Value::Window(window.clone()))
+                && !overlay.property(i, &Value::Sym(display)).is_nil()
+        })
+}
+
+/// Return the rendered pixel heights of WINDOW's decoration rows and text
+/// rows when visible display properties may make rows nonuniform. Position
+/// queries then use the same measurements as the GUI painter without
+/// rebuilding a grid for ordinary text-only windows.
+pub(crate) fn window_text_pixel_rows(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+) -> Option<(usize, Vec<usize>)> {
+    if !window_has_visible_display_property(i, window) {
+        return None;
+    }
+    let frame = crate::editor::frame_of_window(i, window)?;
+    let (width, height) = {
+        let frame = frame.borrow();
+        (frame.width.max(1), frame.height.max(1))
+    };
+    let (window_id, window_top) = {
+        let window = window.borrow();
+        (window.id, window.top)
+    };
+    let grid = render_grid_internal(i, width, height, false, None, Some(&frame), None);
+    let area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == window_id)?;
+    let line_height = grid.default_line_height.max(1);
+    let row_height = |row: usize| {
+        grid.row_heights
+            .get(row)
+            .copied()
+            .unwrap_or(line_height)
+            .max(1)
+    };
+    let prefix_height = (window_top..area.top)
+        .map(row_height)
+        .fold(0usize, usize::saturating_add);
+    let text_rows = (0..area.rows)
+        .map(|row| row_height(area.top.saturating_add(row)))
+        .collect();
+    Some((prefix_height, text_rows))
+}
+
 /// Render FRAME with mouse-face highlighting at MOUSE_POSITION without
 /// changing the interpreter's selected frame.
 pub fn render_frame_grid_with_mouse_position_cached(
