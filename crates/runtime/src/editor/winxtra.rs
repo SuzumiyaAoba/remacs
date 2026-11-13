@@ -3792,7 +3792,8 @@ fn f_set_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::t())
 }
 
-/// `set-window-scroll-bars' — window-live-p check; GNU returns nil.
+/// `set-window-scroll-bars' — window-live-p check; return whether the
+/// effective scroll bar settings changed.
 fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let window = win_live(i, &a[0])?;
     let width = match arg(&a, 1) {
@@ -3807,14 +3808,16 @@ fn f_set_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         other => return Err(i.wrong_type_mut("integer-or-nil", &other)),
     };
     let horizontal = window_horizontal_scroll_type_argument(i, &arg(&a, 4))?;
-    window.borrow_mut().scroll_bars = Some((
-        width,
-        vertical,
-        height,
-        horizontal,
-        arg(&a, 5).truthy(),
-    ));
-    Ok(Value::Nil)
+    let previous = window_scroll_bar_settings(i, &window);
+    window.borrow_mut().scroll_bars =
+        Some((width, vertical, height, horizontal, arg(&a, 5).truthy()));
+    let current = window_scroll_bar_settings(i, &window);
+    Ok(Value::from_bool(
+        previous.0 != current.0
+            || previous.1 != current.1
+            || previous.2 != current.2
+            || previous.3 != current.3,
+    ))
 }
 
 fn f_raise_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
