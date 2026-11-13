@@ -1058,13 +1058,18 @@ Return t if after a closing tag."
 		  point close)
 	      (forward-sexp 1)
 	      (setq point (point))
-	      ;; FIXME: This re-search-forward will mistakenly match
-	      ;; tag-like text inside attributes.
+	      ;; Ignore tag-like text in quoted attributes and comments.
 	      (while (and (re-search-forward re nil t)
-			  (not (setq close
-				     (eq (char-after (1+ (match-beginning 0))) ?/)))
-			  (goto-char (match-beginning 0))
-			  (sgml-skip-tag-forward 1))
+			  (let ((match-start (match-beginning 0))
+				(match-end (match-end 0)))
+			    (if (let ((state (save-excursion
+					       (syntax-ppss match-start))))
+				  (or (nth 3 state) (nth 4 state)))
+				(progn (goto-char match-end) t)
+			      (and (not (setq close
+					      (eq (char-after (1+ match-start)) ?/)))
+				   (goto-char match-start)
+				   (sgml-skip-tag-forward 1)))))
 		(setq close nil))
 	      (unless close
 		(goto-char point)
