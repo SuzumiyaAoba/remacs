@@ -3198,6 +3198,23 @@ and not from inner alignment points."
 	   ((looking-at (rst-re '(:grp itmany-tag hws-sta) '(:grp "\\S ") "?"))
 	    (when (match-string 2)
 	      (push (list (match-beginning 2) 0 t) tabs)))
+	   ;; Option list.  The description starts after the option group and
+	   ;; its separating whitespace; with no inline description, use the
+	   ;; usual two-column continuation point.
+	   ;;Remacs: GNU left option-list continuation tabs as a FIXME.
+	   ((looking-at (rst-re 'opt-tag '(:shy optsep-tag opt-tag) "*"))
+	    (let ((option-end (match-end 0))
+		  description-point)
+	      (save-excursion
+		(goto-char option-end)
+		(skip-chars-forward " \t")
+		(when (and (>= (- (point) option-end) 2)
+			   (not (eolp)))
+		  (setq description-point (point))))
+	      (push (if description-point
+			(list description-point 0 t)
+		      (list option-end 2 t))
+		    tabs)))
 	   ;; Field.
 	   ((looking-at (rst-re '(:grp fld-tag) '(:grp hws-tag)
 				'(:grp "\\S ") "?"))
@@ -3224,7 +3241,26 @@ and not from inner alignment points."
 	      (push (list (match-beginning 3) 0 t) tabs)))
 	   ;; Comment.
 	   ((looking-at (rst-re 'cmt-sta-1))
-	    (push (list (point) rst-indent-comment t) tabs)))
+	    (push (list (point) rst-indent-comment t) tabs))
+	   ;; A definition-list term has no explicit marker.  Offer the default
+	   ;; body indentation after an unindented, non-sentence paragraph that
+	   ;; starts a block; keep the paragraph column as another cycling tab.
+	   ;;Remacs: GNU left definition-list continuation tabs as a FIXME.
+	   (t
+	    (when (and (= (current-column) 0)
+		       (looking-at "\\sw")
+		       (not (save-excursion
+			      (end-of-line)
+			      (skip-chars-backward " \t")
+			      (memq (char-before) '(?. ?! ??))))
+		       (not (looking-at (rst-re 'ado-beg-2-1)))
+		       (save-excursion
+			 (forward-line 1)
+			 (not (looking-at (rst-re 'ado-beg-2-1))))
+		       (save-excursion
+			 (forward-line -1)
+			 (or (bobp) (looking-at (rst-re 'lin-end)))))
+	      (push (list (point) rst-indent-width t) tabs))))
 	  ;; Start of literal block.
 	  (when (looking-at (rst-re 'lit-sta-2))
 	    (cl-destructuring-bind (point offset _inner) (car tabs)
