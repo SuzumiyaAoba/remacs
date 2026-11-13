@@ -673,6 +673,18 @@ impl TextInputState {
         self.discarded_replacement_range = None;
     }
 
+    fn cancel_empty_marked_text(&mut self, replacement: Option<&Range<usize>>, text: &str) -> bool {
+        if !text.is_empty()
+            || self.marked.is_empty()
+            || replacement.is_some_and(|range| self.marked_range.as_ref() != Some(range))
+        {
+            return false;
+        }
+        self.take();
+        self.clear_discarded_replacement();
+        true
+    }
+
     fn clear_active(&mut self) -> String {
         self.selection = 0..0;
         self.marked_range = None;
@@ -981,6 +993,16 @@ impl EntityInputHandler for EditorView {
         if self.input.is_discarded_replacement(replacement.as_ref()) {
             self.input.take();
             self.input.clear_discarded_replacement();
+            cx.notify();
+            return;
+        }
+        // Windows and Wayland report a canceled composition as an empty
+        // replacement.  Clearing the provisional mark restores the original
+        // selection; sending this range to the logic thread would delete it.
+        if self
+            .input
+            .cancel_empty_marked_text(replacement.as_ref(), text)
+        {
             cx.notify();
             return;
         }
@@ -1305,6 +1327,108 @@ mod tests {
         assert_eq!(input.take(), "かな");
         assert!(input.take().is_empty());
         assert_eq!(input.commit(None, "A日B😀e\u{301}"), "A日B😀e\u{301}");
+    }
+
+    #[test]
+    fn empty_full_marked_replacement_cancels_without_editing_the_base_range() {
+        let mut windows = TextInputState::default();
+        windows.mark_document(Some(4..7), "かな", Some(2..2), 4..7);
+        assert!(windows.cancel_empty_marked_text(None, ""));
+        assert!(windows.marked.is_empty());
+        assert!(windows.marked_range.is_none());
+        assert!(windows.replacement_range.is_none());
+
+        let mut wayland = TextInputState::default();
+        wayland.mark_document(Some(4..7), "かな", Some(2..2), 4..7);
+        let marked = wayland.marked_range.clone().unwrap();
+        assert!(wayland.cancel_empty_marked_text(Some(&marked), ""));
+        assert!(wayland.marked.is_empty());
+        assert!(wayland.marked_range.is_none());
+        assert!(wayland.replacement_range.is_none());
+    }
+
+    #[test]
+    fn empty_partial_replacement_and_nonempty_commit_are_not_cancellations() {
+        let mut input = TextInputState::default();
+        input.mark_document(Some(4..7), "かな", Some(2..2), 4..7);
+        let marked = input.marked_range.clone().unwrap();
+
+        assert!(!input.cancel_empty_marked_text(Some(&(marked.start..marked.start + 1)), ""));
+        assert!(!input.cancel_empty_marked_text(None, "確定"));
+        assert_eq!(input.marked, "かな");
+        assert_eq!(input.replacement_range, Some(4..7));
+    }
+
+    #[test]
+    fn canceled_composition_preserves_the_selected_base_text() {
+        let mut interp = remacs_runtime::lisp::Interp::new();
+        interp
+            .eval_str(
+                "(progn (erase-buffer) (insert \"abcdef\") (goto-char 5) \
+                 (set-mark 2) (activate-mark))",
+            )
+            .unwrap();
+        let grid = remacs_runtime::frontend::render_grid_with_input_cached(&interp, 80, 24, None);
+        let original_selection = grid
+            .input
+            .as_ref()
+            .and_then(|input| input.selection.as_ref())
+            .expect("test buffer has a selected range")
+            .range
+            .clone();
+
+        let mut app = gpui::TestAppContext::single();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = app.add_window(|window, cx| {
+            let mut view = EditorView::new(tx, cx);
+            view.focus.focus(window);
+            view.grid = grid;
+            view
+        });
+        app.run_until_parked();
+        let _ = rx.try_iter().count();
+
+        handle
+            .update(&mut app, |view, window, cx| {
+                // Wayland reports cancellation by replacing the whole marked
+                // range with empty text.
+                view.replace_and_mark_text_in_range(
+                    Some(original_selection.clone()),
+                    "かな",
+                    Some(2..2),
+                    window,
+                    cx,
+                );
+                let marked = view.input.marked_range.clone().unwrap();
+                view.replace_text_in_range(Some(marked), "", window, cx);
+                assert!(view.input.marked.is_empty());
+                assert_eq!(
+                    view.selected_text_range(false, window, cx).unwrap().range,
+                    original_selection
+                );
+
+                // Windows reports the same cancellation with no replacement
+                // range at all.
+                view.replace_and_mark_text_in_range(
+                    Some(original_selection.clone()),
+                    "かな",
+                    Some(2..2),
+                    window,
+                    cx,
+                );
+                view.replace_text_in_range(None, "", window, cx);
+                assert!(view.input.marked.is_empty());
+                assert_eq!(
+                    view.selected_text_range(false, window, cx).unwrap().range,
+                    original_selection
+                );
+            })
+            .unwrap();
+
+        assert!(
+            !rx.try_iter()
+                .any(|event| { matches!(event, GuiEvent::Text(_) | GuiEvent::ReplaceText { .. }) })
+        );
     }
     #[test]
     fn buffer_switch_discards_stale_replacement_range() {
