@@ -1432,6 +1432,7 @@ pub static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("ediff-merg", include_str!("../../../lisp/ediff-merg.el")),
     ("ediff-mult", include_str!("../../../lisp/ediff-mult.el")),
     ("ediff-ptch", include_str!("../../../lisp/ediff-ptch.el")),
+    ("ediff-tbar", include_str!("../../../lisp/ediff-tbar.el")),  // not in GNU tree (adapted/remacs-specific)
     ("ediff-util", include_str!("../../../lisp/ediff-util.el")),
     ("ediff-vers", include_str!("../../../lisp/ediff-vers.el")),
     ("ediff-wind", include_str!("../../../lisp/ediff-wind.el")),

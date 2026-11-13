@@ -156,12 +156,12 @@
               :help "Switch between the single-frame presentation mode and the multi-frame mode"
               :button (:toggle . (eq (bound-and-true-p ediff-window-setup-function)
 		                     #'ediff-setup-windows-multiframe))))
-;; FIXME: Port XEmacs's toolbar support!
-;; ["Use a toolbar with Ediff control buffer"
-;;  ediff-toggle-use-toolbar
-;;  :style toggle
-;;  :selected (if (featurep 'ediff-tbar)
-;;       	 (ediff-use-toolbar-p))]
+(define-key menu-bar-ediff-misc-menu [ediff-toolbar]
+  '(menu-item "Use a toolbar with Ediff control buffer"
+              ediff-toggle-use-toolbar
+              :help "Toggle the Ediff toolbar (requires a graphical frame with its tool bar enabled)"
+              :button (:toggle . (ediff-use-toolbar-p))
+              :enable (ediff-has-toolbar-support-p)))
 (define-key menu-bar-ediff-misc-menu [eregistry]
   '(menu-item "List Ediff Sessions" ediff-show-registry
               :help "List all active Ediff sessions; it is a convenient way to find and resume such a session"))

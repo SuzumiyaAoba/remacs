@@ -35,6 +35,7 @@
 (require 'ediff-wind)
 (require 'ediff-diff)
 (require 'ediff-merg)
+(require 'ediff-tbar)
 
 (eval-when-compile
   (require 'cl-lib))
@@ -1349,22 +1350,20 @@ which see."
 Works only in versions of Emacs that support toolbars.
 To change the default, set the variable `ediff-use-toolbar-p', which see."
   (interactive)
-  ;; FIXME: Make it work in Emacs!
-  (if (featurep 'ediff-tbar)
-      (progn
-        (or (display-graphic-p)
-	    (user-error "Emacs is not running as a window application"))
-	;; do this only after killing the toolbar
-	(setq ediff-use-toolbar-p (not ediff-use-toolbar-p))
-
-	(mapc (lambda(buf)
-		(ediff-with-current-buffer buf
-		  ;; force redisplay
-		  (setq ediff-window-config-saved "")
-		  ))
-	      ediff-session-registry)
-	(if (ediff-in-control-buffer-p)
-	    (ediff-recenter 'no-rehighlight)))))
+  (let ((enable (not ediff-use-toolbar-p)))
+    (when (and enable (not (ediff-has-toolbar-support-p)))
+      (user-error "Ediff toolbar is not supported on this display"))
+    (setq ediff-use-toolbar-p enable)
+    (mapc (lambda (buf)
+	    (when (buffer-live-p buf)
+	      (ediff-with-current-buffer buf
+		(when (ediff-in-control-buffer-p)
+		  (ediff--set-toolbar enable)
+		  ;; Force redisplay after changing the control buffer's toolbar.
+		  (setq ediff-window-config-saved "")))))
+	  ediff-session-registry)
+    (when (ediff-in-control-buffer-p)
+      (ediff-recenter 'no-rehighlight))))
 
 ;; Merging
 

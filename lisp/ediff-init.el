@@ -51,9 +51,11 @@ that Ediff doesn't know about.")
 	((display-color-p))
 	(t (memq window-system '(pc)))))
 
-;; toolbar support for emacs hasn't been implemented in ediff
-(defun ediff-has-toolbar-support-p ()
-  nil)
+;; Remacs: use the native tool bar when the current display supports it.
+(defun ediff-has-toolbar-support-p (&optional frame)
+  (and (display-graphic-p frame)
+       (require 'tool-bar nil t)
+       (fboundp 'tool-bar-local-item)))
 
 (defun ediff-use-toolbar-p ()
   (and (ediff-has-toolbar-support-p)	;Can it do it ?
