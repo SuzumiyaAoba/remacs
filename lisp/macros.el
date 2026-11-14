@@ -68,9 +68,10 @@ Possibilities: \\<query-replace-map>
                      (with-current-buffer standard-output
                        (help-mode)))))))))))
 
-(defun insert-kbd-macro (macroname)
-  "Insert in buffer the Lisp definition of kbd macro MACRONAME."
-  (interactive "SName of keyboard macro to insert: ")
+(defun insert-kbd-macro (macroname &optional keys)
+  "Insert in buffer the Lisp definition of kbd macro MACRONAME.
+Optional second argument KEYS means also record its global key bindings."
+  (interactive "SName of keyboard macro to insert: \nP")
   (let ((def (symbol-function macroname)))
     (or (or (stringp def) (vectorp def))
         (error "Keyboard macro %s is not defined" macroname))
@@ -78,7 +79,16 @@ Possibilities: \\<query-replace-map>
     (princ macroname (current-buffer))
     (princ "\n   " (current-buffer))
     (prin1 def (current-buffer))
-    (princ ")\n" (current-buffer))))
+    (princ ")\n" (current-buffer))
+    (when keys
+      (let ((keys (or (where-is-internal def '(keymap))
+                      (where-is-internal macroname '(keymap)))))
+        (dolist (key keys)
+          (princ "(keymap-global-set " (current-buffer))
+          (prin1 (key-description key) (current-buffer))
+          (princ " #'" (current-buffer))
+          (prin1 macroname (current-buffer))
+          (princ ")\n" (current-buffer)))))))
 
 ;;;###autoload
 (defun apply-macro-to-region-lines (top bottom &optional macro)
