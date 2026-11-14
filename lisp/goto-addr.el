@@ -50,8 +50,6 @@
 ;; Known bugs/features:
 ;; * goto-address-mail-regexp only catches foo@bar.org style addressing,
 ;;   not stuff like X.400 addresses, etc.
-;; * regexp also catches Message-Id line, since it is in the format of
-;;   an Internet e-mail address (like Compuserve addresses)
 ;; * If the buffer is fontified after goto-address-fontify is run
 ;;   (say, using font-lock-fontify-buffer), then font-lock faces will
 ;;   override goto-address faces.
@@ -157,6 +155,27 @@ will have no effect.")
 
 (defvar goto-address-prog-mode)
 
+(defun goto-address--header-end ()
+  "Return the start of the body after the first header separator."
+  (save-excursion
+    (goto-char (point-min))
+    (or (and (re-search-forward "^[ \t]*$" nil t)
+             (match-beginning 0))
+        (point-max))))
+
+(defun goto-address--message-id-header-p (&optional header-end)
+  "Return non-nil if point is in a Message-ID header or continuation.
+HEADER-END, when non-nil, is the start of the message body."
+  (save-match-data
+    (save-excursion
+      (beginning-of-line)
+      (while (and (> (point) (point-min))
+                  (looking-at "[ \t]+"))
+        (forward-line -1))
+      (and (< (point) (or header-end (goto-address--header-end)))
+           (let ((case-fold-search t))
+             (looking-at-p "[ \t]*Message-ID[ \t]*:"))))))
+
 (defun goto-address-fontify (&optional start end)
   "Fontify the URLs and e-mail addresses in the current buffer.
 This function implements `goto-address-highlight-p'
@@ -195,26 +214,28 @@ and `goto-address-fontify-p'."
 	    (overlay-put this-overlay 'category 'goto-address)
 	    (overlay-put this-overlay 'goto-address t))))
       (goto-char (or start (point-min)))
-      (while (re-search-forward goto-address-mail-regexp end t)
-	(let* ((s (match-beginning 0))
-	       (e (match-end 0))
-	       this-overlay)
-	  (when (or (not goto-address-prog-mode)
-		    ;; This tests for both comment and string
-		    ;; syntax.
-		    (nth 8 (syntax-ppss)))
-	    (setq this-overlay (make-overlay s e))
-	    (and goto-address-fontify-p
-		 (overlay-put this-overlay 'face goto-address-mail-face))
-	    (overlay-put this-overlay 'evaporate t)
-	    (overlay-put this-overlay 'mouse-face
-			 goto-address-mail-mouse-face)
-	    (overlay-put this-overlay 'follow-link t)
-	    (overlay-put this-overlay
-			 'help-echo "mouse-2, C-c RET: mail this address")
-	    (overlay-put this-overlay
-			 'keymap goto-address-highlight-keymap)
-	    (overlay-put this-overlay 'goto-address t)))))))
+      (let ((header-end (goto-address--header-end)))
+	(while (re-search-forward goto-address-mail-regexp end t)
+	  (let* ((s (match-beginning 0))
+		 (e (match-end 0))
+		 this-overlay)
+	    (when (and (not (goto-address--message-id-header-p header-end))
+		       (or (not goto-address-prog-mode)
+			   ;; This tests for both comment and string
+			   ;; syntax.
+			   (nth 8 (syntax-ppss))))
+	      (setq this-overlay (make-overlay s e))
+	      (and goto-address-fontify-p
+		   (overlay-put this-overlay 'face goto-address-mail-face))
+	      (overlay-put this-overlay 'evaporate t)
+	      (overlay-put this-overlay 'mouse-face
+			   goto-address-mail-mouse-face)
+	      (overlay-put this-overlay 'follow-link t)
+	      (overlay-put this-overlay
+			   'help-echo "mouse-2, C-c RET: mail this address")
+	      (overlay-put this-overlay
+			   'keymap goto-address-highlight-keymap)
+	      (overlay-put this-overlay 'goto-address t))))))))
 
 (defun goto-address-fontify-region (start end)
   "Fontify URLs and e-mail addresses in the given region."
@@ -262,11 +283,12 @@ using `browse-url-secondary-browser-function' instead."
 Then search backwards to beginning of line for the start of an e-mail
 address.  If no e-mail address found, return nil."
   (re-search-backward "[^-_A-Za-z0-9.@]" (line-beginning-position) 'lim)
-  (if (or (looking-at goto-address-mail-regexp)	; already at start
-	  (and (re-search-forward goto-address-mail-regexp
-				  (line-end-position) 'lim)
-	       (goto-char (match-beginning 0))))
-      (match-string-no-properties 0)))
+  (when (or (looking-at goto-address-mail-regexp)	; already at start
+	    (and (re-search-forward goto-address-mail-regexp
+				    (line-end-position) 'lim)
+		 (goto-char (match-beginning 0))))
+    (unless (goto-address--message-id-header-p)
+      (match-string-no-properties 0))))
 
 (defun goto-address-at-mouse (click)
   "Send to the e-mail address or load the URL at mouse click."
