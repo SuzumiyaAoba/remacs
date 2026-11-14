@@ -2295,15 +2295,16 @@ impl ChanIo {
     }
 
     fn echo_grid(
-        &self,
         mut grid: Grid,
+        cols: usize,
+        rows: usize,
         text: &str,
         reset_styles: bool,
         use_grid_cursor: bool,
         move_cursor: bool,
         tab_width: usize,
     ) -> Grid {
-        let echo_row = self.rows.saturating_sub(1);
+        let echo_row = rows.saturating_sub(1);
         let selected_cursor = use_grid_cursor
             .then(|| grid.cursors.iter().find(|cursor| cursor.selected).copied())
             .flatten();
@@ -2328,7 +2329,7 @@ impl ChanIo {
                 let (shown, _, _, cursor_column, cursor_index) =
                     fit_echo_text_at_cursor(
                         text,
-                        self.cols,
+                        cols,
                         cursor_character,
                         cursor_column,
                         tab_width,
@@ -2337,7 +2338,7 @@ impl ChanIo {
             }
             None => {
                 let (shown, columns, visible_bytes) =
-                    fit_text_to_cells_with_tab_width(text, self.cols, tab_width);
+                    fit_text_to_cells_with_tab_width(text, cols, tab_width);
                 let cursor_column = selected_cursor
                     .map(|cursor| cursor.column)
                     .or(fallback_cursor_column)
@@ -2369,7 +2370,7 @@ impl ChanIo {
         }
         if move_cursor {
             grid.cursors.retain(|cursor| !cursor.selected);
-            let cx = cursor_column.min(self.cols.saturating_sub(1));
+            let cx = cursor_column.min(cols.saturating_sub(1));
             grid.cursor = Some((cx, echo_row));
             grid.cursor_index = Some(cursor_index);
             if let Some(mut cursor) = selected_cursor {
@@ -3289,7 +3290,7 @@ impl KeyIo for ChanIo {
             .last
             .clone()
             .unwrap_or_else(|| Grid::blank(self.cols, self.rows));
-        let grid = self.echo_grid(grid, text, true, false, true, 8);
+        let grid = Self::echo_grid(grid, self.cols, self.rows, text, true, false, true, 8);
         self.send_grid(grid)
     }
 
@@ -3315,7 +3316,7 @@ impl KeyIo for ChanIo {
             render_grid_with_mouse_position_cached(i, cols, rows, cached, self.mouse_position)
         };
         grid.blink_elapsed_since_input = self.last_input_at.elapsed().as_secs_f64();
-        let grid = self.echo_grid(grid, text, false, true, true, tab_width);
+        let grid = Self::echo_grid(grid, cols, rows, text, false, true, true, tab_width);
         self.send_grid(grid)
     }
 

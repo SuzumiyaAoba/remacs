@@ -1210,6 +1210,38 @@ fn chanio_render_and_draw_echo() {
 }
 
 #[test]
+fn chanio_draw_echo_uses_selected_frame_dimensions() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let (mut io, _tx, grx) = chan_pair();
+            let mut interp = Interp::new();
+            interp
+                .eval_str(
+                    r#"(progn
+                         (set-frame-parameter nil 'window-system 'ns)
+                         (setq gui-echo-small-frame
+                               (make-frame '((window-system . ns)
+                                             (width . 30) (height . 12)
+                                             (tool-bar-lines . 0) (tab-bar-lines . 0))))
+                         (select-frame gui-echo-small-frame))"#,
+                )
+                .unwrap();
+            io.render(&interp).unwrap();
+            let _ = grx.try_recv();
+
+            io.draw_echo_with_state(&interp, &"x".repeat(60)).unwrap();
+            let grid = grx.try_recv().unwrap();
+            assert_eq!(grid.rows.len(), 12);
+            assert!(grid.rows.last().unwrap().chars().count() <= 30);
+            assert_eq!(grid.cursor.map(|(_, row)| row), Some(11));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn chanio_send_grid_latest_wins_and_closed() {
     let (mut io, _tx, grx) = chan_pair();
     // Bounded(1) + force_send: newest displaces the queued frame.
