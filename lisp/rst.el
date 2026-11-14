@@ -504,10 +504,15 @@ in parentheses follows the development revision and the time stamp.")
 				   ; colon tag.
 
     ;; Comments (`cmt')
-    (cmt-sta-1 (:grp exm-sta) "[^[|_\n]"
-	       (:alt "[^:\n]" (:seq ":" (:alt "[^:\n]" "$")))
-	       "*$") ; Start of a comment block; first group is explicit markup
-		     ; start.
+    ;; Remacs: A nested explicit-markup start can be comment text and may end
+    ;; with the double colon used by a directive.
+    (cmt-sta-1 (:grp exm-sta)
+	       (:alt (:seq exm-sta ".*")
+		     (:seq "[^[|_\n]"
+			   (:alt "[^:\n]" (:seq ":" (:alt "[^:\n]" "$")))
+			   "*"))
+	       "$") ; Start of a comment block; first group is explicit markup
+		    ; start.
 
     ;; Paragraphs (`par')
     (par-tag- (:alt itmany-tag fld-tag opt-tag fncdef-tag-2 dir-tag-3 exm-tag)
@@ -3788,6 +3793,14 @@ of your own."
   (rst-re 'lin-beg "|" "[^\n]*" "|" 'lin-end)
   "Regexp matching a line with the outer delimiters of a grid-table row.")
 
+(defconst rst-font-lock-comment-start-regexp
+  (rst-re 'lin-beg 'cmt-sta-1)
+  "Regexp matching a non-empty comment block start.")
+
+(defconst rst-font-lock-empty-comment-start-regexp
+  (rst-re 'lin-beg '(:grp exm-tag) '(:grp hws-tag) "$")
+  "Regexp matching an empty comment block start.")
+
 (defun rst-font-lock-grid-table-row-p (position)
   "Return non-nil if POSITION is on a grid-table row delimiter.
 The row must be adjacent to a horizontal grid-table border."
@@ -3815,6 +3828,44 @@ Set the match data to the next `|' on a row adjacent to a grid border."
 	  (set-match-data (list pipe (1+ pipe)))
 	  (setq found t))))
     found))
+
+(defun rst-font-lock-match-comment-block (limit)
+  "Match a comment block before LIMIT, including its indented contents."
+  (let* ((comment-start
+          (save-excursion
+            (and (re-search-forward rst-font-lock-comment-start-regexp limit t)
+                 (match-beginning 0))))
+         (empty-comment-start
+          (save-excursion
+            (and (re-search-forward rst-font-lock-empty-comment-start-regexp
+                                    limit t)
+                 (match-beginning 0))))
+         (start (cond
+                 ((and comment-start empty-comment-start)
+                  (min comment-start empty-comment-start))
+                 (comment-start)
+                 (empty-comment-start))))
+    (when start
+      (goto-char start)
+      (cond
+       ((looking-at rst-font-lock-comment-start-regexp)
+        (let ((begin (match-beginning 0))
+              (indentation-point (match-end 1)))
+          (let ((end (or (rst-font-lock-find-unindented-line-limit
+                          indentation-point)
+                         (line-end-position))))
+            (put-text-property begin end 'font-lock-multiline t)
+            (set-match-data (list begin end))
+            (goto-char end)
+            t)))
+       ((looking-at rst-font-lock-empty-comment-start-regexp)
+        (let ((begin (match-beginning 0)))
+          (let ((end (or (rst-font-lock-find-unindented-line-limit 'next)
+                         (line-end-position))))
+            (put-text-property begin end 'font-lock-multiline t)
+            (set-match-data (list begin end))
+            (goto-char end)
+            t)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -3951,22 +4002,12 @@ Set the match data to the next `|' on a row adjacent to a grid border."
     ;;        superfluous.
 
     ;; `Comments`_
-    ;; This is multiline.
-    (,(rst-re 'lin-beg 'cmt-sta-1)
-     (1 'rst-comment)
-     (rst-font-lock-find-unindented-line-match
-      (rst-font-lock-find-unindented-line-limit (match-end 1))
-      nil
-      (0 'rst-comment append)))
-    (,(rst-re 'lin-beg '(:grp exm-tag) '(:grp hws-tag) "$")
-     (1'rst-comment)
-     (2'rst-comment)
-     (rst-font-lock-find-unindented-line-match
-      (rst-font-lock-find-unindented-line-limit 'next)
-      nil
-      (0 'rst-comment append)))
+    ;; Match the whole comment block so nested directives and field lists
+    ;; cannot retain their active-markup faces.
+    (rst-font-lock-match-comment-block
+     (0 'rst-comment t))
 
-    ;; FIXME: This is not rendered as comment::
+    ;; Remacs: This nested directive remains part of the outer comment::
     ;;        .. .. list-table::
     ;;              :stub-columns: 1
     ;;              :header-rows: 1
