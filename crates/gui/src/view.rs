@@ -50,6 +50,8 @@ mod fringe;
 mod help_key_tests;
 #[cfg(test)]
 mod icon_title_tests;
+#[cfg(test)]
+mod image_data_tests;
 mod input;
 #[cfg(all(test, target_os = "macos"))]
 mod insert_key_tests;
@@ -4400,6 +4402,10 @@ fn grid_data_image(
     base_uri: Option<String>,
     css: Option<String>,
 ) -> Option<Img> {
+    if format == "pbm" {
+        let image = Image::from_pnm_bytes(bytes.to_vec())?;
+        return Some(img(Arc::new(image)));
+    }
     let format = match format.as_str() {
         "png" => ImageFormat::Png,
         "jpeg" | "jpg" => ImageFormat::Jpeg,

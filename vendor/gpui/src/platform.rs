@@ -1937,6 +1937,16 @@ impl Image {
         }
     }
 
+    /// Decode portable anymap data and normalize it to PNG for rendering.
+    pub fn from_pnm_bytes(bytes: Vec<u8>) -> Option<Self> {
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Pnm).ok()?;
+        let mut encoded = Cursor::new(Vec::new());
+        decoded
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .ok()?;
+        Some(Self::from_bytes(ImageFormat::Png, encoded.into_inner()))
+    }
+
     /// Get this image's ID
     pub fn id(&self) -> u64 {
         self.id
@@ -2112,5 +2122,21 @@ impl From<String> for ClipboardString {
             text: value,
             metadata: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod pnm_image_tests {
+    use super::{Image, ImageFormat};
+
+    #[test]
+    fn pbm_data_is_normalized_to_png() {
+        let image = Image::from_pnm_bytes(b"P1\n2 2\n0 1\n1 0\n".to_vec())
+            .expect("portable bitmap should decode");
+        assert_eq!(image.format, ImageFormat::Png);
+        assert!(matches!(
+            image::guess_format(&image.bytes),
+            Ok(image::ImageFormat::Png)
+        ));
     }
 }

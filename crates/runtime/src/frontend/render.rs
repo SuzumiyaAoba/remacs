@@ -8607,7 +8607,7 @@ fn image_display_replacement(
     let format = i.symbol_name(format).to_lowercase();
     if !matches!(
         format.as_str(),
-        "png" | "jpeg" | "jpg" | "webp" | "gif" | "svg" | "bmp" | "tiff" | "tif"
+        "png" | "jpeg" | "jpg" | "webp" | "gif" | "svg" | "bmp" | "tiff" | "tif" | "pbm"
     ) {
         return None;
     }

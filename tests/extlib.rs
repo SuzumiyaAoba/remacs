@@ -199,13 +199,13 @@ fn image_spec_tty_behavior() {
 
 #[test]
 fn init_image_library_types() {
-    // GNU `lookup_image_type': t for built-in type symbols only.
-    assert_eq!(ev("(init-image-library 'xbm)"), "t");
+    // Only types the GUI renderer can decode are available.
+    assert_eq!(ev("(init-image-library 'xbm)"), "nil");
     assert_eq!(ev("(init-image-library 'png)"), "t");
     assert_eq!(ev("(init-image-library 'nosuchtype)"), "nil");
     // Non-symbol arg → nil (GNU compares symbols only).
     assert_eq!(ev("(init-image-library \"png\")"), "nil");
-    assert_eq!(ev("(image-type-available-p 'xbm)"), "t");
+    assert_eq!(ev("(image-type-available-p 'xbm)"), "nil");
     assert_eq!(ev("(image-type-available-p 'nosuchtype)"), "nil");
 }
 

@@ -218,8 +218,8 @@ pub(super) fn f_image_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-/// The image types remacs claims (GNU `image_types[]' parity):
-/// `init-image-library'/`image-type-available-p' share the set.
+/// Image descriptor types registered by Remacs.  Actual availability is
+/// filtered by the frontend's decoder support below.
 pub(super) fn known_image_type(i: &Interp, v: &Value) -> bool {
     let Value::Sym(s) = v else {
         return false;
@@ -241,16 +241,14 @@ pub(super) fn known_image_type(i: &Interp, v: &Value) -> bool {
     )
 }
 
-/// `image-type-available-p' — the types our (fake) image support
-/// claims: GNU batch reports all built-ins available.
+/// `image-type-available-p' — the image formats the GUI renderer can decode.
 pub(super) fn f_image_type_available_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(known_image_type(i, &a[0])))
+    Ok(Value::from_bool(renderer_supports_image_type(i, &a[0])))
 }
 
-/// `init-image-library' — GNU's `lookup_image_type': t iff TYPE is a
-/// registered (built-in) image type symbol.
+/// `init-image-library' — only initialize image types the GUI decoder supports.
 pub(super) fn f_init_image_library(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(known_image_type(i, &a[0])))
+    Ok(Value::from_bool(renderer_supports_image_type(i, &a[0])))
 }
 
 /// `imagep' — GNU's valid_image_p: a list headed `image' whose plist
@@ -347,6 +345,16 @@ pub(super) fn f_image_cache_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalR
     Ok(Value::Int(
         i.gui_image_cache_size.load(std::sync::atomic::Ordering::Acquire) as i128,
     ))
+}
+
+fn renderer_supports_image_type(i: &Interp, value: &Value) -> bool {
+    let Value::Sym(symbol) = value else {
+        return false;
+    };
+    matches!(
+        i.symbol_name(*symbol).as_str(),
+        "png" | "gif" | "jpeg" | "webp" | "bmp" | "pbm" | "tiff" | "svg"
+    )
 }
 
 pub(super) fn f_bitmap_spec_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
