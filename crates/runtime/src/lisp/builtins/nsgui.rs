@@ -1011,8 +1011,14 @@ fn f_ns_disown_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
                     .read(backend.as_ref())
                     .map_err(|error| i.error(format!("Clipboard read failed: {error}")))?;
                 if current.as_deref() == Some(owned_text.as_str()) {
-                    host.write(backend.as_ref(), String::new())
-                        .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+                    if matches!(&host, HostSelection::Clipboard) {
+                        backend
+                            .clear_text()
+                            .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+                    } else {
+                        host.write(backend.as_ref(), String::new())
+                            .map_err(|error| i.error(format!("Clipboard write failed: {error}")))?;
+                    }
                 }
             }
         } else if let Some(owned_text) = i

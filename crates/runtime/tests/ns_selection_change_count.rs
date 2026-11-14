@@ -9,12 +9,27 @@ struct ClipboardState {
     text: Option<String>,
     change_count: u64,
     info: Option<ClipboardInfo>,
+    change_count_available: bool,
 }
 
 #[derive(Default)]
 struct TestClipboard(RefCell<ClipboardState>);
 
 impl TestClipboard {
+    fn enable_change_count(&self) {
+        self.0.borrow_mut().change_count_available = true;
+    }
+
+    fn clear(&self) {
+        let mut state = self.0.borrow_mut();
+        state.text = None;
+        state.change_count += 1;
+        state.info = Some(ClipboardInfo {
+            has_data: false,
+            targets: Vec::new(),
+        });
+    }
+
     fn external_write(&self, text: &str) {
         let mut state = self.0.borrow_mut();
         state.text = Some(text.to_owned());
@@ -49,36 +64,25 @@ impl ClipboardBackend for TestClipboard {
         Ok(())
     }
 
+    fn clear_text(&self) -> Result<(), String> {
+        self.clear();
+        Ok(())
+    }
+
     fn clipboard_info(&self) -> Result<Option<ClipboardInfo>, String> {
         Ok(self.0.borrow().info.clone())
     }
 
     fn clipboard_change_count(&self) -> Result<Option<u64>, String> {
-        Ok(Some(self.0.borrow().change_count))
+        let state = self.0.borrow();
+        Ok(state
+            .change_count_available
+            .then_some(state.change_count))
     }
 
     fn write_text_with_change_count(&self, text: String) -> Result<Option<u64>, String> {
-        let mut state = self.0.borrow_mut();
-        state.text = Some(text);
-        state.change_count += 1;
-        state.info = Some(ClipboardInfo {
-            has_data: true,
-            targets: vec!["STRING".to_owned()],
-        });
-        Ok(Some(state.change_count))
-    }
-
-    fn clear_text_if_change_count(&self, expected: u64) -> Result<(), String> {
-        let mut state = self.0.borrow_mut();
-        if state.change_count == expected {
-            state.text = Some(String::new());
-            state.change_count += 1;
-            state.info = Some(ClipboardInfo {
-                has_data: true,
-                targets: vec!["STRING".to_owned()],
-            });
-        }
-        Ok(())
+        self.write_text(text)?;
+        self.clipboard_change_count()
     }
 }
 
@@ -96,6 +100,7 @@ fn clipboard_ownership_uses_change_count_and_disowns_conditionally() {
         .spawn(|| {
             let mut interp = Interp::new();
             let host = Rc::new(TestClipboard::default());
+            host.enable_change_count();
             interp.set_clipboard_backend(Some(host.clone()));
             expect(
                 &mut interp,
@@ -125,7 +130,8 @@ fn clipboard_ownership_uses_change_count_and_disowns_conditionally() {
             );
             expect(&mut interp, "(ns-selection-owner-p 'CLIPBOARD)", "t");
             expect(&mut interp, "(ns-disown-selection-internal 'CLIPBOARD)", "nil");
-            assert_eq!(host.0.borrow().text.as_deref(), Some(""));
+            assert_eq!(host.0.borrow().text, None);
+            assert!(!host.0.borrow().info.as_ref().unwrap().has_data);
 
             expect(
                 &mut interp,
@@ -167,6 +173,35 @@ fn clipboard_ownership_uses_change_count_and_disowns_conditionally() {
                 "(gui-backend-selection-exists-p 'CLIPBOARD)",
                 "t",
             );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn clipboard_disown_without_change_count_clears_the_owned_payload() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = Interp::new();
+            let host = Rc::new(TestClipboard::default());
+            interp.set_clipboard_backend(Some(host.clone()));
+            expect(
+                &mut interp,
+                "(progn (setq window-system 'ns initial-window-system 'ns) (set-frame-parameter nil 'window-system 'ns))",
+                "nil",
+            );
+
+            expect(
+                &mut interp,
+                "(ns-own-selection-internal 'CLIPBOARD \"owned without count\")",
+                "\"owned without count\"",
+            );
+            expect(&mut interp, "(ns-selection-owner-p 'CLIPBOARD)", "t");
+            expect(&mut interp, "(ns-disown-selection-internal 'CLIPBOARD)", "nil");
+            assert_eq!(host.0.borrow().text, None);
+            assert!(!host.0.borrow().info.as_ref().unwrap().has_data);
         })
         .unwrap()
         .join()

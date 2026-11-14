@@ -178,11 +178,26 @@ fn write_host_clipboard_with_change_count(
     Ok(native_clipboard_change_count())
 }
 
-fn clear_host_clipboard_if_change_count(app: &App, expected: u64) -> Result<(), String> {
+fn clear_host_clipboard_if_change_count(app: &mut App, expected: u64) -> Result<(), String> {
     if native_clipboard_change_count() == Some(expected) {
-        write_host_selection(app, ClipboardTarget::Clipboard, String::new())?;
+        clear_host_clipboard(app)?;
     }
     Ok(())
+}
+
+fn clear_host_clipboard(_app: &mut App) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let pasteboard = unsafe { NSPasteboard::generalPasteboard(nil) };
+        unsafe {
+            pasteboard.clearContents();
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        write_host_selection(_app, ClipboardTarget::Clipboard, String::new())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -579,6 +594,15 @@ pub fn run_gui_with_dump(
                     ClipboardRequest::Write(target, text, reply) => {
                         let result = cx
                             .update(|app| write_host_selection(app, target, text))
+                            .map_err(|error| error.to_string())
+                            .and_then(|result| result);
+                        if let Some(reply) = reply {
+                            let _ = reply.send(result);
+                        }
+                    }
+                    ClipboardRequest::Clear(reply) => {
+                        let result = cx
+                            .update(clear_host_clipboard)
                             .map_err(|error| error.to_string())
                             .and_then(|result| result);
                         if let Some(reply) = reply {

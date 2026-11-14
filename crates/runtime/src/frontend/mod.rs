@@ -27,6 +27,12 @@ pub trait ClipboardBackend {
     fn read_text(&self) -> Result<Option<String>, String>;
     fn write_text(&self, text: String) -> Result<(), String>;
 
+    /// Remove the clipboard payload without publishing an empty text value.
+    /// Backends that cannot clear native data types may write an empty string.
+    fn clear_text(&self) -> Result<(), String> {
+        self.write_text(String::new())
+    }
+
     /// Return native clipboard metadata when the host exposes it.
     fn clipboard_info(&self) -> Result<Option<ClipboardInfo>, String> {
         Ok(None)
@@ -48,7 +54,7 @@ pub trait ClipboardBackend {
     /// Clear the clipboard only when it still has the generation we own.
     fn clear_text_if_change_count(&self, expected: u64) -> Result<(), String> {
         if self.clipboard_change_count()? == Some(expected) {
-            self.write_text(String::new())?;
+            self.clear_text()?;
         }
         Ok(())
     }

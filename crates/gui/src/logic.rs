@@ -641,6 +641,7 @@ pub(super) enum ClipboardRequest {
     Write(ClipboardTarget, String, Option<SyncSender<Result<(), String>>>),
     ReadChangeCount(SyncSender<Result<Option<u64>, String>>),
     WriteWithChangeCount(String, SyncSender<Result<Option<u64>, String>>),
+    Clear(Option<SyncSender<Result<(), String>>>),
     ClearIfChangeCount(u64, SyncSender<Result<(), String>>),
 }
 
@@ -1333,6 +1334,20 @@ impl remacs_runtime::frontend::ClipboardBackend for GuiClipboardBackend {
         self.requests
             .send_blocking(ClipboardRequest::ClearIfChangeCount(expected, reply))
             .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI clipboard service stopped".to_owned())?
+    }
+
+    fn clear_text(&self) -> Result<(), String> {
+        let ready = self.ready.load(Ordering::Acquire);
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(ClipboardRequest::Clear(ready.then_some(reply)))
+            .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
+        if !ready {
+            return Ok(());
+        }
         response
             .recv()
             .map_err(|_| "GUI clipboard service stopped".to_owned())?

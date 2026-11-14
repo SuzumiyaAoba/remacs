@@ -158,6 +158,24 @@ fn clipboard_change_count_requests_run_through_the_ui_service() {
 }
 
 #[test]
+fn clipboard_clear_requests_remove_the_native_payload() {
+    let (requests, received) = smol::channel::unbounded();
+    let backend = GuiClipboardBackend {
+        requests,
+        ready: Arc::new(AtomicBool::new(true)),
+    };
+    let service = thread::spawn(move || {
+        let ClipboardRequest::Clear(Some(reply)) = received.recv_blocking().unwrap() else {
+            panic!("clipboard clear")
+        };
+        reply.send(Ok(())).unwrap();
+    });
+
+    backend.clear_text().unwrap();
+    service.join().unwrap();
+}
+
+#[test]
 fn clipboard_metadata_requests_are_forwarded_to_the_ui_service() {
     let (requests, received) = smol::channel::unbounded();
     let backend = GuiClipboardBackend {
