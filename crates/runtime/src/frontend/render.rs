@@ -3668,6 +3668,7 @@ fn render_tool_bar(
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
     row_heights: &mut [usize],
+    help_echoes: &mut Vec<GridHelpEcho>,
     images: &mut Vec<GridImage>,
 ) -> Vec<GridToolBarItem> {
     let mut background = faces.builtin(i, "tool-bar", 0).finish();
@@ -3819,6 +3820,18 @@ fn render_tool_bar(
             image.row = screen_row_index;
             image.column = column.saturating_add(button_width.saturating_sub(image_columns) / 2);
             images.push(image);
+        }
+        if let Some(help) = &binding.help {
+            push_help_echo(
+                help_echoes,
+                GridHelpEcho {
+                    row: screen_row_index,
+                    left: column,
+                    width: button_width,
+                    text: help.clone(),
+                    inhibit_substitution: false,
+                },
+            );
         }
         items.push(GridToolBarItem {
             row: screen_row_index,
@@ -10862,6 +10875,7 @@ fn render_grid_internal(
             &mut fctx,
             &mut screen_rows,
             &mut row_heights,
+            &mut help_echoes,
             &mut images,
         );
     }
