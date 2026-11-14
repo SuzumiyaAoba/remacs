@@ -170,6 +170,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     let help_property = i.q(":help");
     let image_property = i.q(":image");
     let enable = i.q(":enable");
+    let active = i.q(":active");
     let visible = i.q(":visible");
     let filter = i.q(":filter");
     let button = i.q(":button");
@@ -210,7 +211,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
             break;
         };
         let form = value.borrow().car.clone();
-        if matches!(property, Value::Sym(symbol) if symbol == enable) {
+        if matches!(property, Value::Sym(symbol) if symbol == enable || symbol == active) {
             enable_form = if i.symbol_value(force).truthy() {
                 Value::t()
             } else {
