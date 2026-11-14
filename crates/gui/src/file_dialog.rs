@@ -17,9 +17,32 @@ pub(crate) fn path_prompt_options(
     }
 }
 
+pub(crate) const fn should_prompt_for_new_path(must_match: bool, directory_only: bool) -> bool {
+    !must_match && !directory_only
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn must_match_nil_uses_new_path_prompt() {
+        let mut app = gpui::TestAppContext::single();
+        let directory = Path::new("/tmp/project");
+        let response = app.update(|cx| {
+            if should_prompt_for_new_path(false, false) {
+                cx.prompt_for_new_path(directory, Some("new-file.txt"))
+            } else {
+                panic!("MUST-MATCH=nil should request a new path")
+            }
+        });
+        assert!(app.did_prompt_for_new_path());
+        drop(response);
+
+        assert!(!should_prompt_for_new_path(true, false));
+        assert!(!should_prompt_for_new_path(false, true));
+    }
 
     #[test]
     fn lisp_prompt_is_a_title_and_keeps_the_default_button() {

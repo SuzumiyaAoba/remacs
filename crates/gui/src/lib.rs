@@ -1371,24 +1371,47 @@ pub fn run_gui_with_dump(
                         directory_only,
                         reply,
                     } => {
-                        let _ = must_match;
                         let options = file_dialog::path_prompt_options(
                             prompt,
-                            directory,
-                            initial,
+                            directory.clone(),
+                            initial.clone(),
                             directory_only,
                         );
-                        let result = match cx.update(|app| app.prompt_for_paths(options)) {
-                            Ok(response) => match response.await {
-                                Ok(Ok(Some(paths))) => Ok(paths
-                                    .into_iter()
-                                    .next()
-                                    .map(|path| path.to_string_lossy().into_owned())),
-                                Ok(Ok(None)) => Ok(None),
-                                Ok(Err(error)) => Err(error.to_string()),
+                        let save_directory = directory
+                            .as_deref()
+                            .filter(|directory| !directory.is_empty())
+                            .map(std::path::PathBuf::from)
+                            .unwrap_or_else(|| std::path::PathBuf::from("."));
+                        let result = if file_dialog::should_prompt_for_new_path(
+                            must_match,
+                            directory_only,
+                        ) {
+                            match cx.update(|app| {
+                                app.prompt_for_new_path(&save_directory, initial.as_deref())
+                            }) {
+                                Ok(response) => match response.await {
+                                    Ok(Ok(Some(path))) => {
+                                        Ok(Some(path.to_string_lossy().into_owned()))
+                                    }
+                                    Ok(Ok(None)) => Ok(None),
+                                    Ok(Err(error)) => Err(error.to_string()),
+                                    Err(error) => Err(error.to_string()),
+                                },
                                 Err(error) => Err(error.to_string()),
-                            },
-                            Err(error) => Err(error.to_string()),
+                            }
+                        } else {
+                            match cx.update(|app| app.prompt_for_paths(options)) {
+                                Ok(response) => match response.await {
+                                    Ok(Ok(Some(paths))) => Ok(paths
+                                        .into_iter()
+                                        .next()
+                                        .map(|path| path.to_string_lossy().into_owned())),
+                                    Ok(Ok(None)) => Ok(None),
+                                    Ok(Err(error)) => Err(error.to_string()),
+                                    Err(error) => Err(error.to_string()),
+                                },
+                                Err(error) => Err(error.to_string()),
+                            }
                         };
                         let _ = reply.send(result);
                     }
