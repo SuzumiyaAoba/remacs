@@ -1722,17 +1722,28 @@ impl GeometrySymbols {
     }
 }
 
+fn group_frames_by_display(
+    frames: impl IntoIterator<Item = (Option<u32>, Value)>,
+) -> HashMap<u32, Vec<Value>> {
+    let mut grouped = HashMap::new();
+    for (display_id, frame) in frames {
+        if let Some(display_id) = display_id {
+            grouped.entry(display_id).or_insert_with(Vec::new).push(frame);
+        }
+    }
+    grouped
+}
+
 fn monitor_record(
     monitor: &MonitorGeometry,
-    current_display_id: Option<u32>,
-    all_frames: &Value,
+    frames_by_display: &HashMap<u32, Vec<Value>>,
     keys: GeometrySymbols,
 ) -> Value {
-    let monitor_frames = if current_display_id.is_none_or(|id| id == monitor.display_id) {
-        all_frames.clone()
-    } else {
-        Value::Nil
-    };
+    let monitor_frames = frames_by_display
+        .get(&monitor.display_id)
+        .cloned()
+        .map(Value::list)
+        .unwrap_or(Value::Nil);
     let attr = |key, values: [i128; 4]| {
         let mut fields = Vec::with_capacity(5);
         fields.push(Value::Sym(key));
@@ -1756,9 +1767,8 @@ fn monitor_record(
 mod monitor_record_tests {
     use super::*;
 
-    #[test]
-    fn monitor_record_exposes_its_display_name() {
-        let keys = GeometrySymbols {
+    fn test_keys() -> GeometrySymbols {
+        GeometrySymbols {
             pixel_width: 0,
             pixel_height: 1,
             char_width: 2,
@@ -1786,7 +1796,12 @@ mod monitor_record_tests {
             tool_bar_size: 24,
             top: 25,
             internal_border_width: 26,
-        };
+        }
+    }
+
+    #[test]
+    fn monitor_record_exposes_its_display_name() {
+        let keys = test_keys();
         let monitor = MonitorGeometry {
             display_id: 42,
             name: "display-42".to_owned(),
@@ -1795,7 +1810,7 @@ mod monitor_record_tests {
             mm_size: [Some(530), Some(300)],
             native_origin: [0, 0],
         };
-        let record = monitor_record(&monitor, Some(42), &Value::Nil, keys);
+        let record = monitor_record(&monitor, &HashMap::new(), keys);
         let fields = record.list_to_vec().unwrap();
         let Value::Cons(name_attribute) = &fields[0] else {
             panic!("monitor name attribute")
@@ -1806,6 +1821,38 @@ mod monitor_record_tests {
             panic!("monitor name string")
         };
         assert_eq!(name.borrow().to_unicode_lossy(), "display-42");
+    }
+
+    #[test]
+    fn monitor_record_lists_only_frames_on_its_display() {
+        let keys = test_keys();
+        let monitor = MonitorGeometry {
+            display_id: 42,
+            name: "display-42".to_owned(),
+            geometry: [0, 0, 1920, 1080],
+            workarea: [0, 0, 1920, 1040],
+            mm_size: [Some(530), Some(300)],
+            native_origin: [0, 0],
+        };
+        let frames = group_frames_by_display([
+            (Some(41), Value::Int(10)),
+            (Some(42), Value::Int(20)),
+            (Some(42), Value::Int(21)),
+            (None, Value::Int(99)),
+        ]);
+
+        let record = monitor_record(&monitor, &frames, keys);
+        let attributes = record.list_to_vec().unwrap();
+        let Value::Cons(frames_attribute) = &attributes[4] else {
+            panic!("monitor frames attribute")
+        };
+        let frame_attribute = frames_attribute.borrow().cdr.list_to_vec().unwrap();
+        let frames = frame_attribute[0].list_to_vec().unwrap();
+        let frame_ids = frames
+            .into_iter()
+            .map(|frame| frame.int())
+            .collect::<Vec<_>>();
+        assert_eq!(frame_ids, vec![Some(20), Some(21)]);
     }
 }
 
@@ -3003,7 +3050,18 @@ impl KeyIo for ChanIo {
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
         self.scroll_remainders
             .retain(|(frame_id, _), _| frame_id.is_none_or(|id| live_ids.contains(&id)));
-        let all_frames = Value::list(live_frames.iter().cloned().map(Value::Frame).collect());
+        let frames_by_display = group_frames_by_display(live_frames.iter().map(|frame| {
+            let frame_id = frame.borrow().id;
+            let geometry = self.frame_geometries.get(&frame_id).cloned().or_else(|| {
+                (Some(frame_id) == self.primary_frame_id)
+                    .then(|| self.geometry.clone())
+                    .flatten()
+            });
+            (
+                geometry.and_then(|geometry| geometry.current_display_id),
+                Value::Frame(frame.clone()),
+            )
+        }));
         let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
         let mut selected_grid = None;
         let mut snapshots = Vec::new();
@@ -3073,12 +3131,7 @@ impl KeyIo for ChanIo {
                     .monitors
                     .iter()
                     .map(|monitor| {
-                        monitor_record(
-                            monitor,
-                            geometry.current_display_id,
-                            &all_frames,
-                            keys,
-                        )
+                        monitor_record(monitor, &frames_by_display, keys)
                     })
                     .collect::<Vec<_>>();
                 let mut params = frame.borrow().params.clone();
