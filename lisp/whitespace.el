@@ -1349,4 +1349,16 @@ Also apply `font-lock-multiline' text property."
 (dolist (var whitespace--watched-vars)
   (add-variable-watcher var #'whitespace--variable-watcher))
 
+(defun whitespace-unload-function ()
+  "Unload the whitespace library."
+  (dolist (var whitespace--watched-vars)
+    (remove-variable-watcher var #'whitespace--variable-watcher))
+  (global-whitespace-mode -1)
+  ;; Be sure all local whitespace modes are turned off.
+  (save-current-buffer
+    (dolist (buf (buffer-list))
+      (set-buffer buf)
+      (whitespace-mode -1)))
+  nil)
+
 (provide 'whitespace)
