@@ -6,11 +6,67 @@
 (defun kbd-macro-query (flag)
   "Query user during kbd macro execution.
 With prefix argument FLAG, enter recursive edit, reading keyboard
-commands even within a kbd macro.  Without FLAG, ask whether to
-continue running the macro."
+commands even within a kbd macro.  Without prefix argument, ask
+whether to continue running the macro.
+
+Your options are: \\<query-replace-map>
+
+\\[act]\tFinish this iteration normally and continue with the next.
+\\[skip]\tSkip the rest of this iteration, and start the next.
+\\[exit]\tStop the macro entirely right now.
+\\[recenter]\tRedisplay the screen, then ask again.
+\\[edit]\tEnter recursive edit; ask again when you exit from that."
   (interactive "P")
-  ;; Non-interactive/no-window-system: never query, always continue.
-  nil)
+  (or executing-kbd-macro
+      defining-kbd-macro
+      (user-error "Not defining or executing kbd macro"))
+  (if flag
+      (let (executing-kbd-macro defining-kbd-macro)
+        (recursive-edit))
+    (if (not executing-kbd-macro)
+        nil
+      (let ((loop t)
+            (msg (substitute-command-keys
+                  "Proceed with macro?\\<query-replace-map>\
+ (\\[act], \\[skip], \\[exit], \\[recenter], \\[edit]) ")))
+        (while loop
+          (let ((key (let ((executing-kbd-macro nil)
+                           (defining-kbd-macro nil))
+                       (message "%s" msg)
+                       (read-event)))
+                def)
+            (setq key (vector key))
+            (setq def (lookup-key query-replace-map key))
+            (cond ((eq def 'act)
+                   (setq loop nil))
+                  ((eq def 'skip)
+                   (setq loop nil)
+                   (setq executing-kbd-macro ""))
+                  ((eq def 'exit)
+                   (setq loop nil)
+                   (setq executing-kbd-macro t))
+                  ((eq def 'recenter)
+                   (recenter nil))
+                  ((eq def 'edit)
+                   (let (executing-kbd-macro defining-kbd-macro)
+                     (recursive-edit)))
+                  ((eq def 'quit)
+                   (setq quit-flag t))
+                  (t
+                   (or (eq def 'help)
+                       (ding))
+                   (with-output-to-temp-buffer "*Help*"
+                     (princ
+                      (substitute-command-keys
+                       "Specify how to proceed with keyboard macro execution.
+Possibilities: \\<query-replace-map>
+\\[act]\tFinish this iteration normally and continue with the next.
+\\[skip]\tSkip the rest of this iteration, and start the next.
+\\[exit]\tStop the macro entirely right now.
+\\[recenter]\tRedisplay the screen, then ask again.
+\\[edit]\tEnter recursive edit; ask again when you exit from that."))
+                     (with-current-buffer standard-output
+                       (help-mode)))))))))))
 
 (defun insert-kbd-macro (macroname)
   "Insert in buffer the Lisp definition of kbd macro MACRONAME."
