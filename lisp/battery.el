@@ -523,7 +523,7 @@ The following %-sequences are provided:
 			     nil t)
               (incf low (string-to-number (match-string 1)))))
           (incf full-capacity
-                (or device-last-full-capacity device-design-capacity 0))))
+                (or device-last-full-capacity device-design-capacity 0)))))
     (setq charging-state (battery--combine-linux-statuses charging-states))
     (and capacity rate
 	 (setq minutes (if (zerop rate) 0
@@ -684,7 +684,7 @@ The following %-sequences are provided:
                            (rx (in "01")) 0)
                      ("0" "BAT")
                      ("1" "AC")
-                     (_ "N/A"))))))
+                     (_ "N/A")))))))
 
 
 ;;; `/dev/power/acpi_battery' interface for Haiku.
@@ -1009,7 +1009,7 @@ The following %-sequences are provided:
           (cons ?s (if secs (number-to-string secs) "N/A"))
           (cons ?m (if mins (number-to-string mins) "N/A"))
           (cons ?h (if hrs (number-to-string hrs) "N/A"))
-          (cons ?t (if hrs (format "%d:%02d" hrs (% mins 60)) "N/A")))))
+          (cons ?t (if hrs (format "%d:%02d" hrs (% mins 60)) "N/A"))))))
 
 
 ;;; `apm' interface for BSD.
