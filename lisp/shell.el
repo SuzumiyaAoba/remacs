@@ -499,8 +499,19 @@ can be determined, a default according to the shell type is used."
   (car (shell--unquote&requote-argument str)))
 (defun shell--requote-argument (upos qstr)
   ;; See `completion-table-with-quoting'.
-  (let ((res (shell--unquote&requote-argument qstr upos)))
-    (cons (nth 1 res) (nth 2 res))))
+  (let* ((res (shell--unquote&requote-argument qstr upos))
+         (qpos (nth 1 res))
+         (qfun (nth 2 res))
+         (closing-quote
+          (and (integerp qpos)
+               (< qpos (length qstr))
+               (memq (aref qstr qpos) '(?\" ?\'))
+               (aref qstr qpos))))
+    (cons qpos
+          (lambda (string &optional final)
+            (concat (funcall qfun string)
+                    (when (and final closing-quote)
+                      (string closing-quote)))))))
 
 (defun shell--unquote-double-quoted (string)
   "Remove POSIX double-quote escapes from STRING."

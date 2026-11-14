@@ -23001,11 +23001,9 @@ REQUOTE is a function of 2 args (UPOS QSTR) where
 REQUOTE should return a pair (QPOS . QFUN) such that QPOS is the
 position corresponding to UPOS but in QSTR, and QFUN is a function
 of one argument (a string) which returns that argument appropriately quoted
-for use at QPOS."
-  ;; FIXME: One problem with the current setup is that `qfun' doesn't know if
-  ;; its argument is "the end of the completion", so if the quoting used double
-  ;; quotes (for example), we end up completing "fo" to "foobar and throwing
-  ;; away the closing double quote.
+for use at QPOS.  QFUN may also accept a second argument FINAL, which is
+non-nil when the string is the final part of the completion.  Older
+one-argument QFUNs remain supported."
   `(lambda (string pred action)
     (cond
      ((eq action 'metadata)
@@ -23142,8 +23140,9 @@ for use at QPOS."
        (suffix (substring completion (max point (length prefix))))
        (`(,qpos . ,qfun) (funcall requote (length prefix) string))
        (qstr1 (if (> point (length prefix))
-                  (funcall qfun (substring completion (length prefix) point))))
-       (qsuffix (funcall qfun suffix))
+                  (completion--twq-requote
+                   qfun (substring completion (length prefix) point))))
+       (qsuffix (completion--twq-requote qfun suffix t))
        (qstring (concat (substring string 0 qpos) qstr1 qsuffix))
        (qpoint
         (cond
@@ -23156,8 +23155,17 @@ for use at QPOS."
       ;; If requote failed (e.g. because sifn-requote did not handle
       ;; Tramp's "/foo:/bar//baz -> /foo:/baz" truncation), then at least
       ;; try requote properly.
-      (let ((qstr (funcall qfun completion)))
+      (let ((qstr (completion--twq-requote qfun completion t)))
 	(cons qstr (length qstr))))))
+
+(defun completion--twq-requote (qfun string &optional final)
+  "Call QFUN on STRING, passing FINAL when QFUN supports that argument."
+  (if (and final
+           (let ((max-args (cdr (func-arity qfun))))
+             (or (eq max-args 'many)
+                 (and (integerp max-args) (> max-args 1)))))
+      (funcall qfun string t)
+    (funcall qfun string)))
 
 (defun completion--twq-all (string ustring completions boundary
                                    _unquote requote)
@@ -23202,14 +23210,14 @@ for use at QPOS."
        (mapcar (lambda (completion)
                  (cl-assert (string-prefix-p prefix completion 'ignore-case) t)
                  (let* ((new (substring completion (length prefix)))
-                        (qnew (funcall qfun new))
+                        (qnew (completion--twq-requote qfun new t))
  			(qprefix
                          (if (not completion-ignore-case)
                              qprefix
                            ;; Make qprefix inherit the case from `completion'.
                            (let* ((rest (substring completion
                                                    0 (length prefix)))
-                                  (qrest (funcall qfun rest)))
+                                  (qrest (completion--twq-requote qfun rest)))
                              (if (string-equal-ignore-case qprefix qrest)
                                  (propertize qrest 'face
                                              'completions-common-part)

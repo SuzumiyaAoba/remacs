@@ -36,11 +36,21 @@ const CASES: &str = r##"(progn
           (unless (and (= (car before-q) 5) (= (car after-q) 6))
             (error "completion cursor mapping changed: %S / %S"
                    before-q after-q))
-          (unless (eq (cdr after-q) #'comint-quote-filename)
-            (error "completion requote callback changed: %S" after-q))
+          (remacs-shell-check (funcall (cdr after-q) "foobar" t) "foobar\""
+                              "final completion preserves the closing quote")
           (unless (equal (funcall comint-unquote-function shell-quoted)
                          unquoted)
             (error "comint quote/unquote round trip changed: %S" shell-quoted)))
+        (let ((table (completion-table-with-quoting
+                      '("foobar") #'shell--unquote-argument
+                      #'shell--requote-argument)))
+          (remacs-shell-check (try-completion "\"fo\"" table) "\"foobar\""
+                              "quoted completion retains the closing quote")
+          (remacs-shell-check (car (all-completions "\"fo\"" table nil))
+                              "\"foobar\""
+                              "listed completion retains the closing quote"))
+        (remacs-shell-check (completion--twq-requote #'identity "foobar" t)
+                            "foobar" "one-argument requote callbacks remain supported")
         ;; With no configured escape quoting, preserve the existing branch.
         (let ((comint-file-name-quote-list nil))
           (remacs-shell-check (shell--unquote-argument "\"foo\\q\"") "foo\\q"
