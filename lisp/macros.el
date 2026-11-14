@@ -72,14 +72,31 @@ Possibilities: \\<query-replace-map>
   "Insert in buffer the Lisp definition of kbd macro MACRONAME.
 Optional second argument KEYS means also record its global key bindings."
   (interactive "SName of keyboard macro to insert: \nP")
-  (let ((def (symbol-function macroname)))
-    (or (or (stringp def) (vectorp def))
+  (let* ((def (symbol-function macroname))
+         (kmacro-record
+          (and (not (or (stringp def) (vectorp def)))
+               (fboundp 'kmacro-p)
+               (kmacro-p def))))
+    (or (or (stringp def) (vectorp def) kmacro-record)
         (error "Keyboard macro %s is not defined" macroname))
-    (princ "(fset '" (current-buffer))
-    (prin1 macroname (current-buffer))
-    (princ "\n   " (current-buffer))
-    (prin1 def (current-buffer))
-    (princ ")\n" (current-buffer))
+    (if kmacro-record
+        (let* ((counter (kmacro--counter def))
+               (format (kmacro--format def))
+               (definition
+                (append
+                 (list 'kmacro (key-description (kmacro--keys def)))
+                 (unless (and (equal counter 0) (equal format "%d"))
+                   (list counter format)))))
+          (princ "(defalias '" (current-buffer))
+          (prin1 macroname (current-buffer))
+          (princ " " (current-buffer))
+          (prin1 definition (current-buffer))
+          (princ ")\n" (current-buffer)))
+      (princ "(fset '" (current-buffer))
+      (prin1 macroname (current-buffer))
+      (princ "\n   " (current-buffer))
+      (prin1 def (current-buffer))
+      (princ ")\n" (current-buffer)))
     (when keys
       (let ((keys (or (where-is-internal def '(keymap))
                       (where-is-internal macroname '(keymap)))))

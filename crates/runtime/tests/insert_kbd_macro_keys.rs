@@ -33,3 +33,41 @@ fn insert_kbd_macro_with_keys_records_global_bindings() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn insert_kbd_macro_preserves_countered_kmacro_records() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut i = Interp::new();
+            let result = i
+                .eval_str(
+                    r#"(progn
+                         (require 'kmacro)
+                         (fset 'qa-audit-counter-macro (kmacro [120] 4 "%02d"))
+                         (let ((definition
+                                (with-temp-buffer
+                                  (insert-kbd-macro 'qa-audit-counter-macro)
+                                  (buffer-string))))
+                           (with-temp-buffer
+                             (insert definition)
+                             (eval-buffer))
+                           (let ((macro (symbol-function 'qa-audit-counter-macro)))
+                             (list
+                              (equal definition
+                                     (concat "(defalias 'qa-audit-counter-macro "
+                                             "(kmacro \"x\" 4 \"%02d\"))\n"))
+                              (and (kmacro-p macro) t)
+                              (kmacro--counter macro)
+                              (kmacro--format macro)))))"#,
+                )
+                .unwrap();
+            assert_eq!(
+                i.prin1_to_string(&result).to_unicode_lossy(),
+                "(t t 4 \"%02d\")"
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
