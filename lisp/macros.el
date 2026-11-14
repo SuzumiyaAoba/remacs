@@ -76,7 +76,7 @@ Optional second argument KEYS means also record its global key bindings."
     (or (or (stringp def) (vectorp def))
         (error "Keyboard macro %s is not defined" macroname))
     (princ "(fset '" (current-buffer))
-    (princ macroname (current-buffer))
+    (prin1 macroname (current-buffer))
     (princ "\n   " (current-buffer))
     (prin1 def (current-buffer))
     (princ ")\n" (current-buffer))
