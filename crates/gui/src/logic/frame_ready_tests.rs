@@ -15,6 +15,7 @@ struct Trace {
     frames: Vec<(usize, String, FrameVisibility)>,
     snapshots_after_ready: usize,
     ready: Vec<(usize, bool)>,
+    prompts: Vec<(usize, bool)>,
     warps: Vec<(usize, i128, i128, bool)>,
 }
 
@@ -34,8 +35,12 @@ fn attach(
     // Queue an existing frame, so readiness distinguishes it from a new one.
     frontend.borrow_mut().render(interp).unwrap();
     interp.set_frame_window_backend(Some(Rc::new(GuiFrameVisibilityBackend::new(
-        requests, &frontend,
+        requests.clone(),
+        &frontend,
     ))));
+    interp.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
+        requests: requests.clone(),
+    })));
     let primary = interp.selected_frame.as_ref().unwrap().borrow().id;
     let worker = thread::spawn(move || {
         let mut trace = Trace::default();
@@ -77,6 +82,17 @@ fn attach(
                         }
                     }
                 }
+                GuiRequest::Prompt {
+                    frame_id, reply, ..
+                } => {
+                    let ready = native_frames.contains(&frame_id);
+                    trace.prompts.push((frame_id, ready));
+                    let _ = reply.send(if ready {
+                        Ok(Some(0))
+                    } else {
+                        Err("GUI frame is not open".into())
+                    });
+                }
                 GuiRequest::WarpPointer {
                     frame_id,
                     x,
@@ -107,6 +123,7 @@ fn finish(
     frontend: &Rc<RefCell<ChanIo>>,
     worker: thread::JoinHandle<Trace>,
 ) -> Trace {
+    interp.set_dialog_backend(None);
     interp.set_frame_window_backend(None);
     frontend.borrow_mut().gui_requests = None;
     worker.join().unwrap()
@@ -229,4 +246,47 @@ fn creation_disconnect_and_pointer_errors_return_to_lisp() {
             usize::from(matches!(outcome, Outcome::RejectWarp))
         );
     }
+}
+
+#[test]
+fn x_popup_dialog_waits_until_a_new_frame_is_ready() {
+    thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = graphical_interp();
+            let (frontend, _grids, worker) = attach(&mut interp, Outcome::Success);
+            let result = interp.eval_str(
+                r#"(let ((frame (make-frame '((window-system . ns)
+                                              (name . "qa2236-dialog")
+                                              (width . 40) (height . 12)))))
+                     (x-popup-dialog frame '("Continue?" ("Yes" . yes) ("No" . no))))"#,
+            );
+            let trace = finish(&mut interp, &frontend, worker);
+            let value = result.unwrap_or_else(|flow| match &flow {
+                remacs_runtime::lisp::error::Flow::Signal(signal) => panic!(
+                    "x-popup-dialog failed: {} {}",
+                    interp
+                        .prin1_to_string(&signal.symbol())
+                        .to_unicode_lossy(),
+                    interp
+                        .prin1_to_string(&signal.data())
+                        .to_unicode_lossy()
+                ),
+                _ => panic!("x-popup-dialog failed: {flow:?}"),
+            });
+            assert_eq!(interp.prin1_to_string(&value), "yes");
+
+            let frame_id = trace
+                .frames
+                .iter()
+                .find(|(_, name, _)| name == "qa2236-dialog")
+                .unwrap()
+                .0;
+            assert_eq!(trace.ready, vec![(frame_id, false), (frame_id, true)]);
+            assert_eq!(trace.prompts, vec![(frame_id, true)]);
+            assert_eq!(trace.snapshots_after_ready, 0);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

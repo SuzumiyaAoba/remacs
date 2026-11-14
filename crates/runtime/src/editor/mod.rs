@@ -7987,6 +7987,11 @@ fn f_x_popup_dialog(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // the native prompt.
     if !dialog_items.is_empty() {
         let frame_id = frame.borrow().id;
+        if let Some(frame_window_backend) = i.frame_window_backend.clone() {
+            frame_window_backend
+                .prepare_frame(i, frame_id)
+                .map_err(|error| i.error(format!("Dialog failed: {error}")))?;
+        }
         let selected = backend
             .choose_with_items(frame_id, &title, None, &dialog_items, header)
             .map_err(|error| i.error(format!("Dialog failed: {error}")))?;
