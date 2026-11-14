@@ -768,8 +768,26 @@ fn file_drop_uri(path: &std::path::Path) -> String {
             .map(|directory| directory.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    let mut uri = String::from("file://");
-    for byte in absolute.to_string_lossy().bytes() {
+    file_drop_uri_from_path(&absolute.to_string_lossy())
+}
+
+fn file_drop_uri_from_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let windows_drive_path = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    let path = if windows_drive_path {
+        path.replace('\\', "/")
+    } else {
+        path.to_owned()
+    };
+    let mut uri = if windows_drive_path {
+        String::from("file:///")
+    } else {
+        String::from("file://")
+    };
+    for byte in path.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':') {
             uri.push(byte as char);
         } else {
@@ -5633,16 +5651,28 @@ mod accessibility_frame_key_tests {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod file_drop_uri_tests {
+    use super::file_drop_uri_from_path;
+    #[cfg(target_os = "macos")]
     use super::file_drop_uri;
+    #[cfg(target_os = "macos")]
     use std::path::Path;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn file_drop_uri_escapes_utf8_paths() {
         assert_eq!(
             file_drop_uri(Path::new("/tmp/remacs drop/日本.txt")),
             "file:///tmp/remacs%20drop/%E6%97%A5%E6%9C%AC.txt"
+        );
+    }
+
+    #[test]
+    fn windows_drive_path_uses_a_local_file_uri() {
+        assert_eq!(
+            file_drop_uri_from_path(r"C:\Temp\sample file.txt"),
+            "file:///C:/Temp/sample%20file.txt"
         );
     }
 }
