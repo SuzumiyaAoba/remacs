@@ -1897,6 +1897,64 @@ impl Render for EditorView {
         let explicit_tooltip = (!self.follow_tooltip_drag)
             .then(|| grid.tooltip.clone())
             .flatten();
+        let tooltip_position = grid.tooltip_position.unwrap_or_default();
+        let tooltip_pointer = tooltip_position.pointer.map_or_else(
+            || window.mouse_position(),
+            |(x, y)| {
+                point(
+                    px((x.saturating_sub(frame_left)) as f32),
+                    px((y
+                        .saturating_sub(frame_top)
+                        .saturating_sub(content_top_offset)) as f32),
+                )
+            },
+        );
+        let tooltip_left = tooltip_position
+            .left
+            .map(|left| px((left.saturating_sub(frame_left)) as f32))
+            .or_else(|| {
+                tooltip_position
+                    .right
+                    .map(|right| vp.width - px((right.saturating_sub(frame_left)) as f32))
+            })
+            .unwrap_or_else(|| tooltip_pointer.x + px(tooltip_position.dx as f32));
+        let tooltip_top = tooltip_position
+            .top
+            .map(|top| {
+                px((top
+                    .saturating_sub(frame_top)
+                    .saturating_sub(content_top_offset)) as f32)
+            })
+            .or_else(|| {
+                tooltip_position.bottom.map(|bottom| {
+                    vp.height
+                        - px((bottom
+                            .saturating_sub(frame_top)
+                            .saturating_sub(content_top_offset)) as f32)
+                })
+            })
+            .unwrap_or_else(|| tooltip_pointer.y + px(tooltip_position.dy as f32));
+        let tooltip_right = tooltip_position
+            .left
+            .is_none()
+            .then(|| {
+                tooltip_position
+                    .right
+                    .map(|right| vp.width - px((right.saturating_sub(frame_left)) as f32))
+            })
+            .flatten();
+        let tooltip_bottom = tooltip_position
+            .top
+            .is_none()
+            .then(|| {
+                tooltip_position.bottom.map(|bottom| {
+                    vp.height
+                        - px((bottom
+                            .saturating_sub(frame_top)
+                            .saturating_sub(content_top_offset)) as f32)
+                })
+            })
+            .flatten();
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
         let scroll_grid = grid.clone();
@@ -3567,14 +3625,18 @@ impl Render for EditorView {
                     .tooltip(move |_, cx| cx.new(|_| HelpTooltipView { text: text.clone() }).into())
             }))
             .when_some(explicit_tooltip, |this, text| {
-                this.child(
-                    div()
-                        .absolute()
-                        .left(border + px(12.0))
-                        .top(border + px(12.0))
-                        .bg(rgb(0x303438))
-                        .child(text),
-                )
+                let tooltip = div().absolute();
+                let tooltip = if tooltip_position.left.is_some() || tooltip_right.is_none() {
+                    tooltip.left(tooltip_left)
+                } else {
+                    tooltip.right(tooltip_right.unwrap())
+                };
+                let tooltip = if tooltip_position.top.is_some() || tooltip_bottom.is_none() {
+                    tooltip.top(tooltip_top)
+                } else {
+                    tooltip.bottom(tooltip_bottom.unwrap())
+                };
+                this.child(tooltip.bg(rgb(0x303438)).child(text))
             })
     }
 }

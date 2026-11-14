@@ -153,6 +153,7 @@ use environment::{
     f_system_users,
 };
 mod compat;
+pub(crate) use compat::clear_gui_tip;
 use compat::{
     f_bidi_find_overridden, f_bidi_resolved_levels, f_bidi_string_mark_left_to_right,
     f_byte_to_string, f_command_line, f_command_modes, f_current_bidi_paragraph_direction,

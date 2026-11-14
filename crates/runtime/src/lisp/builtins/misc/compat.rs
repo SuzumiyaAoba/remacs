@@ -146,15 +146,85 @@ pub(super) fn f_x_show_tip(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !crate::editor::frame_is_graphical(i, &frame) {
         return Err(i.error("Window system frame should be used"));
     }
+    let timeout = a
+        .get(3)
+        .filter(|value| !value.is_nil())
+        .cloned()
+        .or_else(|| {
+            i.q_soft("x-show-tooltip-timeout")
+                .and_then(|symbol| i.default_toplevel_value(symbol))
+        })
+        .unwrap_or(Value::Int(5));
+    match &timeout {
+        Value::Int(value) if *value >= 0 => {}
+        Value::Float(value) if value.is_finite() && **value >= 0.0 => {}
+        _ => return Err(i.wrong_type_mut("numberp", &timeout)),
+    }
+    let dx = match a.get(4) {
+        None | Some(Value::Nil) => 5,
+        Some(Value::Int(value)) => *value,
+        Some(value) => return Err(i.wrong_type_mut("fixnump", value)),
+    };
+    let dy = match a.get(5) {
+        None | Some(Value::Nil) => -10,
+        Some(Value::Int(value)) => *value,
+        Some(value) => return Err(i.wrong_type_mut("fixnump", value)),
+    };
+    let parameters = a.get(2).cloned().unwrap_or(Value::Nil);
+    let tooltip_position = crate::frontend::GridTooltipPosition {
+        left: tooltip_parameter(i, &parameters, "left"),
+        right: tooltip_parameter(i, &parameters, "right"),
+        top: tooltip_parameter(i, &parameters, "top"),
+        bottom: tooltip_parameter(i, &parameters, "bottom"),
+        pointer: i.gui_mouse_absolute_position,
+        dx,
+        dy,
+    };
+    clear_gui_tip(i)?;
+    let run_at_time = Value::Sym(i.q("run-at-time"));
+    let hide_tip = Value::Sym(i.q("x-hide-tip"));
+    let timer = i.apply(&run_at_time, vec![timeout, Value::Nil, hide_tip])?;
     let Value::Str(text) = &a[0] else {
         unreachable!();
     };
     i.gui_tip = Some(text.borrow().to_unicode_lossy());
+    i.gui_tip_frame_id = Some(frame.borrow().id);
+    i.gui_tip_position = Some(tooltip_position);
+    i.gui_tip_timer = Some(timer);
     Ok(Value::Nil)
 }
 
+fn tooltip_parameter(i: &mut Interp, parameters: &Value, name: &str) -> Option<i128> {
+    let key = i.intern(name);
+    parameters
+        .list_to_vec()
+        .ok()?
+        .into_iter()
+        .find_map(|entry| {
+            let Value::Cons(cell) = entry else {
+                return None;
+            };
+            let cell = cell.borrow();
+            (matches!(cell.car, Value::Sym(symbol) if symbol == key))
+                .then(|| cell.cdr.int())
+                .flatten()
+        })
+}
+
+pub(crate) fn clear_gui_tip(i: &mut Interp) -> EvalResult {
+    if let Some(timer) = i.gui_tip_timer.clone() {
+        let cancel_timer = Value::Sym(i.q("cancel-timer"));
+        i.apply(&cancel_timer, vec![timer])?;
+    }
+    let was_visible = i.gui_tip.take().is_some();
+    i.gui_tip_frame_id = None;
+    i.gui_tip_position = None;
+    i.gui_tip_timer = None;
+    Ok(Value::from_bool(was_visible))
+}
+
 pub(super) fn f_x_hide_tip(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(i.gui_tip.take().is_some()))
+    clear_gui_tip(i)
 }
 
 /// `gnutls-available-p' — GNU returns the GnuTLS capability list.

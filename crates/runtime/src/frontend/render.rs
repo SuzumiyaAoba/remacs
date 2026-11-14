@@ -443,6 +443,23 @@ pub struct GridHelpEcho {
     pub text: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct GridTooltipPosition {
+    /// Absolute screen coordinate of the tooltip's left edge.
+    pub left: Option<i128>,
+    /// Absolute screen coordinate of the tooltip's right edge.
+    pub right: Option<i128>,
+    /// Absolute screen coordinate of the tooltip's top edge.
+    pub top: Option<i128>,
+    /// Absolute screen coordinate of the tooltip's bottom edge.
+    pub bottom: Option<i128>,
+    /// Pointer location captured when `x-show-tip' was called.
+    pub pointer: Option<(i128, i128)>,
+    /// Pointer-relative offsets used on axes without a position parameter.
+    pub dx: i128,
+    pub dy: i128,
+}
+
 fn push_help_echo(regions: &mut Vec<GridHelpEcho>, next: GridHelpEcho) {
     if let Some(previous) = regions.last_mut()
         && previous.row == next.row
@@ -828,6 +845,7 @@ pub struct Grid {
     /// Pointer overrides for formatted mode/header/tab-line cells.
     pub pointer_regions: Vec<GridPointerRegion>,
     pub tooltip: Option<String>,
+    pub tooltip_position: Option<GridTooltipPosition>,
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
     pub bottom_dividers: Vec<GridBottomDivider>,
@@ -1143,6 +1161,7 @@ impl Grid {
             help_echoes: Vec::new(),
             pointer_regions: Vec::new(),
             tooltip: None,
+            tooltip_position: None,
             popup_menu_items: Vec::new(),
             scroll_bars: Vec::new(),
             bottom_dividers: Vec::new(),
@@ -10145,6 +10164,7 @@ fn render_grid_internal(
 ) -> Grid {
     let max_image_size = image_size_limit(i);
     let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
+    let frame_id = frame.as_ref().map(|frame| frame.borrow().id);
     let frame_resize_pixelwise = i
         .q_soft("frame-resize-pixelwise")
         .is_some_and(|symbol| i.symbol_value(symbol).truthy());
@@ -10175,7 +10195,10 @@ fn render_grid_internal(
     let mut tab_bar_items = Vec::new();
     let mut help_echoes = Vec::new();
     let mut pointer_regions = Vec::new();
-    let tooltip = i.gui_tip.clone();
+    let tooltip = (i.gui_tip_frame_id == frame_id)
+        .then(|| i.gui_tip.clone())
+        .flatten();
+    let tooltip_position = tooltip.as_ref().and(i.gui_tip_position);
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
     let mut bottom_dividers = Vec::new();
@@ -10223,6 +10246,7 @@ fn render_grid_internal(
                 help_echoes,
                 pointer_regions,
                 tooltip,
+                tooltip_position,
                 popup_menu_items,
                 scroll_bars,
                 bottom_dividers,
@@ -13130,6 +13154,7 @@ fn render_grid_internal(
         help_echoes,
         pointer_regions,
         tooltip,
+        tooltip_position,
         popup_menu_items,
         scroll_bars,
         bottom_dividers,

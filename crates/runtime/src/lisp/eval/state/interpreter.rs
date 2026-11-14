@@ -53,6 +53,12 @@ pub struct Interp {
     pub echo_message_props: Vec<(usize, usize, Vec<Value>)>,
     /// Active graphical tooltip requested by `x-show-tip'.
     pub gui_tip: Option<String>,
+    /// Native frame receiving `x-show-tip'.
+    pub gui_tip_frame_id: Option<usize>,
+    /// Position arguments for the active `x-show-tip'.
+    pub gui_tip_position: Option<crate::frontend::GridTooltipPosition>,
+    /// Timer that hides the active `x-show-tip'.
+    pub gui_tip_timer: Option<Value>,
     /// Popup menu requested by `x-popup-menu' for the GUI frontend.
     pub gui_popup_menu: Option<Rc<crate::frontend::PopupMenu>>,
     pub(crate) native_menus: Vec<crate::frontend::GridMenu>,

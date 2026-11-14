@@ -693,6 +693,7 @@ pub use render::{
     GridBidiDirection, GridBidiDisabledRange, GridBidiParagraphRange, GridComposition,
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
     GridPointerRegion,
+    GridTooltipPosition,
     GridModeLine, GridHeaderLine, GridTabLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,

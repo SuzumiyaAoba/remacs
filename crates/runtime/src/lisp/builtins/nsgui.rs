@@ -1313,7 +1313,7 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         )
         .map_err(|error| i.error(format!("Drag and drop failed: {error}")))?;
     if follow_tooltip {
-        i.gui_tip = None;
+        crate::lisp::builtins::misc::clear_gui_tip(i)?;
     }
     let result = match result {
         None => Value::Nil,
