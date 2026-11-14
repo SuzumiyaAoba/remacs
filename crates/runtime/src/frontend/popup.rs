@@ -665,6 +665,9 @@ pub(crate) fn show_popup_menu(
     }) {
         return Ok(Value::Nil);
     }
+    let run_hooks = Value::Sym(i.intern("run-hooks"));
+    let pre_popup_menu_hook = Value::Sym(i.intern("x-pre-popup-menu-hook"));
+    i.apply(&run_hooks, vec![pre_popup_menu_hook])?;
     static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
     let menu = Rc::new(PopupMenu {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
