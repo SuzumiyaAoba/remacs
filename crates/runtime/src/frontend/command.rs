@@ -589,7 +589,9 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 urls,
                 action,
             } => {
-                if let Err(flow) = dispatch_drop(i, position, &urls, &action) {
+                if let Err(flow) =
+                    dispatch_drop(i, position, &urls, &action, &mut keys, &mut arg_mode)
+                {
                     report_flow(i, flow);
                 }
             }
@@ -1614,6 +1616,42 @@ fn dispatch_frontend_command_value(
     arg_mode: &mut bool,
     events: &[Value],
 ) {
+    let command_to_execute = command.clone();
+    let events_to_execute = events.to_vec();
+    let command_args = args.iter().copied().map(Value::Int).collect();
+    if let Err(flow) = dispatch_frontend_command_action(
+        i,
+        command,
+        command_args,
+        keys,
+        arg_mode,
+        events,
+        true,
+        move |i| {
+            if events_to_execute.is_empty() {
+                i.command_execute(&command_to_execute)
+            } else {
+                i.command_execute_with_keys(
+                    &command_to_execute,
+                    &Value::vector(events_to_execute),
+                )
+            }
+        },
+    ) {
+        report_flow(i, flow);
+    }
+}
+
+fn dispatch_frontend_command_action(
+    i: &mut Interp,
+    command: Value,
+    command_args: Vec<Value>,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+    events: &[Value],
+    report_errors: bool,
+    execute: impl FnOnce(&mut Interp) -> Result<Value, Flow>,
+) -> Result<(), Flow> {
     keys.clear();
     *arg_mode = false;
     i.gui_popup_menu = None;
@@ -1634,34 +1672,33 @@ fn dispatch_frontend_command_value(
         }
     }
     crate::editor::record_recent_command(i, command.clone());
-    let saved_args = std::mem::replace(
-        &mut i.command_args,
-        args.iter().copied().map(Value::Int).collect(),
-    );
+    let saved_args = std::mem::replace(&mut i.command_args, command_args);
     let this_command = i.q("this-command");
     let previous = i.symbol_value(this_command);
     let last_command = i.q("last-command");
-    let _ = i.set_symbol(last_command, previous);
-    let _ = i.set_symbol(this_command, command.clone());
+    i.store_internal_value(last_command, previous);
+    i.store_internal_value(this_command, command.clone());
     let last_event = i.q("last-command-event");
-    let _ = i.set_symbol(last_event, events.last().unwrap_or(&command).clone());
+    i.store_internal_value(last_event, events.last().unwrap_or(&command).clone());
     let prefix = i.q("prefix-arg");
     let current_prefix = i.q("current-prefix-arg");
     let prefix_value = i.symbol_value(prefix);
-    let _ = i.set_symbol(current_prefix, prefix_value);
-    let _ = i.set_symbol(prefix, Value::Nil);
+    i.store_internal_value(current_prefix, prefix_value);
+    i.store_internal_value(prefix, Value::Nil);
 
     let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
-    let result = if events.is_empty() {
-        i.command_execute(&command)
-    } else {
-        i.command_execute_with_keys(&command, &Value::vector(events.to_vec()))
+    let flow = match execute(i) {
+        Ok(_) => {
+            post_command_undo_boundary(i);
+            None
+        }
+        Err(flow) if report_errors => {
+            report_flow(i, flow);
+            None
+        }
+        Err(flow) => Some(flow),
     };
-    match result {
-        Ok(_) => post_command_undo_boundary(i),
-        Err(flow) => report_flow(i, flow),
-    }
     let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
     i.command_key_capture_active = was_capturing;
     i.kbd_macro_mark = i.kbd_macro_events.len();
@@ -1669,6 +1706,11 @@ fn dispatch_frontend_command_value(
     i.command_key_events.clear();
     i.command_raw_key_events.clear();
     i.command_key_start = 0;
+    if let Some(flow) = flow {
+        Err(flow)
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn dispatch_key<T: KeyIo>(
@@ -2114,6 +2156,8 @@ fn dispatch_drop(
     position: Option<MousePosition>,
     urls: &[String],
     action: &str,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
 ) -> Result<(), crate::lisp::Flow> {
     if urls.is_empty() {
         return Ok(());
@@ -2133,31 +2177,44 @@ fn dispatch_drop(
         })
         .unwrap_or_else(|| frame.borrow().selected.clone());
     let buffer_id = window.borrow().buffer;
-    if let Some(position) = position.filter(|position| position.buffer_id == buffer_id)
-        && let Some(buffer) = i.buffers.get(buffer_id)
-    {
-        let point = {
-            let mut buffer = buffer.borrow_mut();
-            buffer.set_point(position.buffer_position);
-            buffer.point()
-        };
-        let mut window = window.borrow_mut();
-        window.point = point;
-        crate::editor::set_window_old_point(i, &mut window, point);
-    }
-
+    let dropped_position = position.filter(|position| position.buffer_id == buffer_id);
     let require = Value::Sym(i.q("require"));
     let feature = Value::Sym(i.q("dnd"));
-    i.apply(&require, vec![feature])?;
     let handler = Value::Sym(i.q("dnd-handle-multiple-urls"));
     let urls = Value::list(urls.iter().cloned().map(Value::string).collect());
     let action = Value::Sym(i.intern(action));
-    i.apply(
-        &handler,
-        vec![Value::Window(window.clone()), urls, action],
-    )?;
-    let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
-    Ok(())
+    let command_name = if cfg!(target_os = "macos") {
+        "ns-drag-n-drop"
+    } else {
+        "dnd-handle-multiple-urls"
+    };
+    let command = Value::Sym(i.intern(command_name));
+    let events = [Value::Sym(i.intern("drag-n-drop"))];
+    dispatch_frontend_command_action(
+        i,
+        command,
+        Vec::new(),
+        keys,
+        arg_mode,
+        &events,
+        false,
+        move |i| {
+            i.apply(&require, vec![feature])?;
+            if let Some(position) = dropped_position
+                && let Some(buffer) = i.buffers.get(buffer_id)
+            {
+                let point = {
+                    let mut buffer = buffer.borrow_mut();
+                    buffer.set_point(position.buffer_position);
+                    buffer.point()
+                };
+                let mut window = window.borrow_mut();
+                window.point = point;
+                crate::editor::set_window_old_point(i, &mut window, point);
+            }
+            i.apply(&handler, vec![Value::Window(window), urls, action])
+        },
+    )
 }
 
 fn dispatch_color_drop(
@@ -3225,7 +3282,9 @@ fn minibuf_loop<T: KeyIo>(
                 urls,
                 action,
             } => {
-                if let Err(flow) = dispatch_drop(i, position, &urls, &action) {
+                if let Err(flow) =
+                    dispatch_drop(i, position, &urls, &action, &mut keys, &mut arg_mode)
+                {
                     return Err(flow);
                 }
             }
