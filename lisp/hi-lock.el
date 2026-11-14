@@ -9,37 +9,63 @@
 
 ;;; Code:
 
-(defvar hi-lock-file-patterns-range 10000
+(defgroup hi-lock nil
+  "Interactively add and remove font-lock patterns for highlighting text."
+  :link '(custom-manual "(emacs)Highlight Interactively")
+  :group 'font-lock)
+
+(defcustom hi-lock-file-patterns-range 10000
   "Limit of search in a buffer for hi-lock patterns.
 When a file is visited and hi-lock mode is on, patterns starting
 up to this limit are added to font-lock's patterns.  See documentation
-of functions `hi-lock-mode' and `hi-lock-find-patterns'.")
+of functions `hi-lock-mode' and `hi-lock-find-patterns'."
+  :type 'natnum
+  :group 'hi-lock)
 
-(defvar hi-lock-highlight-range 2000000
+(defcustom hi-lock-highlight-range 2000000
   "Size of area highlighted by hi-lock when font-lock not active.
 Font-lock is not active in buffers that do their own highlighting,
 such as the buffer created by `list-colors-display'.  In those buffers
 hi-lock patterns will only be applied over a range of
 `hi-lock-highlight-range' characters.  If font-lock is active then
-highlighting will be applied throughout the buffer.")
+highlighting will be applied throughout the buffer."
+  :type 'natnum
+  :group 'hi-lock)
 
-(defvar hi-lock-exclude-modes
+(defcustom hi-lock-exclude-modes
   '(rmail-mode mime/viewer-mode gnus-article-mode term-mode)
   "List of major modes in which hi-lock will not run.
 For security reasons since font lock patterns can specify function
-calls.")
+calls."
+  :type '(repeat symbol)
+  :group 'hi-lock)
 
-(defvar hi-lock-file-patterns-policy 'ask
+(defcustom hi-lock-file-patterns-policy 'ask
   "Specify when hi-lock should use patterns found in file.
 If `ask', prompt when patterns found in buffer; if bound to a function,
 use patterns when function returns t (function is called with patterns
 as first argument); if `always', use file patterns without prompt;
-if nil or `never' or anything else, don't use file patterns.")
+if nil or `never' or anything else, don't use file patterns."
+  :type '(choice (const :tag "Do not use file patterns" never)
+                 (const :tag "Always use file patterns" always)
+                 (const :tag "Ask about file patterns" ask)
+                 (function :tag "Function to check file patterns"))
+  :group 'hi-lock
+  ;; It can have a function value.
+  :risky t
+  :version "22.1")
 
-(defvar hi-lock-auto-select-face nil
+(defcustom hi-lock-auto-select-face nil
   "When nil, highlighting commands prompt for the face to use.
 When non-nil, highlighting command determine the faces to use
-by cycling through the faces in `hi-lock-face-defaults'.")
+by cycling through the faces in `hi-lock-face-defaults'."
+  :type 'boolean
+  :version "24.4")
+
+(defgroup hi-lock-faces nil
+  "Faces for hi-lock."
+  :group 'hi-lock
+  :group 'faces)
 
 (defface hi-yellow
   '((((min-colors 88) (background light))
