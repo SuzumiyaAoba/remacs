@@ -3932,7 +3932,8 @@ fn render_prepared_tab_bar(
         if let Some(screen_row) = screen.get_mut(screen_row) {
             place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
         }
-        if item.command.is_some() || item.command_id.is_some() {
+        let selectable_tab = !prepared.close && prepared.tab_index.is_some();
+        if item.command.is_some() || item.command_id.is_some() || selectable_tab {
             let selection_width = if tab_close_width > 0 {
                 button_width.saturating_sub(tab_close_width)
             } else {
@@ -3944,9 +3945,17 @@ fn render_prepared_tab_bar(
                     byte_range: None,
                     left: column,
                     width: selection_width,
-                    command: item.command.clone().unwrap_or_default(),
+                    command: item.command.clone().unwrap_or_else(|| {
+                        if selectable_tab {
+                            "tab-bar-select-tab".to_owned()
+                        } else {
+                            String::new()
+                        }
+                    }),
                     command_id: item.command_id.clone(),
-                    argument: prepared.argument,
+                    argument: prepared.argument.or_else(|| {
+                        selectable_tab.then_some(prepared.tab_index).flatten()
+                    }),
                 });
             }
         }

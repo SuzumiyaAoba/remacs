@@ -164,6 +164,72 @@ fn middle_click_on_tab_closes_that_tab() {
 }
 
 #[test]
+fn dragging_a_tab_to_another_tab_reorders_it() {
+    let mut app = gpui::TestAppContext::single_with_native_text_system();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(3);
+            let mut grid = Grid::blank(32, 5);
+            grid.rows = vec![" ".repeat(32); 5];
+            grid.rows[0] = "First     Second     Third   ".into();
+            grid.tab_bar_items = [
+                (0, 5, 1),
+                (10, 6, 2),
+                (21, 5, 3),
+            ]
+            .into_iter()
+            .map(|(left, width, tab)| GridTabBarItem {
+                row: 0,
+                left,
+                width,
+                byte_range: None,
+                command: "tab-bar-select-tab".into(),
+                command_id: None,
+                argument: Some(tab),
+            })
+            .collect();
+            view.grid = grid;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    let positions = handle
+        .update(&mut app, |view, _, _| {
+            view.tab_hit_regions
+                .borrow()
+                .iter()
+                .map(|item| item.bounds.center() + point(px(3.0), px(3.0)))
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(positions.len(), 3, "cell ranges must create tab hit regions");
+
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    visual.simulate_mouse_down(positions[0], MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(positions[2], Some(MouseButton::Left), Modifiers::none());
+    visual.simulate_mouse_up(positions[2], MouseButton::Left, Modifiers::none());
+
+    let commands: Vec<_> = rx
+        .try_iter()
+        .filter_map(|event| match event {
+            GuiEvent::CommandArgs { command, args } => Some((command, args)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        commands,
+        vec![
+            ("tab-bar-select-tab".into(), vec![1]),
+            ("tab-bar-move-tab-to".into(), vec![3, 1]),
+        ]
+    );
+}
+
+#[test]
 fn wheel_on_tab_dispatches_tab_navigation_and_shift_moves_tabs() {
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)

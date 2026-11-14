@@ -521,6 +521,12 @@ struct ScrollBarDrag {
     dragged: bool,
 }
 
+#[derive(Clone, Copy)]
+struct TabBarDrag {
+    from_tab: i128,
+    dragged: bool,
+}
+
 struct HelpTooltipView {
     text: String,
 }
@@ -810,6 +816,48 @@ fn grid_text_range_bounds(
     })
 }
 
+fn grid_cell_column_byte_index(text: &str, column: usize) -> usize {
+    let mut current_column = 0usize;
+    for (byte_index, character) in text.char_indices() {
+        if current_column >= column {
+            return byte_index;
+        }
+        let width = if character == '\t' {
+            8 - current_column % 8
+        } else {
+            gui_display_char_width(character)
+        };
+        current_column = current_column.saturating_add(width);
+        if current_column >= column {
+            return byte_index + character.len_utf8();
+        }
+    }
+    text.len()
+}
+
+fn grid_cell_range_bounds(
+    grid: &Grid,
+    lines: &[ShapedLine],
+    row: usize,
+    left_column: usize,
+    width: usize,
+    line_height: Pixels,
+) -> Option<Bounds<Pixels>> {
+    let text = grid.rows.get(row)?;
+    let line = lines.get(row)?;
+    let start = grid_cell_column_byte_index(text, left_column);
+    let end = grid_cell_column_byte_index(text, left_column.saturating_add(width));
+    let start_x = grid_line_x(grid, row, line, start);
+    let end_x = grid_line_x(grid, row, line, end);
+    let left = start_x.min(end_x);
+    let right = start_x.max(end_x);
+    let height = grid_row_height(grid, row, line_height);
+    (right > left && height > px(0.0)).then(|| Bounds {
+        origin: point(left, grid_row_top(grid, row, line_height)),
+        size: size(right - left, height),
+    })
+}
+
 fn tool_bar_hit_regions(
     grid: &Grid,
     lines: &[ShapedLine],
@@ -847,12 +895,20 @@ fn tab_bar_hit_regions(
         .iter()
         .filter_map(|item| {
             Some(CommandHitRegion {
-                bounds: grid_text_range_bounds(
-                    grid,
-                    lines,
-                    item.row,
-                    item.byte_range?,
-                    line_height,
+                bounds: item.byte_range.map_or_else(
+                    || {
+                        grid_cell_range_bounds(
+                            grid,
+                            lines,
+                            item.row,
+                            item.left,
+                            item.width,
+                            line_height,
+                        )
+                    },
+                    |range| {
+                        grid_text_range_bounds(grid, lines, item.row, range, line_height)
+                    },
                 )?,
                 row: item.row,
                 command: item.command.clone(),
@@ -1035,6 +1091,7 @@ pub(super) struct EditorView {
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
     scroll_bar_drag: Option<ScrollBarDrag>,
+    tab_bar_drag: Option<TabBarDrag>,
     follow_tooltip_drag: bool,
     mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
     mouse_position_poll_started: bool,
@@ -1137,6 +1194,7 @@ impl EditorView {
             runtime_frame_size: None,
             runtime_frame_position: None,
             scroll_bar_drag: None,
+            tab_bar_drag: None,
             follow_tooltip_drag: false,
             mouse_down_position: None,
             mouse_position_poll_started: false,
@@ -1964,6 +2022,7 @@ impl Render for EditorView {
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     this.mouse_down_position = None;
                     this.pressed_button = None;
+                    this.tab_bar_drag = None;
                     this.consumed_mouse_buttons.remove(&MouseButton::Left);
                     let Some(point) =
                         frame_content_point(event.position, window.viewport_size(), border)
@@ -1990,6 +2049,17 @@ impl Render for EditorView {
                         return;
                     }
                     if let Some(button) = this.button_at(point) {
+                        this.tab_bar_drag = match &button.action {
+                            ButtonAction::Tab {
+                                command,
+                                command_id: None,
+                                argument: Some(from_tab),
+                            } if command == "tab-bar-select-tab" => Some(TabBarDrag {
+                                from_tab: *from_tab,
+                                dragged: false,
+                            }),
+                            _ => None,
+                        };
                         this.consumed_mouse_buttons.insert(MouseButton::Left);
                         this.pressed_button = Some(button);
                         window.prevent_default();
@@ -2084,6 +2154,18 @@ impl Render for EditorView {
                     if !event.dragging() {
                         return;
                     }
+                    if event.pressed_button == Some(MouseButton::Left)
+                        && this.consumed_mouse_buttons.contains(&MouseButton::Left)
+                        && let Some(drag) = this.tab_bar_drag
+                    {
+                        this.tab_bar_drag = Some(TabBarDrag {
+                            dragged: true,
+                            ..drag
+                        });
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
                     if event
                         .pressed_button
                         .is_some_and(|button| this.consumed_mouse_buttons.contains(&button))
@@ -2120,10 +2202,34 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
-                        if let Some(pressed) = this.pressed_button.take() {
-                            let current =
-                                frame_content_point(event.position, window.viewport_size(), border)
-                                    .and_then(|point| this.button_at(point));
+                        let pressed = this.pressed_button.take();
+                        let current =
+                            frame_content_point(event.position, window.viewport_size(), border)
+                                .and_then(|point| this.button_at(point));
+                        if let Some(drag) = this.tab_bar_drag.take().filter(|drag| drag.dragged) {
+                            let _ = left_mouse_up_tx.send(GuiEvent::CommandArgs {
+                                command: "tab-bar-select-tab".to_owned(),
+                                args: vec![drag.from_tab],
+                            });
+                            let target_tab = current.as_ref().and_then(|button| {
+                                match &button.action {
+                                    ButtonAction::Tab {
+                                        command,
+                                        command_id: None,
+                                        argument: Some(tab),
+                                    } if command == "tab-bar-select-tab" => Some(*tab),
+                                    _ => None,
+                                }
+                            });
+                            if let Some(to_tab) = target_tab
+                                && to_tab != drag.from_tab
+                            {
+                                let _ = left_mouse_up_tx.send(GuiEvent::CommandArgs {
+                                    command: "tab-bar-move-tab-to".to_owned(),
+                                    args: vec![to_tab, drag.from_tab],
+                                });
+                            }
+                        } else if let Some(pressed) = pressed {
                             if current.as_ref() == Some(&pressed) {
                                 let _ = left_mouse_up_tx.send(pressed.into_event());
                             } else if let Some(event) = pressed.cancel_event() {
@@ -2217,6 +2323,7 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(|this, _event: &MouseUpEvent, window, cx| {
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
+                        this.tab_bar_drag = None;
                         if let Some(event) = this
                             .pressed_button
                             .take()
