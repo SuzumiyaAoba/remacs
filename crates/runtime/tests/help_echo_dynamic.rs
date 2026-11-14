@@ -259,3 +259,46 @@ fn help_echo_functions_and_expressions_resolve_at_the_hovered_position() {
         .join()
         .expect("dynamic help-echo test thread panicked");
 }
+
+#[test]
+fn hovered_help_uses_tooltip_delay_before_showing_a_tip() {
+    std::thread::Builder::new()
+        .name("help-echo-tooltip-delay".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut i = Interp::new();
+            let buffer_id = i.current_buffer;
+            eval(&mut i, "(require 'tooltip)");
+            eval(
+                &mut i,
+                r#"(progn
+                  (message nil)
+                  (setq tooltip-mode t
+                        tooltip-delay 5
+                        tooltip-short-delay 0.1
+                        tooltip-timeout-id nil
+                        tooltip-hide-time nil
+                        show-help-function #'tooltip-show-help
+                        qa-tooltip-delay-captured nil)
+                  (fset 'run-with-timer
+                        (lambda (delay _repeat _function &rest _args)
+                          (setq qa-tooltip-delay-captured delay)
+                          'qa-tooltip-fake-timer)))"#,
+            );
+            eval(
+                &mut i,
+                "(progn (erase-buffer) (insert \"hover\")\
+                       (put-text-property 1 6 'help-echo \"Delayed help\"))",
+            );
+            assert_help_echo(&mut i, buffer_id, "Delayed help");
+            assert_eq!(
+                i.eval_str("qa-tooltip-delay-captured")
+                    .unwrap()
+                    .int(),
+                Some(5)
+            );
+        })
+        .unwrap()
+        .join()
+        .expect("tooltip-delay test thread panicked");
+}
