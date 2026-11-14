@@ -20,7 +20,13 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{
+            Com::*,
+            LibraryLoader::*,
+            Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+            Ole::*,
+            SystemServices::*,
+        },
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -49,6 +55,7 @@ pub struct WindowsWindowState {
     pub keyboard_events: crate::platform::windows_key_names::KeyEventState,
     pub system_key_handled: bool,
     pub hovered: bool,
+    pub external_text_dragged: bool,
 
     pub renderer: DirectXRenderer,
 
@@ -117,6 +124,7 @@ impl WindowsWindowState {
         let last_reported_capslock = None;
         let system_key_handled = false;
         let hovered = false;
+        let external_text_dragged = false;
         let click_state = ClickState::new();
         let nc_button_pressed = None;
         let fullscreen = None;
@@ -140,6 +148,7 @@ impl WindowsWindowState {
             keyboard_events: Default::default(),
             system_key_handled,
             hovered,
+            external_text_dragged,
             renderer,
             click_state,
             current_cursor,
@@ -968,6 +977,47 @@ impl PlatformWindow for WindowsWindow {
     }
 }
 
+fn external_text_from_data_object(idata_obj: &IDataObject) -> Option<String> {
+    let config = FORMATETC {
+        cfFormat: CF_UNICODETEXT.0,
+        ptd: std::ptr::null_mut() as _,
+        dwAspect: DVASPECT_CONTENT.0,
+        lindex: -1,
+        tymed: TYMED_HGLOBAL.0 as _,
+    };
+    if unsafe { idata_obj.QueryGetData(&config as _) } != S_OK {
+        return None;
+    }
+    let mut idata = unsafe { idata_obj.GetData(&config as _) }.log_err()?;
+    let hglobal = unsafe { idata.u.hGlobal };
+    if hglobal.is_invalid() {
+        unsafe { ReleaseStgMedium(&mut idata) };
+        return None;
+    }
+    let size = unsafe { GlobalSize(hglobal) };
+    let data = unsafe { GlobalLock(hglobal) };
+    let text = if data.is_null() {
+        None
+    } else {
+        let wide = unsafe {
+            std::slice::from_raw_parts(
+                data.cast::<u16>(),
+                size / std::mem::size_of::<u16>(),
+            )
+        };
+        let text = decode_external_text(wide);
+        unsafe { GlobalUnlock(hglobal).ok() };
+        Some(text)
+    };
+    unsafe { ReleaseStgMedium(&mut idata) };
+    text
+}
+
+fn decode_external_text(wide: &[u16]) -> String {
+    let end = wide.iter().position(|unit| *unit == 0).unwrap_or(wide.len());
+    String::from_utf16_lossy(&wide[..end])
+}
+
 #[implement(IDropTarget)]
 struct WindowsDragDropHandler(pub Rc<WindowsWindowInner>);
 
@@ -993,17 +1043,27 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     ) -> windows::core::Result<()> {
         unsafe {
             let idata_obj = pdataobj.ok()?;
-            let config = FORMATETC {
+            let file_config = FORMATETC {
                 cfFormat: CF_HDROP.0,
                 ptd: std::ptr::null_mut() as _,
                 dwAspect: DVASPECT_CONTENT.0,
                 lindex: -1,
                 tymed: TYMED_HGLOBAL.0 as _,
             };
-            let cursor_position = POINT { x: pt.x, y: pt.y };
-            if idata_obj.QueryGetData(&config as _) == S_OK {
+            let screen_position = POINT { x: pt.x, y: pt.y };
+            let mut cursor_position = screen_position;
+            ScreenToClient(self.0.hwnd, &mut cursor_position)
+                .ok()
+                .log_err();
+            let scale_factor = self.0.state.borrow().scale_factor;
+            let position = logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            );
+            if idata_obj.QueryGetData(&file_config as _) == S_OK {
                 *pdweffect = DROPEFFECT_COPY;
-                let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
+                let Some(mut idata) = idata_obj.GetData(&file_config as _).log_err() else {
                     return Ok(());
                 };
                 if idata.u.hGlobal.is_invalid() {
@@ -1017,26 +1077,24 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                     }
                 });
                 ReleaseStgMedium(&mut idata);
-                let mut cursor_position = cursor_position;
-                ScreenToClient(self.0.hwnd, &mut cursor_position)
-                    .ok()
-                    .log_err();
-                let scale_factor = self.0.state.borrow().scale_factor;
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                    position: logical_point(
-                        cursor_position.x as f32,
-                        cursor_position.y as f32,
-                        scale_factor,
-                    ),
+                    position,
                     paths: ExternalPaths(paths),
                 });
+                self.0.state.borrow_mut().external_text_dragged = false;
+                self.handle_drag_drop(input);
+            } else if let Some(text) = external_text_from_data_object(&idata_obj) {
+                *pdweffect = DROPEFFECT_COPY;
+                let input = PlatformInput::TextDrop(TextDropEvent::Entered { position, text });
+                self.0.state.borrow_mut().external_text_dragged = true;
                 self.handle_drag_drop(input);
             } else {
                 *pdweffect = DROPEFFECT_NONE;
+                self.0.state.borrow_mut().external_text_dragged = false;
             }
             self.0
                 .drop_target_helper
-                .DragEnter(self.0.hwnd, idata_obj, &cursor_position, *pdweffect)
+                .DragEnter(self.0.hwnd, idata_obj, &screen_position, *pdweffect)
                 .log_err();
         }
         Ok(())
@@ -1060,13 +1118,17 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .log_err();
         }
         let scale_factor = self.0.state.borrow().scale_factor;
-        let input = PlatformInput::FileDrop(FileDropEvent::Pending {
-            position: logical_point(
-                cursor_position.x as f32,
-                cursor_position.y as f32,
-                scale_factor,
-            ),
-        });
+        let position = logical_point(
+            cursor_position.x as f32,
+            cursor_position.y as f32,
+            scale_factor,
+        );
+        let text_drop = self.0.state.borrow().external_text_dragged;
+        let input = if text_drop {
+            PlatformInput::TextDrop(TextDropEvent::Pending { position })
+        } else {
+            PlatformInput::FileDrop(FileDropEvent::Pending { position })
+        };
         self.handle_drag_drop(input);
 
         Ok(())
@@ -1076,7 +1138,15 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         unsafe {
             self.0.drop_target_helper.DragLeave().log_err();
         }
-        let input = PlatformInput::FileDrop(FileDropEvent::Exited);
+        let text_drop = std::mem::replace(
+            &mut self.0.state.borrow_mut().external_text_dragged,
+            false,
+        );
+        let input = if text_drop {
+            PlatformInput::TextDrop(TextDropEvent::Exited)
+        } else {
+            PlatformInput::FileDrop(FileDropEvent::Exited)
+        };
         self.handle_drag_drop(input);
 
         Ok(())
@@ -1102,13 +1172,20 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .log_err();
         }
         let scale_factor = self.0.state.borrow().scale_factor;
-        let input = PlatformInput::FileDrop(FileDropEvent::Submit {
-            position: logical_point(
-                cursor_position.x as f32,
-                cursor_position.y as f32,
-                scale_factor,
-            ),
-        });
+        let position = logical_point(
+            cursor_position.x as f32,
+            cursor_position.y as f32,
+            scale_factor,
+        );
+        let text_drop = std::mem::replace(
+            &mut self.0.state.borrow_mut().external_text_dragged,
+            false,
+        );
+        let input = if text_drop {
+            PlatformInput::TextDrop(TextDropEvent::Submit { position })
+        } else {
+            PlatformInput::FileDrop(FileDropEvent::Submit { position })
+        };
         self.handle_drag_drop(input);
 
         Ok(())
@@ -1466,7 +1543,7 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
 
 #[cfg(test)]
 mod tests {
-    use super::ClickState;
+    use super::{ClickState, decode_external_text};
     use crate::{DevicePixels, MouseButton, point};
     use std::time::Duration;
 
@@ -1515,5 +1592,18 @@ mod tests {
             state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
             1
         );
+    }
+
+    #[test]
+    fn external_unicode_text_stops_at_the_first_nul() {
+        assert_eq!(
+            decode_external_text(&[b'h' as u16, b'i' as u16, 0, b'!' as u16]),
+            "hi"
+        );
+    }
+
+    #[test]
+    fn external_unicode_text_preserves_surrogate_pairs() {
+        assert_eq!(decode_external_text(&[0xd83d, 0xde00, 0]), "😀");
     }
 }

@@ -78,6 +78,17 @@ impl<T: ReceiveData> DataOffer<T> {
         self.mime_types.iter().any(|t| t == mime_type)
     }
 
+    pub(crate) fn preferred_drop_mime_type(&self) -> Option<(&'static str, bool)> {
+        if self.has_mime_type(FILE_LIST_MIME_TYPE) {
+            return Some((FILE_LIST_MIME_TYPE, false));
+        }
+        TEXT_MIME_TYPES
+            .iter()
+            .copied()
+            .find(|mime_type| self.has_mime_type(mime_type))
+            .map(|mime_type| (mime_type, true))
+    }
+
     fn read_bytes(&self, connection: &Connection, mime_type: &str) -> Option<Vec<u8>> {
         let pipe = Pipe::new().unwrap();
         self.inner.receive_data(mime_type.to_string(), unsafe {
@@ -134,6 +145,54 @@ impl<T: ReceiveData> DataOffer<T> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod drop_mime_tests {
+    use super::{DataOffer, FILE_LIST_MIME_TYPE, ReceiveData};
+    use std::os::fd::BorrowedFd;
+
+    struct MockOffer;
+
+    impl ReceiveData for MockOffer {
+        fn receive_data(&self, _mime_type: String, _fd: BorrowedFd<'_>) {}
+    }
+
+    fn offer_with_mime_types(mime_types: &[&str]) -> DataOffer<MockOffer> {
+        let mut offer = DataOffer::new(MockOffer);
+        for mime_type in mime_types {
+            offer.add_mime_type((*mime_type).to_owned());
+        }
+        offer
+    }
+
+    #[test]
+    fn drop_offer_prefers_files_when_uri_list_and_text_are_offered() {
+        let offer = offer_with_mime_types(&[
+            "text/plain;charset=utf-8",
+            FILE_LIST_MIME_TYPE,
+            "UTF8_STRING",
+        ]);
+
+        assert_eq!(
+            offer.preferred_drop_mime_type(),
+            Some((FILE_LIST_MIME_TYPE, false))
+        );
+    }
+
+    #[test]
+    fn drop_offer_accepts_utf8_text_without_uri_list() {
+        let offer = offer_with_mime_types(&["text/plain", "UTF8_STRING"]);
+
+        assert_eq!(offer.preferred_drop_mime_type(), Some(("UTF8_STRING", true)));
+    }
+
+    #[test]
+    fn drop_offer_rejects_unrecognized_mime_types() {
+        let offer = offer_with_mime_types(&["application/octet-stream"]);
+
+        assert_eq!(offer.preferred_drop_mime_type(), None);
     }
 }
 

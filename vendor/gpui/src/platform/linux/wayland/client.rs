@@ -77,7 +77,7 @@ use crate::{
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScrollDelta, ScrollWheelEvent,
-    Size, TouchPhase, WindowParams, point, px, size,
+    Size, TextDropEvent, TouchPhase, WindowParams, point, px, size,
 };
 use crate::{
     SharedString,
@@ -243,6 +243,7 @@ pub struct DragState {
     data_offer: Option<wl_data_offer::WlDataOffer>,
     window: Option<WaylandWindowStatePtr>,
     position: Point<Pixels>,
+    text_drop: bool,
 }
 
 pub struct ClickState {
@@ -575,6 +576,7 @@ impl WaylandClient {
                 data_offer: None,
                 window: None,
                 position: Point::default(),
+                text_drop: false,
             },
             click: ClickState {
                 last_click: Instant::now(),
@@ -1927,12 +1929,24 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
                     };
+                    let Some((mime_type, text_drop)) = state
+                        .data_offers
+                        .iter()
+                        .find(|offer| offer.inner.id() == data_offer.id())
+                        .and_then(|offer| offer.preferred_drop_mime_type())
+                    else {
+                        data_offer.destroy();
+                        return;
+                    };
 
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
+                    if text_drop {
+                        data_offer.accept(serial, Some(mime_type.to_owned()));
+                    }
 
                     let pipe = Pipe::new().unwrap();
-                    data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
+                    data_offer.receive(mime_type.to_owned(), unsafe {
                         BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
                     });
                     let fd = pipe.read;
@@ -1940,7 +1954,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                     let read_task = state.common.background_executor.spawn(async {
                         let buffer = unsafe { read_fd(fd)? };
-                        let text = String::from_utf8(buffer)?;
+                        let text = String::from_utf8_lossy(&buffer).into_owned();
                         anyhow::Ok(text)
                     });
 
@@ -1949,37 +1963,42 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         .common
                         .foreground_executor
                         .spawn(async move {
-                            let file_list = match read_task.await {
-                                Ok(list) => list,
+                            let content = match read_task.await {
+                                Ok(content) => content,
                                 Err(err) => {
                                     log::error!("error reading drag and drop pipe: {err:?}");
                                     return;
                                 }
                             };
 
-                            let paths: SmallVec<[_; 2]> = file_list
-                                .lines()
-                                .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| url.to_file_path().log_err())
-                                .collect();
                             let position = Point::new(x.into(), y.into());
-
-                            // Prevent dropping text from other programs.
-                            if paths.is_empty() {
-                                data_offer.destroy();
-                                return;
-                            }
-
-                            let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                                position,
-                                paths: crate::ExternalPaths(paths),
-                            });
+                            let input = if text_drop {
+                                PlatformInput::TextDrop(TextDropEvent::Entered {
+                                    position,
+                                    text: content,
+                                })
+                            } else {
+                                let paths: SmallVec<[_; 2]> = content
+                                    .lines()
+                                    .filter_map(|path| Url::parse(path).log_err())
+                                    .filter_map(|url| url.to_file_path().log_err())
+                                    .collect();
+                                if paths.is_empty() {
+                                    data_offer.destroy();
+                                    return;
+                                }
+                                PlatformInput::FileDrop(FileDropEvent::Entered {
+                                    position,
+                                    paths: crate::ExternalPaths(paths),
+                                })
+                            };
 
                             let client = this.get_client();
                             let mut state = client.borrow_mut();
                             state.drag.data_offer = Some(data_offer);
                             state.drag.window = Some(drag_window.clone());
                             state.drag.position = position;
+                            state.drag.text_drop = text_drop;
 
                             drop(state);
                             drag_window.handle_input(input);
@@ -1994,7 +2013,11 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 let position = Point::new(x.into(), y.into());
                 state.drag.position = position;
 
-                let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
+                let input = if state.drag.text_drop {
+                    PlatformInput::TextDrop(TextDropEvent::Pending { position })
+                } else {
+                    PlatformInput::FileDrop(FileDropEvent::Pending { position })
+                };
                 drop(state);
                 drag_window.handle_input(input);
             }
@@ -2003,12 +2026,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     return;
                 };
                 let data_offer = state.drag.data_offer.clone().unwrap();
+                let text_drop = state.drag.text_drop;
                 data_offer.destroy();
 
                 state.drag.data_offer = None;
                 state.drag.window = None;
+                state.drag.text_drop = false;
 
-                let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
+                let input = if text_drop {
+                    PlatformInput::TextDrop(TextDropEvent::Exited)
+                } else {
+                    PlatformInput::FileDrop(FileDropEvent::Exited {})
+                };
                 drop(state);
                 drag_window.handle_input(input);
             }
@@ -2019,13 +2048,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 let data_offer = state.drag.data_offer.clone().unwrap();
                 data_offer.finish();
                 data_offer.destroy();
+                let text_drop = state.drag.text_drop;
 
                 state.drag.data_offer = None;
                 state.drag.window = None;
+                state.drag.text_drop = false;
 
-                let input = PlatformInput::FileDrop(FileDropEvent::Submit {
-                    position: state.drag.position,
-                });
+                let position = state.drag.position;
+                let input = if text_drop {
+                    PlatformInput::TextDrop(TextDropEvent::Submit { position })
+                } else {
+                    PlatformInput::FileDrop(FileDropEvent::Submit { position })
+                };
                 drop(state);
                 drag_window.handle_input(input);
             }

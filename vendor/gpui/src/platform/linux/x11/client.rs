@@ -63,7 +63,8 @@ use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    ScrollDelta, Size, TextDropEvent, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -779,6 +780,7 @@ impl X11Client {
 
                 if event.type_ == state.atoms.XdndEnter {
                     state.xdnd_state.other_window = atom;
+                    state.xdnd_state.retrieved = false;
                     if (arg1 & 0x1) == 0x1 {
                         state.xdnd_state.drag_type = xdnd_get_supported_atom(
                             &state.xcb_connection,
@@ -786,19 +788,25 @@ impl X11Client {
                             state.xdnd_state.other_window,
                         );
                     } else {
-                        if let Some(atom) = [arg2, arg3, arg4]
-                            .into_iter()
-                            .find(|atom| xdnd_is_atom_supported(*atom, &state.atoms))
-                        {
-                            state.xdnd_state.drag_type = atom;
-                        }
+                        state.xdnd_state.drag_type =
+                            xdnd_preferred_supported_atom(&[arg2, arg3, arg4], &state.atoms);
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
                     let position = state.xdnd_state.position;
+                    let text_drop =
+                        xdnd_is_text_atom(state.xdnd_state.drag_type, &state.atoms);
                     drop(state);
-                    window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
-                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
+                    if text_drop {
+                        window.handle_input(PlatformInput::TextDrop(TextDropEvent::Pending {
+                            position,
+                        }));
+                        window.handle_input(PlatformInput::TextDrop(TextDropEvent::Exited));
+                    } else {
+                        window.handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
+                            position,
+                        }));
+                        window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
+                    }
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 } else if event.type_ == state.atoms.XdndPosition {
                     if let Ok(pos) = get_reply(
@@ -808,7 +816,7 @@ impl X11Client {
                         state.xdnd_state.position =
                             Point::new(Pixels(pos.win_x as f32), Pixels(pos.win_y as f32));
                     }
-                    if !state.xdnd_state.retrieved {
+                    if !state.xdnd_state.retrieved && state.xdnd_state.drag_type != 0 {
                         check_reply(
                             || "Failed to convert selection for drag and drop",
                             state.xcb_connection.convert_selection(
@@ -829,9 +837,17 @@ impl X11Client {
                         arg4,
                     );
                     let position = state.xdnd_state.position;
+                    let text_drop =
+                        xdnd_is_text_atom(state.xdnd_state.drag_type, &state.atoms);
                     drop(state);
-                    window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
+                    if text_drop {
+                        window.handle_input(PlatformInput::TextDrop(TextDropEvent::Pending {
+                            position,
+                        }));
+                    } else {
+                        window
+                            .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
+                    }
                 } else if event.type_ == state.atoms.XdndDrop {
                     xdnd_send_finished(
                         &state.xcb_connection,
@@ -840,9 +856,17 @@ impl X11Client {
                         state.xdnd_state.other_window,
                     );
                     let position = state.xdnd_state.position;
+                    let text_drop =
+                        xdnd_is_text_atom(state.xdnd_state.drag_type, &state.atoms);
                     drop(state);
-                    window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+                    if text_drop {
+                        window.handle_input(PlatformInput::TextDrop(TextDropEvent::Submit {
+                            position,
+                        }));
+                    } else {
+                        window
+                            .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+                    }
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 }
             }
@@ -864,20 +888,37 @@ impl X11Client {
                 let Some(reply) = reply else {
                     return Some(());
                 };
-                if let Ok(file_list) = str::from_utf8(&reply.value) {
+                if reply.format != 8 {
+                    return Some(());
+                }
+                let position = state.xdnd_state.position;
+                let input = if state.xdnd_state.drag_type == state.atoms.TextUriList {
+                    let file_list = String::from_utf8_lossy(&reply.value);
                     let paths: SmallVec<[_; 2]> = file_list
                         .lines()
                         .filter_map(|path| Url::parse(path).log_err())
                         .filter_map(|url| url.to_file_path().log_err())
                         .collect();
-                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                        position: state.xdnd_state.position,
+                    PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position,
                         paths: crate::ExternalPaths(paths),
-                    });
-                    drop(state);
-                    window.handle_input(input);
-                    self.0.borrow_mut().xdnd_state.retrieved = true;
-                }
+                    })
+                } else if xdnd_is_text_atom(state.xdnd_state.drag_type, &state.atoms) {
+                    let text = if reply.type_ == state.atoms.STRING {
+                        reply.value.iter().map(|byte| char::from(*byte)).collect()
+                    } else {
+                        String::from_utf8_lossy(&reply.value).into_owned()
+                    };
+                    PlatformInput::TextDrop(TextDropEvent::Entered {
+                        position,
+                        text: text.trim_end_matches('\0').to_owned(),
+                    })
+                } else {
+                    return Some(());
+                };
+                drop(state);
+                window.handle_input(input);
+                self.0.borrow_mut().xdnd_state.retrieved = true;
             }
             Event::ConfigureNotify(event) => {
                 let bounds = Bounds {
@@ -2003,13 +2044,42 @@ fn check_gtk_frame_extents_supported(
     supported_atom_ids.contains(&atoms._GTK_FRAME_EXTENTS)
 }
 
-fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
+fn xdnd_is_text_atom(atom: u32, atoms: &XcbAtoms) -> bool {
     atom == atoms.TEXT
         || atom == atoms.STRING
         || atom == atoms.UTF8_STRING
         || atom == atoms.TEXT_PLAIN
         || atom == atoms.TEXT_PLAIN_UTF8
-        || atom == atoms.TextUriList
+}
+
+fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {
+    atom == atoms.TextUriList || xdnd_is_text_atom(atom, atoms)
+}
+
+fn xdnd_preferred_supported_atom(offered_atoms: &[u32], atoms: &XcbAtoms) -> u32 {
+    let priority = [
+        atoms.TextUriList,
+        atoms.TEXT_PLAIN_UTF8,
+        atoms.UTF8_STRING,
+        atoms.TEXT_PLAIN,
+        atoms.TEXT,
+        atoms.STRING,
+    ];
+    first_offered_atom(offered_atoms, &priority, |atom| {
+        xdnd_is_atom_supported(atom, atoms)
+    })
+}
+
+fn first_offered_atom(
+    offered_atoms: &[u32],
+    priority: &[u32],
+    is_supported: impl Fn(u32) -> bool,
+) -> u32 {
+    priority
+        .iter()
+        .copied()
+        .find(|atom| offered_atoms.contains(atom) && is_supported(*atom))
+        .unwrap_or(0)
 }
 
 fn xdnd_get_supported_atom(
@@ -2031,11 +2101,7 @@ fn xdnd_get_supported_atom(
     .log_with_level(Level::Warn)
         && let Some(atoms) = reply.value32()
     {
-        for atom in atoms {
-            if xdnd_is_atom_supported(atom, supported_atoms) {
-                return atom;
-            }
-        }
+        return xdnd_preferred_supported_atom(&atoms.collect::<Vec<_>>(), supported_atoms);
     }
     0
 }
@@ -2490,4 +2556,33 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+#[cfg(test)]
+mod xdnd_tests {
+    use super::first_offered_atom;
+
+    #[test]
+    fn selects_the_highest_priority_supported_drop_type() {
+        let supported = [11, 22, 33];
+
+        assert_eq!(
+            first_offered_atom(&[99, 22, 11], &[11, 22, 33], |atom| {
+                supported.contains(&atom)
+            }),
+            11
+        );
+    }
+
+    #[test]
+    fn ignores_unsupported_and_unoffered_drop_types() {
+        assert_eq!(
+            first_offered_atom(&[22, 33], &[22, 33], |atom| atom != 22),
+            33
+        );
+        assert_eq!(
+            first_offered_atom(&[44, 55], &[11, 22, 33], |_| true),
+            0
+        );
+    }
 }
