@@ -1,39 +1,102 @@
 ;;; whitespace.el --- minor mode to visualize TAB, (HARD) SPC, NEWLINE  -*- lexical-binding: t -*-
 ;; Ported from GNU Emacs whitespace.el for remacs.
 
-(defvar whitespace-style
+(defgroup whitespace nil
+  "Visualize blanks (TAB, (HARD) SPACE and NEWLINE)."
+  :link '(emacs-library-link :tag "Source Lisp File" "whitespace.el")
+  :version "23.1"
+  :group 'convenience)
+
+(defcustom whitespace-style
   '(face
     tabs spaces trailing lines space-before-tab newline
     indentation empty space-after-tab
     space-mark tab-mark newline-mark
     missing-newline-at-eof)
-  "Determine the kinds of whitespace are visualized.")
+  "Determine the kinds of whitespace are visualized."
+  :type '(set :tag "Kind of Blank"
+              (const :tag "(Face) Face visualization" face)
+              (const :tag "(Face) Trailing TABs, SPACEs and HARD SPACEs"
+                     trailing)
+              (const :tag "(Face) TABs" tabs)
+              (const :tag "(Face) SPACEs and HARD SPACEs" spaces)
+              (const :tag "(Face) Lines" lines)
+              (const :tag "(Face) Lines, only overlong part" lines-tail)
+              (const :tag "(Face) Lines, only first character" lines-char)
+              (const :tag "(Face) NEWLINEs" newline)
+              (const :tag "(Face) Missing newlines at EOB"
+                     missing-newline-at-eof)
+              (const :tag "(Face) Page delimiters" page-delimiters)
+              (const :tag "(Face) Empty Lines At BOB And/Or EOB" empty)
+              (const :tag "(Face) Indentation SPACEs" indentation::tab)
+              (const :tag "(Face) Indentation TABs"
+                     indentation::space)
+              (const :tag "(Face) Indentation TABs or SPACEs" indentation)
+              (const :tag "(Face) Too much line indentation" big-indent)
+              (const :tag "(Face) SPACEs after TAB: SPACEs"
+                     space-after-tab::tab)
+              (const :tag "(Face) SPACEs after TAB: TABs"
+                     space-after-tab::space)
+              (const :tag "(Face) SPACEs after TAB" space-after-tab)
+              (const :tag "(Face) SPACEs before TAB: SPACEs"
+                     space-before-tab::tab)
+              (const :tag "(Face) SPACEs before TAB: TABs"
+                     space-before-tab::space)
+              (const :tag "(Face) SPACEs before TAB" space-before-tab)
+              (const :tag "(Mark) SPACEs and HARD SPACEs" space-mark)
+              (const :tag "(Mark) TABs" tab-mark)
+              (const :tag "(Mark) NEWLINEs" newline-mark))
+  :version "31.1"
+  :group 'whitespace)
 
-(defvar whitespace-action nil
-  "Specify the whitespace cleanup action to be taken.")
+(defcustom whitespace-action nil
+  "Specify the whitespace cleanup action to be taken."
+  :type '(choice :tag "Actions"
+                 (const :tag "None" nil)
+                 (repeat :tag "Action List"
+                         (choice :tag "Action"
+                                 (const :tag "Cleanup When On" cleanup)
+                                 (const :tag "Report On Bogus" report-on-bogus)
+                                 (const :tag "Auto Cleanup" auto-cleanup)
+                                 (const :tag "Abort On Bogus" abort-on-bogus)
+                                 (const :tag "Warn If Read-Only" warn-if-read-only))))
+  :group 'whitespace)
 
-(defvar whitespace-trailing-regexp
+(defcustom whitespace-trailing-regexp
   "\\([\t \u00A0]+\\)$"
-  "Regexp to match trailing characters that should be visualized.")
+  "Regexp to match trailing characters that should be visualized."
+  :type '(regexp :tag "Trailing Chars")
+  :group 'whitespace)
 
-(defvar whitespace-space-before-tab-regexp "\\( +\\)\\(\t+\\)"
-  "Regexp to match SPACEs before TAB that should be visualized.")
+(defcustom whitespace-space-before-tab-regexp "\\( +\\)\\(\t+\\)"
+  "Regexp to match SPACEs before TAB that should be visualized."
+  :type '(regexp :tag "SPACEs Before TAB")
+  :group 'whitespace)
 
-(defvar whitespace-indentation-regexp
+(defcustom whitespace-indentation-regexp
   '("^\t*\\(\\( \\{%d\\}\\)+\\)[^\n\t]"
     . "^ *\\(\t+\\).")
-  "Regexps to match indentation whitespace that should be visualized.")
+  "Regexps to match indentation whitespace that should be visualized."
+  :type '(cons (string :tag "Indentation SPACEs")
+               (regexp :tag "Indentation TABs"))
+  :group 'whitespace)
 
-(defvar whitespace-empty-at-bob-regexp "\\`\\([ \t\n]*\\(?:\n\\|$\\)\\)"
-  "Regexp to match empty lines at beginning of buffer.")
+(defcustom whitespace-empty-at-bob-regexp "\\`\\([ \t\n]*\\(?:\n\\|$\\)\\)"
+  "Regexp to match empty lines at beginning of buffer."
+  :type '(regexp :tag "Empty Lines At Beginning Of Buffer")
+  :group 'whitespace)
 
-(defvar whitespace-empty-at-eob-regexp "^\\([ \t\n]+\\)\\'"
-  "Regexp to match empty lines at end of buffer.")
+(defcustom whitespace-empty-at-eob-regexp "^\\([ \t\n]+\\)\\'"
+  "Regexp to match empty lines at end of buffer."
+  :type '(regexp :tag "Empty Lines At End Of Buffer")
+  :group 'whitespace)
 
-(defvar whitespace-space-after-tab-regexp
+(defcustom whitespace-space-after-tab-regexp
   '("\t+\\(\\( \\{%d,\\}\\)+\\)"
     . "\\(\t+\\) \\{%d,\\}")
-  "Regexps to match multiple SPACEs after TAB that should be visualized.")
+  "Regexps to match multiple SPACEs after TAB that should be visualized."
+  :type '(cons (string :tag "SPACEs After TAB") string)
+  :group 'whitespace)
 
 (defun whitespace-warn-read-only (msg)
   "Warn if buffer is read-only."
@@ -253,35 +316,72 @@ INDEX is the level group matched by REGEXP and used by ACTION."
 
 ;; ---------- whitespace.el display/mode half (GNU port) ----------
 
-(defvar whitespace-hspace-regexp "\\( +\\)"
-  "Regexp to match HARD SPACE characters that should be visualized.")
+(defcustom whitespace-hspace-regexp "\\( +\\)"
+  "Regexp to match HARD SPACE characters that should be visualized."
+  :type '(regexp :tag "HARD SPACE Chars")
+  :group 'whitespace)
 
-(defvar whitespace-space-regexp "\\( +\\)"
-  "Regexp to match SPACE characters that should be visualized.")
+(defcustom whitespace-space-regexp "\\( +\\)"
+  "Regexp to match SPACE characters that should be visualized."
+  :type '(regexp :tag "SPACE Chars")
+  :group 'whitespace)
 
-(defvar whitespace-tab-regexp "\\(\t+\\)"
-  "Regexp to match TAB characters that should be visualized.")
+(defcustom whitespace-tab-regexp "\\(\t+\\)"
+  "Regexp to match TAB characters that should be visualized."
+  :type '(regexp :tag "TAB Chars")
+  :group 'whitespace)
 
-(defvar whitespace-big-indent-regexp
+(defcustom whitespace-big-indent-regexp
   "^\\(\\(?:\t\\{4,\\}\\| \\{32,\\}\\)[\t ]*\\)"
-  "Regexp to match big indentation at BOL that should be visualized.")
+  "Regexp to match big indentation at BOL that should be visualized."
+  :version "25.1"
+  :type '(regexp :tag "Detect too much indentation at the beginning of a line")
+  :group 'whitespace)
 
-(defvar whitespace-line-column 80
+(defcustom whitespace-line-column 80
   "Column beyond which the line is highlighted.
-If nil, use the value of `fill-column'.")
+If nil, use the value of `fill-column'."
+  :type '(choice :tag "Line Length Limit"
+                 (integer :tag "Line Length")
+                 (const :tag "Use fill-column" nil))
+  :safe #'integerp
+  :group 'whitespace)
 
-(defvar whitespace-display-mappings
+(defcustom whitespace-display-mappings
   '((space-mark   ?\     [?·]     [?.])
     (space-mark   ?\xA0  [?¤]     [?_])
     (newline-mark ?\n    [?$ ?\n])
     (tab-mark     ?\t    [?» ?\t] [?\\ ?\t]))
-  "Alist of mappings for displaying characters: (KIND CHAR VECTOR...).")
+  "Alist of mappings for displaying characters: (KIND CHAR VECTOR...)."
+  :type '(repeat
+          (list :tag "Character Mapping"
+                (choice :tag "Char Kind"
+                        (const :tag "Tab" tab-mark)
+                        (const :tag "Space" space-mark)
+                        (const :tag "Newline" newline-mark))
+                (character :tag "Char")
+                (repeat :inline t :tag "Vector List"
+                        (vector :tag ""
+                                (repeat :inline t :tag "Vector Characters"
+                                        (character :tag "Char"))))))
+  :group 'whitespace)
 
-(defvar whitespace-global-modes t
-  "Modes for which global `whitespace-mode' is automatically turned on.")
+(defcustom whitespace-global-modes t
+  "Modes for which global `whitespace-mode' is automatically turned on."
+  :type '(choice :tag "Global Modes"
+                 (const :tag "None" nil)
+                 (const :tag "All" t)
+                 (set :menu-tag "Mode Specific" :tag "Modes"
+                      :value (not)
+                      (const :tag "Except" not)
+                      (repeat :inline t (symbol :tag "Mode"))))
+  :group 'whitespace)
 
-(defvar whitespace-global-mode-buffers '("\\`\\*scratch\\*\\'")
-  "Buffer name regexps where global `whitespace-mode' can be auto-enabled.")
+(defcustom whitespace-global-mode-buffers '("\\`\\*scratch\\*\\'")
+  "Buffer name regexps where global `whitespace-mode' can be auto-enabled."
+  :type '(repeat (regexp :tag "Regexp matching buffer name"))
+  :version "31.1"
+  :group 'whitespace)
 
 (defvar whitespace-report-buffer-name "*Whitespace Report*"
   "The buffer name for whitespace bogus report.")
