@@ -24,4 +24,38 @@ continue running the macro."
     (prin1 def (current-buffer))
     (princ ")\n" (current-buffer))))
 
+;;;###autoload
+(defun apply-macro-to-region-lines (top bottom &optional macro)
+  "Apply last keyboard macro to all lines in the region.
+For each line that begins in the region, move to the beginning of
+the line, and run the last keyboard macro.
+
+When called from lisp, this function takes two arguments TOP and
+BOTTOM, describing the current region.  TOP must be before BOTTOM.
+The optional third argument MACRO specifies a keyboard macro to
+execute."
+  (interactive "r")
+  (or macro
+      (progn
+        (if (null last-kbd-macro)
+            (user-error "No keyboard macro has been defined"))
+        (setq macro last-kbd-macro)))
+  (save-excursion
+    (let ((end-marker (copy-marker bottom))
+          next-line-marker)
+      (goto-char top)
+      (if (not (bolp))
+          (forward-line 1))
+      (setq next-line-marker (point-marker))
+      (while (< next-line-marker end-marker)
+        (goto-char next-line-marker)
+        (save-excursion
+          (forward-line 1)
+          (set-marker next-line-marker (point)))
+        (save-excursion
+          (let ((mark-active nil))
+            (execute-kbd-macro macro))))
+      (set-marker end-marker nil)
+      (set-marker next-line-marker nil))))
+
 (provide 'macros)
