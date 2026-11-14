@@ -724,6 +724,7 @@ pub use render::{
     GridInputSelection, GridMenu, GridPixelwiseSegment, GridStipple, GridPointerShape,
     GridPointerRegion,
     GridTooltipPosition,
+    GridTooltip, GridTooltipRun,
     GridModeLine, GridHeaderLine, GridTabLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,
@@ -734,6 +735,7 @@ pub use render::{
     render_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached_mut,
 };
 pub(crate) use render::{position_at_display_cell, position_display_cell};
+pub(crate) use render::grid_tooltip_from_string;
 pub(crate) use render::window_text_pixel_rows;
 pub(crate) use render::visual_line_ranges_for_window;
 pub(crate) use render::{buffer_setting, line_number_display_settings};

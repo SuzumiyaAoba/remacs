@@ -461,6 +461,23 @@ pub struct GridTooltipPosition {
     pub dy: i128,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridTooltipRun {
+    /// Number of UTF-8 bytes in this run.
+    pub len: usize,
+    pub style: CellStyle,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridTooltip {
+    pub text: String,
+    /// The `tooltip` face used for the tooltip background and default text.
+    pub style: CellStyle,
+    /// Font families referenced by the run styles.
+    pub font_families: Vec<String>,
+    pub runs: Vec<GridTooltipRun>,
+}
+
 fn push_help_echo(regions: &mut Vec<GridHelpEcho>, next: GridHelpEcho) {
     if let Some(previous) = regions.last_mut()
         && previous.row == next.row
@@ -846,7 +863,7 @@ pub struct Grid {
     pub help_echoes: Vec<GridHelpEcho>,
     /// Pointer overrides for formatted mode/header/tab-line cells.
     pub pointer_regions: Vec<GridPointerRegion>,
-    pub tooltip: Option<String>,
+    pub tooltip: Option<GridTooltip>,
     pub tooltip_position: Option<GridTooltipPosition>,
     pub popup_menu_items: Vec<GridPopupMenuItem>,
     pub scroll_bars: Vec<GridScrollBar>,
@@ -9776,6 +9793,59 @@ fn echo_message_style(
         }
     }
     mix.finish()
+}
+
+pub(crate) fn grid_tooltip_from_string(
+    i: &Interp,
+    string: &crate::lisp::value::StrRef,
+    frame: &crate::editor::FrameRef,
+) -> GridTooltip {
+    let text_value = string.borrow().clone();
+    let properties = i.str_props(string);
+    let mut ctx = FaceCtx::new(i, Some(frame));
+    ctx.default_style = Some(ctx.builtin(i, "default", 0).finish());
+    let tooltip_mix = ctx.builtin(i, "tooltip", 0);
+    let tooltip_style = tooltip_mix.finish();
+    let face = ctx.face;
+    let font_lock_face = ctx.font_lock_face;
+    let mut text = String::new();
+    let mut runs = Vec::<GridTooltipRun>::new();
+
+    for (position, character) in text_value.chars().enumerate() {
+        let mut mix = tooltip_mix;
+        for (start, end, plist) in properties {
+            if position < *start || position >= *end {
+                continue;
+            }
+            for pair in plist.chunks_exact(2) {
+                if matches!(
+                    pair.first(),
+                    Some(Value::Sym(property)) if *property == face || *property == font_lock_face
+                ) {
+                    mix.merge(&ctx.face_value(i, &pair[1], 0));
+                }
+            }
+        }
+
+        let style = mix.finish();
+        let character = character.unicode().unwrap_or('\u{fffd}');
+        text.push(character);
+        let len = character.len_utf8();
+        if let Some(run) = runs.last_mut()
+            && run.style == style
+        {
+            run.len = run.len.saturating_add(len);
+        } else {
+            runs.push(GridTooltipRun { len, style });
+        }
+    }
+
+    GridTooltip {
+        text,
+        style: tooltip_style,
+        font_families: ctx.font_families,
+        runs,
+    }
 }
 
 fn style_at_pos_with_named_face(

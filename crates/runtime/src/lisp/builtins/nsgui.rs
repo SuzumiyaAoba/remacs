@@ -1304,7 +1304,7 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let follow_tooltip = a.get(5).is_some_and(|value| !value.is_nil());
     let tooltip = if follow_tooltip {
-        i.gui_tip.clone()
+        i.gui_tip.as_ref().map(|tooltip| tooltip.text.clone())
     } else {
         None
     };

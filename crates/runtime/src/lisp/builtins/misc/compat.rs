@@ -187,7 +187,7 @@ pub(super) fn f_x_show_tip(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Value::Str(text) = &a[0] else {
         unreachable!();
     };
-    i.gui_tip = Some(text.borrow().to_unicode_lossy());
+    i.gui_tip = Some(crate::frontend::grid_tooltip_from_string(i, text, &frame));
     i.gui_tip_frame_id = Some(frame.borrow().id);
     i.gui_tip_position = Some(tooltip_position);
     i.gui_tip_timer = Some(timer);

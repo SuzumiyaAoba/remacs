@@ -1,6 +1,9 @@
-use super::{TooltipPlacement, tooltip_placement};
-use gpui::{point, px, size};
-use remacs_runtime::frontend::GridTooltipPosition;
+use super::{EditorView, TooltipPlacement, tooltip_placement};
+use gpui::{TestAppContext, point, px, size};
+use remacs_runtime::frontend::{
+    CellColor, CellStyle, Grid, GridTooltip, GridTooltipPosition, GridTooltipRun,
+};
+use std::sync::mpsc;
 
 #[test]
 fn tip_position_uses_pointer_offsets_and_absolute_frame_edges() {
@@ -68,4 +71,43 @@ fn tip_position_uses_pointer_offsets_and_absolute_frame_edges() {
             bottom: Some(px(60.0)),
         }
     );
+}
+
+#[test]
+fn explicit_tooltip_renders_styled_text_runs() {
+    let mut app = TestAppContext::single_with_native_text_system();
+    let (tx, _rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            let mut grid = Grid::blank(40, 6);
+            grid.tooltip = Some(GridTooltip {
+                text: "styled tip".to_owned(),
+                style: CellStyle {
+                    fg: Some(CellColor(0, 0, 255)),
+                    bg: Some(CellColor(255, 255, 0)),
+                    ..Default::default()
+                },
+                font_families: Vec::new(),
+                runs: vec![GridTooltipRun {
+                    len: "styled tip".len(),
+                    style: CellStyle {
+                        fg: Some(CellColor(255, 0, 0)),
+                        bg: Some(CellColor(255, 255, 0)),
+                        bold: true,
+                        ..Default::default()
+                    },
+                }],
+            });
+            grid.tooltip_position = Some(GridTooltipPosition::default());
+            view.set_grid(grid, window);
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    let rendered_tooltip = handle
+        .update(&mut app, |view, _, _| view.grid.tooltip.is_some())
+        .unwrap();
+    assert!(rendered_tooltip);
 }

@@ -2024,6 +2024,8 @@ impl Render for EditorView {
         let marked_origin =
             input::composition_origin(&self.grid, self.input.replacement_range.as_ref());
         let composition_font = text_font.clone();
+        let tooltip_text_font = text_font.clone();
+        let tooltip_gamma_exponent = grid.gamma_exponent;
         let mouse_face_exit_position = self.mouse_face_position.clone();
         let mouse_face_exit_tx = self.tx.clone();
         div()
@@ -3621,7 +3623,74 @@ impl Render for EditorView {
                     image_cache_size.clone(),
                 )
             }))
-            .when_some(explicit_tooltip, |this, text| {
+            .when_some(explicit_tooltip, |this, tooltip_text| {
+                let runs = tooltip_text
+                    .runs
+                    .iter()
+                    .map(|run| {
+                        let style = run.style;
+                        let (color, background_color) = style_colors(
+                            style,
+                            default_background,
+                            background_alpha,
+                            tooltip_gamma_exponent,
+                        );
+                        let mut font = tooltip_text_font.clone();
+                        if let Some(family) = style
+                            .font_family
+                            .and_then(|id| tooltip_text.font_families.get(id as usize))
+                        {
+                            font.family = font_family(window, Some(family.clone())).into();
+                        }
+                        if let Some(weight) = style.font_weight {
+                            font.weight = FontWeight(weight as f32);
+                        } else if style.bold {
+                            font = font.bold();
+                        }
+                        if let Some(width) = style.font_width {
+                            font.stretch = FontStretch::from_percentage(width);
+                        }
+                        if style.italic {
+                            font = font.italic();
+                        }
+                        TextRun {
+                            len: run.len,
+                            font,
+                            color,
+                            background_color: if style.stipple.is_some() {
+                                None
+                            } else {
+                                background_color
+                            },
+                            underline: style.underline.then(|| UnderlineStyle {
+                                thickness: px(1.0),
+                                color: style
+                                    .underline_color
+                                    .map(|color| rgb(color_rgb(color)).into()),
+                                wavy: style.underline_wave,
+                            }),
+                            strikethrough: style.strike.then(|| StrikethroughStyle {
+                                thickness: px(1.0),
+                                color: style
+                                    .strike_color
+                                    .map(|color| rgb(color_rgb(color)).into()),
+                            }),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let text = if runs.is_empty() {
+                    gpui::StyledText::new(tooltip_text.text.clone())
+                } else {
+                    gpui::StyledText::new(tooltip_text.text.clone()).with_runs(runs)
+                };
+                let (tooltip_foreground, tooltip_background) = style_colors(
+                    tooltip_text.style,
+                    default_background,
+                    background_alpha,
+                    tooltip_gamma_exponent,
+                );
+                let tooltip_background =
+                    tooltip_background.unwrap_or_else(|| rgb(0x303438).into());
                 let tooltip = div().absolute();
                 let tooltip = if let Some(left) = tooltip_placement.left {
                     tooltip.left(left)
@@ -3637,7 +3706,20 @@ impl Render for EditorView {
                 } else {
                     tooltip
                 };
-                this.child(tooltip.bg(rgb(0x303438)).child(text))
+                this.child(
+                    tooltip
+                        .bg(tooltip_background)
+                        .text_color(tooltip_foreground)
+                        .text_size(
+                            tooltip_text
+                                .style
+                                .font_height
+                                .map(face_font_size)
+                                .unwrap_or(font_size),
+                        )
+                        .font_family(tooltip_text_font.family.clone())
+                        .child(text),
+                )
             })
     }
 }

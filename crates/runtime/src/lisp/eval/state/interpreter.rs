@@ -52,7 +52,7 @@ pub struct Interp {
     /// Text-property intervals retained for the current echo-area message.
     pub echo_message_props: Vec<(usize, usize, Vec<Value>)>,
     /// Active graphical tooltip requested by `x-show-tip'.
-    pub gui_tip: Option<String>,
+    pub gui_tip: Option<crate::frontend::GridTooltip>,
     /// Native frame receiving `x-show-tip'.
     pub gui_tip_frame_id: Option<usize>,
     /// Position arguments for the active `x-show-tip'.
