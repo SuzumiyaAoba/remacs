@@ -1998,9 +1998,10 @@ The user will be asked for a file name."
 		  (gnus-uu-choose-action file-name gnus-uu-ext-to-mime-list)
 		  (rfc2231-encode-string "name" file-name)))
   (insert (format "Content-Transfer-Encoding: %s\n\n" encoding))
-  ;; FIXME: Shouldn't we set-buffer before saving the restriction?  --Stef
+  (set-buffer gnus-message-buffer)
+  ;; Remacs: Save the message buffer's restriction after switching to it.
   (save-restriction
-    (set-buffer gnus-message-buffer)
+    (widen)
     (goto-char (point-min))
     (re-search-forward (concat "^" (regexp-quote mail-header-separator) "$"))
     (forward-line -1)
