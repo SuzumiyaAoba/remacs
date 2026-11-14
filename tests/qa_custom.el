@@ -272,4 +272,18 @@
 (qa (fboundp 'internal-facep) nil)
 (qa (fboundp 'face-spec-get) nil)
 
+;; == windmove's Customize group ==
+(require 'windmove)
+(qa (get 'windmove 'group-documentation)
+    "Directional selection of windows in a frame.")
+(qa (mapcar #'car (custom-group-members 'windmove nil))
+    '(windmove-wrap-around windmove-create-window
+      windmove-window-distance-delta windmove-allow-all-windows
+      windmove-allow-repeated-command-override windmove-mode
+      windmove-display-no-select
+      windmove-default-keybindings windmove-display-default-keybindings
+      windmove-delete-default-keybindings
+      windmove-swap-states-default-keybindings))
+(qa (progn (customize-group 'windmove) t) t)
+
 (princ (qa--done))

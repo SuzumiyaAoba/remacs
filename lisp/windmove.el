@@ -4,6 +4,14 @@
 ;; commentary and copyright header are elided.  Function bodies are
 ;; verbatim GNU.
 
+;; User configurable variables:
+(defgroup windmove nil
+  "Directional selection of windows in a frame."
+  :prefix "windmove-"
+  :version "21.1"
+  :group 'windows
+  :group 'convenience)
+
 (defcustom windmove-wrap-around nil
   "Whether movement off the edge of the frame wraps around.
 If this variable is set to t, moving left from the leftmost window in
