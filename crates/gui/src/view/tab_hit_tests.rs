@@ -1,5 +1,5 @@
 use super::{EditorView, GuiEvent};
-use gpui::{Modifiers, point, px};
+use gpui::{Modifiers, MouseButton, point, px};
 use remacs_runtime::frontend::{CellStyle, Grid, GridTabBarItem};
 use std::sync::mpsc;
 
@@ -107,4 +107,54 @@ fn adjacent_tab_clicks_follow_native_face_glyph_boundaries() {
         !rx.try_iter()
             .any(|event| matches!(event, GuiEvent::CommandArgs { .. }))
     );
+}
+
+#[test]
+fn middle_click_on_tab_closes_that_tab() {
+    let mut app = gpui::TestAppContext::single();
+    let (tx, rx) = mpsc::channel();
+    let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
+    handle
+        .update(&mut app, |view, window, cx| {
+            window.activate_window();
+            view.set_internal_border_width(3);
+            let mut grid = Grid::blank(32, 5);
+            grid.rows = vec![" ".repeat(32); 5];
+            grid.rows[0] = "Second tab                    ".into();
+            grid.tab_bar_items.push(GridTabBarItem {
+                row: 0,
+                left: 0,
+                width: 7,
+                byte_range: Some((0, 7)),
+                command: "tab-bar-select-tab".into(),
+                command_id: None,
+                argument: Some(2),
+            });
+            view.grid = grid;
+            cx.notify();
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    let bounds = handle
+        .update(&mut app, |view, _, _| {
+            view.tab_hit_regions.borrow()[0].bounds
+        })
+        .unwrap();
+    let position = point(
+        px(3.0) + bounds.right() - px(0.25),
+        px(3.0) + bounds.size.height / 2.0,
+    );
+    let mut visual = gpui::VisualTestContext::from_window(handle.into(), &app);
+    visual.simulate_mouse_down(position, MouseButton::Middle, Modifiers::none());
+    visual.simulate_mouse_up(position, MouseButton::Middle, Modifiers::none());
+
+    let commands: Vec<_> = rx
+        .try_iter()
+        .filter_map(|event| match event {
+            GuiEvent::CommandArgs { command, args } => Some((command, args)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(commands, vec![("tab-bar-close-tab".into(), vec![2])]);
 }

@@ -1037,6 +1037,7 @@ pub(super) struct EditorView {
     mouse_position_poll_started: bool,
     consumed_mouse_buttons: HashSet<MouseButton>,
     pressed_button: Option<PressedButton>,
+    middle_tab_close_index: Option<i128>,
     button_activation_subscription: Option<Subscription>,
     bell_flash: bool,
     bell_flash_generation: u64,
@@ -1138,6 +1139,7 @@ impl EditorView {
             mouse_position_poll_started: false,
             consumed_mouse_buttons: HashSet::new(),
             pressed_button: None,
+            middle_tab_close_index: None,
             button_activation_subscription: None,
             bell_flash: false,
             bell_flash_generation: 0,
@@ -2242,6 +2244,9 @@ impl Render for EditorView {
                     element = element.on_mouse_down(
                         button,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            if button == MouseButton::Middle {
+                                this.middle_tab_close_index = None;
+                            }
                             if let Some(menu) = down_grid.popup_menu_items.first() {
                                 this.consumed_mouse_buttons.insert(button);
                                 let _ = down_tx.send(GuiEvent::PopupMenuSelection {
@@ -2254,6 +2259,24 @@ impl Render for EditorView {
                             }
                             let point =
                                 frame_content_point(event.position, window.viewport_size(), border);
+                            if button == MouseButton::Middle {
+                                let tab_index = point
+                                    .and_then(|point| this.button_at(point))
+                                    .and_then(|pressed| match pressed.action {
+                                        ButtonAction::Tab {
+                                            argument: Some(tab_index),
+                                            ..
+                                        } => Some(tab_index),
+                                        _ => None,
+                                    });
+                                if let Some(tab_index) = tab_index {
+                                    this.middle_tab_close_index = Some(tab_index);
+                                    this.consumed_mouse_buttons.insert(button);
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    return;
+                                }
+                            }
                             if let Some(position) = point.and_then(|point| {
                                 input::mouse_position_for_point_with_cell_width(
                                     &down_grid, point, cell_width, window,
@@ -2287,6 +2310,26 @@ impl Render for EditorView {
                         button,
                         cx.listener(move |this, event: &MouseUpEvent, window, cx| {
                             if this.consumed_mouse_buttons.remove(&button) {
+                                if button == MouseButton::Middle
+                                    && let Some(tab_index) = this.middle_tab_close_index.take()
+                                    && let Some(point) = frame_content_point(
+                                        event.position,
+                                        window.viewport_size(),
+                                        border,
+                                    )
+                                    && this.button_at(point).is_some_and(|pressed| {
+                                        matches!(pressed.action,
+                                            ButtonAction::Tab {
+                                                argument: Some(current),
+                                                ..
+                                            } if current == tab_index)
+                                    })
+                                {
+                                    let _ = up_tx.send(GuiEvent::CommandArgs {
+                                        command: "tab-bar-close-tab".to_owned(),
+                                        args: vec![tab_index],
+                                    });
+                                }
                                 window.prevent_default();
                                 cx.stop_propagation();
                                 return;
@@ -2319,6 +2362,18 @@ impl Render for EditorView {
                             }
                         }),
                     );
+                    if button == MouseButton::Middle {
+                        element = element.on_mouse_up_out(
+                            button,
+                            cx.listener(move |this, _event: &MouseUpEvent, window, cx| {
+                                if this.middle_tab_close_index.take().is_some() {
+                                    this.consumed_mouse_buttons.remove(&button);
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                }
+                            }),
+                        );
+                    }
                 }
                 element
             })
