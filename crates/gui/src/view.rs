@@ -13,8 +13,9 @@ use gpui::*;
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBidiDirection, GridCursor, GridImage,
     GridImageConversion, GridImageSizeLimit, GridImageSource, GridMenu, GridMenuItem,
-    GridPointerShape, GridScrollBar, GridScrollBarOrientation, GridStipple, GridVScroll, MouseArea,
-    MouseButton as RemacsMouseButton, MouseInput, MousePosition, NativeMenuCommandId,
+    GridPointerShape, GridScrollBar, GridScrollBarOrientation, GridStipple, GridTooltipPosition,
+    GridVScroll, MouseArea, MouseButton as RemacsMouseButton, MouseInput, MousePosition,
+    NativeMenuCommandId,
     QuitRequest, WeakNativeMenuCommandId,
 };
 use std::collections::{HashMap, HashSet};
@@ -85,6 +86,8 @@ mod pointer_tests;
 mod pointer_window_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod wheel_window_tests;
+#[cfg(test)]
+mod tooltip_position_tests;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
@@ -567,6 +570,67 @@ fn frame_content_point(
 
 fn device_pixels(value: Pixels, scale_factor: f32) -> i128 {
     (f32::from(value) * scale_factor).round() as i128
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TooltipPlacement {
+    left: Option<Pixels>,
+    right: Option<Pixels>,
+    top: Option<Pixels>,
+    bottom: Option<Pixels>,
+}
+
+fn tooltip_placement(
+    position: GridTooltipPosition,
+    frame_left: i128,
+    frame_top: i128,
+    content_top_offset: i128,
+    viewport: Size<Pixels>,
+    pointer: Point<Pixels>,
+) -> TooltipPlacement {
+    let left = position
+        .left
+        .map(|left| px(left.saturating_sub(frame_left) as f32));
+    let right = if left.is_none() {
+        position
+            .right
+            .map(|right| viewport.width - px(right.saturating_sub(frame_left) as f32))
+    } else {
+        None
+    };
+    let left = left.or_else(|| {
+        right
+            .is_none()
+            .then(|| pointer.x + px(position.dx as f32))
+    });
+
+    let top = position.top.map(|top| {
+        px(top
+            .saturating_sub(frame_top)
+            .saturating_sub(content_top_offset) as f32)
+    });
+    let bottom = if top.is_none() {
+        position.bottom.map(|bottom| {
+            viewport.height
+                - px(bottom
+                    .saturating_sub(frame_top)
+                    .saturating_sub(content_top_offset) as f32)
+        })
+    } else {
+        None
+    };
+    let top = top.or_else(|| {
+        bottom
+            .is_none()
+            .then(|| pointer.y + px(position.dy as f32))
+    });
+
+    TooltipPlacement {
+        left,
+        right,
+        top,
+        bottom,
+    }
 }
 
 #[cfg(test)]
@@ -1909,52 +1973,14 @@ impl Render for EditorView {
                 )
             },
         );
-        let tooltip_left = tooltip_position
-            .left
-            .map(|left| px((left.saturating_sub(frame_left)) as f32))
-            .or_else(|| {
-                tooltip_position
-                    .right
-                    .map(|right| vp.width - px((right.saturating_sub(frame_left)) as f32))
-            })
-            .unwrap_or_else(|| tooltip_pointer.x + px(tooltip_position.dx as f32));
-        let tooltip_top = tooltip_position
-            .top
-            .map(|top| {
-                px((top
-                    .saturating_sub(frame_top)
-                    .saturating_sub(content_top_offset)) as f32)
-            })
-            .or_else(|| {
-                tooltip_position.bottom.map(|bottom| {
-                    vp.height
-                        - px((bottom
-                            .saturating_sub(frame_top)
-                            .saturating_sub(content_top_offset)) as f32)
-                })
-            })
-            .unwrap_or_else(|| tooltip_pointer.y + px(tooltip_position.dy as f32));
-        let tooltip_right = tooltip_position
-            .left
-            .is_none()
-            .then(|| {
-                tooltip_position
-                    .right
-                    .map(|right| vp.width - px((right.saturating_sub(frame_left)) as f32))
-            })
-            .flatten();
-        let tooltip_bottom = tooltip_position
-            .top
-            .is_none()
-            .then(|| {
-                tooltip_position.bottom.map(|bottom| {
-                    vp.height
-                        - px((bottom
-                            .saturating_sub(frame_top)
-                            .saturating_sub(content_top_offset)) as f32)
-                })
-            })
-            .flatten();
+        let tooltip_placement = tooltip_placement(
+            tooltip_position,
+            frame_left,
+            frame_top,
+            content_top_offset,
+            vp,
+            tooltip_pointer,
+        );
         let tx = self.tx.clone();
         let mouse_grid = grid.clone();
         let scroll_grid = grid.clone();
@@ -3626,15 +3652,19 @@ impl Render for EditorView {
             }))
             .when_some(explicit_tooltip, |this, text| {
                 let tooltip = div().absolute();
-                let tooltip = if tooltip_position.left.is_some() || tooltip_right.is_none() {
-                    tooltip.left(tooltip_left)
+                let tooltip = if let Some(left) = tooltip_placement.left {
+                    tooltip.left(left)
+                } else if let Some(right) = tooltip_placement.right {
+                    tooltip.right(right)
                 } else {
-                    tooltip.right(tooltip_right.unwrap())
+                    tooltip
                 };
-                let tooltip = if tooltip_position.top.is_some() || tooltip_bottom.is_none() {
-                    tooltip.top(tooltip_top)
+                let tooltip = if let Some(top) = tooltip_placement.top {
+                    tooltip.top(top)
+                } else if let Some(bottom) = tooltip_placement.bottom {
+                    tooltip.bottom(bottom)
                 } else {
-                    tooltip.bottom(tooltip_bottom.unwrap())
+                    tooltip
                 };
                 this.child(tooltip.bg(rgb(0x303438)).child(text))
             })
