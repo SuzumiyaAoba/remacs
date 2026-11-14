@@ -168,6 +168,63 @@ fn initial_frame_visibility_is_preserved_in_snapshots() {
 }
 
 #[test]
+fn pending_frame_snapshots_coalesce_before_prompt_requests() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            use super::logic::GuiRequest;
+
+            let mut interp = Interp::new();
+            interp
+                .eval_str("(set-frame-parameter nil 'window-system 'ns)")
+                .unwrap();
+            let (mut io, _events, _grids) = chan_pair();
+            let (requests, received) = smol::channel::unbounded();
+            io.gui_requests = Some(requests.clone());
+            io.legacy_grid_output = false;
+
+            io.render(&interp).unwrap();
+            interp
+                .eval_str("(set-frame-parameter nil 'name \"intermediate\")")
+                .unwrap();
+            io.render(&interp).unwrap();
+            interp
+                .eval_str("(set-frame-parameter nil 'name \"latest\")")
+                .unwrap();
+            io.render(&interp).unwrap();
+
+            let frame_id = interp.selected_frame.as_ref().unwrap().borrow().id;
+            let (reply, _response) = mpsc::sync_channel(1);
+            requests
+                .send_blocking(GuiRequest::Prompt {
+                    frame_id,
+                    message: "Continue?".into(),
+                    detail: None,
+                    header: None,
+                    items: Vec::new(),
+                    reply,
+                })
+                .unwrap();
+
+            let GuiRequest::FrameSnapshots(mailbox) = received.try_recv().unwrap() else {
+                panic!("expected a frame snapshot notification first");
+            };
+            assert!(matches!(
+                received.try_recv().unwrap(),
+                GuiRequest::Prompt { .. }
+            ));
+            assert!(received.try_recv().is_err());
+
+            let snapshots = mailbox.take_latest().unwrap();
+            assert_eq!(snapshots.len(), 1);
+            assert_eq!(snapshots[0].name, "latest");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn gui_initial_frame_visibility_loads_init_and_honors_quick() {
     use super::logic::{FrameSnapshot, GuiRequest, start_logic_with_frames};
     use remacs_runtime::frontend::FrameVisibility;
