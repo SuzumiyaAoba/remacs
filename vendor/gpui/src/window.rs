@@ -948,6 +948,8 @@ impl Window {
             focus,
             show,
             kind,
+            #[cfg(target_os = "macos")]
+            parent_window,
             is_movable,
             is_resizable,
             is_minimizable,
@@ -969,6 +971,8 @@ impl Window {
                 bounds,
                 titlebar,
                 kind,
+                #[cfg(target_os = "macos")]
+                parent_window,
                 is_movable,
                 is_resizable,
                 is_minimizable,

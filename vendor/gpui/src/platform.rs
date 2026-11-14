@@ -1188,6 +1188,10 @@ pub struct WindowOptions {
     /// The kind of window to create
     pub kind: WindowKind,
 
+    /// Native parent window for an attached child window on macOS.
+    #[cfg(target_os = "macos")]
+    pub parent_window: Option<raw_window_handle::RawWindowHandle>,
+
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
@@ -1237,6 +1241,9 @@ pub(crate) struct WindowParams {
     /// The kind of window to create
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub kind: WindowKind,
+
+    #[cfg(target_os = "macos")]
+    pub parent_window: Option<raw_window_handle::RawWindowHandle>,
 
     /// Whether the window should be movable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1315,6 +1322,8 @@ impl Default for WindowOptions {
             focus: true,
             show: true,
             kind: WindowKind::Normal,
+            #[cfg(target_os = "macos")]
+            parent_window: None,
             is_movable: true,
             is_resizable: true,
             is_minimizable: true,

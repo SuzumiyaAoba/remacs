@@ -608,6 +608,7 @@ impl MacWindow {
             bounds,
             titlebar,
             kind,
+            parent_window,
             is_movable,
             is_resizable,
             is_minimizable,
@@ -701,6 +702,17 @@ impl MacWindow {
                 target_screen,
             );
             assert!(!native_window.is_null());
+            if let Some(rwh::RawWindowHandle::AppKit(parent_handle)) = parent_window {
+                let parent_view = parent_handle.ns_view.as_ptr() as id;
+                let parent_window: id = msg_send![parent_view, window];
+                if !parent_window.is_null() {
+                    let _: () = msg_send![
+                        parent_window,
+                        addChildWindow: native_window
+                        ordered: NSWindowOrderingMode::NSWindowAbove
+                    ];
+                }
+            }
             let drag_types: id = msg_send![class!(NSMutableArray), array];
             let () = msg_send![drag_types, addObject: NSFilenamesPboardType];
             let () = msg_send![drag_types, addObject: NSPasteboardTypeString];

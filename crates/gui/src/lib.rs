@@ -1534,6 +1534,19 @@ fn frame_window_options(
                 .primary_frame_id
                 .and_then(|primary| windows.get(&primary))
         });
+    #[cfg(target_os = "macos")]
+    let parent_window = frame.parent_frame.and_then(|parent| {
+        windows.get(&parent).and_then(|handle| {
+            handle
+                .update(cx, |_view, window, _cx| {
+                    raw_window_handle::HasWindowHandle::window_handle(window)
+                        .ok()
+                        .map(|handle| handle.as_raw())
+                })
+                .ok()
+                .flatten()
+        })
+    });
     let parent_bounds =
         base_window.and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
     let parameter_position = frame.left.zip(frame.top).map(|(left, top)| {
@@ -1635,6 +1648,8 @@ fn frame_window_options(
         } else {
             WindowKind::Normal
         },
+        #[cfg(target_os = "macos")]
+        parent_window,
         window_decorations: (child || frame.undecorated).then_some(WindowDecorations::Client),
         titlebar: if child || frame.undecorated {
             None
