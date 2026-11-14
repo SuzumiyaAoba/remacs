@@ -473,6 +473,7 @@ impl MouseButton {
 pub enum MouseArea {
     ModeLine,
     HeaderLine,
+    TabBar,
     TabLine,
     LeftMargin,
     RightMargin,
@@ -712,5 +713,3 @@ pub(crate) fn gui_face_attributes_supported(
 ) -> bool {
     render::gui_face_attributes_supported(i, frame, attributes)
 }
-    LeftMargin,
-    RightMargin,

@@ -423,6 +423,30 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     })
 }
 
+pub(super) fn tab_bar_mouse_position(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    scale_factor: f32,
+    row: usize,
+) -> Option<MousePosition> {
+    let input = grid.input.as_ref()?;
+    Some(MousePosition {
+        buffer_id: input.buffer_id,
+        buffer_position: input.character_index_for_utf16_offset(input.cursor, false),
+        utf16_offset: input.cursor,
+        x: super::device_pixels(point.x, scale_factor),
+        y: super::device_pixels(point.y, scale_factor),
+        row,
+        column: (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize,
+        window_id: None,
+        area: Some(MouseArea::TabBar),
+        object: None,
+        timestamp: mouse_timestamp_ms(),
+        mode_line_buffer_name: false,
+    })
+}
+
 pub(super) fn mode_line_mouse_position(
     grid: &Grid,
     point: Point<Pixels>,

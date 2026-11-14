@@ -712,6 +712,7 @@ fn file_drop_uri(path: &std::path::Path) -> String {
 #[derive(Clone)]
 struct CommandHitRegion {
     bounds: Bounds<Pixels>,
+    row: usize,
     command: String,
     command_id: Option<NativeMenuCommandId>,
     argument: Option<i128>,
@@ -828,6 +829,7 @@ fn tool_bar_hit_regions(
                     item.byte_range?,
                     line_height,
                 )?,
+                row: item.row,
                 command: item.command.clone(),
                 command_id: item.command_id.clone(),
                 argument: None,
@@ -852,6 +854,7 @@ fn tab_bar_hit_regions(
                     item.byte_range?,
                     line_height,
                 )?,
+                row: item.row,
                 command: item.command.clone(),
                 command_id: item.command_id.clone(),
                 argument: item.argument,
@@ -1850,6 +1853,7 @@ impl Render for EditorView {
         let popup_hit_for_shape = self.popup_hit_regions.clone();
         let popup_hit_for_scroll = self.popup_hit_regions.clone();
         let tab_hit_for_shape = self.tab_hit_regions.clone();
+        let tab_hit_for_scroll = self.tab_hit_regions.clone();
         let tool_hit_for_shape = self.tool_hit_regions.clone();
         let left_mouse_down_modifiers = physical_modifier_state.clone();
         let left_mouse_up_tx = self.tx.clone();
@@ -2423,6 +2427,52 @@ impl Render for EditorView {
                     return;
                 }
                 let point = frame_content_point(event.position, window.viewport_size(), border);
+                let vertical_delta = event.delta.pixel_delta(line_height).y;
+                let tab_position = point.and_then(|point| {
+                    let row = tab_hit_for_scroll
+                        .borrow()
+                        .iter()
+                        .find(|item| {
+                            point.x >= item.bounds.left()
+                                && point.x < item.bounds.right()
+                                && point.y >= item.bounds.top()
+                                && point.y < item.bounds.bottom()
+                        })
+                        .map(|item| item.row)?;
+                    input::tab_bar_mouse_position(
+                        &scroll_grid,
+                        point,
+                        cell_width,
+                        window.scale_factor(),
+                        row,
+                    )
+                });
+                if let Some(position) = tab_position
+                    && f32::from(vertical_delta) != 0.0
+                {
+                    let delta_lines = -f32::from(vertical_delta) / f32::from(line_height);
+                    let pixel_delta = event.delta.precise().then(|| {
+                        (
+                            f32::from(event.delta.pixel_delta(cell_width).x).round() as i128,
+                            f32::from(vertical_delta).round() as i128,
+                        )
+                    });
+                    let modifiers = mouse_modifier_bits(
+                        &event.modifiers,
+                        modifier_mapping,
+                        scroll_modifiers.get(),
+                    );
+                    let _ = scroll_tx.send(GuiEvent::Scroll {
+                        delta: delta_lines,
+                        horizontal: false,
+                        pixel_delta,
+                        modifiers,
+                        position,
+                    });
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    return;
+                }
                 if let Some(position) = point.and_then(|point| {
                     input::mouse_position_for_point_with_cell_width(
                         &scroll_grid,
