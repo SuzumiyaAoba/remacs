@@ -10376,6 +10376,12 @@ fn render_grid_internal(
     } else {
         0
     };
+    let tab_bar_at_bottom = i.q_soft("tab-bar-position").is_some_and(|property| {
+        matches!(
+            crate::lisp::eval::plist_get(&fb.params, property),
+            Value::Sym(position) if i.symbol_name(position) == "bottom"
+        )
+    });
     let chrome_rows = tool_bar_rows.saturating_add(tab_bar_rows);
     let current_minibuffer_height = fb
         .minibuffer
@@ -10486,7 +10492,7 @@ fn render_grid_internal(
             &fb.params,
             width,
             tab_bar_rows,
-            0,
+            if tab_bar_at_bottom { tool_bar_rows } else { 0 },
             default_style,
             &mut fctx,
             &mut screen_rows,
@@ -10498,7 +10504,7 @@ fn render_grid_internal(
             &fb,
             width,
             tool_bar_rows,
-            tab_bar_rows,
+            if tab_bar_at_bottom { 0 } else { tab_bar_rows },
             frame_char_width,
             default_style,
             &mut fctx,
