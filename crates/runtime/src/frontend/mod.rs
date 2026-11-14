@@ -601,10 +601,20 @@ pub trait KeyIo {
     }
     /// Repaint the whole frame.
     fn render(&mut self, i: &Interp) -> io::Result<()>;
+    /// Buffer positions currently hovered by this front-end, paired with
+    /// their owning frames. Used to evaluate dynamic help properties before
+    /// the read-only renderer consumes the corresponding snapshot.
+    fn dynamic_help_echo_positions(
+        &self,
+        _i: &Interp,
+    ) -> Vec<(crate::editor::FrameRef, MousePosition)> {
+        Vec::new()
+    }
     /// Repaint with mutable runtime access for redisplay forms that evaluate Lisp.
     /// Existing front-ends keep the read-only renderer unless they override this.
     fn render_mut(&mut self, i: &mut Interp) -> io::Result<()> {
-        let _condition_cache = render::prepare_display_condition_cache(i);
+        let targets = self.dynamic_help_echo_positions(i);
+        let _render_cache = render::prepare_frontend_render_cache(i, &targets);
         self.render(i)
     }
     /// Most recently observed native pointer position, in the display-relative
@@ -704,8 +714,9 @@ pub use render::{
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,
     render_frame_grid_with_input_cached, render_frame_grid_with_mouse_position_cached,
+    render_frame_grid_with_mouse_position_cached_mut,
     render_grid, render_grid_mut, render_grid_with_input_cached,
-    render_grid_with_mouse_position_cached,
+    render_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached_mut,
 };
 pub(crate) use render::{position_at_display_cell, position_display_cell};
 pub(crate) use render::window_text_pixel_rows;

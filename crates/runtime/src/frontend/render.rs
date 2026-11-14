@@ -7086,6 +7086,8 @@ fn builtin_face_defaults(i: &Interp, name: &str) -> StyleMix {
 struct WindowFaces {
     /// The window whose redisplay is using these face values.
     window: Value,
+    /// Buffer represented by this face context.
+    buffer_id: usize,
     /// Buffer-local face replacements. Keep each cdr intact so direct
     /// composite specs remain distinct from face-remap helper entries.
     face_remappings: Vec<(crate::lisp::value::SymId, Value)>,
@@ -7630,6 +7632,7 @@ fn window_faces(
     .collect();
     WindowFaces {
         window: win.clone(),
+        buffer_id: bb.id,
         face_remappings,
         overlays,
         prop_faces,
@@ -7662,7 +7665,11 @@ fn overlay_strings_at(faces: &WindowFaces, position: usize) -> Vec<DisplayText> 
         .unwrap_or_default()
 }
 
-fn help_echo_at(i: &Interp, faces: &WindowFaces, position: usize) -> Option<String> {
+fn help_echo_property_at(
+    i: &Interp,
+    faces: &WindowFaces,
+    position: usize,
+) -> Option<(Value, Value)> {
     let mut overlays: Vec<_> = faces
         .help_echo_overlays
         .iter()
@@ -7672,20 +7679,181 @@ fn help_echo_at(i: &Interp, faces: &WindowFaces, position: usize) -> Option<Stri
         .collect();
     crate::buffer::sort_overlays_by_priority(i, &mut overlays);
     for (_, index) in overlays.into_iter().rev() {
-        let value = &faces.help_echo_overlays[index].1;
-        if let Value::Str(text) = value {
-            return Some(text.borrow().to_unicode_lossy());
-        }
+        let (overlay, value) = &faces.help_echo_overlays[index];
+        return Some((value.clone(), overlay.handle.clone()));
     }
     faces
         .help_echo_props
         .iter()
         .filter(|(start, end, _, _)| position >= *start && position < *end)
         .max_by_key(|(_, _, _, insertion)| insertion)
-        .and_then(|(_, _, value, _)| match value {
-            Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
-            _ => None,
+        .and_then(|(_, _, value, _)| {
+            Some((
+                value.clone(),
+                Value::Buffer(i.buffers.get(faces.buffer_id)?),
+            ))
         })
+}
+
+fn help_echo_property_in_buffer(
+    i: &Interp,
+    buffer: &std::rc::Rc<std::cell::RefCell<Buffer>>,
+    window: &Value,
+    position: usize,
+) -> Option<(Value, Value)> {
+    let property = i.q_soft("help-echo")?;
+    let (buffer_id, overlays, properties) = {
+        let buffer = buffer.borrow();
+        (
+            buffer.id,
+            buffer.overlays.clone(),
+            buffer
+                .text
+                .props
+                .borrow()
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.prop == property)
+                .map(|(insertion, item)| {
+                    (item.start, item.end, item.value.clone(), insertion)
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let mut covering_overlays: Vec<_> = overlays
+        .iter()
+        .enumerate()
+        .filter(|(_, overlay)| {
+            overlay.buffer == Some(buffer_id)
+                && position >= overlay.start
+                && position < overlay.end
+                && overlay.matches_window(i, window)
+        })
+        .map(|(index, overlay)| (overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut covering_overlays);
+    for (_, index) in covering_overlays.into_iter().rev() {
+        let overlay = &overlays[index];
+        let value = overlay.property(i, &Value::Sym(property));
+        if !value.is_nil() {
+            return Some((value, overlay.handle.clone()));
+        }
+    }
+    properties
+        .into_iter()
+        .filter(|(start, end, _, _)| position >= *start && position < *end)
+        .max_by_key(|(_, _, _, insertion)| *insertion)
+        .map(|(_, _, value, _)| (value, Value::Buffer(buffer.clone())))
+}
+
+#[derive(Clone)]
+struct DynamicHelpEcho {
+    buffer_id: usize,
+    window_id: usize,
+    position: usize,
+    text: Option<String>,
+}
+
+fn help_echo_at(
+    i: &Interp,
+    faces: &WindowFaces,
+    position: usize,
+    dynamic: Option<&DynamicHelpEcho>,
+) -> Option<String> {
+    let (value, _) = help_echo_property_at(i, faces, position)?;
+    if let Value::Str(text) = value {
+        return Some(text.borrow().to_unicode_lossy());
+    }
+    let Value::Window(window) = &faces.window else {
+        return None;
+    };
+    let matches_hover = |dynamic: &DynamicHelpEcho| {
+        dynamic.buffer_id == faces.buffer_id
+            && dynamic.window_id == window.borrow().id
+            && dynamic.position == position
+    };
+    if let Some(dynamic) = dynamic.filter(|dynamic| matches_hover(dynamic)) {
+        return dynamic.text.clone();
+    }
+    let interpreter_key = display_condition_cache_key(i);
+    DYNAMIC_HELP_ECHO_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(&interpreter_key)?
+            .iter()
+            .find(|dynamic| matches_hover(dynamic))
+            .and_then(|dynamic| dynamic.text.clone())
+    })
+}
+
+fn resolve_dynamic_help_echo(
+    i: &mut Interp,
+    frame: &crate::editor::FrameRef,
+    mouse_position: Option<MousePosition>,
+) -> Option<DynamicHelpEcho> {
+    let mouse_position = mouse_position?;
+    if mouse_position.area.is_some() || mouse_position.object.is_some() {
+        return None;
+    }
+    let windows = {
+        let frame = frame.borrow();
+        frame
+            .windows
+            .iter()
+            .chain(frame.minibuffer.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let window = if let Some(window_id) = mouse_position.window_id {
+        windows
+            .into_iter()
+            .find(|window| window.borrow().id == window_id)
+    } else {
+        let selected = crate::editor::sel_window(i)?;
+        windows
+            .into_iter()
+            .find(|window| std::rc::Rc::ptr_eq(window, &selected))
+    }?;
+    if window.borrow().buffer != mouse_position.buffer_id {
+        return None;
+    }
+    let buffer = i.buffers.get(mouse_position.buffer_id)?;
+    let window_value = Value::Window(window.clone());
+    let (value, object) = help_echo_property_in_buffer(
+        i,
+        &buffer,
+        &window_value,
+        mouse_position.buffer_position,
+    )?;
+    if matches!(value, Value::Str(_)) {
+        return None;
+    }
+
+    let current_buffer = i.current_buffer;
+    i.set_current_buffer(mouse_position.buffer_id);
+    let result = if crate::lisp::builtins::data::functionp_val(i, &value) {
+        i.apply(
+            &value,
+            vec![
+                window_value,
+                object,
+                Value::Int(mouse_position.buffer_position.saturating_add(1) as i128),
+            ],
+        )
+    } else {
+        i.eval(&value)
+    };
+    i.set_current_buffer(current_buffer);
+    let text = result.ok().and_then(|value| match value {
+        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+        _ => None,
+    });
+    Some(DynamicHelpEcho {
+        buffer_id: mouse_position.buffer_id,
+        window_id: window.borrow().id,
+        position: mouse_position.buffer_position,
+        text,
+    })
 }
 
 fn line_spacing_pixels(value: &Value, default_line_height: usize) -> Option<usize> {
@@ -8622,6 +8790,8 @@ struct DisplayConditionResult {
 thread_local! {
     static DISPLAY_CONDITION_CACHE: RefCell<HashMap<usize, Vec<DisplayConditionResult>>> =
         RefCell::new(HashMap::new());
+    static DYNAMIC_HELP_ECHO_CACHE: RefCell<HashMap<usize, Vec<DynamicHelpEcho>>> =
+        RefCell::new(HashMap::new());
 }
 
 pub(crate) struct DisplayConditionCacheGuard {
@@ -8638,6 +8808,44 @@ impl Drop for DisplayConditionCacheGuard {
 
 fn display_condition_cache_key(i: &Interp) -> usize {
     i as *const Interp as usize
+}
+
+pub(crate) struct DynamicHelpEchoCacheGuard {
+    interpreter_key: usize,
+}
+
+impl Drop for DynamicHelpEchoCacheGuard {
+    fn drop(&mut self) {
+        DYNAMIC_HELP_ECHO_CACHE.with(|cache| {
+            cache.borrow_mut().remove(&self.interpreter_key);
+        });
+    }
+}
+
+pub(crate) struct FrontendRenderCacheGuard {
+    _display: DisplayConditionCacheGuard,
+    _help_echo: DynamicHelpEchoCacheGuard,
+}
+
+pub(crate) fn prepare_frontend_render_cache(
+    i: &mut Interp,
+    targets: &[(crate::editor::FrameRef, MousePosition)],
+) -> FrontendRenderCacheGuard {
+    let display = prepare_display_condition_cache(i);
+    let interpreter_key = display_condition_cache_key(i);
+    let dynamic_help_echoes = targets
+        .iter()
+        .filter_map(|(frame, position)| resolve_dynamic_help_echo(i, frame, Some(*position)))
+        .collect();
+    DYNAMIC_HELP_ECHO_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(interpreter_key, dynamic_help_echoes);
+    });
+    FrontendRenderCacheGuard {
+        _display: display,
+        _help_echo: DynamicHelpEchoCacheGuard { interpreter_key },
+    }
 }
 
 fn evaluate_display_condition(
@@ -9781,7 +9989,7 @@ fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
 /// minimal amount to show point, and recentered when point sits more
 /// than a window-height away (scrolling can't reach it cheaply).
 pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
-    render_grid_internal(i, width, height, false, None, None, None)
+    render_grid_internal(i, width, height, false, None, None, None, None)
 }
 
 /// Render the selected frame while allowing display conditions to evaluate Lisp.
@@ -9798,7 +10006,7 @@ pub fn render_grid_with_input_cached(
     height: usize,
     cached: Option<&GridInput>,
 ) -> Grid {
-    render_grid_internal(i, width, height, true, cached, None, None)
+    render_grid_internal(i, width, height, true, cached, None, None, None)
 }
 
 /// Render a GUI input grid with mouse-face highlighting at MOUSE_POSITION.
@@ -9809,7 +10017,33 @@ pub fn render_grid_with_mouse_position_cached(
     cached: Option<&GridInput>,
     mouse_position: Option<MousePosition>,
 ) -> Grid {
-    render_grid_internal(i, width, height, true, cached, None, mouse_position)
+    render_grid_internal(i, width, height, true, cached, None, mouse_position, None)
+}
+
+/// Render a GUI input grid and evaluate a dynamic `help-echo` at the hovered
+/// buffer position. The read-only renderer keeps its existing string-only
+/// behavior for callers that cannot run Lisp callbacks.
+pub fn render_grid_with_mouse_position_cached_mut(
+    i: &mut Interp,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    let frame = i.selected_frame.clone();
+    let dynamic_help_echo = frame
+        .as_ref()
+        .and_then(|frame| resolve_dynamic_help_echo(i, frame, mouse_position));
+    render_grid_internal(
+        i,
+        width,
+        height,
+        true,
+        cached,
+        None,
+        mouse_position,
+        dynamic_help_echo.as_ref(),
+    )
 }
 
 /// Render FRAME without changing the interpreter's selected frame. This is
@@ -9821,7 +10055,7 @@ pub fn render_frame_grid_with_input_cached(
     height: usize,
     cached: Option<&GridInput>,
 ) -> Grid {
-    render_grid_internal(i, width, height, true, cached, Some(frame), None)
+    render_grid_internal(i, width, height, true, cached, Some(frame), None, None)
 }
 
 fn window_has_visible_display_property(i: &Interp, window: &crate::editor::WindowRef) -> bool {
@@ -9886,7 +10120,7 @@ pub(crate) fn window_text_pixel_rows(
         let window = window.borrow();
         (window.id, window.top)
     };
-    let grid = render_grid_internal(i, width, height, false, None, Some(&frame), None);
+    let grid = render_grid_internal(i, width, height, false, None, Some(&frame), None, None);
     let area = grid
         .window_text_areas
         .iter()
@@ -9926,6 +10160,30 @@ pub fn render_frame_grid_with_mouse_position_cached(
         cached,
         Some(frame),
         mouse_position,
+        None,
+    )
+}
+
+/// Render FRAME and evaluate a dynamic `help-echo` at its hovered buffer
+/// position without changing the interpreter's selected frame.
+pub fn render_frame_grid_with_mouse_position_cached_mut(
+    i: &mut Interp,
+    frame: &crate::editor::FrameRef,
+    width: usize,
+    height: usize,
+    cached: Option<&GridInput>,
+    mouse_position: Option<MousePosition>,
+) -> Grid {
+    let dynamic_help_echo = resolve_dynamic_help_echo(i, frame, mouse_position);
+    render_grid_internal(
+        i,
+        width,
+        height,
+        true,
+        cached,
+        Some(frame),
+        mouse_position,
+        dynamic_help_echo.as_ref(),
     )
 }
 
@@ -10161,6 +10419,7 @@ fn render_grid_internal(
     cached_input: Option<&GridInput>,
     frame_override: Option<&crate::editor::FrameRef>,
     mouse_position: Option<MousePosition>,
+    dynamic_help_echo: Option<&DynamicHelpEcho>,
 ) -> Grid {
     let max_image_size = image_size_limit(i);
     let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
@@ -12027,7 +12286,12 @@ fn render_grid_internal(
                 ));
                 if let Some(wf) = &wf {
                     for index in 0..segment_len {
-                        let Some(text) = help_echo_at(i, wf, segment_pos + index) else {
+                        let Some(text) = help_echo_at(
+                            i,
+                            wf,
+                            segment_pos + index,
+                            dynamic_help_echo,
+                        ) else {
                             continue;
                         };
                         let source_column = rendered

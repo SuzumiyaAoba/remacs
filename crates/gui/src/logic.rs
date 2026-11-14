@@ -2877,6 +2877,30 @@ impl KeyIo for ChanIo {
         Ok(())
     }
 
+    fn dynamic_help_echo_positions(
+        &self,
+        i: &Interp,
+    ) -> Vec<(remacs_runtime::editor::FrameRef, MousePosition)> {
+        let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
+        i.frames
+            .iter()
+            .filter(|frame| !frame.borrow().dead)
+            .filter_map(|frame| {
+                let frame_id = frame.borrow().id;
+                let position = self
+                    .mouse_positions
+                    .get(&frame_id)
+                    .copied()
+                    .or_else(|| {
+                        (Some(frame_id) == selected_id)
+                            .then_some(self.mouse_position)
+                            .flatten()
+                    })?;
+                Some((frame.clone(), position))
+            })
+            .collect()
+    }
+
     fn render(&mut self, i: &Interp) -> io::Result<()> {
         if let Some(frame) = i.selected_frame.as_ref() {
             self.active_frame_id = Some(frame.borrow().id);

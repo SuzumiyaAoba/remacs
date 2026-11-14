@@ -210,7 +210,7 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
         let previous = interp.gui_popup_menu.replace(menu.clone());
         let result = popup_loop(&popup_io, interp, &menu);
         interp.gui_popup_menu = previous;
-        let redraw = popup_io.borrow_mut().render(interp);
+        let redraw = popup_io.borrow_mut().render_mut(interp);
         match result {
             Err(flow) => Err(flow),
             Ok(selection) => redraw
@@ -251,7 +251,7 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
                 run_frontend_changes(&t, interp)?;
                 super::prepare_native_menus(interp)?;
                 t.borrow_mut()
-                    .render(interp)
+                    .render_mut(interp)
                     .map_err(|error| interp.error(format!("sit-for redisplay: {error}")))?;
                 render_needed = false;
             }
