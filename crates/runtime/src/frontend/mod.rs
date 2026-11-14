@@ -610,12 +610,26 @@ pub trait KeyIo {
     ) -> Vec<(crate::editor::FrameRef, MousePosition)> {
         Vec::new()
     }
+    /// Dispatch help found under the current pointer after the grid is built.
+    fn update_hover_help(
+        &mut self,
+        _i: &mut Interp,
+    ) -> Result<bool, crate::lisp::error::Flow> {
+        Ok(false)
+    }
     /// Repaint with mutable runtime access for redisplay forms that evaluate Lisp.
     /// Existing front-ends keep the read-only renderer unless they override this.
     fn render_mut(&mut self, i: &mut Interp) -> io::Result<()> {
         let targets = self.dynamic_help_echo_positions(i);
         let _render_cache = render::prepare_frontend_render_cache(i, &targets);
-        self.render(i)
+        self.render(i)?;
+        if self
+            .update_hover_help(i)
+            .map_err(|flow| io::Error::other(format!("hover help: {flow:?}")))?
+        {
+            self.render(i)?;
+        }
+        Ok(())
     }
     /// Most recently observed native pointer position, in the display-relative
     /// pixel coordinates of the selected frame, when the frontend has one.
@@ -713,6 +727,7 @@ pub use render::{
     GridModeLine, GridHeaderLine, GridTabLine, GridVScroll, GridWindowTextArea,
     GridMenuItem, GridPopupMenuItem, GridScrollBar, GridScrollBarOrientation, GridTabBarItem,
     GridToolBarItem, fit_text_to_cells, fit_text_to_cells_with_tab_width,
+    dispatch_hover_help,
     render_frame_grid_with_input_cached, render_frame_grid_with_mouse_position_cached,
     render_frame_grid_with_mouse_position_cached_mut,
     render_grid, render_grid_mut, render_grid_with_input_cached,

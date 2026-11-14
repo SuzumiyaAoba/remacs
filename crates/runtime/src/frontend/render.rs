@@ -441,6 +441,7 @@ pub struct GridHelpEcho {
     pub left: usize,
     pub width: usize,
     pub text: String,
+    pub inhibit_substitution: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -464,6 +465,7 @@ fn push_help_echo(regions: &mut Vec<GridHelpEcho>, next: GridHelpEcho) {
     if let Some(previous) = regions.last_mut()
         && previous.row == next.row
         && previous.text == next.text
+        && previous.inhibit_substitution == next.inhibit_substitution
         && next.left <= previous.left.saturating_add(previous.width)
     {
         let end = previous
@@ -2697,6 +2699,7 @@ use frame_title::{FrameTitleDependencies, frame_title};
 #[derive(Clone, Default)]
 struct ModeLineCharacterProperties {
     help: Option<String>,
+    inhibit_substitution: bool,
     identification: bool,
     pointer: Option<GridPointerShape>,
 }
@@ -3259,8 +3262,12 @@ fn format_mode_line_string(
                 position,
             ));
             let help = i.q_soft("help-echo").and_then(|property| {
-                help_echo_text(crate::lisp::eval::plist_get(&plist, property))
+                help_echo_text(i, crate::lisp::eval::plist_get(&plist, property))
             });
+            let (help, inhibit_substitution) = match help {
+                Some((help, inhibit_substitution)) => (Some(help), inhibit_substitution),
+                None => (None, false),
+            };
             let identification = i.q_soft("local-map").is_some_and(|property| {
                 mode_line_identification_map(
                     i,
@@ -3273,6 +3280,7 @@ fn format_mode_line_string(
             });
             ModeLineCharacterProperties {
                 help,
+                inhibit_substitution,
                 identification,
                 pointer,
             }
@@ -3297,9 +3305,14 @@ fn mode_line_identification_map(i: &Interp, buffer_id: usize, map: &Value) -> bo
             .is_some_and(|identification| crate::lisp::eq_values(map, &identification))
 }
 
-fn help_echo_text(value: Value) -> Option<String> {
+fn help_echo_text(i: &Interp, value: Value) -> Option<(String, bool)> {
     match value {
-        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+        Value::Str(text) => {
+            let inhibit_substitution =
+                help_echo_inhibit_substitution(i, &Value::Str(text.clone()));
+            let text = text.borrow().to_unicode_lossy();
+            Some((text, inhibit_substitution))
+        }
         _ => None,
     }
 }
@@ -3441,8 +3454,8 @@ pub(super) fn format_mode_line_value(
                                     )
                                     .map(|pair| &pair[1])
                             };
-                            let help =
-                                property("help-echo").map(|value| help_echo_text(value.clone()));
+                            let help = property("help-echo")
+                                .and_then(|value| help_echo_text(i, value.clone()));
                             let identification = property("local-map")
                                 .map(|value| mode_line_identification_map(i, buffer_id, value));
                             let pointer =
@@ -3451,8 +3464,9 @@ pub(super) fn format_mode_line_value(
                                 .iter_mut()
                                 .chain(properties.fill.iter_mut())
                             {
-                                if let Some(help) = &help {
-                                    character.help = help.clone();
+                                if let Some((help, inhibit_substitution)) = &help {
+                                    character.help = Some(help.clone());
+                                    character.inhibit_substitution = *inhibit_substitution;
                                 }
                                 if let Some(identification) = identification {
                                     character.identification = identification;
@@ -5490,6 +5504,7 @@ fn place_formatted_window_row(
                     left: left.saturating_add(column),
                     width: cells,
                     text,
+                    inhibit_substitution: properties.inhibit_substitution,
                 },
             );
         }
@@ -7695,6 +7710,20 @@ fn help_echo_property_at(
         })
 }
 
+fn help_echo_inhibit_substitution(i: &Interp, value: &Value) -> bool {
+    let Value::Str(text) = value else {
+        return false;
+    };
+    if text.borrow().is_empty() {
+        return false;
+    }
+    let Some(property) = i.q_soft("help-echo-inhibit-substitution") else {
+        return false;
+    };
+    let plist = Value::list(crate::buffer::primitives::str_plist_at(i.str_props(text), 0));
+    crate::lisp::eval::plist_get(&plist, property).truthy()
+}
+
 fn help_echo_property_in_buffer(
     i: &Interp,
     buffer: &std::rc::Rc<std::cell::RefCell<Buffer>>,
@@ -7751,7 +7780,7 @@ struct DynamicHelpEcho {
     buffer_id: usize,
     window_id: usize,
     position: usize,
-    text: Option<String>,
+    text: Option<(String, bool)>,
 }
 
 fn help_echo_at(
@@ -7759,10 +7788,11 @@ fn help_echo_at(
     faces: &WindowFaces,
     position: usize,
     dynamic: Option<&DynamicHelpEcho>,
-) -> Option<String> {
+) -> Option<(String, bool)> {
     let (value, _) = help_echo_property_at(i, faces, position)?;
     if let Value::Str(text) = value {
-        return Some(text.borrow().to_unicode_lossy());
+        let inhibit_substitution = help_echo_inhibit_substitution(i, &Value::Str(text.clone()));
+        return Some((text.borrow().to_unicode_lossy(), inhibit_substitution));
     }
     let Value::Window(window) = &faces.window else {
         return None;
@@ -7784,6 +7814,32 @@ fn help_echo_at(
             .find(|dynamic| matches_hover(dynamic))
             .and_then(|dynamic| dynamic.text.clone())
     })
+}
+
+/// Dispatch a hovered help string through `show-help-function`, applying
+/// command-key substitution unless the string requests that it be inhibited.
+pub fn dispatch_hover_help(
+    i: &mut Interp,
+    show_help_function: &Value,
+    help: Option<&GridHelpEcho>,
+) -> Result<(), crate::lisp::error::Flow> {
+    if show_help_function.is_nil() {
+        return Ok(());
+    }
+    let help = match help {
+        Some(region) => {
+            let text = Value::string(region.text.clone());
+            if region.inhibit_substitution {
+                text
+            } else {
+                let substitute = Value::Sym(i.q("substitute-command-keys"));
+                i.apply(&substitute, vec![text])?
+            }
+        }
+        None => Value::Nil,
+    };
+    i.apply(show_help_function, vec![help])?;
+    Ok(())
 }
 
 fn resolve_dynamic_help_echo(
@@ -7845,7 +7901,11 @@ fn resolve_dynamic_help_echo(
     };
     i.set_current_buffer(current_buffer);
     let text = result.ok().and_then(|value| match value {
-        Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
+        Value::Str(text) => {
+            let inhibit_substitution =
+                help_echo_inhibit_substitution(i, &Value::Str(text.clone()));
+            Some((text.borrow().to_unicode_lossy(), inhibit_substitution))
+        }
         _ => None,
     });
     Some(DynamicHelpEcho {
@@ -12286,7 +12346,7 @@ fn render_grid_internal(
                 ));
                 if let Some(wf) = &wf {
                     for index in 0..segment_len {
-                        let Some(text) = help_echo_at(
+                        let Some((text, inhibit_substitution)) = help_echo_at(
                             i,
                             wf,
                             segment_pos + index,
@@ -12317,6 +12377,7 @@ fn render_grid_internal(
                             left: content_left.saturating_add(visible_column),
                             width: visible_width,
                             text,
+                            inhibit_substitution,
                         });
                     }
                 }

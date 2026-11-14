@@ -530,16 +530,6 @@ struct TabBarDrag {
     dragged: bool,
 }
 
-struct HelpTooltipView {
-    text: String,
-}
-
-impl Render for HelpTooltipView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().bg(rgb(0x303438)).child(self.text.clone())
-    }
-}
-
 fn scroll_bar_axis(bar: &GridScrollBar, point: Point<Pixels>) -> f32 {
     let coordinate = match bar.orientation {
         GridScrollBarOrientation::Vertical => point.y,
@@ -1966,10 +1956,6 @@ impl Render for EditorView {
         let image_cache_entries = self.image_cache_entries.clone();
         let image_cache_size = self.image_cache_size.clone();
         let image_vscrolls = grid.vscrolls.clone();
-        let help_echoes = grid.help_echoes.clone();
-        let help_vscrolls = grid.vscrolls.clone();
-        let help_row_heights = grid.row_heights.clone();
-        let help_default_line_height = grid.default_line_height;
         let pointer_regions = grid.pointer_regions.clone();
         let pointer_row_heights = grid.row_heights.clone();
         let pointer_default_line_height = grid.default_line_height;
@@ -3632,41 +3618,6 @@ impl Render for EditorView {
                     image_cache_entries.clone(),
                     image_cache_size.clone(),
                 )
-            }))
-            .children(help_echoes.into_iter().map(|region| {
-                let text = region.text;
-                let vscroll = help_vscrolls
-                    .iter()
-                    .find(|scroll| {
-                        region.row >= scroll.top
-                            && region.row < scroll.top.saturating_add(scroll.rows)
-                            && region.left >= scroll.left
-                            && region.left < scroll.left.saturating_add(scroll.width)
-                    })
-                    .map_or(0, |scroll| scroll.pixels);
-                let top = row_top_from_heights(
-                    &help_row_heights,
-                    help_default_line_height,
-                    region.row,
-                    line_height,
-                );
-                let height = row_height_from_heights(
-                    &help_row_heights,
-                    help_default_line_height,
-                    region.row,
-                    line_height,
-                );
-                div()
-                    .absolute()
-                    .left(border + cell_width * region.left as f32)
-                    .top(border + top - px(vscroll as f32))
-                    .w(cell_width * region.width as f32)
-                    .h(height)
-                    .id((
-                        "help-echo",
-                        (region.row as u64).saturating_mul(1 << 32) + region.left as u64,
-                    ))
-                    .tooltip(move |_, cx| cx.new(|_| HelpTooltipView { text: text.clone() }).into())
             }))
             .when_some(explicit_tooltip, |this, text| {
                 let tooltip = div().absolute();

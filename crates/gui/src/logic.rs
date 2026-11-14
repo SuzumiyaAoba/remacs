@@ -1434,6 +1434,14 @@ pub(super) struct ChanIo {
     pub(super) scroll_remainders: HashMap<(Option<usize>, bool), ScrollRemainder>,
     last_input_at: Instant,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    last_hover_help: Option<HoverHelpState>,
+}
+
+#[derive(Clone)]
+struct HoverHelpState {
+    text: String,
+    inhibit_substitution: bool,
+    show_help_function: Value,
 }
 
 fn echo_tab_width(i: &Interp) -> usize {
@@ -2011,6 +2019,7 @@ impl ChanIo {
             scroll_remainders: HashMap::new(),
             last_input_at: Instant::now(),
             image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
+            last_hover_help: None,
         }
     }
 
@@ -2901,6 +2910,74 @@ impl KeyIo for ChanIo {
             .collect()
     }
 
+    fn update_hover_help(
+        &mut self,
+        i: &mut Interp,
+    ) -> Result<bool, remacs_runtime::lisp::error::Flow> {
+        let selected_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
+        let target = self
+            .dynamic_help_echo_positions(i)
+            .into_iter()
+            .max_by_key(|(frame, position)| {
+                (
+                    position.timestamp,
+                    Some(frame.borrow().id) == selected_id,
+                )
+            });
+        let help = target.as_ref().and_then(|(frame, position)| {
+            self.frame_grids
+                .get(&frame.borrow().id)?
+                .help_echoes
+                .iter()
+                .find(|region| {
+                    region.row == position.row
+                        && position.column >= region.left
+                        && position.column < region.left.saturating_add(region.width)
+                })
+                .cloned()
+        });
+        let show_help_function = i
+            .intern_soft("show-help-function")
+            .map(|symbol| i.symbol_value(symbol))
+            .unwrap_or(Value::Nil);
+        let Some(help) = help.filter(|_| !show_help_function.is_nil()) else {
+            if let Some(previous) = self.last_hover_help.take() {
+                remacs_runtime::frontend::dispatch_hover_help(
+                    i,
+                    &previous.show_help_function,
+                    None,
+                )?;
+                return Ok(true);
+            }
+            return Ok(false);
+        };
+        let current = HoverHelpState {
+            text: help.text.clone(),
+            inhibit_substitution: help.inhibit_substitution,
+            show_help_function: show_help_function.clone(),
+        };
+        if self.last_hover_help.as_ref().is_some_and(|previous| {
+            previous.text == current.text
+                && previous.inhibit_substitution == current.inhibit_substitution
+                && remacs_runtime::lisp::builtins::eq_values(
+                    &previous.show_help_function,
+                    &current.show_help_function,
+                )
+        }) {
+            return Ok(false);
+        }
+        if let Some(previous) = &self.last_hover_help {
+            remacs_runtime::frontend::dispatch_hover_help(
+                i,
+                &previous.show_help_function,
+                None,
+            )?;
+        }
+        remacs_runtime::frontend::dispatch_hover_help(i, &show_help_function, Some(&help))?;
+        self.last_hover_help = Some(current);
+        Ok(true)
+    }
+
     fn render(&mut self, i: &Interp) -> io::Result<()> {
         if let Some(frame) = i.selected_frame.as_ref() {
             self.active_frame_id = Some(frame.borrow().id);
@@ -3720,6 +3797,7 @@ fn start_logic_inner(
                 scroll_remainders: HashMap::new(),
                 last_input_at: Instant::now(),
                 image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
+                last_hover_help: None,
             };
             let term = Rc::new(RefCell::new(io));
             if enable_gui_requests {

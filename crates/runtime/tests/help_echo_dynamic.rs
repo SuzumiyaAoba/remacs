@@ -37,6 +37,27 @@ impl KeyIo for HoverFrontend {
             .unwrap_or_default()
     }
 
+    fn update_hover_help(
+        &mut self,
+        i: &mut Interp,
+    ) -> Result<bool, remacs_runtime::lisp::error::Flow> {
+        let help = self.grid.as_ref().and_then(|grid| {
+            grid.help_echoes
+                .iter()
+                .find(|region| {
+                    region.row == self.position.row
+                        && self.position.column >= region.left
+                        && self.position.column < region.left.saturating_add(region.width)
+                })
+        });
+        let Some(help) = help else {
+            return Ok(false);
+        };
+        let show_help_function = i.eval_str("(symbol-value 'show-help-function)")?;
+        remacs_runtime::frontend::dispatch_hover_help(i, &show_help_function, Some(help))?;
+        Ok(true)
+    }
+
     fn draw_echo(&mut self, _: &str) -> io::Result<()> {
         Ok(())
     }
@@ -100,7 +121,12 @@ fn help_echo_functions_and_expressions_resolve_at_the_hovered_position() {
                   (erase-buffer)
                   (insert "hover")
                   (setq qa-help-echo-function-calls 0
-                        qa-help-echo-function-args nil)
+                        qa-help-echo-function-args nil
+                        qa-show-help-calls nil
+                        show-help-function
+                        (lambda (help)
+                          (setq qa-show-help-calls
+                                (cons help qa-show-help-calls))))
                   (put-text-property
                    (point-min) (point-max) 'help-echo
                    (lambda (window object position)
@@ -119,6 +145,11 @@ fn help_echo_functions_and_expressions_resolve_at_the_hovered_position() {
             assert_eq!(
                 i.prin1_to_string(&result).to_unicode_lossy(),
                 "(1 (t t 1))"
+            );
+            let result = i.eval_str("qa-show-help-calls").unwrap();
+            assert_eq!(
+                i.prin1_to_string(&result).to_unicode_lossy(),
+                "(\"Dynamic text help\")"
             );
 
             eval(
@@ -143,6 +174,11 @@ fn help_echo_functions_and_expressions_resolve_at_the_hovered_position() {
                 i.prin1_to_string(&result).to_unicode_lossy(),
                 "(t t 1)"
             );
+            let result = i.eval_str("qa-show-help-calls").unwrap();
+            assert_eq!(
+                i.prin1_to_string(&result).to_unicode_lossy(),
+                "(\"Dynamic overlay help\" \"Dynamic text help\")"
+            );
 
             eval(
                 &mut i,
@@ -163,6 +199,60 @@ fn help_echo_functions_and_expressions_resolve_at_the_hovered_position() {
             assert_eq!(
                 i.prin1_to_string(&result).to_unicode_lossy(),
                 "1"
+            );
+
+            eval(
+                &mut i,
+                r#"(progn
+                  (erase-buffer)
+                  (insert "hover")
+                  (setq qa-show-help-calls nil)
+                  (put-text-property
+                   (point-min) (point-max) 'help-echo "Press \\[next-line]"))"#,
+            );
+            assert_help_echo(&mut i, buffer_id, r"Press \[next-line]");
+            let actual = i.eval_str("qa-show-help-calls").unwrap();
+            let expected = i
+                .eval_str(r#"(list (substitute-command-keys "Press \\[next-line]"))"#)
+                .unwrap();
+            assert_eq!(
+                i.prin1_to_string(&actual).to_unicode_lossy(),
+                i.prin1_to_string(&expected).to_unicode_lossy()
+            );
+
+            eval(
+                &mut i,
+                r#"(progn
+                  (erase-buffer)
+                  (insert "hover")
+                  (setq qa-show-help-calls nil)
+                  (put-text-property
+                   (point-min) (point-max) 'help-echo
+                   (propertize "Press \\[next-line]"
+                               'help-echo-inhibit-substitution t)))"#,
+            );
+            assert_help_echo(&mut i, buffer_id, r"Press \[next-line]");
+            let actual = i.eval_str("(car qa-show-help-calls)").unwrap();
+            let expected = i.eval_str(r#""Press \\[next-line]""#).unwrap();
+            assert_eq!(
+                i.prin1_to_string(&actual).to_unicode_lossy(),
+                i.prin1_to_string(&expected).to_unicode_lossy()
+            );
+
+            eval(&mut i, "(progn (require 'tooltip) (tooltip-mode -1))");
+            eval(
+                &mut i,
+                r#"(progn
+                  (erase-buffer)
+                  (insert "hover")
+                  (put-text-property
+                   (point-min) (point-max) 'help-echo "Echo area help"))"#,
+            );
+            assert_help_echo(&mut i, buffer_id, "Echo area help");
+            let message = i.eval_str("(current-message)").unwrap();
+            assert_eq!(
+                i.prin1_to_string(&message).to_unicode_lossy(),
+                "\"Echo area help\""
             );
         })
         .unwrap()
