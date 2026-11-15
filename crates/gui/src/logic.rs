@@ -3520,8 +3520,9 @@ fn apply_startup_arguments(
     i: &mut Interp,
     files: &[String],
     arguments: &[String],
-    gui_initialization: bool,
+    gui_startup_identity: Option<&GuiStartupIdentity>,
 ) -> remacs_runtime::lisp::EvalResult {
+    let gui_initialization = gui_startup_identity.is_some();
     let mut startup_arguments = arguments.to_vec();
     let mut files_to_open = files.to_vec();
     for argument_file in remacs_cli::arguments(arguments).filter_map(|argument| match argument {
@@ -3724,9 +3725,8 @@ fn start_logic_inner(
             if enable_gui_selections {
                 i.set_x_resource_backend(Some(Rc::new(GuiXResourceBackend)));
             }
-            if enable_gui_selections {
-                configure_gui_window_system(&mut i);
-            }
+            let gui_startup_identity =
+                enable_gui_selections.then(|| configure_gui_window_system(&mut i));
             if enable_gui_requests {
                 i.set_bell_backend(Some(Rc::new(GuiBellBackend {
                     requests: gui_requests_tx.clone(),
@@ -3890,7 +3890,8 @@ fn start_logic_inner(
                 })
                 .collect::<HashMap<_, _>>();
             let startup_frame_sizes = term.borrow().frame_sizes.clone();
-            let startup = apply_startup_arguments(&mut i, &files, &arguments, enable_gui_selections);
+            let startup =
+                apply_startup_arguments(&mut i, &files, &arguments, gui_startup_identity.as_ref());
             if let Err(error) = startup {
                 let message = format!("GUI startup: {error:?}");
                 eprintln!("remacs: {message}");
@@ -3942,7 +3943,10 @@ fn start_logic_inner(
     ))
 }
 
-fn configure_gui_window_system(i: &mut Interp) {
+/// Private token proving GUI identity has been installed before startup actions.
+struct GuiStartupIdentity;
+
+fn configure_gui_window_system(i: &mut Interp) -> GuiStartupIdentity {
     let window_system = i.intern("window-system");
     let initial_window_system = i.intern("initial-window-system");
     #[cfg(target_os = "macos")]
@@ -3967,6 +3971,51 @@ fn configure_gui_window_system(i: &mut Interp) {
             &remacs_runtime::lisp::Value::Sym(update_faces),
             vec![remacs_runtime::lisp::Value::Frame(frame)],
         );
+    }
+    GuiStartupIdentity
+}
+
+#[cfg(test)]
+mod gui_startup_identity_tests {
+    use super::{apply_startup_arguments, configure_gui_window_system};
+    use remacs_runtime::lisp::Interp;
+
+    #[test]
+    fn command_line_eval_observes_the_configured_gui_window_system() {
+        let expected = if cfg!(target_os = "macos") {
+            "ns"
+        } else if cfg!(target_os = "windows") {
+            "w32"
+        } else {
+            "gpui"
+        };
+
+        std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn(move || {
+                let mut interp = Interp::new();
+                let gui_startup_identity = configure_gui_window_system(&mut interp);
+                apply_startup_arguments(
+                    &mut interp,
+                    &[],
+                    &[
+                        "--eval".to_owned(),
+                        "(setq qa-gui-startup-window-system (window-system))".to_owned(),
+                    ],
+                    Some(&gui_startup_identity),
+                )
+                .unwrap();
+
+                let symbol = interp.intern("qa-gui-startup-window-system");
+                let observed = interp.symbol_value(symbol);
+                assert_eq!(
+                    interp.prin1_to_string(&observed).to_unicode_lossy(),
+                    expected
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
 
