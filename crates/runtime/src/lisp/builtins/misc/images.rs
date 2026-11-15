@@ -3,6 +3,14 @@
 use crate::lisp::builtins::arg;
 use crate::lisp::{Interp, error::EvalResult, obarray::sym, value::Value};
 
+pub(super) fn f_display_images_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = a.get(0).cloned().unwrap_or(Value::Nil);
+    let frame = crate::lisp::builtins::misc::decode_display(i, &display)?;
+    Ok(Value::from_bool(
+        i.image_backend.is_some() && crate::editor::frame_is_graphical(i, &frame),
+    ))
+}
+
 pub(super) fn f_image_transforms_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
     if crate::editor::frame_is_graphical(i, &frame) {

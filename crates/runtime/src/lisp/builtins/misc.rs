@@ -255,9 +255,10 @@ use functions::{
     f_special_variable_p, f_subr_native_elisp_p,
 };
 use images::{
-    f_bitmap_spec_p, f_clear_image_cache, f_image_cache_size, f_image_flush, f_image_mask_p,
-    f_image_metadata, f_image_size, f_image_transforms_p, f_image_type, f_image_type_available_p,
-    f_imagep, f_init_image_library, f_lookup_image_map, f_put_image, f_remove_images,
+    f_bitmap_spec_p, f_clear_image_cache, f_display_images_p, f_image_cache_size, f_image_flush,
+    f_image_mask_p, f_image_metadata, f_image_size, f_image_transforms_p, f_image_type,
+    f_image_type_available_p, f_imagep, f_init_image_library, f_lookup_image_map, f_put_image,
+    f_remove_images,
 };
 use objects::{
     f_cl_type_of, f_garbage_collect_maybe, f_gc_heapsize, f_length_eq, f_length_gt, f_length_lt,
@@ -1164,7 +1165,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_mouse_pixel_position,
         ""
     ),
-    S!("display-images-p", 0, 1, f_display_false, ""),
+    S!("display-images-p", 0, 1, f_display_images_p, ""),
     S!("display-pixel-width", 0, 1, f_display_pixel_width, ""),
     S!("display-pixel-height", 0, 1, f_display_pixel_height, ""),
     S!("display-mm-width", 0, 1, f_display_mm, ""),

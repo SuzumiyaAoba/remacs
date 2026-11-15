@@ -15658,9 +15658,7 @@ the suggested string to use instead.  See
 
 ;; Remaining GNU -Q variable defaults for this cluster.
 
-;;Remacs: GPUI currently has no image paint path, regardless of the image
-;; metadata primitives registered by the runtime.
-(defconst remacs--image-rendering-supported nil
+(defvar remacs--image-rendering-supported nil
   "Non-nil if the active Remacs front-end can draw image glyphs.")
 
 (defvar window-system nil)

@@ -56,7 +56,11 @@ impl Interp {
 
     /// Install or remove the host image decoder/cache used by graphical frames.
     pub fn set_image_backend(&mut self, backend: Option<Rc<dyn crate::frontend::ImageBackend>>) {
+        let supported = backend.is_some();
         self.image_backend = backend;
+        if let Some(variable) = self.intern_soft("remacs--image-rendering-supported") {
+            let _ = self.set_symbol_default_no_watchers(variable, Value::from_bool(supported));
+        }
     }
 
     /// Install or remove the host font chooser used by GUI font primitives.
