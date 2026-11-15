@@ -1758,6 +1758,12 @@ FILE, if set, is the file name."
               (rr  nil))
           ;; (message "  yes we should.")
           ;; translate 'hfy-anchor properties to anchors
+          (setq pt (point-min))
+          (when (setq pr (get-text-property pt 'hfy-anchor))
+            (goto-char pt)
+            (remove-text-properties pt (1+ pt) '(hfy-anchor nil))
+            (hfy-insert-anchor pr)
+            (setq pt (point)))
           (while (setq pt (next-single-property-change pt 'hfy-anchor))
             (if (setq pr (get-text-property pt 'hfy-anchor))
                 (progn (goto-char pt)

@@ -24,4 +24,14 @@
    (buffer-string))
  "<span class=\"evil&quot; onclick=&quot;alert(1)\">")
 
+(qa
+ (let ((html (with-temp-buffer
+               (insert "xy")
+               (put-text-property 1 2 'hfy-anchor "first-tag.1")
+               (hfy-fontify-buffer "src" "file.el"))))
+   (with-current-buffer html
+     (goto-char (point-min))
+     (not (null (search-forward "<a name=\"first-tag.1\"></a>" nil t)))))
+ t)
+
 (princ (qa--done))
