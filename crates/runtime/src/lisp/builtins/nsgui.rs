@@ -847,7 +847,7 @@ fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else if a[0].truthy() {
         backend.hide()
     } else {
-        backend.activate()
+        backend.unhide()
     };
     result.map_err(|error| i.error(format!("Application visibility failed: {error}")))?;
     Ok(Value::Nil)

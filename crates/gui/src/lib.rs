@@ -1381,6 +1381,20 @@ pub fn run_gui_with_dump(
                             });
                         let _ = reply.send(result);
                     }
+                    GuiRequest::UnhideApp { reply } => {
+                        let result = cx
+                            .update(|app| {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let _ = app;
+                                    unhide_native_application();
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                app.activate(false);
+                            })
+                            .map_err(|error| error.to_string());
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::HideOtherApps(reply) => {
                         let result = cx
                             .update(|app| app.hide_other_apps())

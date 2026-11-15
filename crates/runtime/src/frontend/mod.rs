@@ -355,6 +355,10 @@ pub trait ApplicationVisibilityBackend {
     ) -> Result<(), String> {
         self.activate()
     }
+    /// Restore a hidden application without requesting activation.
+    fn unhide(&self) -> Result<(), String> {
+        self.activate()
+    }
     fn hide_other_apps(&self) -> Result<(), String>;
     fn set_dock_badge(&self, badge: Option<&str>) -> Result<(), String>;
     fn set_dock_progress(&self, progress: Option<f64>) -> Result<(), String>;

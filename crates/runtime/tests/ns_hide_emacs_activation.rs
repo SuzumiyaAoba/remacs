@@ -8,6 +8,7 @@ use std::{cell::RefCell, rc::Rc, thread};
 enum Call {
     Hide,
     Activate,
+    Unhide,
     ActivateUnhidden { has_frame: bool, front: bool },
 }
 
@@ -34,6 +35,11 @@ impl ApplicationVisibilityBackend for RecordingBackend {
             has_frame: frame_id.is_some(),
             front: bring_frame_to_front,
         });
+        Ok(())
+    }
+
+    fn unhide(&self) -> Result<(), String> {
+        self.0.borrow_mut().push(Call::Unhide);
         Ok(())
     }
 
@@ -87,7 +93,7 @@ fn ns_hide_emacs_activation_symbols_keep_their_distinct_modes() {
                         has_frame: true,
                         front: true,
                     },
-                    Call::Activate,
+                    Call::Unhide,
                     Call::Hide,
                 ]
             );

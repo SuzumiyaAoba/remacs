@@ -537,6 +537,9 @@ pub(super) enum GuiRequest {
         bring_frame_to_front: bool,
         reply: SyncSender<Result<(), String>>,
     },
+    UnhideApp {
+        reply: SyncSender<Result<(), String>>,
+    },
     HideOtherApps(SyncSender<Result<(), String>>),
     Prompt {
         frame_id: usize,
@@ -1210,6 +1213,16 @@ impl remacs_runtime::frontend::ApplicationVisibilityBackend
                 bring_frame_to_front,
                 reply,
             })
+            .map_err(|_| "GUI application service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI application service stopped".to_owned())?
+    }
+
+    fn unhide(&self) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::UnhideApp { reply })
             .map_err(|_| "GUI application service is unavailable".to_owned())?;
         response
             .recv()
