@@ -2034,13 +2034,7 @@ fn lower_frame_window(window: &Window) {
 fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool) {
     #[cfg(target_os = "macos")]
     if let Some(native_window) = appkit_native_window(window) {
-        let level: NSInteger = match z_group {
-            Some("above") if child => 101,
-            Some("above") => 3,
-            Some("below") => 0,
-            _ if child => 101,
-            _ => 0,
-        };
+        let level = mac_frame_window_level(z_group, child);
         unsafe {
             let _: () = msg_send![native_window, setLevel: level];
             match z_group {
@@ -2061,6 +2055,27 @@ fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool)
         _ => {
             let _ = (window, child);
         }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_frame_window_level(z_group: Option<&str>, _child: bool) -> NSInteger {
+    match z_group {
+        Some("above") => 3,
+        _ => 0,
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_frame_window_level_tests {
+    use super::mac_frame_window_level;
+
+    #[test]
+    fn child_frames_without_a_z_group_stay_below_modal_panels_and_menus() {
+        assert_eq!(mac_frame_window_level(None, true), 0);
+        assert_eq!(mac_frame_window_level(None, false), 0);
+        assert_eq!(mac_frame_window_level(Some("above"), true), 3);
+        assert_eq!(mac_frame_window_level(Some("below"), true), 0);
     }
 }
 
