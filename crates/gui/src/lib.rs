@@ -707,6 +707,7 @@ pub fn run_gui_with_dump(
             let mut window_represented_files = HashMap::<usize, Option<String>>::new();
             let mut native_visibility = HashMap::<usize, bool>::new();
             let mut window_visibilities = HashMap::<usize, FrameVisibility>::new();
+            let mut pending_frame_visibilities = HashMap::<usize, FrameVisibility>::new();
             let mut pending_frame_orders = HashMap::<usize, bool>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
@@ -717,9 +718,16 @@ pub fn run_gui_with_dump(
                         };
                         let live_frames: HashSet<_> =
                             snapshots.iter().map(|snapshot| snapshot.frame_id).collect();
+                        pending_frame_visibilities
+                            .retain(|frame_id, _| live_frames.contains(frame_id));
                         pending_frame_orders.retain(|frame_id, _| live_frames.contains(frame_id));
-                        for snapshot in snapshots {
+                        for mut snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
+                            snapshot.visibility = frame_snapshot_visibility(
+                                frame_id,
+                                snapshot.visibility,
+                                &pending_frame_visibilities,
+                            );
                             let visibility = snapshot.visibility;
                             let update_visibility =
                                 window_visibilities.get(&frame_id) != Some(&visibility);
@@ -889,6 +897,7 @@ pub fn run_gui_with_dump(
                                 if update_visibility {
                                     native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
                                 }
+                                pending_frame_visibilities.remove(&frame_id);
                                 continue;
                             }
                             if let Some(handle) = primary_window.take() {
@@ -973,6 +982,7 @@ pub fn run_gui_with_dump(
                                     &mut pending_frame_orders,
                                     cx,
                                 );
+                                pending_frame_visibilities.remove(&frame_id);
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
                                 window_backgrounds.insert(frame_id, initial_background_appearance);
@@ -1069,6 +1079,7 @@ pub fn run_gui_with_dump(
                                 &mut pending_frame_orders,
                                 cx,
                             );
+                            pending_frame_visibilities.remove(&frame_id);
                             native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
                             windows.insert(frame_id, handle);
                         }
@@ -1157,9 +1168,12 @@ pub fn run_gui_with_dump(
                             .copied()
                             .unwrap_or(true);
                         if let Some(handle) = windows.get(&frame_id).copied() {
+                            pending_frame_visibilities.remove(&frame_id);
                             let _ = handle.update(cx, |_view, window, _cx| {
                                 apply_frame_visibility(window, visibility, focus_on_map);
                             });
+                        } else {
+                            pending_frame_visibilities.insert(frame_id, visibility);
                         }
                     }
                     GuiRequest::FrameOrder { frame_id, raise } => {
@@ -2072,6 +2086,17 @@ fn raise_frame_window(window: &Window) {
 
 fn lower_frame_window(window: &Window) {
     window.lower_window();
+}
+
+fn frame_snapshot_visibility(
+    frame_id: usize,
+    snapshot_visibility: FrameVisibility,
+    pending: &HashMap<usize, FrameVisibility>,
+) -> FrameVisibility {
+    pending
+        .get(&frame_id)
+        .copied()
+        .unwrap_or(snapshot_visibility)
 }
 
 fn apply_frame_order(window: &Window, raise: bool) {
