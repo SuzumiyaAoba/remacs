@@ -1,5 +1,5 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
-use super::{MouseObject, MouseObjectSource, MousePosition};
+use super::{MouseArea, MouseObject, MouseObjectSource, MousePosition};
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
@@ -2719,6 +2719,7 @@ struct ModeLineCharacterProperties {
     inhibit_substitution: bool,
     identification: bool,
     pointer: Option<GridPointerShape>,
+    mouse_face: Option<Value>,
 }
 
 #[derive(Default)]
@@ -3295,11 +3296,16 @@ fn format_mode_line_string(
             let pointer = i.q_soft("pointer").and_then(|property| {
                 mode_line_pointer_shape(i, &crate::lisp::eval::plist_get(&plist, property))
             });
+            let mouse_face = i
+                .q_soft("mouse-face")
+                .map(|property| crate::lisp::eval::plist_get(&plist, property))
+                .filter(|value| value.truthy());
             ModeLineCharacterProperties {
                 help,
                 inhibit_substitution,
                 identification,
                 pointer,
+                mouse_face,
             }
         };
         properties
@@ -3477,6 +3483,9 @@ pub(super) fn format_mode_line_value(
                                 .map(|value| mode_line_identification_map(i, buffer_id, value));
                             let pointer =
                                 property("pointer").map(|value| mode_line_pointer_shape(i, value));
+                            let mouse_face = property("mouse-face")
+                                .filter(|value| value.truthy())
+                                .cloned();
                             for character in properties.characters[start..]
                                 .iter_mut()
                                 .chain(properties.fill.iter_mut())
@@ -3490,6 +3499,9 @@ pub(super) fn format_mode_line_value(
                                 }
                                 if let Some(pointer) = pointer {
                                     character.pointer = pointer;
+                                }
+                                if let Some(mouse_face) = &mouse_face {
+                                    character.mouse_face = Some(mouse_face.clone());
                                 }
                             }
                         }
@@ -5459,6 +5471,23 @@ fn place_fringe_bitmap(
     true
 }
 
+fn formatted_row_mouse_column(
+    mouse_position: Option<MousePosition>,
+    window_id: usize,
+    buffer_id: usize,
+    row: usize,
+    area: MouseArea,
+) -> Option<usize> {
+    mouse_position
+        .filter(|position| {
+            position.window_id == Some(window_id)
+                && position.buffer_id == buffer_id
+                && position.row == row
+                && position.area == Some(area)
+        })
+        .map(|position| position.column)
+}
+
 fn place_formatted_window_row(
     i: &Interp,
     faces: &mut FaceCtx,
@@ -5471,6 +5500,7 @@ fn place_formatted_window_row(
     format: &Value,
     context: &ModeLineContext,
     face_name: &str,
+    mouse_face_column: Option<usize>,
     help_echoes: &mut Vec<GridHelpEcho>,
     pointer_regions: &mut Vec<GridPointerRegion>,
 ) -> Option<(usize, usize)> {
@@ -5492,6 +5522,7 @@ fn place_formatted_window_row(
     // particular, tabs cover several cells and a clipped wide glyph covers none.
     let mut column = 0usize;
     let mut buffer_name_range = None;
+    let mut mouse_face_ranges = Vec::<(usize, usize, Value)>::new();
     for (character, properties) in text.chars().zip(properties.characters) {
         let character = match character {
             '\n' | '\r' => ' ',
@@ -5505,6 +5536,14 @@ fn place_formatted_window_row(
         };
         if column.saturating_add(cells) > width {
             break;
+        }
+        if cells > 0
+            && mouse_face_column
+                .is_some_and(|hover| hover >= column && hover < column.saturating_add(cells))
+            && let Some(mouse_face) = properties.mouse_face.as_ref()
+            && mouse_face.truthy()
+        {
+            mouse_face_ranges.push((column, cells, mouse_face.clone()));
         }
         push_pointer_region(
             pointer_regions,
@@ -5559,8 +5598,25 @@ fn place_formatted_window_row(
     {
         style.inverse = true;
     }
-    let cell_styles = vec![style; width];
-    let character_styles = row_text.chars().map(|_| style).collect::<Vec<_>>();
+    let mut cell_styles = vec![style; width];
+    for (column, cells, mouse_face) in mouse_face_ranges {
+        let mouse_style = faces.face_value(i, &mouse_face, 0).overlay_on(style);
+        let end = column.saturating_add(cells).min(width);
+        for cell in cell_styles.iter_mut().take(end).skip(column) {
+            *cell = mouse_style;
+        }
+    }
+    let mut character_styles = Vec::with_capacity(row_text.chars().count());
+    let mut cell_column = 0usize;
+    for character in row_text.chars() {
+        let cells = display_char_width(character);
+        character_styles.push(if cells == 0 {
+            character_styles.last().copied().unwrap_or(style)
+        } else {
+            cell_styles.get(cell_column).copied().unwrap_or(style)
+        });
+        cell_column = cell_column.saturating_add(cells);
+    }
     place_text_row(screen_row, left, &row_text, &cell_styles, &character_styles);
     buffer_name_range
 }
@@ -13034,6 +13090,13 @@ fn render_grid_internal(
                 &tab_line_format,
                 &mode_context,
                 "tab-line",
+                formatted_row_mouse_column(
+                    mouse_position,
+                    window_id,
+                    buf_id,
+                    auxiliary_row,
+                    MouseArea::TabLine,
+                ),
                 &mut help_echoes,
                 &mut pointer_regions,
             );
@@ -13059,6 +13122,13 @@ fn render_grid_internal(
                 &header_line_format,
                 &mode_context,
                 "header-line",
+                formatted_row_mouse_column(
+                    mouse_position,
+                    window_id,
+                    buf_id,
+                    auxiliary_row,
+                    MouseArea::HeaderLine,
+                ),
                 &mut help_echoes,
                 &mut pointer_regions,
             );
@@ -13095,6 +13165,13 @@ fn render_grid_internal(
                 &mode_line_format,
                 &mode_context,
                 ml_name,
+                formatted_row_mouse_column(
+                    mouse_position,
+                    window_id,
+                    buf_id,
+                    my,
+                    MouseArea::ModeLine,
+                ),
                 &mut help_echoes,
                 &mut pointer_regions,
             );

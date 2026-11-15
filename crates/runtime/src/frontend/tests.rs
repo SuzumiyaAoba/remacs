@@ -335,6 +335,95 @@ fn nontext_mouse_area_does_not_use_buffer_hover_properties() {
 }
 
 #[test]
+fn formatted_mode_header_and_tab_lines_apply_mouse_face_on_hover() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        r##"(progn
+          (setq-local mode-line-format
+                      '((:propertize " Hover " mouse-face (:background "#ff0000"))))
+          (setq-local header-line-format
+                      '((:propertize " Hover " mouse-face (:background "#ff0000"))))
+          (setq-local tab-line-format
+                      '((:propertize " Hover " mouse-face (:background "#ff0000")))))"##,
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let window_id = frame.borrow().selected.borrow().id;
+    let buffer_id = i.current_buffer_ref().unwrap().borrow().id;
+    let grid = crate::frontend::render_frame_grid_with_mouse_position_cached(
+        &i, &frame, 80, 25, None, None,
+    );
+    let red = Some(CellColor(255, 0, 0));
+    let line_targets = [
+        (
+            grid.mode_lines
+                .iter()
+                .find(|line| line.window_id == window_id)
+                .unwrap()
+                .row,
+            grid.mode_lines
+                .iter()
+                .find(|line| line.window_id == window_id)
+                .unwrap()
+                .left,
+            crate::frontend::MouseArea::ModeLine,
+        ),
+        (
+            grid.header_lines
+                .iter()
+                .find(|line| line.window_id == window_id)
+                .unwrap()
+                .row,
+            grid.header_lines
+                .iter()
+                .find(|line| line.window_id == window_id)
+                .unwrap()
+                .left,
+            crate::frontend::MouseArea::HeaderLine,
+        ),
+        (
+            grid.tab_lines
+                .iter()
+                .find(|line| line.window_id == window_id)
+                .unwrap()
+                .row,
+            grid.tab_lines
+                .iter()
+                .find(|line| line.window_id == window_id)
+                .unwrap()
+                .left,
+            crate::frontend::MouseArea::TabLine,
+        ),
+    ];
+    for (row, left, area) in line_targets {
+        let position = MousePosition {
+            buffer_id,
+            buffer_position: 0,
+            utf16_offset: 0,
+            x: 2,
+            y: 0,
+            row,
+            column: 2,
+            window_id: Some(window_id),
+            area: Some(area),
+            mode_line_buffer_name: false,
+            object: None,
+            timestamp: 0,
+        };
+        let hovered = crate::frontend::render_frame_grid_with_mouse_position_cached(
+            &i,
+            &frame,
+            80,
+            25,
+            None,
+            Some(position),
+        );
+        assert_eq!(hovered.char_attrs[row][left + 2].bg, red);
+        assert_ne!(hovered.char_attrs[row][left].bg, red);
+    }
+}
+
+#[test]
 fn disable_eval_display_wrapper_applies_inner_spec_without_evaluation() {
     let mut i = interp_with_frame("X");
     i.eval_str(
