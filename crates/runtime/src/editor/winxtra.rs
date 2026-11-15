@@ -5022,7 +5022,9 @@ fn f_make_frame_visible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         other => return Err(i.wrong_type_mut("frame-live-p", other)),
     };
-    if crate::editor::frame_is_graphical(i, &frame) {
+    if crate::editor::frame_is_graphical(i, &frame)
+        && crate::editor::frame_visibility(i, &frame) != crate::frontend::FrameVisibility::Visible
+    {
         crate::editor::set_frame_visibility(i, &frame, true)?;
     }
     Ok(Value::Frame(frame))

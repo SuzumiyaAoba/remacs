@@ -174,3 +174,34 @@ fn make_frame_invisible_allows_hiding_one_of_multiple_visible_frames() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn make_frame_visible_does_not_request_visibility_for_an_already_visible_frame() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = Interp::new();
+            let backend = Rc::new(WindowRecorder::default());
+            interp.set_frame_window_backend(Some(backend.clone()));
+            interp
+                .eval_str("(set-frame-parameter nil 'window-system 'ns)")
+                .unwrap();
+            let frame_id = interp.selected_frame.as_ref().unwrap().borrow().id;
+
+            interp.eval_str("(make-frame-visible (selected-frame))").unwrap();
+            assert!(backend.0.borrow().is_empty());
+
+            interp
+                .eval_str("(set-frame-parameter nil 'visibility nil)")
+                .unwrap();
+            backend.0.borrow_mut().clear();
+            interp.eval_str("(make-frame-visible (selected-frame))").unwrap();
+            assert_eq!(
+                backend.0.borrow().as_slice(),
+                &[(frame_id, FrameVisibility::Visible)]
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
