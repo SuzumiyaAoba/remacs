@@ -307,6 +307,72 @@ fn nonselected_frame_keeps_input_grid_for_mouse_face_hover() {
 }
 
 #[test]
+fn nonselected_window_with_its_own_buffer_gets_mouse_face_hover() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(progn
+          (set-frame-parameter nil 'window-system 'ns)
+          (setq qa-mouse-face-first (selected-window)
+                qa-mouse-face-buffer (get-buffer-create \"*qa-mouse-face-other*\")
+                qa-mouse-face-second (split-window-below 6))
+          (with-current-buffer qa-mouse-face-buffer
+            (insert (propertize \"hover\" 'mouse-face 'highlight)))
+          (set-window-buffer qa-mouse-face-second qa-mouse-face-buffer)
+          (select-window qa-mouse-face-first))",
+    )
+    .unwrap();
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let Value::Window(second) = i.eval_str("qa-mouse-face-second").unwrap() else {
+        panic!("second split window");
+    };
+    let Value::Buffer(buffer) = i.eval_str("qa-mouse-face-buffer").unwrap() else {
+        panic!("second window buffer");
+    };
+    let window_id = second.borrow().id;
+    let buffer_id = buffer.borrow().id;
+    let grid = crate::frontend::render_frame_grid_with_mouse_position_cached(
+        &i, &frame, 80, 25, None, None,
+    );
+    let area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == window_id)
+        .unwrap();
+    let hit = grid
+        .input
+        .as_ref()
+        .unwrap()
+        .hit_test_position(area.top, area.text_left, 0)
+        .unwrap();
+    assert_eq!(hit.buffer_id, buffer_id);
+    assert_eq!(hit.window_id, Some(window_id));
+
+    let position = MousePosition {
+        buffer_id: hit.buffer_id,
+        buffer_position: hit.buffer_position,
+        utf16_offset: hit.utf16_offset,
+        x: 0,
+        y: 0,
+        row: area.top,
+        column: area.text_left,
+        window_id: hit.window_id,
+        area: None,
+        mode_line_buffer_name: false,
+        object: hit.object,
+        timestamp: 0,
+    };
+    let hovered = crate::frontend::render_frame_grid_with_mouse_position_cached(
+        &i,
+        &frame,
+        80,
+        25,
+        None,
+        Some(position),
+    );
+    assert!(hovered.char_attrs[area.top][area.text_left].inverse);
+}
+
+#[test]
 fn nontext_mouse_area_does_not_use_buffer_hover_properties() {
     let mut i = interp_with_frame("hover\n");
     i.eval_str(
