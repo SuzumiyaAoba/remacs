@@ -912,6 +912,8 @@ pub struct Grid {
     pub default_row_height: usize,
     /// Pointer shape at the current mouse position, if it is over buffer text.
     pub hover_cursor: Option<GridPointerShape>,
+    /// Pointer shape for blank cells in a window's text area.
+    pub void_text_area_pointer: GridPointerShape,
     /// Keep the pointer shape while `track-mouse` has the value `dragging`.
     pub freeze_pointer_shape: bool,
     /// Whether the native mouse pointer should be visible over this frame.
@@ -968,6 +970,7 @@ struct GridInputHitTestRow {
     row: usize,
     buffer_id: usize,
     buffer_start: usize,
+    ends_logical_line: bool,
     source_offsets: Vec<usize>,
     first_visible_source: usize,
     char_offsets: Arc<[usize]>,
@@ -1030,6 +1033,15 @@ impl GridInput {
         Some((start, end))
     }
 
+    pub fn hit_test_row_ends_logical_line(&self, row: usize, column: usize) -> Option<bool> {
+        self.hit_test_rows
+            .iter()
+            .find(|candidate| {
+                candidate.row == row && column >= candidate.left && column < candidate.right
+            })
+            .map(|row| row.ends_logical_line)
+    }
+
     /// Map a rendered text byte back to its buffer and window position.
     pub fn hit_test_position(
         &self,
@@ -1070,6 +1082,7 @@ impl GridInput {
         row: usize,
         buffer_id: usize,
         buffer_start: usize,
+        ends_logical_line: bool,
         source_offsets: Vec<usize>,
         first_visible_source: usize,
         window_id: Option<usize>,
@@ -1115,6 +1128,7 @@ impl GridInput {
             row,
             buffer_id,
             buffer_start,
+            ends_logical_line,
             source_offsets,
             first_visible_source,
             char_offsets,
@@ -1212,6 +1226,7 @@ impl Grid {
             default_line_height: 19,
             default_row_height: 19,
             hover_cursor: None,
+            void_text_area_pointer: GridPointerShape::Arrow,
             freeze_pointer_shape: false,
             pointer_visible: true,
             mouse_color: None,
@@ -10686,6 +10701,13 @@ fn render_grid_internal(
     let mut input_screen_lefts = Vec::new();
     let mut cursor_index = None;
     let mut hover_cursor = None;
+    let void_text_area_pointer = i
+        .q_soft("void-text-area-pointer")
+        .map(|symbol| {
+            let value = i.symbol_value(symbol);
+            grid_pointer_shape(i, Some(&value))
+        })
+        .unwrap_or(GridPointerShape::Arrow);
     let dragging_symbol = i.q_soft("dragging");
     let freeze_pointer_shape = i
         .q_soft("track-mouse")
@@ -10750,6 +10772,7 @@ fn render_grid_internal(
                 default_line_height,
                 default_row_height,
                 hover_cursor,
+                void_text_area_pointer,
                 freeze_pointer_shape,
                 pointer_visible: true,
                 mouse_color: None,
@@ -12961,6 +12984,7 @@ fn render_grid_internal(
                         y,
                         buf_id,
                         segment_pos,
+                        segment_end == line_len && !plan.hard_break,
                         rendered.source_offsets.clone(),
                         first_visible_source,
                         Some(window_id),
@@ -13382,6 +13406,7 @@ fn render_grid_internal(
                     y,
                     buffer_id,
                     buffer_start,
+                    true,
                     source_offsets,
                     0,
                     fb.minibuffer.as_ref().map(|window| window.borrow().id),
@@ -13688,6 +13713,7 @@ fn render_grid_internal(
         default_line_height,
         default_row_height,
         hover_cursor,
+        void_text_area_pointer,
         freeze_pointer_shape,
         pointer_visible: fb.pointer_visible,
         mouse_color,

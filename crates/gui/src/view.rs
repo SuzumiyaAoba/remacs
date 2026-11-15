@@ -2032,8 +2032,18 @@ impl Render for EditorView {
         let key_modifier_state = physical_modifier_state.clone();
         let mouse_move_modifier_state = physical_modifier_state.clone();
         let bell_flash = self.bell_flash;
+        let mouse_point =
+            frame_content_point(window.mouse_position(), vp, border);
+        let over_void_text_area = mouse_point.is_some_and(|point| {
+            input::void_text_area_at_point(&self.grid, point, cell_width, window)
+        });
         let mouse_cursor = if self.grid.pointer_visible {
-            gpui_cursor_style(self.grid.hover_cursor)
+            let shape = if over_void_text_area {
+                Some(self.grid.void_text_area_pointer)
+            } else {
+                self.grid.hover_cursor
+            };
+            gpui_cursor_style(shape)
         } else {
             CursorStyle::None
         };

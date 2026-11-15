@@ -560,6 +560,75 @@ pub(super) fn text_window_at_point(
         .map(|area| area.window_id)
 }
 
+pub(super) fn void_text_area_at_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    window: &mut Window,
+) -> bool {
+    let Some(window_id) = text_window_at_point(grid, point, cell_width) else {
+        return false;
+    };
+    let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
+    let in_text_area = grid.window_text_areas.iter().any(|area| {
+        area.window_id == window_id
+            && column >= area.text_left
+            && column < area.text_left.saturating_add(area.text_width)
+    });
+    if !in_text_area {
+        return false;
+    }
+
+    let row = grid_row_at_y(grid, point.y);
+    let vscroll = grid
+        .vscrolls
+        .iter()
+        .find(|scroll| {
+            row >= scroll.top
+                && row < scroll.top.saturating_add(scroll.rows)
+                && column >= scroll.left
+                && column < scroll.left.saturating_add(scroll.width)
+        })
+        .map_or(0, |scroll| scroll.pixels);
+    let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
+    let source_range = grid
+        .input
+        .as_ref()
+        .and_then(|input| input.hit_test_source_range(row, column));
+    let Some((source_start, source_end)) = source_range else {
+        return true;
+    };
+    let Some(true) = grid
+        .input
+        .as_ref()
+        .and_then(|input| input.hit_test_row_ends_logical_line(row, column))
+    else {
+        return false;
+    };
+    let Some(line) = grid.rows.get(row) else {
+        return true;
+    };
+    let layout = shape_grid_row(grid, row, window, line);
+    let byte = layout.closest_index_for_x(point.x);
+    if !(source_start..=source_end).contains(&byte) {
+        return false;
+    }
+    let Some(input) = grid.input.as_ref() else {
+        return false;
+    };
+    if input
+        .hit_test_position(row, column, byte)
+        .is_some_and(|position| position.object.is_some())
+        || image_object_at_point(grid, point, cell_width).is_some()
+    {
+        return false;
+    }
+    let start_x = f32::from(layout.x_for_index(source_start));
+    let end_x = f32::from(layout.x_for_index(source_end));
+    let x = f32::from(point.x);
+    x < start_x.min(end_x) || x >= start_x.max(end_x)
+}
+
 pub(super) fn mouse_position_for_text_point_with_cell_width(
     grid: &Grid,
     point: Point<Pixels>,
