@@ -249,6 +249,64 @@ fn mouse_face_highlight_is_limited_to_the_hovered_shared_buffer_window() {
 }
 
 #[test]
+fn nonselected_frame_keeps_input_grid_for_mouse_face_hover() {
+    let mut i = interp_with_frame("hover\n");
+    i.eval_str(
+        "(put-text-property 1 6 'mouse-face 'highlight) \
+         (set-frame-parameter nil 'window-system 'ns)",
+    )
+    .unwrap();
+    let first_frame = i.selected_frame.as_ref().unwrap().clone();
+    let buffer_id = i.current_buffer_ref().unwrap().borrow().id;
+    let Value::Frame(second_frame) = i
+        .eval_str("(make-frame '((window-system . ns) (name . \"qa-hover-frame-b\")))")
+        .unwrap()
+    else {
+        panic!("second frame");
+    };
+    let second_window = second_frame.borrow().selected.clone();
+    let second_window_id = second_window.borrow().id;
+    let set_window_buffer = Value::Sym(i.intern("set-window-buffer"));
+    let buffer = i.buffer_value(buffer_id).unwrap();
+    i.apply(
+        &set_window_buffer,
+        vec![Value::Window(second_window), buffer],
+    )
+    .unwrap();
+    i.selected_frame = Some(first_frame.clone());
+
+    let position = MousePosition {
+        buffer_id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 0,
+        y: 0,
+        row: 0,
+        column: 0,
+        window_id: Some(second_window_id),
+        area: None,
+        mode_line_buffer_name: false,
+        object: None,
+        timestamp: 0,
+    };
+    let grid = crate::frontend::render_frame_grid_with_mouse_position_cached(
+        &i,
+        &second_frame,
+        80,
+        25,
+        None,
+        Some(position),
+    );
+    assert!(grid.input.is_some());
+    let area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == second_window_id)
+        .unwrap();
+    assert!(grid.char_attrs[area.top][area.text_left].inverse);
+}
+
+#[test]
 fn disable_eval_display_wrapper_applies_inner_spec_without_evaluation() {
     let mut i = interp_with_frame("X");
     i.eval_str(
