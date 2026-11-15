@@ -307,6 +307,34 @@ fn nonselected_frame_keeps_input_grid_for_mouse_face_hover() {
 }
 
 #[test]
+fn nontext_mouse_area_does_not_use_buffer_hover_properties() {
+    let mut i = interp_with_frame("hover\n");
+    i.eval_str(
+        "(put-text-property 1 6 'mouse-face 'highlight) \
+         (put-text-property 1 6 'pointer 'hand)",
+    )
+    .unwrap();
+    let window_id = i.selected_frame.as_ref().unwrap().borrow().selected.borrow().id;
+    let position = MousePosition {
+        buffer_id: i.current_buffer_ref().unwrap().borrow().id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 0,
+        y: 0,
+        row: 0,
+        column: 0,
+        window_id: Some(window_id),
+        area: Some(crate::frontend::MouseArea::LeftMargin),
+        mode_line_buffer_name: false,
+        object: None,
+        timestamp: 0,
+    };
+    let grid = render_grid_with_mouse_position_cached(&i, 40, 4, None, Some(position));
+    assert!(!grid.char_attrs[0][0].inverse);
+    assert!(grid.hover_cursor.is_none());
+}
+
+#[test]
 fn disable_eval_display_wrapper_applies_inner_spec_without_evaluation() {
     let mut i = interp_with_frame("X");
     i.eval_str(
