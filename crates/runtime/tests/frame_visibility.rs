@@ -137,3 +137,40 @@ fn parameter_setters_send_distinct_native_visibility_requests() {
         );
     }
 }
+
+#[test]
+fn make_frame_invisible_allows_hiding_one_of_multiple_visible_frames() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = Interp::new();
+            interp.set_frame_window_backend(Some(Rc::new(WindowRecorder::default())));
+            interp
+                .eval_str(
+                    "(set-frame-parameter nil 'window-system 'ns) (setq qa-first-frame (selected-frame))",
+                )
+                .unwrap();
+            interp
+                .eval_str("(setq qa-other-frame (make-frame '((window-system . ns))))")
+                .unwrap();
+
+            interp
+                .eval_str("(make-frame-invisible qa-first-frame)")
+                .unwrap();
+            let first_visibility = interp.eval_str("(frame-visible-p qa-first-frame)").unwrap();
+            assert_eq!(interp.prin1_to_string(&first_visibility), "nil");
+            let other_visibility = interp.eval_str("(frame-visible-p qa-other-frame)").unwrap();
+            assert_eq!(interp.prin1_to_string(&other_visibility), "t");
+
+            assert!(
+                interp
+                    .eval_str("(make-frame-invisible qa-other-frame)")
+                    .is_err()
+            );
+            let other_visibility = interp.eval_str("(frame-visible-p qa-other-frame)").unwrap();
+            assert_eq!(interp.prin1_to_string(&other_visibility), "t");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

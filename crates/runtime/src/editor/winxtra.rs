@@ -4626,11 +4626,23 @@ fn f_tty_set_output_buffer_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     Err(i.error("Attempt to suspend a non-text terminal device"))
 }
 
-/// `make-frame-invisible' — the sole visible frame can only be hidden
-/// when FORCE is non-nil.
+/// `make-frame-invisible' — GNU only refuses to hide the last
+/// visible or iconified frame unless FORCE is non-nil.
 fn f_make_frame_invisible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
-    if !arg(&a, 1).truthy() {
+    let frame_id = frame.borrow().id;
+    let another_visible_or_iconified_frame = i
+        .frames
+        .iter()
+        .filter(|other| {
+            let other = other.borrow();
+            !other.dead && other.id != frame_id
+        })
+        .any(|other| {
+            crate::editor::frame_visibility(i, other)
+                != crate::frontend::FrameVisibility::Hidden
+        });
+    if !arg(&a, 1).truthy() && !another_visible_or_iconified_frame {
         return Err(i.error("Attempt to make invisible the sole visible or iconified frame"));
     }
     if crate::editor::frame_is_graphical(i, &frame) {
