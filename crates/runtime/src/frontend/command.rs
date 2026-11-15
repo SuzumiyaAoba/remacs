@@ -2,8 +2,8 @@
 #[cfg(test)]
 use super::render_grid;
 use super::{
-    GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
-    MouseWheelDirection,
+    FrameVisibility, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
+    MousePosition, MouseWheelDirection,
 };
 use crate::lisp::Flow;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
@@ -736,17 +736,17 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         }
     }
 
-    if let Some((frame_id, visible)) = term.borrow_mut().take_frame_visibility_update()
+    if let Some((frame_id, frame_visibility)) = term.borrow_mut().take_frame_visibility_update()
         && let Some(frame) = i
             .frames
             .iter()
             .find(|frame| frame.borrow().id == frame_id)
             .cloned()
     {
-        let visibility = if visible {
-            Value::t()
-        } else {
-            Value::Sym(i.intern("icon"))
+        let visibility = match frame_visibility {
+            FrameVisibility::Visible => Value::t(),
+            FrameVisibility::Hidden => Value::Nil,
+            FrameVisibility::Iconified => Value::Sym(i.intern("icon")),
         };
         let visibility_key = Value::Sym(i.intern("visibility"));
         let known_key = Value::Sym(i.intern("remacs--visibility-known"));

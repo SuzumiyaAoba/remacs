@@ -60,7 +60,7 @@ mod dialog_items;
 mod dialogs;
 mod file_dialog;
 mod frame_visibility;
-use frame_visibility::{apply_frame_visibility, apply_initial_frame_visibility};
+use frame_visibility::{apply_frame_visibility, apply_initial_frame_visibility, native_visibility};
 
 mod keys;
 mod logic;
@@ -705,7 +705,7 @@ pub fn run_gui_with_dump(
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
             let mut window_represented_files = HashMap::<usize, Option<String>>::new();
-            let mut native_visibility = HashMap::<usize, bool>::new();
+            let mut native_visibility = HashMap::<usize, FrameVisibility>::new();
             let mut window_visibilities = HashMap::<usize, FrameVisibility>::new();
             let mut pending_frame_visibilities = HashMap::<usize, FrameVisibility>::new();
             let mut pending_frame_orders = HashMap::<usize, bool>::new();
@@ -895,7 +895,7 @@ pub fn run_gui_with_dump(
                                 window_appearances.insert(frame_id, ns_appearance);
                                 window_represented_files.insert(frame_id, represented_file);
                                 if update_visibility {
-                                    native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
+                                    native_visibility.insert(frame_id, visibility);
                                 }
                                 pending_frame_visibilities.remove(&frame_id);
                                 continue;
@@ -990,7 +990,7 @@ pub fn run_gui_with_dump(
                                 window_appearances.insert(frame_id, initial_ns_appearance);
                                 window_represented_files
                                     .insert(frame_id, initial_represented_file);
-                                native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
+                                native_visibility.insert(frame_id, visibility);
                                 windows.insert(frame_id, handle);
                                 continue;
                             }
@@ -1080,7 +1080,7 @@ pub fn run_gui_with_dump(
                                 cx,
                             );
                             pending_frame_visibilities.remove(&frame_id);
-                            native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
+                            native_visibility.insert(frame_id, visibility);
                             windows.insert(frame_id, handle);
                         }
                         let removed: Vec<_> = windows
@@ -1109,23 +1109,31 @@ pub fn run_gui_with_dump(
                             native_visibility.remove(&frame_id);
                             window_visibilities.remove(&frame_id);
                         }
-                        if let Some(stack) = cx.update(|app| app.window_stack()).ok().flatten() {
-                            for (frame_id, handle) in &windows {
-                                let any_window: AnyWindowHandle = (*handle).into();
-                                let visible = handle
-                                    .update(cx, |_view, window, _cx| {
-                                        native_frame_visible(window)
+                        let stack = cx.update(|app| app.window_stack()).ok().flatten();
+                        for (frame_id, handle) in &windows {
+                            let any_window: AnyWindowHandle = (*handle).into();
+                            let visibility = handle
+                                .update(cx, |_view, window, _cx| {
+                                    native_frame_visibility(window)
+                                })
+                                .ok()
+                                .or_else(|| {
+                                    stack.as_ref().map(|stack| {
+                                        if stack.contains(&any_window) {
+                                            FrameVisibility::Visible
+                                        } else {
+                                            FrameVisibility::Hidden
+                                        }
                                     })
-                                    .ok()
-                                    .flatten()
-                                    .unwrap_or_else(|| stack.contains(&any_window));
-                                if native_visibility.get(frame_id) != Some(&visible) {
-                                    native_visibility.insert(*frame_id, visible);
-                                    let _ = event_tx.send(GuiEvent::FrameVisibility {
-                                        frame_id: *frame_id,
-                                        visible,
-                                    });
-                                }
+                                });
+                            if let Some(visibility) = visibility
+                                && native_visibility.get(frame_id) != Some(&visibility)
+                            {
+                                native_visibility.insert(*frame_id, visibility);
+                                let _ = event_tx.send(GuiEvent::FrameVisibility {
+                                    frame_id: *frame_id,
+                                    visibility,
+                                });
                             }
                         }
                     }
@@ -1161,8 +1169,7 @@ pub fn run_gui_with_dump(
                     }
                     GuiRequest::FrameVisibility { frame_id, visibility } => {
                         window_visibilities.insert(frame_id, visibility);
-                        let visible = visibility == FrameVisibility::Visible;
-                        native_visibility.insert(frame_id, visible);
+                        native_visibility.insert(frame_id, visibility);
                         let focus_on_map = frame_focus_on_map
                             .get(&frame_id)
                             .copied()
@@ -2031,8 +2038,8 @@ mod partial_fullscreen_tests {
     }
 }
 
-fn native_frame_visible(window: &Window) -> Option<bool> {
-    Some(window.is_visible())
+fn native_frame_visibility(window: &Window) -> FrameVisibility {
+    native_visibility(window.is_visible(), window.is_minimized())
 }
 
 #[cfg(target_os = "macos")]

@@ -544,6 +544,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn minimize(&self);
     fn set_visible(&self, visible: bool);
     fn is_visible(&self) -> bool;
+    fn is_minimized(&self) -> Option<bool> {
+        None
+    }
     fn zoom(&self);
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;

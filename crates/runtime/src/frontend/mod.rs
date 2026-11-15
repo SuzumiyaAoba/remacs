@@ -686,7 +686,7 @@ pub trait KeyIo {
         None
     }
     /// Visibility change reported by the native window manager.
-    fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
+    fn take_frame_visibility_update(&mut self) -> Option<(usize, FrameVisibility)> {
         None
     }
     /// Fullscreen/maximized mode reported by the native window manager.

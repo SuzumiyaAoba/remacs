@@ -4315,6 +4315,11 @@ impl Window {
         self.platform_window.is_visible()
     }
 
+    /// Whether this window is minimized, when the platform reports that state.
+    pub fn is_minimized(&self) -> Option<bool> {
+        self.platform_window.is_minimized()
+    }
+
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.platform_window.toggle_fullscreen();

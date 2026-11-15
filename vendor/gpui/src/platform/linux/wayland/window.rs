@@ -1097,6 +1097,10 @@ impl PlatformWindow for WaylandWindow {
         state.visibility.is_visible() && !state.minimized
     }
 
+    fn is_minimized(&self) -> Option<bool> {
+        Some(self.borrow().minimized)
+    }
+
     fn zoom(&self) {
         let state = self.borrow();
         if !state.maximized {

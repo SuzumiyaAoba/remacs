@@ -5652,26 +5652,23 @@ pub(super) fn build_managed_editor_view(
         close_events.send_delete_request_or_defer().is_err()
     });
     let frame_events = view.tx.clone();
-    let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, cx| {
-        if let (Some(frame_id), Some(stack)) = (frame_events.frame_id(), cx.window_stack()) {
-            let visible = stack.contains(&window.window_handle());
-            let _ = frame_events.send_visibility_update(frame_id, visible);
+    let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, _cx| {
+        if let Some(frame_id) = frame_events.frame_id() {
+            let visibility = crate::native_frame_visibility(window);
+            let _ = frame_events.send_visibility_update(frame_id, visibility);
         }
     });
     view.focus_subscriptions.push(subscription);
     let no_accept_focus = view.no_accept_focus.clone();
     let no_accept_focus_on_focus_in = no_accept_focus.clone();
     let frame_events = view.tx.clone();
-    let subscription = window.on_focus_in(&view.focus, cx, move |window, cx| {
+    let subscription = window.on_focus_in(&view.focus, cx, move |window, _cx| {
         if no_accept_focus_on_focus_in.get() {
             window.blur();
         }
         if let Some(frame_id) = frame_events.frame_id() {
-            let visible = cx
-                .window_stack()
-                .map(|stack| stack.contains(&window.window_handle()))
-                .unwrap_or(true);
-            let _ = frame_events.send_visibility_update(frame_id, visible);
+            let visibility = crate::native_frame_visibility(window);
+            let _ = frame_events.send_visibility_update(frame_id, visibility);
         }
     });
     view.focus_subscriptions.push(subscription);

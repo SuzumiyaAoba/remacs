@@ -778,6 +778,10 @@ impl PlatformWindow for WindowsWindow {
         unsafe { IsWindowVisible(self.0.hwnd).as_bool() && !IsIconic(self.0.hwnd).as_bool() }
     }
 
+    fn is_minimized(&self) -> Option<bool> {
+        Some(unsafe { IsIconic(self.0.hwnd).as_bool() })
+    }
+
     fn activate(&self) {
         let hwnd = self.0.hwnd;
         let this = self.0.clone();

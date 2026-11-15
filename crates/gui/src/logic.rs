@@ -69,7 +69,10 @@ pub(super) enum GuiEvent {
         frame_id: usize,
         event: Box<GuiEvent>,
     },
-    FrameVisibility { frame_id: usize, visible: bool },
+    FrameVisibility {
+        frame_id: usize,
+        visibility: FrameVisibility,
+    },
     ColorDrop {
         position: Option<MousePosition>,
         color: String,
@@ -215,10 +218,12 @@ impl FrameEventSender {
     pub(super) fn send_visibility_update(
         &self,
         frame_id: usize,
-        visible: bool,
+        visibility: FrameVisibility,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
-        self.sender
-            .send(GuiEvent::FrameVisibility { frame_id, visible })
+        self.sender.send(GuiEvent::FrameVisibility {
+            frame_id,
+            visibility,
+        })
     }
 
     pub(super) fn send_delete_request(
@@ -1531,7 +1536,7 @@ pub(super) struct ChanIo {
     active_frame_id: Option<usize>,
     primary_frame_id: Option<usize>,
     pending_frame_selection: Option<usize>,
-    pending_frame_visibility: Option<(usize, bool)>,
+    pending_frame_visibility: Option<(usize, FrameVisibility)>,
     pending_frame_fullscreen: Option<(usize, Option<&'static str>)>,
     pending_frame_focus: Option<(usize, bool)>,
     pending_frame_moved: Option<(usize, i128, i128)>,
@@ -2605,8 +2610,11 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
-            GuiEvent::FrameVisibility { frame_id, visible } => {
-                self.pending_frame_visibility = Some((frame_id, visible));
+            GuiEvent::FrameVisibility {
+                frame_id,
+                visibility,
+            } => {
+                self.pending_frame_visibility = Some((frame_id, visibility));
                 self.render_requested = true;
                 Ok(None)
             }
@@ -2891,8 +2899,11 @@ impl KeyIo for ChanIo {
                 self.render_requested = true;
                 Ok(None)
             }
-            GuiEvent::FrameVisibility { frame_id, visible } => {
-                self.pending_frame_visibility = Some((frame_id, visible));
+            GuiEvent::FrameVisibility {
+                frame_id,
+                visibility,
+            } => {
+                self.pending_frame_visibility = Some((frame_id, visibility));
                 self.render_requested = true;
                 Ok(None)
             }
@@ -3409,7 +3420,7 @@ impl KeyIo for ChanIo {
         self.pending_frame_moved.take()
     }
 
-    fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
+    fn take_frame_visibility_update(&mut self) -> Option<(usize, FrameVisibility)> {
         self.pending_frame_visibility.take()
     }
 
@@ -3575,7 +3586,7 @@ mod discard_input_tests {
         events
             .send(GuiEvent::FrameVisibility {
                 frame_id: 7,
-                visible: false,
+                visibility: FrameVisibility::Hidden,
             })
             .unwrap();
 
@@ -3587,7 +3598,10 @@ mod discard_input_tests {
         ));
 
         assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
-        assert_eq!(io.pending_frame_visibility, Some((7, false)));
+        assert_eq!(
+            io.pending_frame_visibility,
+            Some((7, FrameVisibility::Hidden))
+        );
         assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
     }
 }
