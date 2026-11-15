@@ -750,16 +750,14 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         };
         let visibility_key = Value::Sym(i.intern("visibility"));
         let known_key = Value::Sym(i.intern("remacs--visibility-known"));
-        let params = crate::lisp::eval::plist_put_front(
-            &frame.borrow().params,
-            &visibility_key,
-            visibility,
-        );
-        frame.borrow_mut().params = crate::lisp::eval::plist_put_front(
-            &params,
-            &known_key,
-            Value::t(),
-        );
+        let params =
+            crate::lisp::eval::plist_put_front(&frame.borrow().params, &visibility_key, visibility);
+        frame.borrow_mut().params =
+            crate::lisp::eval::plist_put_front(&params, &known_key, Value::t());
+    }
+
+    if let Some((frame_id, fullscreen)) = term.borrow_mut().take_frame_fullscreen_update() {
+        apply_native_fullscreen_update(i, frame_id, fullscreen);
     }
 
     if let Some((frame_id, focused)) = term.borrow_mut().take_frame_focus_update()
@@ -803,6 +801,56 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         if let Err(flow) = i.apply(&save_and_quit, Vec::new()) {
             report_flow(i, flow);
         }
+    }
+}
+
+fn apply_native_fullscreen_update(
+    i: &mut Interp,
+    frame_id: usize,
+    fullscreen: Option<&'static str>,
+) {
+    let Some(frame) = i
+        .frames
+        .iter()
+        .find(|frame| frame.borrow().id == frame_id)
+        .cloned()
+    else {
+        return;
+    };
+    let key = Value::Sym(i.intern("fullscreen"));
+    let value = fullscreen.map_or(Value::Nil, |mode| Value::Sym(i.intern(mode)));
+    let params = crate::lisp::eval::plist_put_front(&frame.borrow().params, &key, value);
+    frame.borrow_mut().params = params;
+}
+
+#[cfg(test)]
+mod native_fullscreen_parameter_tests {
+    use super::apply_native_fullscreen_update;
+    use crate::lisp::Interp;
+
+    #[test]
+    fn native_fullscreen_modes_update_the_lisp_frame_parameter() {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let frame_id = interp.selected_frame.as_ref().unwrap().borrow().id;
+
+                for (state, expected) in [
+                    (Some("fullboth"), "fullboth"),
+                    (Some("maximized"), "maximized"),
+                    (None, "nil"),
+                ] {
+                    apply_native_fullscreen_update(&mut interp, frame_id, state);
+                    let actual = interp
+                        .eval_str("(frame-parameter nil 'fullscreen)")
+                        .unwrap();
+                    assert_eq!(interp.prin1_to_string(&actual), expected);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
 

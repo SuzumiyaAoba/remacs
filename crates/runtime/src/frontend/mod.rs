@@ -661,6 +661,11 @@ pub trait KeyIo {
     fn take_frame_visibility_update(&mut self) -> Option<(usize, bool)> {
         None
     }
+    /// Fullscreen/maximized mode reported by the native window manager.
+    /// `None` as the inner value means that the frame returned to windowed mode.
+    fn take_frame_fullscreen_update(&mut self) -> Option<(usize, Option<&'static str>)> {
+        None
+    }
     /// Focus change reported by the native window manager.
     fn take_frame_focus_update(&mut self) -> Option<(usize, bool)> {
         None

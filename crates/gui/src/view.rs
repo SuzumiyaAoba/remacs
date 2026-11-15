@@ -1805,6 +1805,8 @@ impl Render for EditorView {
             scale_factor: scale_factor as f64,
             frame_left,
             frame_top,
+            fullscreen: window.is_fullscreen(),
+            maximized: window.is_maximized(),
             current_display_id,
             monitors,
         };
@@ -5670,6 +5672,8 @@ mod accessibility_frame_key_tests {
             scale_factor: 1.0,
             frame_left: 10,
             frame_top: 20,
+            fullscreen: false,
+            maximized: false,
             current_display_id: Some(1),
             monitors: Vec::new(),
         }

@@ -593,8 +593,22 @@ pub(super) struct GuiGeometry {
     pub scale_factor: f64,
     pub frame_left: i128,
     pub frame_top: i128,
+    pub fullscreen: bool,
+    pub maximized: bool,
     pub current_display_id: Option<u32>,
     pub monitors: Vec<MonitorGeometry>,
+}
+
+impl GuiGeometry {
+    fn native_fullscreen_parameter(&self) -> Option<&'static str> {
+        if self.fullscreen {
+            Some("fullboth")
+        } else if self.maximized {
+            Some("maximized")
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1416,6 +1430,7 @@ pub(super) struct ChanIo {
     primary_frame_id: Option<usize>,
     pending_frame_selection: Option<usize>,
     pending_frame_visibility: Option<(usize, bool)>,
+    pending_frame_fullscreen: Option<(usize, Option<&'static str>)>,
     pending_frame_focus: Option<(usize, bool)>,
     pending_frame_moved: Option<(usize, i128, i128)>,
     pending_frame_delete: Option<usize>,
@@ -2052,6 +2067,7 @@ impl ChanIo {
             primary_frame_id: None,
             pending_frame_selection: None,
             pending_frame_visibility: None,
+            pending_frame_fullscreen: None,
             pending_frame_focus: None,
             pending_frame_moved: None,
             pending_frame_delete: None,
@@ -2219,6 +2235,21 @@ impl ChanIo {
             self.active_frame_id = Some(frame_id);
             self.pending_frame_selection = Some(frame_id);
         }
+    }
+
+    fn record_frame_geometry(
+        &mut self,
+        frame_id: usize,
+        geometry: &GuiGeometry,
+    ) -> Option<GuiGeometry> {
+        let previous = self.frame_geometries.insert(frame_id, geometry.clone());
+        if previous.as_ref().is_some_and(|previous| {
+            previous.fullscreen != geometry.fullscreen || previous.maximized != geometry.maximized
+        }) {
+            self.pending_frame_fullscreen =
+                Some((frame_id, geometry.native_fullscreen_parameter()));
+        }
+        previous
     }
 
     fn record_mouse_down(
@@ -2533,7 +2564,7 @@ impl KeyIo for ChanIo {
             }
             GuiEvent::Geometry(geometry) => {
                 let frame_move = if let Some(frame_id) = self.active_frame_id {
-                    let previous = self.frame_geometries.insert(frame_id, geometry.clone());
+                    let previous = self.record_frame_geometry(frame_id, &geometry);
                     previous
                         .filter(|old| {
                             old.frame_left != geometry.frame_left
@@ -2816,8 +2847,7 @@ impl KeyIo for ChanIo {
             }
             GuiEvent::Geometry(geometry) => {
                 let moved_frame = if let Some(frame_id) = self.active_frame_id {
-                    self.frame_geometries
-                        .insert(frame_id, geometry.clone())
+                    self.record_frame_geometry(frame_id, &geometry)
                         .filter(|old| {
                             old.frame_left != geometry.frame_left
                                 || old.frame_top != geometry.frame_top
@@ -3273,6 +3303,10 @@ impl KeyIo for ChanIo {
         self.pending_frame_visibility.take()
     }
 
+    fn take_frame_fullscreen_update(&mut self) -> Option<(usize, Option<&'static str>)> {
+        self.pending_frame_fullscreen.take()
+    }
+
     fn take_frame_focus_update(&mut self) -> Option<(usize, bool)> {
         self.pending_frame_focus.take()
     }
@@ -3483,6 +3517,8 @@ mod native_frame_geometry_tests {
                     scale_factor: 1.0,
                     frame_left: 10,
                     frame_top: 20,
+                    fullscreen: false,
+                    maximized: false,
                     current_display_id: None,
                     monitors: Vec::new(),
                 });
@@ -3513,6 +3549,71 @@ mod native_frame_geometry_tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod native_fullscreen_state_tests {
+    use super::{ChanIo, GuiEvent, GuiGeometry};
+    use remacs_runtime::frontend::KeyIo;
+    use std::{sync::mpsc, time::Duration};
+
+    fn geometry(fullscreen: bool, maximized: bool) -> GuiGeometry {
+        GuiGeometry {
+            cols: 80,
+            rows: 24,
+            pixel_width: 640,
+            pixel_height: 480,
+            outer_width: 640,
+            outer_height: 500,
+            char_width: 8,
+            char_height: 20,
+            scale_factor: 1.0,
+            frame_left: 10,
+            frame_top: 20,
+            fullscreen,
+            maximized,
+            current_display_id: None,
+            monitors: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn native_fullscreen_and_maximize_changes_are_reported_for_the_frame() {
+        let (events, receiver) = mpsc::channel();
+        let (grids, _grid_receiver) = smol::channel::unbounded();
+        let mut io = ChanIo::new_for_test(receiver, grids);
+        io.active_frame_id = Some(42);
+
+        events
+            .send(GuiEvent::Geometry(geometry(false, false)))
+            .unwrap();
+        assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+        assert_eq!(io.take_frame_fullscreen_update(), None);
+
+        events
+            .send(GuiEvent::Geometry(geometry(true, false)))
+            .unwrap();
+        assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+        assert_eq!(
+            io.take_frame_fullscreen_update(),
+            Some((42, Some("fullboth")))
+        );
+
+        events
+            .send(GuiEvent::Geometry(geometry(false, true)))
+            .unwrap();
+        assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+        assert_eq!(
+            io.take_frame_fullscreen_update(),
+            Some((42, Some("maximized")))
+        );
+
+        events
+            .send(GuiEvent::Geometry(geometry(false, false)))
+            .unwrap();
+        assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+        assert_eq!(io.take_frame_fullscreen_update(), Some((42, None)));
     }
 }
 
@@ -3833,6 +3934,7 @@ fn start_logic_inner(
                 primary_frame_id: selected_frame_id,
                 pending_frame_selection: None,
                 pending_frame_visibility: None,
+                pending_frame_fullscreen: None,
                 pending_frame_focus: None,
                 pending_frame_moved: None,
                 pending_frame_delete: None,
