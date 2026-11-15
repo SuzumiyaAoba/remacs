@@ -281,6 +281,68 @@ pub(super) fn frame_font_metrics(
     let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
     (text_font, font_size, cell_width, line_height)
 }
+
+pub(super) fn font_info(
+    grid: &Grid,
+    window: &mut Window,
+    name: &str,
+) -> Option<remacs_runtime::frontend::FontInfo> {
+    let opened_name = window
+        .text_system()
+        .all_font_names()
+        .into_iter()
+        .find(|family| family.eq_ignore_ascii_case(name))?;
+    let font = font(opened_name.clone());
+    let font_id = window.text_system().resolve_font(&font);
+    let font_size = grid
+        .default_style
+        .font_height
+        .map(face_font_size)
+        .unwrap_or(px(FONT_SIZE));
+    let bounds = window.text_system().bounding_box(font_id, font_size);
+    let top = f32::from(bounds.origin.y);
+    let bottom = top + f32::from(bounds.size.height);
+    let ascent = (-top).max(0.0);
+    let descent = bottom.max(0.0);
+    let space_width = window
+        .text_system()
+        .advance(font_id, font_size, ' ')
+        .map(|size| f32::from(size.width))
+        .unwrap_or(0.0);
+    let mut max_width: f32 = 0.0;
+    let mut total_width: f32 = 0.0;
+    let mut width_count = 0usize;
+    for character in ' '..='~' {
+        if let Ok(size) = window.text_system().advance(font_id, font_size, character) {
+            let width = f32::from(size.width);
+            max_width = max_width.max(width);
+            total_width += width;
+            width_count += 1;
+        }
+    }
+    let average_width = if width_count == 0 {
+        0.0
+    } else {
+        total_width / width_count as f32
+    };
+    let rounded = |value: f32| value.round() as i128;
+
+    Some(remacs_runtime::frontend::FontInfo {
+        opened_name: opened_name.clone(),
+        full_name: opened_name,
+        size: rounded(f32::from(font_size)),
+        height: rounded(ascent + descent),
+        baseline_offset: 0,
+        relative_compose: 0,
+        default_ascent: rounded(ascent),
+        max_width: rounded(max_width),
+        ascent: rounded(ascent),
+        descent: rounded(descent),
+        space_width: rounded(space_width),
+        average_width: rounded(average_width),
+        filename: None,
+    })
+}
 const BIDI_PARAGRAPH_LTR_OPEN: &str = "\u{2066}";
 const BIDI_PARAGRAPH_RTL_OPEN: &str = "\u{2067}";
 const BIDI_PARAGRAPH_CLOSE: &str = "\u{2069}";

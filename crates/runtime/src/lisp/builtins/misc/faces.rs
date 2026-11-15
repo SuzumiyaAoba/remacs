@@ -312,17 +312,37 @@ pub(super) fn f_font_family_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 
 pub(super) fn f_font_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU font.c Ffont_info:
-    // CHECK_STRING(NAME) first, then the optional FRAME decodes via
-    // frame-live-p — both before the batch winsys error.
-    let _ = want_string(i, &a[0])?;
-    if let Some(v) = a.get(1) {
-        match v {
-            Value::Nil => {}
-            Value::Frame(f) if !f.borrow().dead => {}
-            other => return Err(i.wrong_type_mut("frame-live-p", other)),
-        }
+    // CHECK_STRING(NAME) first, then decode_window_system_frame(FRAME).
+    let name = want_string(i, &a[0])?.to_unicode_lossy();
+    let frame = crate::editor::frame_live(i, &arg(&a, 1))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
     }
-    Err(i.error("Window system frame should be used"))
+    let Some(backend) = i.font_family_list_backend.clone() else {
+        return Ok(Value::Nil);
+    };
+    let font_info = backend
+        .font_info(frame.borrow().id, &name)
+        .map_err(|error| i.error(error))?;
+    let Some(font_info) = font_info else {
+        return Ok(Value::Nil);
+    };
+    Ok(Value::vector(vec![
+        Value::string(font_info.opened_name),
+        Value::string(font_info.full_name),
+        Value::Int(font_info.size),
+        Value::Int(font_info.height),
+        Value::Int(font_info.baseline_offset),
+        Value::Int(font_info.relative_compose),
+        Value::Int(font_info.default_ascent),
+        Value::Int(font_info.max_width),
+        Value::Int(font_info.ascent),
+        Value::Int(font_info.descent),
+        Value::Int(font_info.space_width),
+        Value::Int(font_info.average_width),
+        font_info.filename.map(Value::string).unwrap_or(Value::Nil),
+        Value::Nil,
+    ]))
 }
 
 /// `font-match-p' — both args are font-specs in GNU (typed check);

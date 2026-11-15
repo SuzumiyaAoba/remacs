@@ -194,11 +194,35 @@ pub trait FontSelectionBackend {
 pub trait FontFamilyListBackend {
     fn list_families(&self, frame_id: usize) -> Result<Vec<String>, String>;
 
+    /// Information for an opened font family, or `None` when it cannot be
+    /// opened. Metrics use integer pixel units like GNU's `font-info` vector.
+    fn font_info(&self, _frame_id: usize, _name: &str) -> Result<Option<FontInfo>, String> {
+        Ok(None)
+    }
+
     /// Reinitialize the font resources used to render FRAME after the
     /// operating system reports that its font configuration has changed.
     fn reconsider_frame_fonts(&self, _frame_id: usize) -> Result<(), String> {
         Ok(())
     }
+}
+
+/// Font metrics exposed to Lisp by `font-info`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontInfo {
+    pub opened_name: String,
+    pub full_name: String,
+    pub size: i128,
+    pub height: i128,
+    pub baseline_offset: i128,
+    pub relative_compose: i128,
+    pub default_ascent: i128,
+    pub max_width: i128,
+    pub ascent: i128,
+    pub descent: i128,
+    pub space_width: i128,
+    pub average_width: i128,
+    pub filename: Option<String>,
 }
 
 /// Requested native visibility of a graphical frame.

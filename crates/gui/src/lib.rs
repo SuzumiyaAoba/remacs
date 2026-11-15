@@ -1286,6 +1286,22 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::FontInfo {
+                        frame_id,
+                        name,
+                        reply,
+                    } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, move |view, window, _cx| {
+                                    view::font_info(&view.grid, window, &name)
+                                })
+                                .map_err(|error| error.to_string())
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::ReconsiderFrameFonts { frame_id, reply } => {
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             handle
