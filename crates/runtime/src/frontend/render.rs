@@ -1600,7 +1600,12 @@ fn word_wrap_categories_equal(left: EmacsChar, right: EmacsChar) -> bool {
     category(left) == category(right)
 }
 
-fn display_prefix_value_width(i: &Interp, value: &Value, tab_width: usize) -> usize {
+fn display_prefix_value_width(
+    i: &Interp,
+    value: &Value,
+    tab_width: usize,
+    cell_width: usize,
+) -> usize {
     match value {
         Value::Str(string) => display_columns_of(string.borrow().chars(), tab_width),
         Value::Cons(spec) => {
@@ -1608,14 +1613,27 @@ fn display_prefix_value_width(i: &Interp, value: &Value, tab_width: usize) -> us
                 let spec = spec.borrow();
                 (spec.car.clone(), spec.cdr.clone())
             };
-            if matches!(head, Value::Sym(symbol) if i.symbol_name(symbol) == "space") {
-                display_space_spec_width(i, &tail)
-            } else {
-                0
+            match &head {
+                Value::Sym(symbol) if i.symbol_name(*symbol) == "space" => {
+                    display_space_spec_width(i, &tail)
+                }
+                Value::Sym(symbol) if i.symbol_name(*symbol) == "image" => {
+                    image_prefix_value_width(i, value, cell_width)
+                }
+                _ => 0,
             }
         }
+        Value::Vec(_) => image_prefix_value_width(i, value, cell_width),
         _ => 0,
     }
+}
+
+fn image_prefix_value_width(i: &Interp, value: &Value, cell_width: usize) -> usize {
+    let width = image_property(i, value, ":width");
+    let pixels = display_spec_number(i, &width, 0)
+        .map(|width| width.ceil().clamp(1.0, 1_000_000.0) as usize)
+        .unwrap_or(1);
+    pixels.div_ceil(cell_width.max(1)).max(1)
 }
 
 pub(crate) fn visual_line_ranges_for_window(
@@ -1662,12 +1680,9 @@ pub(crate) fn visual_line_ranges_for_window(
         .unwrap_or(8);
     let ctl_arrow = buffer_setting(i, "ctl-arrow", buffer_id).truthy();
     let window_value = Value::Window(window.clone());
-    let line_prefix = line_prefix_at_pos(i, buffer_id, &window_value, line_pos);
-    let requested_prefix_width = line_prefix
-        .as_ref()
-        .map(|prefix| display_columns(prefix, tab_width))
-        .unwrap_or(0)
-        .min(width);
+    let line_prefix = prefix_value_at_pos(i, buffer_id, &window_value, line_pos, "line-prefix");
+    let requested_prefix_width =
+        display_prefix_value_width(i, &line_prefix, tab_width, 8).min(width);
     let first_character_width = line.chars().next().map_or(0, |character| {
         let code = character.code();
         let unicode = character.unicode().unwrap_or('\u{fffd}');
@@ -1689,7 +1704,7 @@ pub(crate) fn visual_line_ranges_for_window(
         requested_prefix_width
     };
     let wrap_prefix = prefix_value_at_pos(i, buffer_id, &window_value, line_pos, "wrap-prefix");
-    let wrap_prefix_width = display_prefix_value_width(i, &wrap_prefix, tab_width)
+    let wrap_prefix_width = display_prefix_value_width(i, &wrap_prefix, tab_width, 8)
         .min(width.saturating_sub(first_character_width.min(width)));
     let word_wrap = buffer_setting(i, "word-wrap", buffer_id).truthy();
     let word_wrap_by_category = buffer_setting(i, "word-wrap-by-category", buffer_id).truthy();
@@ -2408,13 +2423,7 @@ fn prefix_value_at_pos(
         .unwrap_or_else(|| buffer_setting(i, variable, buffer_id))
 }
 
-fn line_prefix_at_pos(
-    i: &Interp,
-    buffer_id: usize,
-    window: &Value,
-    position: usize,
-) -> Option<EmacsText> {
-    let value = prefix_value_at_pos(i, buffer_id, window, position, "line-prefix");
+fn line_prefix_text(value: &Value) -> Option<EmacsText> {
     match value {
         Value::Str(string) => Some(string.borrow().chars().collect()),
         _ => None,
@@ -12094,12 +12103,40 @@ fn render_grid_internal(
             } else {
                 0
             };
-            let line_prefix = (start_offset == 0)
-                .then(|| line_prefix_at_pos(i, buf_id, &Value::Window(w.clone()), line_pos))
-                .flatten();
+            let line_prefix_value = (start_offset == 0).then(|| {
+                prefix_value_at_pos(
+                    i,
+                    buf_id,
+                    &Value::Window(w.clone()),
+                    line_pos,
+                    "line-prefix",
+                )
+            });
+            let line_prefix = line_prefix_value.as_ref().and_then(line_prefix_text);
+            let line_prefix_replacement = line_prefix_value.as_ref().and_then(|value| {
+                if matches!(value, Value::Str(_)) {
+                    None
+                } else {
+                    display_value_replacement(
+                        i,
+                        &mut fctx,
+                        value,
+                        buf_id,
+                        line_pos,
+                        default_style.font_height.unwrap_or(140),
+                        false,
+                        None,
+                    )
+                }
+            });
             let requested_prefix_width = line_prefix
                 .as_ref()
                 .map(|prefix| display_columns(prefix, tab_width))
+                .or_else(|| {
+                    line_prefix_replacement
+                        .as_ref()
+                        .map(|prefix| prefix.columns_after(0, tab_width, frame_char_width))
+                })
                 .unwrap_or(0)
                 .min(content_width);
             // Fringe display specifications consume source characters but no
@@ -12575,6 +12612,20 @@ fn render_grid_internal(
                             prefix,
                             prefix_width,
                             tab_width,
+                            rendered,
+                        );
+                    } else if let Some(prefix) = line_prefix_replacement.as_ref() {
+                        let prefix_row = render_display_prefix(
+                            prefix,
+                            prefix_width,
+                            frame_char_width,
+                            tab_width,
+                            default_style,
+                            graphical,
+                        );
+                        rendered = prepend_rendered_prefix_row(
+                            prefix_row,
+                            prefix_width,
                             rendered,
                         );
                     }
