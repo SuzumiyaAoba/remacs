@@ -1528,6 +1528,14 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn is_minimized(&self) -> Option<bool> {
+        let window = self.0.lock().native_window;
+        unsafe {
+            let minimized: BOOL = msg_send![window, isMiniaturized];
+            Some(minimized == YES)
+        }
+    }
+
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
