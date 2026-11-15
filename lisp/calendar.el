@@ -1366,12 +1366,15 @@ return negative results."
 (defun calendar-date-from-day-of-year (year dayno)
   "Return the date of the DAYNO-th day in YEAR.
 DAYNO must be an integer between -366 and 366."
+  (unless (integer-or-marker-p dayno)
+    (signal 'wrong-type-argument (list 'integer-or-marker-p dayno)))
   (if (> year 0)
       (calendar-gregorian-from-absolute
        (+ (if (< dayno 0)
               (+ 1 dayno (if (calendar-leap-year-p year) 366 365))
             dayno)
-          (calendar-absolute-from-gregorian (list 12 31 (1- year)))))
+          (calendar-absolute-from-gregorian
+           (list 12 31 (if (= year 1) -1 (1- year))))))
     (if (= year 0)
         ;; Signal the calendar's standard error for the nonexistent year.
         (calendar-absolute-from-gregorian '(1 1 0))

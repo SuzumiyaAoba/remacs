@@ -79,6 +79,10 @@ qa!(qa_buffer, "qa_buffer.el");
 qa!(qa_buffer_history, "qa_buffer_history.el");
 qa!(qa_calendar_exit_sessions, "qa_calendar_exit_sessions.el");
 qa!(qa_calendar_hebrew_epoch, "qa_calendar_hebrew_epoch.el");
+qa!(
+    qa_calendar_date_from_day_of_year,
+    "qa_calendar_date_from_day_of_year.el"
+);
 qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");
