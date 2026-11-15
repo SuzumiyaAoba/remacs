@@ -187,14 +187,14 @@ the link points to a different year and so has a directory part."
                          (member month '(1 12))
                          (format "../%d/" year))
                     (cal-html-monthpage-name month year))
-            (calendar-month-name month)))))
+            (cal-html-htmlify-string (calendar-month-name month))))))
 
 
 (defun cal-html-insert-link-yearpage (month year)
   "Insert a link tagged with MONTH name, to index page for four-digit YEAR."
   (insert (cal-html-h1
            (format "%s %s"
-                   (calendar-month-name month)
+                   (cal-html-htmlify-string (calendar-month-name month))
                    (cal-html-href "index.html" (number-to-string year))))))
 
 
@@ -255,8 +255,9 @@ Contains links to previous and next month and year, and current minical."
     (insert cal-html-b-tablerow-string)
     (dotimes (i 7)
       (insert (cal-html-th
-               (aref cal-html-day-abbrev-array
-                     (mod (+ i calendar-week-start-day) 7)))))
+               (cal-html-htmlify-string
+                (aref cal-html-day-abbrev-array
+                      (mod (+ i calendar-week-start-day) 7))))))
     (insert cal-html-e-tablerow-string)
     ;; Initial empty slots.
     (insert cal-html-b-tablerow-string)
@@ -388,8 +389,9 @@ holidays in HOLIDAY-LIST."
                    (calendar-day-number date))
          "")
        (format "%d&nbsp;%s" (1+ i)
-               (aref calendar-day-name-array
-                     (calendar-day-of-week date)))
+               (cal-html-htmlify-string
+                (aref calendar-day-name-array
+                      (calendar-day-of-week date))))
        cal-html-e-tableheader-string
        ;; Diary entries.
        cal-html-b-tabledata-string
