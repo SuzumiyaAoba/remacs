@@ -1436,6 +1436,7 @@ struct RuntimeFramePosition {
     left: Option<i128>,
     top: Option<i128>,
     parent_bounds: Option<(u32, u32, u32, u32)>,
+    frame_size: (u32, u32),
 }
 
 fn runtime_frame_position_changed(
@@ -1443,6 +1444,7 @@ fn runtime_frame_position_changed(
     left: Option<i128>,
     top: Option<i128>,
     parent_bounds: Option<&Bounds<Pixels>>,
+    frame_size: Size<Pixels>,
 ) -> bool {
     let parent_bounds = parent_bounds.map(|bounds| {
         (
@@ -1456,6 +1458,10 @@ fn runtime_frame_position_changed(
         left,
         top,
         parent_bounds,
+        frame_size: (
+            f32::from(frame_size.width).to_bits(),
+            f32::from(frame_size.height).to_bits(),
+        ),
     };
     let changed = *previous != Some(position);
     *previous = Some(position);
@@ -1486,24 +1492,35 @@ mod runtime_frame_position_tests {
             Some(20),
             Some(20),
             Some(&initial),
+            size(px(100.0), px(80.0)),
         ));
         assert!(!runtime_frame_position_changed(
             &mut cache,
             Some(20),
             Some(20),
             Some(&initial),
+            size(px(100.0), px(80.0)),
         ));
         assert!(runtime_frame_position_changed(
             &mut cache,
             Some(20),
             Some(20),
             Some(&moved),
+            size(px(100.0), px(80.0)),
         ));
         assert!(runtime_frame_position_changed(
             &mut cache,
             Some(20),
             Some(20),
             Some(&resized),
+            size(px(100.0), px(80.0)),
+        ));
+        assert!(runtime_frame_position_changed(
+            &mut cache,
+            Some(20),
+            Some(20),
+            Some(&resized),
+            size(px(120.0), px(80.0)),
         ));
     }
 }
@@ -1833,8 +1850,15 @@ impl EditorView {
         left: Option<i128>,
         top: Option<i128>,
         parent_bounds: Option<&Bounds<Pixels>>,
+        frame_size: Size<Pixels>,
     ) -> bool {
-        runtime_frame_position_changed(&mut self.runtime_frame_position, left, top, parent_bounds)
+        runtime_frame_position_changed(
+            &mut self.runtime_frame_position,
+            left,
+            top,
+            parent_bounds,
+            frame_size,
+        )
     }
 
     pub(super) fn resize_to_cells(&mut self, width: usize, height: usize, window: &mut Window) {
