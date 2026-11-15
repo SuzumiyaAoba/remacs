@@ -4262,27 +4262,81 @@ fn f_fontp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(ok))
 }
 
+fn font_entity(i: &mut Interp, family: String) -> Value {
+    Value::record(vec![
+        Value::Sym(i.q("font-entity")),
+        Value::Sym(i.q("gpui")),
+        Value::Nil,
+        Value::string(family),
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+    ])
+}
+
+fn font_families_matching_spec(
+    i: &mut Interp,
+    frame: &FrameRef,
+    spec: &Value,
+) -> Result<Vec<String>, Flow> {
+    let Some(backend) = i.font_family_list_backend.clone() else {
+        return Ok(Vec::new());
+    };
+    let frame_id = frame.borrow().id;
+    let families = backend
+        .list_families(frame_id)
+        .map_err(|error| i.error(error))?;
+    let requested_family = font_spec_family(i, spec).map(|family| family.to_unicode_lossy());
+    Ok(match requested_family {
+        Some(requested_family) => families
+            .into_iter()
+            .filter(|family| family.eq_ignore_ascii_case(&requested_family))
+            .collect(),
+        None => families,
+    })
+}
+
 fn f_find_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU font.c: decode_live_frame(FRAME, arg 1) before the
     // font-spec check on arg 0; batch finds no matching font → nil.
-    if let Some(v) = a.get(1) {
-        let _ = frame_live(i, v)?;
-    }
+    let frame = frame_live(i, a.get(1).unwrap_or(&Value::Nil))?;
     if font_kind(i, &a[0]).as_deref() != Some("font-spec") {
         return Err(i.wrong_type_mut("font-spec", &a[0]));
     }
-    Ok(Value::Nil)
+    if !frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let Some(family) = font_families_matching_spec(i, &frame, &a[0])?.into_iter().next() else {
+        return Ok(Value::Nil);
+    };
+    Ok(font_entity(i, family))
 }
 fn f_list_fonts(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU font.c: decode_live_frame(FRAME, arg 1) fires before
     // the font-spec check on arg 0 (and before SEPARATE/COUNT too).
-    if let Some(v) = a.get(1) {
-        let _ = frame_live(i, v)?;
-    }
+    let frame = frame_live(i, a.get(1).unwrap_or(&Value::Nil))?;
     if font_kind(i, &a[0]).as_deref() != Some("font-spec") {
         return Err(i.wrong_type_mut("font-spec", &a[0]));
     }
-    Ok(Value::Nil)
+    if !frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let mut families = font_families_matching_spec(i, &frame, &a[0])?;
+    if let Some(Value::Int(count)) = a.get(3)
+        && *count >= 0
+    {
+        families.truncate(usize::try_from(*count).unwrap_or(usize::MAX));
+    }
+    Ok(Value::list(
+        families
+            .into_iter()
+            .map(|family| font_entity(i, family))
+            .collect(),
+    ))
 }
 
 fn f_open_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
