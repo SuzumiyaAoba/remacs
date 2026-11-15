@@ -755,6 +755,54 @@ pub(super) fn f_font_shape_gstring(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     ))
 }
 
+fn font_size_height(size: &str) -> Option<u16> {
+    let size = size.parse::<f64>().ok()?;
+    if !size.is_finite() || size <= 0.0 {
+        return None;
+    }
+    let tenths = (size * 10.0).round();
+    if !(1.0..=f64::from(u16::MAX)).contains(&tenths) {
+        return None;
+    }
+    Some(tenths as u16)
+}
+
+fn font_name_family_and_height(name: &str, families: &[String]) -> (String, Option<u16>) {
+    if let Some(family) = families
+        .iter()
+        .find(|family| family.eq_ignore_ascii_case(name))
+    {
+        return (family.clone(), None);
+    }
+
+    let matching_family = families
+        .iter()
+        .filter_map(|family| {
+            let prefix = name.get(..family.len())?;
+            if !prefix.eq_ignore_ascii_case(family) {
+                return None;
+            }
+            let size = name.get(family.len()..)?.strip_prefix('-')?;
+            Some((family.len(), family, font_size_height(size)?))
+        })
+        .max_by_key(|(length, _, _)| *length);
+    if let Some((_, family, height)) = matching_family {
+        return (family.clone(), Some(height));
+    }
+
+    // Font names without an exact family match may still use GNU's
+    // family-size form.  This also lets the GUI's fallback stack handle
+    // unavailable families while retaining the requested size.
+    if let Some((family, size)) = name.rsplit_once('-')
+        && let Some(height) = font_size_height(size)
+        && !family.is_empty()
+    {
+        return (family.to_owned(), Some(height));
+    }
+
+    (name.to_owned(), None)
+}
+
 /// `set-frame-font' — apply the selected font family to the default face.
 pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frames = arg(&a, 2);
@@ -781,22 +829,32 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     }
     target_frames.retain(|frame| crate::editor::frame_is_graphical(i, frame));
 
-    let Value::Str(_) = &a[0] else {
+    let Value::Str(font_name) = &a[0] else {
         return Ok(Value::Nil);
     };
     if target_frames.is_empty() {
         return Ok(Value::Nil);
     }
+    let font_name = font_name.borrow().to_unicode_lossy();
+    let families = if let Some(backend) = i.font_family_list_backend.clone() {
+        let frame_id = target_frames[0].borrow().id;
+        backend
+            .list_families(frame_id)
+            .map_err(|error| i.error(error))?
+    } else {
+        Vec::new()
+    };
+    let (family, height) = font_name_family_and_height(&font_name, &families);
 
     let default = Value::Sym(i.intern("default"));
-    let font = a[0].clone();
+    let family = Value::string(family);
     let inhibit_customize = a.get(3).is_some_and(Value::truthy);
     let face_frame = if !frames.is_nil() && !inhibit_customize {
         Value::Int(0)
     } else {
         Value::Frame(target_frames[0].clone())
     };
-    let attributes = vec![
+    let mut attributes = vec![
         default,
         face_frame,
         Value::Sym(i.intern(":width")),
@@ -806,10 +864,14 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         Value::Sym(i.intern(":slant")),
         Value::Sym(i.intern("normal")),
         Value::Sym(i.intern(":family")),
-        font.clone(),
+        family.clone(),
         Value::Sym(i.intern(":font")),
-        font.clone(),
+        family,
     ];
+    if let Some(height) = height {
+        attributes.push(Value::Sym(i.intern(":height")));
+        attributes.push(Value::Int(i128::from(height)));
+    }
     crate::editor::f_set_face_attribute(i, attributes.into())?;
 
     let font_parameter = Value::Sym(i.intern("font"));
@@ -817,7 +879,7 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
         let params = crate::lisp::eval::plist_put_front(
             &frame.borrow().params,
             &font_parameter,
-            font.clone(),
+            a[0].clone(),
         );
         frame.borrow_mut().params = params;
     }
