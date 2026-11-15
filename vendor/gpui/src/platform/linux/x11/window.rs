@@ -1385,6 +1385,10 @@ impl PlatformWindow for X11Window {
             .is_some_and(|reply| reply.map_state == xproto::MapState::VIEWABLE)
     }
 
+    fn is_minimized(&self) -> Option<bool> {
+        Some(self.0.state.borrow().hidden)
+    }
+
     fn activate(&self) {
         let data = [1, xproto::Time::CURRENT_TIME.into(), 0, 0, 0];
         let message = xproto::ClientMessageEvent::new(
