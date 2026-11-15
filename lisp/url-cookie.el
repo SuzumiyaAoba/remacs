@@ -366,6 +366,32 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
           (error "Invalid cookie date: %s" date))
         parsed-time))))
 
+(defun url-cookie--max-expiration-date ()
+  "Return the latest expiry date accepted by the RFC 6265 date parser."
+  ;;Remacs: cookie dates parsed here have a four-digit year limit. Preserve
+  ;; positive Max-Age cookies by saturating unrepresentable times at year 9999.
+  (format-time-string "%a %b %d %H:%M:%S %Y GMT"
+                      (encode-time 59 59 23 31 12 9999 0)
+                      t))
+
+(defun url-cookie--positive-max-age-expiration (max-age)
+  "Format positive MAX-AGE as an Expires date, saturating overflow."
+  (let* ((maximum-time (encode-time 59 59 23 31 12 9999 0))
+         (maximum-date (url-cookie--max-expiration-date))
+         (maximum-delta (floor (float-time (time-subtract maximum-time nil))))
+         (delta (string-to-number max-age)))
+    (if (> delta maximum-delta)
+        maximum-date
+      (let* ((time (ignore-errors (time-add nil delta)))
+             (expires (and time
+                           (ignore-errors
+                             (format-time-string "%a %b %d %H:%M:%S %Y GMT"
+                                                 time t))))
+             (parsed (and expires
+                          (ignore-errors
+                            (url-cookie--expires-date-to-time expires)))))
+        (if parsed expires maximum-date)))))
+
 (defun url-cookie-expired-p (cookie)
   "Return non-nil if COOKIE is expired."
   (let ((exp (url-cookie-expires cookie)))
@@ -569,10 +595,7 @@ Compare names without regard to case.  With nil PREDICATE, accept any value."
 		  (format-time-string "%a, %d %b %Y %H:%M:%S GMT"
 				      (time-add nil -1)
 				      t)
-		(ignore-errors
-		  (format-time-string "%a %b %d %H:%M:%S %Y GMT"
-				      (time-add nil (string-to-number max-age))
-				      t))))
+		(url-cookie--positive-max-age-expiration max-age)))
       (setq expires
             (cdr-safe
              (url-cookie--last-attribute
