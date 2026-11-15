@@ -203,6 +203,8 @@ impl PlatformWindow for TestWindow {
         self.set_visible(true);
     }
 
+    fn lower_without_focus(&self) {}
+
     fn is_active(&self) -> bool {
         false
     }

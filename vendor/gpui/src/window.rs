@@ -4290,6 +4290,11 @@ impl Window {
         self.platform_window.raise_without_focus();
     }
 
+    /// Lower the current window without requesting input focus where supported.
+    pub fn lower_window(&self) {
+        self.platform_window.lower_without_focus();
+    }
+
     /// Minimize the current window at the platform level.
     pub fn minimize_window(&self) {
         self.platform_window.minimize();

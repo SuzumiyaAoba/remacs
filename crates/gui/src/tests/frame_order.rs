@@ -1,4 +1,4 @@
-use super::super::raise_frame_window;
+use super::super::{lower_frame_window, raise_frame_window};
 use gpui::{Context, IntoElement, Render, TestAppContext, Window, div};
 
 struct FrameOrderView;
@@ -88,4 +88,31 @@ fn raising_another_frame_preserves_keyboard_focus_until_explicit_activation() {
         .unwrap();
     app.run_until_parked();
     assert_eq!(focus(&mut app), (false, true));
+}
+
+#[test]
+fn lowering_another_frame_preserves_keyboard_focus() {
+    // Regression for #2268: lower-frame must not activate its target.
+    let mut app = TestAppContext::single();
+    let source = app.add_window(|_, _| FrameOrderView);
+    let target = app.add_window(|_, _| FrameOrderView);
+    source
+        .update(&mut app, |_, window, _| window.activate_window())
+        .unwrap();
+    app.run_until_parked();
+
+    target
+        .update(&mut app, |_, window, _| {
+            lower_frame_window(window);
+            assert!(window.is_visible());
+        })
+        .unwrap();
+    app.run_until_parked();
+
+    assert!(source
+        .update(&mut app, |_, window, _| window.is_window_active())
+        .unwrap());
+    assert!(!target
+        .update(&mut app, |_, window, _| window.is_window_active())
+        .unwrap());
 }

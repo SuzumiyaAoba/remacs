@@ -1036,6 +1036,10 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn lower_without_focus(&self) {
+        // xdg-shell exposes no request for lowering a toplevel; the compositor owns stacking order.
+    }
+
     fn is_active(&self) -> bool {
         self.borrow().active
     }

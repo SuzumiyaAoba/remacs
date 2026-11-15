@@ -2021,14 +2021,7 @@ fn raise_frame_window(window: &Window) {
 }
 
 fn lower_frame_window(window: &Window) {
-    #[cfg(target_os = "macos")]
-    if let Some(native_window) = appkit_native_window(window) {
-        unsafe {
-            let _: () = msg_send![native_window, orderBack: nil];
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    window.lower_window();
 }
 
 fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool) {

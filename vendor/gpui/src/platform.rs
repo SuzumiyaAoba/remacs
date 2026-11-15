@@ -530,6 +530,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn raise_without_focus(&self) {
         self.activate();
     }
+    /// Lower the window without requesting input focus.
+    /// Platforms without a non-focusing lowering operation leave its order unchanged.
+    fn lower_without_focus(&self) {}
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);

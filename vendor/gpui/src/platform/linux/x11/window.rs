@@ -1411,6 +1411,17 @@ impl PlatformWindow for X11Window {
         xcb_flush(&self.0.xcb);
     }
 
+    fn lower_without_focus(&self) {
+        self.0
+            .xcb
+            .configure_window(
+                self.0.x_window,
+                &xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::BELOW),
+            )
+            .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
     fn is_active(&self) -> bool {
         self.0.state.borrow().active
     }
