@@ -1,6 +1,9 @@
-use super::{EditorView, frame_minimum_size};
+use super::{EditorView, frame_minimum_size, frame_window_options};
 use gpui::{TestAppContext, px, size};
-use std::sync::mpsc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, atomic::AtomicUsize, mpsc},
+};
 
 #[test]
 fn minimum_size_defaults_to_ten_columns_and_three_rows() {
@@ -20,6 +23,50 @@ fn minimum_size_defaults_to_ten_columns_and_three_rows() {
         frame_minimum_size(Some(20), Some(2), 7.25, 18.5, 6.0),
         Some(size(px(151.0), px(62.0)))
     );
+}
+
+#[test]
+fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
+    let frame = super::logic::FrameSnapshot {
+        frame_id: 1,
+        primary_frame_id: Some(1),
+        image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
+        image_cache_size: Arc::new(AtomicUsize::new(0)),
+        name: "F1".to_owned(),
+        parent_frame: None,
+        visibility: remacs_runtime::frontend::FrameVisibility::Visible,
+        modifier_mapping: super::keys::ModifierMapping::default(),
+        alpha_active: 255,
+        alpha_inactive: 255,
+        alpha_background: 255,
+        width: 40,
+        height: 12,
+        internal_border_width: 0,
+        left: None,
+        top: None,
+        undecorated: false,
+        ns_transparent_titlebar: false,
+        ns_appearance: None,
+        represented_file: None,
+        fullscreen: None,
+        auto_raise: false,
+        auto_lower: false,
+        z_group: None,
+        no_accept_focus: false,
+        no_focus_on_map: false,
+        skip_taskbar: false,
+        sticky: false,
+        shaded: false,
+        min_width: None,
+        min_height: None,
+        grid: remacs_runtime::frontend::Grid::blank(40, 12),
+    };
+    let app = TestAppContext::single();
+    let mut async_app = app.to_async();
+
+    let options = frame_window_options(&frame, &HashMap::new(), &mut async_app);
+
+    assert_eq!(options.window_min_size, Some(size(px(80.0), px(57.0))));
 }
 
 #[test]
