@@ -813,12 +813,21 @@ regular specifiers."
                                                 (extra-light . "200")
                                                 (ultra-light . "100")))))))
 
+(defun hfy-box-color (color)
+  ;; Remacs: Resolve :box colors instead of inserting custom text into CSS.
+  (when (symbolp color)
+    (setq color (symbol-name color)))
+  (and (stringp color)
+       (condition-case nil
+           (hfy-triplet color)
+         (error nil))))
+
 (defun hfy-box-to-border-assoc (spec)
   (if spec
       (let ((tag (car  spec))
             (val (cadr spec)))
         (cons (cl-case tag
-                (:color (cons "color" val))
+                (:color (cons "color" (hfy-box-color val)))
                 (:width (cons "width"  val))
                 (:style (cons "style"  val)))
               (hfy-box-to-border-assoc (cddr spec))))))
@@ -840,7 +849,9 @@ regular specifiers."
   (if box
       (cond
        ((integerp box) (list (cons "border-width" (format "%dpx"   box))))
-       ((stringp  box) (list (cons "border" (format "solid %s 1px" box))))
+       ((stringp box)
+        (let ((color (hfy-box-color box)))
+          (and color (list (cons "border" (format "solid %s 1px" color))))))
        ((listp    box) (hfy-box-to-style box)                            ))) )
 
 (defun hfy-decor (tag _val)
