@@ -820,6 +820,9 @@ fn f_ns_set_mouse_absolute_pixel_position(i: &mut Interp, a: crate::lisp::Argv) 
 }
 
 fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !cfg!(target_os = "macos") {
+        return Err(winsys(i));
+    }
     let Some(backend) = i.application_visibility_backend.clone() else {
         return Err(winsys(i));
     };

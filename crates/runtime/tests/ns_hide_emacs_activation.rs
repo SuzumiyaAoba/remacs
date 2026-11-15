@@ -75,30 +75,37 @@ fn ns_hide_emacs_activation_symbols_keep_their_distinct_modes() {
             interp
                 .set_application_visibility_backend(Some(Rc::new(RecordingBackend(calls.clone()))));
 
-            for form in [
+            let forms = [
                 "(ns-hide-emacs 'activate)",
                 "(ns-hide-emacs 'activate-front)",
                 "(ns-hide-emacs nil)",
                 "(ns-hide-emacs t)",
-            ] {
-                interp.eval_str(form).unwrap();
+            ];
+            if cfg!(target_os = "macos") {
+                for form in forms {
+                    interp.eval_str(form).unwrap();
+                }
+                assert_eq!(
+                    *calls.borrow(),
+                    vec![
+                        Call::ActivateUnhidden {
+                            has_frame: true,
+                            front: false,
+                        },
+                        Call::ActivateUnhidden {
+                            has_frame: true,
+                            front: true,
+                        },
+                        Call::Unhide,
+                        Call::Hide,
+                    ]
+                );
+            } else {
+                for form in forms {
+                    assert!(interp.eval_str(form).is_err());
+                }
+                assert!(calls.borrow().is_empty());
             }
-
-            assert_eq!(
-                *calls.borrow(),
-                vec![
-                    Call::ActivateUnhidden {
-                        has_frame: true,
-                        front: false,
-                    },
-                    Call::ActivateUnhidden {
-                        has_frame: true,
-                        front: true,
-                    },
-                    Call::Unhide,
-                    Call::Hide,
-                ]
-            );
         })
         .unwrap()
         .join()
