@@ -345,12 +345,227 @@ pub(super) fn f_font_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     ]))
 }
 
-/// `font-match-p' — both args are font-specs in GNU (typed check);
-/// matching two arbitrary specs is trivially true for us.
+#[derive(Clone, Copy)]
+enum FontValueKind {
+    Spec,
+    Entity,
+    Object,
+}
+
+fn font_value_kind(i: &Interp, value: &Value) -> Option<FontValueKind> {
+    if value.record_kind() == Some(crate::lisp::value::RecordKind::FontSpec) {
+        return Some(FontValueKind::Spec);
+    }
+    let Value::Record(record) = value else {
+        return None;
+    };
+    let tag = record.borrow().first().cloned()?;
+    match &tag {
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "font-entity" => {
+            Some(FontValueKind::Entity)
+        }
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "font-object" => {
+            Some(FontValueKind::Object)
+        }
+        _ => None,
+    }
+}
+
+fn font_property_value(i: &Interp, value: &Value, kind: FontValueKind, property: &str) -> Value {
+    match (kind, value) {
+        (FontValueKind::Spec, Value::Record(record)) => {
+            let properties = record.borrow().get(1).cloned().unwrap_or(Value::Nil);
+            i.intern_soft(property)
+                .map(|key| crate::lisp::eval::plist_get_v(&properties, &Value::Sym(key)))
+                .unwrap_or(Value::Nil)
+        }
+        (FontValueKind::Entity | FontValueKind::Object, Value::Record(record)) => {
+            // C font vectors store the driver type in slot 0; Remacs records
+            // have a Lisp type tag in that slot, so attribute indices shift by
+            // one in their serialized representation.
+            let index = match property {
+                ":foundry" => 2,
+                ":family" => 3,
+                ":adstyle" => 4,
+                ":registry" => 5,
+                ":weight" => 6,
+                ":slant" => 7,
+                ":width" => 8,
+                ":size" => 9,
+                ":dpi" => 10,
+                _ => return Value::Nil,
+            };
+            record.borrow().get(index).cloned().unwrap_or(Value::Nil)
+        }
+        _ => Value::Nil,
+    }
+}
+
+fn font_numeric_property_value(
+    i: &Interp,
+    value: &Value,
+    kind: FontValueKind,
+    property: &str,
+) -> Option<f64> {
+    let table: &[(&str, i128)] = match property {
+        ":weight" => &[
+            ("thin", 0),
+            ("ultra-light", 40),
+            ("ultralight", 40),
+            ("extra-light", 40),
+            ("extralight", 40),
+            ("light", 50),
+            ("semi-light", 55),
+            ("semilight", 55),
+            ("demilight", 55),
+            ("book", 80),
+            ("regular", 80),
+            ("normal", 80),
+            ("unspecified", 80),
+            ("medium", 100),
+            ("semi-bold", 180),
+            ("semibold", 180),
+            ("demibold", 180),
+            ("demi-bold", 180),
+            ("demi", 180),
+            ("bold", 200),
+            ("extra-bold", 205),
+            ("extrabold", 205),
+            ("ultra-bold", 205),
+            ("ultrabold", 205),
+            ("black", 210),
+            ("heavy", 210),
+            ("ultra-heavy", 250),
+            ("ultraheavy", 250),
+        ],
+        ":slant" => &[
+            ("reverse-oblique", 0),
+            ("ro", 0),
+            ("reverse-italic", 10),
+            ("ri", 10),
+            ("normal", 100),
+            ("roman", 100),
+            ("r", 100),
+            ("unspecified", 100),
+            ("italic", 200),
+            ("i", 200),
+            ("ot", 200),
+            ("oblique", 210),
+            ("o", 210),
+        ],
+        ":width" => &[
+            ("ultra-condensed", 50),
+            ("ultracondensed", 50),
+            ("extra-condensed", 63),
+            ("extracondensed", 63),
+            ("condensed", 75),
+            ("compressed", 75),
+            ("narrow", 75),
+            ("semi-condensed", 87),
+            ("semicondensed", 87),
+            ("demicondensed", 87),
+            ("normal", 100),
+            ("medium", 100),
+            ("regular", 100),
+            ("unspecified", 100),
+            ("semi-expanded", 113),
+            ("semiexpanded", 113),
+            ("demiexpanded", 113),
+            ("expanded", 125),
+            ("extra-expanded", 150),
+            ("extraexpanded", 150),
+            ("ultra-expanded", 200),
+            ("ultraexpanded", 200),
+            ("wide", 200),
+        ],
+        _ => &[],
+    };
+    let symbol_name = match value {
+        Value::Sym(symbol) => Some(i.symbol_name(*symbol)),
+        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+    if let Some(symbol_name) = symbol_name
+        && let Some((_, number)) = table
+            .iter()
+            .find(|(name, _)| *name == symbol_name.as_str())
+    {
+        return Some(*number as f64);
+    }
+    match value {
+        Value::Int(number)
+            if matches!(kind, FontValueKind::Entity | FontValueKind::Object)
+                && matches!(property, ":weight" | ":slant" | ":width") =>
+        {
+            Some(if *number > 255 || *number < -255 {
+                (number >> 8) as f64
+            } else {
+                *number as f64
+            })
+        }
+        Value::Int(number) => Some(*number as f64),
+        Value::Float(number) => Some(**number),
+        _ => None,
+    }
+}
+
+fn font_attribute_matches(
+    i: &Interp,
+    property: &str,
+    left: &Value,
+    right: &Value,
+    right_kind: FontValueKind,
+) -> bool {
+    if left.is_nil() || right.is_nil() {
+        return true;
+    }
+    if let (Some(left), Some(right)) = (
+        font_numeric_property_value(i, left, FontValueKind::Spec, property),
+        font_numeric_property_value(i, right, right_kind, property),
+    ) {
+        return left == right;
+    }
+    let name = |value: &Value| match value {
+        Value::Sym(symbol) => Some(i.symbol_name(*symbol)),
+        Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
+        _ => None,
+    };
+    match (name(left), name(right)) {
+        (Some(left), Some(right)) => left.eq_ignore_ascii_case(&right),
+        _ => match (left, right) {
+            (Value::Int(left), Value::Int(right)) => left == right,
+            (Value::Float(left), Value::Float(right)) => **left == **right,
+            (Value::Int(left), Value::Float(right)) => *left as f64 == **right,
+            (Value::Float(left), Value::Int(right)) => **left == *right as f64,
+            _ => false,
+        },
+    }
+}
+
+/// `font-match-p' — test the specified family and style constraints.
 pub(super) fn f_font_match_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    for v in &a[..2] {
-        if v.record_kind() != Some(crate::lisp::value::RecordKind::FontSpec) {
-            return Err(i.wrong_type_mut("font-spec", v));
+    if a[0].record_kind() != Some(crate::lisp::value::RecordKind::FontSpec) {
+        return Err(i.wrong_type_mut("font-spec", &a[0]));
+    }
+    let Some(font_kind) = font_value_kind(i, &a[1]) else {
+        return Err(i.wrong_type_mut("font", &a[1]));
+    };
+    let properties = [
+        ":foundry",
+        ":family",
+        ":adstyle",
+        ":registry",
+        ":weight",
+        ":slant",
+        ":width",
+        ":size",
+        ":dpi",
+    ];
+    for property in properties {
+        let requested = font_property_value(i, &a[0], FontValueKind::Spec, property);
+        let actual = font_property_value(i, &a[1], font_kind, property);
+        if !font_attribute_matches(i, property, &requested, &actual, font_kind) {
+            return Ok(Value::Nil);
         }
     }
     Ok(Value::t())
