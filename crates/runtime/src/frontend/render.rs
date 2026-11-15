@@ -6545,6 +6545,8 @@ struct FaceCtx {
     /// fallback for the default face, so an explicit default-face background
     /// still takes precedence.
     frame_default_background: Option<CellColor>,
+    /// Face attribute overrides stored on the rendered frame.
+    frame_face_attributes: Vec<(crate::lisp::value::SymId, Value)>,
 }
 
 impl FaceCtx {
@@ -6613,6 +6615,9 @@ impl FaceCtx {
                 _ => None,
             })
             .unwrap_or_else(|| crate::editor::default_directory(i));
+        let frame_face_attributes = frame
+            .map(|frame| frame.borrow().face_attributes.clone())
+            .unwrap_or_default();
         let mut ctx = FaceCtx {
             face: sym("face"),
             font_lock_face: sym("font-lock-face"),
@@ -6638,6 +6643,7 @@ impl FaceCtx {
             cache: HashMap::new(),
             frame_default_foreground: None,
             frame_default_background: None,
+            frame_face_attributes,
             default_style: None,
         };
         if let Some(frame) = frame {
@@ -6842,6 +6848,14 @@ impl FaceCtx {
         }
         if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
             mix.merge(&self.face_plist(i, plist, depth));
+        }
+        let frame_face = self
+            .frame_face_attributes
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, plist)| plist.clone());
+        if let Some(plist) = frame_face {
+            mix.merge(&self.face_plist(i, &plist, depth));
         }
         if i.symbol_name(*name) == "default" {
             // Cache the realized default size, so inheriting it cannot apply

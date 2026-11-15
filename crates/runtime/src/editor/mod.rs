@@ -213,6 +213,8 @@ pub struct Frame {
     pub buffer_list: Vec<usize>,
     /// Buffers buried on this frame, most recently buried first.
     pub buried_buffer_list: Vec<usize>,
+    /// Face attributes set specifically for this frame.
+    pub(crate) face_attributes: Vec<(SymId, Value)>,
     pub params: Value,
     pub dead: bool,
 }
@@ -437,6 +439,7 @@ impl Frame {
                 window_state_change: false,
                 buffer_list: vec![buffer],
                 buried_buffer_list: Vec::new(),
+                face_attributes: Vec::new(),
                 params: Value::Nil,
                 dead: false,
             },
@@ -23744,6 +23747,93 @@ fn face_attr(i: &mut Interp, name: &SymId, attr: &str, frame_is_t: bool) -> Valu
     }
 }
 
+fn face_frame_context(i: &Interp, frame: &Value) -> (Option<FrameRef>, bool) {
+    match frame {
+        Value::Nil => (i.selected_frame.clone(), false),
+        Value::Frame(frame) => (Some(frame.clone()), false),
+        Value::Sym(symbol) if *symbol == sym::T => (None, true),
+        _ => (None, false),
+    }
+}
+
+fn face_attr_for_frame(
+    i: &mut Interp,
+    name: &SymId,
+    attr: &str,
+    frame: Option<&FrameRef>,
+    frame_is_t: bool,
+) -> Value {
+    if frame_is_t {
+        return face_attr(i, name, attr, true);
+    }
+    let key = i.intern(attr);
+    if let Some(value) = frame.and_then(|frame| {
+        let frame = frame.borrow();
+        frame
+            .face_attributes
+            .iter()
+            .find(|(face, _)| face == name)
+            .and_then(|(_, plist)| crate::lisp::eval::plist_lookup(plist, key))
+    }) {
+        return value;
+    }
+    face_attr(i, name, attr, false)
+}
+
+fn set_frame_face_attr(
+    i: &mut Interp,
+    frame: &FrameRef,
+    name: &SymId,
+    attr: &str,
+    value: Value,
+) {
+    let key = i.intern(attr);
+    let mut frame = frame.borrow_mut();
+    if !frame.face_attributes.iter().any(|(face, _)| face == name) {
+        frame.face_attributes.push((*name, Value::Nil));
+    }
+    if let Some((_, plist)) = frame
+        .face_attributes
+        .iter_mut()
+        .find(|(face, _)| face == name)
+    {
+        *plist = crate::lisp::eval::plist_put(plist, key, value);
+    }
+}
+
+fn clear_frame_face_attr(i: &mut Interp, frame: &FrameRef, name: &SymId, attr: &str) {
+    let property = Value::Sym(i.intern(attr));
+    let mut frame = frame.borrow_mut();
+    if let Some((_, plist)) = frame
+        .face_attributes
+        .iter_mut()
+        .find(|(face, _)| face == name)
+    {
+        *plist = crate::lisp::eval::plist_remove_v(plist, &property);
+    }
+}
+
+fn set_face_attr_for_scope(
+    i: &mut Interp,
+    name: &SymId,
+    attr: &str,
+    value: Value,
+    frame: &Value,
+) {
+    match frame {
+        Value::Frame(frame) => set_frame_face_attr(i, frame, name, attr, value),
+        Value::Nil | Value::Int(0) => {
+            set_face_attr(i, name, attr, value);
+            for frame in i.frames.clone() {
+                if !frame.borrow().dead {
+                    clear_frame_face_attr(i, &frame, name, attr);
+                }
+            }
+        }
+        _ => set_face_attr(i, name, attr, value),
+    }
+}
+
 fn f_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU decode_live_frame on FRAME wins over every other arg check:
     // t → spec layer, nil/live frame → realized value, else frame-live-p.
@@ -23767,9 +23857,8 @@ fn f_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             vec![Value::string("Invalid face attribute name"), a[1].clone()],
         ));
     }
-    // FRAME=t → stored spec layer (validated above).
-    let spec = matches!(arg(&a, 2), Value::Sym(s) if s == sym::T);
-    Ok(face_attr(i, &name, &attr, spec))
+    let (frame, frame_is_t) = face_frame_context(i, &arg(&a, 2));
+    Ok(face_attr_for_frame(i, &name, &attr, frame.as_ref(), frame_is_t))
 }
 
 fn f_facep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -23853,7 +23942,7 @@ fn f_face_equal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     face_frame_live(i, &arg(&a, 2))?;
     let n1 = face_name_of(i, &a[0])?;
     let n2 = face_name_of(i, &a[1])?;
-    let spec = matches!(arg(&a, 2), Value::Sym(s) if s == sym::T);
+    let (frame, frame_is_t) = face_frame_context(i, &arg(&a, 2));
     const ATTRS: &[&str] = &[
         ":family",
         ":foundry",
@@ -23876,8 +23965,8 @@ fn f_face_equal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ":inherit",
     ];
     for at in ATTRS {
-        let v1 = face_attr(i, &n1, at, spec);
-        let v2 = face_attr(i, &n2, at, spec);
+        let v1 = face_attr_for_frame(i, &n1, at, frame.as_ref(), frame_is_t);
+        let v2 = face_attr_for_frame(i, &n2, at, frame.as_ref(), frame_is_t);
         if !crate::lisp::builtins::equal_values(i, &v1, &v2)? {
             return Ok(Value::Nil);
         }
@@ -23920,7 +24009,7 @@ fn sync_scroll_bar_color(
     // GNU realizes the graphical scrollbar face through these parameters.
     // FRAME=t only changes defaults, while FRAME=0 visits all live frames.
     let frames: Vec<FrameRef> = match frame {
-        Value::Nil => i.selected_frame.clone().into_iter().collect(),
+        Value::Nil => i.frames.clone(),
         Value::Int(0) => i.frames.clone(),
         Value::Frame(frame) => vec![frame.clone()],
         _ => return Ok(()),
@@ -24083,7 +24172,7 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> E
         face_global_update(i, &name, &attr, value.clone());
     }
     if !to_t {
-        set_face_attr(i, &name, &attr, value.clone());
+        set_face_attr_for_scope(i, &name, &attr, value.clone(), &arg(&a, 3));
         sync_scroll_bar_color(i, &name, &attr, &value, &arg(&a, 3))?;
     }
     if i.symbol_name(name) == "cursor" && attr == ":background" {
@@ -24159,7 +24248,7 @@ pub(crate) fn f_set_face_attribute(i: &mut Interp, a: crate::lisp::Argv) -> Eval
                 }
             }
             if !to_t {
-                set_face_attr(i, &name, &attr, v.clone());
+                set_face_attr_for_scope(i, &name, &attr, v.clone(), &a[1]);
                 sync_scroll_bar_color(i, &name, &attr, &v, &a[1])?;
             }
         }
@@ -24555,16 +24644,18 @@ fn f_set_face_background(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // FACE is unknown.
     face_frame_live(i, &arg(&a, 2))?;
     let name = face_name_of(i, &a[0])?;
-    set_face_attr(i, &name, ":background", a[1].clone());
+    set_face_attr_for_scope(i, &name, ":background", a[1].clone(), &arg(&a, 2));
     sync_scroll_bar_color(i, &name, ":background", &a[1], &arg(&a, 2))?;
     Ok(Value::Nil)
 }
 
 /// `face-extend-p` — t when FACE's :extend attribute is non-nil.
 fn f_face_extend_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = face_frame_live(i, &arg(&a, 1))?;
+    let frame_value = arg(&a, 1);
+    let _ = face_frame_live(i, &frame_value)?;
     let name = face_name_of(i, &a[0])?;
-    match face_attr(i, &name, ":extend", false) {
+    let (frame, frame_is_t) = face_frame_context(i, &frame_value);
+    match face_attr_for_frame(i, &name, ":extend", frame.as_ref(), frame_is_t) {
         Value::Nil => Ok(Value::Nil),
         Value::Sym(s) if i.symbol_name(s) == "unspecified" => Ok(Value::Nil),
         _ => Ok(Value::t()),
@@ -24580,16 +24671,18 @@ fn f_set_face_extend(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     face_frame_live(i, &arg(&a, 2))?;
     let name = face_name_of(i, &a[0])?;
-    set_face_attr(i, &name, ":extend", a[1].clone());
+    set_face_attr_for_scope(i, &name, ":extend", a[1].clone(), &arg(&a, 2));
     Ok(Value::Nil)
 }
 
 /// (memq WEIGHT '(semi-bold bold extra-bold ultra-bold)) like GNU.
 fn f_face_bold_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU decodes FRAME (arg2) before FACE: non-live → frame-live-p.
-    let _ = face_frame_live(i, &arg(&a, 1))?;
+    let frame_value = arg(&a, 1);
+    let _ = face_frame_live(i, &frame_value)?;
     let name = face_name_of(i, &a[0])?;
-    let w = face_attr(i, &name, ":weight", false);
+    let (frame, frame_is_t) = face_frame_context(i, &frame_value);
+    let w = face_attr_for_frame(i, &name, ":weight", frame.as_ref(), frame_is_t);
     let wname = match &w {
         Value::Sym(s) => i.symbol_name(*s),
         _ => String::new(),
@@ -24606,9 +24699,11 @@ fn f_face_bold_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 fn f_face_italic_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = face_frame_live(i, &arg(&a, 1))?;
+    let frame_value = arg(&a, 1);
+    let _ = face_frame_live(i, &frame_value)?;
     let name = face_name_of(i, &a[0])?;
-    let w = face_attr(i, &name, ":slant", false);
+    let (frame, frame_is_t) = face_frame_context(i, &frame_value);
+    let w = face_attr_for_frame(i, &name, ":slant", frame.as_ref(), frame_is_t);
     let wname = match &w {
         Value::Sym(s) => i.symbol_name(*s),
         _ => String::new(),
@@ -24625,9 +24720,11 @@ fn f_face_italic_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 }
 fn f_face_underline_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = face_frame_live(i, &arg(&a, 1))?;
+    let frame_value = arg(&a, 1);
+    let _ = face_frame_live(i, &frame_value)?;
     let name = face_name_of(i, &a[0])?;
-    Ok(match face_attr(i, &name, ":underline", false) {
+    let (frame, frame_is_t) = face_frame_context(i, &frame_value);
+    Ok(match face_attr_for_frame(i, &name, ":underline", frame.as_ref(), frame_is_t) {
         Value::Sym(s) if i.symbol_name(s) == "unspecified" => Value::Nil,
         v => v,
     })
