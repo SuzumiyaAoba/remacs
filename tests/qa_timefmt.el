@@ -287,6 +287,7 @@
 (qa (format-spec "%010a" '((?a . 5))) "0000000005")
 (qa (format-spec "%.3a" '((?a . "abcdef"))) "abc")
 (qa (format-spec "%4.2a" '((?a . "abcdef"))) "  ab")
+(qa (format-spec "%^2.2s" '((?s . "aß"))) "ASS")
 (qa (format-spec "%-4a|%.2a" '((?a . "xyz"))) "xyz |xy")
 ;; Precision truncates the rendered string, it does not round numbers.
 (qa (format-spec "%08.3f" '((?f . 3.14159))) "000003.1")
