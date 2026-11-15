@@ -1431,6 +1431,83 @@ impl RunMenuCommand {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RuntimeFramePosition {
+    left: Option<i128>,
+    top: Option<i128>,
+    parent_bounds: Option<(u32, u32, u32, u32)>,
+}
+
+fn runtime_frame_position_changed(
+    previous: &mut Option<RuntimeFramePosition>,
+    left: Option<i128>,
+    top: Option<i128>,
+    parent_bounds: Option<&Bounds<Pixels>>,
+) -> bool {
+    let parent_bounds = parent_bounds.map(|bounds| {
+        (
+            f32::from(bounds.origin.x).to_bits(),
+            f32::from(bounds.origin.y).to_bits(),
+            f32::from(bounds.size.width).to_bits(),
+            f32::from(bounds.size.height).to_bits(),
+        )
+    });
+    let position = RuntimeFramePosition {
+        left,
+        top,
+        parent_bounds,
+    };
+    let changed = *previous != Some(position);
+    *previous = Some(position);
+    changed
+}
+
+#[cfg(test)]
+mod runtime_frame_position_tests {
+    use super::runtime_frame_position_changed;
+    use gpui::{Bounds, Pixels, point, px, size};
+
+    fn bounds(left: f32, top: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(left), px(top)),
+            size: size(px(width), px(height)),
+        }
+    }
+
+    #[test]
+    fn moving_or_resizing_parent_invalidates_child_position_cache() {
+        let mut cache = None;
+        let initial = bounds(10.0, 20.0, 400.0, 300.0);
+        let moved = bounds(110.0, 120.0, 400.0, 300.0);
+        let resized = bounds(110.0, 120.0, 500.0, 300.0);
+
+        assert!(runtime_frame_position_changed(
+            &mut cache,
+            Some(20),
+            Some(20),
+            Some(&initial),
+        ));
+        assert!(!runtime_frame_position_changed(
+            &mut cache,
+            Some(20),
+            Some(20),
+            Some(&initial),
+        ));
+        assert!(runtime_frame_position_changed(
+            &mut cache,
+            Some(20),
+            Some(20),
+            Some(&moved),
+        ));
+        assert!(runtime_frame_position_changed(
+            &mut cache,
+            Some(20),
+            Some(20),
+            Some(&resized),
+        ));
+    }
+}
+
 pub(super) struct EditorView {
     tx: FrameEventSender,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
@@ -1458,7 +1535,7 @@ pub(super) struct EditorView {
     native_minimum_size: Option<(Size<Pixels>, f32)>,
     geometry: Option<GuiGeometry>,
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
-    runtime_frame_position: Option<(Option<i128>, Option<i128>)>,
+    runtime_frame_position: Option<RuntimeFramePosition>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     tab_bar_drag: Option<TabBarDrag>,
     follow_tooltip_drag: bool,
@@ -1755,11 +1832,9 @@ impl EditorView {
         &mut self,
         left: Option<i128>,
         top: Option<i128>,
+        parent_bounds: Option<&Bounds<Pixels>>,
     ) -> bool {
-        let position = (left, top);
-        let changed = self.runtime_frame_position != Some(position);
-        self.runtime_frame_position = Some(position);
-        changed
+        runtime_frame_position_changed(&mut self.runtime_frame_position, left, top, parent_bounds)
     }
 
     pub(super) fn resize_to_cells(&mut self, width: usize, height: usize, window: &mut Window) {

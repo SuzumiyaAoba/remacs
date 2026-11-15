@@ -2050,7 +2050,7 @@ fn apply_frame_snapshot_bounds(
     if view.needs_frame_size_update(width, height) {
         view.resize_to_cells(width, height, window);
     }
-    let position_changed = view.needs_frame_position_update(left, top);
+    let position_changed = view.needs_frame_position_update(left, top, parent_bounds.as_ref());
     if position_changed
         && let (Some(left), Some(top)) = (left, top)
         && view.native_position() != Some((left, top))
