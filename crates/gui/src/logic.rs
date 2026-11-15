@@ -183,6 +183,7 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
 pub(super) struct FrameEventSender {
     sender: Sender<GuiEvent>,
     frame_id: Rc<std::cell::Cell<Option<usize>>>,
+    pending_delete_request: Rc<Cell<bool>>,
     quit_request: Option<Arc<QuitRequest>>,
 }
 
@@ -195,12 +196,16 @@ impl FrameEventSender {
         Self {
             sender,
             frame_id: Rc::new(std::cell::Cell::new(frame_id)),
+            pending_delete_request: Rc::new(Cell::new(false)),
             quit_request,
         }
     }
 
     pub(super) fn set_frame_id(&self, frame_id: usize) {
         self.frame_id.set(Some(frame_id));
+        if self.pending_delete_request.replace(false) {
+            let _ = self.send_delete_request(frame_id);
+        }
     }
 
     pub(super) fn frame_id(&self) -> Option<usize> {
@@ -221,6 +226,15 @@ impl FrameEventSender {
         frame_id: usize,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
         self.sender.send(GuiEvent::FrameDeleteRequest { frame_id })
+    }
+
+    pub(super) fn send_delete_request_or_defer(&self) -> Result<(), mpsc::SendError<GuiEvent>> {
+        if let Some(frame_id) = self.frame_id() {
+            self.send_delete_request(frame_id)
+        } else {
+            self.pending_delete_request.set(true);
+            Ok(())
+        }
     }
 
     pub(super) fn send_focus_update(

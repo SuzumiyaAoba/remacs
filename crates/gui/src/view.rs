@@ -5610,12 +5610,12 @@ pub(super) fn build_managed_editor_view(
         if cx.windows().len() <= 1 {
             if alt_f4_close || command_w_close {
                 let _ = close_events.send(GuiEvent::PowerOff);
+            } else if close_events.frame_id().is_none() {
+                let _ = close_events.send_delete_request_or_defer();
             }
             return false;
         }
-        close_events
-            .frame_id()
-            .is_some_and(|frame_id| close_events.send_delete_request(frame_id).is_err())
+        close_events.send_delete_request_or_defer().is_err()
     });
     let frame_events = view.tx.clone();
     let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, cx| {

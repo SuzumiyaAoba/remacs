@@ -1,6 +1,23 @@
 use super::*;
 use std::{collections::HashSet, thread};
 
+#[test]
+fn close_requested_before_frame_id_is_replayed_when_bound() {
+    let (sender, received) = mpsc::channel();
+    let frame_events = FrameEventSender::new(sender, None, None);
+
+    frame_events.send_delete_request_or_defer().unwrap();
+    frame_events.send_delete_request_or_defer().unwrap();
+    assert!(matches!(received.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+    frame_events.set_frame_id(2276);
+    assert!(matches!(
+        received.try_recv(),
+        Ok(GuiEvent::FrameDeleteRequest { frame_id: 2276 })
+    ));
+    assert!(matches!(received.try_recv(), Err(mpsc::TryRecvError::Empty)));
+}
+
 #[derive(Clone, Copy)]
 enum Outcome {
     Success,
