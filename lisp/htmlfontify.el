@@ -1568,18 +1568,41 @@ See also `hfy-html-enkludge-buffer'."
       (remove-text-properties (point-min) (point-max)
                               '(hfy-show-trailing-whitespace nil)))))
 
+(defun hfy-escape-html-attribute (string)
+  "Escape STRING for insertion into a double-quoted HTML attribute."
+  (let ((escaped string))
+    (dolist (replacement '(("&" . "&amp;")
+                          ("\"" . "&quot;")
+                          ("'" . "&#39;")
+                          ("<" . "&lt;")
+                          (">" . "&gt;")))
+      (setq escaped
+            (replace-regexp-in-string
+             (regexp-quote (car replacement)) (cdr replacement) escaped t t)))
+    escaped))
+
+(defun hfy-insert-anchor (name &optional text)
+  "Insert an anchor with NAME and optional TEXT escaped for HTML."
+  (insert (format "<a name=\"%s\">%s</a>"
+                  (hfy-escape-html-attribute name)
+                  (hfy-escape-html-attribute (or text "")))))
+
 (defun hfy-begin-span (style text-block text-id text-begins-block-p)
   "Default handler to begin a span of text.
 Insert \"<span class=\"STYLE\" ...>\".
 See `hfy-begin-span-handler' for more information."
   (when text-begins-block-p
     (insert
-     (format "<span onclick=\"toggle_invis('%s');\">…</span>" text-block)))
+     (format "<span onclick=\"toggle_invis('%s');\">…</span>"
+             (hfy-escape-html-attribute text-block))))
 
   (insert
    (if text-block
-       (format "<span class=\"%s\" id=\"%s-%d\">" style text-block text-id)
-     (format "<span class=\"%s\">" style))))
+       (format "<span class=\"%s\" id=\"%s-%d\">"
+               (hfy-escape-html-attribute style)
+               (hfy-escape-html-attribute text-block)
+               text-id)
+     (format "<span class=\"%s\">" (hfy-escape-html-attribute style)))))
 
 (defun hfy-end-span ()
   "Default handler to end a span of text.
@@ -1739,7 +1762,7 @@ FILE, if set, is the file name."
             (if (setq pr (get-text-property pt 'hfy-anchor))
                 (progn (goto-char pt)
                        (remove-text-properties pt (1+ pt) '(hfy-anchor nil))
-                       (insert (concat "<a name=\"" pr "\"></a>")))))
+                       (hfy-insert-anchor pr))))
           ;; translate alternate 'hfy-link and 'hfy-endl props to opening
           ;; and closing links. (this should avoid those spurious closes
           ;; we sometimes get by generating only paired tags)
@@ -1751,7 +1774,7 @@ FILE, if set, is the file name."
               (cl-case lp
                 (hfy-link
                  (if (setq rr (get-text-property pt 'hfy-inst))
-                     (insert (format "<a name=\"%s\"></a>" rr)))
+                     (hfy-insert-anchor rr))
                  (insert (format "<a href=\"%s\">" pr))
                  (setq lp 'hfy-endl))
                 (hfy-endl
@@ -1977,11 +2000,12 @@ DEF-FILES is a list of file containing possible link endpoints for TAG
 TAG is the tag in question
 TAG-MAP is the entry in `hfy-tags-cache'."
   ;;(message "hfy-href");;DBUG
-  (concat
-   (hfy-href-stub this-file def-files tag)
-   (or hfy-link-extn hfy-extn) "#" tag ;;(.src -> .html)
-   (if (= 1 (length def-files))
-       (concat "." (format "%d" (cadr (assoc (car def-files) tag-map)))))) )
+  (hfy-escape-html-attribute
+   (concat
+    (hfy-href-stub this-file def-files tag)
+    (or hfy-link-extn hfy-extn) "#" tag ;;(.src -> .html)
+    (if (= 1 (length def-files))
+        (concat "." (format "%d" (cadr (assoc (car def-files) tag-map))))))))
 
 (defun hfy-word-regex (string)
   "Return a regex that matches STRING as the first `match-string', with non
@@ -2196,9 +2220,15 @@ DSTDIR is the output directory, where files will be written."
                    "   <td><a href=\"%s%s#%s.%d\">%d</a></td>\n"
                    "  </tr>                                  \n")
                   (if (string= TAG tag-started) "&nbsp;"
-                    (format "<a name=\"%s\">%s</a>" TAG TAG))
-                  file (or hfy-link-extn hfy-extn) file
-                  file (or hfy-link-extn hfy-extn) TAG line line))
+                    (format "<a name=\"%s\">%s</a>"
+                            (hfy-escape-html-attribute TAG)
+                            (hfy-escape-html-attribute TAG)))
+                  (hfy-escape-html-attribute file)
+                  (hfy-escape-html-attribute (or hfy-link-extn hfy-extn))
+                  (hfy-escape-html-attribute file)
+                  (hfy-escape-html-attribute file)
+                  (hfy-escape-html-attribute (or hfy-link-extn hfy-extn))
+                  (hfy-escape-html-attribute TAG) line line))
                 (setq tag-started TAG))))))
       (insert "</table>\n")
       (insert (funcall hfy-page-footer filename))
