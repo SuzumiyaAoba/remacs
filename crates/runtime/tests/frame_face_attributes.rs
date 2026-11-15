@@ -80,4 +80,15 @@ fn face_attributes_are_isolated_and_rendered_per_frame() {
             &frame_a
         ));
     }
+
+    i.eval_str(
+        "(set-face-attribute 'default nil :height 160 :foreground \"green\" :underline nil)",
+    )
+    .unwrap();
+    for frame in [&frame_a, &frame_b] {
+        let grid = render_frame_grid_with_input_cached(&i, frame, 40, 12, None);
+        assert_eq!(grid.default_style.font_height, Some(160));
+        assert_eq!(grid.default_style.fg, Some(CellColor(0, 255, 0)));
+        assert!(!grid.default_style.underline);
+    }
 }

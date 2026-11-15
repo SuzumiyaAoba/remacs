@@ -1,6 +1,42 @@
 //! Property-list access and mutation shared by evaluator and builtins.
 
 use crate::lisp::value::{SymId, Value};
+use std::rc::Rc;
+
+fn same_cons(left: &Value, right: &Value) -> bool {
+    matches!((left, right), (Value::Cons(a), Value::Cons(b)) if Rc::ptr_eq(a, b))
+}
+
+/// Constant-space Brent detector over plist key cells. Advance after moving
+/// from one key/value pair to the next pair.
+struct PlistCycle {
+    anchor: Value,
+    power: usize,
+    steps: usize,
+}
+
+impl PlistCycle {
+    fn new(plist: &Value) -> Self {
+        Self {
+            anchor: plist.clone(),
+            power: 1,
+            steps: 0,
+        }
+    }
+
+    fn advance(&mut self, tail: &Value) -> bool {
+        self.steps = self.steps.saturating_add(1);
+        if same_cons(tail, &self.anchor) {
+            return true;
+        }
+        if self.steps == self.power {
+            self.anchor = tail.clone();
+            self.power = self.power.saturating_mul(2);
+            self.steps = 0;
+        }
+        false
+    }
+}
 
 /// Return the first value for PROP, or nil when absent.
 pub fn plist_get(plist: &Value, prop: SymId) -> Value {
@@ -158,6 +194,46 @@ pub fn plist_lookup_v(plist: &Value, prop: &Value) -> Option<Value> {
             _ => return None,
         }
     }
+}
+
+/// Remove every eq-matching property from a plist, keeping the remaining
+/// key/value order and terminating if user mutation made the plist circular.
+pub fn plist_remove_v(plist: &Value, prop: &Value) -> Value {
+    let mut cur = plist.clone();
+    let mut cycle = PlistCycle::new(plist);
+    let mut kept = Vec::new();
+    loop {
+        let Value::Cons(key_cell) = cur else {
+            break;
+        };
+        let (key, rest) = {
+            let Ok(cell) = key_cell.try_borrow() else {
+                return plist.clone();
+            };
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        let (value, next) = match &rest {
+            Value::Cons(value_cell) => {
+                let Ok(cell) = value_cell.try_borrow() else {
+                    return plist.clone();
+                };
+                (cell.car.clone(), cell.cdr.clone())
+            }
+            _ => (Value::Nil, Value::Nil),
+        };
+        if !crate::lisp::builtins::eq_values(&key, prop) {
+            kept.push(key);
+            kept.push(value);
+        }
+        let Value::Cons(_) = rest else {
+            break;
+        };
+        cur = next;
+        if cycle.advance(&cur) {
+            break;
+        }
+    }
+    Value::list(kept)
 }
 
 pub fn plist_put_v(plist: &Value, prop: &Value, val: Value) -> Value {
