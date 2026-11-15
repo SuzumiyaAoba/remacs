@@ -3448,6 +3448,14 @@ impl KeyIo for ChanIo {
         }
     }
 
+    fn render_idle_animation(&mut self, _i: &mut Interp) -> io::Result<()> {
+        let Some(mut grid) = self.last.clone() else {
+            return Ok(());
+        };
+        grid.blink_elapsed_since_input = self.last_input_at.elapsed().as_secs_f64();
+        self.send_grid(grid)
+    }
+
     fn take_render_request(&mut self) -> bool {
         std::mem::take(&mut self.render_requested)
     }

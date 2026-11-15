@@ -642,6 +642,11 @@ pub trait KeyIo {
     }
     /// Repaint the whole frame.
     fn render(&mut self, i: &Interp) -> io::Result<()>;
+    /// Repaint an idle animation without processing unrelated frame changes.
+    /// Front-ends that do not specialize this path use the regular mutable render.
+    fn render_idle_animation(&mut self, i: &mut Interp) -> io::Result<()> {
+        self.render_mut(i)
+    }
     /// Buffer positions currently hovered by this front-end, paired with
     /// their owning frames. Used to evaluate dynamic help properties before
     /// the read-only renderer consumes the corresponding snapshot.

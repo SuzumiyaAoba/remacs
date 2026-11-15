@@ -513,18 +513,34 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
         };
         let render_on_idle = term.borrow().render_on_idle();
         let render_requested = term.borrow_mut().take_render_request();
+        let mut idle_animation_only = render_on_idle
+            && !render_needed
+            && !event_activity
+            && !window_activity
+            && !render_requested;
         render_needed |= event_activity || window_activity || render_on_idle || render_requested;
         if render_needed {
             if let Err(flow) = term.borrow_mut().run_pre_redisplay_functions(i) {
                 report_flow(i, flow);
+                idle_animation_only = false;
             }
-            if let Err(flow) = run_frontend_changes(&term, i) {
-                report_flow(i, flow);
+            match run_frontend_changes(&term, i) {
+                Ok(activity) => idle_animation_only &= !activity,
+                Err(flow) => {
+                    report_flow(i, flow);
+                    idle_animation_only = false;
+                }
             }
             if let Err(flow) = super::prepare_native_menus(i) {
                 report_flow(i, flow);
+                idle_animation_only = false;
             }
-            term.borrow_mut().render_mut(i)?;
+            idle_animation_only &= !term.borrow_mut().take_render_request();
+            if idle_animation_only {
+                term.borrow_mut().render_idle_animation(i)?;
+            } else {
+                term.borrow_mut().render_mut(i)?;
+            }
             render_needed = false;
         }
         if let Some((key, event)) = pop_unread_key_event(i) {
