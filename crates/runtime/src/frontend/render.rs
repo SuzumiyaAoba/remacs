@@ -130,6 +130,8 @@ pub struct GridImage {
     pub column: usize,
     /// Source Lisp property for `posn-image` hit testing.
     pub object_source: Option<MouseObjectSource>,
+    /// Pointer shape requested by the image descriptor's `:pointer` property.
+    pub pointer: Option<GridPointerShape>,
     pub source: GridImageSource,
     /// Selected zero-based frame for multi-frame images.
     pub index: Option<usize>,
@@ -4522,6 +4524,7 @@ struct RenderedFringe {
 struct RenderedImage {
     column: usize,
     object_source: Option<MouseObjectSource>,
+    pointer: Option<GridPointerShape>,
     source: GridImageSource,
     index: Option<usize>,
     conversion: Option<GridImageConversion>,
@@ -4663,6 +4666,7 @@ enum DisplayReplacement {
     Image {
         source: GridImageSource,
         object_source: Option<MouseObjectSource>,
+        pointer: Option<GridPointerShape>,
         index: Option<usize>,
         conversion: Option<GridImageConversion>,
         transform_smoothing: Option<bool>,
@@ -6125,6 +6129,7 @@ where
             Some(DisplayReplacement::Image {
                 source,
                 object_source,
+                pointer,
                 index,
                 conversion,
                 transform_smoothing,
@@ -6154,6 +6159,7 @@ where
                     images.push(RenderedImage {
                         column: image_column - hscroll,
                         object_source,
+                        pointer,
                         source,
                         index,
                         conversion,
@@ -8672,6 +8678,8 @@ fn image_display_replacement(
     let conversion = image_conversion(i, image_property(i, &plist, ":conversion"));
     let transform_smoothing = image_transform_smoothing(i, &plist);
     let masked = !image_property(i, &plist, ":mask").is_nil();
+    let pointer_value = image_property(i, &plist, ":pointer");
+    let pointer = (!pointer_value.is_nil()).then(|| grid_pointer_shape(i, Some(&pointer_value)));
     let map = image_map_areas(i, &image_property(i, &plist, ":map"));
     let file = image_property(i, &plist, ":file");
     if let Value::Str(file) = file {
@@ -8708,6 +8716,7 @@ fn image_display_replacement(
         return Some(DisplayReplacement::Image {
             source,
             object_source,
+            pointer,
             index,
             conversion,
             transform_smoothing,
@@ -8803,6 +8812,7 @@ fn image_display_replacement(
     Some(DisplayReplacement::Image {
         source,
         object_source,
+        pointer,
         index,
         conversion,
         transform_smoothing,
@@ -8825,6 +8835,7 @@ pub(super) fn toolbar_grid_image(
     let DisplayReplacement::Image {
         source,
         object_source,
+        pointer,
         index,
         conversion,
         transform_smoothing,
@@ -8845,6 +8856,7 @@ pub(super) fn toolbar_grid_image(
         row: 0,
         column: 0,
         object_source,
+        pointer,
         source,
         index,
         conversion,
@@ -12831,6 +12843,7 @@ fn render_grid_internal(
                         row: y,
                         column,
                         object_source: image.object_source,
+                        pointer: image.pointer,
                         source: image.source.clone(),
                         index: image.index,
                         conversion: image.conversion,
@@ -13390,6 +13403,7 @@ fn render_grid_internal(
                     row: y,
                     column: image.column,
                     object_source: image.object_source,
+                    pointer: image.pointer,
                     source: image.source.clone(),
                     index: image.index,
                     conversion: image.conversion,

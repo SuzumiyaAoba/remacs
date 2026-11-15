@@ -15,7 +15,8 @@ use gpui::{
     rgb, size,
 };
 use remacs_runtime::frontend::{
-    CellStyle, Grid, GridInput, GridWindowTextArea, MouseArea, MouseObject, MousePosition,
+    CellStyle, Grid, GridInput, GridPointerShape, GridWindowTextArea, MouseArea, MouseObject,
+    MousePosition,
 };
 
 pub(super) fn mouse_timestamp_ms() -> i128 {
@@ -275,6 +276,21 @@ fn image_object_at_point(
         }
     }
     None
+}
+
+pub(super) fn image_pointer_at_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+) -> Option<GridPointerShape> {
+    let MouseObject::Image { source } = image_object_at_point(grid, point, cell_width)? else {
+        return None;
+    };
+    grid.images
+        .iter()
+        .rev()
+        .find(|image| image.object_source == Some(source))
+        .and_then(|image| image.pointer)
 }
 
 impl TextInputState {
