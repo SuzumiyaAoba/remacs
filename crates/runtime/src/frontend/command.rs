@@ -2327,28 +2327,54 @@ fn dispatch_color_drop(
         let Some(buffer) = i.buffer_value(position.buffer_id) else {
             return Ok(());
         };
-        let face_property = Value::Sym(i.intern("face"));
-        let get_char_property = Value::Sym(i.intern("get-char-property"));
-        let face_value = i.apply(
-            &get_char_property,
-            vec![
-                Value::Int(position.buffer_position as i128 + 1),
-                face_property,
-                buffer,
-            ],
-        )?;
-        let default_face = Value::Sym(i.intern("default"));
-        match face_value {
-            Value::Sym(_) => face_value,
-            Value::Cons(cons) => {
-                let face = cons.borrow().car.clone();
-                if matches!(face, Value::Sym(_)) {
-                    face
-                } else {
-                    default_face
+        let active_region = if let Value::Buffer(buffer_ref) = &buffer
+            && position.area.is_none()
+        {
+            let mark_active = i.q_soft("mark-active").unwrap_or(0);
+            let buffer = buffer_ref.borrow();
+            let mark_active = buffer
+                .locals
+                .get(&mark_active)
+                .is_some_and(|value| value.truthy());
+            let mark = buffer
+                .mark
+                .as_ref()
+                .map(|marker| marker.borrow().position);
+            let point = cursor_window_point.unwrap_or(buffer.point);
+            mark.is_some_and(|mark| {
+                mark_active
+                    && position.buffer_position > mark.min(point)
+                    && position.buffer_position < mark.max(point)
+            })
+        } else {
+            false
+        };
+        if active_region {
+            Value::Sym(i.intern("region"))
+        } else {
+            let face_property = Value::Sym(i.intern("face"));
+            let get_char_property = Value::Sym(i.intern("get-char-property"));
+            let face_value = i.apply(
+                &get_char_property,
+                vec![
+                    Value::Int(position.buffer_position as i128 + 1),
+                    face_property,
+                    buffer,
+                ],
+            )?;
+            let default_face = Value::Sym(i.intern("default"));
+            match face_value {
+                Value::Sym(_) => face_value,
+                Value::Cons(cons) => {
+                    let face = cons.borrow().car.clone();
+                    if matches!(face, Value::Sym(_)) {
+                        face
+                    } else {
+                        default_face
+                    }
                 }
+                _ => default_face,
             }
-            _ => default_face,
         }
     };
     let attribute = Value::Sym(i.intern(if background {
@@ -2443,6 +2469,74 @@ mod color_drop_tests {
                     .eval_str("(frame-parameter nil 'cursor-color)")
                     .unwrap();
                 assert_eq!(interp.prin1_to_string(&color), "\"#778899\"");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn color_drop_in_active_region_updates_region_face() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(progn (erase-buffer) \
+                         (make-face 'color-drop-test-face) \
+                         (set-face-attribute 'color-drop-test-face nil :foreground \"red\") \
+                         (insert (propertize \"abc\" 'face 'color-drop-test-face)) \
+                         (set-mark 1) (goto-char 4) (setq mark-active t))",
+                    )
+                    .unwrap();
+
+                let frame = interp.selected_frame.as_ref().unwrap().clone();
+                let window = frame.borrow().selected.clone();
+                let (window_id, buffer_id) = {
+                    let window = window.borrow();
+                    (window.id, window.buffer)
+                };
+                let crate::lisp::Value::Buffer(buffer) = interp.buffer_value(buffer_id).unwrap()
+                else {
+                    panic!("selected window buffer was not a buffer value");
+                };
+                window.borrow_mut().point = buffer.borrow().point;
+                let original_face = interp
+                    .eval_str(
+                        "(face-attribute 'color-drop-test-face :foreground (selected-frame))",
+                    )
+                    .unwrap();
+                let original_face = interp.prin1_to_string(&original_face).to_string();
+                let position = MousePosition {
+                    buffer_id,
+                    buffer_position: 1,
+                    utf16_offset: 1,
+                    x: 0,
+                    y: 0,
+                    row: 0,
+                    column: 1,
+                    window_id: Some(window_id),
+                    area: None,
+                    object: None,
+                    timestamp: 0,
+                    mode_line_buffer_name: false,
+                };
+
+                dispatch_color_drop(&mut interp, Some(position), "334455", false).unwrap();
+                let region_face = interp
+                    .eval_str("(face-attribute 'region :foreground (selected-frame))")
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&region_face), "\"#334455\"");
+                let text_face = interp
+                    .eval_str(
+                        "(face-attribute 'color-drop-test-face :foreground (selected-frame))",
+                    )
+                    .unwrap();
+                assert_eq!(
+                    interp.prin1_to_string(&text_face).to_string(),
+                    original_face
+                );
             })
             .unwrap()
             .join()
