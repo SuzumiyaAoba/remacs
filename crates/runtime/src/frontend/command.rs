@@ -2291,6 +2291,36 @@ fn dispatch_color_drop(
         )?;
         return Ok(());
     };
+    let cursor_window = position
+        .window_id
+        .and_then(|window_id| {
+            frame
+                .borrow()
+                .windows
+                .iter()
+                .find(|window| window.borrow().id == window_id)
+                .cloned()
+        })
+        .or_else(|| {
+            position
+                .window_id
+                .is_none()
+                .then(|| frame.borrow().selected.clone())
+        });
+    let cursor_position = position.area.is_none()
+        && cursor_window.is_some_and(|window| {
+            let window = window.borrow();
+            window.buffer == position.buffer_id && window.point == position.buffer_position
+        });
+    if cursor_position {
+        let parameter = Value::Sym(i.intern("cursor-color"));
+        let set_frame_parameter = Value::Sym(i.intern("set-frame-parameter"));
+        i.apply(
+            &set_frame_parameter,
+            vec![Value::Frame(frame), parameter, color],
+        )?;
+        return Ok(());
+    }
     let face = if position.area == Some(MouseArea::ModeLine) {
         Value::Sym(i.intern("mode-line"))
     } else {
@@ -2375,6 +2405,44 @@ mod color_drop_tests {
                     .eval_str("(frame-parameter nil 'background-color)")
                     .unwrap();
                 assert_eq!(interp.prin1_to_string(&background), "\"#445566\"");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn color_drop_at_the_caret_updates_cursor_color() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let frame = interp.selected_frame.as_ref().unwrap().clone();
+                let window = frame.borrow().selected.clone();
+                let (window_id, buffer_id, point) = {
+                    let window = window.borrow();
+                    (window.id, window.buffer, window.point)
+                };
+                let cursor = MousePosition {
+                    buffer_id,
+                    buffer_position: point,
+                    utf16_offset: point,
+                    x: 0,
+                    y: 0,
+                    row: 0,
+                    column: 0,
+                    window_id: Some(window_id),
+                    area: None,
+                    object: None,
+                    timestamp: 0,
+                    mode_line_buffer_name: false,
+                };
+
+                dispatch_color_drop(&mut interp, Some(cursor), "778899", false).unwrap();
+                let color = interp
+                    .eval_str("(frame-parameter nil 'cursor-color)")
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&color), "\"#778899\"");
             })
             .unwrap()
             .join()
