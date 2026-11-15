@@ -145,21 +145,37 @@ Gregorian date Sunday, December 31, 1 BC."
                  ;; Before Gregorian year 1, estimate directly from the
                  ;; Hebrew 19-year cycle instead of using a BCE Gregorian
                  ;; date as the month/year seed. A cycle spans about 6939
-                 ;; days; the loops below correct the estimate.
+                 ;; days; the search below corrects the estimate.
                  (max 1 (1+ (/ (* (- date hebrew-epoch) 19) 6939)))))
-         (month (if greg-date
-                    (aref [9 10 11 12 1 2 3 4 7 7 7 8]
-                          (1- (calendar-extract-month greg-date)))
-                  7))
+         (low year)
+         (high (1+ year))
+         (step 1)
+         ;; Start at Tishri; a year has only 12 or 13 months, so walking
+         ;; forward from here is bounded even when DATE is very distant.
+         (month 7)
          (length (progn
-                   ;;Remacs: the Gregorian-year estimate can overshoot for
-                   ;;distant dates, so correct in both directions.
-                   (while (< date (calendar-hebrew-to-absolute
-                                   (list 7 1 year)))
-                     (setq year (1- year)))
-                   (while (>= date (calendar-hebrew-to-absolute
-                                    (list 7 1 (1+ year))))
-                     (setq year (1+ year)))
+                   ;;Remacs: the Gregorian estimate drifts by millions of
+                   ;; years for distant dates. Bracket the containing Hebrew
+                   ;; year exponentially, then bisect its monotone boundaries.
+                   (if (< date (calendar-hebrew-to-absolute (list 7 1 low)))
+                       (progn
+                         (setq high low
+                               low (- low step))
+                         (while (< date (calendar-hebrew-to-absolute
+                                         (list 7 1 low)))
+                           (setq high low
+                                 step (* 2 step)
+                                 low (- high step))))
+                     (while (>= date (calendar-hebrew-to-absolute (list 7 1 high)))
+                       (setq low high
+                             high (+ high step)
+                             step (* 2 step))))
+                   (while (> (- high low) 1)
+                     (let ((middle (/ (+ low high) 2)))
+                       (if (<= (calendar-hebrew-to-absolute (list 7 1 middle)) date)
+                           (setq low middle)
+                         (setq high middle))))
+                   (setq year low)
                    (calendar-hebrew-last-month-of-year year)))
          day)
     (while (> date
