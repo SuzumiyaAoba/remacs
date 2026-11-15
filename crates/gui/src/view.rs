@@ -5,7 +5,7 @@ use super::{
         is_native_command_w, keystroke_to_code_with_mapping, modifier_state_after_change,
         mouse_modifier_bits, pass_text_to_os, unicode_key_text,
     },
-    logic::{COLOR_DROP_PREFIX, FrameEventSender, GuiEvent, GuiGeometry},
+    logic::{COLOR_DROP_PREFIX, FrameEventSender, FramePosition, GuiEvent, GuiGeometry},
     monitor::monitor_geometry,
 };
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
@@ -1431,18 +1431,18 @@ impl RunMenuCommand {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct RuntimeFramePosition {
-    left: Option<i128>,
-    top: Option<i128>,
+    left: Option<FramePosition>,
+    top: Option<FramePosition>,
     parent_bounds: Option<(u32, u32, u32, u32)>,
     frame_size: (u32, u32),
 }
 
 fn runtime_frame_position_changed(
     previous: &mut Option<RuntimeFramePosition>,
-    left: Option<i128>,
-    top: Option<i128>,
+    left: Option<FramePosition>,
+    top: Option<FramePosition>,
     parent_bounds: Option<&Bounds<Pixels>>,
     frame_size: Size<Pixels>,
 ) -> bool {
@@ -1470,7 +1470,7 @@ fn runtime_frame_position_changed(
 
 #[cfg(test)]
 mod runtime_frame_position_tests {
-    use super::runtime_frame_position_changed;
+    use super::{FramePosition, runtime_frame_position_changed};
     use gpui::{Bounds, Pixels, point, px, size};
 
     fn bounds(left: f32, top: f32, width: f32, height: f32) -> Bounds<Pixels> {
@@ -1489,36 +1489,36 @@ mod runtime_frame_position_tests {
 
         assert!(runtime_frame_position_changed(
             &mut cache,
-            Some(20),
-            Some(20),
+            Some(FramePosition::Pixels(20)),
+            Some(FramePosition::Pixels(20)),
             Some(&initial),
             size(px(100.0), px(80.0)),
         ));
         assert!(!runtime_frame_position_changed(
             &mut cache,
-            Some(20),
-            Some(20),
+            Some(FramePosition::Pixels(20)),
+            Some(FramePosition::Pixels(20)),
             Some(&initial),
             size(px(100.0), px(80.0)),
         ));
         assert!(runtime_frame_position_changed(
             &mut cache,
-            Some(20),
-            Some(20),
+            Some(FramePosition::Pixels(20)),
+            Some(FramePosition::Pixels(20)),
             Some(&moved),
             size(px(100.0), px(80.0)),
         ));
         assert!(runtime_frame_position_changed(
             &mut cache,
-            Some(20),
-            Some(20),
+            Some(FramePosition::Pixels(20)),
+            Some(FramePosition::Pixels(20)),
             Some(&resized),
             size(px(100.0), px(80.0)),
         ));
         assert!(runtime_frame_position_changed(
             &mut cache,
-            Some(20),
-            Some(20),
+            Some(FramePosition::Pixels(20)),
+            Some(FramePosition::Pixels(20)),
             Some(&resized),
             size(px(120.0), px(80.0)),
         ));
@@ -1821,12 +1821,6 @@ impl EditorView {
         true
     }
 
-    pub(super) fn native_position(&self) -> Option<(i128, i128)> {
-        self.geometry
-            .as_ref()
-            .map(|geometry| (geometry.frame_left, geometry.frame_top))
-    }
-
     pub(super) fn needs_frame_size_update(&mut self, width: usize, height: usize) -> bool {
         let extra_height = self
             .grid
@@ -1847,8 +1841,8 @@ impl EditorView {
 
     pub(super) fn needs_frame_position_update(
         &mut self,
-        left: Option<i128>,
-        top: Option<i128>,
+        left: Option<FramePosition>,
+        top: Option<FramePosition>,
         parent_bounds: Option<&Bounds<Pixels>>,
         frame_size: Size<Pixels>,
     ) -> bool {

@@ -308,6 +308,95 @@ impl FrameEventSender {
 
 /// A frame's render snapshot, sent from the logic thread to the GPUI thread.
 /// It contains no Lisp objects, keeping the `Interp` on its logic thread.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum FramePosition {
+    Pixels(i128),
+    Ratio(f64),
+    FromStart(f64),
+    FromEnd(f64),
+}
+
+fn frame_position_offset(value: &Value) -> Option<f64> {
+    match value {
+        Value::Int(value) => Some(*value as f64),
+        Value::Float(value) if value.is_finite() => Some(**value),
+        Value::Cons(cons) => {
+            let cons = cons.borrow();
+            match (&cons.car, &cons.cdr) {
+                (Value::Int(value), Value::Nil) => Some(*value as f64),
+                (Value::Float(value), Value::Nil) if value.is_finite() => Some(**value),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn frame_position_parameter(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+    name: &str,
+) -> Option<FramePosition> {
+    let value = frame_parameter_value(i, frame, name);
+    frame_position_from_value(i, &value)
+}
+
+fn frame_position_from_value(i: &Interp, value: &Value) -> Option<FramePosition> {
+    match value {
+        Value::Int(value) => Some(FramePosition::Pixels(*value)),
+        Value::Float(value) if value.is_finite() => Some(FramePosition::Ratio(**value)),
+        Value::Cons(cons) => {
+            let (direction, offset) = {
+                let cons = cons.borrow();
+                (cons.car.clone(), cons.cdr.clone())
+            };
+            let Value::Sym(direction) = direction else {
+                return None;
+            };
+            let offset = frame_position_offset(&offset)?;
+            match i.symbol_name(direction).as_str() {
+                "+" => Some(FramePosition::FromStart(offset)),
+                "-" => Some(FramePosition::FromEnd(offset)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod frame_position_parameter_tests {
+    use super::{FramePosition, frame_position_from_value};
+    use remacs_runtime::{lisp::Interp, lisp::Value};
+
+    #[test]
+    fn parses_fractional_and_edge_relative_frame_positions() {
+        let mut interp = Interp::new();
+        let ratio = interp.eval_str("0.5").unwrap();
+        let from_start = interp.eval_str("'(+ 60)").unwrap();
+        let from_end = interp.eval_str("'(- 30)").unwrap();
+        let invalid = interp.eval_str("'(left . 30)").unwrap();
+
+        assert_eq!(
+            frame_position_from_value(&interp, &ratio),
+            Some(FramePosition::Ratio(0.5))
+        );
+        assert_eq!(
+            frame_position_from_value(&interp, &from_start),
+            Some(FramePosition::FromStart(60.0))
+        );
+        assert_eq!(
+            frame_position_from_value(&interp, &from_end),
+            Some(FramePosition::FromEnd(30.0))
+        );
+        assert_eq!(
+            frame_position_from_value(&interp, &Value::Int(-20)),
+            Some(FramePosition::Pixels(-20))
+        );
+        assert_eq!(frame_position_from_value(&interp, &invalid), None);
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FrameSnapshot {
     pub frame_id: usize,
@@ -324,8 +413,8 @@ pub(super) struct FrameSnapshot {
     pub width: usize,
     pub height: usize,
     pub internal_border_width: usize,
-    pub left: Option<i128>,
-    pub top: Option<i128>,
+    pub left: Option<FramePosition>,
+    pub top: Option<FramePosition>,
     pub undecorated: bool,
     pub ns_transparent_titlebar: bool,
     pub ns_appearance: Option<gpui::WindowAppearance>,
@@ -388,8 +477,8 @@ fn frame_snapshot(
         width,
         height,
         internal_border_width,
-        left: int_param("left"),
-        top: int_param("top"),
+        left: frame_position_parameter(i, frame, "left"),
+        top: frame_position_parameter(i, frame, "top"),
         undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
         ns_transparent_titlebar: frame_parameter_value(
             i,

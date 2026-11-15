@@ -71,7 +71,7 @@ use dialog_items::dialog_prompt_items;
 use dialogs::dialog_prompt_buttons;
 use dialogs::dialog_prompt_level;
 use logic::{
-    ClipboardRequest, ClipboardTarget, FrameSnapshot, GuiEvent, GuiRequest,
+    ClipboardRequest, ClipboardTarget, FramePosition, FrameSnapshot, GuiEvent, GuiRequest,
     start_logic_with_native_window,
 };
 use view::{EditorView, build_managed_editor_view};
@@ -1808,75 +1808,106 @@ fn frame_window_options(
     let parent_window_handle = frame
         .parent_frame
         .and_then(|parent| windows.get(&parent).copied().map(Into::into));
-    let parent_bounds =
-        base_window.and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
-    let parameter_position = frame.left.zip(frame.top).map(|(left, top)| {
-        if child {
-            let position = parent_bounds
-                .map(|bounds| bounds.origin + point(px(left as f32), px(top as f32)))
-                .unwrap_or_else(|| point(px(left as f32), px(top as f32)));
-            let display_id = base_window
-                .and_then(|base| {
-                    base.update(cx, |_view, window, cx| {
-                        window.display(cx).map(|display| u32::from(display.id()))
-                    })
-                    .ok()
-                })
-                .flatten();
-            (position, display_id)
-        } else {
-            base_window
-                .and_then(|base| {
-                    base.update(cx, |_view, window, cx| {
-                        frame_position_in_window(left, top, None, window, cx)
-                    })
-                    .ok()
-                })
-                .unwrap_or_else(|| (point(px(left as f32), px(top as f32)), None))
-        }
+    let reference_bounds =
+        base_window.and_then(|base| base.update(cx, |_view, window, _cx| window.bounds()).ok());
+    let parent_bounds = frame.parent_frame.and_then(|parent| {
+        windows
+            .get(&parent)
+            .and_then(|window| window.update(cx, |_view, window, _cx| window.bounds()).ok())
     });
-    let bounds = if let Some(parent_bounds) = parent_bounds {
-        if child {
-            let left = frame.left.map(|value| value as f32).unwrap_or_else(|| {
-                (f32::from(parent_bounds.size.width) - f32::from(content_size.width)) / 2.0
-            });
-            let top = frame.top.map(|value| value as f32).unwrap_or_else(|| {
-                (f32::from(parent_bounds.size.height) - f32::from(content_size.height)) / 2.0
-            });
-            Bounds::new(
-                parent_bounds.origin + point(px(left), px(top)),
-                content_size,
-            )
-        } else if let Some((position, _)) = parameter_position {
-            Bounds::new(position, content_size)
-        } else if frame.left.is_some() || frame.top.is_some() {
-            let default_origin = parent_bounds.origin + point(px(36.0), px(36.0));
-            Bounds::new(
-                point(
-                    frame
-                        .left
-                        .map(|value| px(value as f32))
-                        .unwrap_or(default_origin.x),
-                    frame
-                        .top
-                        .map(|value| px(value as f32))
-                        .unwrap_or(default_origin.y),
-                ),
-                content_size,
-            )
-        } else {
-            Bounds::new(
-                parent_bounds.origin + point(px(36.0), px(36.0)),
-                content_size,
-            )
-        }
+    let has_position = frame.left.is_some() || frame.top.is_some();
+    let parameter_position = if !has_position {
+        None
+    } else if child {
+        let area = parent_bounds.or(reference_bounds).unwrap_or_else(|| {
+            Bounds::new(point(px(0.0), px(0.0)), size(px(0.0), px(0.0)))
+        });
+        let default_origin = point(
+            area.origin.x + px((f32::from(area.size.width) - f32::from(content_size.width)) / 2.0),
+            area.origin.y + px((f32::from(area.size.height) - f32::from(content_size.height)) / 2.0),
+        );
+        let position = frame_position_for_bounds(
+            frame.left,
+            frame.top,
+            area,
+            content_size,
+            true,
+            default_origin,
+        );
+        let display_id = base_window
+            .and_then(|base| {
+                base.update(cx, |_view, window, cx| {
+                    window.display(cx).map(|display| u32::from(display.id()))
+                })
+                .ok()
+            })
+            .flatten();
+        Some((position, display_id))
     } else {
+        let default_origin = reference_bounds
+            .map(|bounds| bounds.origin + point(px(36.0), px(36.0)))
+            .unwrap_or(point(px(80.0), px(80.0)));
+        let left = frame.left.unwrap_or(FramePosition::Pixels(
+            f32::from(default_origin.x).round() as i128,
+        ));
+        let top = frame.top.unwrap_or(FramePosition::Pixels(
+            f32::from(default_origin.y).round() as i128,
+        ));
+        base_window
+            .and_then(|base| {
+                base.update(cx, |_view, window, cx| {
+                    frame_position_in_window(
+                        Some(left),
+                        Some(top),
+                        None,
+                        content_size,
+                        window,
+                        cx,
+                    )
+                })
+                .ok()
+            })
+            .or_else(|| {
+                cx.update(|cx| {
+                    cx.primary_display().map(|display| {
+                        let bounds = display.bounds();
+                        (
+                            frame_position_point(left, top, bounds, content_size, false),
+                            Some(u32::from(display.id())),
+                        )
+                    })
+                })
+                .ok()
+                .flatten()
+            })
+            .or_else(|| {
+                let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(0.0), px(0.0)));
+                Some((frame_position_point(left, top, bounds, content_size, false), None))
+            })
+    };
+    let bounds = if child {
+        let area = parent_bounds.or(reference_bounds).unwrap_or_else(|| {
+            Bounds::new(point(px(0.0), px(0.0)), size(px(0.0), px(0.0)))
+        });
+        let default_origin = point(
+            area.origin.x + px((f32::from(area.size.width) - f32::from(content_size.width)) / 2.0),
+            area.origin.y + px((f32::from(area.size.height) - f32::from(content_size.height)) / 2.0),
+        );
         Bounds::new(
             parameter_position
                 .map(|(position, _)| position)
-                .unwrap_or(point(px(80.0), px(80.0))),
+                .unwrap_or(default_origin),
             content_size,
         )
+    } else if let Some((position, _)) = parameter_position {
+        Bounds::new(position, content_size)
+    } else if let Some(reference_bounds) = reference_bounds {
+        Bounds::new(
+            reference_bounds.origin + point(px(36.0), px(36.0)),
+            content_size,
+        )
+    } else {
+        Bounds::new(point(px(80.0), px(80.0)), content_size)
     };
     let display_id = parameter_position.and_then(|(_, display_id)| display_id);
     #[cfg(not(target_os = "macos"))]
@@ -1989,90 +2020,78 @@ fn display_for_frame_bounds(
 }
 
 fn frame_position_in_window(
-    mut left: i128,
-    mut top: i128,
-    parent_bounds: Option<Bounds<Pixels>>,
+    left: Option<FramePosition>,
+    top: Option<FramePosition>,
+    parent_bounds: Option<&Bounds<Pixels>>,
+    frame_size: Size<Pixels>,
     window: &Window,
     cx: &App,
 ) -> (Point<Pixels>, Option<u32>) {
-    let frame_size = window.bounds().size;
+    let current_origin = window.bounds().origin;
     if let Some(parent_bounds) = parent_bounds {
         return (
-            point(
-                frame_position_coordinate(
-                    left,
-                    parent_bounds.origin.x,
-                    parent_bounds.size.width,
-                    frame_size.width,
-                    true,
-                ),
-                frame_position_coordinate(
-                    top,
-                    parent_bounds.origin.y,
-                    parent_bounds.size.height,
-                    frame_size.height,
-                    true,
-                ),
+            frame_position_for_bounds(
+                left,
+                top,
+                *parent_bounds,
+                frame_size,
+                true,
+                current_origin,
             ),
             window.display(cx).map(|display| u32::from(display.id())),
         );
     }
+    let monitors = monitor::monitor_geometry(window, cx);
+    let display_id = window
+        .display(cx)
+        .or_else(|| cx.primary_display())
+        .map(|display| u32::from(display.id()));
+    let current_monitor = display_id
+        .and_then(|display_id| {
+            monitors
+                .iter()
+                .find(|monitor| monitor.display_id == display_id)
+        })
+        .or_else(|| monitors.first());
+    let area_bounds = current_monitor
+        .map(|monitor| {
+            Bounds::new(
+                point(
+                    px(monitor.geometry[0] as f32),
+                    px(monitor.geometry[1] as f32),
+                ),
+                size(
+                    px(monitor.geometry[2] as f32),
+                    px(monitor.geometry[3] as f32),
+                ),
+            )
+        })
+        .unwrap_or_else(|| Bounds::new(point(px(0.0), px(0.0)), size(px(0.0), px(0.0))));
+    let position = frame_position_for_bounds(
+        left,
+        top,
+        area_bounds,
+        frame_size,
+        false,
+        current_origin,
+    );
     #[cfg(target_os = "macos")]
     {
-        let monitors = monitor::monitor_geometry(window, cx);
-        let display_id = window.display(cx).map(|display| u32::from(display.id()));
-        if left < 0 || top < 0 {
-            if let Some(monitor) = display_id
-                .and_then(|display_id| {
-                    monitors
-                        .iter()
-                        .find(|monitor| monitor.display_id == display_id)
-                })
-                .or_else(|| monitors.first())
-            {
-                if left < 0 {
-                    left = f32::from(frame_position_coordinate(
-                        left,
-                        px(monitor.geometry[0] as f32),
-                        px(monitor.geometry[2] as f32),
-                        frame_size.width,
-                        false,
-                    ))
-                    .round() as i128;
-                }
-                if top < 0 {
-                    top = f32::from(frame_position_coordinate(
-                        top,
-                        px(monitor.geometry[1] as f32),
-                        px(monitor.geometry[3] as f32),
-                        frame_size.height,
-                        false,
-                    ))
-                    .round() as i128;
-                }
-            }
-        }
         let monitor = monitors
             .iter()
             .find(|monitor| {
                 let [x, y, width, height] = monitor.geometry;
-                left >= x
-                    && left < x.saturating_add(width)
-                    && top >= y
-                    && top < y.saturating_add(height)
+                position.x >= px(x as f32)
+                    && position.x < px(x.saturating_add(width) as f32)
+                    && position.y >= px(y as f32)
+                    && position.y < px(y.saturating_add(height) as f32)
             })
-            .or_else(|| {
-                display_id.and_then(|display_id| {
-                    monitors
-                        .iter()
-                        .find(|monitor| monitor.display_id == display_id)
-                })
-            });
+            .or(current_monitor);
         if let Some(monitor) = monitor {
             return (
                 point(
-                    px(left.saturating_sub(monitor.native_origin[0]) as f32),
-                    px(top.saturating_sub(monitor.geometry[1]) as f32),
+                    position.x - px(monitor.native_origin[0] as f32),
+                    position.y - px(monitor.geometry[1] as f32),
                 ),
                 Some(monitor.display_id),
             );
@@ -2080,86 +2099,186 @@ fn frame_position_in_window(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let display_id = window.display(cx).map(|display| u32::from(display.id()));
-        if left < 0 || top < 0 {
-            let monitors = monitor::monitor_geometry(window, cx);
-            if let Some(monitor) = display_id
-                .and_then(|display_id| {
-                    monitors
-                        .iter()
-                        .find(|monitor| monitor.display_id == display_id)
-                })
-                .or_else(|| monitors.first())
-            {
-                if left < 0 {
-                    left = f32::from(frame_position_coordinate(
-                        left,
-                        px(monitor.geometry[0] as f32),
-                        px(monitor.geometry[2] as f32),
-                        frame_size.width,
-                        false,
-                    ))
-                    .round() as i128;
-                }
-                if top < 0 {
-                    top = f32::from(frame_position_coordinate(
-                        top,
-                        px(monitor.geometry[1] as f32),
-                        px(monitor.geometry[3] as f32),
-                        frame_size.height,
-                        false,
-                    ))
-                    .round() as i128;
-                }
-            }
-        }
-        return (point(px(left as f32), px(top as f32)), display_id);
+        return (position, display_id);
     }
     #[cfg(target_os = "macos")]
-    (
-        point(px(left as f32), px(top as f32)),
-        window.display(cx).map(|display| u32::from(display.id())),
+    (position, display_id)
+}
+
+fn frame_position_point(
+    left: FramePosition,
+    top: FramePosition,
+    area_bounds: Bounds<Pixels>,
+    frame_size: Size<Pixels>,
+    relative_to_area: bool,
+) -> Point<Pixels> {
+    point(
+        frame_position_coordinate(
+            left,
+            area_bounds.origin.x,
+            area_bounds.size.width,
+            frame_size.width,
+            relative_to_area,
+        ),
+        frame_position_coordinate(
+            top,
+            area_bounds.origin.y,
+            area_bounds.size.height,
+            frame_size.height,
+            relative_to_area,
+        ),
+    )
+}
+
+fn frame_position_for_bounds(
+    left: Option<FramePosition>,
+    top: Option<FramePosition>,
+    area_bounds: Bounds<Pixels>,
+    frame_size: Size<Pixels>,
+    relative_to_area: bool,
+    default_origin: Point<Pixels>,
+) -> Point<Pixels> {
+    point(
+        left.map(|position| {
+            frame_position_coordinate(
+                position,
+                area_bounds.origin.x,
+                area_bounds.size.width,
+                frame_size.width,
+                relative_to_area,
+            )
+        })
+        .unwrap_or(default_origin.x),
+        top.map(|position| {
+            frame_position_coordinate(
+                position,
+                area_bounds.origin.y,
+                area_bounds.size.height,
+                frame_size.height,
+                relative_to_area,
+            )
+        })
+        .unwrap_or(default_origin.y),
     )
 }
 
 fn frame_position_coordinate(
-    coordinate: i128,
+    coordinate: FramePosition,
     area_origin: Pixels,
     area_extent: Pixels,
     frame_extent: Pixels,
     relative_to_area: bool,
 ) -> Pixels {
-    if coordinate < 0 {
-        area_origin + area_extent + px(coordinate as f32) - frame_extent
-    } else if relative_to_area {
-        area_origin + px(coordinate as f32)
-    } else {
-        px(coordinate as f32)
+    match coordinate {
+        FramePosition::Pixels(value) if value < 0 => {
+            area_origin + area_extent + px(value as f32) - frame_extent
+        }
+        FramePosition::Pixels(value) if relative_to_area => area_origin + px(value as f32),
+        FramePosition::Pixels(value) => px(value as f32),
+        FramePosition::Ratio(ratio) => area_origin + area_extent * ratio as f32,
+        FramePosition::FromStart(offset) => area_origin + px(offset as f32),
+        FramePosition::FromEnd(offset) => {
+            area_origin + area_extent - px(offset as f32) - frame_extent
+        }
     }
 }
 
 #[cfg(test)]
 mod frame_position_coordinate_tests {
-    use super::frame_position_coordinate;
-    use gpui::px;
+    use super::{FramePosition, frame_position_coordinate, frame_position_for_bounds};
+    use gpui::{Bounds, point, px, size};
 
     #[test]
     fn negative_coordinates_place_the_frame_from_the_right_or_bottom_edge() {
         assert_eq!(
-            frame_position_coordinate(-20, px(0.0), px(1920.0), px(500.0), false),
+            frame_position_coordinate(
+                FramePosition::Pixels(-20),
+                px(0.0),
+                px(1920.0),
+                px(500.0),
+                false,
+            ),
             px(1400.0)
         );
         assert_eq!(
-            frame_position_coordinate(-30, px(0.0), px(1080.0), px(400.0), false),
+            frame_position_coordinate(
+                FramePosition::Pixels(-30),
+                px(0.0),
+                px(1080.0),
+                px(400.0),
+                false,
+            ),
             px(650.0)
         );
         assert_eq!(
-            frame_position_coordinate(-20, px(100.0), px(600.0), px(200.0), true),
+            frame_position_coordinate(
+                FramePosition::Pixels(-20),
+                px(100.0),
+                px(600.0),
+                px(200.0),
+                true,
+            ),
             px(480.0)
         );
         assert_eq!(
-            frame_position_coordinate(20, px(100.0), px(600.0), px(200.0), true),
+            frame_position_coordinate(
+                FramePosition::Pixels(20),
+                px(100.0),
+                px(600.0),
+                px(200.0),
+                true,
+            ),
             px(120.0)
+        );
+    }
+
+    #[test]
+    fn fractional_and_relative_coordinates_use_display_edges() {
+        assert_eq!(
+            frame_position_coordinate(
+                FramePosition::Ratio(0.5),
+                px(100.0),
+                px(800.0),
+                px(200.0),
+                false,
+            ),
+            px(500.0)
+        );
+        assert_eq!(
+            frame_position_coordinate(
+                FramePosition::FromStart(60.0),
+                px(100.0),
+                px(800.0),
+                px(200.0),
+                false,
+            ),
+            px(160.0)
+        );
+        assert_eq!(
+            frame_position_coordinate(
+                FramePosition::FromEnd(30.0),
+                px(100.0),
+                px(800.0),
+                px(200.0),
+                false,
+            ),
+            px(670.0)
+        );
+    }
+
+    #[test]
+    fn an_unspecified_axis_keeps_the_existing_window_position() {
+        let area = Bounds::new(point(px(100.0), px(200.0)), size(px(800.0), px(600.0)));
+        assert_eq!(
+            frame_position_for_bounds(
+                Some(FramePosition::Ratio(0.5)),
+                None,
+                area,
+                size(px(200.0), px(100.0)),
+                false,
+                point(px(350.0), px(410.0)),
+            ),
+            point(px(500.0), px(410.0))
         );
     }
 }
@@ -2170,8 +2289,8 @@ fn apply_frame_snapshot_bounds(
     cx: &mut Context<EditorView>,
     width: usize,
     height: usize,
-    left: Option<i128>,
-    top: Option<i128>,
+    left: Option<FramePosition>,
+    top: Option<FramePosition>,
     parent_bounds: Option<Bounds<Pixels>>,
 ) {
     if view.needs_frame_size_update(width, height) {
@@ -2183,12 +2302,19 @@ fn apply_frame_snapshot_bounds(
         parent_bounds.as_ref(),
         window.bounds().size,
     );
-    if position_changed
-        && let (Some(left), Some(top)) = (left, top)
-        && view.native_position() != Some((left, top))
+    if position_changed && (left.is_some() || top.is_some())
     {
-        let (position, display_id) = frame_position_in_window(left, top, parent_bounds, window, cx);
-        window.set_position(position, display_id);
+        let (position, display_id) = frame_position_in_window(
+            left,
+            top,
+            parent_bounds.as_ref(),
+            window.bounds().size,
+            window,
+            cx,
+        );
+        if window.bounds().origin != position {
+            window.set_position(position, display_id);
+        }
     }
 }
 
