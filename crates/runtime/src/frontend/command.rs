@@ -611,7 +611,14 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 color,
                 background,
             } => {
-                if let Err(flow) = dispatch_color_drop(i, position, &color, background) {
+                if let Err(flow) = dispatch_color_drop_command(
+                    i,
+                    position,
+                    &color,
+                    background,
+                    &mut keys,
+                    &mut arg_mode,
+                ) {
                     report_flow(i, flow);
                 }
             }
@@ -2395,9 +2402,32 @@ fn dispatch_color_drop(
     Ok(())
 }
 
+fn dispatch_color_drop_command(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    color: &str,
+    background: bool,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> Result<(), Flow> {
+    let command = Value::Sym(i.intern("ns-drag-color"));
+    let events = [Value::Sym(i.intern("ns-drag-color"))];
+    let color = color.to_owned();
+    dispatch_frontend_command_action(
+        i,
+        command,
+        Vec::new(),
+        keys,
+        arg_mode,
+        &events,
+        false,
+        move |i| dispatch_color_drop(i, position, &color, background).map(|()| Value::Nil),
+    )
+}
+
 #[cfg(test)]
 mod color_drop_tests {
-    use super::{MouseArea, MousePosition, dispatch_color_drop};
+    use super::{MouseArea, MousePosition, dispatch_color_drop, dispatch_color_drop_command};
     use crate::lisp::Interp;
 
     #[test]
@@ -2469,6 +2499,50 @@ mod color_drop_tests {
                     .eval_str("(frame-parameter nil 'cursor-color)")
                     .unwrap();
                 assert_eq!(interp.prin1_to_string(&color), "\"#778899\"");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn color_drop_runs_command_lifecycle_hooks() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(progn (setq color-drop-pre-command nil \
+                                      color-drop-post-command nil) \
+                         (add-hook 'pre-command-hook \
+                           (lambda () (setq color-drop-pre-command this-command))) \
+                         (add-hook 'post-command-hook \
+                           (lambda () (setq color-drop-post-command this-command))))",
+                    )
+                    .unwrap();
+                let mut keys = Vec::new();
+                let mut arg_mode = false;
+
+                dispatch_color_drop_command(
+                    &mut interp,
+                    None,
+                    "123456",
+                    false,
+                    &mut keys,
+                    &mut arg_mode,
+                )
+                .unwrap();
+
+                for variable in [
+                    "color-drop-pre-command",
+                    "color-drop-post-command",
+                    "this-command",
+                    "last-input-event",
+                ] {
+                    let actual = interp.eval_str(variable).unwrap();
+                    assert_eq!(interp.prin1_to_string(&actual), "ns-drag-color");
+                }
             })
             .unwrap()
             .join()
@@ -3570,7 +3644,14 @@ fn minibuf_loop<T: KeyIo>(
                 color,
                 background,
             } => {
-                if let Err(flow) = dispatch_color_drop(i, position, &color, background) {
+                if let Err(flow) = dispatch_color_drop_command(
+                    i,
+                    position,
+                    &color,
+                    background,
+                    &mut keys,
+                    &mut arg_mode,
+                ) {
                     return Err(flow);
                 }
             }
