@@ -325,6 +325,19 @@ Characters are replaced according to `cal-html-html-subst-list'."
     ""))
 
 
+(defun cal-html-htmlify-attribute (attribute)
+  "Escape ATTRIBUTE for a double-quoted HTML attribute."
+  (when (stringp attribute)
+    (setq attribute (string-replace "&" "&amp;" attribute))
+    (setq attribute (string-replace "\"" "&quot;" attribute))
+    (setq attribute (string-replace "<" "&lt;" attribute))
+    (setq attribute (string-replace ">" "&gt;" attribute))
+    (setq attribute (string-replace "\n" "&#10;" attribute))
+    (setq attribute (string-replace "\r" "&#13;" attribute))
+    (setq attribute (string-replace "\t" "&#9;" attribute)))
+  (or attribute ""))
+
+
 (defun cal-html-htmlify-entry (entry &optional class)
   "Convert a diary entry ENTRY to html with the appropriate class specifier.
 Optional argument CLASS is the class specifier to use."
@@ -338,7 +351,8 @@ Optional argument CLASS is the class specifier to use."
                  (nth 2 entry)))
            "NO-YEAR")
           (t "NORMAL"))))
-    (format "<span class=%s>%s</span>" start
+    (format "<span class=\"%s\">%s</span>"
+            (cal-html-htmlify-attribute (format "%s" start))
             (cal-html-htmlify-string (cadr entry)))))
 
 
