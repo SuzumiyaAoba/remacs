@@ -2288,6 +2288,82 @@ fn dispatch_drop(
     )
 }
 
+#[cfg(test)]
+mod drop_target_tests {
+    use super::{MousePosition, dispatch_drop};
+    use crate::lisp::{Interp, Value};
+
+    #[test]
+    fn drop_handler_receives_the_window_under_the_drop_position() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(setq qa-drop-first-window (selected-window))\
+                         (setq qa-drop-target-window (split-window-below 6))\
+                         (set-window-buffer qa-drop-target-window\
+                                            (get-buffer-create \" *drop-target*\"))\
+                         (select-window qa-drop-first-window)\
+                         (setq qa-drop-window nil)\
+                         (provide 'dnd)\
+                         (fset 'dnd-handle-multiple-urls\
+                               (lambda (window _urls _action)\
+                                 (setq qa-drop-window window)))",
+                    )
+                    .unwrap();
+                let Value::Window(target_window) = interp
+                    .eval_str("qa-drop-target-window")
+                    .unwrap()
+                else {
+                    panic!("split-window-below did not return a window");
+                };
+                let (window_id, buffer_id) = {
+                    let window = target_window.borrow();
+                    (window.id, window.buffer)
+                };
+                let position = MousePosition {
+                    buffer_id,
+                    buffer_position: 0,
+                    utf16_offset: 0,
+                    x: 0,
+                    y: 0,
+                    row: 0,
+                    column: 0,
+                    window_id: Some(window_id),
+                    area: None,
+                    object: None,
+                    timestamp: 0,
+                    mode_line_buffer_name: false,
+                };
+                let mut keys = Vec::new();
+                let mut arg_mode = false;
+                dispatch_drop(
+                    &mut interp,
+                    Some(position),
+                    &["file:///tmp/drop-target.txt".to_owned()],
+                    "copy",
+                    &mut keys,
+                    &mut arg_mode,
+                )
+                .unwrap();
+
+                let target_received = interp
+                    .eval_str("(eq qa-drop-window qa-drop-target-window)")
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&target_received), "t");
+                let selected_unchanged = interp
+                    .eval_str("(eq (selected-window) qa-drop-first-window)")
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&selected_unchanged), "t");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
 fn dispatch_color_drop(
     i: &mut Interp,
     position: Option<MousePosition>,
