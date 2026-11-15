@@ -86,6 +86,7 @@ qa!(
 qa!(qa_cal_html_escape_custom_labels, "qa_cal_html_escape_custom_labels.el");
 qa!(qa_cal_html_year_index_cols, "qa_cal_html_year_index_cols.el");
 qa!(qa_htmlfontify_escape_attributes, "qa_htmlfontify_escape_attributes.el");
+qa!(qa_htmlfontify_escape_family, "qa_htmlfontify_escape_family.el");
 qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");

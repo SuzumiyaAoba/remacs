@@ -757,8 +757,16 @@ may happen."
                        '(0 1 2))))))
 
 (defun hfy-family (family)
-  (list (cons "font-family"
-              (format "\"%s\"" (string-replace "\"" "\\\\\"" family)))))
+  ;; Remacs: CSS-escape strings and avoid literal </style> raw-text delimiters.
+  (let ((escaped (string-replace "\\" "\\\\" family)))
+    (setq escaped (string-replace "\"" "\\\"" escaped))
+    (setq escaped (string-replace "<" "\\3c " escaped))
+    (setq escaped (string-replace ">" "\\3e " escaped))
+    (setq escaped (string-replace "\n" "\\a " escaped))
+    (setq escaped (string-replace "\r" "\\d " escaped))
+    (setq escaped (string-replace "\f" "\\c " escaped))
+    (list (cons "font-family" (concat "\"" escaped "\"")))))
+
 (defun hfy-bgcol  (color) (list (cons "background"   (hfy-triplet color))))
 (defun hfy-color (color) (list (cons "color"        (hfy-triplet color))))
 (define-obsolete-function-alias 'hfy-colour #'hfy-color "27.1")
