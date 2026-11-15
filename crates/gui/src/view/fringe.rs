@@ -1,4 +1,4 @@
-use super::{grid_row_height, grid_row_top, style_colors, vscroll_pixels_for_cell};
+use super::{grid_row_height_for_cell, grid_row_top_for_cell, style_colors, vscroll_pixels_for_cell};
 use gpui::{Bounds, Pixels, Window, fill, point, px, size};
 use remacs_runtime::frontend::{Grid, GridFringeBitmap, GridFringeBitmapAlign};
 
@@ -99,10 +99,10 @@ pub(super) fn paint(
     window: &mut Window,
 ) {
     for bitmap in &grid.fringe_bitmaps {
-        let row_height = grid_row_height(grid, bitmap.row, line_height);
+        let row_height = grid_row_height_for_cell(grid, bitmap.row, bitmap.column, line_height);
         let origin = point(
             bounds.left() + cell_width * bitmap.column as f32,
-            bounds.top() + grid_row_top(grid, bitmap.row, line_height)
+            bounds.top() + grid_row_top_for_cell(grid, bitmap.row, bitmap.column, line_height)
                 - px(vscroll_pixels_for_cell(grid, bitmap.row, bitmap.column) as f32),
         );
         let (foreground, background) = style_colors(

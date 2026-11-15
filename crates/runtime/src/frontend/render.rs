@@ -525,6 +525,7 @@ pub struct GridScrollBar {
 enum PendingScrollBarGeometry {
     Vertical {
         index: usize,
+        window_id: usize,
         top_row: usize,
         bottom_row: usize,
         total: usize,
@@ -628,6 +629,14 @@ pub struct GridWindowTextArea {
     /// Buffer-local margins in display cells.
     pub left_margin: usize,
     pub right_margin: usize,
+}
+
+/// Pixel heights for the body rows of one window in a shared frame grid.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridWindowRowHeights {
+    pub window_id: usize,
+    pub top: usize,
+    pub heights: Vec<usize>,
 }
 
 /// A window body whose contents are raised by a pixel scroll offset.
@@ -925,6 +934,8 @@ pub struct Grid {
     pub gamma_exponent: Option<f64>,
     /// Pixel height for each display row. Empty grids use the frontend default.
     pub row_heights: Vec<usize>,
+    /// Per-window body row heights for side-by-side windows with different line spacing.
+    pub window_row_heights: Vec<GridWindowRowHeights>,
     /// Base frame line height before line spacing and per-line overrides.
     pub default_line_height: usize,
     /// Default text row height used when the viewport needs more rows.
@@ -1242,6 +1253,7 @@ impl Grid {
             default_bg: None,
             gamma_exponent: None,
             row_heights: Vec::new(),
+            window_row_heights: Vec::new(),
             default_line_height: 19,
             default_row_height: 19,
             hover_cursor: None,
@@ -10739,6 +10751,7 @@ fn render_grid_internal(
     let mut header_lines = Vec::new();
     let mut tab_lines = Vec::new();
     let mut window_text_areas = Vec::new();
+    let mut window_row_heights = Vec::new();
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -10794,6 +10807,7 @@ fn render_grid_internal(
                 header_lines,
                 tab_lines,
                 window_text_areas,
+                window_row_heights: Vec::new(),
                 vscrolls,
                 compositions: Vec::new(),
                 attrs,
@@ -11449,6 +11463,7 @@ fn render_grid_internal(
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
         let content_top = window_top + top_rows;
         let content_bottom = content_top.saturating_add(text_rows);
+        let mut current_window_row_heights = vec![frame_char_height; text_rows];
         if !minibuffer_window && text_rows > 0 && width_after_fringes > 0 {
             window_text_areas.push(GridWindowTextArea {
                 window_id,
@@ -11828,6 +11843,7 @@ fn render_grid_internal(
                     });
                     pending_scrollbar_geometry.push(PendingScrollBarGeometry::Vertical {
                         index,
+                        window_id,
                         top_row: content_top,
                         bottom_row: content_bottom,
                         total: total_lines,
@@ -12335,6 +12351,11 @@ fn render_grid_internal(
                     // Grid rows are shared across side-by-side windows, so
                     // reserve enough height for the tallest row at this y.
                     *row_height = (*row_height).max(display_row_height);
+                }
+                if let Some(row_height) = current_window_row_heights
+                    .get_mut(y.saturating_sub(content_top))
+                {
+                    *row_height = display_row_height;
                 }
                 visible_end = if segment_end == line_len && !plan.hard_break {
                     row_end
@@ -13278,6 +13299,11 @@ fn render_grid_internal(
             });
             mode_rows.push(my);
         }
+        window_row_heights.push(GridWindowRowHeights {
+            window_id,
+            top: content_top,
+            heights: current_window_row_heights,
+        });
     }
     // A divider belongs to the window above it. Reserve its pixels at
     // that row boundary, counting a shared boundary only once even when
@@ -13742,6 +13768,7 @@ fn render_grid_internal(
         match geometry {
             PendingScrollBarGeometry::Vertical {
                 index,
+                window_id,
                 top_row,
                 bottom_row,
                 total,
@@ -13749,8 +13776,31 @@ fn render_grid_internal(
                 offset,
                 minimum_thumb_size,
             } => {
-                let top = row_top_from_heights(&row_heights, default_line_height, top_row);
-                let bottom = row_top_from_heights(&row_heights, default_line_height, bottom_row);
+                let window_metrics = window_row_heights
+                    .iter()
+                    .find(|metrics| metrics.window_id == window_id);
+                let top = window_metrics.map_or_else(
+                    || row_top_from_heights(&row_heights, default_line_height, top_row),
+                    |metrics| {
+                        row_top_from_heights(&row_heights, default_line_height, metrics.top)
+                            .saturating_add(row_top_from_heights(
+                                &metrics.heights,
+                                default_line_height,
+                                top_row.saturating_sub(metrics.top),
+                            ))
+                    },
+                );
+                let bottom = window_metrics.map_or_else(
+                    || row_top_from_heights(&row_heights, default_line_height, bottom_row),
+                    |metrics| {
+                        row_top_from_heights(&row_heights, default_line_height, metrics.top)
+                            .saturating_add(row_top_from_heights(
+                                &metrics.heights,
+                                default_line_height,
+                                bottom_row.saturating_sub(metrics.top),
+                            ))
+                    },
+                );
                 let track_height = bottom.saturating_sub(top);
                 let Some((thumb_start, thumb_size)) = scroll_thumb(
                     track_height,
@@ -13814,6 +13864,7 @@ fn render_grid_internal(
         header_lines,
         tab_lines,
         window_text_areas,
+        window_row_heights,
         vscrolls,
         compositions,
         bidi_disabled_ranges,

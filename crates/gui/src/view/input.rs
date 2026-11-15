@@ -90,6 +90,22 @@ fn grid_row_at_y(grid: &Grid, y: Pixels) -> usize {
     grid.row_heights.len()
 }
 
+fn grid_row_at_y_for_window(grid: &Grid, window_id: usize, y: Pixels) -> Option<usize> {
+    let area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == window_id)?;
+    if super::grid_window_row_metrics(grid, window_id).is_none() {
+        return Some(grid_row_at_y(grid, y));
+    }
+    let end = area.top.saturating_add(area.rows);
+    (area.top..end).find(|row| {
+        let top = super::grid_window_row_top(grid, window_id, *row, px(LINE_HEIGHT));
+        let bottom = top + super::grid_window_row_height(grid, window_id, *row, px(LINE_HEIGHT));
+        y >= top && y < bottom
+    })
+}
+
 pub(super) fn visible_input_position(
     grid: &Grid,
     utf16_offset: usize,
@@ -225,7 +241,12 @@ fn image_map_area_at_point(
         };
         let slice = image.resolved_slice();
         let left = f32::from(cell_width) * image.column as f32;
-        let top = f32::from(grid_row_top(grid, image.row, px(LINE_HEIGHT)))
+        let top = f32::from(grid_row_top_for_cell(
+            grid,
+            image.row,
+            image.column,
+            px(LINE_HEIGHT),
+        ))
             - super::vscroll_pixels_for_cell(grid, image.row, image.column) as f32;
         let local_x = f32::from(point.x) - left;
         let local_y = f32::from(point.y) - top;
@@ -264,10 +285,21 @@ fn image_object_at_point(
             .1
             .map(|height| height as f32)
             .unwrap_or_else(|| {
-                f32::from(grid_row_height(grid, image.row, px(LINE_HEIGHT))).max(1.0)
+                f32::from(grid_row_height_for_cell(
+                    grid,
+                    image.row,
+                    image.column,
+                    px(LINE_HEIGHT),
+                ))
+                .max(1.0)
             });
         let left = f32::from(cell_width) * image.column as f32;
-        let top = f32::from(grid_row_top(grid, image.row, px(LINE_HEIGHT)))
+        let top = f32::from(grid_row_top_for_cell(
+            grid,
+            image.row,
+            image.column,
+            px(LINE_HEIGHT),
+        ))
             - super::vscroll_pixels_for_cell(grid, image.row, image.column) as f32;
         let local_x = f32::from(point.x) - left;
         let local_y = f32::from(point.y) - top;
@@ -388,7 +420,11 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     }
     let input = grid.input.as_ref()?;
     let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
-    let row = grid_row_at_y(grid, point.y);
+    let window_id = text_window_at_point(grid, point, cell_width);
+    let row = match window_id {
+        Some(window_id) => grid_row_at_y_for_window(grid, window_id, point.y)?,
+        None => grid_row_at_y(grid, point.y),
+    };
     let vscroll = grid
         .vscrolls
         .iter()
@@ -399,7 +435,11 @@ pub(super) fn mouse_position_for_point_with_cell_width(
                 && column < scroll.left.saturating_add(scroll.width)
         })
         .map_or(0, |scroll| scroll.pixels);
-    let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
+    let scrolled_y = point.y + px(vscroll as f32);
+    let row = match window_id {
+        Some(window_id) => grid_row_at_y_for_window(grid, window_id, scrolled_y)?,
+        None => grid_row_at_y(grid, scrolled_y),
+    };
     let area_hit = fringe_area_hit(grid, row, column).or_else(|| margin_area_hit(grid, row, column));
     let hit_column = area_hit.map_or(column, |(_, column)| column);
     let line = grid.rows.get(row)?;
@@ -570,8 +610,12 @@ pub(super) fn text_window_at_point(
         .find(|area| {
             row >= area.top
                 && row < area.top.saturating_add(area.rows)
-                && column >= area.left
-                && column < area.left.saturating_add(area.width)
+                && column >= area.left.saturating_sub(area.left_fringe)
+                && column
+                    < area
+                        .left
+                        .saturating_add(area.width)
+                        .saturating_add(area.right_fringe)
         })
         .map(|area| area.window_id)
 }
@@ -606,7 +650,9 @@ pub(super) fn void_text_area_at_point(
                 && column < scroll.left.saturating_add(scroll.width)
         })
         .map_or(0, |scroll| scroll.pixels);
-    let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
+    let Some(row) = grid_row_at_y_for_window(grid, window_id, point.y + px(vscroll as f32)) else {
+        return true;
+    };
     let source_range = grid
         .input
         .as_ref()
@@ -653,7 +699,11 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
 ) -> Option<MousePosition> {
     let input = grid.input.as_ref()?;
     let column = (f32::from(point.x) / f32::from(cell_width)).floor().max(0.0) as usize;
-    let row = grid_row_at_y(grid, point.y);
+    let window_id = text_window_at_point(grid, point, cell_width);
+    let row = match window_id {
+        Some(window_id) => grid_row_at_y_for_window(grid, window_id, point.y)?,
+        None => grid_row_at_y(grid, point.y),
+    };
     let vscroll = grid
         .vscrolls
         .iter()
@@ -664,7 +714,11 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
                 && column < scroll.left.saturating_add(scroll.width)
         })
         .map_or(0, |scroll| scroll.pixels);
-    let row = grid_row_at_y(grid, point.y + px(vscroll as f32));
+    let scrolled_y = point.y + px(vscroll as f32);
+    let row = match window_id {
+        Some(window_id) => grid_row_at_y_for_window(grid, window_id, scrolled_y)?,
+        None => grid_row_at_y(grid, scrolled_y),
+    };
     let line = grid.rows.get(row)?;
     let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
     let (source_start, source_end) = input.hit_test_source_range(row, column)?;
@@ -1305,7 +1359,8 @@ impl EntityInputHandler for EditorView {
             return Some(Bounds {
                 origin: point(
                     bounds.left() + base_x + left,
-                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT))
+                    bounds.top()
+                        + super::grid_row_top_for_cell(&self.grid, row, column, px(LINE_HEIGHT))
                         - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
                 ),
                 size: size(
@@ -1314,7 +1369,7 @@ impl EntityInputHandler for EditorView {
                     } else {
                         text_width.max(self.cell_width)
                     },
-                    grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
+                    super::grid_row_height_for_cell(&self.grid, row, column, px(LINE_HEIGHT)),
                 ),
             });
         };
@@ -1374,7 +1429,8 @@ impl EntityInputHandler for EditorView {
             return Some(Bounds {
                 origin: point(
                     bounds.left() + base_x + left,
-                    bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT))
+                    bounds.top()
+                        + super::grid_row_top_for_cell(&self.grid, row, column, px(LINE_HEIGHT))
                         - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
                 ),
                 size: size(
@@ -1383,7 +1439,7 @@ impl EntityInputHandler for EditorView {
                     } else {
                         text_width.max(self.cell_width)
                     },
-                    grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
+                    super::grid_row_height_for_cell(&self.grid, row, column, px(LINE_HEIGHT)),
                 ),
             });
         }
@@ -1413,7 +1469,8 @@ impl EntityInputHandler for EditorView {
         Some(Bounds {
             origin: point(
                 bounds.left() + left,
-                bounds.top() + grid_row_top(&self.grid, row, px(LINE_HEIGHT))
+                bounds.top()
+                    + super::grid_row_top_for_cell(&self.grid, row, column, px(LINE_HEIGHT))
                     - px(super::vscroll_pixels_for_cell(&self.grid, row, column) as f32),
             ),
             size: size(
@@ -1422,7 +1479,7 @@ impl EntityInputHandler for EditorView {
                 } else {
                     text_width.max(self.cell_width)
                 },
-                grid_row_height(&self.grid, row, px(LINE_HEIGHT)),
+                super::grid_row_height_for_cell(&self.grid, row, column, px(LINE_HEIGHT)),
             ),
         })
     }
