@@ -86,3 +86,25 @@ fn single_event_reader_returns_wheel_events_with_position() {
         assert!(matches!(&fields[4], Value::Cons(_)), "pixel delta is present");
     }
 }
+
+#[test]
+fn single_event_reader_processes_color_drop_before_returning_key() {
+    let mut i = interp_with_frame("");
+    let pending = VecDeque::from([
+        InputEvent::ColorDrop {
+            position: None,
+            color: "445566".to_owned(),
+            background: true,
+        },
+        InputEvent::Key(b'x' as i128),
+    ]);
+    let term = std::rc::Rc::new(std::cell::RefCell::new(WheelFrontend { pending }));
+
+    let MinibufInput::Key(key) = minibuf_loop(&term, &mut i, &EmacsText::from(""), true).unwrap()
+    else {
+        panic!("single event reader should return the key after processing color drop");
+    };
+    assert_eq!(key, b'x' as i128);
+    let color = i.eval_str("(frame-parameter nil 'background-color)").unwrap();
+    assert_eq!(i.prin1_to_string(&color), "\"#445566\"");
+}

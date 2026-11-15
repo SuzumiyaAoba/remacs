@@ -347,3 +347,27 @@ fn x_popup_dialog_waits_until_a_new_frame_is_ready() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn poll_input_preserves_color_drop_for_nested_read_event() {
+    let (events, received_events) = mpsc::channel();
+    let (grids, _received_grids) = smol::channel::bounded(1);
+    let mut io = ChanIo::new_for_test(received_events, grids);
+    events
+        .send(GuiEvent::ColorDrop {
+            position: None,
+            color: "112233".to_owned(),
+            background: false,
+        })
+        .unwrap();
+
+    let input = io.poll_input(Duration::ZERO).unwrap();
+    assert!(matches!(
+        input,
+        Some(InputEvent::ColorDrop {
+            position: None,
+            color,
+            background: false,
+        }) if color == "112233"
+    ));
+}
