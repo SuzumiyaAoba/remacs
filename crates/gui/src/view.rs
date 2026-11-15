@@ -822,7 +822,39 @@ fn file_drop_uri(path: &std::path::Path) -> String {
     file_drop_uri_from_path(&absolute.to_string_lossy())
 }
 
+fn append_file_uri_component(uri: &mut String, component: &str, authority: bool) {
+    for byte in component.bytes() {
+        let safe_component_byte = if authority {
+            matches!(byte, b':' | b'[' | b']')
+        } else {
+            matches!(byte, b'/' | b':')
+        };
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'_' | b'.' | b'~')
+            || safe_component_byte
+        {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+}
+
 fn file_drop_uri_from_path(path: &str) -> String {
+    if let Some(unc_path) = path.strip_prefix(r"\\") {
+        let normalized = unc_path.replace('\\', "/");
+        if let Some((authority, share_path)) = normalized.split_once('/') {
+            let share_path = share_path.trim_start_matches('/');
+            if !authority.is_empty() && !share_path.is_empty() {
+                let mut uri = String::from("file://");
+                append_file_uri_component(&mut uri, authority, true);
+                uri.push('/');
+                append_file_uri_component(&mut uri, share_path, false);
+                return uri;
+            }
+        }
+    }
+
     let bytes = path.as_bytes();
     let windows_drive_path = bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
@@ -838,13 +870,7 @@ fn file_drop_uri_from_path(path: &str) -> String {
     } else {
         String::from("file://")
     };
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':') {
-            uri.push(byte as char);
-        } else {
-            uri.push_str(&format!("%{byte:02X}"));
-        }
-    }
+    append_file_uri_component(&mut uri, &path, false);
     uri
 }
 
@@ -5787,6 +5813,18 @@ mod file_drop_uri_tests {
         assert_eq!(
             file_drop_uri_from_path(r"C:\Temp\sample file.txt"),
             "file:///C:/Temp/sample%20file.txt"
+        );
+    }
+
+    #[test]
+    fn windows_unc_path_maps_the_server_to_uri_authority() {
+        assert_eq!(
+            file_drop_uri_from_path(r"\\server\share\sample file.txt"),
+            "file://server/share/sample%20file.txt"
+        );
+        assert_eq!(
+            file_drop_uri_from_path(r"\\server\share\日本.txt"),
+            "file://server/share/%E6%97%A5%E6%9C%AC.txt"
         );
     }
 }
