@@ -588,7 +588,7 @@ pub(super) enum GuiRequest {
         must_match: bool,
         initial: Option<String>,
         directory_only: bool,
-        reply: SyncSender<Result<Option<String>, String>>,
+        reply: SyncSender<Result<Option<std::path::PathBuf>, String>>,
     },
     BeginDrag {
         frame_id: usize,
@@ -884,7 +884,7 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
         must_match: bool,
         initial: Option<&str>,
         directory_only: bool,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<std::path::PathBuf>, String> {
         self.read_file_name_for_frame(None, prompt, directory, must_match, initial, directory_only)
     }
 
@@ -896,7 +896,7 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
         must_match: bool,
         initial: Option<&str>,
         directory_only: bool,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<std::path::PathBuf>, String> {
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(GuiRequest::FileDialog {
@@ -946,6 +946,29 @@ mod file_dialog_frame_tests {
         assert_eq!(frame_id, Some(42));
         reply.send(Ok(None)).unwrap();
         assert_eq!(worker.join().unwrap(), Ok(None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_dialog_reply_preserves_non_utf8_path_bytes() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::PathBuf};
+
+        let (requests, received) = smol::channel::unbounded();
+        let backend = GuiFileDialogBackend {
+            requests,
+            quit_request: Arc::new(QuitRequest::default()),
+        };
+        let path = PathBuf::from(OsString::from_vec(b"/tmp/remacs-\xff.txt".to_vec()));
+        let expected = path.clone();
+        let worker = thread::spawn(move || {
+            backend.read_file_name_for_frame(Some(42), "Open", None, false, None, false)
+        });
+
+        let GuiRequest::FileDialog { reply, .. } = received.recv_blocking().unwrap() else {
+            panic!("expected a file dialog request");
+        };
+        reply.send(Ok(Some(path))).unwrap();
+        assert_eq!(worker.join().unwrap(), Ok(Some(expected)));
     }
 
     #[test]

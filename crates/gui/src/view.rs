@@ -1010,11 +1010,19 @@ fn file_drop_uri(path: &std::path::Path) -> String {
             .map(|directory| directory.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    file_drop_uri_from_path(&absolute.to_string_lossy())
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        file_drop_uri_from_bytes(absolute.as_os_str().as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        file_drop_uri_from_path(&absolute.to_string_lossy())
+    }
 }
 
-fn append_file_uri_component(uri: &mut String, component: &str, authority: bool) {
-    for byte in component.bytes() {
+fn append_file_uri_bytes(uri: &mut String, component: &[u8], authority: bool) {
+    for &byte in component {
         let safe_component_byte = if authority {
             matches!(byte, b':' | b'[' | b']')
         } else {
@@ -1029,6 +1037,16 @@ fn append_file_uri_component(uri: &mut String, component: &str, authority: bool)
             uri.push_str(&format!("%{byte:02X}"));
         }
     }
+}
+
+fn append_file_uri_component(uri: &mut String, component: &str, authority: bool) {
+    append_file_uri_bytes(uri, component.as_bytes(), authority);
+}
+
+fn file_drop_uri_from_bytes(path: &[u8]) -> String {
+    let mut uri = String::from("file://");
+    append_file_uri_bytes(&mut uri, path, false);
+    uri
 }
 
 fn file_drop_uri_from_path(path: &str) -> String {
@@ -6382,18 +6400,27 @@ mod accessibility_frame_key_tests {
 #[cfg(test)]
 mod file_drop_uri_tests {
     use super::file_drop_uri_from_path;
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     use super::file_drop_uri;
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     use std::path::Path;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn file_drop_uri_escapes_utf8_paths() {
         assert_eq!(
             file_drop_uri(Path::new("/tmp/remacs drop/日本.txt")),
             "file:///tmp/remacs%20drop/%E6%97%A5%E6%9C%AC.txt"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_drop_uri_preserves_non_utf8_path_bytes() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::PathBuf};
+
+        let path = PathBuf::from(OsString::from_vec(b"/tmp/remacs-\xff.txt".to_vec()));
+        assert_eq!(file_drop_uri(&path), "file:///tmp/remacs-%FF.txt");
     }
 
     #[test]

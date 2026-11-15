@@ -1592,7 +1592,7 @@ pub fn run_gui_with_dump(
                             }) {
                                 Ok(response) => match response.await {
                                     Ok(Ok(Some(path))) => {
-                                        Ok(Some(path.to_string_lossy().into_owned()))
+                                        Ok(Some(path))
                                     }
                                     Ok(Ok(None)) => Ok(None),
                                     Ok(Err(error)) => Err(error.to_string()),
@@ -1605,10 +1605,7 @@ pub fn run_gui_with_dump(
                                 app.prompt_for_paths_for_window(options, owner)
                             }) {
                                 Ok(response) => match response.await {
-                                    Ok(Ok(Some(paths))) => Ok(paths
-                                        .into_iter()
-                                        .next()
-                                        .map(|path| path.to_string_lossy().into_owned())),
+                                    Ok(Ok(Some(paths))) => Ok(paths.into_iter().next()),
                                     Ok(Ok(None)) => Ok(None),
                                     Ok(Err(error)) => Err(error.to_string()),
                                     Err(error) => Err(error.to_string()),

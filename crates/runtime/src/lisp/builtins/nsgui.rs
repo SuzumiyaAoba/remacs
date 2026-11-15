@@ -897,7 +897,11 @@ fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             directory_only,
         )
         .map_err(|error| i.error(format!("File dialog failed: {error}")))?;
-    Ok(selected.map(Value::string).unwrap_or(Value::Nil))
+    Ok(selected
+        .map(|path| {
+            Value::string(crate::lisp::text::EmacsText::from_os_str(path.as_os_str()))
+        })
+        .unwrap_or(Value::Nil))
 }
 
 fn f_ns_popup_color_panel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

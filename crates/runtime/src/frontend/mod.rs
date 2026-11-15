@@ -167,7 +167,7 @@ pub trait FileDialogBackend {
         must_match: bool,
         initial: Option<&str>,
         directory_only: bool,
-    ) -> Result<Option<String>, String>;
+    ) -> Result<Option<std::path::PathBuf>, String>;
 
     fn read_file_name_for_frame(
         &self,
@@ -177,7 +177,7 @@ pub trait FileDialogBackend {
         must_match: bool,
         initial: Option<&str>,
         directory_only: bool,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<std::path::PathBuf>, String> {
         self.read_file_name(prompt, directory, must_match, initial, directory_only)
     }
 }
