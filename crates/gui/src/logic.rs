@@ -2310,7 +2310,9 @@ impl ChanIo {
         match event {
             GuiEvent::ForFrame { frame_id, event } => {
                 self.active_frame_id = Some(frame_id);
-                self.pending_frame_selection = Some(frame_id);
+                if discardable_gui_input(&event) {
+                    self.pending_frame_selection = Some(frame_id);
+                }
                 *event
             }
             event => event,
@@ -3722,6 +3724,40 @@ mod native_fullscreen_state_tests {
             .unwrap();
         assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
         assert_eq!(io.take_frame_fullscreen_update(), Some((42, None)));
+    }
+
+    #[test]
+    fn only_input_events_from_a_frame_select_it() {
+        let (events, receiver) = mpsc::channel();
+        let (grids, _grid_receiver) = smol::channel::unbounded();
+        let mut io = ChanIo::new_for_test(receiver, grids);
+
+        for event in [
+            GuiEvent::Geometry(geometry(false, false)),
+            GuiEvent::Resize(80, 24),
+        ] {
+            events
+                .send(GuiEvent::ForFrame {
+                    frame_id: 42,
+                    event: Box::new(event),
+                })
+                .unwrap();
+            assert!(io.poll_input(Duration::ZERO).unwrap().is_none());
+            assert_eq!(io.active_frame_id, Some(42));
+            assert_eq!(io.take_frame_selection(), None);
+        }
+
+        events
+            .send(GuiEvent::ForFrame {
+                frame_id: 42,
+                event: Box::new(GuiEvent::Key(65)),
+            })
+            .unwrap();
+        assert!(matches!(
+            io.poll_input(Duration::ZERO).unwrap(),
+            Some(remacs_runtime::frontend::InputEvent::Key(65))
+        ));
+        assert_eq!(io.take_frame_selection(), Some(42));
     }
 }
 
