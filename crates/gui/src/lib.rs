@@ -707,6 +707,7 @@ pub fn run_gui_with_dump(
             let mut window_represented_files = HashMap::<usize, Option<String>>::new();
             let mut native_visibility = HashMap::<usize, bool>::new();
             let mut window_visibilities = HashMap::<usize, FrameVisibility>::new();
+            let mut pending_frame_orders = HashMap::<usize, bool>::new();
             let mut primary_window = Some(primary_window);
             while let Ok(request) = gui_requests.recv().await {
                 match request {
@@ -716,6 +717,7 @@ pub fn run_gui_with_dump(
                         };
                         let live_frames: HashSet<_> =
                             snapshots.iter().map(|snapshot| snapshot.frame_id).collect();
+                        pending_frame_orders.retain(|frame_id, _| live_frames.contains(frame_id));
                         for snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
                             let visibility = snapshot.visibility;
@@ -965,6 +967,12 @@ pub fn run_gui_with_dump(
                                     );
                                     apply_initial_frame_visibility(window, visibility, focus_on_map);
                                 });
+                                apply_pending_frame_order(
+                                    frame_id,
+                                    &handle,
+                                    &mut pending_frame_orders,
+                                    cx,
+                                );
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
                                 window_backgrounds.insert(frame_id, initial_background_appearance);
@@ -1055,6 +1063,12 @@ pub fn run_gui_with_dump(
                                 );
                                 apply_initial_frame_visibility(window, visibility, focus_on_map);
                             });
+                            apply_pending_frame_order(
+                                frame_id,
+                                &handle,
+                                &mut pending_frame_orders,
+                                cx,
+                            );
                             native_visibility.insert(frame_id, visibility == FrameVisibility::Visible);
                             windows.insert(frame_id, handle);
                         }
@@ -1149,15 +1163,13 @@ pub fn run_gui_with_dump(
                         }
                     }
                     GuiRequest::FrameOrder { frame_id, raise } => {
-                        if let Some(handle) = windows.get(&frame_id).copied() {
-                            let _ = handle.update(cx, |_view, window, _cx| {
-                                if raise {
-                                    raise_frame_window(window);
-                                } else {
-                                    lower_frame_window(window);
-                                }
-                            });
-                        }
+                        request_frame_order(
+                            frame_id,
+                            raise,
+                            &windows,
+                            &mut pending_frame_orders,
+                            cx,
+                        );
                     }
                     GuiRequest::FrameListZOrder { reply } => {
                         let result = cx
@@ -2060,6 +2072,40 @@ fn raise_frame_window(window: &Window) {
 
 fn lower_frame_window(window: &Window) {
     window.lower_window();
+}
+
+fn apply_frame_order(window: &Window, raise: bool) {
+    if raise {
+        raise_frame_window(window);
+    } else {
+        lower_frame_window(window);
+    }
+}
+
+fn request_frame_order<T: Render + 'static>(
+    frame_id: usize,
+    raise: bool,
+    windows: &HashMap<usize, WindowHandle<T>>,
+    pending: &mut HashMap<usize, bool>,
+    cx: &mut AsyncApp,
+) {
+    if let Some(handle) = windows.get(&frame_id).copied() {
+        pending.remove(&frame_id);
+        let _ = handle.update(cx, move |_view, window, _cx| apply_frame_order(window, raise));
+    } else {
+        pending.insert(frame_id, raise);
+    }
+}
+
+fn apply_pending_frame_order<T: Render + 'static>(
+    frame_id: usize,
+    handle: &WindowHandle<T>,
+    pending: &mut HashMap<usize, bool>,
+    cx: &mut AsyncApp,
+) {
+    if let Some(raise) = pending.remove(&frame_id) {
+        let _ = handle.update(cx, move |_view, window, _cx| apply_frame_order(window, raise));
+    }
 }
 
 fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool) {

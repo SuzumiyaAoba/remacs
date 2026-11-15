@@ -1,5 +1,8 @@
-use super::super::{lower_frame_window, raise_frame_window};
-use gpui::{Context, IntoElement, Render, TestAppContext, Window, div};
+use super::super::{
+    apply_pending_frame_order, lower_frame_window, raise_frame_window, request_frame_order,
+};
+use gpui::{Context, IntoElement, Render, TestAppContext, Window, WindowHandle, div};
+use std::collections::HashMap;
 
 struct FrameOrderView;
 
@@ -133,6 +136,40 @@ fn setting_always_on_top_preserves_keyboard_focus() {
         .unwrap();
     app.run_until_parked();
 
+    assert!(source
+        .update(&mut app, |_, window, _| window.is_window_active())
+        .unwrap());
+    assert!(!target
+        .update(&mut app, |_, window, _| window.is_window_active())
+        .unwrap());
+}
+
+#[test]
+fn lower_frame_order_requested_before_window_creation_is_applied() {
+    // Regression for #2273: a lower request survives until the native window exists.
+    let mut app = TestAppContext::single();
+    let source = app.add_window(|_, _| FrameOrderView);
+    source
+        .update(&mut app, |_, window, _| window.activate_window())
+        .unwrap();
+    app.run_until_parked();
+
+    let frame_id = 2273;
+    let windows = HashMap::<usize, WindowHandle<FrameOrderView>>::new();
+    let mut pending = HashMap::new();
+    let mut async_app = app.update(|app| app.to_async());
+    request_frame_order(frame_id, false, &windows, &mut pending, &mut async_app);
+    assert_eq!(pending.get(&frame_id), Some(&false));
+
+    let target = app.add_window(|_, _| FrameOrderView);
+    source
+        .update(&mut app, |_, window, _| window.activate_window())
+        .unwrap();
+    app.run_until_parked();
+
+    apply_pending_frame_order(frame_id, &target, &mut pending, &mut async_app);
+    app.run_until_parked();
+    assert!(pending.is_empty());
     assert!(source
         .update(&mut app, |_, window, _| window.is_window_active())
         .unwrap());
