@@ -637,6 +637,8 @@ pub struct GridWindowRowHeights {
     pub window_id: usize,
     pub top: usize,
     pub heights: Vec<usize>,
+    /// Extra pixels above each row's text, relative to the row's top.
+    pub text_offsets: Vec<usize>,
 }
 
 /// A window body whose contents are raised by a pixel scroll offset.
@@ -8224,9 +8226,10 @@ fn line_height_property(
     if let Value::Cons(_) = value
         && let Ok(items) = value.list_to_vec()
         && items.len() == 2
+        && let Some(height) = height_spec_pixels(i, faces, &items[0], default_line_height)
         && let Some(total) = height_spec_pixels(i, faces, &items[1], default_line_height)
     {
-        return Some(LineHeightProperty::Total(total));
+        return Some(LineHeightProperty::Total { height, total });
     }
     height_spec_pixels(i, faces, value, default_line_height).map(LineHeightProperty::Minimum)
 }
@@ -11520,6 +11523,7 @@ fn render_grid_internal(
         let content_top = window_top + top_rows;
         let content_bottom = content_top.saturating_add(text_rows);
         let mut current_window_row_heights = vec![frame_char_height; text_rows];
+        let mut current_window_row_text_offsets = vec![0; text_rows];
         if !minibuffer_window && text_rows > 0 && width_after_fringes > 0 {
             window_text_areas.push(GridWindowTextArea {
                 window_id,
@@ -12424,13 +12428,19 @@ fn render_grid_internal(
                 } else {
                     None
                 };
-                let display_row_height = match explicit_line_height {
-                    Some(LineHeightProperty::ContentsOnly) => frame_char_height,
-                    Some(LineHeightProperty::Total(total)) => frame_char_height.max(total),
-                    Some(LineHeightProperty::Minimum(height)) => frame_char_height
-                        .max(height)
-                        .saturating_add(newline_spacing),
-                    None => frame_char_height.saturating_add(newline_spacing),
+                let (display_row_height, display_text_offset) = match explicit_line_height {
+                    Some(LineHeightProperty::ContentsOnly) => (frame_char_height, 0),
+                    Some(LineHeightProperty::Total { height, total }) => (
+                        frame_char_height.max(height).max(total),
+                        height.saturating_sub(frame_char_height),
+                    ),
+                    Some(LineHeightProperty::Minimum(height)) => (
+                        frame_char_height
+                            .max(height)
+                            .saturating_add(newline_spacing),
+                        0,
+                    ),
+                    None => (frame_char_height.saturating_add(newline_spacing), 0),
                 };
                 if let Some(row_height) = row_heights.get_mut(y) {
                     // Grid rows are shared across side-by-side windows, so
@@ -12441,6 +12451,11 @@ fn render_grid_internal(
                     .get_mut(y.saturating_sub(content_top))
                 {
                     *row_height = display_row_height;
+                }
+                if let Some(text_offset) = current_window_row_text_offsets
+                    .get_mut(y.saturating_sub(content_top))
+                {
+                    *text_offset = display_text_offset;
                 }
                 visible_end = if segment_end == line_len && !plan.hard_break {
                     row_end
@@ -13403,6 +13418,7 @@ fn render_grid_internal(
             window_id,
             top: content_top,
             heights: current_window_row_heights,
+            text_offsets: current_window_row_text_offsets,
         });
     }
     // A divider belongs to the window above it. Reserve its pixels at

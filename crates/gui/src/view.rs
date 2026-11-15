@@ -447,6 +447,20 @@ fn grid_window_row_height(
     )
 }
 
+fn grid_window_row_text_offset(grid: &Grid, window_id: usize, row: usize) -> Pixels {
+    let Some(metrics) = grid_window_row_metrics(grid, window_id) else {
+        return px(0.0);
+    };
+    if row < metrics.top {
+        return px(0.0);
+    }
+    metrics
+        .text_offsets
+        .get(row.saturating_sub(metrics.top))
+        .map(|offset| px(*offset as f32))
+        .unwrap_or(px(0.0))
+}
+
 fn grid_row_top_for_cell(
     grid: &Grid,
     row: usize,
@@ -467,7 +481,10 @@ fn grid_row_top_for_cell(
         })
         .map_or_else(
             || grid_row_top(grid, row, fallback),
-            |area| grid_window_row_top(grid, area.window_id, row, fallback),
+            |area| {
+                grid_window_row_top(grid, area.window_id, row, fallback)
+                    + grid_window_row_text_offset(grid, area.window_id, row)
+            },
         )
 }
 
@@ -491,7 +508,11 @@ fn grid_row_height_for_cell(
         })
         .map_or_else(
             || grid_row_height(grid, row, fallback),
-            |area| grid_window_row_height(grid, area.window_id, row, fallback),
+            |area| {
+                (grid_window_row_height(grid, area.window_id, row, fallback)
+                    - grid_window_row_text_offset(grid, area.window_id, row))
+                .max(px(1.0))
+            },
         )
 }
 
@@ -4926,6 +4947,7 @@ fn paint_grid_row_at(
     bounds: Bounds<Pixels>,
     row_top: Pixels,
     row_height: Pixels,
+    text_offset: Pixels,
     line_height: Pixels,
     cell_width: Pixels,
     default_background: u32,
@@ -4934,7 +4956,9 @@ fn paint_grid_row_at(
     cx: &mut App,
 ) {
     let paint_line_height = line_height.max(line.ascent + line.descent);
-    let origin = point(bounds.left(), bounds.top() + row_top);
+    let text_top = row_top + text_offset;
+    let text_height = (row_height - text_offset).max(px(1.0));
+    let origin = point(bounds.left(), bounds.top() + text_top);
     paint_stipple_backgrounds(
         grid,
         row,
@@ -4951,7 +4975,7 @@ fn paint_grid_row_at(
         row,
         line,
         origin,
-        row_height,
+        text_height,
         cell_width,
         paint_line_height,
         default_background,
@@ -4964,7 +4988,7 @@ fn paint_grid_row_at(
         row,
         line,
         bounds,
-        row_top,
+        text_top,
         paint_line_height,
         default_background,
         grid.gamma_exponent,
@@ -5078,6 +5102,7 @@ fn paint_grid_row_with_window_heights(
                     bounds,
                     global_top,
                     global_height,
+                    px(0.0),
                     line_height,
                     cell_width,
                     default_background,
@@ -5115,6 +5140,7 @@ fn paint_grid_row_with_window_heights(
                     bounds,
                     row_top,
                     row_height,
+                    grid_window_row_text_offset(grid, area.window_id, row),
                     line_height,
                     cell_width,
                     default_background,

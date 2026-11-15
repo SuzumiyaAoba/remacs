@@ -8,7 +8,8 @@ use std::{
 };
 
 use super::{
-    EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT, grid_row_height, grid_row_top,
+    EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT, grid_row_height, grid_row_height_for_cell,
+    grid_row_top, grid_row_top_for_cell,
 };
 use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
