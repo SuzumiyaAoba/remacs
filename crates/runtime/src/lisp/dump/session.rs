@@ -127,6 +127,8 @@ struct FrameData {
     window_state_change: bool,
     buffer_list: Vec<usize>,
     buried_buffer_list: Vec<usize>,
+    #[serde(default)]
+    face_attributes: Vec<(Ref, Ref)>,
     params: Ref,
     dead: bool,
 }
@@ -315,6 +317,7 @@ impl Image {
                 window_state_change: frame.window_state_change,
                 buffer_list: frame.buffer_list.clone(),
                 buried_buffer_list: frame.buried_buffer_list.clone(),
+                face_attributes: Vec::new(),
                 params: Value::Nil,
                 dead: frame.dead,
             };
@@ -601,6 +604,11 @@ impl Image {
                 .as_ref()
                 .map(|r| window(i, &mut decoder, r))
                 .transpose()?;
+            let face_attributes = data
+                .face_attributes
+                .iter()
+                .map(|(face, attrs)| Ok((decoder.symbol(face)?, decoder.value(i, attrs)?)))
+                .collect::<Result<Vec<_>>>()?;
             let params = decoder.value(i, &data.params)?;
             let pixel_size = frame_pixel_size_from_params(i, &params);
             let mut f = object.borrow_mut();
@@ -617,6 +625,7 @@ impl Image {
             f.change_size = data.change_size;
             f.change_pixel_size = data.change_pixel_size.or(Some(pixel_size));
             f.window_state_change = data.window_state_change;
+            f.face_attributes = face_attributes;
             f.params = params;
         }
         for data in &self.window_data {
@@ -986,6 +995,11 @@ impl Image {
             window_state_change: f.window_state_change,
             buffer_list: f.buffer_list.clone(),
             buried_buffer_list: f.buried_buffer_list.clone(),
+            face_attributes: f
+                .face_attributes
+                .iter()
+                .map(|(face, attrs)| Ok((e.value(&Value::Sym(*face))?, e.value(attrs)?)))
+                .collect::<Result<_>>()?,
             params: e.value(&f.params)?,
             dead: f.dead,
         })
