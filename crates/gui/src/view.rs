@@ -32,6 +32,8 @@ use unicode_width::UnicodeWidthChar;
 #[cfg(test)]
 mod autoselect_tests;
 #[cfg(test)]
+mod window_activation_tests;
+#[cfg(test)]
 mod frame_metrics_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod begin_key_tests;
@@ -1213,7 +1215,6 @@ pub(super) struct EditorView {
     auto_raise: Rc<Cell<bool>>,
     auto_lower: Rc<Cell<bool>>,
     last_window_active: Option<bool>,
-    last_focus_update_sent: Option<bool>,
     native_close_on_alt_f4: Rc<Cell<bool>>,
     native_close_on_command_w: Rc<Cell<bool>>,
     #[cfg(target_os = "macos")]
@@ -1231,6 +1232,27 @@ pub(super) struct EditorView {
     accessibility_geometry_snapshot: Option<AccessibilityFrameKey>,
     #[cfg(any(target_os = "linux", target_os = "windows", test))]
     accessibility_tree_snapshot: Option<(String, String, String, std::ops::Range<usize>)>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FrameActivationUpdate {
+    raise: bool,
+    lower: bool,
+    focus: Option<bool>,
+}
+
+fn frame_activation_update(
+    previous: Option<bool>,
+    active: bool,
+    auto_raise: bool,
+    auto_lower: bool,
+) -> FrameActivationUpdate {
+    let changed = previous != Some(active);
+    FrameActivationUpdate {
+        raise: changed && active && auto_raise,
+        lower: previous == Some(true) && !active && auto_lower,
+        focus: (changed && (previous.is_some() || active)).then_some(active),
+    }
 }
 
 impl EditorView {
@@ -1316,7 +1338,6 @@ impl EditorView {
             auto_raise: Rc::new(Cell::new(false)),
             auto_lower: Rc::new(Cell::new(false)),
             last_window_active: None,
-            last_focus_update_sent: None,
             native_close_on_alt_f4: Rc::new(Cell::new(false)),
             native_close_on_command_w: Rc::new(Cell::new(false)),
             #[cfg(target_os = "macos")]
@@ -1664,11 +1685,22 @@ impl Render for EditorView {
                     if !active {
                         view.pressed_button = None;
                     }
-                    if let Some(frame_id) = view.tx.frame_id()
-                        && view.last_focus_update_sent != Some(active)
-                    {
-                        let _ = view.tx.send_focus_update(frame_id, active);
-                        view.last_focus_update_sent = Some(active);
+                    if let Some(frame_id) = view.tx.frame_id() {
+                        let update = frame_activation_update(
+                            view.last_window_active,
+                            active,
+                            view.auto_raise.get(),
+                            view.auto_lower.get(),
+                        );
+                        view.last_window_active = Some(active);
+                        if update.raise {
+                            window.activate_window();
+                        } else if update.lower {
+                            crate::lower_frame_window(window);
+                        }
+                        if let Some(focused) = update.focus {
+                            let _ = view.tx.send_focus_update(frame_id, focused);
+                        }
                     }
                 }));
         }
@@ -1683,21 +1715,23 @@ impl Render for EditorView {
                 .set(PhysicalModifierState::default());
         }
         if let Some(frame_id) = self.tx.frame_id() {
-            if self.last_window_active != Some(active) {
-                if active && self.auto_raise.get() {
-                    window.activate_window();
-                } else if !active && self.auto_lower.get() {
-                    crate::lower_frame_window(window);
-                }
-                self.last_window_active = Some(active);
+            let update = frame_activation_update(
+                self.last_window_active,
+                active,
+                self.auto_raise.get(),
+                self.auto_lower.get(),
+            );
+            self.last_window_active = Some(active);
+            if update.raise {
+                window.activate_window();
+            } else if update.lower {
+                crate::lower_frame_window(window);
             }
-            if self.last_focus_update_sent != Some(active) {
-                let _ = self.tx.send_focus_update(frame_id, active);
-                self.last_focus_update_sent = Some(active);
+            if let Some(focused) = update.focus {
+                let _ = self.tx.send_focus_update(frame_id, focused);
             }
         } else {
             self.last_window_active = None;
-            self.last_focus_update_sent = None;
         }
         self.update_window_title(window);
         if self.installed_menus != self.grid.menus {
