@@ -6405,6 +6405,7 @@ fn prepend_rendered_prefix(
     prefix: &EmacsText,
     prefix_width: usize,
     tab_width: usize,
+    default_style: CellStyle,
     mut row: RenderedRow,
 ) -> RenderedRow {
     if prefix_width == 0 {
@@ -6435,10 +6436,10 @@ fn prepend_rendered_prefix(
     text.push_str(&prefix);
     text.push_str(&row.text);
     row.text = text;
-    let mut cell_attrs = vec![CellStyle::default(); prefix_width];
+    let mut cell_attrs = vec![default_style; prefix_width];
     cell_attrs.extend(row.cell_attrs);
     row.cell_attrs = cell_attrs;
-    let mut char_attrs = vec![CellStyle::default(); prefix_char_count];
+    let mut char_attrs = vec![default_style; prefix_char_count];
     char_attrs.extend(row.char_attrs);
     row.char_attrs = char_attrs;
     row.source_offsets
@@ -12612,6 +12613,7 @@ fn render_grid_internal(
                             prefix,
                             prefix_width,
                             tab_width,
+                            default_style,
                             rendered,
                         );
                     } else if let Some(prefix) = line_prefix_replacement.as_ref() {
