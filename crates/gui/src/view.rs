@@ -1821,10 +1821,11 @@ impl Render for EditorView {
 
         #[cfg(target_os = "macos")]
         {
-            let (screen_text, screen_selection) = self.input.accessibility_screen_projection(
-                &self.grid,
-                visible_grid_selection(&self.grid),
-            );
+            let accessibility_window =
+                super::appkit_native_window(window).map(|window| window as usize);
+            let (screen_text, screen_selection) = self
+                .input
+                .accessibility_screen_projection(&self.grid, visible_grid_selection(&self.grid));
             let (buffer_text, buffer_selection) = self.grid.input.as_ref().map_or_else(
                 || {
                     self.input
@@ -1854,6 +1855,7 @@ impl Render for EditorView {
             {
                 self.accessibility_buffer_view = super::accessibility::update_text_view(
                     self.accessibility_buffer_view,
+                    accessibility_window,
                     &buffer_text,
                     buffer_selection.clone(),
                     "Buffer contents",
@@ -1861,6 +1863,7 @@ impl Render for EditorView {
                 );
                 self.accessibility_screen_view = super::accessibility::update_text_view(
                     self.accessibility_screen_view,
+                    accessibility_window,
                     &screen_text,
                     screen_selection.clone(),
                     "Visible frame contents",
@@ -1870,8 +1873,14 @@ impl Render for EditorView {
                     Some((buffer_text, buffer_selection, screen_text, screen_selection));
             }
             if self.accessibility_geometry_snapshot != Some(accessibility_geometry) {
-                super::accessibility::update_text_view_frame(self.accessibility_buffer_view);
-                super::accessibility::update_text_view_frame(self.accessibility_screen_view);
+                super::accessibility::update_text_view_frame(
+                    self.accessibility_buffer_view,
+                    accessibility_window,
+                );
+                super::accessibility::update_text_view_frame(
+                    self.accessibility_screen_view,
+                    accessibility_window,
+                );
                 self.accessibility_geometry_snapshot = Some(accessibility_geometry);
             }
         }

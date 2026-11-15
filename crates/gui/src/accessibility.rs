@@ -1,7 +1,6 @@
 //! Native macOS accessibility text surface for the canvas-rendered editor.
 
 use cocoa::{
-    appkit::NSApp,
     base::{NO, YES, id, nil},
     foundation::{NSPoint, NSRange, NSRect, NSSize, NSString},
 };
@@ -20,22 +19,14 @@ unsafe extern "C" {
 /// children, then keep its text and caret synchronized with the visible grid.
 pub(super) fn update_text_view(
     existing: Option<usize>,
+    target_window: Option<usize>,
     text: &str,
     selection: Range<usize>,
     label_text: &str,
     help_text: &str,
 ) -> Option<usize> {
+    let window = target_window? as id;
     unsafe {
-        let app = NSApp();
-        if app == nil {
-            return existing;
-        }
-        let key_window: id = msg_send![app, keyWindow];
-        let window: id = if key_window == nil {
-            msg_send![app, mainWindow]
-        } else {
-            key_window
-        };
         if window == nil {
             return existing;
         }
@@ -70,25 +61,52 @@ pub(super) fn update_text_view(
                 let help = NSString::alloc(nil).init_str(help_text);
                 let _: () = msg_send![view, setAccessibilityHelp: help];
                 let _: () = msg_send![help, release];
-
-                let _: () = msg_send![view, setAccessibilityParent: content];
-                let _: () = msg_send![view, setAccessibilityWindow: window];
-                let _: () = msg_send![view, setAccessibilityTopLevelUIElement: window];
-                let screen_frame: NSRect = msg_send![content, convertRectToScreen: bounds];
-                let _: () = msg_send![view, setAccessibilityFrame: screen_frame];
-
-                let old_children: id = msg_send![content, accessibilityChildren];
-                let children: id = msg_send![class!(NSMutableArray), array];
-                if old_children != nil {
-                    let _: () = msg_send![children, addObjectsFromArray: old_children];
-                }
-                let _: () = msg_send![children, addObject: view];
-                let _: () = msg_send![content, setAccessibilityChildren: children];
                 let _: () = msg_send![view, autorelease];
-                NSAccessibilityPostNotification(content, NSAccessibilityLayoutChangedNotification);
                 view
             }
         };
+
+        let existing_window: id = msg_send![view, accessibilityWindow];
+        if existing_window != window {
+            if existing_window != nil {
+                let existing_content: id = msg_send![existing_window, contentView];
+                if existing_content != nil {
+                    let existing_children: id =
+                        msg_send![existing_content, accessibilityChildren];
+                    if existing_children != nil {
+                        let children: id = msg_send![class!(NSMutableArray), array];
+                        let count: usize = msg_send![existing_children, count];
+                        for index in 0..count {
+                            let child: id = msg_send![existing_children, objectAtIndex: index];
+                            if child != view {
+                                let _: () = msg_send![children, addObject: child];
+                            }
+                        }
+                        let _: () = msg_send![existing_content, setAccessibilityChildren: children];
+                    }
+                    NSAccessibilityPostNotification(
+                        existing_content,
+                        NSAccessibilityLayoutChangedNotification,
+                    );
+                }
+            }
+
+            let _: () = msg_send![view, setAccessibilityParent: content];
+            let _: () = msg_send![view, setAccessibilityWindow: window];
+            let _: () = msg_send![view, setAccessibilityTopLevelUIElement: window];
+            let bounds: NSRect = msg_send![content, bounds];
+            let screen_frame: NSRect = msg_send![content, convertRectToScreen: bounds];
+            let _: () = msg_send![view, setAccessibilityFrame: screen_frame];
+
+            let old_children: id = msg_send![content, accessibilityChildren];
+            let children: id = msg_send![class!(NSMutableArray), array];
+            if old_children != nil {
+                let _: () = msg_send![children, addObjectsFromArray: old_children];
+            }
+            let _: () = msg_send![children, addObject: view];
+            let _: () = msg_send![content, setAccessibilityChildren: children];
+            NSAccessibilityPostNotification(content, NSAccessibilityLayoutChangedNotification);
+        }
 
         let value = NSString::alloc(nil).init_str(text);
         let _: () = msg_send![view, setString: value];
@@ -106,27 +124,15 @@ pub(super) fn update_text_view(
 }
 
 /// Refresh the screen-space frame after the native window moves or resizes.
-pub(super) fn update_text_view_frame(existing: Option<usize>) {
+pub(super) fn update_text_view_frame(existing: Option<usize>, target_window: Option<usize>) {
     let Some(pointer) = existing else {
+        return;
+    };
+    let Some(window) = target_window.map(|window| window as id) else {
         return;
     };
     unsafe {
         let view = pointer as id;
-        let accessibility_window: id = msg_send![view, accessibilityWindow];
-        let window: id = if accessibility_window != nil {
-            accessibility_window
-        } else {
-            let app = NSApp();
-            if app == nil {
-                return;
-            }
-            let key_window: id = msg_send![app, keyWindow];
-            if key_window == nil {
-                msg_send![app, mainWindow]
-            } else {
-                key_window
-            }
-        };
         if window == nil {
             return;
         }
@@ -141,3 +147,4 @@ pub(super) fn update_text_view_frame(existing: Option<usize>) {
         NSAccessibilityPostNotification(view, NSAccessibilityLayoutChangedNotification);
     }
 }
+
