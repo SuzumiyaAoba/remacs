@@ -4295,6 +4295,11 @@ impl Window {
         self.platform_window.lower_without_focus();
     }
 
+    /// Set whether the current window stays above ordinary windows without requesting focus.
+    pub fn set_always_on_top(&self, always_on_top: bool) {
+        self.platform_window.set_always_on_top(always_on_top);
+    }
+
     /// Minimize the current window at the platform level.
     pub fn minimize_window(&self) {
         self.platform_window.minimize();

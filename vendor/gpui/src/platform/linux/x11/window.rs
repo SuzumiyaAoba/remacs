@@ -64,6 +64,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
+        _NET_WM_STATE_ABOVE,
         _NET_WM_STATE_FULLSCREEN,
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
@@ -758,9 +759,21 @@ impl Drop for X11Window {
 }
 
 enum WmHintPropertyState {
-    // Remove = 0,
-    // Add = 1,
+    Remove = 0,
+    Add = 1,
     Toggle = 2,
+}
+
+#[cfg(test)]
+mod wm_hint_property_state_tests {
+    use super::WmHintPropertyState;
+
+    #[test]
+    fn state_actions_match_ewmh_values() {
+        assert_eq!(WmHintPropertyState::Remove as u32, 0);
+        assert_eq!(WmHintPropertyState::Add as u32, 1);
+        assert_eq!(WmHintPropertyState::Toggle as u32, 2);
+    }
 }
 
 impl X11Window {
@@ -1420,6 +1433,21 @@ impl PlatformWindow for X11Window {
             )
             .log_err();
         xcb_flush(&self.0.xcb);
+    }
+
+    fn set_always_on_top(&self, always_on_top: bool) {
+        let state = self.0.state.borrow();
+        self.set_wm_hints(
+            || "X11 SendEvent to change the window stacking group failed.",
+            if always_on_top {
+                WmHintPropertyState::Add
+            } else {
+                WmHintPropertyState::Remove
+            },
+            state.atoms._NET_WM_STATE_ABOVE,
+            xproto::AtomEnum::NONE.into(),
+        )
+        .log_err();
     }
 
     fn is_active(&self) -> bool {

@@ -1040,6 +1040,10 @@ impl PlatformWindow for WaylandWindow {
         // xdg-shell exposes no request for lowering a toplevel; the compositor owns stacking order.
     }
 
+    fn set_always_on_top(&self, _always_on_top: bool) {
+        // xdg-shell has no general toplevel always-on-top request.
+    }
+
     fn is_active(&self) -> bool {
         self.borrow().active
     }

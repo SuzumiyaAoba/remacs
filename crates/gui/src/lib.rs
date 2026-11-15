@@ -2043,10 +2043,14 @@ fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool)
     }
     #[cfg(not(target_os = "macos"))]
     match z_group {
-        Some("above") => window.activate_window(),
-        Some("below") => lower_frame_window(window),
+        Some("above") => window.set_always_on_top(true),
+        Some("below") => {
+            window.set_always_on_top(false);
+            lower_frame_window(window);
+        }
         _ => {
-            let _ = (window, child);
+            window.set_always_on_top(false);
+            let _ = child;
         }
     }
 }

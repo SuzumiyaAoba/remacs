@@ -205,6 +205,8 @@ impl PlatformWindow for TestWindow {
 
     fn lower_without_focus(&self) {}
 
+    fn set_always_on_top(&self, _always_on_top: bool) {}
+
     fn is_active(&self) -> bool {
         false
     }

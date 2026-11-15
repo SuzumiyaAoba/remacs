@@ -533,6 +533,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Lower the window without requesting input focus.
     /// Platforms without a non-focusing lowering operation leave its order unchanged.
     fn lower_without_focus(&self) {}
+    /// Set whether the window belongs to the always-on-top group.
+    /// Platforms without persistent stacking control leave the group unchanged.
+    fn set_always_on_top(&self, _always_on_top: bool) {}
     fn is_active(&self) -> bool;
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);

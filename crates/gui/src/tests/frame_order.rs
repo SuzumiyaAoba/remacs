@@ -116,3 +116,27 @@ fn lowering_another_frame_preserves_keyboard_focus() {
         .update(&mut app, |_, window, _| window.is_window_active())
         .unwrap());
 }
+
+#[test]
+fn setting_always_on_top_preserves_keyboard_focus() {
+    // Regression for #2269: changing z-group must not activate the target frame.
+    let mut app = TestAppContext::single();
+    let source = app.add_window(|_, _| FrameOrderView);
+    let target = app.add_window(|_, _| FrameOrderView);
+    source
+        .update(&mut app, |_, window, _| window.activate_window())
+        .unwrap();
+    app.run_until_parked();
+
+    target
+        .update(&mut app, |_, window, _| window.set_always_on_top(true))
+        .unwrap();
+    app.run_until_parked();
+
+    assert!(source
+        .update(&mut app, |_, window, _| window.is_window_active())
+        .unwrap());
+    assert!(!target
+        .update(&mut app, |_, window, _| window.is_window_active())
+        .unwrap());
+}

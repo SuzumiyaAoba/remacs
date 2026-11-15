@@ -878,6 +878,33 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn set_always_on_top(&self, always_on_top: bool) {
+        let hwnd = self.0.hwnd;
+        let insert_after = if always_on_top {
+            HWND_TOPMOST
+        } else {
+            HWND_NOTOPMOST
+        };
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        Some(insert_after),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    )
+                    .context("unable to change window stacking group")
+                    .log_err();
+                }
+            })
+            .detach();
+    }
+
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
