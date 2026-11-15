@@ -1535,6 +1535,29 @@ fn frame_minimum_size(
     ))
 }
 
+fn frame_pixel_size(
+    width: usize,
+    height: usize,
+    grid: &remacs_runtime::frontend::Grid,
+    cell_width: Pixels,
+    line_height: Pixels,
+    internal_border_width: usize,
+) -> Size<Pixels> {
+    let default_line_height = grid.default_line_height.max(1);
+    let default_row_adjustment = grid
+        .default_row_height
+        .saturating_sub(default_line_height);
+    let default_row_height = line_height + px(default_row_adjustment as f32);
+    let pixel_height = (0..height.max(3))
+        .map(|row| view::grid_row_height(grid, row, default_row_height))
+        .fold(px(0.0), |total, row_height| total + row_height);
+    let border = px(internal_border_width as f32 * 2.0);
+    size(
+        (cell_width * width.max(10) as f32).max(px(80.0)) + border,
+        pixel_height.max(px(57.0)) + border,
+    )
+}
+
 fn frame_window_options(
     frame: &FrameSnapshot,
     windows: &HashMap<usize, WindowHandle<EditorView>>,
@@ -1542,25 +1565,6 @@ fn frame_window_options(
 ) -> WindowOptions {
     let child = frame.parent_frame.is_some();
     let internal_border = frame.internal_border_width as f32 * 2.0;
-    let extra_row_height = frame
-        .grid
-        .row_heights
-        .iter()
-        .map(|height| height.saturating_sub(frame.grid.default_line_height.max(1)))
-        .sum::<usize>();
-    let content_size = size(
-        px((frame.width.max(10) as f32 * 8.0).max(80.0) + internal_border),
-        px((frame.height.max(3) as f32 * 19.0).max(57.0)
-            + extra_row_height as f32
-            + internal_border),
-    );
-    let window_min_size = frame_minimum_size(
-        frame.min_width,
-        frame.min_height,
-        8.0,
-        frame.grid.default_line_height.max(1) as f32,
-        internal_border,
-    );
     let base_window = frame
         .parent_frame
         .and_then(|parent| windows.get(&parent))
@@ -1569,6 +1573,32 @@ fn frame_window_options(
                 .primary_frame_id
                 .and_then(|primary| windows.get(&primary))
         });
+    let cell_metrics = base_window.and_then(|base| {
+        base.update(cx, |_view, window, _cx| {
+            let (_, _, cell_width, line_height) = view::frame_font_metrics(&frame.grid, window);
+            (cell_width, line_height)
+        })
+        .ok()
+    });
+    let (cell_width, line_height) = cell_metrics.unwrap_or((
+        px(8.0),
+        px(frame.grid.default_line_height.max(1) as f32),
+    ));
+    let content_size = frame_pixel_size(
+        frame.width,
+        frame.height,
+        &frame.grid,
+        cell_width,
+        line_height,
+        frame.internal_border_width,
+    );
+    let window_min_size = frame_minimum_size(
+        frame.min_width,
+        frame.min_height,
+        f32::from(cell_width),
+        f32::from(line_height),
+        internal_border,
+    );
     #[cfg(target_os = "macos")]
     let parent_window = frame.parent_frame.and_then(|parent| {
         windows.get(&parent).and_then(|handle| {

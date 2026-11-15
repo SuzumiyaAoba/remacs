@@ -31,6 +31,8 @@ use std::{
 use unicode_width::UnicodeWidthChar;
 #[cfg(test)]
 mod autoselect_tests;
+#[cfg(test)]
+mod frame_metrics_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod begin_key_tests;
 #[cfg(all(test, target_os = "macos"))]
@@ -206,6 +208,35 @@ pub(super) fn font_family(window: &mut Window, requested: Option<String>) -> Str
         .find(|family| available.contains(&family.to_lowercase()))
         .map(|family| (*family).to_owned())
         .unwrap_or_else(|| "monospace".to_owned())
+}
+
+pub(super) fn frame_font_metrics(
+    grid: &Grid,
+    window: &mut Window,
+) -> (Font, Pixels, Pixels, Pixels) {
+    let default_style = grid.default_style;
+    let requested_family = default_style
+        .font_family
+        .and_then(|id| grid.font_families.get(id as usize))
+        .cloned();
+    let family = font_family(window, requested_family);
+    let mut text_font = font(family);
+    if let Some(weight) = default_style.font_weight {
+        text_font.weight = FontWeight(weight as f32);
+    }
+    text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
+    let font_size = default_style
+        .font_height
+        .map(face_font_size)
+        .unwrap_or(px(FONT_SIZE));
+    let font_id = window.text_system().resolve_font(&text_font);
+    let cell_width = window
+        .text_system()
+        .advance(font_id, font_size, '0')
+        .map(|metrics| metrics.width)
+        .unwrap_or(px(8.0));
+    let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
+    (text_font, font_size, cell_width, line_height)
 }
 const BIDI_PARAGRAPH_LTR_OPEN: &str = "\u{2066}";
 const BIDI_PARAGRAPH_RTL_OPEN: &str = "\u{2067}";
@@ -1450,28 +1481,9 @@ impl EditorView {
     pub(super) fn resize_to_cells(&mut self, width: usize, height: usize, window: &mut Window) {
         let width = width.max(super::MIN_FRAME_COLUMNS);
         let height = height.max(3);
-        let default_style = self.grid.default_style;
-        let requested_family = default_style
-            .font_family
-            .and_then(|id| self.grid.font_families.get(id as usize))
-            .cloned();
-        let family = font_family(window, requested_family);
-        let mut text_font = font(family);
-        if let Some(weight) = default_style.font_weight {
-            text_font.weight = FontWeight(weight as f32);
-        }
-        text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
-        let font_size = default_style
-            .font_height
-            .map(face_font_size)
-            .unwrap_or(px(FONT_SIZE));
-        let font_id = window.text_system().resolve_font(&text_font);
-        self.cell_width = window
-            .text_system()
-            .advance(font_id, font_size, '0')
-            .map(|metrics| metrics.width)
-            .unwrap_or(px(8.0));
-        self.line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
+        let (_, _, cell_width, line_height) = frame_font_metrics(&self.grid, window);
+        self.cell_width = cell_width;
+        self.line_height = line_height;
         let minimum = self.update_minimum_size(window, self.cell_width, self.line_height);
         let viewport = window.viewport_size();
         let border = self.internal_border_width as f32 * 2.0;
@@ -1694,29 +1706,9 @@ impl Render for EditorView {
         }
 
         let font_families = self.grid.font_families.clone();
-        let default_style = self.grid.default_style;
-        let requested_family = default_style
-            .font_family
-            .and_then(|id| font_families.get(id as usize))
-            .cloned();
-        let family = font_family(window, requested_family);
-        let mut text_font = font(family);
-        if let Some(weight) = default_style.font_weight {
-            text_font.weight = FontWeight(weight as f32);
-        }
-        text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
-        let font_size = default_style
-            .font_height
-            .map(face_font_size)
-            .unwrap_or(px(FONT_SIZE));
-        let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
+        let (text_font, font_size, cell_width, line_height) =
+            frame_font_metrics(&self.grid, window);
         self.line_height = line_height;
-        let font_id = window.text_system().resolve_font(&text_font);
-        let cell_width = window
-            .text_system()
-            .advance(font_id, font_size, '0')
-            .map(|s| s.width)
-            .unwrap_or(px(8.0));
         self.cell_width = cell_width;
         let minimum = self.update_minimum_size(window, cell_width, line_height);
         let resize_increments = if self.grid.frame_resize_pixelwise {
