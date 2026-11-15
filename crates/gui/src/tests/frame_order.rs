@@ -1,5 +1,13 @@
-use super::super::{EditorView, raise_frame_window};
-use std::sync::mpsc;
+use super::super::raise_frame_window;
+use gpui::{Context, IntoElement, Render, TestAppContext, Window, div};
+
+struct FrameOrderView;
+
+impl Render for FrameOrderView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 #[test]
 fn initial_visible_frame_becomes_active_only_when_mapping_allows_focus() {
@@ -9,9 +17,8 @@ fn initial_visible_frame_becomes_active_only_when_mapping_allows_focus() {
         [(false, false), (true, false), (false, true), (true, true)]
     {
         let mut app = gpui::TestAppContext::single();
-        let (tx, _rx) = mpsc::channel();
-        let source = app.add_window(|_, cx| EditorView::new(tx.clone(), cx));
-        let target = app.add_window(|_, cx| EditorView::new(tx, cx));
+        let source = app.add_window(|_, _| FrameOrderView);
+        let target = app.add_window(|_, _| FrameOrderView);
         source
             .update(&mut app, |_, window, _| window.activate_window())
             .unwrap();
@@ -42,10 +49,10 @@ fn initial_visible_frame_becomes_active_only_when_mapping_allows_focus() {
 
 #[test]
 fn raising_another_frame_preserves_keyboard_focus_until_explicit_activation() {
-    let mut app = gpui::TestAppContext::single();
-    let (tx, _rx) = mpsc::channel();
-    let source = app.add_window(|_, cx| EditorView::new(tx.clone(), cx));
-    let target = app.add_window(|_, cx| EditorView::new(tx, cx));
+    // Regression for #2267: raise-frame changes stacking order without changing focus.
+    let mut app = TestAppContext::single();
+    let source = app.add_window(|_, _| FrameOrderView);
+    let target = app.add_window(|_, _| FrameOrderView);
     source
         .update(&mut app, |_, window, _| window.activate_window())
         .unwrap();
