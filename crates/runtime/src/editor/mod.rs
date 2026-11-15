@@ -2416,7 +2416,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         crate::lisp::builtins::misc::f_display_grayscale_p,
         ""
     ),
-    S!("display-mouse-p", 0, 1, f_display_pred_nil, ""),
+    S!("display-mouse-p", 0, 1, f_display_mouse_p, ""),
     S!("color-defined-p", 1, 2, f_color_defined_p, ""),
     S!("defined-colors", 0, 1, f_defined_colors, ""),
     S!("color-values", 1, 2, f_color_values, ""),
@@ -6439,6 +6439,12 @@ fn f_display_pred_nil(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let v = a.get(0).cloned().unwrap_or(Value::Nil);
     let _ = crate::lisp::builtins::misc::decode_display(i, &v)?;
     Ok(Value::Nil)
+}
+
+fn f_display_mouse_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let display = a.get(0).cloned().unwrap_or(Value::Nil);
+    let frame = crate::lisp::builtins::misc::decode_display(i, &display)?;
+    Ok(Value::from_bool(frame_is_graphical(i, &frame)))
 }
 
 fn frame_parameter_value(i: &Interp, frame: &crate::editor::FrameRef, name: &str) -> Value {
