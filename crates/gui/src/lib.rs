@@ -1,6 +1,6 @@
 //! GPUI frontend. The evaluator lives on a separate logic thread.
 use gpui::*;
-use remacs_runtime::frontend::FrameVisibility;
+use remacs_runtime::frontend::{FrameVisibility, QuitRequest};
 use std::collections::{HashMap, HashSet};
 use std::io;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -571,7 +571,7 @@ pub fn run_gui_with_dump(
     });
     application.run(move |cx: &mut App| {
         #[cfg(target_os = "macos")]
-        register_power_off_listener(event_tx.clone());
+        register_power_off_listener(event_tx.clone(), quit_request.clone());
         #[cfg(target_os = "macos")]
         register_system_sleep_listener(event_tx.clone());
         #[cfg(target_os = "macos")]
@@ -2036,11 +2036,15 @@ fn native_frame_visible(window: &Window) -> Option<bool> {
 }
 
 #[cfg(target_os = "macos")]
-fn register_power_off_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
+fn register_power_off_listener(
+    event_tx: std::sync::mpsc::Sender<GuiEvent>,
+    quit_request: Arc<QuitRequest>,
+) {
     let workspace: id = unsafe { msg_send![class!(NSWorkspace), sharedWorkspace] };
     let notification_center: id = unsafe { msg_send![workspace, notificationCenter] };
     let name = unsafe { NSString::alloc(nil).init_str("NSWorkspaceWillPowerOffNotification") };
     let handler = block::ConcreteBlock::new(move |_notification: id| {
+        quit_request.request_power_off();
         let _ = event_tx.send(GuiEvent::PowerOff);
     })
     .copy();

@@ -1,4 +1,4 @@
-use super::{GuiDialogBackend, GuiRequest};
+use super::{GuiDialogBackend, GuiRequest, QuitRequest};
 use remacs_runtime::frontend::{DialogBackend, DialogItem};
 
 #[test]
@@ -24,7 +24,10 @@ fn dialog_header_crosses_the_gui_transport() {
             assert_eq!(items, [DialogItem::Button("OK".into())]);
             reply.send(Ok(Some(0))).unwrap();
         });
-        let backend = GuiDialogBackend { requests };
+        let backend = GuiDialogBackend {
+            requests,
+            quit_request: std::sync::Arc::new(QuitRequest::default()),
+        };
         let buttons = ["OK".to_string()];
         let result = match header {
             Some(header) => backend.choose_with_header(7, "Body", None, &buttons, header),
@@ -61,7 +64,10 @@ fn dialog_text_items_keep_order_and_only_buttons_have_return_indices() {
             assert_eq!(header, Some(false));
             reply.send(Ok(reply_index)).unwrap();
         });
-        let backend = GuiDialogBackend { requests };
+        let backend = GuiDialogBackend {
+            requests,
+            quit_request: std::sync::Arc::new(QuitRequest::default()),
+        };
         assert_eq!(
             backend
                 .choose_with_items(7, "Body", None, &items, false)
@@ -88,7 +94,10 @@ fn dialog_group_boundary_crosses_transport_without_consuming_a_value() {
         assert_eq!(items, expected);
         reply.send(Ok(Some(2))).unwrap();
     });
-    let backend = GuiDialogBackend { requests };
+    let backend = GuiDialogBackend {
+        requests,
+        quit_request: std::sync::Arc::new(QuitRequest::default()),
+    };
     assert_eq!(
         backend
             .choose_with_items(7, "Body", None, &items, false)

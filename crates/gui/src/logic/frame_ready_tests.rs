@@ -57,6 +57,7 @@ fn attach(
     ))));
     interp.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
         requests: requests.clone(),
+        quit_request: std::sync::Arc::new(QuitRequest::default()),
     })));
     let primary = interp.selected_frame.as_ref().unwrap().borrow().id;
     let worker = thread::spawn(move || {

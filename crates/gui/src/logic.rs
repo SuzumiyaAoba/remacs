@@ -679,6 +679,7 @@ mod dialog_tests;
 
 struct GuiDialogBackend {
     requests: smol::channel::Sender<GuiRequest>,
+    quit_request: Arc<QuitRequest>,
 }
 
 impl remacs_runtime::frontend::DialogBackend for GuiDialogBackend {
@@ -751,15 +752,38 @@ impl GuiDialogBackend {
                 reply,
             })
             .map_err(|_| "GUI dialog service is unavailable".to_owned())?;
-        let selected = response
-            .recv()
-            .map_err(|_| "GUI dialog service stopped".to_owned())??;
+        let Some(selected) = receive_dialog_reply(
+            &response,
+            &self.quit_request,
+            "GUI dialog service stopped",
+        )? else {
+            return Ok(None);
+        };
+        let selected = selected?;
         Ok(selected.and_then(|index| super::dialog_items::dialog_button_index(items, index)))
     }
 }
 
 struct GuiFileDialogBackend {
     requests: smol::channel::Sender<GuiRequest>,
+    quit_request: Arc<QuitRequest>,
+}
+
+fn receive_dialog_reply<T>(
+    response: &mpsc::Receiver<T>,
+    quit_request: &QuitRequest,
+    stopped_error: &str,
+) -> Result<Option<T>, String> {
+    loop {
+        if quit_request.power_off_pending() {
+            return Ok(None);
+        }
+        match response.recv_timeout(Duration::from_millis(50)) {
+            Ok(result) => return Ok(Some(result)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(stopped_error.to_owned()),
+        }
+    }
 }
 
 struct GuiDragBackend {
@@ -838,22 +862,30 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
                 reply,
             })
             .map_err(|_| "GUI file dialog service is unavailable".to_owned())?;
-        response
-            .recv()
-            .map_err(|_| "GUI file dialog service stopped".to_owned())?
+        match receive_dialog_reply(
+            &response,
+            &self.quit_request,
+            "GUI file dialog service stopped",
+        )? {
+            Some(result) => result,
+            None => Ok(None),
+        }
     }
 }
 
 #[cfg(test)]
 mod file_dialog_frame_tests {
-    use super::{GuiFileDialogBackend, GuiRequest};
-    use remacs_runtime::frontend::FileDialogBackend;
-    use std::thread;
+    use super::{GuiFileDialogBackend, GuiRequest, receive_dialog_reply};
+    use remacs_runtime::frontend::{FileDialogBackend, QuitRequest};
+    use std::{sync::Arc, thread, time::Duration};
 
     #[test]
     fn file_dialog_request_keeps_the_selected_frame_id() {
         let (requests, received) = smol::channel::unbounded();
-        let backend = GuiFileDialogBackend { requests };
+        let backend = GuiFileDialogBackend {
+            requests,
+            quit_request: Arc::new(QuitRequest::default()),
+        };
         let worker = thread::spawn(move || {
             backend.read_file_name_for_frame(Some(42), "Open", None, false, None, false)
         });
@@ -867,6 +899,22 @@ mod file_dialog_frame_tests {
         assert_eq!(frame_id, Some(42));
         reply.send(Ok(None)).unwrap();
         assert_eq!(worker.join().unwrap(), Ok(None));
+    }
+
+    #[test]
+    fn dialog_reply_wait_is_interrupted_by_power_off() {
+        let (_reply, response) =
+            std::sync::mpsc::sync_channel::<Result<Option<usize>, String>>(1);
+        let quit_request = Arc::new(QuitRequest::default());
+        let request = quit_request.clone();
+        let worker = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            request.request_power_off();
+        });
+
+        let result = receive_dialog_reply(&response, &quit_request, "stopped").unwrap();
+        worker.join().unwrap();
+        assert!(result.is_none());
     }
 }
 
@@ -2548,6 +2596,9 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::PowerOff => {
+                if let Some(request) = &self.quit_request {
+                    request.clear_power_off();
+                }
                 self.pending_power_off = true;
                 self.render_requested = true;
                 Ok(None)
@@ -2831,6 +2882,9 @@ impl KeyIo for ChanIo {
                 Ok(None)
             }
             GuiEvent::PowerOff => {
+                if let Some(request) = &self.quit_request {
+                    request.clear_power_off();
+                }
                 self.pending_power_off = true;
                 self.render_requested = true;
                 Ok(None)
@@ -3892,9 +3946,11 @@ fn start_logic_inner(
                 })));
                 i.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
                     requests: gui_requests_tx.clone(),
+                    quit_request: logic_quit_request.clone(),
                 })));
                 i.set_file_dialog_backend(Some(Rc::new(GuiFileDialogBackend {
                     requests: gui_requests_tx.clone(),
+                    quit_request: logic_quit_request.clone(),
                 })));
                 i.set_font_family_list_backend(Some(Rc::new(GuiFontFamilyListBackend {
                     requests: gui_requests_tx.clone(),

@@ -8,7 +8,7 @@
 
 use std::io;
 use std::ops::Range;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::lisp::{Interp, value::SymId};
@@ -253,6 +253,7 @@ pub trait ColorPanelBackend {
 pub struct QuitRequest {
     pending: AtomicUsize,
     consumed: AtomicUsize,
+    power_off_pending: AtomicBool,
 }
 
 impl QuitRequest {
@@ -263,6 +264,21 @@ impl QuitRequest {
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 Some(n.saturating_add(1))
             });
+    }
+
+    /// Record a power-off event so synchronous front-end waits can unwind.
+    pub fn request_power_off(&self) {
+        self.power_off_pending.store(true, Ordering::Release);
+    }
+
+    /// Check whether a power-off event is waiting to be consumed by the front-end.
+    pub fn power_off_pending(&self) -> bool {
+        self.power_off_pending.load(Ordering::Acquire)
+    }
+
+    /// Clear the power-off latch after its queued event reaches the command loop.
+    pub fn clear_power_off(&self) {
+        self.power_off_pending.store(false, Ordering::Release);
     }
 
     /// Transfer all pending host requests to the interpreter and arrange for
