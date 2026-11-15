@@ -79,6 +79,8 @@ For compatibility with features and packages that are aware of
     (delete-selection-mode 1)                ; Setup the hooks.
     (setq-default delete-selection-mode nil) ; But keep it globally disabled.
     ))
+  ;; Remacs: match `define-minor-mode' by running the local mode hook after each transition.
+  (run-hooks 'delete-selection-local-mode-hook)
   delete-selection-mode)
 
 (defvar delete-selection-local-mode-hook nil)
