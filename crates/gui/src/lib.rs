@@ -1582,7 +1582,11 @@ fn frame_window_options(
                 .flatten()
         })
     });
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "windows"
+    ))]
     let parent_window_handle = frame
         .parent_frame
         .and_then(|parent| windows.get(&parent).copied().map(Into::into));
@@ -1707,7 +1711,11 @@ fn frame_window_options(
         },
         #[cfg(target_os = "macos")]
         parent_window,
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "windows"
+        ))]
         parent_window_handle,
         window_decorations: (child || frame.undecorated).then_some(WindowDecorations::Client),
         titlebar: if child || frame.undecorated {

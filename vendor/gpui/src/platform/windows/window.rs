@@ -380,6 +380,7 @@ impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         params: WindowParams,
+        owner_window: Option<HWND>,
         creation_info: WindowCreationInfo,
     ) -> Result<Self> {
         let WindowCreationInfo {
@@ -464,7 +465,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                None,
+                owner_window,
                 None,
                 Some(hinstance.into()),
                 Some(&context as *const _ as *const _),

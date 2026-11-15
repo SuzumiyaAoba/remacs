@@ -1213,8 +1213,8 @@ pub struct WindowOptions {
     #[cfg(target_os = "macos")]
     pub parent_window: Option<raw_window_handle::RawWindowHandle>,
 
-    /// GPUI parent window for an attached child window on Linux and FreeBSD.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    /// GPUI parent/owner window for an attached child window on Linux, FreeBSD, and Windows.
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     pub parent_window_handle: Option<AnyWindowHandle>,
 
     /// Whether the window should be movable by the user
@@ -1270,7 +1270,7 @@ pub(crate) struct WindowParams {
     #[cfg(target_os = "macos")]
     pub parent_window: Option<raw_window_handle::RawWindowHandle>,
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     pub parent_window_handle: Option<AnyWindowHandle>,
 
     /// Whether the window should be movable by the user
@@ -1402,7 +1402,7 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             #[cfg(target_os = "macos")]
             parent_window: None,
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
             parent_window_handle: None,
             is_movable: true,
             is_resizable: true,
