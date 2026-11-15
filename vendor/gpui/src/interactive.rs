@@ -592,11 +592,15 @@ pub enum TextDropEvent {
     Pending {
         /// The position of the mouse relative to the window.
         position: Point<Pixels>,
+        /// Updated text payload, when the platform can refresh it during drag.
+        text: Option<String>,
     },
     /// Text was dropped on the window.
     Submit {
         /// The position of the mouse relative to the window.
         position: Point<Pixels>,
+        /// Final text payload, when the platform can refresh it at drop time.
+        text: Option<String>,
     },
     /// The drag was cancelled or left the window.
     Exited,

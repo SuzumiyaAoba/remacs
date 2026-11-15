@@ -2825,8 +2825,12 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
-    let event = if window_state.lock().external_text_dragged {
-        PlatformInput::TextDrop(TextDropEvent::Pending { position })
+    let text_dragged = window_state.lock().external_text_dragged;
+    let event = if text_dragged {
+        PlatformInput::TextDrop(TextDropEvent::Pending {
+            position,
+            text: external_color_from_event(dragging_info),
+        })
     } else {
         PlatformInput::FileDrop(FileDropEvent::Pending { position })
     };
@@ -2861,7 +2865,10 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     let position = drag_event_position(&window_state, dragging_info);
     let text_dragged = window_state.lock().external_text_dragged;
     let event = if text_dragged {
-        PlatformInput::TextDrop(TextDropEvent::Submit { position })
+        PlatformInput::TextDrop(TextDropEvent::Submit {
+            position,
+            text: external_color_from_event(dragging_info),
+        })
     } else {
         PlatformInput::FileDrop(FileDropEvent::Submit { position })
     };

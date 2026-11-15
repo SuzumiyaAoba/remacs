@@ -2025,7 +2025,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 state.drag.position = position;
 
                 let input = if state.drag.text_drop {
-                    PlatformInput::TextDrop(TextDropEvent::Pending { position })
+                    PlatformInput::TextDrop(TextDropEvent::Pending {
+                        position,
+                        text: None,
+                    })
                 } else {
                     PlatformInput::FileDrop(FileDropEvent::Pending { position })
                 };
@@ -2067,7 +2070,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
 
                 let position = state.drag.position;
                 let input = if text_drop {
-                    PlatformInput::TextDrop(TextDropEvent::Submit { position })
+                    PlatformInput::TextDrop(TextDropEvent::Submit {
+                        position,
+                        text: None,
+                    })
                 } else {
                     PlatformInput::FileDrop(FileDropEvent::Submit { position })
                 };

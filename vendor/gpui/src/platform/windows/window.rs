@@ -1179,7 +1179,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         );
         let text_drop = self.0.state.borrow().external_text_dragged;
         let input = if text_drop {
-            PlatformInput::TextDrop(TextDropEvent::Pending { position })
+            PlatformInput::TextDrop(TextDropEvent::Pending {
+                position,
+                text: None,
+            })
         } else {
             PlatformInput::FileDrop(FileDropEvent::Pending { position })
         };
@@ -1236,7 +1239,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
             false,
         );
         let input = if text_drop {
-            PlatformInput::TextDrop(TextDropEvent::Submit { position })
+            PlatformInput::TextDrop(TextDropEvent::Submit {
+                position,
+                text: None,
+            })
         } else {
             PlatformInput::FileDrop(FileDropEvent::Submit { position })
         };

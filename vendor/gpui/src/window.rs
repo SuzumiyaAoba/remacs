@@ -3807,17 +3807,27 @@ impl Window {
                         modifiers: Modifiers::default(),
                     })
                 }
-                TextDropEvent::Pending { position } => {
+                TextDropEvent::Pending { position, text } => {
                     self.mouse_position = position;
+                    if let Some(text) = text
+                        && let Some(active_drag) = cx.active_drag.as_mut()
+                    {
+                        active_drag.value = Arc::new(ExternalText(text));
+                    }
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
-                TextDropEvent::Submit { position } => {
+                TextDropEvent::Submit { position, text } => {
                     cx.activate(true);
                     self.mouse_position = position;
+                    if let Some(text) = text
+                        && let Some(active_drag) = cx.active_drag.as_mut()
+                    {
+                        active_drag.value = Arc::new(ExternalText(text));
+                    }
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,

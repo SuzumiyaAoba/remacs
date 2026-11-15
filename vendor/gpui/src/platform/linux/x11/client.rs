@@ -799,6 +799,7 @@ impl X11Client {
                     if text_drop {
                         window.handle_input(PlatformInput::TextDrop(TextDropEvent::Pending {
                             position,
+                            text: None,
                         }));
                         window.handle_input(PlatformInput::TextDrop(TextDropEvent::Exited));
                     } else {
@@ -843,6 +844,7 @@ impl X11Client {
                     if text_drop {
                         window.handle_input(PlatformInput::TextDrop(TextDropEvent::Pending {
                             position,
+                            text: None,
                         }));
                     } else {
                         window
@@ -862,6 +864,7 @@ impl X11Client {
                     if text_drop {
                         window.handle_input(PlatformInput::TextDrop(TextDropEvent::Submit {
                             position,
+                            text: None,
                         }));
                     } else {
                         window
