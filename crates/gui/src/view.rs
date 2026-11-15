@@ -542,6 +542,59 @@ fn grid_window_row_height(
     )
 }
 
+fn scroll_row_height(
+    grid: &Grid,
+    window_id: Option<usize>,
+    row: usize,
+    fallback: Pixels,
+) -> Pixels {
+    window_id
+        .map(|window_id| grid_window_row_height(grid, window_id, row, fallback))
+        .unwrap_or_else(|| grid_row_height(grid, row, fallback))
+        .max(px(1.0))
+}
+
+fn wheel_delta_lines(delta: ScrollDelta, row_height: Pixels) -> f32 {
+    match delta {
+        ScrollDelta::Pixels(delta) => -f32::from(delta.y) / f32::from(row_height.max(px(1.0))),
+        ScrollDelta::Lines(delta) => -delta.y,
+    }
+}
+
+#[cfg(test)]
+mod wheel_delta_line_spacing_tests {
+    use super::{scroll_row_height, wheel_delta_lines};
+    use gpui::{ScrollDelta, point, px};
+    use remacs_runtime::frontend::Grid;
+
+    #[test]
+    fn pixel_deltas_use_the_target_window_row_height() {
+        let mut grid = Grid::blank(20, 4);
+        grid.default_line_height = 19;
+        grid.row_heights = vec![31; 4];
+        grid.window_row_heights.push(super::GridWindowRowHeights {
+            window_id: 7,
+            top: 0,
+            heights: vec![31; 4],
+            text_offsets: vec![0; 4],
+        });
+
+        let row_height = scroll_row_height(&grid, Some(7), 1, px(19.0));
+        assert_eq!(row_height, px(31.0));
+        assert_eq!(
+            wheel_delta_lines(
+                ScrollDelta::Pixels(point(px(0.0), px(-31.0))),
+                row_height,
+            ),
+            1.0
+        );
+        assert_eq!(
+            wheel_delta_lines(ScrollDelta::Lines(point(0.0, -1.5)), row_height),
+            1.5
+        );
+    }
+}
+
 fn grid_window_row_text_offset(grid: &Grid, window_id: usize, row: usize) -> Pixels {
     let Some(metrics) = grid_window_row_metrics(grid, window_id) else {
         return px(0.0);
@@ -3115,7 +3168,15 @@ impl Render for EditorView {
                 }) {
                     let vertical_delta = event.delta.pixel_delta(line_height);
                     let horizontal_delta = event.delta.pixel_delta(cell_width);
-                    let delta_lines = -f32::from(vertical_delta.y) / f32::from(line_height);
+                    let delta_lines = wheel_delta_lines(
+                        event.delta,
+                        scroll_row_height(
+                            &scroll_grid,
+                            position.window_id,
+                            position.row,
+                            line_height,
+                        ),
+                    );
                     let delta_columns = -f32::from(horizontal_delta.x) / f32::from(cell_width);
                     let pixel_delta = event.delta.precise().then(|| {
                         (

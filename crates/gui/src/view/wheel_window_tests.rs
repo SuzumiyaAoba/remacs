@@ -166,6 +166,54 @@ fn check_nonselected_wheel(stacked: bool, shared: bool, mode_line: bool) {
 }
 
 #[test]
+fn pixel_wheel_scroll_uses_line_spacing_of_pointer_row() {
+    let mut interp = Interp::new();
+    interp
+        .eval_str(
+            r#"(progn
+              (set-frame-parameter nil 'window-system 'ns)
+              (set-frame-parameter nil 'menu-bar-lines 0)
+              (set-frame-parameter nil 'tool-bar-lines 0)
+              (set-frame-parameter nil 'tab-bar-lines 0)
+              (set-frame-parameter nil 'vertical-scroll-bars nil)
+              (set-frame-size nil 80 16)
+              (setq-default header-line-format nil tab-line-format nil mode-line-format nil)
+              (switch-to-buffer (get-buffer-create "*wheel-line-spacing*"))
+              (erase-buffer)
+              (dotimes (n 100) (insert (format "line %d\n" n)))
+              (setq-local line-spacing 12))"#,
+        )
+        .unwrap();
+    let frame = interp.selected_frame.as_ref().unwrap().clone();
+    reflow_frame_windows(&frame, 80, 16);
+    let grid = render_grid_with_input_cached(&interp, 80, 16, None);
+    let area = *grid.window_text_areas.first().expect("text window area");
+    let row = area.top + 1;
+    let default_line_height = px(grid.default_line_height as f32);
+    let row_height = super::scroll_row_height(
+        &grid,
+        Some(area.window_id),
+        row,
+        default_line_height,
+    );
+    assert!(
+        row_height > default_line_height,
+        "line-spacing should increase the rendered row height"
+    );
+    let pixel_delta = ScrollDelta::Pixels(point(px(0.0), px(-f32::from(row_height))));
+    let line_delta = ScrollDelta::Lines(point(0.0, -1.5));
+    assert!(
+        f32::from(row_height) / f32::from(default_line_height) > 1.0,
+        "the default line-height divisor would overcount this row"
+    );
+    assert_eq!(super::wheel_delta_lines(pixel_delta, row_height), 1.0);
+    assert!(
+        (super::wheel_delta_lines(line_delta, row_height) - 1.5).abs() < 0.01,
+        "line-based input should preserve the requested line count"
+    );
+}
+
+#[test]
 fn wheel_follows_nonselected_side_by_side_buffer() {
     check_nonselected_wheel(false, false, false);
 }
