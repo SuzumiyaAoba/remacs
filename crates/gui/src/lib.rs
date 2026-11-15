@@ -1302,6 +1302,22 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::ResolveFontAt {
+                        frame_id,
+                        style,
+                        reply,
+                    } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, move |_view, window, _cx| {
+                                    view::resolve_font_at(window, &style)
+                                })
+                                .map_err(|error| error.to_string())
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::ImageInfo {
                         frame_id,
                         source,

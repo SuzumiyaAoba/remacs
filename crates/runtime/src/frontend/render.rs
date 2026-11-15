@@ -1,5 +1,5 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
-use super::{MouseArea, MouseObject, MouseObjectSource, MousePosition};
+use super::{FontAtStyle, MouseArea, MouseObject, MouseObjectSource, MousePosition};
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
@@ -10009,6 +10009,68 @@ fn visibility_at_pos(i: &Interp, faces: &WindowFaces, pos: usize) -> Visibility 
 /// wins), then overlays in ascending priority.
 fn style_at_pos(i: &Interp, ctx: &mut FaceCtx, wf: &WindowFaces, pos: usize) -> CellStyle {
     style_at_pos_with_named_face(i, ctx, wf, pos, None)
+}
+
+fn font_at_style(ctx: &FaceCtx, style: CellStyle) -> FontAtStyle {
+    FontAtStyle {
+        family: style
+            .font_family
+            .and_then(|index| ctx.font_families.get(usize::from(index)).cloned()),
+        weight: style.font_weight,
+        width: style.font_width,
+        height: style.font_height,
+        bold: style.bold,
+        italic: style.italic,
+    }
+}
+
+/// Resolve the same face stack used by redisplay at a buffer position.
+pub(crate) fn font_at_style_for_buffer_position(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    window: &crate::lisp::value::WindowRef,
+    position: usize,
+) -> Option<FontAtStyle> {
+    let buffer_id = window.borrow().buffer;
+    let buffer = i.buffers.get(buffer_id)?;
+    let mut ctx = FaceCtx::new(i, Some(frame));
+    ctx.default_style = Some(ctx.builtin(i, "default", 0).finish());
+    let faces = window_faces(
+        i,
+        &mut ctx,
+        &buffer,
+        &Value::Window(window.clone()),
+        None,
+    );
+    let style = style_at_pos(i, &mut ctx, &faces, position);
+    Some(font_at_style(&ctx, style))
+}
+
+/// Resolve face text properties attached directly to a string character.
+pub(crate) fn font_at_style_for_string_position(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    string: &crate::lisp::value::StrRef,
+    position: usize,
+) -> Option<FontAtStyle> {
+    let mut ctx = FaceCtx::new(i, Some(frame));
+    ctx.default_style = Some(ctx.builtin(i, "default", 0).finish());
+    let mut style = ctx.builtin(i, "default", 0);
+    let properties = i.str_props(string);
+    for (start, end, plist) in properties {
+        if position < *start || position >= *end {
+            continue;
+        }
+        for pair in plist.chunks_exact(2) {
+            let Some(property) = i.sym_id(&pair[0]) else {
+                continue;
+            };
+            if property == ctx.face || property == ctx.font_lock_face {
+                style.merge(&ctx.face_value(i, &pair[1], 0));
+            }
+        }
+    }
+    Some(font_at_style(&ctx, style.finish()))
 }
 
 fn echo_message_style(

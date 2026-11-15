@@ -251,6 +251,52 @@ pub(super) fn f_internal_copy_lisp_face(i: &mut Interp, a: crate::lisp::Argv) ->
 /// `font-at' — GNU checks that WINDOW (default selected) displays
 /// the current buffer, then bounds-checks POSITION against the
 /// buffer (1-based) or STRING (0-based).  tty text has no font.
+fn font_at_object(i: &mut Interp, style: crate::frontend::FontAtStyle, family: String) -> Value {
+    let weight = style.weight.unwrap_or(if style.bold { 700 } else { 400 });
+    let width = style.width.unwrap_or(100);
+    let height = style.height.unwrap_or(140);
+    Value::record(vec![
+        Value::Sym(i.q("font-object")),
+        Value::Sym(i.q("gpui")),
+        Value::Nil,
+        Value::string(family),
+        Value::Nil,
+        Value::Nil,
+        Value::Int(i128::from(weight) * 256),
+        Value::Sym(i.q(if style.italic { "italic" } else { "normal" })),
+        Value::Int(i128::from(width)),
+        Value::Int(i128::from(height)),
+        Value::Nil,
+    ])
+}
+
+fn resolve_font_at(
+    i: &mut Interp,
+    frame: Option<crate::editor::FrameRef>,
+    style: Option<crate::frontend::FontAtStyle>,
+) -> EvalResult {
+    let Some(frame) = frame else {
+        return Ok(Value::Nil);
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Nil);
+    }
+    let Some(style) = style else {
+        return Ok(Value::Nil);
+    };
+    let Some(backend) = i.font_family_list_backend.clone() else {
+        return Ok(Value::Nil);
+    };
+    let frame_id = frame.borrow().id;
+    let Some(family) = backend
+        .resolve_font_at(frame_id, &style)
+        .map_err(|error| i.error(error))?
+    else {
+        return Ok(Value::Nil);
+    };
+    Ok(font_at_object(i, style, family))
+}
+
 pub(super) fn f_font_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU font.c: decode_live_window(WINDOW) first (wta window-live-p),
     // then the STRING branch: CHECK_FIXNUM(position) + CHECK_STRING;
@@ -268,7 +314,17 @@ pub(super) fn f_font_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if pos < 0 || pos >= len {
             return Err(aoor(i, vec![Value::string(s.clone()), Value::Int(pos)]));
         }
-        return Ok(Value::Nil);
+        let frame = crate::editor::frame_of_window(i, &w);
+        let style = frame.as_ref().and_then(|frame| match &a[2] {
+            Value::Str(string) => crate::frontend::font_at_style_for_string_position(
+                i,
+                frame,
+                string,
+                pos as usize,
+            ),
+            _ => None,
+        });
+        return resolve_font_at(i, frame, style);
     }
     let wid = w.borrow().buffer;
     let cur = i.buffers.get(i.current_buffer);
@@ -289,7 +345,16 @@ pub(super) fn f_font_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             vec![a[0].clone(), Value::Int(begv), Value::Int(zv)],
         ));
     }
-    Ok(Value::Nil)
+    let frame = crate::editor::frame_of_window(i, &w);
+    let style = frame.as_ref().and_then(|frame| {
+        crate::frontend::font_at_style_for_buffer_position(
+            i,
+            frame,
+            &w,
+            usize::try_from(pos - 1).ok()?,
+        )
+    });
+    resolve_font_at(i, frame, style)
 }
 
 /// `font-info' — needs a window-system frame; GNU always errors on

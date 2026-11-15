@@ -11,8 +11,8 @@ use super::{
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::*;
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBidiDirection, GridCursor, GridImage,
-    GridImageConversion, GridImageSizeLimit, GridImageSource, GridMenu, GridMenuItem,
+    BoxStyle, BoxStyleKind, CellColor, CellStyle, FontAtStyle, Grid, GridBidiDirection,
+    GridCursor, GridImage, GridImageConversion, GridImageSizeLimit, GridImageSource, GridMenu, GridMenuItem,
     GridPointerShape, GridScrollBar, GridScrollBarOrientation, GridStipple, GridTooltipPosition,
     GridVScroll, GridWindowRowHeights, MouseArea, MouseButton as RemacsMouseButton, MouseInput,
     MousePosition,
@@ -343,6 +343,24 @@ pub(super) fn font_info(
         average_width: rounded(average_width),
         filename: None,
     })
+}
+
+pub(super) fn resolve_font_at(window: &mut Window, style: &FontAtStyle) -> Option<String> {
+    let mut requested = font(font_family(window, style.family.clone()));
+    if let Some(weight) = style.weight {
+        requested.weight = FontWeight(weight as f32);
+    } else if style.bold {
+        requested = requested.bold();
+    }
+    requested.stretch = FontStretch::from_percentage(style.width.unwrap_or(100));
+    if style.italic {
+        requested = requested.italic();
+    }
+    let font_id = window.text_system().resolve_font(&requested);
+    window
+        .text_system()
+        .get_font_for_id(font_id)
+        .map(|resolved| resolved.family.to_string())
 }
 const BIDI_PARAGRAPH_LTR_OPEN: &str = "\u{2066}";
 const BIDI_PARAGRAPH_RTL_OPEN: &str = "\u{2067}";

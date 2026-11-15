@@ -520,6 +520,11 @@ pub(super) enum GuiRequest {
         name: String,
         reply: SyncSender<Result<Option<remacs_runtime::frontend::FontInfo>, String>>,
     },
+    ResolveFontAt {
+        frame_id: usize,
+        style: remacs_runtime::frontend::FontAtStyle,
+        reply: SyncSender<Result<Option<String>, String>>,
+    },
     ImageInfo {
         frame_id: usize,
         source: remacs_runtime::frontend::GridImageSource,
@@ -1166,6 +1171,24 @@ impl remacs_runtime::frontend::FontFamilyListBackend for GuiFontFamilyListBacken
         response
             .recv()
             .map_err(|_| "GUI font-family service stopped".to_owned())?
+    }
+
+    fn resolve_font_at(
+        &self,
+        frame_id: usize,
+        style: &remacs_runtime::frontend::FontAtStyle,
+    ) -> Result<Option<String>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::ResolveFontAt {
+                frame_id,
+                style: style.clone(),
+                reply,
+            })
+            .map_err(|_| "GUI font service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI font service stopped".to_owned())?
     }
 
     fn font_info(

@@ -189,10 +189,33 @@ pub trait FontSelectionBackend {
     fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String>;
 }
 
+/// Resolved face attributes for the character passed to `font-at`.
+/// Font names are resolved by the graphical front-end so the returned
+/// font object describes the face that its text system actually opened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontAtStyle {
+    pub family: Option<String>,
+    pub weight: Option<u16>,
+    pub width: Option<u8>,
+    pub height: Option<u16>,
+    pub bold: bool,
+    pub italic: bool,
+}
+
 /// Font-family names available to a graphical front-end. Implementations
 /// may query the native text system on its owning UI thread.
 pub trait FontFamilyListBackend {
     fn list_families(&self, frame_id: usize) -> Result<Vec<String>, String>;
+
+    /// Resolve a rendered face to the font actually opened by the host text
+    /// system. A missing result means no usable font is available.
+    fn resolve_font_at(
+        &self,
+        _frame_id: usize,
+        _style: &FontAtStyle,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
 
     /// Information for an opened font family, or `None` when it cannot be
     /// opened. Metrics use integer pixel units like GNU's `font-info` vector.
@@ -856,6 +879,9 @@ pub(crate) use render::{position_at_display_cell, position_display_cell};
 pub(crate) use render::{ImageSpecInfo, image_spec_info};
 pub(crate) use render::grid_tooltip_from_string;
 pub(crate) use render::window_text_pixel_rows;
+pub(crate) use render::{
+    font_at_style_for_buffer_position, font_at_style_for_string_position,
+};
 pub(crate) use render::visual_line_ranges_for_window;
 pub(crate) use render::{buffer_setting, line_number_display_settings};
 pub(crate) use render::visible_fontification_range;
