@@ -2,8 +2,8 @@
 #[cfg(test)]
 use super::render_grid;
 use super::{
-    FrameVisibility, GridScrollBarOrientation, InputEvent, KeyIo, MouseButton, MouseInput,
-    MousePosition, MouseWheelDirection,
+    FrameVisibility, GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton,
+    MouseInput, MousePosition, MouseWheelDirection,
 };
 use crate::lisp::Flow;
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
@@ -2271,40 +2271,55 @@ fn dispatch_color_drop(
     color: &str,
     background: bool,
 ) -> Result<(), crate::lisp::Flow> {
-    let Some(position) = position else {
-        return Ok(());
-    };
     if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Ok(());
     }
     let Some(frame) = i.selected_frame.clone() else {
         return Ok(());
     };
-    let Some(buffer) = i.buffer_value(position.buffer_id) else {
+    let color = Value::string(format!("#{color}"));
+    let Some(position) = position else {
+        let parameter = Value::Sym(i.intern(if background {
+            "background-color"
+        } else {
+            "foreground-color"
+        }));
+        let set_frame_parameter = Value::Sym(i.intern("set-frame-parameter"));
+        i.apply(
+            &set_frame_parameter,
+            vec![Value::Frame(frame), parameter, color],
+        )?;
         return Ok(());
     };
-    let face_property = Value::Sym(i.intern("face"));
-    let get_char_property = Value::Sym(i.intern("get-char-property"));
-    let face_value = i.apply(
-        &get_char_property,
-        vec![
-            Value::Int(position.buffer_position as i128 + 1),
-            face_property,
-            buffer,
-        ],
-    )?;
-    let default_face = Value::Sym(i.intern("default"));
-    let face = match face_value {
-        Value::Sym(_) => face_value,
-        Value::Cons(cons) => {
-            let face = cons.borrow().car.clone();
-            if matches!(face, Value::Sym(_)) {
-                face
-            } else {
-                default_face
+    let face = if position.area == Some(MouseArea::ModeLine) {
+        Value::Sym(i.intern("mode-line"))
+    } else {
+        let Some(buffer) = i.buffer_value(position.buffer_id) else {
+            return Ok(());
+        };
+        let face_property = Value::Sym(i.intern("face"));
+        let get_char_property = Value::Sym(i.intern("get-char-property"));
+        let face_value = i.apply(
+            &get_char_property,
+            vec![
+                Value::Int(position.buffer_position as i128 + 1),
+                face_property,
+                buffer,
+            ],
+        )?;
+        let default_face = Value::Sym(i.intern("default"));
+        match face_value {
+            Value::Sym(_) => face_value,
+            Value::Cons(cons) => {
+                let face = cons.borrow().car.clone();
+                if matches!(face, Value::Sym(_)) {
+                    face
+                } else {
+                    default_face
+                }
             }
+            _ => default_face,
         }
-        _ => default_face,
     };
     let attribute = Value::Sym(i.intern(if background {
         ":background"
@@ -2318,10 +2333,53 @@ fn dispatch_color_drop(
             face,
             Value::Frame(frame),
             attribute,
-            Value::string(format!("#{color}")),
+            color,
         ],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod color_drop_tests {
+    use super::{MouseArea, MousePosition, dispatch_color_drop};
+    use crate::lisp::Interp;
+
+    #[test]
+    fn mode_line_and_empty_frame_color_drops_have_targets() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let mode_line = MousePosition {
+                    buffer_id: usize::MAX,
+                    buffer_position: 0,
+                    utf16_offset: 0,
+                    x: 0,
+                    y: 0,
+                    row: 0,
+                    column: 0,
+                    window_id: None,
+                    area: Some(MouseArea::ModeLine),
+                    object: None,
+                    timestamp: 0,
+                    mode_line_buffer_name: false,
+                };
+                dispatch_color_drop(&mut interp, Some(mode_line), "112233", false).unwrap();
+                let foreground = interp
+                    .eval_str("(face-attribute 'mode-line :foreground (selected-frame))")
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&foreground), "\"#112233\"");
+
+                dispatch_color_drop(&mut interp, None, "445566", true).unwrap();
+                let background = interp
+                    .eval_str("(frame-parameter nil 'background-color)")
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&background), "\"#445566\"");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 fn mouse_input_dragged(mouse: MouseInput) -> bool {

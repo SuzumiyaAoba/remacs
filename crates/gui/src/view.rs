@@ -32,6 +32,8 @@ use unicode_width::UnicodeWidthChar;
 #[cfg(test)]
 mod autoselect_tests;
 #[cfg(test)]
+mod color_drop_tests;
+#[cfg(test)]
 mod window_activation_tests;
 #[cfg(test)]
 mod frame_metrics_tests;
@@ -2124,6 +2126,21 @@ impl Render for EditorView {
                     .strip_prefix(COLOR_DROP_PREFIX)
                     .and_then(|color| color.split_once(':'))
                 {
+                    let position = position.or_else(|| {
+                        frame_content_point(
+                            window.mouse_position(),
+                            window.viewport_size(),
+                            border,
+                        )
+                        .and_then(|point| {
+                            input::mode_line_mouse_position(
+                                &this.grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                            )
+                        })
+                    });
                     let _ = external_text_drop_tx.send(GuiEvent::ColorDrop {
                         position,
                         color: color.to_owned(),
