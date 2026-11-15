@@ -29,6 +29,30 @@ use std::{
     rc::Rc,
 };
 use unicode_width::UnicodeWidthChar;
+
+fn external_color_drop_event(
+    position: Option<MousePosition>,
+    color: &ExternalColor,
+) -> Option<GuiEvent> {
+    let (kind, color) = color
+        .0
+        .strip_prefix(COLOR_DROP_PREFIX)?
+        .split_once(':')?;
+    Some(GuiEvent::ColorDrop {
+        position,
+        color: color.to_owned(),
+        background: kind == "background",
+    })
+}
+
+fn external_text_drop_event(position: Option<MousePosition>, text: &ExternalText) -> GuiEvent {
+    GuiEvent::Drop {
+        position,
+        urls: vec![text.0.clone()],
+        action: "copy".to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod autoselect_tests;
 #[cfg(test)]
@@ -2113,7 +2137,7 @@ impl Render for EditorView {
                 window.prevent_default();
                 cx.stop_propagation();
             }))
-            .on_drop(cx.listener(move |this, text: &ExternalText, window, cx| {
+            .on_drop(cx.listener(move |this, color: &ExternalColor, window, cx| {
                 let position =
                     frame_content_point(window.mouse_position(), window.viewport_size(), border)
                         .and_then(|point| {
@@ -2121,38 +2145,36 @@ impl Render for EditorView {
                                 &this.grid, point, cell_width, window,
                             )
                         });
-                if let Some((kind, color)) = text
-                    .0
-                    .strip_prefix(COLOR_DROP_PREFIX)
-                    .and_then(|color| color.split_once(':'))
-                {
-                    let position = position.or_else(|| {
-                        frame_content_point(
-                            window.mouse_position(),
-                            window.viewport_size(),
-                            border,
+                let position = position.or_else(|| {
+                    frame_content_point(
+                        window.mouse_position(),
+                        window.viewport_size(),
+                        border,
+                    )
+                    .and_then(|point| {
+                        input::mode_line_mouse_position(
+                            &this.grid,
+                            point,
+                            cell_width,
+                            window.scale_factor(),
                         )
-                        .and_then(|point| {
-                            input::mode_line_mouse_position(
-                                &this.grid,
-                                point,
-                                cell_width,
-                                window.scale_factor(),
-                            )
-                        })
-                    });
-                    let _ = external_text_drop_tx.send(GuiEvent::ColorDrop {
-                        position,
-                        color: color.to_owned(),
-                        background: kind == "background",
-                    });
-                } else {
-                    let _ = external_text_drop_tx.send(GuiEvent::Drop {
-                        position,
-                        urls: vec![text.0.clone()],
-                        action: "copy".to_owned(),
-                    });
+                    })
+                });
+                if let Some(event) = external_color_drop_event(position, color) {
+                    let _ = this.tx.send(event);
                 }
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
+            .on_drop(cx.listener(move |_this, text: &ExternalText, window, cx| {
+                let position =
+                    frame_content_point(window.mouse_position(), window.viewport_size(), border)
+                        .and_then(|point| {
+                            input::mouse_position_for_point_with_cell_width(
+                                &_this.grid, point, cell_width, window,
+                            )
+                        });
+                let _ = external_text_drop_tx.send(external_text_drop_event(position, text));
                 window.prevent_default();
                 cx.stop_propagation();
             }))

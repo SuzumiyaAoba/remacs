@@ -915,6 +915,7 @@ impl X11Client {
                     PlatformInput::TextDrop(TextDropEvent::Entered {
                         position,
                         text: text.trim_end_matches('\0').to_owned(),
+                        is_color: false,
                     })
                 } else {
                     return Some(());

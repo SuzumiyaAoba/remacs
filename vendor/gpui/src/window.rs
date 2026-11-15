@@ -7,8 +7,8 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    ExternalDragOperation, ExternalText, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
-    GpuSpecs, Hsla,
+    ExternalColor, ExternalDragOperation, ExternalText, FileDropEvent, FontId, Global,
+    GlobalElementId, GlyphId, GpuSpecs, Hsla,
     InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
@@ -3791,14 +3791,27 @@ impl Window {
                 }
             },
             PlatformInput::TextDrop(text_drop) => match text_drop {
-                TextDropEvent::Entered { position, text } => {
+                TextDropEvent::Entered {
+                    position,
+                    text,
+                    is_color,
+                } => {
                     self.mouse_position = position;
                     if cx.active_drag.is_none() {
-                        cx.active_drag = Some(AnyDrag {
-                            value: Arc::new(ExternalText(text.clone())),
-                            view: cx.new(|_| ExternalText(text)).into(),
-                            cursor_offset: position,
-                            cursor_style: None,
+                        cx.active_drag = Some(if is_color {
+                            AnyDrag {
+                                value: Arc::new(ExternalColor(text.clone())),
+                                view: cx.new(|_| ExternalColor(text)).into(),
+                                cursor_offset: position,
+                                cursor_style: None,
+                            }
+                        } else {
+                            AnyDrag {
+                                value: Arc::new(ExternalText(text.clone())),
+                                view: cx.new(|_| ExternalText(text)).into(),
+                                cursor_offset: position,
+                                cursor_style: None,
+                            }
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -3812,7 +3825,7 @@ impl Window {
                     if let Some(text) = text
                         && let Some(active_drag) = cx.active_drag.as_mut()
                     {
-                        active_drag.value = Arc::new(ExternalText(text));
+                        active_drag.value = Arc::new(ExternalColor(text));
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
@@ -3826,7 +3839,7 @@ impl Window {
                     if let Some(text) = text
                         && let Some(active_drag) = cx.active_drag.as_mut()
                     {
-                        active_drag.value = Arc::new(ExternalText(text));
+                        active_drag.value = Arc::new(ExternalColor(text));
                     }
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,

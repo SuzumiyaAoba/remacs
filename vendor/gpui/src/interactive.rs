@@ -537,6 +537,16 @@ impl Render for ExternalText {
     }
 }
 
+/// A color dragged into the window from an external application.
+#[derive(Debug, Clone)]
+pub struct ExternalColor(pub String);
+
+impl Render for ExternalColor {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// A file-open request delivered by the operating system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenFileRequest {
@@ -587,6 +597,8 @@ pub enum TextDropEvent {
         position: Point<Pixels>,
         /// The text being dragged.
         text: String,
+        /// Whether the payload represents a native color rather than plain text.
+        is_color: bool,
     },
     /// Text is being dragged over the window.
     Pending {

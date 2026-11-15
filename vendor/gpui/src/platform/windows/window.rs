@@ -1139,7 +1139,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 self.handle_drag_drop(input);
             } else if let Some(text) = external_text_from_data_object(&idata_obj) {
                 *pdweffect = DROPEFFECT_COPY;
-                let input = PlatformInput::TextDrop(TextDropEvent::Entered { position, text });
+                let input = PlatformInput::TextDrop(TextDropEvent::Entered {
+                    position,
+                    text,
+                    is_color: false,
+                });
                 self.0.state.borrow_mut().external_text_dragged = true;
                 self.handle_drag_drop(input);
             } else {

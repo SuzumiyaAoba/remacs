@@ -1987,6 +1987,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 PlatformInput::TextDrop(TextDropEvent::Entered {
                                     position,
                                     text: content,
+                                    is_color: false,
                                 })
                             } else {
                                 let paths: SmallVec<[_; 2]> = content

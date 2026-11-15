@@ -2800,7 +2800,11 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     if let Some(color) = external_color_from_event(dragging_info)
         && send_new_event(
             &window_state,
-            PlatformInput::TextDrop(TextDropEvent::Entered { position, text: color }),
+            PlatformInput::TextDrop(TextDropEvent::Entered {
+                position,
+                text: color,
+                is_color: true,
+            }),
         )
     {
         let mut state = window_state.lock();
@@ -2811,7 +2815,11 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     if let Some(text) = external_text_from_event(dragging_info)
         && send_new_event(
             &window_state,
-            PlatformInput::TextDrop(TextDropEvent::Entered { position, text }),
+            PlatformInput::TextDrop(TextDropEvent::Entered {
+                position,
+                text,
+                is_color: false,
+            }),
         )
     {
         let mut state = window_state.lock();
