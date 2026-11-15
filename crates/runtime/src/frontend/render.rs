@@ -8155,7 +8155,12 @@ enum LineHeightProperty {
     Total(usize),
 }
 
-fn height_spec_pixels(value: &Value, default_line_height: usize) -> Option<usize> {
+fn height_spec_pixels(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    value: &Value,
+    default_line_height: usize,
+) -> Option<usize> {
     match value {
         Value::Int(height) if *height > 0 => usize::try_from(*height).ok(),
         Value::Float(ratio) if (**ratio).is_finite() && **ratio > 0.0 => {
@@ -8175,9 +8180,30 @@ fn height_spec_pixels(value: &Value, default_line_height: usize) -> Option<usize
                 Value::Float(ratio) => *ratio,
                 _ => return None,
             };
-            let _ = face;
+            let default_font_height = faces
+                .default_style
+                .and_then(|style| style.font_height)
+                .unwrap_or(140)
+                .max(1);
+            let face_font_height = match face {
+                Value::Sym(symbol) => {
+                    let symbol = crate::editor::face_resolve(i, &symbol).unwrap_or(symbol);
+                    faces
+                        .named(i, &symbol, 0)
+                        .finish()
+                        .font_height
+                        .unwrap_or(default_font_height)
+                        .max(1)
+                }
+                _ => default_font_height,
+            };
+            let face_height = ((default_line_height as f64 * face_font_height as f64
+                / default_font_height as f64)
+                .round()
+                .max(1.0)
+                .min(usize::MAX as f64)) as usize;
             (ratio.is_finite() && ratio > 0.0).then(|| {
-                (ratio * default_line_height as f64)
+                (ratio * face_height as f64)
                     .round()
                     .min(usize::MAX as f64) as usize
             })
@@ -8186,23 +8212,29 @@ fn height_spec_pixels(value: &Value, default_line_height: usize) -> Option<usize
     }
 }
 
-fn line_height_property(value: &Value, default_line_height: usize) -> Option<LineHeightProperty> {
+fn line_height_property(
+    i: &Interp,
+    faces: &mut FaceCtx,
+    value: &Value,
+    default_line_height: usize,
+) -> Option<LineHeightProperty> {
     if matches!(value, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T) {
         return Some(LineHeightProperty::ContentsOnly);
     }
     if let Value::Cons(_) = value
         && let Ok(items) = value.list_to_vec()
         && items.len() == 2
-        && let Some(total) = height_spec_pixels(&items[1], default_line_height)
+        && let Some(total) = height_spec_pixels(i, faces, &items[1], default_line_height)
     {
         return Some(LineHeightProperty::Total(total));
     }
-    height_spec_pixels(value, default_line_height).map(LineHeightProperty::Minimum)
+    height_spec_pixels(i, faces, value, default_line_height).map(LineHeightProperty::Minimum)
 }
 
 fn line_height_at_pos(
     i: &Interp,
     faces: &WindowFaces,
+    face_ctx: &mut FaceCtx,
     position: usize,
     default_line_height: usize,
 ) -> Option<LineHeightProperty> {
@@ -8225,7 +8257,7 @@ fn line_height_at_pos(
         .map(|(_, _, value, _)| value);
     overlay_value
         .or(property_value)
-        .and_then(|value| line_height_property(value, default_line_height))
+        .and_then(|value| line_height_property(i, face_ctx, value, default_line_height))
 }
 
 fn image_property(i: &Interp, plist: &Value, name: &str) -> Value {
@@ -12384,6 +12416,7 @@ fn render_grid_internal(
                         line_height_at_pos(
                             i,
                             faces,
+                            &mut fctx,
                             line_pos.saturating_add(line_len),
                             frame_char_height,
                         )
