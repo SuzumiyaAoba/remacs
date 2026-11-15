@@ -7197,6 +7197,19 @@ fn window_faces(
         .default_style
         .and_then(|style| style.font_height)
         .unwrap_or(140);
+    let mouse_face_window_id = mouse_position.and_then(|position| {
+        position
+            .window_id
+            .or_else(|| crate::editor::sel_window(i).map(|window| window.borrow().id))
+    });
+    let mouse_face_position = mouse_position
+        .filter(|position| {
+            position.buffer_id == bb.id
+                && mouse_face_window_id.is_some_and(|window_id| {
+                    matches!(win, Value::Window(window) if window.borrow().id == window_id)
+                })
+        })
+        .map(|position| position.buffer_position);
     let mouse_position = mouse_position
         .filter(|position| position.buffer_id == bb.id)
         .map(|position| position.buffer_position);
@@ -7326,7 +7339,7 @@ fn window_faces(
             overlay.buffer == Some(bb.id) && overlay.matches_window(i, win)
         })
         .filter_map(|(overlay_index, overlay)| {
-            let mouse_face_active = mouse_position.is_some_and(|position| {
+            let mouse_face_active = mouse_face_position.is_some_and(|position| {
                 position >= overlay.start && position < overlay.end
             });
             let mut string_value = |property: Option<crate::lisp::value::SymId>| {
@@ -7450,7 +7463,7 @@ fn window_faces(
                         bb.id,
                         start,
                         default_font_height,
-                        mouse_position.is_some_and(|position| {
+                        mouse_face_position.is_some_and(|position| {
                             position >= start && position < end
                         }),
                         Some(MouseObjectSource::TextProperty {
@@ -7476,7 +7489,7 @@ fn window_faces(
             })
             .filter_map(|(overlay_index, overlay)| {
                 let value = overlay.property(i, &Value::Sym(display_property));
-                let mouse_face_active = mouse_position.is_some_and(|position| {
+                let mouse_face_active = mouse_face_position.is_some_and(|position| {
                     position >= overlay.start && position < overlay.end
                 });
                 let replacement = display_value_replacement(
@@ -7533,7 +7546,7 @@ fn window_faces(
         .filter(|tp| tp.prop == ctx.invisible)
         .map(|tp| (tp.start, tp.end, tp.value.clone()))
         .collect();
-    let mouse_face_prop = mouse_position.and_then(|position| {
+    let mouse_face_prop = mouse_face_position.and_then(|position| {
         properties
             .iter()
             .enumerate()
@@ -7546,7 +7559,7 @@ fn window_faces(
             .max_by_key(|(index, _)| *index)
             .map(|(_, tp)| (tp.start, tp.end, tp.value.clone()))
     });
-    let mouse_face_overlay = mouse_position.and_then(|position| {
+    let mouse_face_overlay = mouse_face_position.and_then(|position| {
         let candidates: Vec<_> = bb
             .overlays
             .iter()

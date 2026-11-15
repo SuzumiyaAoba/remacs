@@ -194,6 +194,61 @@ fn display_replacement_string_faces_style_its_own_text() {
 }
 
 #[test]
+fn mouse_face_highlight_is_limited_to_the_hovered_shared_buffer_window() {
+    let mut i = interp_with_frame("hover\n");
+    i.eval_str(
+        "(put-text-property 1 6 'mouse-face 'highlight) \
+         (setq qa-mouse-face-first (selected-window)) \
+         (setq qa-mouse-face-second (split-window-below 6)) \
+         (set-window-buffer qa-mouse-face-second (current-buffer))",
+    )
+    .unwrap();
+    let Value::Window(first) = i.eval_str("qa-mouse-face-first").unwrap() else {
+        panic!("first split window");
+    };
+    let Value::Window(second) = i.eval_str("qa-mouse-face-second").unwrap() else {
+        panic!("second split window");
+    };
+    let first_id = first.borrow().id;
+    let second_id = second.borrow().id;
+    let position = MousePosition {
+        buffer_id: i.current_buffer_ref().unwrap().borrow().id,
+        buffer_position: 0,
+        utf16_offset: 0,
+        x: 0,
+        y: 0,
+        row: 0,
+        column: 0,
+        window_id: Some(second_id),
+        area: None,
+        mode_line_buffer_name: false,
+        object: None,
+        timestamp: 0,
+    };
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let grid = crate::frontend::render_frame_grid_with_mouse_position_cached(
+        &i,
+        &frame,
+        80,
+        25,
+        None,
+        Some(position),
+    );
+    let first_area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == first_id)
+        .unwrap();
+    let second_area = grid
+        .window_text_areas
+        .iter()
+        .find(|area| area.window_id == second_id)
+        .unwrap();
+    assert!(!grid.char_attrs[first_area.top][first_area.text_left].inverse);
+    assert!(grid.char_attrs[second_area.top][second_area.text_left].inverse);
+}
+
+#[test]
 fn disable_eval_display_wrapper_applies_inner_spec_without_evaluation() {
     let mut i = interp_with_frame("X");
     i.eval_str(
