@@ -9,6 +9,7 @@ enum Call {
     Hide,
     Activate,
     Unhide,
+    HideOtherApps,
     ActivateUnhidden { has_frame: bool, front: bool },
 }
 
@@ -44,6 +45,7 @@ impl ApplicationVisibilityBackend for RecordingBackend {
     }
 
     fn hide_other_apps(&self) -> Result<(), String> {
+        self.0.borrow_mut().push(Call::HideOtherApps);
         Ok(())
     }
 
@@ -97,6 +99,30 @@ fn ns_hide_emacs_activation_symbols_keep_their_distinct_modes() {
                     Call::Hide,
                 ]
             );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn ns_hide_others_uses_the_backend_only_on_macos() {
+    thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = Interp::new();
+            let calls = Rc::new(RefCell::new(Vec::new()));
+            interp
+                .set_application_visibility_backend(Some(Rc::new(RecordingBackend(calls.clone()))));
+
+            let result = interp.eval_str("(ns-hide-others)");
+            if cfg!(target_os = "macos") {
+                result.unwrap();
+                assert_eq!(*calls.borrow(), vec![Call::HideOtherApps]);
+            } else {
+                assert!(result.is_err());
+                assert!(calls.borrow().is_empty());
+            }
         })
         .unwrap()
         .join()

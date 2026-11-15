@@ -854,6 +854,9 @@ fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_ns_hide_others(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+    if !cfg!(target_os = "macos") {
+        return Err(winsys(i));
+    }
     let Some(backend) = i.application_visibility_backend.clone() else {
         return Err(winsys(i));
     };
