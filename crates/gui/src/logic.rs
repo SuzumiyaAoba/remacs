@@ -37,7 +37,9 @@ fn same_mouse_face_position(left: Option<MousePosition>, right: Option<MousePosi
     match (left, right) {
         (None, None) => true,
         (Some(left), Some(right)) => {
-            left.buffer_id == right.buffer_id && left.buffer_position == right.buffer_position
+            left.buffer_id == right.buffer_id
+                && left.buffer_position == right.buffer_position
+                && left.window_id == right.window_id
         }
         _ => false,
     }

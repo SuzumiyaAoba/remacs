@@ -7283,7 +7283,16 @@ fn window_faces(
         })
         .map(|position| position.buffer_position);
     let mouse_position = mouse_position
-        .filter(|position| position.buffer_id == bb.id && position.area.is_none())
+        .filter(|position| {
+            position.buffer_id == bb.id
+                && position.area.is_none()
+                && match win {
+                    Value::Window(window) => {
+                        mouse_face_window_id == Some(window.borrow().id)
+                    }
+                    _ => true,
+                }
+        })
         .map(|position| position.buffer_position);
     // GNU's `redisplay--update-region-highlight' only displays the
     // region while Transient Mark mode and `mark-active' are both set.
@@ -11859,6 +11868,9 @@ fn render_grid_internal(
         if let Some(position) = mouse_position
             && position.buffer_id == buf_id
             && position.area.is_none()
+            && position
+                .window_id
+                .map_or(selected_window, |hovered_window_id| hovered_window_id == window_id)
         {
             hover_cursor = Some(grid_pointer_shape(
                 i,
