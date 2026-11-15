@@ -289,6 +289,9 @@ Contains links to previous and next month and year, and current minical."
 (defun cal-html-insert-year-minicals (year cols)
   "Make a one page yearly mini-calendar for four-digit YEAR.
 There are 12/cols rows of COLS months each."
+  ;; Remacs: Reject invalid column counts before writing partial output.
+  (unless (and (integerp cols) (> cols 0))
+    (signal 'args-out-of-range (list cols)))
   (insert cal-html-b-document-string)
   (insert (cal-html-h1 (number-to-string year)))
   (insert (cal-html-b-table "class=year")
