@@ -8920,6 +8920,47 @@ fn image_display_replacement(
     })
 }
 
+pub(crate) struct ImageSpecInfo {
+    pub(crate) source: GridImageSource,
+    pub(crate) index: Option<usize>,
+    pub(crate) width: Option<usize>,
+    pub(crate) height: Option<usize>,
+    pub(crate) mask_requested: bool,
+}
+
+pub(crate) fn image_spec_info(
+    i: &Interp,
+    value: &Value,
+    buffer_id: usize,
+    default_font_height: u16,
+) -> Option<ImageSpecInfo> {
+    let DisplayReplacement::Image {
+        source,
+        index,
+        width,
+        height,
+        masked,
+        ..
+    } = image_display_replacement(
+        i,
+        value,
+        buffer_id,
+        default_font_height,
+        None,
+        None,
+    )?
+    else {
+        return None;
+    };
+    Some(ImageSpecInfo {
+        source,
+        index,
+        width,
+        height,
+        mask_requested: masked,
+    })
+}
+
 pub(super) fn toolbar_grid_image(
     i: &Interp,
     value: &Value,

@@ -1,7 +1,7 @@
 //! Image specifications, metadata and buffer display adapters.
 
 use crate::lisp::builtins::arg;
-use crate::lisp::{Interp, error::EvalResult, value::Value};
+use crate::lisp::{Interp, error::EvalResult, obarray::sym, value::Value};
 
 pub(super) fn f_image_transforms_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match a.first() {
@@ -159,24 +159,126 @@ pub(super) fn f_remove_images(i: &mut Interp, args: crate::lisp::Argv) -> EvalRe
     Ok(Value::Nil)
 }
 
-/// `image-size' / `image-mask-p' — GNU validates the spec first and
-/// signals "Invalid image specification" for anything else; a valid
-/// spec then hits `decode_window_system_frame', which on a tty is the
-/// "Window system frame should be used" error.
-pub(super) fn f_image_spec_check(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+fn image_spec_info(
+    i: &mut Interp,
+    spec: &Value,
+    frame: &crate::editor::FrameRef,
+) -> Result<crate::frontend::ImageSpecInfo, crate::lisp::error::Flow> {
+    let font_height = crate::editor::frame_char_height(i, frame)
+        .max(1)
+        .min(u16::MAX as usize) as u16;
+    crate::frontend::image_spec_info(i, spec, i.current_buffer, font_height)
+        .ok_or_else(|| i.error("Invalid image specification"))
+}
+
+fn image_info(
+    i: &mut Interp,
+    frame: &crate::editor::FrameRef,
+    spec: &crate::frontend::ImageSpecInfo,
+) -> Result<Option<crate::frontend::ImageInfo>, crate::lisp::error::Flow> {
+    let Some(backend) = i.image_backend.clone() else {
+        return Ok(None);
+    };
+    let frame_id = frame.borrow().id;
+    backend
+        .image_info(frame_id, spec.source.clone(), spec.index)
+        .map_err(|error| i.error(error))
+}
+
+fn image_display_size(
+    spec: &crate::frontend::ImageSpecInfo,
+    info: &crate::frontend::ImageInfo,
+) -> (usize, usize) {
+    match (spec.width, spec.height) {
+        (Some(width), Some(height)) => (width, height),
+        (Some(width), None) => (
+            width,
+            if info.width == 0 {
+                0
+            } else {
+                (info.height as f64 * width as f64 / info.width as f64).round() as usize
+            },
+        ),
+        (None, Some(height)) => (
+            if info.height == 0 {
+                0
+            } else {
+                (info.width as f64 * height as f64 / info.height as f64).round() as usize
+            },
+            height,
+        ),
+        (None, None) => (info.width, info.height),
+    }
+}
+
+/// `image-size' — load a valid image descriptor on the requested frame.
+pub(super) fn f_image_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !valid_image_spec(i, &a[0]) {
         return Err(i.error("Invalid image specification"));
     }
-    Err(i.error("Window system frame should be used"))
+    let frame = crate::editor::frame_live(i, &arg(&a, 2))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
+    }
+    let spec = image_spec_info(i, &a[0], &frame)?;
+    let Some(info) = image_info(i, &frame, &spec)? else {
+        return Ok(Value::Nil);
+    };
+    let (width, height) = image_display_size(&spec, &info);
+    if arg(&a, 1).truthy() {
+        Ok(Value::cons(
+            Value::Int(width as i128),
+            Value::Int(height as i128),
+        ))
+    } else {
+        let char_width = crate::editor::frame_char_width(i, &frame).max(1) as f64;
+        let char_height = crate::editor::frame_char_height(i, &frame).max(1) as f64;
+        Ok(Value::cons(
+            Value::float(width as f64 / char_width),
+            Value::float(height as f64 / char_height),
+        ))
+    }
 }
 
-/// `image-metadata' — nil for an invalid spec; a valid spec hits the
-/// same window-system error as `image-size'.
+/// `image-mask-p' — report transparency or a mask requested by the spec.
+pub(super) fn f_image_mask_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !valid_image_spec(i, &a[0]) {
+        return Err(i.error("Invalid image specification"));
+    }
+    let frame = crate::editor::frame_live(i, &arg(&a, 1))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
+    }
+    let spec = image_spec_info(i, &a[0], &frame)?;
+    let masked =
+        spec.mask_requested || image_info(i, &frame, &spec)?.is_some_and(|info| info.has_mask);
+    Ok(Value::from_bool(masked))
+}
+
+/// `image-metadata' — expose frame count and delay for animated images.
 pub(super) fn f_image_metadata(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !valid_image_spec(i, &a[0]) {
         return Ok(Value::Nil);
     }
-    Err(i.error("Window system frame should be used"))
+    let frame = crate::editor::frame_live(i, &arg(&a, 1))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
+    }
+    let spec = image_spec_info(i, &a[0], &frame)?;
+    let Some(info) = image_info(i, &frame, &spec)? else {
+        return Ok(Value::Nil);
+    };
+    let mut metadata = Vec::new();
+    if let Some(delay) = info.frame_delay.filter(|delay| *delay > 0.0) {
+        metadata.extend([Value::Sym(i.intern("delay")), Value::float(delay)]);
+    }
+    if info.frame_count > 1 {
+        metadata.extend([
+            Value::Sym(i.intern("count")),
+            Value::Int(info.frame_count as i128),
+        ]);
+    }
+    Ok(Value::list(metadata))
 }
 
 /// `image-type' — GNU maps a file name's extension via
@@ -297,13 +399,39 @@ pub(super) fn f_imagep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(valid_image_spec(i, &a[0])))
 }
 
-/// `image-flush' — invalid spec signals a plain error; a valid spec
-/// then hits the no-window-system error like GNU on a tty.
+/// `image-flush' — remove the image from the renderer cache.
 pub(super) fn f_image_flush(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !valid_image_spec(i, &a[0]) {
         return Err(i.error("Invalid image specification"));
     }
-    Err(i.error("Window system frame should be used"))
+    let frame_arg = arg(&a, 1);
+    let (frame, frame_ids) = if i.sym_is(&frame_arg, sym::T) {
+        let frames: Vec<_> = i
+            .frames
+            .iter()
+            .filter(|frame| !frame.borrow().dead && crate::editor::frame_is_graphical(i, frame))
+            .cloned()
+            .collect();
+        let Some(frame) = frames.first().cloned() else {
+            return Ok(Value::Nil);
+        };
+        let frame_ids = frames.iter().map(|frame| frame.borrow().id).collect();
+        (frame, frame_ids)
+    } else {
+        let frame = crate::editor::frame_live(i, &frame_arg)?;
+        if !crate::editor::frame_is_graphical(i, &frame) {
+            return Err(i.error("Window system frame should be used"));
+        }
+        let frame_ids = vec![frame.borrow().id];
+        (frame, frame_ids)
+    };
+    let spec = image_spec_info(i, &a[0], &frame)?;
+    if let Some(backend) = i.image_backend.clone() {
+        backend
+            .flush_image(frame_ids, spec.source)
+            .map_err(|error| i.error(error))?;
+    }
+    Ok(Value::Nil)
 }
 
 /// `put-image` — GNU requires an image spec (list headed `image') and
@@ -335,10 +463,26 @@ pub(super) fn f_clear_image_cache(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         }
         return Ok(Value::Nil);
     }
-    match &arg(&a, 0) {
-        Value::Nil | Value::Frame(_) => Err(i.error("Window system frame should be used")),
-        _ => Ok(Value::Nil),
+    let filter = arg(&a, 0);
+    let (frame_ids, filename) = if i.sym_is(&filter, sym::T) {
+        (None, None)
+    } else if matches!(filter, Value::Nil | Value::Frame(_)) {
+        let frame = crate::editor::frame_live(i, &filter)?;
+        if !crate::editor::frame_is_graphical(i, &frame) {
+            return Err(i.error("Window system frame should be used"));
+        }
+        (Some(vec![frame.borrow().id]), None)
+    } else if let Value::Str(filename) = filter {
+        (None, Some(filename.borrow().to_unicode_lossy()))
+    } else {
+        return Ok(Value::Nil);
+    };
+    if let Some(backend) = i.image_backend.clone() {
+        backend
+            .clear_image_cache(frame_ids, filename)
+            .map_err(|error| i.error(error))?;
     }
+    Ok(Value::Nil)
 }
 
 pub(super) fn f_image_cache_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {

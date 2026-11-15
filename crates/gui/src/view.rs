@@ -19,7 +19,8 @@ use remacs_runtime::frontend::{
     NativeMenuCommandId,
     QuitRequest, WeakNativeMenuCommandId,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicUsize, Ordering},
@@ -1397,6 +1398,7 @@ impl RunMenuCommand {
 pub(super) struct EditorView {
     tx: FrameEventSender,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    image_cache_epochs: Arc<Mutex<HashMap<GridImageSource, usize>>>,
     image_cache_size: Arc<AtomicUsize>,
     pub(super) focus: FocusHandle,
     pub(super) grid: Grid,
@@ -1520,6 +1522,7 @@ impl EditorView {
         EditorView {
             tx: FrameEventSender::new(tx, frame_id, quit_request),
             image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
+            image_cache_epochs: Arc::new(Mutex::new(HashMap::new())),
             image_cache_size: Arc::new(AtomicUsize::new(0)),
             focus: cx.focus_handle(),
             grid: Grid::blank(0, 0),
@@ -2230,6 +2233,7 @@ impl Render for EditorView {
         let image_blink_visible = grid_cursor_blink_visible(&grid);
         let image_gamma_exponent = grid.gamma_exponent;
         let image_cache_entries = self.image_cache_entries.clone();
+        let image_cache_epochs = self.image_cache_epochs.clone();
         let image_cache_size = self.image_cache_size.clone();
         let pointer_regions = grid.pointer_regions.clone();
         let pointer_row_heights = grid.row_heights.clone();
@@ -3895,6 +3899,7 @@ impl Render for EditorView {
                     cursors,
                     image_gamma_exponent,
                     image_cache_entries.clone(),
+                    image_cache_epochs.clone(),
                     image_cache_size.clone(),
                 )
             }))
@@ -4404,10 +4409,21 @@ fn grid_image_element(
     cursors: Vec<GridCursor>,
     gamma_exponent: Option<f64>,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    image_cache_epochs: Arc<Mutex<HashMap<GridImageSource, usize>>>,
     image_cache_size: Arc<AtomicUsize>,
 ) -> AnyElement {
     let slice = image.resolved_slice();
     let cache_key = image.source.clone();
+    let cache_epoch = image_cache_epochs
+        .lock()
+        .ok()
+        .and_then(|epochs| epochs.get(&cache_key).copied())
+        .unwrap_or(0);
+    let mut id_hasher = DefaultHasher::new();
+    image.row.hash(&mut id_hasher);
+    image.column.hash(&mut id_hasher);
+    cache_epoch.hash(&mut id_hasher);
+    let element_id = ("remacs-image", id_hasher.finish());
     let frame_index = image.index;
     let conversion = image.conversion;
     let transform_smoothing = image.transform_smoothing;
@@ -4461,11 +4477,10 @@ fn grid_image_element(
             total.saturating_add(data.as_bytes(frame).map_or(0, <[u8]>::len))
         });
         if let Ok(mut entries) = image_cache_entries.lock() {
-            entries.insert(cache_key.clone(), image_bytes);
-            let total = entries
-                .values()
-                .fold(0usize, |total, bytes| total.saturating_add(*bytes));
-            image_cache_size.store(total, Ordering::Release);
+            let previous = entries.insert(cache_key.clone(), image_bytes).unwrap_or(0);
+            let _ = image_cache_size.fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+                Some(total.saturating_sub(previous).saturating_add(image_bytes))
+            });
         }
     });
     let source = match frame_index {
@@ -4494,7 +4509,7 @@ fn grid_image_element(
         (None, Some(height)) => source.h(px(height as f32)),
         (None, None) => source,
     };
-    let source = grid_image_slice_element(source.into_any_element(), slice);
+    let source = grid_image_slice_element(source.id(element_id).into_any_element(), slice);
     let image_left = border + cell_width * image.column as f32;
     let image_column = image.column;
     let image_top =
@@ -4757,9 +4772,18 @@ fn grid_data_image(
     base_uri: Option<String>,
     css: Option<String>,
 ) -> Option<Img> {
+    grid_data_image_source(format, bytes, base_uri, css).map(img)
+}
+
+fn grid_data_image_source(
+    format: String,
+    bytes: Arc<[u8]>,
+    base_uri: Option<String>,
+    css: Option<String>,
+) -> Option<ImageSource> {
     if format == "pbm" {
         let image = Image::from_pnm_bytes(bytes.to_vec())?;
-        return Some(img(Arc::new(image)));
+        return Some(ImageSource::Image(Arc::new(image)));
     }
     let format = match format.as_str() {
         "png" => ImageFormat::Png,
@@ -4772,17 +4796,257 @@ fn grid_data_image(
         _ => return None,
     };
     match (base_uri, css) {
-        (Some(base_uri), None) => Some(img(ImageSource::ImageWithBaseUri {
+        (Some(base_uri), None) => Some(ImageSource::ImageWithBaseUri {
             image: Arc::new(Image::from_bytes(format, bytes.to_vec())),
             base_uri: std::path::PathBuf::from(base_uri),
-        })),
-        (base_uri, Some(css)) => Some(img(ImageSource::ImageWithSvgOptions {
+        }),
+        (base_uri, Some(css)) => Some(ImageSource::ImageWithSvgOptions {
             image: Arc::new(Image::from_bytes(format, bytes.to_vec())),
             base_uri: base_uri.map(std::path::PathBuf::from),
             css: Some(css),
-        })),
-        (None, None) => Some(img(Arc::new(Image::from_bytes(format, bytes.to_vec())))),
+        }),
+        (None, None) => Some(ImageSource::Image(Arc::new(Image::from_bytes(
+            format,
+            bytes.to_vec(),
+        )))),
     }
+}
+
+fn grid_image_source(source: &GridImageSource) -> Option<ImageSource> {
+    match source {
+        GridImageSource::File(path) => Some(ImageSource::from(std::path::PathBuf::from(path))),
+        GridImageSource::FileWithSvgOptions {
+            path,
+            base_uri,
+            css,
+        } => Some(ImageSource::ResourceWithSvgOptions {
+            resource: std::path::PathBuf::from(path).into(),
+            base_uri: base_uri.as_deref().map(std::path::PathBuf::from),
+            css: css.clone(),
+        }),
+        GridImageSource::Data { format, bytes } => {
+            grid_data_image_source(format.clone(), bytes.clone(), None, None)
+        }
+        GridImageSource::DataWithBaseUri {
+            format,
+            bytes,
+            base_uri,
+        } => grid_data_image_source(format.clone(), bytes.clone(), Some(base_uri.clone()), None),
+        GridImageSource::DataWithSvgOptions {
+            format,
+            bytes,
+            base_uri,
+            css,
+        } => grid_data_image_source(format.clone(), bytes.clone(), base_uri.clone(), css.clone()),
+    }
+}
+
+fn image_format_for_path(path: &str) -> Option<ImageFormat> {
+    let extension = std::path::Path::new(path)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some(ImageFormat::Png),
+        "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+        "webp" => Some(ImageFormat::Webp),
+        "gif" => Some(ImageFormat::Gif),
+        "svg" => Some(ImageFormat::Svg),
+        "bmp" => Some(ImageFormat::Bmp),
+        "tif" | "tiff" => Some(ImageFormat::Tiff),
+        _ => None,
+    }
+}
+
+fn image_from_data(format: &str, bytes: &[u8]) -> Result<Image, String> {
+    if matches!(format, "pbm" | "ppm" | "pgm" | "pam") {
+        return Image::from_pnm_bytes(bytes.to_vec())
+            .ok_or_else(|| "invalid portable anymap image".to_owned());
+    }
+    let format = match format.to_ascii_lowercase().as_str() {
+        "png" => ImageFormat::Png,
+        "jpg" | "jpeg" => ImageFormat::Jpeg,
+        "webp" => ImageFormat::Webp,
+        "gif" => ImageFormat::Gif,
+        "svg" => ImageFormat::Svg,
+        "bmp" => ImageFormat::Bmp,
+        "tif" | "tiff" => ImageFormat::Tiff,
+        _ => return Err("unsupported image format".to_owned()),
+    };
+    Ok(Image::from_bytes(format, bytes.to_vec()))
+}
+
+fn image_from_grid_source(
+    source: &GridImageSource,
+) -> Result<(Image, Option<std::path::PathBuf>, Option<String>), String> {
+    match source {
+        GridImageSource::File(path) => {
+            let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+            let image = if matches!(
+                std::path::Path::new(path)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
+                Some("pbm" | "ppm" | "pgm" | "pam")
+            ) {
+                Image::from_pnm_bytes(bytes)
+                    .ok_or_else(|| "invalid portable anymap image".to_owned())?
+            } else {
+                let format = image_format_for_path(path)
+                    .ok_or_else(|| "unsupported image format".to_owned())?;
+                Image::from_bytes(format, bytes)
+            };
+            return Ok((image, None, None));
+        }
+        GridImageSource::FileWithSvgOptions {
+            path,
+            base_uri,
+            css,
+        } => Ok((
+            Image::from_bytes(
+                ImageFormat::Svg,
+                std::fs::read(path).map_err(|error| error.to_string())?,
+            ),
+            base_uri.as_deref().map(std::path::PathBuf::from),
+            css.clone(),
+        )),
+        GridImageSource::Data { format, bytes } => {
+            Ok((image_from_data(format, bytes)?, None, None))
+        }
+        GridImageSource::DataWithBaseUri {
+            format,
+            bytes,
+            base_uri,
+        } => Ok((
+            image_from_data(format, bytes)?,
+            Some(std::path::PathBuf::from(base_uri)),
+            None,
+        )),
+        GridImageSource::DataWithSvgOptions {
+            format,
+            bytes,
+            base_uri,
+            css,
+        } => Ok((
+            image_from_data(format, bytes)?,
+            base_uri.as_deref().map(std::path::PathBuf::from),
+            css.clone(),
+        )),
+    }
+}
+
+pub(super) fn inspect_image_source(
+    source: &GridImageSource,
+    index: Option<usize>,
+    app: &App,
+) -> Result<Option<remacs_runtime::frontend::ImageInfo>, String> {
+    let svg_renderer = app.svg_renderer();
+    let (image, base_uri, css) = image_from_grid_source(source)?;
+    let data = image
+        .to_image_data_with_svg_options(svg_renderer.clone(), base_uri.as_deref(), css.as_deref())
+        .map_err(|error| error.to_string())?;
+    let frame_index = index.unwrap_or(0);
+    if frame_index >= data.frame_count() {
+        return Ok(None);
+    }
+    let size = data.size(frame_index);
+    let svg_scale = if image.format == ImageFormat::Svg {
+        2
+    } else {
+        1
+    };
+    let width = size.width.0.max(0) as usize / svg_scale;
+    let height = size.height.0.max(0) as usize / svg_scale;
+    let pixels = data.as_bytes(frame_index).unwrap_or_default();
+    let has_mask = pixels
+        .chunks_exact(4)
+        .any(|pixel| pixel.get(3).is_some_and(|alpha| *alpha < 255));
+    let (delay_numerator, delay_denominator) = data.delay(frame_index).numer_denom_ms();
+    let frame_delay = (delay_numerator > 0 && delay_denominator > 0)
+        .then(|| delay_numerator as f64 / delay_denominator as f64 / 1000.0);
+    Ok(Some(remacs_runtime::frontend::ImageInfo {
+        width,
+        height,
+        has_mask,
+        frame_count: data.frame_count(),
+        frame_delay,
+    }))
+}
+
+fn image_source_matches_filename(source: &GridImageSource, filename: &str) -> bool {
+    match source {
+        GridImageSource::File(path) | GridImageSource::FileWithSvgOptions { path, .. } => {
+            path == filename
+        }
+        GridImageSource::Data { .. }
+        | GridImageSource::DataWithBaseUri { .. }
+        | GridImageSource::DataWithSvgOptions { .. } => false,
+    }
+}
+
+fn remove_grid_image_asset(source: &GridImageSource, cx: &mut Context<EditorView>) {
+    if let Some(source) = grid_image_source(source) {
+        let app = <Context<'_, EditorView> as std::borrow::BorrowMut<App>>::borrow_mut(cx);
+        source.remove_asset(app);
+    }
+}
+
+fn bump_image_cache_epoch(view: &EditorView, source: &GridImageSource) {
+    if let Ok(mut epochs) = view.image_cache_epochs.lock() {
+        let epoch = epochs.entry(source.clone()).or_default();
+        *epoch = epoch.saturating_add(1);
+    }
+}
+
+pub(super) fn flush_image_source(
+    view: &mut EditorView,
+    source: &GridImageSource,
+    cx: &mut Context<EditorView>,
+) {
+    remove_grid_image_asset(source, cx);
+    bump_image_cache_epoch(view, source);
+    if let Ok(mut entries) = view.image_cache_entries.lock() {
+        let removed = entries.remove(source).unwrap_or(0);
+        let _ = view
+            .image_cache_size
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+                Some(total.saturating_sub(removed))
+            });
+    }
+    cx.notify();
+}
+
+pub(super) fn clear_image_cache(
+    view: &mut EditorView,
+    filename: Option<&str>,
+    cx: &mut Context<EditorView>,
+) {
+    let removed = if let Ok(mut entries) = view.image_cache_entries.lock() {
+        let removed: Vec<_> = entries
+            .keys()
+            .filter(|source| {
+                filename.is_none_or(|filename| image_source_matches_filename(source, filename))
+            })
+            .cloned()
+            .collect();
+        let removed_bytes = removed.iter().fold(0usize, |total, source| {
+            total.saturating_add(entries.remove(source).unwrap_or(0))
+        });
+        let _ = view
+            .image_cache_size
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |total| {
+                Some(total.saturating_sub(removed_bytes))
+            });
+        removed
+    } else {
+        Vec::new()
+    };
+    for source in removed {
+        remove_grid_image_asset(&source, cx);
+        bump_image_cache_epoch(view, &source);
+    }
+    cx.notify();
 }
 
 #[cfg(target_os = "macos")]

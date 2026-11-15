@@ -225,6 +225,42 @@ pub struct FontInfo {
     pub filename: Option<String>,
 }
 
+/// Metadata read from an image by the host renderer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageInfo {
+    pub width: usize,
+    pub height: usize,
+    pub has_mask: bool,
+    pub frame_count: usize,
+    pub frame_delay: Option<f64>,
+}
+
+/// Host image decoder and cache operations used by window-system primitives.
+pub trait ImageBackend {
+    fn image_info(
+        &self,
+        _frame_id: usize,
+        _source: GridImageSource,
+        _index: Option<usize>,
+    ) -> Result<Option<ImageInfo>, String> {
+        Ok(None)
+    }
+
+    fn flush_image(&self, _frame_ids: Vec<usize>, _source: GridImageSource) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// `frame_ids` is `None` for every GUI frame; a filename restricts the
+    /// operation to resources that refer to that file.
+    fn clear_image_cache(
+        &self,
+        _frame_ids: Option<Vec<usize>>,
+        _filename: Option<String>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 /// Requested native visibility of a graphical frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameVisibility {
@@ -817,6 +853,7 @@ pub use render::{
     render_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached_mut,
 };
 pub(crate) use render::{position_at_display_cell, position_display_cell};
+pub(crate) use render::{ImageSpecInfo, image_spec_info};
 pub(crate) use render::grid_tooltip_from_string;
 pub(crate) use render::window_text_pixel_rows;
 pub(crate) use render::visual_line_ranges_for_window;

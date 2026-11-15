@@ -54,6 +54,11 @@ impl Interp {
         self.font_family_list_backend = backend;
     }
 
+    /// Install or remove the host image decoder/cache used by graphical frames.
+    pub fn set_image_backend(&mut self, backend: Option<Rc<dyn crate::frontend::ImageBackend>>) {
+        self.image_backend = backend;
+    }
+
     /// Install or remove the host font chooser used by GUI font primitives.
     pub fn set_font_selection_backend(
         &mut self,

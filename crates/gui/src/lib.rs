@@ -1302,6 +1302,73 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::ImageInfo {
+                        frame_id,
+                        source,
+                        index,
+                        reply,
+                    } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, move |_view, _window, app| {
+                                    view::inspect_image_source(&source, index, app)
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
+                    GuiRequest::FlushImage {
+                        frame_ids,
+                        source,
+                        reply,
+                    } => {
+                        let mut result = Ok(());
+                        for frame_id in frame_ids {
+                            let Some(handle) = windows.get(&frame_id).copied() else {
+                                result = Err(format!("GUI frame {frame_id} is not open"));
+                                break;
+                            };
+                            let source = source.clone();
+                            if let Err(error) = handle
+                                .update(cx, move |view, _window, view_cx| {
+                                    view::flush_image_source(view, &source, view_cx)
+                                })
+                                .map_err(|error| error.to_string())
+                            {
+                                result = Err(error);
+                                break;
+                            }
+                        }
+                        let _ = reply.send(result);
+                    }
+                    GuiRequest::ClearImageCache {
+                        frame_ids,
+                        filename,
+                        reply,
+                    } => {
+                        let frame_ids = frame_ids.unwrap_or_else(|| windows.keys().copied().collect());
+                        let mut result = Ok(());
+                        for frame_id in frame_ids {
+                            let Some(handle) = windows.get(&frame_id).copied() else {
+                                result = Err(format!("GUI frame {frame_id} is not open"));
+                                break;
+                            };
+                            let filename = filename.clone();
+                            if let Err(error) = handle
+                                .update(cx, move |view, _window, view_cx| {
+                                    view::clear_image_cache(view, filename.as_deref(), view_cx)
+                                })
+                                .map_err(|error| error.to_string())
+                            {
+                                result = Err(error);
+                                break;
+                            }
+                        }
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::ReconsiderFrameFonts { frame_id, reply } => {
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             handle

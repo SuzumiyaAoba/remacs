@@ -179,6 +179,7 @@ impl Interp {
             dialog_backend: None,
             file_dialog_backend: None,
             font_family_list_backend: None,
+            image_backend: None,
             font_selection_backend: None,
             frame_window_backend: None,
             color_panel_backend: None,

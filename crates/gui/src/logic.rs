@@ -520,6 +520,22 @@ pub(super) enum GuiRequest {
         name: String,
         reply: SyncSender<Result<Option<remacs_runtime::frontend::FontInfo>, String>>,
     },
+    ImageInfo {
+        frame_id: usize,
+        source: remacs_runtime::frontend::GridImageSource,
+        index: Option<usize>,
+        reply: SyncSender<Result<Option<remacs_runtime::frontend::ImageInfo>, String>>,
+    },
+    FlushImage {
+        frame_ids: Vec<usize>,
+        source: remacs_runtime::frontend::GridImageSource,
+        reply: SyncSender<Result<(), String>>,
+    },
+    ClearImageCache {
+        frame_ids: Option<Vec<usize>>,
+        filename: Option<String>,
+        reply: SyncSender<Result<(), String>>,
+    },
     ReconsiderFrameFonts {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
@@ -1178,6 +1194,68 @@ impl remacs_runtime::frontend::FontFamilyListBackend for GuiFontFamilyListBacken
         response
             .recv()
             .map_err(|_| "GUI font service stopped".to_owned())?
+    }
+}
+
+struct GuiImageBackend {
+    requests: smol::channel::Sender<GuiRequest>,
+}
+
+impl remacs_runtime::frontend::ImageBackend for GuiImageBackend {
+    fn image_info(
+        &self,
+        frame_id: usize,
+        source: remacs_runtime::frontend::GridImageSource,
+        index: Option<usize>,
+    ) -> Result<Option<remacs_runtime::frontend::ImageInfo>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::ImageInfo {
+                frame_id,
+                source,
+                index,
+                reply,
+            })
+            .map_err(|_| "GUI image service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI image service stopped".to_owned())?
+    }
+
+    fn flush_image(
+        &self,
+        frame_ids: Vec<usize>,
+        source: remacs_runtime::frontend::GridImageSource,
+    ) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FlushImage {
+                frame_ids,
+                source,
+                reply,
+            })
+            .map_err(|_| "GUI image service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI image service stopped".to_owned())?
+    }
+
+    fn clear_image_cache(
+        &self,
+        frame_ids: Option<Vec<usize>>,
+        filename: Option<String>,
+    ) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::ClearImageCache {
+                frame_ids,
+                filename,
+                reply,
+            })
+            .map_err(|_| "GUI image service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI image service stopped".to_owned())?
     }
 }
 
@@ -4088,6 +4166,9 @@ fn start_logic_inner(
                     quit_request: logic_quit_request.clone(),
                 })));
                 i.set_font_family_list_backend(Some(Rc::new(GuiFontFamilyListBackend {
+                    requests: gui_requests_tx.clone(),
+                })));
+                i.set_image_backend(Some(Rc::new(GuiImageBackend {
                     requests: gui_requests_tx.clone(),
                 })));
                 i.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {

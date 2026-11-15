@@ -255,10 +255,9 @@ use functions::{
     f_special_variable_p, f_subr_native_elisp_p,
 };
 use images::{
-    f_bitmap_spec_p, f_clear_image_cache, f_image_cache_size, f_image_flush, f_image_metadata,
-    f_image_spec_check,
-    f_image_transforms_p, f_image_type, f_image_type_available_p, f_imagep, f_init_image_library,
-    f_lookup_image_map, f_put_image, f_remove_images,
+    f_bitmap_spec_p, f_clear_image_cache, f_image_cache_size, f_image_flush, f_image_mask_p,
+    f_image_metadata, f_image_size, f_image_transforms_p, f_image_type, f_image_type_available_p,
+    f_imagep, f_init_image_library, f_lookup_image_map, f_put_image, f_remove_images,
 };
 use objects::{
     f_cl_type_of, f_garbage_collect_maybe, f_gc_heapsize, f_length_eq, f_length_gt, f_length_lt,
@@ -1534,9 +1533,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("image-flush", 1, 2, f_image_flush, ""),
-    S!("image-mask-p", 1, 2, f_image_spec_check, ""),
+    S!("image-mask-p", 1, 2, f_image_mask_p, ""),
     S!("image-metadata", 1, 2, f_image_metadata, ""),
-    S!("image-size", 1, 3, f_image_spec_check, ""),
+    S!("image-size", 1, 3, f_image_size, ""),
     S!("image-transforms-p", 0, 1, f_image_transforms_p, ""),
     S!("image-type", 1, 3, f_image_type, ""),
     S!("image-type-available-p", 1, 2, f_image_type_available_p, ""),
