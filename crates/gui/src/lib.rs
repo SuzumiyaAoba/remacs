@@ -860,6 +860,7 @@ pub fn run_gui_with_dump(
                                         apply_frame_window_state(
                                             window,
                                             requested_fullscreen.as_deref(),
+                                            cx,
                                         );
                                     }
                                     if update_behavior {
@@ -951,6 +952,7 @@ pub fn run_gui_with_dump(
                                     apply_frame_window_state(
                                         window,
                                         initial_fullscreen.as_deref(),
+                                        cx,
                                     );
                                     view.set_frame_behavior(
                                         initial_behavior.0,
@@ -1662,7 +1664,25 @@ fn frame_window_options(
     };
     let window_bounds = match frame.fullscreen.as_deref() {
         Some("maximized") => WindowBounds::Maximized(bounds),
-        Some("fullboth" | "fullwidth" | "fullheight") => WindowBounds::Fullscreen(bounds),
+        Some("fullboth") => WindowBounds::Fullscreen(bounds),
+        Some(mode @ ("fullwidth" | "fullheight")) => {
+            let display_bounds = cx
+                .update(|cx| {
+                    display_id
+                        .and_then(|id| cx.find_display(DisplayId::from(id)))
+                        .or_else(|| cx.primary_display())
+                        .map(|display| display.bounds())
+                })
+                .ok()
+                .flatten();
+            let partial_bounds = display_bounds
+                .and_then(|display_bounds| {
+                    partial_frame_window_geometry(mode, bounds, bounds.size, display_bounds)
+                })
+                .map(|(bounds, _)| bounds)
+                .unwrap_or(bounds);
+            WindowBounds::Windowed(partial_bounds)
+        }
         _ => WindowBounds::Windowed(bounds),
     };
     WindowOptions {
@@ -1804,7 +1824,7 @@ fn apply_frame_snapshot_bounds(
     }
 }
 
-fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
+fn apply_frame_window_state(window: &mut Window, fullscreen: Option<&str>, cx: &mut App) {
     match fullscreen {
         Some("maximized") => {
             if window.is_fullscreen() {
@@ -1814,12 +1834,33 @@ fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
                 window.zoom_window();
             }
         }
-        Some("fullboth" | "fullwidth" | "fullheight") => {
+        Some("fullboth") => {
             if window.is_maximized() {
                 window.zoom_window();
             }
             if !window.is_fullscreen() {
                 window.toggle_fullscreen();
+            }
+        }
+        Some(mode @ ("fullwidth" | "fullheight")) => {
+            if window.is_fullscreen() {
+                window.toggle_fullscreen();
+            }
+            if window.is_maximized() {
+                window.zoom_window();
+            }
+            if let Some(display) = window.display(cx).or_else(|| cx.primary_display()) {
+                let current_bounds = window.bounds();
+                let content_size = window.viewport_size();
+                if let Some((bounds, content_size)) = partial_frame_window_geometry(
+                    mode,
+                    current_bounds,
+                    content_size,
+                    display.bounds(),
+                ) {
+                    window.resize(content_size);
+                    window.set_position(bounds.origin, Some(u32::from(display.id())));
+                }
             }
         }
         _ => {
@@ -1830,6 +1871,89 @@ fn apply_frame_window_state(window: &Window, fullscreen: Option<&str>) {
                 window.zoom_window();
             }
         }
+    }
+}
+
+fn partial_frame_window_geometry(
+    mode: &str,
+    current_bounds: Bounds<Pixels>,
+    content_size: Size<Pixels>,
+    display_bounds: Bounds<Pixels>,
+) -> Option<(Bounds<Pixels>, Size<Pixels>)> {
+    let horizontal_chrome =
+        (f32::from(current_bounds.size.width) - f32::from(content_size.width)).max(0.0);
+    let vertical_chrome =
+        (f32::from(current_bounds.size.height) - f32::from(content_size.height)).max(0.0);
+    let bounds = match mode {
+        "fullwidth" => Bounds::new(
+            point(display_bounds.origin.x, current_bounds.origin.y),
+            size(display_bounds.size.width, current_bounds.size.height),
+        ),
+        "fullheight" => Bounds::new(
+            point(current_bounds.origin.x, display_bounds.origin.y),
+            size(current_bounds.size.width, display_bounds.size.height),
+        ),
+        _ => return None,
+    };
+    let content_size = size(
+        px((f32::from(bounds.size.width) - horizontal_chrome).max(1.0)),
+        px((f32::from(bounds.size.height) - vertical_chrome).max(1.0)),
+    );
+    Some((bounds, content_size))
+}
+
+#[cfg(test)]
+mod partial_fullscreen_tests {
+    use super::partial_frame_window_geometry;
+    use gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn fullwidth_expands_only_width_and_preserves_content_height() {
+        let current = Bounds::new(point(px(100.0), px(200.0)), size(px(420.0), px(330.0)));
+        let display = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
+
+        assert_eq!(
+            partial_frame_window_geometry(
+                "fullwidth",
+                current,
+                size(px(400.0), px(300.0)),
+                display
+            ),
+            Some((
+                Bounds::new(point(px(0.0), px(200.0)), size(px(1920.0), px(330.0))),
+                size(px(1900.0), px(300.0)),
+            ))
+        );
+    }
+
+    #[test]
+    fn fullheight_expands_only_height_and_preserves_content_width() {
+        let current = Bounds::new(point(px(100.0), px(200.0)), size(px(420.0), px(330.0)));
+        let display = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
+
+        assert_eq!(
+            partial_frame_window_geometry(
+                "fullheight",
+                current,
+                size(px(400.0), px(300.0)),
+                display
+            ),
+            Some((
+                Bounds::new(point(px(100.0), px(0.0)), size(px(420.0), px(1080.0))),
+                size(px(400.0), px(1050.0)),
+            ))
+        );
+    }
+
+    #[test]
+    fn other_modes_do_not_produce_partial_geometry() {
+        let current = Bounds::new(point(px(100.0), px(200.0)), size(px(420.0), px(330.0)));
+        let display = Bounds::new(point(px(0.0), px(0.0)), size(px(1920.0), px(1080.0)));
+
+        assert_eq!(
+            partial_frame_window_geometry("fullboth", current, current.size, display),
+            None
+        );
     }
 }
 
