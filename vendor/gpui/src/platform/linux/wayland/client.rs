@@ -70,7 +70,7 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::{PlatformWindow, blade::BladeContext};
+use crate::platform::{PlatformWindow, blade::BladeContext, resolve_parent_window};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
@@ -698,7 +698,18 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
-        let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+        let focused_parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+        let parent = resolve_parent_window(
+            params.parent_window_handle,
+            focused_parent,
+            |parent_handle| {
+                state
+                    .windows
+                    .values()
+                    .find(|window| window.handle() == parent_handle)
+                    .map(|window| window.toplevel())
+            },
+        );
 
         let (window, surface_id) = WaylandWindow::new(
             handle,

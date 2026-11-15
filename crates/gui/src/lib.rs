@@ -1570,6 +1570,10 @@ fn frame_window_options(
                 .flatten()
         })
     });
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let parent_window_handle = frame
+        .parent_frame
+        .and_then(|parent| windows.get(&parent).copied().map(Into::into));
     let parent_bounds =
         base_window.and_then(|parent| parent.update(cx, |_view, window, _cx| window.bounds()).ok());
     let parameter_position = frame.left.zip(frame.top).map(|(left, top)| {
@@ -1673,6 +1677,8 @@ fn frame_window_options(
         },
         #[cfg(target_os = "macos")]
         parent_window,
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        parent_window_handle,
         window_decorations: (child || frame.undecorated).then_some(WindowDecorations::Client),
         titlebar: if child || frame.undecorated {
             None

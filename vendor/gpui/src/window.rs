@@ -950,6 +950,8 @@ impl Window {
             kind,
             #[cfg(target_os = "macos")]
             parent_window,
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            parent_window_handle,
             is_movable,
             is_resizable,
             is_minimizable,
@@ -973,6 +975,8 @@ impl Window {
                 kind,
                 #[cfg(target_os = "macos")]
                 parent_window,
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                parent_window_handle,
                 is_movable,
                 is_resizable,
                 is_minimizable,

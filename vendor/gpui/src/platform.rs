@@ -1192,6 +1192,10 @@ pub struct WindowOptions {
     #[cfg(target_os = "macos")]
     pub parent_window: Option<raw_window_handle::RawWindowHandle>,
 
+    /// GPUI parent window for an attached child window on Linux and FreeBSD.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub parent_window_handle: Option<AnyWindowHandle>,
+
     /// Whether the window should be movable by the user
     pub is_movable: bool,
 
@@ -1245,6 +1249,9 @@ pub(crate) struct WindowParams {
     #[cfg(target_os = "macos")]
     pub parent_window: Option<raw_window_handle::RawWindowHandle>,
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub parent_window_handle: Option<AnyWindowHandle>,
+
     /// Whether the window should be movable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
@@ -1272,6 +1279,35 @@ pub(crate) struct WindowParams {
     pub window_min_size: Option<Size<Pixels>>,
     #[cfg(target_os = "macos")]
     pub tabbing_identifier: Option<String>,
+}
+
+pub(crate) fn resolve_parent_window<Parent, Window>(
+    parent: Option<Parent>,
+    focused: Option<Window>,
+    resolve: impl FnOnce(Parent) -> Option<Window>,
+) -> Option<Window> {
+    parent.map_or(focused, resolve)
+}
+
+#[cfg(test)]
+mod parent_window_tests {
+    use super::resolve_parent_window;
+
+    #[test]
+    fn explicit_parent_wins_and_does_not_fall_back_when_unavailable() {
+        assert_eq!(
+            resolve_parent_window(Some("requested"), Some("focused"), |parent| Some(parent)),
+            Some("requested")
+        );
+        assert_eq!(
+            resolve_parent_window(Some("missing"), Some("focused"), |_| None),
+            None
+        );
+        assert_eq!(
+            resolve_parent_window(None::<&str>, Some("focused"), |_| None),
+            Some("focused")
+        );
+    }
 }
 
 /// Represents the status of how a window should be opened.
@@ -1324,6 +1360,8 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             #[cfg(target_os = "macos")]
             parent_window: None,
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            parent_window_handle: None,
             is_movable: true,
             is_resizable: true,
             is_minimizable: true,

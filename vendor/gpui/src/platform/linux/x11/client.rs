@@ -49,7 +49,7 @@ use super::{
 };
 
 use crate::platform::{
-    LinuxCommon, PlatformWindow,
+    LinuxCommon, PlatformWindow, resolve_parent_window,
     blade::BladeContext,
     linux::{
         DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
@@ -1491,10 +1491,19 @@ impl LinuxClient for X11Client {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
-        let parent_window = state
+        let focused_parent_window = state
             .keyboard_focused_window
             .and_then(|focused_window| state.windows.get(&focused_window))
             .map(|window| window.window.x_window);
+        let parent_window = resolve_parent_window(
+            params.parent_window_handle,
+            focused_parent_window,
+            |parent_handle| {
+                state.windows.iter().find_map(|(window_id, window)| {
+                    (window.handle() == parent_handle).then_some(*window_id)
+                })
+            },
+        );
         let x_window = state
             .xcb_connection
             .generate_id()
