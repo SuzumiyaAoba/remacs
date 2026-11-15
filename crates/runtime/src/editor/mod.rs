@@ -7175,6 +7175,7 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut width = default_size.0;
     let mut height = default_size.1;
     let mut parameters = pl.clone();
+    let mut initial_window_system = None;
     if let Ok(entries) = pl.list_to_vec() {
         let mut has_window_system = false;
         for entry in entries {
@@ -7200,7 +7201,12 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                         height = value as usize;
                     }
                 }
-                "window-system" => has_window_system = true,
+                "window-system" => {
+                    has_window_system = true;
+                    if initial_window_system.is_none() {
+                        initial_window_system = Some(value.clone());
+                    }
+                }
                 _ => {}
             }
         }
@@ -7209,6 +7215,7 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         {
             let window_system = frame_parameter_value(i, frame, "window-system");
             if !window_system.is_nil() {
+                initial_window_system = Some(window_system.clone());
                 parameters = Value::cons(
                     Value::cons(Value::Sym(i.intern("window-system")), window_system),
                     parameters,
@@ -7219,6 +7226,11 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = Frame::new_tty(buf, minibuf, width, height);
     let name = next_frame_name(i);
     f.borrow_mut().name = crate::lisp::Value::string_ref(name);
+    if let Some(window_system) = initial_window_system {
+        let key = Value::Sym(i.intern("window-system"));
+        let params = crate::lisp::eval::plist_put_front(&f.borrow().params, &key, window_system);
+        f.borrow_mut().params = params;
+    }
     if let Err(flow) = f_modify_frame_parameters(
         i,
         vec![Value::Frame(f.clone()), parameters].into(),

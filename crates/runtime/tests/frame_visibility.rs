@@ -1,6 +1,6 @@
 use remacs_runtime::{
     frontend::{FrameVisibility, FrameWindowBackend},
-    lisp::Interp,
+    lisp::{Interp, Value},
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -136,6 +136,47 @@ fn parameter_setters_send_distinct_native_visibility_requests() {
             expected
         );
     }
+}
+
+#[test]
+fn make_frame_initial_visibility_parameters_reach_the_native_frontend() {
+    let mut interp = Interp::new_with_noninteractive(false);
+    let backend = Rc::new(WindowRecorder::default());
+    interp.set_frame_window_backend(Some(backend.clone()));
+    interp
+        .eval_str("(set-frame-parameter nil 'window-system 'ns)")
+        .unwrap();
+
+    let Value::Frame(hidden) = interp
+        .eval_str("(make-frame '((visibility . nil)))")
+        .unwrap()
+    else {
+        panic!("make-frame did not return a frame");
+    };
+    assert_eq!(
+        remacs_runtime::editor::frame_visibility(&interp, &hidden),
+        FrameVisibility::Hidden
+    );
+    assert_eq!(
+        backend.0.borrow().last().map(|(_, visibility)| *visibility),
+        Some(FrameVisibility::Hidden)
+    );
+
+    backend.0.borrow_mut().clear();
+    let Value::Frame(iconified) = interp
+        .eval_str("(make-frame '((visibility . icon)))")
+        .unwrap()
+    else {
+        panic!("make-frame did not return a frame");
+    };
+    assert_eq!(
+        remacs_runtime::editor::frame_visibility(&interp, &iconified),
+        FrameVisibility::Iconified
+    );
+    assert_eq!(
+        backend.0.borrow().last().map(|(_, visibility)| *visibility),
+        Some(FrameVisibility::Iconified)
+    );
 }
 
 #[test]
