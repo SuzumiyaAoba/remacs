@@ -823,7 +823,28 @@ fn f_ns_hide_emacs(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Some(backend) = i.application_visibility_backend.clone() else {
         return Err(winsys(i));
     };
-    let result = if a[0].truthy() {
+    let activate = i.q("activate");
+    let activate_front = i.q("activate-front");
+    let front_frame = matches!(&a[0], Value::Sym(symbol) if *symbol == activate_front);
+    let activate_unhidden =
+        front_frame || matches!(&a[0], Value::Sym(symbol) if *symbol == activate);
+    let frame_id = i
+        .selected_frame
+        .as_ref()
+        .filter(|frame| crate::editor::frame_is_graphical(i, frame))
+        .map(|frame| frame.borrow().id);
+    if front_frame
+        && cfg!(target_os = "macos")
+        && let (Some(frame_id), Some(frame_window_backend)) =
+            (frame_id, i.frame_window_backend.clone())
+    {
+        frame_window_backend
+            .prepare_frame(i, frame_id)
+            .map_err(|error| i.error(format!("Application visibility failed: {error}")))?;
+    }
+    let result = if activate_unhidden {
+        backend.activate_unhidden(frame_id, front_frame)
+    } else if a[0].truthy() {
         backend.hide()
     } else {
         backend.activate()

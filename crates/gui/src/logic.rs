@@ -28,6 +28,8 @@ use unicode_width::UnicodeWidthChar;
 mod frame_ready_tests;
 #[cfg(test)]
 mod clipboard_tests;
+#[cfg(test)]
+mod application_visibility_tests;
 
 pub(super) const COLOR_DROP_PREFIX: &str = "\u{1f}remacs-color-drop:";
 
@@ -528,6 +530,11 @@ pub(super) enum GuiRequest {
     },
     HideApp {
         hide: bool,
+        reply: SyncSender<Result<(), String>>,
+    },
+    ActivateUnhideApp {
+        frame_id: Option<usize>,
+        bring_frame_to_front: bool,
         reply: SyncSender<Result<(), String>>,
     },
     HideOtherApps(SyncSender<Result<(), String>>),
@@ -1189,6 +1196,24 @@ impl remacs_runtime::frontend::ApplicationVisibilityBackend
 
     fn activate(&self) -> Result<(), String> {
         self.request_hide(false)
+    }
+
+    fn activate_unhidden(
+        &self,
+        frame_id: Option<usize>,
+        bring_frame_to_front: bool,
+    ) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::ActivateUnhideApp {
+                frame_id,
+                bring_frame_to_front,
+                reply,
+            })
+            .map_err(|_| "GUI application service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI application service stopped".to_owned())?
     }
 
     fn hide_other_apps(&self) -> Result<(), String> {

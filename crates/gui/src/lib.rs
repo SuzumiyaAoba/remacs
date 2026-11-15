@@ -1349,6 +1349,38 @@ pub fn run_gui_with_dump(
                             .map_err(|error| error.to_string());
                         let _ = reply.send(result);
                     }
+                    GuiRequest::ActivateUnhideApp {
+                        frame_id,
+                        bring_frame_to_front,
+                        reply,
+                    } => {
+                        let result = cx
+                            .update(|app| {
+                                #[cfg(target_os = "macos")]
+                                unhide_native_application();
+                                app.activate(true);
+                            })
+                            .map_err(|error| error.to_string())
+                            .and_then(|()| {
+                                if bring_frame_to_front {
+                                    if let Some(frame_id) = frame_id {
+                                        let handle = windows.get(&frame_id).copied().ok_or_else(|| {
+                                            format!("GUI frame {frame_id} is not open")
+                                        })?;
+                                        handle
+                                            .update(cx, |_view, window, _cx| {
+                                                window.activate_window();
+                                            })
+                                            .map_err(|error| error.to_string())
+                                    } else {
+                                        Ok(())
+                                    }
+                                } else {
+                                    Ok(())
+                                }
+                            });
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::HideOtherApps(reply) => {
                         let result = cx
                             .update(|app| app.hide_other_apps())
@@ -2753,6 +2785,14 @@ fn show_native_character_palette(window: &Window) -> Result<(), String> {
     {
         let _ = window;
         Err("Character Viewer is available only on macOS".to_owned())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn unhide_native_application() {
+    unsafe {
+        let app: id = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, unhide: app];
     }
 }
 

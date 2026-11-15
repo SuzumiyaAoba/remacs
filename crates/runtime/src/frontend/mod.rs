@@ -346,6 +346,15 @@ pub trait DragBackend {
 pub trait ApplicationVisibilityBackend {
     fn hide(&self) -> Result<(), String>;
     fn activate(&self) -> Result<(), String>;
+    /// Unhide the application, activate it, and optionally raise FRAME.
+    /// Backends without distinct activation modes can fall back to `activate`.
+    fn activate_unhidden(
+        &self,
+        _frame_id: Option<usize>,
+        _bring_frame_to_front: bool,
+    ) -> Result<(), String> {
+        self.activate()
+    }
     fn hide_other_apps(&self) -> Result<(), String>;
     fn set_dock_badge(&self, badge: Option<&str>) -> Result<(), String>;
     fn set_dock_progress(&self, progress: Option<f64>) -> Result<(), String>;
