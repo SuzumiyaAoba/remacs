@@ -4,10 +4,13 @@ use crate::lisp::builtins::arg;
 use crate::lisp::{Interp, error::EvalResult, obarray::sym, value::Value};
 
 pub(super) fn f_image_transforms_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match a.first() {
-        None | Some(Value::Nil) => Ok(Value::Nil),
-        Some(Value::Frame(f)) if !f.borrow().dead => Ok(Value::Nil),
-        Some(other) => Err(i.wrong_type_mut("frame-live-p", other)),
+    let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
+    if crate::editor::frame_is_graphical(i, &frame) {
+        // GPUI applies image width/height descriptors, but has no image
+        // rotation transform.
+        Ok(Value::list(vec![Value::Sym(i.intern("scale"))]))
+    } else {
+        Ok(Value::Nil)
     }
 }
 
