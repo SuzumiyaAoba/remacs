@@ -522,6 +522,23 @@ pub struct GridScrollBar {
     pub max_offset: usize,
 }
 
+enum PendingScrollBarGeometry {
+    Vertical {
+        index: usize,
+        top_row: usize,
+        bottom_row: usize,
+        total: usize,
+        visible: usize,
+        offset: usize,
+        minimum_thumb_size: usize,
+    },
+    Horizontal {
+        index: usize,
+        row: usize,
+        subtract_bar_height: bool,
+    },
+}
+
 /// A bottom divider between a window and the screen area below it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GridBottomDivider {
@@ -4463,6 +4480,12 @@ fn render_popup_menu(
         left += panel_width;
     }
     hit_items
+}
+
+fn row_top_from_heights(row_heights: &[usize], default_height: usize, row: usize) -> usize {
+    (0..row).fold(0usize, |top, index| {
+        top.saturating_add(row_heights.get(index).copied().unwrap_or(default_height))
+    })
 }
 
 fn scroll_thumb(
@@ -10709,6 +10732,7 @@ fn render_grid_internal(
     let tooltip_position = tooltip.as_ref().and(i.gui_tip_position);
     let mut popup_menu_items = Vec::new();
     let mut scroll_bars = Vec::new();
+    let mut pending_scrollbar_geometry = Vec::new();
     let mut bottom_dividers = Vec::new();
     let mut right_dividers = Vec::new();
     let mut mode_lines = Vec::new();
@@ -11788,6 +11812,7 @@ fn render_grid_internal(
                             .saturating_mul(frame_char_width)
                             .saturating_sub(bar_width)
                     };
+                    let index = scroll_bars.len();
                     scroll_bars.push(GridScrollBar {
                         window_id,
                         buffer_id: buf_id,
@@ -11800,6 +11825,15 @@ fn render_grid_internal(
                         thumb_start,
                         thumb_size,
                         max_offset: total_lines.saturating_sub(text_rows),
+                    });
+                    pending_scrollbar_geometry.push(PendingScrollBarGeometry::Vertical {
+                        index,
+                        top_row: content_top,
+                        bottom_row: content_bottom,
+                        total: total_lines,
+                        visible: text_rows,
+                        offset: top_line.saturating_sub(first_line),
+                        minimum_thumb_size: frame_char_height.saturating_mul(2),
                     });
                 }
             }
@@ -11838,6 +11872,7 @@ fn render_grid_internal(
                             .saturating_mul(frame_char_height)
                             .saturating_sub(bar_height)
                     };
+                    let index = scroll_bars.len();
                     scroll_bars.push(GridScrollBar {
                         window_id,
                         buffer_id: buf_id,
@@ -11850,6 +11885,15 @@ fn render_grid_internal(
                         thumb_start,
                         thumb_size,
                         max_offset: max_columns.saturating_sub(content_width),
+                    });
+                    pending_scrollbar_geometry.push(PendingScrollBarGeometry::Horizontal {
+                        index,
+                        row: if side {
+                            raw_window_top
+                        } else {
+                            raw_window_bottom
+                        },
+                        subtract_bar_height: !side,
                     });
                 }
             }
@@ -13284,6 +13328,7 @@ fn render_grid_internal(
     if let Some((window_id, buffer_id, bar_height, _, thumb_start, thumb_size, max_offset)) =
         minibuffer_scroll_bar
     {
+        let index = scroll_bars.len();
         scroll_bars.push(GridScrollBar {
             window_id,
             buffer_id,
@@ -13298,6 +13343,11 @@ fn render_grid_internal(
             thumb_start,
             thumb_size,
             max_offset,
+        });
+        pending_scrollbar_geometry.push(PendingScrollBarGeometry::Horizontal {
+            index,
+            row: mini_top.saturating_add(minibuffer_text_height),
+            subtract_bar_height: false,
         });
     }
     if i.minibuf_level > 0 && mini_height > 0 && let Some(minibuffer) = &fb.minibuffer {
@@ -13686,6 +13736,54 @@ fn render_grid_internal(
             )
         {
             item.byte_range = Some((*start, *end));
+        }
+    }
+    for geometry in pending_scrollbar_geometry {
+        match geometry {
+            PendingScrollBarGeometry::Vertical {
+                index,
+                top_row,
+                bottom_row,
+                total,
+                visible,
+                offset,
+                minimum_thumb_size,
+            } => {
+                let top = row_top_from_heights(&row_heights, default_line_height, top_row);
+                let bottom = row_top_from_heights(&row_heights, default_line_height, bottom_row);
+                let track_height = bottom.saturating_sub(top);
+                let Some((thumb_start, thumb_size)) = scroll_thumb(
+                    track_height,
+                    total,
+                    visible,
+                    offset,
+                    minimum_thumb_size,
+                ) else {
+                    continue;
+                };
+                let Some(scroll_bar) = scroll_bars.get_mut(index) else {
+                    continue;
+                };
+                scroll_bar.top = top;
+                scroll_bar.height = track_height;
+                scroll_bar.thumb_start = thumb_start;
+                scroll_bar.thumb_size = thumb_size;
+            }
+            PendingScrollBarGeometry::Horizontal {
+                index,
+                row,
+                subtract_bar_height,
+            } => {
+                let Some(scroll_bar) = scroll_bars.get_mut(index) else {
+                    continue;
+                };
+                let top = row_top_from_heights(&row_heights, default_line_height, row);
+                scroll_bar.top = if subtract_bar_height {
+                    top.saturating_sub(scroll_bar.height)
+                } else {
+                    top
+                };
+            }
         }
     }
     let mouse_color = frame_mouse_color(i, &mut fctx, &frame.borrow());
