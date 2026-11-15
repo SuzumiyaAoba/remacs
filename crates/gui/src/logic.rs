@@ -521,6 +521,7 @@ pub(super) enum GuiRequest {
         reply: SyncSender<Result<Option<usize>, String>>,
     },
     FileDialog {
+        frame_id: Option<usize>,
         prompt: String,
         directory: Option<String>,
         must_match: bool,
@@ -799,9 +800,22 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
         initial: Option<&str>,
         directory_only: bool,
     ) -> Result<Option<String>, String> {
+        self.read_file_name_for_frame(None, prompt, directory, must_match, initial, directory_only)
+    }
+
+    fn read_file_name_for_frame(
+        &self,
+        frame_id: Option<usize>,
+        prompt: &str,
+        directory: Option<&str>,
+        must_match: bool,
+        initial: Option<&str>,
+        directory_only: bool,
+    ) -> Result<Option<String>, String> {
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(GuiRequest::FileDialog {
+                frame_id,
                 prompt: prompt.to_owned(),
                 directory: directory.map(str::to_owned),
                 must_match,
@@ -813,6 +827,32 @@ impl remacs_runtime::frontend::FileDialogBackend for GuiFileDialogBackend {
         response
             .recv()
             .map_err(|_| "GUI file dialog service stopped".to_owned())?
+    }
+}
+
+#[cfg(test)]
+mod file_dialog_frame_tests {
+    use super::{GuiFileDialogBackend, GuiRequest};
+    use remacs_runtime::frontend::FileDialogBackend;
+    use std::thread;
+
+    #[test]
+    fn file_dialog_request_keeps_the_selected_frame_id() {
+        let (requests, received) = smol::channel::unbounded();
+        let backend = GuiFileDialogBackend { requests };
+        let worker = thread::spawn(move || {
+            backend.read_file_name_for_frame(Some(42), "Open", None, false, None, false)
+        });
+
+        let GuiRequest::FileDialog {
+            frame_id, reply, ..
+        } = received.recv_blocking().unwrap()
+        else {
+            panic!("expected a file dialog request");
+        };
+        assert_eq!(frame_id, Some(42));
+        reply.send(Ok(None)).unwrap();
+        assert_eq!(worker.join().unwrap(), Ok(None));
     }
 }
 

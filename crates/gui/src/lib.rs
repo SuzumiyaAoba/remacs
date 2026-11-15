@@ -1366,6 +1366,7 @@ pub fn run_gui_with_dump(
                         let _ = reply.send(result);
                     }
                     GuiRequest::FileDialog {
+                        frame_id,
                         prompt,
                         directory,
                         must_match,
@@ -1384,12 +1385,19 @@ pub fn run_gui_with_dump(
                             .filter(|directory| !directory.is_empty())
                             .map(std::path::PathBuf::from)
                             .unwrap_or_else(|| std::path::PathBuf::from("."));
+                        let owner: Option<AnyWindowHandle> = frame_id
+                            .and_then(|frame_id| windows.get(&frame_id).copied())
+                            .map(Into::into);
                         let result = if file_dialog::should_prompt_for_new_path(
                             must_match,
                             directory_only,
                         ) {
                             match cx.update(|app| {
-                                app.prompt_for_new_path(&save_directory, initial.as_deref())
+                                app.prompt_for_new_path_for_window(
+                                    &save_directory,
+                                    initial.as_deref(),
+                                    owner,
+                                )
                             }) {
                                 Ok(response) => match response.await {
                                     Ok(Ok(Some(path))) => {
@@ -1402,7 +1410,9 @@ pub fn run_gui_with_dump(
                                 Err(error) => Err(error.to_string()),
                             }
                         } else {
-                            match cx.update(|app| app.prompt_for_paths(options)) {
+                            match cx.update(|app| {
+                                app.prompt_for_paths_for_window(options, owner)
+                            }) {
                                 Ok(response) => match response.await {
                                     Ok(Ok(Some(paths))) => Ok(paths
                                         .into_iter()

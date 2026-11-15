@@ -224,11 +224,26 @@ pub(crate) trait Platform: 'static {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+    fn prompt_for_paths_for_window(
+        &self,
+        options: PathPromptOptions,
+        _owner: Option<AnyWindowHandle>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths(options)
+    }
     fn prompt_for_new_path(
         &self,
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+    fn prompt_for_new_path_for_window(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+        _owner: Option<AnyWindowHandle>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+        self.prompt_for_new_path(directory, suggested_name)
+    }
     fn can_select_mixed_files_and_dirs(&self) -> bool;
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
@@ -1289,9 +1304,17 @@ pub(crate) fn resolve_parent_window<Parent, Window>(
     parent.map_or(focused, resolve)
 }
 
+pub(crate) fn resolve_dialog_owner<Requested, Window>(
+    requested: Option<Requested>,
+    active: Option<Window>,
+    resolve: impl FnOnce(Requested) -> Option<Window>,
+) -> Option<Window> {
+    requested.and_then(resolve).or(active)
+}
+
 #[cfg(test)]
 mod parent_window_tests {
-    use super::resolve_parent_window;
+    use super::{resolve_dialog_owner, resolve_parent_window};
 
     #[test]
     fn explicit_parent_wins_and_does_not_fall_back_when_unavailable() {
@@ -1306,6 +1329,19 @@ mod parent_window_tests {
         assert_eq!(
             resolve_parent_window(None::<&str>, Some("focused"), |_| None),
             Some("focused")
+        );
+    }
+
+    #[test]
+    fn native_dialog_owner_prefers_the_requested_window() {
+        assert_eq!(
+            resolve_dialog_owner(Some(2), Some(1), |window| Some(window + 10)),
+            Some(12)
+        );
+        assert_eq!(resolve_dialog_owner(Some(2), Some(1), |_| None), Some(1));
+        assert_eq!(
+            resolve_dialog_owner(None::<usize>, Some(1), |_| None),
+            Some(1)
         );
     }
 }

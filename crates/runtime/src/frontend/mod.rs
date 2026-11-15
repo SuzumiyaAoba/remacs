@@ -168,6 +168,18 @@ pub trait FileDialogBackend {
         initial: Option<&str>,
         directory_only: bool,
     ) -> Result<Option<String>, String>;
+
+    fn read_file_name_for_frame(
+        &self,
+        _frame_id: Option<usize>,
+        prompt: &str,
+        directory: Option<&str>,
+        must_match: bool,
+        initial: Option<&str>,
+        directory_only: bool,
+    ) -> Result<Option<String>, String> {
+        self.read_file_name(prompt, directory, must_match, initial, directory_only)
+    }
 }
 
 /// Host font chooser used by graphical font-selection primitives. The

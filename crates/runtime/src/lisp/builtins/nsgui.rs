@@ -856,11 +856,13 @@ fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let must_match = a.get(2).is_some_and(Value::truthy);
     let initial = optional_string(i, a.get(3))?;
     let directory_only = a.get(4).is_some_and(Value::truthy);
+    let frame_id = i.selected_frame.as_ref().map(|frame| frame.borrow().id);
     let Some(backend) = i.file_dialog_backend.clone() else {
         return Err(winsys(i));
     };
     let selected = backend
-        .read_file_name(
+        .read_file_name_for_frame(
+            frame_id,
             &prompt,
             directory.as_deref(),
             must_match,

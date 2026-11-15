@@ -169,6 +169,19 @@ impl WindowsPlatform {
             .and_then(|hwnd| window_from_hwnd(hwnd.as_raw()))
     }
 
+    fn window_hwnd_for_handle(&self, handle: AnyWindowHandle) -> Option<HWND> {
+        let handles = self
+            .raw_window_handles
+            .read()
+            .iter()
+            .map(|window| window.as_raw())
+            .collect::<Vec<_>>();
+        handles.into_iter().find(|hwnd| {
+            self.window_from_hwnd(*hwnd)
+                .is_some_and(|window| window.handle == handle)
+        })
+    }
+
     #[inline]
     fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
         self.raw_window_handles
@@ -443,8 +456,20 @@ impl Platform for WindowsPlatform {
         &self,
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths_for_window(options, None)
+    }
+
+    fn prompt_for_paths_for_window(
+        &self,
+        options: PathPromptOptions,
+        owner: Option<AnyWindowHandle>,
+    ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
+        let window = crate::platform::resolve_dialog_owner(
+            owner,
+            self.find_current_active_window(),
+            |owner| self.window_hwnd_for_handle(owner),
+        );
         self.foreground_executor()
             .spawn(async move {
                 let _ = tx.send(file_open_dialog(options, window));
@@ -459,10 +484,23 @@ impl Platform for WindowsPlatform {
         directory: &Path,
         suggested_name: Option<&str>,
     ) -> Receiver<Result<Option<PathBuf>>> {
+        self.prompt_for_new_path_for_window(directory, suggested_name, None)
+    }
+
+    fn prompt_for_new_path_for_window(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+        owner: Option<AnyWindowHandle>,
+    ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let suggested_name = suggested_name.map(|s| s.to_owned());
         let (tx, rx) = oneshot::channel();
-        let window = self.find_current_active_window();
+        let window = crate::platform::resolve_dialog_owner(
+            owner,
+            self.find_current_active_window(),
+            |owner| self.window_hwnd_for_handle(owner),
+        );
         self.foreground_executor()
             .spawn(async move {
                 let _ = tx.send(file_save_dialog(directory, suggested_name, window));

@@ -1131,6 +1131,16 @@ impl App {
         self.platform.prompt_for_paths(options)
     }
 
+    /// Displays a platform modal for selecting paths, associated with OWNER
+    /// when the platform supports window-owned dialogs.
+    pub fn prompt_for_paths_for_window(
+        &self,
+        options: PathPromptOptions,
+        owner: Option<AnyWindowHandle>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.platform.prompt_for_paths_for_window(options, owner)
+    }
+
     /// Displays a platform modal for selecting a new path where a file can be saved.
     ///
     /// The provided directory will be used to set the initial location.
@@ -1143,6 +1153,18 @@ impl App {
         suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         self.platform.prompt_for_new_path(directory, suggested_name)
+    }
+
+    /// Displays a platform modal for selecting a new path, associated with
+    /// OWNER when the platform supports window-owned dialogs.
+    pub fn prompt_for_new_path_for_window(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+        owner: Option<AnyWindowHandle>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+        self.platform
+            .prompt_for_new_path_for_window(directory, suggested_name, owner)
     }
 
     /// Reveals the specified path at the platform level, such as in Finder on macOS.
