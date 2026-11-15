@@ -897,8 +897,16 @@ fn f_ns_show_character_palette(i: &mut Interp, _a: crate::lisp::Argv) -> EvalRes
     let Some(backend) = i.color_panel_backend.clone() else {
         return Err(winsys(i));
     };
+    let frame_id = frame.borrow().id;
+    if cfg!(target_os = "macos")
+        && let Some(frame_window_backend) = i.frame_window_backend.clone()
+    {
+        frame_window_backend
+            .prepare_frame(i, frame_id)
+            .map_err(|error| i.error(format!("Character palette failed: {error}")))?;
+    }
     backend
-        .show_character_palette(frame.borrow().id)
+        .show_character_palette(frame_id)
         .map_err(|error| i.error(format!("Character palette failed: {error}")))?;
     Ok(Value::Nil)
 }

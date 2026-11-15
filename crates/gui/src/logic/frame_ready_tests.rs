@@ -33,6 +33,7 @@ struct Trace {
     snapshots_after_ready: usize,
     ready: Vec<(usize, bool)>,
     prompts: Vec<(usize, bool)>,
+    palettes: Vec<(usize, bool)>,
     warps: Vec<(usize, i128, i128, bool)>,
 }
 
@@ -58,6 +59,9 @@ fn attach(
     interp.set_dialog_backend(Some(Rc::new(GuiDialogBackend {
         requests: requests.clone(),
         quit_request: std::sync::Arc::new(QuitRequest::default()),
+    })));
+    interp.set_color_panel_backend(Some(Rc::new(GuiColorPanelBackend {
+        requests: requests.clone(),
     })));
     let primary = interp.selected_frame.as_ref().unwrap().borrow().id;
     let worker = thread::spawn(move || {
@@ -111,6 +115,15 @@ fn attach(
                         Err("GUI frame is not open".into())
                     });
                 }
+                GuiRequest::CharacterPalette { frame_id, reply } => {
+                    let ready = native_frames.contains(&frame_id);
+                    trace.palettes.push((frame_id, ready));
+                    let _ = reply.send(if ready {
+                        Ok(())
+                    } else {
+                        Err(format!("GUI frame {frame_id} is not open"))
+                    });
+                }
                 GuiRequest::WarpPointer {
                     frame_id,
                     x,
@@ -142,6 +155,7 @@ fn finish(
     worker: thread::JoinHandle<Trace>,
 ) -> Trace {
     interp.set_dialog_backend(None);
+    interp.set_color_panel_backend(None);
     interp.set_frame_window_backend(None);
     frontend.borrow_mut().gui_requests = None;
     worker.join().unwrap()
@@ -203,6 +217,31 @@ fn new_frame_is_ready_before_cell_pixel_and_absolute_pointer_requests() {
             .iter()
             .any(|snapshot| snapshot.frame_id == frame)
     );
+    assert_eq!(trace.snapshots_after_ready, 0);
+}
+
+#[test]
+fn new_frame_is_ready_before_character_palette_request() {
+    let mut interp = graphical_interp();
+    let (frontend, _grids, worker) = attach(&mut interp, Outcome::Success);
+    let result = interp.eval_str(
+        r#"(let ((frame (make-frame '((window-system . ns)
+                                      (name . "qa2296-palette")
+                                      (width . 40) (height . 12)))))
+             (select-frame frame)
+             (ns-show-character-palette))"#,
+    );
+    let trace = finish(&mut interp, &frontend, worker);
+    assert!(result.unwrap().is_nil());
+
+    let frame = trace
+        .frames
+        .iter()
+        .find(|(_, name, _)| name == "qa2296-palette")
+        .unwrap()
+        .0;
+    assert_eq!(trace.ready, vec![(frame, false), (frame, true)]);
+    assert_eq!(trace.palettes, vec![(frame, true)]);
     assert_eq!(trace.snapshots_after_ready, 0);
 }
 
