@@ -1286,6 +1286,19 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::ReconsiderFrameFonts { frame_id, reply } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, |_view, window, cx| {
+                                    view::refresh_font_family_names_cache(window);
+                                    cx.notify();
+                                })
+                                .map_err(|error| error.to_string())
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     #[cfg(target_os = "macos")]
                     GuiRequest::FontSelection {
                         frame_id,

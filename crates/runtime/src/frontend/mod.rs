@@ -193,6 +193,12 @@ pub trait FontSelectionBackend {
 /// may query the native text system on its owning UI thread.
 pub trait FontFamilyListBackend {
     fn list_families(&self, frame_id: usize) -> Result<Vec<String>, String>;
+
+    /// Reinitialize the font resources used to render FRAME after the
+    /// operating system reports that its font configuration has changed.
+    fn reconsider_frame_fonts(&self, _frame_id: usize) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Requested native visibility of a graphical frame.

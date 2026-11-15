@@ -163,7 +163,24 @@ mod face_font_size_tests {
     }
 }
 
-static FONT_FAMILY_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+static FONT_FAMILY_NAMES: OnceLock<Mutex<Option<HashSet<String>>>> = OnceLock::new();
+
+fn query_font_family_names(window: &mut Window) -> HashSet<String> {
+    window
+        .text_system()
+        .all_font_names()
+        .into_iter()
+        .map(|family| family.to_lowercase())
+        .collect()
+}
+
+pub(super) fn refresh_font_family_names_cache(window: &mut Window) {
+    let mut cached = FONT_FAMILY_NAMES
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *cached = Some(query_font_family_names(window));
+}
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,14 +206,11 @@ fn accessibility_frame_key(geometry: &GuiGeometry) -> AccessibilityFrameKey {
 }
 
 pub(super) fn font_family(window: &mut Window, requested: Option<String>) -> String {
-    let available = FONT_FAMILY_NAMES.get_or_init(|| {
-        window
-            .text_system()
-            .all_font_names()
-            .into_iter()
-            .map(|family| family.to_lowercase())
-            .collect()
-    });
+    let mut cached = FONT_FAMILY_NAMES
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let available = cached.get_or_insert_with(|| query_font_family_names(window));
     if let Some(requested) = requested
         && available.contains(&requested.to_lowercase())
     {

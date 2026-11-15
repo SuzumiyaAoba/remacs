@@ -515,6 +515,10 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<Vec<String>, String>>,
     },
+    ReconsiderFrameFonts {
+        frame_id: usize,
+        reply: SyncSender<Result<(), String>>,
+    },
     #[cfg(target_os = "macos")]
     FontSelection {
         frame_id: usize,
@@ -1141,6 +1145,16 @@ impl remacs_runtime::frontend::FontFamilyListBackend for GuiFontFamilyListBacken
         response
             .recv()
             .map_err(|_| "GUI font-family service stopped".to_owned())?
+    }
+
+    fn reconsider_frame_fonts(&self, frame_id: usize) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::ReconsiderFrameFonts { frame_id, reply })
+            .map_err(|_| "GUI font service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI font service stopped".to_owned())?
     }
 }
 

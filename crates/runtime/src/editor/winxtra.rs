@@ -4651,13 +4651,52 @@ fn f_make_frame_invisible(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// `reconsider-frame-fonts' — frame check, then GNU's non-wsi error.
+/// `reconsider-frame-fonts' — refresh GUI font resources and reapply the
+/// frame's default face after the system font configuration changes.
 fn f_reconsider_frame_fonts(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Frame(_) => {}
-        other => return Err(i.wrong_type_mut("frame-live-p", other)),
+    let frame = crate::editor::frame_live(i, &a[0])?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Err(i.error("Window system frame should be used"));
     }
-    Err(i.error("Window system frame should be used"))
+
+    let font_parameter_key = i.intern("font-parameter");
+    let frame_id = frame.borrow().id;
+    let font_parameter = crate::lisp::eval::plist_get_v(
+        &frame.borrow().params,
+        &i.sym(font_parameter_key),
+    );
+    let parameters = if font_parameter.is_nil() {
+        Value::Nil
+    } else {
+        let font_key = i.intern("font");
+        Value::list(vec![Value::cons(
+            Value::Sym(font_key),
+            font_parameter.clone(),
+        )])
+    };
+
+    if let Some(backend) = i.font_family_list_backend.clone() {
+        backend
+            .reconsider_frame_fonts(frame_id)
+            .map_err(|message| i.error(message))?;
+    }
+
+    let function = Value::Sym(i.intern("face-set-after-frame-default"));
+    i.apply(&function, vec![Value::Frame(frame.clone()), parameters])?;
+
+    // `face-set-after-frame-default' may update this parameter while applying
+    // the face attributes.  GNU restores the explicit frame parameter after
+    // the default face has been recreated.
+    if !font_parameter.is_nil() {
+        let key = Value::Sym(font_parameter_key);
+        let params = crate::lisp::eval::plist_put_front(
+            &frame.borrow().params,
+            &key,
+            font_parameter,
+        );
+        frame.borrow_mut().params = params;
+    }
+    Ok(Value::Nil)
 }
 
 fn f_terminal_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
