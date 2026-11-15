@@ -54,6 +54,7 @@ pub use lexenv::{
 pub(crate) use lexenv::{lexenv_declared, lexenv_from_value, lexenv_lookup_checked, lexenv_set};
 pub use plist::{
     plist_get, plist_get_v, plist_lookup, plist_lookup_v, plist_put, plist_put_front, plist_put_v,
+    plist_remove_v,
 };
 
 #[path = "threads.rs"]
