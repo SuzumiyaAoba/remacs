@@ -5570,11 +5570,17 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         win_err_valid(i, &arg(&a, 0))?
     };
+    let frame = frame_of_window(i, &w);
+    let chrome = frame
+        .as_ref()
+        .map(|frame| crate::frontend::frame_chrome_rows(i, frame, frame.borrow().height))
+        .unwrap_or_default();
     // GNU BODY=nontrivial (i.e. `window-inside-edges' / `window-body-edges')
     // subtracts the batch menu-bar line too — the text area lives in the
     // pre-split row space where the menu bar was materialized on top.
     let shift = if body {
-        frame_of_window(i, &w)
+        frame
+            .as_ref()
             .map(|f| fmenu_shift(&f.borrow()))
             .unwrap_or(0)
     } else {
@@ -5610,12 +5616,18 @@ fn f_window_edges(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Int(left as i128),
         Value::Int(
             ww.top
+                .saturating_add(chrome.top_rows)
                 .saturating_add(header)
                 .saturating_add(tab)
                 .saturating_sub(shift) as i128,
         ),
         Value::Int(right as i128),
-        Value::Int((ww.top + ww.height).saturating_sub(shift + mode_line) as i128),
+        Value::Int(
+            ww.top
+                .saturating_add(ww.height)
+                .saturating_add(chrome.top_rows)
+                .saturating_sub(shift.saturating_add(mode_line)) as i128,
+        ),
     ]))
 }
 fn f_window_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5635,14 +5647,22 @@ fn f_window_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     for f in &frames {
         let fb = f.borrow();
         let shift = fmenu_shift(&fb);
+        let chrome = crate::frontend::frame_chrome_rows(i, f, fb.height);
         for w in &fb.windows {
             let ww = w.borrow();
             // GNU's coordinate lookup runs on the inside (pre-shift)
             // geometry: a window's rectangle covers its text area
             // plus its own mode line, which lands on the next
             // window's shifted top row.
-            let top = ww.top.saturating_sub(shift);
-            let bot = (ww.top + ww.height).saturating_sub(shift);
+            let top = ww
+                .top
+                .saturating_add(chrome.top_rows)
+                .saturating_sub(shift);
+            let bot = ww
+                .top
+                .saturating_add(ww.height)
+                .saturating_add(chrome.top_rows)
+                .saturating_sub(shift);
             if x >= ww.left as i128
                 && x < (ww.left + ww.width) as i128
                 && y >= top as i128

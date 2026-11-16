@@ -4082,6 +4082,107 @@ pub(crate) fn tool_bar_rows_for_frame(
         .min(frame_height.saturating_sub(1))
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FrameChromeRows {
+    pub tool_bar_rows: usize,
+    pub tab_bar_rows: usize,
+    pub top_rows: usize,
+    pub bottom_rows: usize,
+    pub tool_bar_at_bottom: bool,
+    pub tab_bar_at_bottom: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FrameChromeLayout {
+    pub tool_bar_rows: usize,
+    pub tab_bar_rows: usize,
+    pub top_rows: usize,
+    pub bottom_rows: usize,
+    pub top_pixels: usize,
+    pub bottom_pixels: usize,
+    pub tool_bar_at_bottom: bool,
+    pub tab_bar_at_bottom: bool,
+}
+
+/// Geometry reserved for frame bars around the shared window tree.
+pub(crate) fn frame_chrome_rows(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    frame_height: usize,
+) -> FrameChromeRows {
+    let graphical = crate::editor::frame_is_graphical(i, frame);
+    let tool_bar_rows = tool_bar_rows_for_frame(i, frame, frame_height);
+    let tab_bar_rows = if graphical {
+        crate::editor::frame_parameter_positive_size(i, frame, "tab-bar-lines", 0)
+            .min(frame_height.saturating_sub(1 + tool_bar_rows))
+    } else {
+        0
+    };
+    let parameters = frame.borrow().params.clone();
+    let tab_bar_at_bottom = i.q_soft("tab-bar-position").is_some_and(|property| {
+        matches!(
+            crate::lisp::eval::plist_get(&parameters, property),
+            Value::Sym(position) if i.symbol_name(position) == "bottom"
+        )
+    });
+    let tool_bar_at_bottom = i.q_soft("tool-bar-position").is_some_and(|property| {
+        matches!(
+            crate::lisp::eval::plist_get(&parameters, property),
+            Value::Sym(position) if i.symbol_name(position) == "bottom"
+        )
+    });
+    let (top_rows, bottom_rows) = if tool_bar_at_bottom {
+        if tab_bar_at_bottom {
+            (0, tool_bar_rows.saturating_add(tab_bar_rows))
+        } else {
+            (tab_bar_rows, tool_bar_rows)
+        }
+    } else {
+        (tool_bar_rows.saturating_add(tab_bar_rows), 0)
+    };
+    FrameChromeRows {
+        tool_bar_rows,
+        tab_bar_rows,
+        top_rows,
+        bottom_rows,
+        tool_bar_at_bottom,
+        tab_bar_at_bottom,
+    }
+}
+
+pub(crate) fn frame_chrome_layout(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    frame_height: usize,
+) -> FrameChromeLayout {
+    let rows = frame_chrome_rows(i, frame, frame_height);
+    let char_height = crate::editor::frame_char_height(i, frame).max(1);
+    let tab_bar_pixels = rows.tab_bar_rows.saturating_mul(char_height);
+    let tool_bar_pixels = tool_bar_pixel_height_for_frame(i, frame, rows.tool_bar_rows);
+    let (top_pixels, bottom_pixels) = if rows.tool_bar_at_bottom {
+        if rows.tab_bar_at_bottom {
+            (
+                0,
+                tool_bar_pixels.saturating_add(tab_bar_pixels),
+            )
+        } else {
+            (tab_bar_pixels, tool_bar_pixels)
+        }
+    } else {
+        (tool_bar_pixels.saturating_add(tab_bar_pixels), 0)
+    };
+    FrameChromeLayout {
+        tool_bar_rows: rows.tool_bar_rows,
+        tab_bar_rows: rows.tab_bar_rows,
+        top_rows: rows.top_rows,
+        bottom_rows: rows.bottom_rows,
+        top_pixels,
+        bottom_pixels,
+        tool_bar_at_bottom: rows.tool_bar_at_bottom,
+        tab_bar_at_bottom: rows.tab_bar_at_bottom,
+    }
+}
+
 pub(crate) fn tool_bar_pixel_height_for_frame(
     i: &Interp,
     frame: &crate::editor::FrameRef,
@@ -11853,34 +11954,13 @@ fn render_grid_internal(
         mini_wrap_lines,
         mini_ctl_arrow,
     );
-    let tool_bar_rows = tool_bar_rows_for_frame(i, &frame, height);
-    let tab_bar_rows = if graphical {
-        crate::editor::frame_parameter_positive_size(i, &frame, "tab-bar-lines", 0)
-            .min(height.saturating_sub(1 + tool_bar_rows))
-    } else {
-        0
-    };
-    let tab_bar_at_bottom = i.q_soft("tab-bar-position").is_some_and(|property| {
-        matches!(
-            crate::lisp::eval::plist_get(&fb.params, property),
-            Value::Sym(position) if i.symbol_name(position) == "bottom"
-        )
-    });
-    let tool_bar_at_bottom = i.q_soft("tool-bar-position").is_some_and(|property| {
-        matches!(
-            crate::lisp::eval::plist_get(&fb.params, property),
-            Value::Sym(position) if i.symbol_name(position) == "bottom"
-        )
-    });
-    let (top_chrome_rows, bottom_chrome_rows) = if tool_bar_at_bottom {
-        if tab_bar_at_bottom {
-            (0, tool_bar_rows.saturating_add(tab_bar_rows))
-        } else {
-            (tab_bar_rows, tool_bar_rows)
-        }
-    } else {
-        (tool_bar_rows.saturating_add(tab_bar_rows), 0)
-    };
+    let chrome = frame_chrome_layout(i, &frame, height);
+    let tool_bar_rows = chrome.tool_bar_rows;
+    let tab_bar_rows = chrome.tab_bar_rows;
+    let tab_bar_at_bottom = chrome.tab_bar_at_bottom;
+    let tool_bar_at_bottom = chrome.tool_bar_at_bottom;
+    let top_chrome_rows = chrome.top_rows;
+    let bottom_chrome_rows = chrome.bottom_rows;
     let chrome_rows = top_chrome_rows.saturating_add(bottom_chrome_rows);
     let current_minibuffer_height = fb
         .minibuffer

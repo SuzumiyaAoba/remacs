@@ -917,6 +917,7 @@ pub(crate) use render::position_at_vertical_scrollbar_row;
 pub(crate) use render::{ImageSpecInfo, image_spec_info};
 pub(crate) use render::grid_tooltip_from_string;
 pub(crate) use render::default_face_font_styles_for_window;
+pub(crate) use render::{frame_chrome_layout, frame_chrome_rows};
 pub(crate) use render::{tool_bar_pixel_height_for_frame, tool_bar_rows_for_frame};
 pub(crate) use render::frame_fringe_pixels;
 pub(crate) use render::window_text_pixel_rows;

@@ -768,7 +768,10 @@ fn f_coordinates_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         return Ok(Value::Nil);
     };
     let shift = crate::editor::fmenu_shift(&frame.borrow());
-    let top = top.saturating_sub(shift);
+    let chrome = crate::frontend::frame_chrome_rows(i, &frame, frame.borrow().height);
+    let top = top
+        .saturating_add(chrome.top_rows)
+        .saturating_sub(shift);
     let x = usize::try_from(x).ok();
     let y = usize::try_from(y).ok();
     let (Some(x), Some(y)) = (x, y) else {
@@ -2990,6 +2993,7 @@ fn f_window_margins(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 struct PixelMap {
     root_left: usize,
     root_top: usize,
+    top_offset_y: usize,
     scale_x: f64,
     scale_y: f64,
 }
@@ -3010,10 +3014,26 @@ fn frame_pixel_map(i: &Interp, frame: &FrameRef) -> PixelMap {
     let char_width = crate::editor::frame_char_width(i, frame);
     let char_height = crate::editor::frame_char_height(i, frame);
     let width = crate::editor::frame_pixel_width(i, frame);
-    let height = crate::editor::frame_pixel_height(i, frame).saturating_sub(char_height);
+    let (frame_height, minibuffer_height) = {
+        let frame = frame.borrow();
+        (
+            frame.height,
+            frame
+                .minibuffer
+                .as_ref()
+                .map(|window| window.borrow().height)
+                .unwrap_or(1),
+        )
+    };
+    let chrome = crate::frontend::frame_chrome_layout(i, frame, frame_height);
+    let height = crate::editor::frame_pixel_height(i, frame)
+        .saturating_sub(minibuffer_height.saturating_mul(char_height))
+        .saturating_sub(chrome.top_pixels)
+        .saturating_sub(chrome.bottom_pixels);
     PixelMap {
         root_left,
         root_top,
+        top_offset_y: chrome.top_pixels,
         scale_x: if root_width > 0 {
             width as f64 / root_width as f64
         } else {
@@ -3030,8 +3050,10 @@ fn frame_pixel_map(i: &Interp, frame: &FrameRef) -> PixelMap {
 fn pixelize_cell_edges(map: PixelMap, edges: (i128, i128, i128, i128)) -> (i128, i128, i128, i128) {
     let scale_x =
         |x: i128| (x.saturating_sub(map.root_left as i128) as f64 * map.scale_x).round() as i128;
-    let scale_y =
-        |y: i128| (y.saturating_sub(map.root_top as i128) as f64 * map.scale_y).round() as i128;
+    let scale_y = |y: i128| {
+        (y.saturating_sub(map.root_top as i128) as f64 * map.scale_y).round() as i128
+            + map.top_offset_y as i128
+    };
     (
         scale_x(edges.0),
         scale_y(edges.1),
