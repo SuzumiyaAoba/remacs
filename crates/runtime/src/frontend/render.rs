@@ -15166,3 +15166,24 @@ mod box_padding_tests {
             .all(|style| style.box_style.is_none()));
     }
 }
+
+#[cfg(test)]
+mod long_rgb_face_color_tests {
+    use super::{CellColor, FaceCtx};
+    use crate::lisp::{Interp, Value};
+
+    #[test]
+    fn face_colors_accept_nine_and_twelve_digit_rgb_triplets() {
+        let interp = Interp::new();
+        let face_ctx = FaceCtx::new(&interp, None);
+
+        assert_eq!(
+            face_ctx.color(&Value::string("#000000fff")),
+            Some(CellColor(0, 0, 255))
+        );
+        assert_eq!(
+            face_ctx.color(&Value::string("#00000000ffff")),
+            Some(CellColor(0, 0, 255))
+        );
+    }
+}
