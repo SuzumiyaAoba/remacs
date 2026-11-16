@@ -395,4 +395,20 @@
            (= (window-text-width window) (window-body-width window)))))
  '(3 t t t))
 
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'menu-bar-lines 0)
+   (set-frame-parameter nil 'tool-bar-lines 0)
+   (set-frame-parameter nil 'tab-bar-lines 0)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (let ((body-lines (window-body-height window))
+           (body-pixels (window-body-height window t)))
+       (set-window-scroll-bars window nil nil 8 'bottom)
+       (list (- body-lines (window-body-height window))
+             (- body-pixels (window-body-height window t))))))
+ '(1 8))
+
 (princ (qa--done))

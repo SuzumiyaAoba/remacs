@@ -5309,14 +5309,33 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Body excludes the header, tab, and mode lines.
     let mode_line = winxtra::window_mode_line_height(i, &w)?;
     let height = w.borrow().height;
-    let body_height = height.saturating_sub(mode_line.saturating_add(header).saturating_add(tab));
+    let (scroll_height, _, _, horizontal_scroll_side, _) =
+        winxtra::window_scroll_bar_settings(i, &w);
+    let frame = frame_of_window(i, &w);
+    let char_height = frame
+        .as_ref()
+        .map_or(1, |frame| frame_char_height(i, frame).max(1));
+    let horizontal_scroll_rows = if horizontal_scroll_side.is_some() {
+        scroll_height
+            .unwrap_or(0)
+            .div_ceil(char_height)
+            .min(height)
+    } else {
+        0
+    };
+    let body_height = height.saturating_sub(
+        mode_line
+            .saturating_add(header)
+            .saturating_add(tab)
+            .saturating_add(horizontal_scroll_rows),
+    );
     if a.get(1).is_some_and(Value::truthy) {
-        let frame = frame_of_window(i, &w).ok_or_else(|| i.error("No frame"))?;
+        let frame = frame.ok_or_else(|| i.error("No frame"))?;
         let total_pixels = (height as f64 * winxtra::window_pixel_scale_y(i, &w)).round();
         let decoration_pixels =
             (mode_line + header + tab).saturating_mul(frame_char_height(i, &frame)) as f64;
         Ok(Value::Int(
-            (total_pixels - decoration_pixels).max(0.0) as i128,
+            (total_pixels - decoration_pixels - scroll_pixels).max(0.0) as i128,
         ))
     } else {
         Ok(Value::Int(body_height as i128))
@@ -5338,6 +5357,11 @@ pub(crate) fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
     let frame_width = frame.as_ref().map(|frame| frame.borrow().width);
     let graphical = frame
         .as_ref()
+        let scroll_pixels = if horizontal_scroll_side.is_some() {
+            scroll_height.unwrap_or(0) as f64
+        } else {
+            0.0
+        };
         .is_some_and(|frame| frame_is_graphical(i, frame));
     let char_width = frame
         .as_ref()
