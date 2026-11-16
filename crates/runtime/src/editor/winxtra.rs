@@ -3081,15 +3081,33 @@ fn f_window_body_edges4(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_window_screen_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    // GNU Fwindow_screen_lines excludes the mode line (1 row on
-    // non-minibuffer windows) from the total.
-    let wb = w.borrow();
-    let h = if wb.minibuffer {
-        wb.height
+    let (_, top, _, bottom) = inside_pixel_edges_of(i, &w)?;
+    let line_height_function = i.q("default-line-height");
+    let line_height = if i.fbound_p(line_height_function) {
+        i.apply(&Value::Sym(line_height_function), Vec::new())?
     } else {
-        wb.height.saturating_sub(1)
+        let frame = crate::editor::frame_of_window(i, &w);
+        Value::Int(
+            frame
+                .as_ref()
+                .map_or(1, |frame| crate::editor::frame_char_height(i, frame).max(1))
+                as i128,
+        )
     };
-    Ok(Value::float(h as f64))
+    let line_height = match line_height {
+        Value::Float(height) if height.is_finite() && *height > 0.0 => *height,
+        value => value
+            .int()
+            .filter(|height| *height > 0)
+            .map(|height| height as f64)
+            .unwrap_or_else(|| {
+                crate::editor::frame_of_window(i, &w)
+                    .map(|frame| crate::editor::frame_char_height(i, &frame).max(1))
+                    .unwrap_or(1) as f64
+            }),
+    };
+    let text_height = bottom.saturating_sub(top).max(0) as f64;
+    Ok(Value::float(text_height / line_height))
 }
 
 // ---------- frames ----------
