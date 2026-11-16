@@ -231,4 +231,32 @@
         (list (window-text-pixel-size nil nil nil nil nil t)
               (eq current (current-buffer))))) '((0 . 1) t))
 (qa (window-text-pixel-size nil '(1 . 4294967296)) '(0 . 0))
+
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'char-width 8)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (insert (propertize "x" 'display "MMMMMMMM"))
+     (window-text-pixel-size window)))
+ '(64 . 16))
+
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'char-width 8)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (insert
+      (propertize
+       "x" 'display
+       '(image :type svg :data
+               "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='40'/>"
+               :width 30 :height 40)))
+     (window-text-pixel-size window)))
+ '(30 . 40))
+
 (princ (qa--done))

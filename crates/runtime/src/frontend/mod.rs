@@ -919,6 +919,7 @@ pub(crate) use render::grid_tooltip_from_string;
 pub(crate) use render::{tool_bar_pixel_height_for_frame, tool_bar_rows_for_frame};
 pub(crate) use render::frame_fringe_pixels;
 pub(crate) use render::window_text_pixel_rows;
+pub(crate) use render::window_text_display_pixel_size;
 pub(crate) use render::{
     font_at_style_for_buffer_position, font_at_style_for_string_position,
 };

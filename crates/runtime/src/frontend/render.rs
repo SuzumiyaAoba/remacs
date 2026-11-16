@@ -11038,6 +11038,184 @@ pub(crate) fn window_text_pixel_rows(
     Some((prefix_height, text_rows))
 }
 
+pub(crate) fn window_text_display_pixel_size(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+    segment: &EmacsText,
+    start: usize,
+    tab_width: usize,
+    cell_width: usize,
+    line_height: usize,
+) -> Option<(usize, Vec<usize>)> {
+    fn add_columns(
+        columns: usize,
+        cell_width: usize,
+        line_columns: &mut usize,
+        line_width: &mut usize,
+    ) {
+        *line_columns = line_columns.saturating_add(columns);
+        *line_width = line_width.saturating_add(columns.saturating_mul(cell_width));
+    }
+
+    fn next_line(
+        line_width: &mut usize,
+        line_columns: &mut usize,
+        max_width: &mut usize,
+        row_heights: &mut Vec<usize>,
+        line_height: usize,
+    ) {
+        *max_width = (*max_width).max(*line_width);
+        *line_width = 0;
+        *line_columns = 0;
+        row_heights.push(line_height);
+    }
+
+    fn add_text(
+        text: &str,
+        cell_width: usize,
+        tab_width: usize,
+        line_columns: &mut usize,
+        line_width: &mut usize,
+        max_width: &mut usize,
+        row_heights: &mut Vec<usize>,
+        line_height: usize,
+    ) {
+        for character in text.chars() {
+            if character == '\n' {
+                next_line(line_width, line_columns, max_width, row_heights, line_height);
+            } else if character == '\t' {
+                let columns = tab_width - *line_columns % tab_width;
+                add_columns(columns, cell_width, line_columns, line_width);
+            } else {
+                add_columns(
+                    display_char_width(character),
+                    cell_width,
+                    line_columns,
+                    line_width,
+                );
+            }
+        }
+    }
+
+    let frame = crate::editor::frame_of_window(i, window)?;
+    let buffer_id = window.borrow().buffer;
+    let buffer = i.buffers.get(buffer_id)?;
+    let mut ctx = FaceCtx::new(i, Some(&frame));
+    ctx.default_style = Some(ctx.builtin(i, "default", 0).finish());
+    let faces = window_faces(i, &mut ctx, &buffer, &Value::Window(window.clone()), None);
+    let end = start.saturating_add(segment.chars().count());
+    let has_replacement = faces
+        .display_props
+        .iter()
+        .chain(faces.composition_props.iter())
+        .any(|(range_start, range_end, replacement, _)| {
+            *range_start < end && *range_end > start && replacement.is_some()
+        });
+    if !has_replacement {
+        return None;
+    }
+
+    let cell_width = cell_width.max(1);
+    let tab_width = tab_width.max(1);
+    let line_height = line_height.max(1);
+    let mut line_columns = 0usize;
+    let mut line_width = 0usize;
+    let mut max_width = 0usize;
+    let mut row_heights = vec![line_height];
+    for (offset, source_character) in segment.chars().enumerate() {
+        let position = start.saturating_add(offset);
+        if let Some(replacement) = display_replacement_at(&faces, position) {
+            match replacement {
+                DisplayReplacement::Text(text) | DisplayReplacement::GlyphlessText(text, _) => {
+                    add_text(
+                        &text,
+                        cell_width,
+                        tab_width,
+                        &mut line_columns,
+                        &mut line_width,
+                        &mut max_width,
+                        &mut row_heights,
+                        line_height,
+                    );
+                }
+                DisplayReplacement::StyledText(text) => {
+                    add_text(
+                        &text.text,
+                        cell_width,
+                        tab_width,
+                        &mut line_columns,
+                        &mut line_width,
+                        &mut max_width,
+                        &mut row_heights,
+                        line_height,
+                    );
+                }
+                DisplayReplacement::Space(columns) => add_columns(
+                    columns,
+                    cell_width,
+                    &mut line_columns,
+                    &mut line_width,
+                ),
+                DisplayReplacement::CompositionDefault(columns) => add_columns(
+                    columns,
+                    cell_width,
+                    &mut line_columns,
+                    &mut line_width,
+                ),
+                DisplayReplacement::Image {
+                    width,
+                    height,
+                    intrinsic_width,
+                    intrinsic_height,
+                    slice,
+                    ..
+                } => {
+                    let (image_width, image_height) = image_visible_dimensions(
+                        width,
+                        height,
+                        intrinsic_width,
+                        intrinsic_height,
+                        slice,
+                    );
+                    let image_width = image_width.unwrap_or(cell_width).max(1);
+                    let image_columns = image_width.div_ceil(cell_width).max(1);
+                    line_columns = line_columns.saturating_add(image_columns);
+                    line_width = line_width.saturating_add(image_width);
+                    if let Some(image_height) = image_height {
+                        let row = row_heights.len().saturating_sub(1);
+                        row_heights[row] = row_heights[row].max(image_height);
+                    }
+                }
+                DisplayReplacement::Fringe(_) | DisplayReplacement::Hidden => {}
+            }
+            continue;
+        }
+
+        let character = source_character.unicode().unwrap_or('\u{fffd}');
+        if matches!(character, '\n' | '\r') {
+            next_line(
+                &mut line_width,
+                &mut line_columns,
+                &mut max_width,
+                &mut row_heights,
+                line_height,
+            );
+        } else if character == '\t' {
+            let columns = tab_width - line_columns % tab_width;
+            add_columns(columns, cell_width, &mut line_columns, &mut line_width);
+        } else {
+            add_columns(
+                UnicodeWidthChar::width(character).unwrap_or(1),
+                cell_width,
+                &mut line_columns,
+                &mut line_width,
+            );
+        }
+    }
+    max_width = max_width.max(line_width);
+    Some((max_width, row_heights))
+}
+
 /// Render FRAME with mouse-face highlighting at MOUSE_POSITION without
 /// changing the interpreter's selected frame.
 pub fn render_frame_grid_with_mouse_position_cached(

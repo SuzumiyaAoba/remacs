@@ -4625,15 +4625,37 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     if ignore_line_at_end && ends_at_line_start && !text_lines.is_empty() {
         text_lines.pop();
     }
-    let mut pixel_width = text_lines
+    let mut display_pixel_size = if graphical_window {
+        crate::frontend::window_text_display_pixel_size(
+            i,
+            &w,
+            &segment,
+            start0,
+            tab_width,
+            char_width,
+            window_char_height(i, &w).max(1),
+        )
+    } else {
+        None
+    };
+    if ignore_line_at_end && ends_at_line_start {
+        if let Some((_, rows)) = &mut display_pixel_size {
+            if rows.len() > 1 {
+                rows.pop();
+            }
+        }
+    }
+    let raw_pixel_width = text_lines
         .iter()
-        .map(|columns| {
-            columns
-                .saturating_mul(char_width)
-                .saturating_add(offset.max(0) as usize)
-        })
+        .map(|columns| columns.saturating_mul(char_width))
         .max()
         .unwrap_or(0)
+        .saturating_add(offset.max(0) as usize);
+    let mut pixel_width = display_pixel_size
+        .as_ref()
+        .map_or(raw_pixel_width, |(width, _)| {
+            width.saturating_add(offset.max(0) as usize)
+        })
         .min(x_limit);
     if x_limit == 0 {
         pixel_width = 0;
@@ -4667,7 +4689,10 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         Some(frame) => crate::editor::frame_char_height(i, frame).max(1),
         None => 1,
     };
-    let mut measured_height = text_lines.len().saturating_mul(requested_line_height);
+    let mut measured_height = display_pixel_size.as_ref().map_or_else(
+        || text_lines.len().saturating_mul(requested_line_height),
+        |(_, rows)| rows.iter().copied().fold(0, usize::saturating_add),
+    );
     for (name, wanted) in [
         ("mode-line", mode),
         ("header-line", header),
