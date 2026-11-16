@@ -10501,6 +10501,30 @@ pub(crate) fn font_at_style_for_buffer_position(
     Some(font_at_style(&ctx, style))
 }
 
+/// Resolve the frame's default face with and without this window's face
+/// remapping.  Window body size queries use these styles to convert pixels
+/// into the same character metrics used by redisplay.
+pub(crate) fn default_face_font_styles_for_window(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    window: &crate::lisp::value::WindowRef,
+) -> Option<(FontAtStyle, FontAtStyle)> {
+    let buffer_id = window.borrow().buffer;
+    let buffer = i.buffers.get(buffer_id)?;
+    let mut ctx = FaceCtx::new(i, Some(frame));
+    let default = ctx.builtin(i, "default", 0).finish();
+    ctx.default_style = Some(default);
+    let faces = window_faces(
+        i,
+        &mut ctx,
+        &buffer,
+        &Value::Window(window.clone()),
+        None,
+    );
+    let remapped = remapped_named_face(i, &mut ctx, &faces, "default", 0).finish();
+    Some((font_at_style(&ctx, default), font_at_style(&ctx, remapped)))
+}
+
 /// Resolve face text properties attached directly to a string character.
 pub(crate) fn font_at_style_for_string_position(
     i: &Interp,

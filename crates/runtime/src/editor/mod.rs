@@ -5329,14 +5329,35 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             .saturating_add(tab)
             .saturating_add(horizontal_scroll_rows),
     );
-    if a.get(1).is_some_and(Value::truthy) {
+    let remapped_units = a.get(1).is_some_and(|value| {
+        matches!(value, Value::Sym(symbol) if i.symbol_name(*symbol) == "remap")
+    });
+    if a.get(1).is_some_and(Value::truthy) && !remapped_units {
         let frame = frame.ok_or_else(|| i.error("No frame"))?;
         let total_pixels = (height as f64 * winxtra::window_pixel_scale_y(i, &w)).round();
         let decoration_pixels =
             (mode_line + header + tab).saturating_mul(frame_char_height(i, &frame)) as f64;
+        let scroll_pixels = if horizontal_scroll_side.is_some() {
+            scroll_height.unwrap_or(0) as f64
+        } else {
+            0.0
+        };
         Ok(Value::Int(
             (total_pixels - decoration_pixels - scroll_pixels).max(0.0) as i128,
         ))
+    } else if remapped_units && window_face_remapping_enabled(i, &w) {
+        let frame = frame.ok_or_else(|| i.error("No frame"))?;
+        let total_pixels = (height as f64 * winxtra::window_pixel_scale_y(i, &w)).round();
+        let decoration_pixels =
+            (mode_line + header + tab).saturating_mul(frame_char_height(i, &frame)) as f64;
+        let scroll_pixels = if horizontal_scroll_side.is_some() {
+            scroll_height.unwrap_or(0) as f64
+        } else {
+            0.0
+        };
+        let body_pixels = (total_pixels - decoration_pixels - scroll_pixels).max(0.0) as usize;
+        let character_height = window_remapped_default_char_size(i, &w, false).max(1);
+        Ok(Value::Int((body_pixels / character_height) as i128))
     } else {
         Ok(Value::Int(body_height as i128))
     }
@@ -5357,11 +5378,6 @@ pub(crate) fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
     let frame_width = frame.as_ref().map(|frame| frame.borrow().width);
     let graphical = frame
         .as_ref()
-        let scroll_pixels = if horizontal_scroll_side.is_some() {
-            scroll_height.unwrap_or(0) as f64
-        } else {
-            0.0
-        };
         .is_some_and(|frame| frame_is_graphical(i, frame));
     let char_width = frame
         .as_ref()
@@ -5414,6 +5430,85 @@ pub(crate) fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
         .saturating_sub(divider)
 }
 
+fn window_face_remapping_enabled(i: &Interp, w: &WindowRef) -> bool {
+    let Some(symbol) = i.q_soft("face-remapping-alist") else {
+        return false;
+    };
+    let buffer_id = w.borrow().buffer;
+    i.buffer_local_toplevel_value(symbol, buffer_id)
+        .or_else(|| i.default_toplevel_value(symbol))
+        .or_else(|| {
+            i.buffers
+                .get(buffer_id)
+                .and_then(|buffer| buffer.borrow().locals.get(&symbol).cloned())
+        })
+        .is_some_and(|value| value.truthy())
+}
+
+/// Return the default face's character width or height for `pixelwise='remap`.
+/// The GUI font backend supplies native metrics for the resolved face; the
+/// frame's canonical character metrics provide a fallback before fonts have
+/// been realized.
+fn window_remapped_default_char_size(i: &Interp, w: &WindowRef, horizontal: bool) -> usize {
+    let Some(frame) = frame_of_window(i, w) else {
+        return 1;
+    };
+    let canonical = if horizontal {
+        frame_char_width(i, &frame).max(1)
+    } else {
+        frame_char_height(i, &frame).max(1)
+    };
+    let Some((default_style, remapped_style)) =
+        crate::frontend::default_face_font_styles_for_window(i, &frame, w)
+    else {
+        return canonical;
+    };
+
+    let default_height = default_style.height.unwrap_or(140).max(1);
+    let remapped_height = remapped_style.height.unwrap_or(default_height).max(1);
+    let height_scale = f64::from(remapped_height) / f64::from(default_height);
+    let default_width = default_style.width.unwrap_or(100).max(1);
+    let remapped_width = remapped_style.width.unwrap_or(default_width).max(1);
+    let relative_width_scale = f64::from(remapped_width) / f64::from(default_width);
+
+    let frame_id = frame.borrow().id;
+    let font_info = i.font_family_list_backend.clone().and_then(|backend| {
+        let family = backend
+            .resolve_font_at(frame_id, &remapped_style)
+            .ok()
+            .flatten()?;
+        backend.font_info(frame_id, &family).ok().flatten()
+    });
+    let metric = if horizontal {
+        font_info.as_ref().and_then(|info| {
+            (info.average_width > 0)
+                .then_some(info.average_width)
+                .or_else(|| (info.space_width > 0).then_some(info.space_width))
+        })
+    } else {
+        font_info
+            .as_ref()
+            .and_then(|info| (info.height > 0).then_some(info.height))
+    };
+    metric
+        .map(|value| {
+            let scale = if horizontal {
+                height_scale * (f64::from(remapped_width) / 100.0)
+            } else {
+                height_scale
+            };
+            (value as f64 * scale).round().max(1.0) as usize
+        })
+        .unwrap_or_else(|| {
+            let scale = if horizontal {
+                height_scale * relative_width_scale
+            } else {
+                height_scale
+            };
+            (canonical as f64 * scale).round().max(1.0) as usize
+        })
+}
+
 fn f_window_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     Ok(Value::Int(win_body_width(i, &w) as i128))
@@ -5425,7 +5520,15 @@ fn f_window_total_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_window_body_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
     let body_width = win_body_width(i, &w);
-    if a.get(1).is_some_and(Value::truthy) {
+    let remapped_units = a.get(1).is_some_and(|value| {
+        matches!(value, Value::Sym(symbol) if i.symbol_name(*symbol) == "remap")
+    });
+    if remapped_units && window_face_remapping_enabled(i, &w) {
+        let body_pixels =
+            (body_width as f64 * winxtra::window_pixel_scale_x(i, &w)).round().max(0.0) as usize;
+        let character_width = window_remapped_default_char_size(i, &w, true).max(1);
+        Ok(Value::Int((body_pixels / character_width) as i128))
+    } else if a.get(1).is_some_and(Value::truthy) && !remapped_units {
         Ok(Value::Int(
             (body_width as f64 * winxtra::window_pixel_scale_x(i, &w)).round() as i128,
         ))
