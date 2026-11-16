@@ -740,7 +740,7 @@ fn f_coordinates_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // GNU Fcoordinates_in_window_p:
     // CHECK_LIVE_WINDOW (window arg 1) runs BEFORE the coordinates cons
     // shape check — `wta window-live-p' on any non-live window.
-    let _w = win_live(i, &arg(&a, 1))?;
+    let window = win_live(i, &arg(&a, 1))?;
     let (x, y) = match &a[0] {
         Value::Cons(c) => {
             let cc = c.borrow();
@@ -748,10 +748,158 @@ fn f_coordinates_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         }
         other => return Err(i.wrong_type_mut("consp", other)),
     };
-    match (x, y) {
-        (Value::Int(_), Value::Int(_)) => Ok(a[0].clone()),
-        _ => Ok(Value::Nil),
+    let (Value::Int(x), Value::Int(y)) = (x, y) else {
+        return Ok(Value::Nil);
+    };
+    let (left, top, width, height, minibuffer, leaf, margins, fringes) = {
+        let window = window.borrow();
+        (
+            window.left,
+            window.top,
+            window.width,
+            window.height,
+            window.minibuffer,
+            window.horiz.is_none(),
+            window.margins,
+            window.fringes,
+        )
+    };
+    let Some(frame) = crate::editor::frame_of_window(i, &window) else {
+        return Ok(Value::Nil);
+    };
+    let shift = crate::editor::fmenu_shift(&frame.borrow());
+    let top = top.saturating_sub(shift);
+    let x = usize::try_from(x).ok();
+    let y = usize::try_from(y).ok();
+    let (Some(x), Some(y)) = (x, y) else {
+        return Ok(Value::Nil);
+    };
+    let x_from_window = x.saturating_sub(left);
+    let y_from_window = y.saturating_sub(top);
+    if x < left
+        || x_from_window >= width
+        || y < top
+        || y_from_window >= height
+    {
+        return Ok(Value::Nil);
     }
+
+    let char_width = crate::editor::frame_char_width(i, &frame).max(1);
+    let char_height = crate::editor::frame_char_height(i, &frame).max(1);
+    let (scroll_width, vertical_scroll_side, scroll_height, horizontal_scroll_side, _) =
+        window_scroll_bar_settings(i, &window);
+    let scroll_columns = if vertical_scroll_side.is_some() {
+        scroll_width.unwrap_or(0).div_ceil(char_width).min(width)
+    } else {
+        0
+    };
+    let left_scroll = if vertical_scroll_side == Some(true) {
+        scroll_columns
+    } else {
+        0
+    };
+    let right_scroll = if vertical_scroll_side == Some(false) {
+        scroll_columns
+    } else {
+        0
+    };
+    let (header, tab, mode) = if leaf && !minibuffer {
+        (
+            window_format_line_height(i, &window, "header-line-format")?,
+            window_format_line_height(i, &window, "tab-line-format")?,
+            window_mode_line_height(i, &window)?,
+        )
+    } else {
+        (0, 0, 0)
+    };
+    if y_from_window < tab {
+        return Ok(Value::Sym(i.q("tab-line")));
+    }
+    if y_from_window < tab.saturating_add(header) {
+        return Ok(Value::Sym(i.q("header-line")));
+    }
+    let scroll_rows = if horizontal_scroll_side.is_some() {
+        scroll_height.unwrap_or(0).div_ceil(char_height).min(height)
+    } else {
+        0
+    };
+    let bottom_divider_rows = if !minibuffer && crate::editor::frame_is_graphical(i, &frame) {
+        crate::editor::frame_parameter_positive_size(i, &frame, "bottom-divider-width", 0)
+            .div_ceil(char_height)
+            .min(height)
+    } else {
+        0
+    };
+    let mode_line_start = height.saturating_sub(mode.saturating_add(bottom_divider_rows));
+    let scroll_bar_start = mode_line_start.saturating_sub(scroll_rows);
+    if bottom_divider_rows > 0 && y_from_window >= height.saturating_sub(bottom_divider_rows) {
+        return Ok(Value::Sym(i.q("bottom-divider")));
+    }
+    if y_from_window >= scroll_bar_start && y_from_window < mode_line_start {
+        return Ok(Value::Nil);
+    }
+    if mode > 0 && y_from_window >= mode_line_start {
+        return Ok(Value::Sym(i.q("mode-line")));
+    }
+
+    let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let parameters = frame.borrow().params.clone();
+    let default_left_fringe = if graphical {
+        crate::frontend::frame_fringe_pixels(i, &parameters, "left-fringe")
+    } else {
+        0
+    };
+    let default_right_fringe = if graphical {
+        crate::frontend::frame_fringe_pixels(i, &parameters, "right-fringe")
+    } else {
+        0
+    };
+    let (left_fringe_pixels, right_fringe_pixels) = fringes
+        .map(|(left, right, _, _)| {
+            (
+                left.unwrap_or(default_left_fringe),
+                right.unwrap_or(default_right_fringe),
+            )
+        })
+        .unwrap_or((default_left_fringe, default_right_fringe));
+    let available_width = width.saturating_sub(left_scroll.saturating_add(right_scroll));
+    let left_fringe = left_fringe_pixels
+        .div_ceil(char_width)
+        .min(available_width.saturating_sub(1));
+    let right_fringe = right_fringe_pixels
+        .div_ceil(char_width)
+        .min(available_width.saturating_sub(left_fringe.saturating_add(1)));
+    let after_fringes = available_width.saturating_sub(left_fringe.saturating_add(right_fringe));
+    let left_margin = margins.0.min(after_fringes.saturating_sub(1));
+    let right_margin = margins
+        .1
+        .min(after_fringes.saturating_sub(left_margin.saturating_add(1)));
+    let text_left = left_scroll
+        .saturating_add(left_fringe)
+        .saturating_add(left_margin);
+    let text_right = width
+        .saturating_sub(right_scroll)
+        .saturating_sub(right_fringe)
+        .saturating_sub(right_margin);
+    if x_from_window < left_scroll || x_from_window >= width.saturating_sub(right_scroll) {
+        return Ok(Value::Nil);
+    }
+    if x_from_window < left_scroll.saturating_add(left_fringe) {
+        return Ok(Value::Sym(i.q("left-fringe")));
+    }
+    if x_from_window < text_left {
+        return Ok(Value::Sym(i.q("left-margin")));
+    }
+    if x_from_window >= text_right {
+        if x_from_window < text_right.saturating_add(right_margin) {
+            return Ok(Value::Sym(i.q("right-margin")));
+        }
+        return Ok(Value::Sym(i.q("right-fringe")));
+    }
+    Ok(Value::cons(
+        Value::Int(x_from_window.saturating_sub(text_left) as i128),
+        Value::Int(y_from_window as i128),
+    ))
 }
 
 /// Shared buffer-arg resolution for the minibuffer predicates: nil →
