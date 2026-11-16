@@ -206,7 +206,7 @@
       (mapcar (lambda (mode) (window-text-pixel-size nil nil nil nil nil mode))
               '(nil t mode-line header-line tab-line bogus)))
     '((0 . 0) (0 . 2) (0 . 0) (0 . 1) (0 . 1) (0 . 0)))
-(qa (window-text-pixel-size nil '(1 . 0)) '(0 . 0))
+(qa (window-text-pixel-size nil '(1 . 0)) '(0 0 1))
 (qa (window-text-pixel-size nil '(1 . 2)) '(0 0 1))
 (qa (window-text-pixel-size nil '(1 . -2)) '(0 0 1))
 (qa-err-data (window-text-pixel-size nil "x") 'wrong-type-argument '(integer-or-marker-p "x"))
@@ -230,7 +230,7 @@
       (let ((current (current-buffer)))
         (list (window-text-pixel-size nil nil nil nil nil t)
               (eq current (current-buffer))))) '((0 . 1) t))
-(qa (window-text-pixel-size nil '(1 . 4294967296)) '(0 . 0))
+(qa (window-text-pixel-size nil '(1 . 4294967296)) '(0 0 1))
 
 (qa
  (let ((window (selected-window)))
@@ -288,6 +288,29 @@
      (list (window-text-pixel-size window nil t)
            (window-text-pixel-size window))))
  '((8 . 16) (8 . 32)))
+
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'menu-bar-lines 0)
+   (set-frame-parameter nil 'tool-bar-lines 0)
+   (set-frame-parameter nil 'tab-bar-lines 0)
+   (set-frame-parameter nil 'char-width 8)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (insert "abc")
+     (let* ((zero (window-text-pixel-size window (cons (point-min) 0)))
+            (offset (window-text-pixel-size window (cons (point-min) 20)))
+            (zero-list
+             (and (consp zero) (consp (cdr zero)) (consp (cddr zero))
+                  (null (cdddr zero))))
+            (offset-list
+             (and (consp offset) (consp (cdr offset)) (consp (cddr offset))
+                  (null (cdddr offset))))
+            (offset-start (and offset-list (nth 2 offset))))
+       (list zero-list (car zero) offset-list (car offset) offset-start))))
+ '(t 24 t 24 1))
 
 (qa
  (let ((window (selected-window)))

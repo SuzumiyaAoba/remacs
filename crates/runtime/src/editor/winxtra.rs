@@ -4518,6 +4518,7 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         })
         .unwrap_or((1, 1));
     let from = arg(&a, 1);
+    let from_is_cons = matches!(&from, Value::Cons(_));
     let (start, offset) = match &from {
         Value::Nil => (beg, 0),
         Value::Sym(s) if *s == sym::T => {
@@ -4700,13 +4701,10 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         .iter()
         .map(|columns| columns.saturating_mul(char_width))
         .max()
-        .unwrap_or(0)
-        .saturating_add(offset.max(0) as usize);
+        .unwrap_or(0);
     let mut pixel_width = display_pixel_size
         .as_ref()
-        .map_or(raw_pixel_width, |(width, _)| {
-            width.saturating_add(offset.max(0) as usize)
-        })
+        .map_or(raw_pixel_width, |(width, _)| *width)
         .min(x_limit);
     if x_limit == 0 {
         pixel_width = 0;
@@ -4756,7 +4754,7 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     if let Some(y_limit) = y_limit {
         measured_height = measured_height.min(y_limit);
     }
-    if offset != 0 {
+    if from_is_cons {
         Ok(Value::list(vec![
             Value::Int(pixel_width as i128),
             Value::Int(measured_height as i128),
