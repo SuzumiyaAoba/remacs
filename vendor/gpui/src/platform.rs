@@ -521,6 +521,29 @@ pub enum DragSessionOutcome {
     ReturnFrame(usize),
 }
 
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn opacity_to_alpha(opacity: f32) -> u8 {
+    let opacity = if opacity.is_finite() {
+        opacity.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    (opacity * f32::from(u8::MAX)).round() as u8
+}
+
+#[cfg(test)]
+mod window_opacity_tests {
+    use super::opacity_to_alpha;
+
+    #[test]
+    fn opacity_maps_to_the_native_alpha_byte() {
+        assert_eq!(opacity_to_alpha(0.0), 0);
+        assert_eq!(opacity_to_alpha(0.5), 128);
+        assert_eq!(opacity_to_alpha(1.0), u8::MAX);
+        assert_eq!(opacity_to_alpha(f32::NAN), u8::MAX);
+    }
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;

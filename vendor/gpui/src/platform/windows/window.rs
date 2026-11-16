@@ -774,6 +774,47 @@ impl PlatformWindow for WindowsWindow {
         }
     }
 
+    fn set_opacity(&self, opacity: f32) {
+        let hwnd = self.0.hwnd;
+        let alpha = crate::platform::opacity_to_alpha(opacity);
+        let current_style = unsafe { get_window_long(hwnd, GWL_EXSTYLE) as u32 };
+        let layered_style = WS_EX_LAYERED.0;
+        let new_style = if alpha < u8::MAX {
+            current_style | layered_style
+        } else {
+            current_style & !layered_style
+        };
+
+        if current_style != new_style {
+            unsafe {
+                set_window_long(hwnd, GWL_EXSTYLE, new_style as isize);
+                SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                )
+                .ok()
+                .log_err();
+            }
+        }
+        if new_style & layered_style != 0 {
+            unsafe {
+                SetLayeredWindowAttributes(
+                    hwnd,
+                    windows::Win32::Foundation::COLORREF(0),
+                    alpha,
+                    LWA_ALPHA,
+                )
+                .ok()
+                .log_err();
+            }
+        }
+    }
+
     fn is_visible(&self) -> bool {
         unsafe { IsWindowVisible(self.0.hwnd).as_bool() && !IsIconic(self.0.hwnd).as_bool() }
     }
