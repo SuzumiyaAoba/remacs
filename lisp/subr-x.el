@@ -13441,7 +13441,7 @@ an integer value."
            (:height
             'integerp)
            (:stipple
-            (and (memq (window-system frame) '(x ns pgtk haiku)) ; No stipple on w32
+            (and (memq (window-system frame) '(x ns pgtk haiku gpui)) ; No stipple on w32
                  (mapcar (lambda (item)
                            (cons item item))
                          (apply #'nconc
