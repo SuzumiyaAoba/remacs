@@ -1034,6 +1034,7 @@ qa!(qa_sqlite_validation, "qa_sqlite_validation.el");
 qa!(qa_multisession_pragmas, "qa_multisession_pragmas.el");
 qa!(qa_multisession_delete_sync, "qa_multisession_delete_sync.el");
 qa!(qa_multisession_delete_unopened, "qa_multisession_delete_unopened.el");
+qa!(qa_multisession_directory_change, "qa_multisession_directory_change.el");
 
 qa!(qa_process_large_send, "qa_process_large_send.el");
 

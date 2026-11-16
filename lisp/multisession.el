@@ -141,49 +141,73 @@ DOC should be a doc string, and ARGS are keywords as applicable to
 (declare-function sqlite-rollback "sqlite.c")
 
 (defvar multisession--db nil)
+(defvar multisession--db-file nil)
 
 (defun multisession--ensure-db ()
-  (unless multisession--db
-    (let* ((file (expand-file-name "sqlite/multisession.sqlite"
-                                   multisession-directory))
-           (dir (file-name-directory file)))
+  (let* ((file (expand-file-name "sqlite/multisession.sqlite"
+                                 multisession-directory))
+         (dir (file-name-directory file)))
+    (when (and multisession--db
+               (not (equal file multisession--db-file)))
+      (sqlite-close multisession--db)
+      (setq multisession--db nil
+            multisession--db-file nil))
+    (unless multisession--db
       (unless (file-exists-p dir)
         (make-directory dir t))
-      (setq multisession--db (sqlite-open file)))
-    ;; These connection settings cannot be changed inside a transaction.
-    (sqlite-pragma multisession--db "journal_mode = WAL")
-    (sqlite-pragma multisession--db "synchronous = NORMAL")
-    (with-sqlite-transaction multisession--db
-      (unless (sqlite-select
-               multisession--db
-               "select name from sqlite_master where type = 'table' and name = 'multisession'")
-        ;; Tidy up the database automatically.
-        (sqlite-pragma multisession--db "auto_vacuum = FULL")
-        ;; Create the table.
-        (sqlite-execute
-         multisession--db
-         "create table multisession (package text not null, key text not null, sequence number not null default 1, value text not null, deleted integer not null default 0)")
-        (sqlite-execute
-         multisession--db
-         "create unique index multisession_idx on multisession (package, key)"))
-      ;; Existing databases need a tombstone column so deletes can advance
-      ;; the same per-key sequence as writes.
-      (unless (member "deleted"
-                      (mapcar #'cadr
-                              (sqlite-select multisession--db
-                                             "pragma table_info(multisession)")))
-        (sqlite-execute multisession--db
-                        "alter table multisession add column deleted integer not null default 0")))))
+      (setq multisession--db (sqlite-open file)
+            multisession--db-file file)
+      ;; These connection settings cannot be changed inside a transaction.
+      (sqlite-pragma multisession--db "journal_mode = WAL")
+      (sqlite-pragma multisession--db "synchronous = NORMAL")
+      (with-sqlite-transaction multisession--db
+        (unless (sqlite-select
+                 multisession--db
+                 "select name from sqlite_master where type = 'table' and name = 'multisession'")
+          ;; Tidy up the database automatically.
+          (sqlite-pragma multisession--db "auto_vacuum = FULL")
+          ;; Create the table.
+          (sqlite-execute
+           multisession--db
+           "create table multisession (package text not null, key text not null, sequence number not null default 1, value text not null, deleted integer not null default 0)")
+          (sqlite-execute
+           multisession--db
+           "create unique index multisession_idx on multisession (package, key)"))
+        ;; Existing databases need a tombstone column so deletes can advance
+        ;; the same per-key sequence as writes.
+        (unless (member "deleted"
+                        (mapcar #'cadr
+                                (sqlite-select multisession--db
+                                               "pragma table_info(multisession)")))
+          (sqlite-execute multisession--db
+                          "alter table multisession add column deleted integer not null default 0"))))))
+
+(defun multisession--sqlite-cached-sequence (object)
+  "Return OBJECT's sequence in the current database, resetting stale caches."
+  (let ((cached-sequence (multisession--cached-sequence object)))
+    (if (and (consp cached-sequence)
+             (equal (car cached-sequence) multisession--db-file))
+        (cdr cached-sequence)
+      (setf (multisession--cached-value object) multisession--unbound
+            (multisession--cached-sequence object)
+            (cons multisession--db-file 0))
+      0)))
+
+(defun multisession--set-sqlite-cached-sequence (object sequence)
+  (setf (multisession--cached-sequence object)
+        (cons multisession--db-file sequence)))
 
 (defun multisession--cache-sqlite-row (object row)
   (let ((sequence (cadr row)))
     (if (= (nth 2 row) 1)
         (setf (multisession--cached-value object)
               (multisession--initial-value object)
-              (multisession--cached-sequence object) sequence)
+              (multisession--cached-sequence object)
+              (cons multisession--db-file sequence))
       (setf (multisession--cached-value object)
             (car (read-from-string (car row)))
-            (multisession--cached-sequence object) sequence))
+            (multisession--cached-sequence object)
+            (cons multisession--db-file sequence)))
     (multisession--cached-value object)))
 
 (cl-defmethod multisession-backend-value ((_type (eql 'sqlite)) object)
@@ -191,7 +215,8 @@ DOC should be a doc string, and ARGS are keywords as applicable to
       (cl-call-next-method)
     (multisession--ensure-db)
     (let ((id (list (multisession--package object)
-                    (multisession--key object))))
+                    (multisession--key object)))
+          (cached-sequence (multisession--sqlite-cached-sequence object)))
       (cond
        ;; We have no value yet; check the database.
        ((eq (multisession--cached-value object) multisession--unbound)
@@ -213,7 +238,7 @@ DOC should be a doc string, and ARGS are keywords as applicable to
                 (sqlite-select
                  multisession--db
                  "select value, sequence, deleted from multisession where sequence > ? and package = ? and key = ?"
-                 (cons (multisession--cached-sequence object) id)))))
+                 (cons cached-sequence id)))))
           (if stored
               (multisession--cache-sqlite-row object stored)
             ;; Nothing, return the cached value.
@@ -252,11 +277,12 @@ DOC should be a doc string, and ARGS are keywords as applicable to
        multisession--db
        "insert into multisession(package, key, sequence, value, deleted) values(?, ?, 1, ?, 0) on conflict(package, key) do update set sequence = sequence + 1, value = ?, deleted = 0"
        (append id (list pvalue pvalue)))
-      (setf (multisession--cached-sequence object)
-            (caar (sqlite-select
-                   multisession--db
-                   "select sequence from multisession where package = ? and key = ?"
-                   id)))
+      (multisession--set-sqlite-cached-sequence
+       object
+       (caar (sqlite-select
+              multisession--db
+              "select sequence from multisession where package = ? and key = ?"
+              id)))
       (setf (multisession--cached-value object) value))))
 
 (cl-defmethod multisession--backend-values ((_type (eql 'sqlite)))
@@ -281,10 +307,11 @@ DOC should be a doc string, and ARGS are keywords as applicable to
         (setf (multisession--cached-value object)
               (multisession--initial-value object)
               (multisession--cached-sequence object)
-              (caar (sqlite-select
-                     multisession--db
-                     "select sequence from multisession where package = ? and key = ?"
-                     id)))))
+              (cons multisession--db-file
+                    (caar (sqlite-select
+                           multisession--db
+                           "select sequence from multisession where package = ? and key = ?"
+                           id))))))
     nil))
 
 ;; Files Backend
