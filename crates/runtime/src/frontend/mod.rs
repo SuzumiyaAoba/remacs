@@ -457,6 +457,7 @@ pub trait DragBackend {
         text: Option<&str>,
         paths: &[String],
         action: DragAction,
+        allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<&str>,
     ) -> Result<Option<DragAction>, String>;

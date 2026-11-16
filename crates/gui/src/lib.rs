@@ -1620,6 +1620,7 @@ pub fn run_gui_with_dump(
                         text,
                         paths,
                         action,
+                        allow_same_frame,
                         follow_tooltip,
                         tooltip,
                         started,
@@ -1648,6 +1649,7 @@ pub fn run_gui_with_dump(
                                         text,
                                         paths,
                                         operation,
+                                        allow_same_frame,
                                         follow_tooltip,
                                         tooltip,
                                         move |operation| {

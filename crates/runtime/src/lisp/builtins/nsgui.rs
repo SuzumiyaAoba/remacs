@@ -1343,6 +1343,7 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         Some(value) => return Err(i.wrong_type_mut("symbolp", value)),
     };
+    let allow_same_frame = a.get(4).is_some_and(|value| !value.is_nil());
     let follow_tooltip = a.get(5).is_some_and(|value| !value.is_nil());
     let tooltip = if follow_tooltip {
         i.gui_tip.as_ref().map(|tooltip| tooltip.text.clone())
@@ -1355,6 +1356,7 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             text.as_deref(),
             &files,
             action,
+            allow_same_frame,
             follow_tooltip,
             tooltip.as_deref(),
         )

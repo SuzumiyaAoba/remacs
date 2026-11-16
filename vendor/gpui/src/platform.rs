@@ -565,6 +565,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         _text: Option<String>,
         _paths: Vec<String>,
         _operation: crate::ExternalDragOperation,
+        _allow_same_frame: bool,
         _follow_tooltip: bool,
         _tooltip: Option<String>,
         _completion: Box<dyn FnOnce(Option<crate::ExternalDragOperation>) + Send>,

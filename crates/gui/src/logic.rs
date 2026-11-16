@@ -791,6 +791,7 @@ pub(super) enum GuiRequest {
         text: Option<String>,
         paths: Vec<String>,
         action: DragAction,
+        allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<String>,
         started: SyncSender<Result<(), String>>,
@@ -1040,6 +1041,7 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         text: Option<&str>,
         paths: &[String],
         action: DragAction,
+        allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<&str>,
     ) -> Result<Option<DragAction>, String> {
@@ -1051,6 +1053,7 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
                 text: text.map(str::to_owned),
                 paths: paths.to_vec(),
                 action,
+                allow_same_frame,
                 follow_tooltip,
                 tooltip: tooltip.map(str::to_owned),
                 started,

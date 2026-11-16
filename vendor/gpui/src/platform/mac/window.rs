@@ -442,6 +442,8 @@ struct MacWindowState {
     drag_session: Option<id>,
     drag_operation: Option<NSDragOperation>,
     drag_completion: Option<Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>>,
+    // The active drag's source window rejects drops back onto itself by default.
+    disallow_same_frame_drop: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     // Keep the physical left-button gesture's mapping until its release.
@@ -768,6 +770,7 @@ impl MacWindow {
                 drag_session: None,
                 drag_operation: None,
                 drag_completion: None,
+                disallow_same_frame_drop: false,
                 first_mouse: false,
                 control_click: false,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -1630,6 +1633,7 @@ impl PlatformWindow for MacWindow {
         text: Option<String>,
         paths: Vec<String>,
         operation: ExternalDragOperation,
+        allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<String>,
         completion: Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>,
@@ -1655,6 +1659,7 @@ impl PlatformWindow for MacWindow {
                 ExternalDragOperation::Generic => NSDragOperationGeneric,
             });
             state.drag_completion = Some(completion);
+            state.disallow_same_frame_drop = !allow_same_frame;
             (state.native_view.as_ptr() as id, event)
         };
 
@@ -1716,6 +1721,7 @@ impl PlatformWindow for MacWindow {
             let completion = {
                 let mut state = self.0.lock();
                 state.drag_operation = None;
+                state.disallow_same_frame_drop = false;
                 state.drag_completion.take()
             };
             if let Some(completion) = completion {
@@ -2007,6 +2013,7 @@ extern "C" fn dragging_session_ended(
             return;
         }
         state.drag_operation = None;
+        state.disallow_same_frame_drop = false;
         (state.drag_session.take(), state.drag_completion.take())
     };
     if let Some(drag_session) = drag_session {
@@ -2783,6 +2790,10 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
+    // This is the source window when a drag returns to its originating frame.
+    if window_state.lock().disallow_same_frame_drop {
+        return NSDragOperationNone;
+    }
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
     if let Some(paths) = paths {

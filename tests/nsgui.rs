@@ -10,6 +10,62 @@
 
 mod common;
 use common::{ev, ev_err};
+use remacs_runtime::{
+    frontend::{DragAction, DragBackend},
+    lisp::Interp,
+};
+use std::{cell::RefCell, rc::Rc};
+
+#[derive(Default)]
+struct DragRecorder(RefCell<Vec<(usize, bool, Option<String>)>>);
+
+impl DragBackend for DragRecorder {
+    fn begin_drag(
+        &self,
+        frame_id: usize,
+        text: Option<&str>,
+        _paths: &[String],
+        _action: DragAction,
+        allow_same_frame: bool,
+        _follow_tooltip: bool,
+        _tooltip: Option<&str>,
+    ) -> Result<Option<DragAction>, String> {
+        self.0.borrow_mut().push((
+            frame_id,
+            allow_same_frame,
+            text.map(str::to_owned),
+        ));
+        Ok(None)
+    }
+}
+
+#[test]
+fn ns_begin_drag_forwards_allow_same_frame() {
+    let mut interp = Interp::new();
+    let backend = Rc::new(DragRecorder::default());
+    interp.set_drag_backend(Some(backend.clone()));
+    interp
+        .eval_str("(set-frame-parameter nil 'window-system 'ns)")
+        .unwrap();
+
+    for form in [
+        "(ns-begin-drag nil '((string . \"dragged text\")) 'XdndActionCopy)",
+        "(ns-begin-drag nil '((string . \"dragged text\")) 'XdndActionCopy nil t)",
+    ] {
+        let result = interp
+            .eval_str(form)
+            .unwrap_or_else(|flow| panic!("{form}: {flow:?}"));
+        assert_eq!(interp.prin1_to_string(&result).to_unicode_lossy(), "nil");
+    }
+
+    let calls = backend.0.borrow();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, calls[1].0);
+    assert!(!calls[0].1);
+    assert!(calls[1].1);
+    assert_eq!(calls[0].2.as_deref(), Some("dragged text"));
+    assert_eq!(calls[1].2.as_deref(), Some("dragged text"));
+}
 
 /// Interp::new pays the prelude cost once per `ev', so each test
 /// evaluates one big `let'/`dolist' probe instead of many forms.
