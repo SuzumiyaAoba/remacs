@@ -1656,6 +1656,7 @@ impl PlatformWindow for MacWindow {
         if text.is_none() && paths.is_empty() {
             return Err("No data was supplied for dragging".to_owned());
         }
+        let preview_text = drag_preview_text(text.as_deref(), tooltip.as_deref());
         let (view, event) = {
             let mut state = self.0.lock();
             if state.drag_completion.is_some() {
@@ -1711,14 +1712,14 @@ impl PlatformWindow for MacWindow {
                 msg_send![dragging_item, initWithPasteboardWriter: pasteboard_item];
             let items: id = msg_send![class!(NSMutableArray), array];
             let _: () = msg_send![items, addObject: dragging_item];
-            let (frame, contents) = tooltip.as_deref().map_or_else(
+            let (frame, contents) = preview_text.as_deref().map_or_else(
                 || {
                     (
                         NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
                         nil,
                     )
                 },
-                |tooltip| tooltip_drag_image(tooltip),
+                |preview| tooltip_drag_image(preview),
             );
             let _: () = msg_send![dragging_item, setDraggingFrame: frame contents: contents];
             if !contents.is_null() {
@@ -2918,6 +2919,31 @@ mod drag_return_frame_tests {
     }
 }
 
+#[cfg(test)]
+mod drag_preview_tests {
+    use super::drag_preview_text;
+
+    #[test]
+    fn outgoing_text_is_used_for_the_drag_preview() {
+        assert_eq!(
+            drag_preview_text(Some("selected text"), None).as_deref(),
+            Some("selected text")
+        );
+        assert_eq!(
+            drag_preview_text(Some("selected text"), Some("tooltip")).as_deref(),
+            Some("tooltip")
+        );
+        assert_eq!(drag_preview_text(None, None), None);
+
+        let long_text = "x".repeat(81);
+        let expected = format!("{}…", "x".repeat(80));
+        assert_eq!(
+            drag_preview_text(Some(&long_text), None).as_deref(),
+            Some(expected.as_str())
+        );
+    }
+}
+
 extern "C" fn dragging_session_moved_to(
     this: &Object,
     _: Sel,
@@ -3177,6 +3203,32 @@ fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -
 fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {
     let drag_location: NSPoint = unsafe { msg_send![dragging_info, draggingLocation] };
     convert_mouse_position(drag_location, window_state.lock().content_size().height)
+}
+
+fn drag_preview_text(text: Option<&str>, tooltip: Option<&str>) -> Option<String> {
+    tooltip
+        .map(str::to_owned)
+        .or_else(|| text.map(drag_preview_label))
+}
+
+fn drag_preview_label(text: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let mut chars = text.chars();
+    let mut preview: String = chars
+        .by_ref()
+        .take(MAX_CHARS)
+        .map(|character| {
+            if character.is_whitespace() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
 }
 
 unsafe fn tooltip_drag_image(text: &str) -> (NSRect, id) {
