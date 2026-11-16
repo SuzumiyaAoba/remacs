@@ -4617,6 +4617,7 @@ fn render_tab_bar(
     i: &Interp,
     frame_id: usize,
     frame_params: &Value,
+    frame_buffer_id: usize,
     width: usize,
     rows: usize,
     row_offset: usize,
@@ -4661,9 +4662,9 @@ fn render_tab_bar(
         .and_then(|value| value.list_to_vec().ok())
         .unwrap_or_default();
     let tab_count = tabs.len().max(1);
-    let close_setting = mode_line_variable(i, i.current_buffer, "tab-bar-close-button-show")
+    let close_setting = mode_line_variable(i, frame_buffer_id, "tab-bar-close-button-show")
         .unwrap_or(Value::Nil);
-    let close_button = mode_line_variable(i, i.current_buffer, "tab-bar-close-button")
+    let close_button = mode_line_variable(i, frame_buffer_id, "tab-bar-close-button")
         .and_then(|value| match value {
             Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
             _ => None,
@@ -4683,7 +4684,7 @@ fn render_tab_bar(
             .map(|tab| tab_entry_parameter(i, tab, "name"))
             .unwrap_or_else(|| {
                 i.buffers
-                    .get(i.current_buffer)
+                    .get(frame_buffer_id)
                     .map(|buffer| Value::string(buffer.borrow().name.clone()))
                     .unwrap_or(Value::Nil)
             });
@@ -4768,11 +4769,11 @@ fn render_tab_bar(
         column = column.saturating_add(button_width).saturating_add(1);
     }
 
-    let new_button_show = mode_line_variable(i, i.current_buffer, "tab-bar-new-button-show")
+    let new_button_show = mode_line_variable(i, frame_buffer_id, "tab-bar-new-button-show")
         .unwrap_or(Value::t())
         .truthy();
     if new_button_show && width > 0 {
-        let label = mode_line_variable(i, i.current_buffer, "tab-bar-new-button")
+        let label = mode_line_variable(i, frame_buffer_id, "tab-bar-new-button")
             .and_then(|value| match value {
                 Value::Str(text) => Some(text.borrow().to_unicode_lossy()),
                 _ => None,
@@ -12080,6 +12081,7 @@ fn render_grid_internal(
             i,
             fb.id,
             &fb.params,
+            fb.selected.borrow().buffer,
             width,
             tab_bar_rows,
             row_offset,
