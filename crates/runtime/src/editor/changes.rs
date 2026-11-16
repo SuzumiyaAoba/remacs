@@ -149,8 +149,9 @@ fn configuration_hook(i: &mut Interp, frame: &FrameRef) -> Result<(), Flow> {
     result
 }
 
-fn record(i: &Interp) {
-    for frame in i.frames.iter().filter(|f| !f.borrow().dead) {
+fn record(i: &mut Interp) {
+    let frames = i.frames.clone();
+    for frame in frames.iter().filter(|f| !f.borrow().dead) {
         let windows = frame_windows(frame);
         let pixel_size = frame_pixel_size(i, frame);
         let (stamp, id, clock) = {
@@ -173,12 +174,14 @@ fn record(i: &Interp) {
         };
         for window in windows {
             let size = window_size(i, &window);
+            let pixel_size = winxtra::window_pixel_sizes(i, &window).ok();
             let mut data = window.borrow_mut();
             data.old_buffer = i.buffer_value(data.buffer).unwrap_or(Value::Nil);
             data.change_stamp = stamp;
             data.change_frame = Some(id);
             data.change_clock = Some(clock.clone());
             data.change_size = Some(size);
+            data.old_pixel_size = pixel_size;
             data.change_start = Some(data.start);
         }
     }
@@ -400,6 +403,72 @@ mod tests {
 
                 let frame = i.selected_frame.as_ref().unwrap().borrow();
                 assert_eq!((frame.width, frame.height), cell_size);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn old_window_pixel_sizes_follow_window_change_passes() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut i = Interp::new();
+                i.eval_str(
+                    "(progn \
+                     (require 'frame) \
+                     (set-frame-parameter nil 'window-system 'gpui) \
+                     (set-frame-parameter nil 'menu-bar-lines 0) \
+                     (set-frame-parameter nil 'tool-bar-lines 0) \
+                     (set-frame-parameter nil 'tab-bar-lines 0) \
+                     (set-frame-parameter nil 'vertical-scroll-bars nil) \
+                     (set-frame-size nil 80 24) \
+                     (setq-local header-line-format \"Header\" \
+                                 mode-line-format \"Mode\"))",
+                )
+                .unwrap();
+
+                assert_eq!(
+                    i.eval_str("(window-old-pixel-width (selected-window))")
+                        .unwrap()
+                        .int(),
+                    Some(0),
+                    "a window has no old pixel size before the first change pass"
+                );
+                run(&mut i).unwrap();
+
+                let old_sizes_match_current = "(let* ((window (selected-window)) \
+                     (edges (window-pixel-edges window)) \
+                     (body (window-body-pixel-edges window))) \
+                   (and (= (window-old-pixel-width window) \
+                           (- (nth 2 edges) (nth 0 edges))) \
+                        (= (window-old-pixel-height window) \
+                           (- (nth 3 edges) (nth 1 edges))) \
+                        (= (window-old-body-pixel-width window) \
+                           (- (nth 2 body) (nth 0 body))) \
+                        (= (window-old-body-pixel-height window) \
+                           (- (nth 3 body) (nth 1 body)))) )";
+                assert!(i.eval_str(old_sizes_match_current).unwrap().truthy());
+                assert!(!i.eval_str("(frame-size-changed-p)").unwrap().truthy());
+
+                let previous_width = i
+                    .eval_str("(window-old-pixel-width (selected-window))")
+                    .unwrap()
+                    .int();
+                i.eval_str("(set-frame-size nil 90 24)").unwrap();
+                assert_eq!(
+                    i.eval_str("(window-old-pixel-width (selected-window))")
+                        .unwrap()
+                        .int(),
+                    previous_width,
+                    "the old width remains the last published size before change hooks"
+                );
+                assert!(i.eval_str("(frame-size-changed-p)").unwrap().truthy());
+
+                run(&mut i).unwrap();
+                assert!(i.eval_str(old_sizes_match_current).unwrap().truthy());
+                assert!(!i.eval_str("(frame-size-changed-p)").unwrap().truthy());
             })
             .unwrap()
             .join()

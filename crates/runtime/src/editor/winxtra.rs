@@ -105,10 +105,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     // GNU's `window-old-pixel-*'/`window-old-body-pixel-*' decode a
     // LIVE window (CHECK_LIVE_WINDOW) then report the pre-redisplay
     // sizes — 0 in batch.
-    S!("window-old-pixel-width", 0, 1, f_zero_winvalid, ""),
-    S!("window-old-pixel-height", 0, 1, f_zero_winvalid, ""),
-    S!("window-old-body-pixel-width", 0, 1, f_zero_winlive, ""),
-    S!("window-old-body-pixel-height", 0, 1, f_zero_winlive, ""),
+    S!("window-old-pixel-width", 0, 1, f_window_old_pixel_width, ""),
+    S!("window-old-pixel-height", 0, 1, f_window_old_pixel_height, ""),
+    S!("window-old-body-pixel-width", 0, 1, f_window_old_body_pixel_width, ""),
+    S!("window-old-body-pixel-height", 0, 1, f_window_old_body_pixel_height, ""),
     S!(
         "window-combination-p",
         0,
@@ -2876,6 +2876,26 @@ fn inside_pixel_edges_of(i: &mut Interp, w: &WindowRef) -> Result<(i128, i128, i
     ))
 }
 
+pub(crate) fn window_pixel_sizes(i: &mut Interp, window: &WindowRef) -> Result<[usize; 4], Flow> {
+    let Some(frame) = frame_of_window(i, window) else {
+        return Err(i.error("No frame"));
+    };
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok([0; 4]);
+    }
+    let total = pixel_edges_of(i, &Value::Window(window.clone()))?;
+    let body = inside_pixel_edges_of(i, window)?;
+    let extent = |start: i128, end: i128| {
+        usize::try_from(end.saturating_sub(start).max(0)).unwrap_or(0)
+    };
+    Ok([
+        extent(total.0, total.2),
+        extent(total.1, total.3),
+        extent(body.0, body.2),
+        extent(body.1, body.3),
+    ])
+}
+
 pub(crate) fn pixelwise_window_origin_offset(w: &WindowRef) -> (i128, i128) {
     let mut left = 0i128;
     let mut top = 0i128;
@@ -5160,11 +5180,32 @@ fn f_window_bottom_divider_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     Ok(Value::Int(width as i128))
 }
 
-/// `window-old-pixel-width'/`window-old-pixel-height' — GNU's
-/// decode_valid_window (`window-valid-p'), 0 in batch.
-fn f_zero_winvalid(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = win_valid(i, &arg(&a, 0))?;
-    Ok(Value::Int(0))
+fn old_window_pixel_size(window: &WindowRef, index: usize) -> usize {
+    window
+        .borrow()
+        .old_pixel_size
+        .map_or(0, |sizes| sizes[index])
+}
+
+/// `window-old-pixel-width' — GNU's decode_valid_window.
+fn f_window_old_pixel_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_valid(i, &arg(&a, 0))?;
+    Ok(Value::Int(old_window_pixel_size(&window, 0) as i128))
+}
+
+fn f_window_old_pixel_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_valid(i, &arg(&a, 0))?;
+    Ok(Value::Int(old_window_pixel_size(&window, 1) as i128))
+}
+
+fn f_window_old_body_pixel_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(old_window_pixel_size(&window, 2) as i128))
+}
+
+fn f_window_old_body_pixel_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let window = win_live(i, &arg(&a, 0))?;
+    Ok(Value::Int(old_window_pixel_size(&window, 3) as i128))
 }
 
 /// `tty-frame-edges' / `tty-frame-geometry' — GNU term.c subs:

@@ -202,6 +202,8 @@ struct WindowData {
     change_clock: Option<u64>,
     #[serde(default)]
     change_size: Option<[usize; 5]>,
+    #[serde(default)]
+    old_pixel_size: Option<[usize; 4]>,
     cursor_type: Ref,
 }
 
@@ -554,8 +556,11 @@ impl Image {
             w.old_buffer = old_buffer;
             w.change_stamp = data.change_stamp;
             w.change_frame = data.change_frame;
-            w.change_clock = data.change_clock.map(|stamp| Rc::new(std::cell::Cell::new(stamp)));
+            w.change_clock = data
+                .change_clock
+                .map(|stamp| Rc::new(std::cell::Cell::new(stamp)));
             w.change_size = data.change_size;
+            w.old_pixel_size = data.old_pixel_size;
             w.cursor_type = cursor_type;
         }
         // Older images have only integer geometry; recover their
@@ -1055,6 +1060,7 @@ impl Image {
             change_frame: w.change_frame,
             change_clock: w.change_clock.as_ref().map(|clock| clock.get()),
             change_size: w.change_size,
+            old_pixel_size: w.old_pixel_size,
             cursor_type: e.value(&w.cursor_type)?,
         })
     }
@@ -1134,7 +1140,15 @@ mod tests {
             }
             for window in legacy["window_data"].as_array_mut().unwrap() {
                 let fields = window.as_object_mut().unwrap();
-                for name in ["change_stamp", "change_frame", "change_clock", "change_size"] { fields.remove(name); }
+                for name in [
+                    "change_stamp",
+                    "change_frame",
+                    "change_clock",
+                    "change_size",
+                    "old_pixel_size",
+                ] {
+                    fields.remove(name);
+                }
             }
             let legacy: Image = serde_json::from_value(legacy).unwrap();
             legacy.restore(&mut restored).unwrap();

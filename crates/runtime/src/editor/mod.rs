@@ -156,6 +156,9 @@ pub struct Window {
     pub(crate) change_frame: Option<usize>,
     pub(crate) change_clock: Option<Rc<std::cell::Cell<u64>>>,
     pub(crate) change_size: Option<[usize; 5]>,
+    /// Pixel width/height snapshots from the last window-change pass:
+    /// total width, total height, body width, and body height.
+    pub(crate) old_pixel_size: Option<[usize; 4]>,
     /// Start position published by the previous redisplay change pass.
     pub(crate) change_start: Option<usize>,
     /// GNU `w->cursor_type': per-window cursor override, t = follow
@@ -317,6 +320,7 @@ impl Window {
                 change_frame: None,
                 change_clock: None,
                 change_size: None,
+                old_pixel_size: None,
                 change_start: None,
                 cursor_type: Value::t(),
                 cursor_visible: true,
