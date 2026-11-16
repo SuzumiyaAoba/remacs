@@ -458,6 +458,7 @@ may have changed) back to `save-place-alist'."
       (with-temp-buffer
         (when save-place-forget-unreadable-files
 	  (save-place-forget-unreadable-files))
+	(save-place--truncate-alist)
         (insert (format ";;; -*- coding: %s; mode: lisp-data -*-\n"
                         coding-system-for-write))
         (let ((print-length nil)
