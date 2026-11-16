@@ -289,4 +289,24 @@
            (window-text-pixel-size window))))
  '((8 . 16) (8 . 32)))
 
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'menu-bar-lines 0)
+   (set-frame-parameter nil 'tool-bar-lines 0)
+   (set-frame-parameter nil 'tab-bar-lines 0)
+   (set-frame-parameter nil 'char-width 8)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (insert " \n \nx")
+     (let ((from (window-text-pixel-size window t))
+           (full (window-text-pixel-size window)))
+       (erase-buffer)
+       (insert "x\n \n")
+       (list from full
+             (window-text-pixel-size window nil t)
+             (window-text-pixel-size window)))))
+ '((8 . 16) (8 . 48) (8 . 16) (8 . 48)))
+
 (princ (qa--done))

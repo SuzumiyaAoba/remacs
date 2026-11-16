@@ -4528,8 +4528,21 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
                     let buffer = buffer.borrow();
                     let mut position = beg.saturating_sub(1).max(0) as usize;
                     let end = end.saturating_sub(1).max(0) as usize;
-                    while position < end && buffer.text.char_at(position) == '\n' {
+                    while position < end
+                        && matches!(
+                            buffer.text.char_at(position).unicode(),
+                            Some(' ' | '\t' | '\n' | '\r')
+                        )
+                    {
                         position += 1;
+                    }
+                    while position > beg.saturating_sub(1).max(0) as usize
+                        && matches!(
+                            buffer.text.char_at(position - 1).unicode(),
+                            Some(' ' | '\t')
+                        )
+                    {
+                        position -= 1;
                     }
                     position as i128 + 1
                 })
@@ -4560,8 +4573,18 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
                 let buffer = buffer.borrow();
                 let mut position = end.saturating_sub(1).max(0) as usize;
                 let beginning = beg.saturating_sub(1).max(0) as usize;
-                while position > beginning && buffer.text.char_at(position - 1) == '\n' {
+                while position > beginning
+                    && matches!(
+                        buffer.text.char_at(position - 1).unicode(),
+                        Some(' ' | '\t' | '\n' | '\r')
+                    )
+                {
                     position -= 1;
+                }
+                while position < end.saturating_sub(1).max(0) as usize
+                    && matches!(buffer.text.char_at(position).unicode(), Some(' ' | '\t'))
+                {
+                    position += 1;
                 }
                 (position as i128 + 1).max(start)
             })
