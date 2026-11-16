@@ -5322,18 +5322,72 @@ fn f_window_body_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Ok(Value::Int(body_height as i128))
     }
 }
-/// Body width excludes margins and the one-column window divider that
-/// separates horizontally adjacent windows on a tty.
+/// Body width excludes scroll bars, fringes, margins, and the window
+/// divider that separates horizontally adjacent windows.
 pub(crate) fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
-    let ww = w.borrow();
-    let frame_w = i
-        .frames
-        .iter()
-        .find(|f| f.borrow().windows.iter().any(|x| Rc::ptr_eq(x, w)))
-        .map(|f| f.borrow().width);
-    let margins = ww.margins.0.saturating_add(ww.margins.1);
-    let divider = usize::from(frame_w.is_some_and(|fw| ww.left + ww.width < fw));
-    ww.width.saturating_sub(margins).saturating_sub(divider)
+    let (window_width, window_left, margins, fringes) = {
+        let window = w.borrow();
+        (
+            window.width,
+            window.left,
+            window.margins,
+            window.fringes,
+        )
+    };
+    let frame = frame_of_window(i, w);
+    let frame_width = frame.as_ref().map(|frame| frame.borrow().width);
+    let graphical = frame
+        .as_ref()
+        .is_some_and(|frame| frame_is_graphical(i, frame));
+    let char_width = frame
+        .as_ref()
+        .map_or(1, |frame| frame_char_width(i, frame).max(1));
+    let (scroll_width, vertical_scroll_side, _, _, _) =
+        winxtra::window_scroll_bar_settings(i, w);
+    let scroll_cells = if vertical_scroll_side.is_some() {
+        scroll_width
+            .unwrap_or(0)
+            .div_ceil(char_width)
+            .min(window_width)
+    } else {
+        0
+    };
+    let width_after_scroll = window_width.saturating_sub(scroll_cells);
+    let (left_fringe_pixels, right_fringe_pixels) = if graphical {
+        let parameters = frame.as_ref().map(|frame| frame.borrow().params.clone());
+        let default_left = parameters.as_ref().map_or(0, |parameters| {
+            crate::frontend::frame_fringe_pixels(i, parameters, "left-fringe")
+        });
+        let default_right = parameters.as_ref().map_or(0, |parameters| {
+            crate::frontend::frame_fringe_pixels(i, parameters, "right-fringe")
+        });
+        fringes
+            .map(|(left, right, _, _)| {
+                (
+                    left.unwrap_or(default_left),
+                    right.unwrap_or(default_right),
+                )
+            })
+            .unwrap_or((default_left, default_right))
+    } else {
+        (0, 0)
+    };
+    let fringe_left_cells = left_fringe_pixels
+        .div_ceil(char_width)
+        .min(width_after_scroll.saturating_sub(1));
+    let fringe_right_cells = right_fringe_pixels
+        .div_ceil(char_width)
+        .min(width_after_scroll.saturating_sub(fringe_left_cells.saturating_add(1)));
+    let width_after_fringes = width_after_scroll
+        .saturating_sub(fringe_left_cells.saturating_add(fringe_right_cells));
+    let margin_left = margins.0.min(width_after_fringes.saturating_sub(1));
+    let margin_right = margins
+        .1
+        .min(width_after_fringes.saturating_sub(margin_left.saturating_add(1)));
+    let divider = usize::from(frame_width.is_some_and(|width| window_left + window_width < width));
+    width_after_fringes
+        .saturating_sub(margin_left.saturating_add(margin_right))
+        .saturating_sub(divider)
 }
 
 fn f_window_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5357,9 +5411,7 @@ fn f_window_body_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_window_text_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;
-    let wb = w.borrow();
-    let margins = wb.margins.0.saturating_add(wb.margins.1);
-    Ok(Value::Int(wb.width.saturating_sub(margins) as i128))
+    Ok(Value::Int(win_body_width(i, &w) as i128))
 }
 fn f_window_hscroll(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_live(i, &arg(&a, 0))?;

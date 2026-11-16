@@ -379,4 +379,20 @@
              (cdr (window-text-pixel-size window))))))
  '(t 16))
 
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'left-fringe 8)
+   (set-frame-parameter nil 'right-fringe 8)
+   (set-frame-parameter nil 'vertical-scroll-bars 'right)
+   (set-frame-parameter nil 'scroll-bar-width 8)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (set-window-margins window 0 0)
+     (list (- (window-total-width window) (window-body-width window))
+           (= (window-width window) (window-body-width window))
+           (< (window-body-width window t) (window-pixel-width window))
+           (= (window-text-width window) (window-body-width window)))))
+ '(3 t t t))
+
 (princ (qa--done))
