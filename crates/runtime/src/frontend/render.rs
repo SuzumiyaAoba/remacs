@@ -5902,6 +5902,7 @@ fn formatted_row_mouse_column(
 
 fn place_formatted_window_row(
     i: &Interp,
+    window_faces: Option<&WindowFaces>,
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
     row: usize,
@@ -6001,7 +6002,11 @@ fn place_formatted_window_row(
         },
     );
     let row_text = fit_text_to_cells_with_tab_width(&text, width, tab_width).0;
-    let mut style = faces.builtin(i, face_name, 0).finish();
+    let mut style = if let Some(window_faces) = window_faces {
+        remapped_named_face(i, faces, window_faces, face_name, 0).finish()
+    } else {
+        faces.builtin(i, face_name, 0).finish()
+    };
     if style == CellStyle::default()
         && matches!(
             face_name,
@@ -13902,6 +13907,7 @@ fn render_grid_internal(
                 formatted_row_mouse_column(
                     mouse_position,
                     window_id,
+                wf.as_ref(),
                     buf_id,
                     auxiliary_row,
                     MouseArea::HeaderLine,
@@ -13934,6 +13940,7 @@ fn render_grid_internal(
                 i,
                 &mut fctx,
                 &mut screen_rows,
+                wf.as_ref(),
                 my,
                 window_left,
                 window_width,
@@ -13977,6 +13984,7 @@ fn render_grid_internal(
         if divider.width == 0 || divider.thickness == 0 || divider.row_boundary == 0 {
             continue;
         }
+                wf.as_ref(),
         divider_rows
             .entry(divider.row_boundary)
             .and_modify(|thickness| *thickness = (*thickness).max(divider.thickness))
