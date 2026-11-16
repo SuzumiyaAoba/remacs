@@ -4520,7 +4520,22 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let from = arg(&a, 1);
     let (start, offset) = match &from {
         Value::Nil => (beg, 0),
-        Value::Sym(s) if *s == sym::T => (beg, 0),
+        Value::Sym(s) if *s == sym::T => {
+            let start = i
+                .buffers
+                .get(buffer)
+                .map(|buffer| {
+                    let buffer = buffer.borrow();
+                    let mut position = beg.saturating_sub(1).max(0) as usize;
+                    let end = end.saturating_sub(1).max(0) as usize;
+                    while position < end && buffer.text.char_at(position) == '\n' {
+                        position += 1;
+                    }
+                    position as i128 + 1
+                })
+                .unwrap_or(beg);
+            (start, 0)
+        }
         Value::Cons(c) => {
             let (position, offset) = {
                 let c = c.borrow();
@@ -4536,8 +4551,21 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         ),
     };
     let to = arg(&a, 2);
-    let to_position = if to.is_nil() || i.sym_id(&to) == Some(sym::T) {
+    let to_position = if to.is_nil() {
         end
+    } else if i.sym_id(&to) == Some(sym::T) {
+        i.buffers
+            .get(buffer)
+            .map(|buffer| {
+                let buffer = buffer.borrow();
+                let mut position = end.saturating_sub(1).max(0) as usize;
+                let beginning = beg.saturating_sub(1).max(0) as usize;
+                while position > beginning && buffer.text.char_at(position - 1) == '\n' {
+                    position -= 1;
+                }
+                (position as i128 + 1).max(start)
+            })
+            .unwrap_or(start)
     } else {
         crate::lisp::builtins::want_int_or_mark(i, &to)?.clamp(start, end)
     };
