@@ -2709,21 +2709,36 @@ fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_posn_pair(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // `window-absolute-pixel-position' (POSITION WINDOW): GNU batch
-    // returns nil (no usable glyph matrix); the WINDOW arg decodes with
-    // `decode_any_window' ("N is not a live window"), POSITION is
-    // `integer-or-marker-p'.
+    // Match `window-absolute-pixel-position': validate WINDOW before POSITION,
+    // then combine the visible glyph position with the window's absolute body
+    // origin.
     let wv = match arg(&a, 1) {
         Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
         v => v.clone(),
     };
-    let _ = win_err_live(i, &wv)?;
-    if let Some(v) = a.first() {
-        if !v.is_nil() {
-            let _ = crate::lisp::builtins::arith::want_int_or_marker(i, v)?;
-        }
-    }
-    Ok(Value::Nil)
+    let window = win_live(i, &wv)?;
+    let position = a.first().cloned().unwrap_or(Value::Nil);
+    let posn = f_posn_at_point(i, vec![position, Value::Window(window.clone())].into())?;
+    let Value::Cons(posn) = posn else {
+        return Ok(Value::Nil);
+    };
+    let Ok(posn) = Value::Cons(posn).list_to_vec() else {
+        return Ok(Value::Nil);
+    };
+    let Some(Value::Cons(coords)) = posn.get(2) else {
+        return Ok(Value::Nil);
+    };
+    let (Some(x), Some(y)) = ({
+        let coords = coords.borrow();
+        (coords.car.int(), coords.cdr.int())
+    }) else {
+        return Ok(Value::Nil);
+    };
+    let (left, top, _, _) = inside_pixel_edges_of(i, &window)?;
+    Ok(Value::cons(
+        Value::Int(left.saturating_add(x)),
+        Value::Int(top.saturating_add(y)),
+    ))
 }
 
 fn f_set_window_vscroll(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
