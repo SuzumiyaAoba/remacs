@@ -5703,8 +5703,6 @@ fn paint_grid_row_at(
         .filter(|styles| !styles.is_empty())
         .or_else(|| grid.attrs.get(row));
     if let Some(styles) = styles {
-        let overline_y =
-            origin.y + (paint_line_height - line.ascent - line.descent) / 2.0 + px(1.0);
         for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
             let Some(style) = styles.get(index).copied() else {
                 continue;
@@ -5720,6 +5718,13 @@ fn paint_grid_row_at(
                 (end, start - end)
             };
             if width > px(0.0) {
+                let overline_y = overline_y_for_byte(
+                    origin.y,
+                    paint_line_height,
+                    line,
+                    byte,
+                    window,
+                );
                 window.paint_quad(fill(
                     Bounds {
                         origin: point(bounds.left() + left, overline_y),
@@ -5735,6 +5740,42 @@ fn paint_grid_row_at(
             }
         }
     }
+}
+
+fn overline_y_from_run_ascent(
+    origin_y: Pixels,
+    line_height: Pixels,
+    line_ascent: Pixels,
+    line_descent: Pixels,
+    run_ascent: Pixels,
+) -> Pixels {
+    origin_y + (line_height - line_ascent - line_descent) / 2.0 + line_ascent - run_ascent
+        + px(1.0)
+}
+
+fn overline_y_for_byte(
+    origin_y: Pixels,
+    line_height: Pixels,
+    line: &ShapedLine,
+    byte: usize,
+    window: &Window,
+) -> Pixels {
+    let run_ascent = line
+        .runs
+        .iter()
+        .filter_map(|run| {
+            run.glyphs
+                .iter()
+                .map(|glyph| glyph.index)
+                .min()
+                .filter(|start| *start <= byte)
+                .map(|start| (start, run))
+        })
+        .max_by_key(|(start, _)| *start)
+        .map(|(_, run)| run)
+        .map(|run| window.text_system().ascent(run.font_id, run.font_size))
+        .unwrap_or(line.ascent);
+    overline_y_from_run_ascent(origin_y, line_height, line.ascent, line.descent, run_ascent)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5935,8 +5976,6 @@ fn paint_vscroll_regions(
                     .filter(|styles| !styles.is_empty())
                     .or_else(|| grid.attrs.get(row));
                 if let Some(styles) = styles {
-                    let overline_y =
-                        origin.y + (line_height - line.ascent - line.descent) / 2.0 + px(1.0);
                     for (index, (byte, ch)) in grid.rows[row].char_indices().enumerate() {
                         let Some(style) = styles.get(index) else {
                             continue;
@@ -5952,6 +5991,8 @@ fn paint_vscroll_regions(
                             (end, start - end)
                         };
                         if width > px(0.0) {
+                            let overline_y =
+                                overline_y_for_byte(origin.y, line_height, line, byte, window);
                             window.paint_quad(fill(
                                 Bounds {
                                     origin: point(bounds.left() + left, overline_y),
@@ -6531,6 +6572,103 @@ fn scroll_bar_colors(
 
 fn background_rgba(color: u32, alpha: u8) -> Hsla {
     rgba((color << 8) | u32::from(alpha)).into()
+}
+
+#[cfg(test)]
+mod overline_position_tests {
+    use super::{overline_y_for_byte, overline_y_from_run_ascent};
+    use gpui::{
+        Context, IntoElement, Render, TestAppContext, TextRun, Window, div, font, px, rgb,
+    };
+
+    struct TextMetricsView;
+
+    impl Render for TextMetricsView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[test]
+    fn overline_tracks_the_ascent_of_its_font_run() {
+        let origin_y = px(10.0);
+        let line_height = px(24.0);
+        let line_ascent = px(16.0);
+        let line_descent = px(5.0);
+
+        let tall_run = overline_y_from_run_ascent(
+            origin_y,
+            line_height,
+            line_ascent,
+            line_descent,
+            px(16.0),
+        );
+        let short_run = overline_y_from_run_ascent(
+            origin_y,
+            line_height,
+            line_ascent,
+            line_descent,
+            px(12.0),
+        );
+
+        assert_eq!(tall_run, px(12.5));
+        assert_eq!(short_run, px(16.5));
+    }
+
+    #[test]
+    fn overline_position_uses_the_ascent_of_the_matching_shaped_run() {
+        let mut app = TestAppContext::single_with_native_text_system();
+        let handle = app.add_window(|_, _| TextMetricsView);
+        let (run_count, first_y, second_y) = handle
+            .update(&mut app, |_, window, _| {
+                let candidates = window
+                    .text_system()
+                    .all_font_names()
+                    .into_iter()
+                    .map(|name| {
+                        let font = font(name.clone());
+                        let id = window.text_system().resolve_font(&font);
+                        let ascent = window.text_system().ascent(id, px(16.0));
+                        (name, id, ascent)
+                    })
+                    .collect::<Vec<_>>();
+                let (first_name, first_id, first_ascent) = candidates
+                    .first()
+                    .expect("text system should provide at least one font")
+                    .clone();
+                let (second_name, _, _) = candidates
+                    .iter()
+                    .find(|(_, id, ascent)| *id != first_id && *ascent != first_ascent)
+                    .cloned()
+                    .expect("text system should provide fonts with different ascents");
+                let make_run = |name| TextRun {
+                    len: 1,
+                    font: font(name),
+                    color: rgb(0x000000).into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let runs = [make_run(first_name), make_run(second_name)];
+                let font_sizes = [None, None];
+                let line = window.text_system().shape_line_with_font_sizes(
+                    "ab".into(),
+                    px(16.0),
+                    &runs,
+                    &font_sizes,
+                    None,
+                );
+                (
+                    line.runs.len(),
+                    overline_y_for_byte(px(0.0), px(24.0), &line, 0, window),
+                    overline_y_for_byte(px(0.0), px(24.0), &line, 1, window),
+                )
+            })
+            .unwrap();
+
+        assert!(run_count >= 2, "each face should produce a shaped run");
+        assert_ne!(first_y, second_y);
+    }
 }
 
 #[cfg(test)]
