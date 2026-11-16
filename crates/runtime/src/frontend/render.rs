@@ -1094,7 +1094,12 @@ impl GridInput {
             .iter()
             .enumerate()
             .skip(row.first_visible_source)
-            .min_by_key(|(_, source_offset)| source_offset.abs_diff(source_byte))?
+            .min_by_key(|(index, source_offset)| {
+                (
+                    source_offset.abs_diff(source_byte),
+                    std::cmp::Reverse(*index),
+                )
+            })?
             .0;
         let buffer_position = row.buffer_start.saturating_add(character);
         let utf16_offset = row.char_offsets.get(buffer_position).copied()?;
