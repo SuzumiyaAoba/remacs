@@ -452,6 +452,10 @@ fn popup_loop<T: KeyIo>(
                 dispatch_frame_moved(i, frame_id, left, top)?;
                 render_needed = true;
             }
+            Some(InputEvent::FrameFontMetrics { frame_id, metrics }) => {
+                i.frame_font_metrics.insert(frame_id, metrics);
+                render_needed = true;
+            }
             Some(InputEvent::MouseMovement { .. }) => {}
             Some(_) => return Ok(None),
         }
@@ -722,6 +726,9 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 if let Err(flow) = dispatch_frame_moved(i, frame_id, left, top) {
                     report_flow(i, flow);
                 }
+            }
+            InputEvent::FrameFontMetrics { frame_id, metrics } => {
+                i.frame_font_metrics.insert(frame_id, metrics);
             }
         }
         render_needed = true;
@@ -3832,6 +3839,9 @@ fn minibuf_loop<T: KeyIo>(
                 left,
                 top,
             } => dispatch_frame_moved(i, frame_id, left, top)?,
+            InputEvent::FrameFontMetrics { frame_id, metrics } => {
+                i.frame_font_metrics.insert(frame_id, metrics);
+            }
         }
         render_needed = true;
         if let Some(f) = i.minibuf_exit_fn.take() {

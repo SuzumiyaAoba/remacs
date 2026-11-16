@@ -1,5 +1,8 @@
 //! Resolve faces and render editor state into a frontend-neutral grid.
-use super::{FontAtStyle, MouseArea, MouseObject, MouseObjectSource, MousePosition};
+use super::{
+    FontAtStyle, FontGlyphKey, FrameFontMetrics, MouseArea, MouseObject, MouseObjectSource,
+    MousePosition,
+};
 use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::{
     buffer::Buffer,
@@ -1508,6 +1511,104 @@ fn wrap_ranges_with_prefix(
     ranges
 }
 
+fn wrap_ranges_with_pixel_metrics<F>(
+    text: &EmacsText,
+    width: usize,
+    first_prefix_width: usize,
+    continuation_prefix_width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+    word_wrap: bool,
+    word_wrap_by_category: bool,
+    metrics: &FrameFontMetrics,
+    mut style_at: F,
+) -> (Vec<Range<usize>>, bool)
+where
+    F: FnMut(usize) -> FontAtStyle,
+{
+    let chars: Vec<_> = text.chars().collect();
+    if chars.is_empty() {
+        return (vec![0..0], false);
+    }
+    if width == 0 {
+        return (vec![0..chars.len()], false);
+    }
+
+    let cell_width = metrics.default_cell_width_64.max(1) as f32 / 64.0;
+    let line_width = width as f32 * cell_width;
+    let tab_stop = tab_width.max(1) as f32 * cell_width;
+    let tab_stop = tab_stop.max(1.0);
+    let mut char_widths = Vec::with_capacity(chars.len());
+    let mut variable_width = false;
+    for (index, character) in chars.iter().enumerate() {
+        let code = character.code();
+        let byte8 = character.byte8().is_some();
+        let unicode = character.unicode().unwrap_or('\u{fffd}');
+        let character_width = if unicode == '\t' {
+            None
+        } else if byte8 {
+            Some(cell_width * 4.0)
+        } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+            Some(cell_width * 2.0)
+        } else {
+            let fallback = cell_width * display_char_width(unicode) as f32;
+            let key = FontGlyphKey {
+                style: style_at(index),
+                character: unicode,
+            };
+            metrics
+                .glyph_widths_64
+                .get(&key)
+                .map(|width| *width as f32 / 64.0)
+                .inspect(|width| {
+                    variable_width |= (*width - fallback).abs() > 0.25;
+                })
+                .or(Some(fallback))
+        };
+        char_widths.push(character_width);
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let mut column = if start == 0 {
+            first_prefix_width.min(width)
+        } else {
+            continuation_prefix_width.min(width)
+        } as f32
+            * cell_width;
+        let mut end = start;
+        while end < chars.len() {
+            let character_width = char_widths[end].unwrap_or_else(|| {
+                (tab_stop - column.rem_euclid(tab_stop)).max(1.0)
+            });
+            if end > start && column > 0.0 && column + character_width > line_width {
+                break;
+            }
+            column += character_width;
+            end += 1;
+        }
+        if end == start {
+            end += 1;
+        }
+        if word_wrap && end < chars.len() {
+            if word_wrap_categories_equal(chars[end - 1], chars[end]) {
+                if let Some(boundary) = (start + 1..end)
+                    .rev()
+                    .find(|boundary| wrap_word_boundary_before(&chars, *boundary, word_wrap_by_category))
+                {
+                    end = boundary;
+                }
+            } else if chars[end].unicode().is_some_and(char::is_whitespace) {
+                end += 1;
+            }
+        }
+        ranges.push(start..end);
+        start = end;
+    }
+    (ranges, variable_width)
+}
+
 fn wrap_ranges_by_word(
     text: &EmacsText,
     width: usize,
@@ -1710,6 +1811,33 @@ pub(crate) fn visual_line_ranges_for_window(
         .min(width.saturating_sub(first_character_width.min(width)));
     let word_wrap = buffer_setting(i, "word-wrap", buffer_id).truthy();
     let word_wrap_by_category = buffer_setting(i, "word-wrap-by-category", buffer_id).truthy();
+    if let Some(frame) = crate::editor::frame_of_window(i, window)
+        && let Some(metrics) = i.frame_font_metrics.get(&frame.borrow().id)
+        && let Some(buffer) = i.buffers.get(buffer_id)
+    {
+        let mut face_ctx = FaceCtx::new(i, Some(&frame));
+        let default_style = face_ctx.builtin(i, "default", 0).finish();
+        face_ctx.default_style = Some(default_style);
+        let faces = window_faces(i, &mut face_ctx, &buffer, &window_value, None);
+        let (ranges, variable_width) = wrap_ranges_with_pixel_metrics(
+            line,
+            width,
+            first_prefix_width,
+            wrap_prefix_width,
+            tab_width,
+            ctl_arrow,
+            word_wrap,
+            word_wrap_by_category,
+            metrics,
+            |index| {
+                let style = style_at_pos(i, &mut face_ctx, &faces, line_pos + index);
+                font_at_style(&face_ctx, style)
+            },
+        );
+        if variable_width {
+            return Some(ranges);
+        }
+    }
     Some(wrap_ranges_with_prefix(
         line,
         width,
@@ -1821,7 +1949,23 @@ pub(crate) fn line_number_display_settings(i: &Interp, buffer: usize) -> (usize,
     (width, line_number_offset)
 }
 
-fn display_row_index_from(
+fn wrap_ranges_for_window(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
+    line: &EmacsText,
+    line_pos: usize,
+    width: usize,
+    tab_width: usize,
+    ctl_arrow: bool,
+) -> Vec<Range<usize>> {
+    visual_line_ranges_for_window(i, buffer_id, window, line, line_pos)
+        .unwrap_or_else(|| wrap_ranges(line, width, tab_width, ctl_arrow))
+}
+
+fn display_row_index_from_window(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
     text: &crate::buffer::SharedText,
     begv: usize,
     zv: usize,
@@ -1836,6 +1980,7 @@ fn display_row_index_from(
     if to < from {
         return None;
     }
+    let buffer_id = window.borrow().buffer;
     let from_line = text.line_of_pos(from);
     let to_line = text.line_of_pos(to);
     if !wrap_lines || width == 0 {
@@ -1857,7 +2002,16 @@ fn display_row_index_from(
             0
         };
         let to_offset = to.saturating_sub(line_start);
-        for range in wrap_ranges(&line, width, tab_width, ctl_arrow) {
+        for range in wrap_ranges_for_window(
+            i,
+            buffer_id,
+            window,
+            &line,
+            line_start,
+            width,
+            tab_width,
+            ctl_arrow,
+        ) {
             if line_number == from_line && range.end <= from_offset && range.end < line_len {
                 continue;
             }
@@ -1913,7 +2067,9 @@ pub(crate) fn position_display_cell(
         if position < bb.begv || position > bb.zv || position < start {
             return None;
         }
-        let row = display_row_index_from(
+        let row = display_row_index_from_window(
+            i,
+            window,
             &bb.text,
             bb.begv,
             bb.zv,
@@ -1934,7 +2090,7 @@ pub(crate) fn position_display_cell(
         let line_chars = line.chars().collect::<Vec<_>>();
         let offset = position.saturating_sub(line_start).min(line_chars.len());
         let ranges = if wrap_lines {
-            wrap_ranges(&line, width, tab_width, ctl_arrow)
+            wrap_ranges_for_window(i, buffer_id, window, &line, line_start, width, tab_width, ctl_arrow)
         } else {
             vec![0..line_chars.len()]
         };
@@ -2014,7 +2170,7 @@ pub(crate) fn position_at_display_cell(
             0
         };
         let ranges = if wrap_lines {
-            wrap_ranges(&line, width, tab_width, ctl_arrow)
+            wrap_ranges_for_window(i, buffer_id, window, &line, line_start, width, tab_width, ctl_arrow)
         } else {
             vec![0..line_len]
         };
@@ -2102,6 +2258,8 @@ pub(crate) fn visible_fontification_range(
 }
 
 fn display_row_distance_from_start(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
     text: &crate::buffer::SharedText,
     begv: usize,
     zv: usize,
@@ -2118,7 +2276,9 @@ fn display_row_distance_from_start(
     } else {
         (point, start, -1isize)
     };
-    let rows = display_row_index_from(
+    let rows = display_row_index_from_window(
+        i,
+        window,
         text,
         begv,
         zv,
@@ -2136,6 +2296,9 @@ fn display_row_distance_from_start(
 }
 
 fn display_row_start_before_point(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
     text: &crate::buffer::SharedText,
     begv: usize,
     zv: usize,
@@ -2159,7 +2322,16 @@ fn display_row_start_before_point(
         let line = text.substring(line_start, line_end);
         let line_len = line.chars().count();
         let point_offset = point.saturating_sub(line_start);
-        let ranges = wrap_ranges(&line, width, tab_width, ctl_arrow);
+        let ranges = wrap_ranges_for_window(
+            i,
+            buffer_id,
+            window,
+            &line,
+            line_start,
+            width,
+            tab_width,
+            ctl_arrow,
+        );
         let point_range = ranges
             .iter()
             .position(|range| {
@@ -3893,7 +4065,7 @@ fn render_tool_bar(
         let character_styles = text.chars().map(|_| button_style).collect::<Vec<_>>();
         let screen_row_index = row_offset.saturating_add(row);
         if let Some(screen_row) = screen.get_mut(screen_row_index) {
-            place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
+            place_text_row(screen_row, column, &text, &cell_styles, &character_styles, false);
         }
         if let (Some(image), Some(image_width), Some(image_height)) =
             (&prepared.image, image_width, image_height)
@@ -4062,7 +4234,7 @@ fn render_prepared_tab_bar(
         let character_styles = text.chars().map(|_| style).collect::<Vec<_>>();
         let screen_row = row_offset.saturating_add(row);
         if let Some(screen_row) = screen.get_mut(screen_row) {
-            place_text_row(screen_row, column, &text, &cell_styles, &character_styles);
+            place_text_row(screen_row, column, &text, &cell_styles, &character_styles, false);
         }
         let selectable_tab = !prepared.close && prepared.tab_index.is_some();
         if item.command.is_some() || item.command_id.is_some() || selectable_tab {
@@ -4245,7 +4417,7 @@ fn render_tab_bar(
         let character_styles = label.chars().map(|_| style).collect::<Vec<_>>();
         let screen_row = row_offset.saturating_add(row);
         if let Some(screen_row) = screen.get_mut(screen_row) {
-            place_text_row(screen_row, column, &label, &cell_styles, &character_styles);
+            place_text_row(screen_row, column, &label, &cell_styles, &character_styles, false);
         }
         items.push(GridTabBarItem {
             row: screen_row,
@@ -4309,7 +4481,7 @@ fn render_tab_bar(
             let character_styles = label.chars().map(|_| style).collect::<Vec<_>>();
             let screen_row = row_offset.saturating_add(row);
             if let Some(screen_row) = screen.get_mut(screen_row) {
-                place_text_row(screen_row, column, &label, &cell_styles, &character_styles);
+                place_text_row(screen_row, column, &label, &cell_styles, &character_styles, false);
             }
             items.push(GridTabBarItem {
                 row: screen_row,
@@ -4483,7 +4655,7 @@ fn render_popup_menu(
             let cell_styles = vec![row_style; panel_width.saturating_sub(2)];
             let char_styles = text.chars().map(|_| row_style).collect::<Vec<_>>();
             if let Some(row) = screen.get_mut(row_index) {
-                place_text_row(row, left + 1, &text, &cell_styles, &char_styles);
+                place_text_row(row, left + 1, &text, &cell_styles, &char_styles, false);
             }
             hit_items.push(GridPopupMenuItem {
                 menu_id: menu.id,
@@ -4556,6 +4728,7 @@ struct RenderedRow {
     images: Vec<RenderedImage>,
     object_hits: Vec<GridInputObjectHit>,
     compositions: Vec<RenderedComposition>,
+    pixel_width: bool,
     fringes: Vec<RenderedFringe>,
 }
 
@@ -5240,7 +5413,23 @@ impl ScreenCell {
 }
 
 fn place_rendered_row(screen: &mut [ScreenCell], left: usize, row: &RenderedRow) {
-    place_text_row(screen, left, &row.text, &row.cell_attrs, &row.char_attrs);
+    place_text_row(
+        screen,
+        left,
+        &row.text,
+        &row.cell_attrs,
+        &row.char_attrs,
+        row.pixel_width,
+    );
+    if row.pixel_width {
+        let right = left.saturating_add(row.cell_attrs.len()).min(screen.len());
+        let blank_start = left.saturating_add(row.visible_columns).min(right);
+        for cell in screen.iter_mut().take(right).skip(blank_start) {
+            if cell.chars.is_empty() && !cell.occupied {
+                cell.continuation = true;
+            }
+        }
+    }
 }
 
 fn place_text_row(
@@ -5248,16 +5437,18 @@ fn place_text_row(
     left: usize,
     text: &str,
     cell_attrs: &[CellStyle],
+    allow_pixel_overflow: bool,
     char_attrs: &[CellStyle],
 ) {
     let mut column = 0usize;
+    let row_right = left.saturating_add(cell_attrs.len()).min(screen.len());
     let mut last_lead = None;
     for (index, ch) in text.chars().enumerate() {
         let char_width = display_char_width(ch);
         let style = char_attrs.get(index).copied().unwrap_or_default();
         if char_width == 0 {
             let target = last_lead
-                .unwrap_or_else(|| left + column.min(screen.len().saturating_sub(left + 1)));
+                .unwrap_or_else(|| left + column.min(row_right.saturating_sub(left + 1)));
             if let Some(cell) = screen.get_mut(target) {
                 cell.chars.push((ch, style));
                 cell.occupied = true;
@@ -5265,15 +5456,35 @@ fn place_text_row(
             }
             continue;
         }
-        let Some(target) = screen.get_mut(left.saturating_add(column)) else {
+        let requested = left.saturating_add(column);
+        let starts_overflow = requested >= row_right;
+        let crosses_edge = allow_pixel_overflow
+            && !starts_overflow
+            && column.saturating_add(char_width) > cell_attrs.len();
+        let target_column = if starts_overflow && allow_pixel_overflow {
+            row_right.saturating_sub(1)
+        } else {
+            requested
+        };
+        let Some(target) = screen.get_mut(target_column) else {
             break;
         };
-        target.chars.clear();
+        if !starts_overflow {
+            target.chars.clear();
+        }
         target.chars.push((ch, style));
-        target.style = cell_attrs.get(column).copied().unwrap_or_default();
+        target.style = cell_attrs
+            .get(column)
+            .copied()
+            .or_else(|| cell_attrs.last().copied())
+            .unwrap_or_default();
         target.occupied = true;
         target.continuation = false;
-        last_lead = Some(left + column);
+        last_lead = Some(target_column);
+        if starts_overflow || crosses_edge {
+            column = column.saturating_add(char_width);
+            continue;
+        }
         for offset in 1..char_width {
             let Some(continuation) = screen.get_mut(left.saturating_add(column + offset)) else {
                 break;
@@ -5310,7 +5521,7 @@ fn place_fringe_glyph(
     let cells = vec![style; fringe_width];
     let characters = glyph.chars().map(|_| style).collect::<Vec<_>>();
     if let Some(screen_row) = screen.get_mut(row) {
-        place_text_row(screen_row, column, &glyph, &cells, &characters);
+        place_text_row(screen_row, column, &glyph, &cells, &characters, false);
     }
 }
 
@@ -5682,7 +5893,7 @@ fn place_formatted_window_row(
         });
         cell_column = cell_column.saturating_add(cells);
     }
-    place_text_row(screen_row, left, &row_text, &cell_styles, &character_styles);
+    place_text_row(screen_row, left, &row_text, &cell_styles, &character_styles, false);
     buffer_name_range
 }
 
@@ -5776,8 +5987,13 @@ fn append_rendered_character(
         return false;
     }
 
-    let cell_start = start_column.saturating_sub(hscroll);
-    let cell_end = next_column.min(end_column).saturating_sub(hscroll);
+    let cell_start = start_column
+        .saturating_sub(hscroll)
+        .min(width);
+    let cell_end = next_column
+        .min(end_column)
+        .saturating_sub(hscroll)
+        .min(width);
     if start_column < hscroll || next_column > end_column {
         // A horizontal boundary can bisect a wide glyph. Preserve its
         // remaining cell geometry with blanks instead of shifting the
@@ -5961,6 +6177,7 @@ fn render_text_row<F, V, D, B>(
     mut display_at: D,
     mut boundary_strings_at: B,
     include_end_boundary: bool,
+    pixel_width: bool,
     graphical: bool,
 ) -> RenderedRow
 where
@@ -5979,7 +6196,11 @@ where
     let hscroll = hscroll.saturating_add(column_offset);
     let mut column = column_offset;
     let mut visible_columns = 0usize;
-    let end_column = hscroll.saturating_add(width);
+    let end_column = if pixel_width {
+        usize::MAX
+    } else {
+        hscroll.saturating_add(width)
+    };
     let tab_width = tab_width.max(1);
     let mut hidden_run = false;
     let mut images = Vec::new();
@@ -6305,11 +6526,13 @@ where
     let padding_char_start = char_attrs.len();
     for cell in visible_columns..width {
         cell_offsets[cell] = rendered.len();
-        rendered.push(' ');
-        cell_attrs[cell].box_style = None;
-        let mut padding_style = default_style;
-        padding_style.box_style = None;
-        char_attrs.push(padding_style);
+        if !pixel_width {
+            rendered.push(' ');
+            cell_attrs[cell].box_style = None;
+            let mut padding_style = default_style;
+            padding_style.box_style = None;
+            char_attrs.push(padding_style);
+        }
         cell_offsets[cell + 1] = rendered.len();
     }
     cell_offsets[width] = rendered.len();
@@ -6325,6 +6548,7 @@ where
         images,
         object_hits,
         compositions,
+        pixel_width,
         fringes,
     }
 }
@@ -6349,6 +6573,7 @@ fn render_display_prefix(
         |_| Visibility::Visible,
         |_| Some(replacement.clone()),
         |_| Vec::new(),
+        false,
         false,
         graphical,
     )
@@ -10914,6 +11139,7 @@ fn render_grid_internal(
     let mut tab_lines = Vec::new();
     let mut window_text_areas = Vec::new();
     let mut window_row_heights = Vec::new();
+    let frame_font_metrics = frame_id.and_then(|frame_id| i.frame_font_metrics.get(&frame_id));
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -11620,6 +11846,8 @@ fn render_grid_internal(
             })
             .unwrap_or((usize::MAX, usize::MAX, usize::MAX, usize::MAX));
         let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
+                    i,
+                    w,
         let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
         let text_rows = window_height
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
@@ -11781,6 +12009,8 @@ fn render_grid_internal(
                             text_rows,
                             margin,
                             scroll_conservatively,
+                    i,
+                    w,
                             scroll_step,
                             aggressive,
                         )
@@ -11831,6 +12061,9 @@ fn render_grid_internal(
                     'lines: for line_number in new_start_line..=pt_line {
                         let line_pos = bb.text.line_start(line_number).max(bb.begv);
                         if line_pos > bb.zv {
+                            i,
+                            buf_id,
+                            w,
                             break;
                         }
                         let line_end = bb.text.line_end(line_pos).min(bb.zv);
@@ -12401,8 +12634,11 @@ fn render_grid_internal(
                 ));
             let word_wrap = buffer_setting(i, "word-wrap", buf_id).truthy();
             let word_wrap_by_category = buffer_setting(i, "word-wrap-by-category", buf_id).truthy();
-            let ranges = if wrap_lines {
-                wrap_ranges_with_prefix(
+            let pixel_metric_ranges = if hscroll == 0
+                && let Some(metrics) = frame_font_metrics
+            {
+                let metric_characters = metric_line.chars().collect::<Vec<_>>();
+                let (ranges, variable_width) = wrap_ranges_with_pixel_metrics(
                     metric_line,
                     content_width,
                     line_prefix_width,
@@ -12413,7 +12649,7 @@ fn render_grid_internal(
                     word_wrap_by_category,
                 )
             } else {
-                vec![0..line_len]
+                (vec![0..line_len], false)
             };
             let max_rows = body_height
                 .min(content_bottom)
@@ -12455,6 +12691,53 @@ fn render_grid_internal(
                     .entry(line_len)
                     .or_default()
                     .push(DisplayText::plain("…".to_owned()));
+                    metrics,
+                    |index| {
+                        let style = wf.as_ref().map_or(default_style, |faces| {
+                            let position = line_pos + index;
+                            let extra_face = metric_characters.get(index).and_then(|character| {
+                                let has_display_override = display_replacement_at(faces, position)
+                                    .is_some()
+                                    || display_table_replacement(i, buf_id, faces, *character)
+                                        .is_some();
+                                (!has_display_override)
+                                    .then(|| nobreak_char_face(&nobreak_char_display, *character))
+                                    .flatten()
+                            });
+                            style_at_pos_with_named_face(
+                                i,
+                                &mut fctx,
+                                faces,
+                                position,
+                                extra_face,
+                            )
+                        });
+                        font_at_style(&fctx, style)
+                    },
+                );
+                variable_width.then_some(ranges)
+            } else {
+                None
+            };
+            let (ranges, pixel_width_line) = if let Some(ranges) = pixel_metric_ranges {
+                if wrap_lines {
+                    (ranges, true)
+                } else {
+                    (vec![ranges.first().cloned().unwrap_or(0..line_len)], true)
+                }
+            } else if wrap_lines {
+                (
+                    wrap_ranges_with_prefix(
+                        metric_line,
+                        content_width,
+                        line_prefix_width,
+                        wrap_prefix_width,
+                        tab_width,
+                        ctl_arrow,
+                        word_wrap,
+                        word_wrap_by_category,
+                    ),
+                    false,
             }
             for plan in plans {
                 let range = &plan.range;
@@ -12625,6 +12908,8 @@ fn render_grid_internal(
                         } else if line_numbers_relative {
                             if point_line_number + 1 == line_number {
                                 if line_numbers_current_absolute {
+                                i,
+                                w,
                                     absolute
                                 } else {
                                     0
@@ -12697,6 +12982,7 @@ fn render_grid_internal(
                     |index| {
                         plan.replacements.get(&(segment_start + index)).cloned()
                             .or_else(|| wf.as_ref()
+                        false,
                                 .and_then(|wf| display_replacement_at(wf, segment_pos + index)))
                             .or_else(|| {
                                 let wf = wf.as_ref()?;
@@ -12785,6 +13071,7 @@ fn render_grid_internal(
                 }
                 if let Some(row_height) = row_heights.get_mut(y) {
                     for image in &rendered.images {
+                    pixel_width_line,
                         if let Some(image_height) = image.visible_dimensions().1 {
                             *row_height = (*row_height).max(image_height);
                         }
@@ -13203,7 +13490,13 @@ fn render_grid_internal(
                     let col = point_col
                         .saturating_sub(row_hscroll)
                         .min(content_width - 1);
-                    let byte_index = if point_col < row_hscroll {
+                    let byte_index = if pixel_width_line {
+                        rendered
+                            .source_offsets
+                            .get(point_index)
+                            .copied()
+                            .unwrap_or(rendered.text.len())
+                    } else if point_col < row_hscroll {
                         0
                     } else if point_col.saturating_sub(row_hscroll) >= content_width {
                         rendered.cell_offsets[content_width - 1]
@@ -13214,8 +13507,9 @@ fn render_grid_internal(
                             .copied()
                             .unwrap_or(rendered.text.len())
                     };
-                    let point_visible = point_col >= row_hscroll
-                        && point_col.saturating_sub(row_hscroll) < content_width;
+                    let point_visible = pixel_width_line
+                        || (point_col >= row_hscroll
+                            && point_col.saturating_sub(row_hscroll) < content_width);
                     let hide_cursor = hide_offscreen_cursor && !point_visible;
                     if selected_frame && selected_window && !hide_cursor {
                         selected_cursor = Some((y, content_left, col, byte_index));
@@ -13724,6 +14018,7 @@ fn render_grid_internal(
                 };
                 snapshot.add_hit_test_row(
                     i,
+                false,
                     y,
                     buffer_id,
                     buffer_start,

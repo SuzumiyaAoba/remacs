@@ -1625,12 +1625,14 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             | GuiEvent::NativeMenuCommand(_)
             | GuiEvent::PopupMenuSelection { .. }
             | GuiEvent::PopupMenuScroll { .. }
-            | GuiEvent::PopupMenuHover { .. } | GuiEvent::PopupMenuScrollAt { .. }
+            | GuiEvent::PopupMenuHover { .. }
+            | GuiEvent::PopupMenuScrollAt { .. }
             | GuiEvent::OpenFiles(_)
             | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
+            GuiEvent::FrameFontMetrics { .. } => None,
             GuiEvent::SystemSleep { .. } => None,
             GuiEvent::ColorDrop { .. } => None,
             GuiEvent::MouseDragMove { .. } => None,
@@ -1661,12 +1663,14 @@ fn registered_input_delivers_text_once_and_keeps_commands_separate() {
             | GuiEvent::NativeMenuCommand(_)
             | GuiEvent::PopupMenuSelection { .. }
             | GuiEvent::PopupMenuScroll { .. }
-            | GuiEvent::PopupMenuHover { .. } | GuiEvent::PopupMenuScrollAt { .. }
+            | GuiEvent::PopupMenuHover { .. }
+            | GuiEvent::PopupMenuScrollAt { .. }
             | GuiEvent::OpenFiles(_)
             | GuiEvent::MouseMove { .. } => None,
             GuiEvent::ForFrame { .. } => None,
             GuiEvent::FrameVisibility { .. } => None,
             GuiEvent::FrameFocus { .. } => None,
+            GuiEvent::FrameFontMetrics { .. } => None,
             GuiEvent::SystemSleep { .. } => None,
             GuiEvent::ColorDrop { .. } => None,
             GuiEvent::MouseDragMove { .. } => None,

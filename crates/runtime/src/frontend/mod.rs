@@ -6,6 +6,7 @@
 //! operations can interleave with repaints because `sit-for`/`sleep-for`
 //! hand control back to this loop rather than blocking inside the evaluator.
 
+use std::collections::HashMap;
 use std::io;
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -192,7 +193,7 @@ pub trait FontSelectionBackend {
 /// Resolved face attributes for the character passed to `font-at`.
 /// Font names are resolved by the graphical front-end so the returned
 /// font object describes the face that its text system actually opened.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FontAtStyle {
     pub family: Option<String>,
     pub weight: Option<u16>,
@@ -200,6 +201,36 @@ pub struct FontAtStyle {
     pub height: Option<u16>,
     pub bold: bool,
     pub italic: bool,
+}
+
+/// The graphical width of one character under a resolved face style.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FontGlyphKey {
+    pub style: FontAtStyle,
+    pub character: char,
+}
+
+/// Measured text metrics for one graphical frame.
+///
+/// Widths use 1/64-pixel units so the runtime can perform deterministic wrap
+/// decisions without depending on a window-system font library.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameFontMetrics {
+    /// Changes whenever the frame's default font identity or size changes.
+    pub signature: u64,
+    /// Width of the default face's `0' glyph, used as one Emacs text column.
+    pub default_cell_width_64: u32,
+    /// Widths known to the front-end. Missing glyphs fall back to Unicode cell widths.
+    pub glyph_widths_64: HashMap<FontGlyphKey, u32>,
+}
+
+/// Replace the cached graphical font metrics for FRAME.
+pub fn update_frame_font_metrics(
+    interp: &mut Interp,
+    frame_id: usize,
+    metrics: FrameFontMetrics,
+) {
+    interp.frame_font_metrics.insert(frame_id, metrics);
 }
 
 /// Font-family names available to a graphical front-end. Implementations
@@ -570,6 +601,11 @@ pub enum InputEvent {
         frame_id: usize,
         left: i128,
         top: i128,
+    },
+    /// Update the runtime's graphical glyph widths for one frame.
+    FrameFontMetrics {
+        frame_id: usize,
+        metrics: FrameFontMetrics,
     },
     /// Move a window's vertical or horizontal scroll bar to a logical offset.
     ScrollBar {

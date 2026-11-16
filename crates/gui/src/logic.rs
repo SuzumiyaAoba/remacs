@@ -1,11 +1,12 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        AppleScriptResult, ClipboardInfo, DragAction, FrameVisibility, Grid, GridImageSource,
+        AppleScriptResult, ClipboardInfo, DragAction, FrameFontMetrics, FrameVisibility, Grid,
+        GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton, MouseInput,
         MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest,
-        fit_text_to_cells_with_tab_width,
-        render_frame_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached,
+        fit_text_to_cells_with_tab_width, render_frame_grid_with_mouse_position_cached,
+        render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
 };
@@ -77,27 +78,61 @@ pub(super) enum GuiEvent {
         frame_id: usize,
         visibility: FrameVisibility,
     },
+    FrameFontMetrics {
+        frame_id: usize,
+        metrics: FrameFontMetrics,
+    },
     ColorDrop {
         position: Option<MousePosition>,
         color: String,
         background: bool,
     },
     #[cfg(target_os = "macos")]
-    NativeService { name: String, argument: String },
-    FrameFocus { frame_id: usize, focused: bool },
-    SystemSleep { sleeping: bool },
-    FrameDeleteRequest { frame_id: usize },
+    NativeService {
+        name: String,
+        argument: String,
+    },
+    FrameFocus {
+        frame_id: usize,
+        focused: bool,
+    },
+    SystemSleep {
+        sleeping: bool,
+    },
+    FrameDeleteRequest {
+        frame_id: usize,
+    },
     PowerOff,
     Key(i128),
     Text(String),
     MenuCommand(String),
     NativeMenuCommand(NativeMenuCommandId),
-    PopupMenuSelection { menu_id: usize, index: Option<usize> },
-    PopupMenuScroll { menu_id: usize, delta_lines: f32 },
-    PopupMenuHover { menu_id: usize, parent: Option<usize>, index: Option<usize> },
-    PopupMenuScrollAt { menu_id: usize, parent: Option<usize>, delta_lines: f32 },
-    CommandArgs { command: String, args: Vec<i128> },
-    ReplaceText { range: Range<usize>, text: String },
+    PopupMenuSelection {
+        menu_id: usize,
+        index: Option<usize>,
+    },
+    PopupMenuScroll {
+        menu_id: usize,
+        delta_lines: f32,
+    },
+    PopupMenuHover {
+        menu_id: usize,
+        parent: Option<usize>,
+        index: Option<usize>,
+    },
+    PopupMenuScrollAt {
+        menu_id: usize,
+        parent: Option<usize>,
+        delta_lines: f32,
+    },
+    CommandArgs {
+        command: String,
+        args: Vec<i128>,
+    },
+    ReplaceText {
+        range: Range<usize>,
+        text: String,
+    },
     Drop {
         position: Option<MousePosition>,
         urls: Vec<String>,
@@ -180,6 +215,7 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
         | GuiEvent::FrameFocus { .. }
         | GuiEvent::SystemSleep { .. }
         | GuiEvent::FrameDeleteRequest { .. }
+        | GuiEvent::FrameFontMetrics { .. }
         | GuiEvent::PowerOff
         | GuiEvent::Resize(..)
         | GuiEvent::Geometry(..) => false,
@@ -1807,6 +1843,7 @@ pub(super) struct ChanIo {
     /// Non-input events held while `discard_input' drains the channel.
     pending_events: VecDeque<GuiEvent>,
     pub(super) pending_open_files: VecDeque<(String, Option<usize>)>,
+    pending_font_metrics: VecDeque<(usize, FrameFontMetrics)>,
     #[cfg(target_os = "macos")]
     pending_native_services: VecDeque<(String, String)>,
     pub(super) cols: usize,
@@ -2447,6 +2484,7 @@ impl ChanIo {
             pending: Vec::new(),
             pending_events: VecDeque::new(),
             pending_open_files: VecDeque::new(),
+            pending_font_metrics: VecDeque::new(),
             #[cfg(target_os = "macos")]
             pending_native_services: VecDeque::new(),
             cols: 80,
@@ -2875,6 +2913,9 @@ impl KeyIo for ChanIo {
             self.last_input_at = Instant::now();
             return Ok(Some(InputEvent::OpenFiles(vec![file])));
         }
+        if let Some((frame_id, metrics)) = self.pending_font_metrics.pop_front() {
+            return Ok(Some(InputEvent::FrameFontMetrics { frame_id, metrics }));
+        }
         #[cfg(target_os = "macos")]
         if let Some((name, argument)) = self.pending_native_services.pop_front() {
             self.last_input_at = Instant::now();
@@ -2907,6 +2948,9 @@ impl KeyIo for ChanIo {
                 self.pending_frame_visibility = Some((frame_id, visibility));
                 self.render_requested = true;
                 Ok(None)
+            }
+            GuiEvent::FrameFontMetrics { frame_id, metrics } => {
+                Ok(Some(InputEvent::FrameFontMetrics { frame_id, metrics }))
             }
             GuiEvent::ColorDrop {
                 position,
@@ -3195,6 +3239,10 @@ impl KeyIo for ChanIo {
             } => {
                 self.pending_frame_visibility = Some((frame_id, visibility));
                 self.render_requested = true;
+                Ok(None)
+            }
+            GuiEvent::FrameFontMetrics { frame_id, metrics } => {
+                self.pending_font_metrics.push_back((frame_id, metrics));
                 Ok(None)
             }
             GuiEvent::ColorDrop { .. } => Ok(None),
@@ -3904,6 +3952,39 @@ mod discard_input_tests {
     }
 }
 
+#[cfg(test)]
+mod frame_font_metrics_event_tests {
+    use super::{ChanIo, GuiEvent};
+    use remacs_runtime::frontend::{FrameFontMetrics, InputEvent, KeyIo};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn frame_scoped_font_metrics_reach_the_runtime_input_protocol() {
+        let (events, receiver) = mpsc::channel();
+        let (grids, _grid_receiver) = smol::channel::unbounded();
+        let mut io = ChanIo::new_for_test(receiver, grids);
+        events
+            .send(GuiEvent::ForFrame {
+                frame_id: 42,
+                event: Box::new(GuiEvent::FrameFontMetrics {
+                    frame_id: 42,
+                    metrics: FrameFontMetrics {
+                        signature: 1,
+                        default_cell_width_64: 8 * 64,
+                        glyph_widths_64: Default::default(),
+                    },
+                }),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            io.poll_input(Duration::ZERO).unwrap(),
+            Some(InputEvent::FrameFontMetrics { frame_id: 42, .. })
+        ));
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod native_frame_geometry_tests {
     use super::*;
@@ -4378,6 +4459,7 @@ fn start_logic_inner(
                 pending: Vec::new(),
                 pending_events: VecDeque::new(),
                 pending_open_files: VecDeque::new(),
+                pending_font_metrics: VecDeque::new(),
                 #[cfg(target_os = "macos")]
                 pending_native_services: VecDeque::new(),
                 cols: 80,

@@ -11,8 +11,9 @@ use super::{
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::*;
 use remacs_runtime::frontend::{
-    BoxStyle, BoxStyleKind, CellColor, CellStyle, FontAtStyle, Grid, GridBidiDirection,
-    GridCursor, GridImage, GridImageConversion, GridImageSizeLimit, GridImageSource, GridMenu, GridMenuItem,
+    BoxStyle, BoxStyleKind, CellColor, CellStyle, FontAtStyle, FontGlyphKey, FrameFontMetrics,
+    Grid, GridBidiDirection, GridCursor, GridImage, GridImageConversion, GridImageSizeLimit,
+    GridImageSource, GridMenu, GridMenuItem,
     GridPointerShape, GridScrollBar, GridScrollBarOrientation, GridStipple, GridTooltipPosition,
     GridVScroll, GridWindowRowHeights, MouseArea, MouseButton as RemacsMouseButton, MouseInput,
     MousePosition,
@@ -267,6 +268,11 @@ pub(super) fn frame_font_metrics(
     let mut text_font = font(family);
     if let Some(weight) = default_style.font_weight {
         text_font.weight = FontWeight(weight as f32);
+    } else if default_style.bold {
+        text_font = text_font.bold();
+    }
+    if default_style.italic {
+        text_font = text_font.italic();
     }
     text_font.stretch = FontStretch::from_percentage(default_style.font_width.unwrap_or(100));
     let font_size = default_style
@@ -281,6 +287,106 @@ pub(super) fn frame_font_metrics(
         .unwrap_or(px(8.0));
     let line_height = px(f32::from(font_size) * (LINE_HEIGHT / FONT_SIZE));
     (text_font, font_size, cell_width, line_height)
+}
+
+fn font_style_for_grid(grid: &Grid, style: CellStyle) -> FontAtStyle {
+    FontAtStyle {
+        family: style
+            .font_family
+            .and_then(|id| grid.font_families.get(id as usize).cloned()),
+        weight: style.font_weight,
+        width: style.font_width,
+        height: style.font_height,
+        bold: style.bold,
+        italic: style.italic,
+    }
+}
+
+fn font_for_grid_style(
+    default_font: &Font,
+    style: &FontAtStyle,
+    window: &mut Window,
+) -> Font {
+    let mut font = default_font.clone();
+    if let Some(family) = &style.family {
+        font.family = font_family(window, Some(family.clone())).into();
+    }
+    if let Some(weight) = style.weight {
+        font.weight = FontWeight(weight as f32);
+    } else if style.bold {
+        font = font.bold();
+    }
+    if let Some(width) = style.width {
+        font.stretch = FontStretch::from_percentage(width);
+    }
+    if style.italic {
+        font = font.italic();
+    }
+    font
+}
+
+fn pixel_width_64(width: Pixels) -> u32 {
+    (f32::from(width).max(0.0) * 64.0)
+        .round()
+        .clamp(0.0, u32::MAX as f32) as u32
+}
+
+fn measure_frame_font_metrics(
+    grid: &Grid,
+    default_font: &Font,
+    default_font_size: Pixels,
+    default_cell_width: Pixels,
+    window: &mut Window,
+) -> FrameFontMetrics {
+    let default_style = font_style_for_grid(grid, grid.default_style);
+    let mut signature = DefaultHasher::new();
+    let resolved_default_family = font_family(window, default_style.family.clone());
+    resolved_default_family.hash(&mut signature);
+    default_style.hash(&mut signature);
+    f32::from(default_font_size).to_bits().hash(&mut signature);
+    f32::from(default_cell_width).to_bits().hash(&mut signature);
+    let signature = signature.finish();
+
+    let mut glyph_widths_64 = HashMap::new();
+    let mut fonts = HashMap::<FontAtStyle, (Font, Pixels)>::new();
+    for (row_index, row) in grid.rows.iter().enumerate() {
+        let styles = grid
+            .char_attrs
+            .get(row_index)
+            .filter(|styles| !styles.is_empty())
+            .or_else(|| grid.attrs.get(row_index));
+        for (column, character) in row.chars().enumerate() {
+            let cell_style = styles
+                .and_then(|styles| styles.get(column))
+                .copied()
+                .unwrap_or_default();
+            let style = font_style_for_grid(grid, cell_style);
+            let key = FontGlyphKey {
+                style: style.clone(),
+                character,
+            };
+            if glyph_widths_64.contains_key(&key) {
+                continue;
+            }
+            let (font, font_size) = fonts.entry(style.clone()).or_insert_with(|| {
+                let font = font_for_grid_style(default_font, &style, window);
+                let font_size = style.height.map(face_font_size).unwrap_or(default_font_size);
+                (font, font_size)
+            }).clone();
+            let font_id = window.text_system().resolve_font(&font);
+            let width = window
+                .text_system()
+                .advance(font_id, font_size, character)
+                .map(|metrics| metrics.width)
+                .unwrap_or(default_cell_width);
+            glyph_widths_64.insert(key, pixel_width_64(width));
+        }
+    }
+    FrameFontMetrics {
+        signature,
+        default_cell_width_64: pixel_width_64(default_cell_width).max(1),
+        glyph_widths_64,
+    }
 }
 
 pub(super) fn font_info(
@@ -1606,6 +1712,8 @@ pub(super) struct EditorView {
     geometry: Option<GuiGeometry>,
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
     runtime_frame_position: Option<RuntimeFramePosition>,
+    font_metrics_cache: Option<FrameFontMetrics>,
+    sent_font_metrics_frame_id: Option<usize>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     tab_bar_drag: Option<TabBarDrag>,
     follow_tooltip_drag: bool,
@@ -1677,6 +1785,53 @@ impl EditorView {
         self.update_window_title(window);
     }
 
+    fn publish_frame_font_metrics(
+        &mut self,
+        default_font: &Font,
+        default_font_size: Pixels,
+        default_cell_width: Pixels,
+        window: &mut Window,
+    ) {
+        let Some(frame_id) = self.tx.frame_id() else {
+            return;
+        };
+        let measured = measure_frame_font_metrics(
+            &self.grid,
+            default_font,
+            default_font_size,
+            default_cell_width,
+            window,
+        );
+        let mut changed = false;
+        if self
+            .font_metrics_cache
+            .as_ref()
+            .is_none_or(|cached| cached.signature != measured.signature)
+        {
+            self.font_metrics_cache = Some(measured);
+            changed = true;
+        } else if let Some(cached) = self.font_metrics_cache.as_mut() {
+            for (key, width) in measured.glyph_widths_64 {
+                if cached.glyph_widths_64.get(&key) != Some(&width) {
+                    cached.glyph_widths_64.insert(key, width);
+                    changed = true;
+                }
+            }
+        }
+        if self.sent_font_metrics_frame_id != Some(frame_id) {
+            changed = true;
+        }
+        if changed
+            && let Some(metrics) = self.font_metrics_cache.clone()
+            && self
+                .tx
+                .send(GuiEvent::FrameFontMetrics { frame_id, metrics })
+                .is_ok()
+        {
+            self.sent_font_metrics_frame_id = Some(frame_id);
+        }
+    }
+
     fn update_window_title(&mut self, window: &mut Window) {
         if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
             window.set_window_title(&self.grid.title);
@@ -1730,6 +1885,8 @@ impl EditorView {
             geometry: None,
             runtime_frame_size: None,
             runtime_frame_position: None,
+            font_metrics_cache: None,
+            sent_font_metrics_frame_id: None,
             scroll_bar_drag: None,
             tab_bar_drag: None,
             follow_tooltip_drag: false,
@@ -2151,6 +2308,7 @@ impl Render for EditorView {
         let font_families = self.grid.font_families.clone();
         let (text_font, font_size, cell_width, line_height) =
             frame_font_metrics(&self.grid, window);
+        self.publish_frame_font_metrics(&text_font, font_size, cell_width, window);
         self.line_height = line_height;
         self.cell_width = cell_width;
         let minimum = self.update_minimum_size(window, cell_width, line_height);

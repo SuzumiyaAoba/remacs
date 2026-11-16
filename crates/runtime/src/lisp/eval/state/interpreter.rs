@@ -79,6 +79,8 @@ pub struct Interp {
     pub gui_mouse_frame_pixel_position: Option<(usize, i128, i128)>,
     /// Decoded bytes retained by the GUI image asset cache.
     pub gui_image_cache_size: Arc<AtomicUsize>,
+    /// Font advances reported by graphical front-ends, keyed by frame id.
+    pub(crate) frame_font_metrics: HashMap<usize, crate::frontend::FrameFontMetrics>,
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,
