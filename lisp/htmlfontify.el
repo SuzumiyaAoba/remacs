@@ -1514,6 +1514,38 @@ Uses `hfy-link-style-fun' to do this."
       (funcall hfy-link-style-fun style-string)
     style-string))
 
+(defun hfy-css-escape-identifier (name)
+  "Return NAME escaped as a CSS identifier.
+Escape punctuation as hexadecimal CSS escapes so it cannot terminate an
+inline style element or change the selector's structure."
+  (let* ((name (if (stringp name) name (format "%s" name)))
+         (length (length name))
+         (index 0)
+         escaped)
+    (dolist (character (string-to-list name))
+      (let ((digit (and (>= character ?0) (<= character ?9))))
+        (push
+         (cond
+          ((= character 0) "\\fffd ")
+          ((or (<= 1 character 31)
+               (= character 127)
+               (= character ?<)
+               (and digit (= index 0))
+               (and digit (= index 1) (= (aref name 0) ?-))
+               (and (= character ?-) (= index 0) (= length 1)))
+           (format "\\%x " character))
+          ((or (and (>= character ?A) (<= character ?Z))
+               (and (>= character ?a) (<= character ?z))
+               digit
+               (= character ?-)
+               (= character ?_)
+               (>= character 128))
+           (char-to-string character))
+          (t (format "\\%x " character)))
+         escaped))
+      (setq index (1+ index)))
+    (apply #'concat (nreverse escaped))))
+
 (defun hfy-sprintf-stylesheet (css file)
   "Return the inline CSS style sheet for FILE as a string."
   (let ((stylesheet
@@ -1526,10 +1558,11 @@ Uses `hfy-link-style-fun' to do this."
           (apply #'concat
                  (mapcar
                   (lambda (style)
-                    (format
-                     "span.%s   %s\nspan.%s a %s\n"
-                     (cadr style) (cddr style)
-                     (cadr style) (hfy-link-style (cddr style))))
+                    (let ((selector (hfy-css-escape-identifier (cadr style))))
+                      (format
+                       "span.%s   %s\nspan.%s a %s\n"
+                       selector (cddr style)
+                       selector (hfy-link-style (cddr style)))))
                   css))
           " --></style>\n")))
     (funcall hfy-page-header file stylesheet)))

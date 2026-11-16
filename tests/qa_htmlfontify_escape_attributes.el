@@ -34,4 +34,22 @@
      (not (null (search-forward "<a name=\"first-tag.1\"></a>" nil t)))))
  t)
 
+(qa (hfy-css-escape-identifier "default") "default")
+
+(qa
+ (let* ((hfy-page-header (lambda (_file stylesheet) stylesheet))
+        (face (intern "x}</style><script>alert(1)</script>"))
+        (css-name (hfy-css-name face))
+        (stylesheet
+         (hfy-sprintf-stylesheet
+          (list (cons face (cons css-name "{ color: red; }")))
+          "unsafe.html")))
+   (list (not (string-match-p "</style><script" stylesheet))
+         (not (string-match-p "<script" stylesheet))
+         (and (string-match-p
+               (regexp-quote (concat "span." (hfy-css-escape-identifier css-name)))
+               stylesheet)
+              t)))
+ '(t t t))
+
 (princ (qa--done))
