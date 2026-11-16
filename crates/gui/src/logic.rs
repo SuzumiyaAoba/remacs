@@ -1951,7 +1951,7 @@ pub(super) struct ChanIo {
     /// the frame content area.
     mouse_frame_position: Option<(Option<usize>, Option<(i128, i128)>, Option<usize>)>,
     /// Fractional scroll units, discarded when the target or event context changes.
-    pub(super) scroll_remainders: HashMap<(Option<usize>, bool), ScrollRemainder>,
+    pub(super) scroll_remainders: HashMap<(Option<usize>, Option<usize>, bool), ScrollRemainder>,
     last_input_at: Instant,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
     last_hover_help: Option<HoverHelpState>,
@@ -2999,7 +2999,7 @@ impl KeyIo for ChanIo {
             GuiEvent::ForFrame { .. } => unreachable!("frame events are unwrapped"),
             GuiEvent::FrameDeleteRequest { frame_id } => {
                 self.scroll_remainders
-                    .retain(|(id, _), _| *id != Some(frame_id));
+                    .retain(|(id, _, _), _| *id != Some(frame_id));
                 self.pending_frame_delete = Some(frame_id);
                 self.render_requested = true;
                 Ok(None)
@@ -3221,7 +3221,10 @@ impl KeyIo for ChanIo {
                     negative_delta: delta.is_sign_negative(),
                     pixel_precise: pixel_delta.is_some(),
                 };
-                let remainder = self.scroll_remainders.entry((frame_id, horizontal)).or_default();
+                let remainder = self
+                    .scroll_remainders
+                    .entry((frame_id, position.window_id, horizontal))
+                    .or_default();
                 if remainder.context != Some(context) {
                     remainder.context = Some(context);
                     remainder.amount = 0.0;
@@ -3612,7 +3615,7 @@ impl KeyIo for ChanIo {
             .retain(|id, _| live_ids.contains(id));
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
         self.scroll_remainders
-            .retain(|(frame_id, _), _| frame_id.is_none_or(|id| live_ids.contains(&id)));
+            .retain(|(frame_id, _, _), _| frame_id.is_none_or(|id| live_ids.contains(&id)));
         let frames_by_display = group_frames_by_display(live_frames.iter().map(|frame| {
             let frame_id = frame.borrow().id;
             let geometry = self.frame_geometries.get(&frame_id).cloned().or_else(|| {
