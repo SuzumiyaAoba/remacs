@@ -11113,6 +11113,34 @@ pub(crate) fn window_text_display_pixel_size(
     let mut ctx = FaceCtx::new(i, Some(&frame));
     ctx.default_style = Some(ctx.builtin(i, "default", 0).finish());
     let faces = window_faces(i, &mut ctx, &buffer, &Value::Window(window.clone()), None);
+    let wrap_starts = {
+        let mut starts = HashSet::new();
+        if !buffer_setting(i, "truncate-lines", buffer_id).truthy() {
+            let text = buffer.borrow();
+            let first_line = text.text.line_of_pos(start);
+            let last_position = start.saturating_add(segment.chars().count());
+            let last_line = text.text.line_of_pos(last_position);
+            let width = crate::editor::win_body_width(i, window).max(1);
+            let ctl_arrow = buffer_setting(i, "ctl-arrow", buffer_id).truthy();
+            for line_number in first_line..=last_line {
+                let line_start = text.text.line_start(line_number).max(text.begv);
+                let line_end = text.text.line_end(line_start).min(text.zv);
+                let line = text.text.substring(line_start, line_end);
+                for range in wrap_ranges_for_window(
+                    i, buffer_id, window, &line, line_start, width, tab_width, ctl_arrow,
+                )
+                .into_iter()
+                .skip(1)
+                {
+                    let row_start = line_start.saturating_add(range.start);
+                    if row_start >= start && row_start < last_position {
+                        starts.insert(row_start);
+                    }
+                }
+            }
+        }
+        starts
+    };
     let cell_width = cell_width.max(1);
     let tab_width = tab_width.max(1);
     let line_height = line_height.max(1);
@@ -11146,7 +11174,7 @@ pub(crate) fn window_text_display_pixel_size(
         || !faces.line_spacing_overlays.is_empty()
         || !faces.line_height_props.is_empty()
         || !faces.line_height_overlays.is_empty();
-    if !has_replacement && !has_line_metrics {
+    if !has_replacement && !has_line_metrics && wrap_starts.is_empty() {
         return None;
     }
 
@@ -11157,6 +11185,16 @@ pub(crate) fn window_text_display_pixel_size(
     let mut image_heights = vec![0usize];
     for (offset, source_character) in segment.chars().enumerate() {
         let position = start.saturating_add(offset);
+        if wrap_starts.contains(&position) {
+            next_line(
+                &mut line_width,
+                &mut line_columns,
+                &mut max_width,
+                &mut row_heights,
+                &mut image_heights,
+                default_row_height,
+            );
+        }
         if let Some(replacement) = display_replacement_at(&faces, position) {
             match replacement {
                 DisplayReplacement::Text(text) | DisplayReplacement::GlyphlessText(text, _) => {
