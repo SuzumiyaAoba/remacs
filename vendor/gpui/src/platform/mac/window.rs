@@ -2831,6 +2831,25 @@ fn client_frame_id_for_window(window: id) -> Option<usize> {
     }
 }
 
+fn target_frame_to_return(
+    mode: &mut crate::DragReturnFrameMode,
+    source_window: usize,
+    source_frame_id: Option<usize>,
+    target_window: usize,
+    target_frame_id: Option<usize>,
+) -> Option<usize> {
+    match *mode {
+        crate::DragReturnFrameMode::Never => return None,
+        crate::DragReturnFrameMode::Eventually if target_window != source_window => {
+            *mode = crate::DragReturnFrameMode::Now;
+        }
+        crate::DragReturnFrameMode::Eventually => return None,
+        crate::DragReturnFrameMode::Now => {}
+    }
+    let target_frame_id = target_frame_id?;
+    (source_frame_id != Some(target_frame_id)).then_some(target_frame_id)
+}
+
 fn return_frame_to_target(
     source_state: &Arc<Mutex<MacWindowState>>,
     target_window: id,
@@ -2838,22 +2857,17 @@ fn return_frame_to_target(
 ) -> bool {
     let completion = {
         let mut source = source_state.lock();
-        match source.return_frame_mode {
-            crate::DragReturnFrameMode::Never => return false,
-            crate::DragReturnFrameMode::Eventually
-                if target_window != source.native_window =>
-            {
-                source.return_frame_mode = crate::DragReturnFrameMode::Now;
-            }
-            crate::DragReturnFrameMode::Eventually => return false,
-            crate::DragReturnFrameMode::Now => {}
-        }
-        let Some(target_frame_id) = target_frame_id else {
+        let source_window = source.native_window as usize;
+        let source_frame_id = source.client_frame_id;
+        let Some(target_frame_id) = target_frame_to_return(
+            &mut source.return_frame_mode,
+            source_window,
+            source_frame_id,
+            target_window as usize,
+            target_frame_id,
+        ) else {
             return false;
         };
-        if source.client_frame_id == Some(target_frame_id) {
-            return false;
-        }
         let Some(completion) = source.drag_completion.take() else {
             return false;
         };
@@ -2866,6 +2880,41 @@ fn return_frame_to_target(
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod drag_return_frame_tests {
+    use super::*;
+
+    #[test]
+    fn eventually_waits_for_leaving_the_source_before_returning_a_frame() {
+        let mut mode = crate::DragReturnFrameMode::Eventually;
+        assert_eq!(
+            target_frame_to_return(&mut mode, 1, Some(10), 1, Some(10)),
+            None
+        );
+        assert_eq!(mode, crate::DragReturnFrameMode::Eventually);
+
+        assert_eq!(target_frame_to_return(&mut mode, 1, Some(10), 2, None), None);
+        assert_eq!(mode, crate::DragReturnFrameMode::Now);
+        assert_eq!(
+            target_frame_to_return(&mut mode, 1, Some(10), 3, Some(11)),
+            Some(11)
+        );
+    }
+
+    #[test]
+    fn now_returns_another_frame_but_not_the_source_frame() {
+        let mut mode = crate::DragReturnFrameMode::Now;
+        assert_eq!(
+            target_frame_to_return(&mut mode, 1, Some(10), 1, Some(10)),
+            None
+        );
+        assert_eq!(
+            target_frame_to_return(&mut mode, 1, Some(10), 2, Some(11)),
+            Some(11)
+        );
     }
 }
 
