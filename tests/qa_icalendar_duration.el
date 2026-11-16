@@ -31,4 +31,14 @@
 (qa (icalendar--decode-isodatetime "20200101T120000-0500" nil nil 32400)
     '(0 0 2 2 1 2020 4 nil 32400))
 
+;; DATE-TIME fields must not roll over; second 60 is reserved for leap seconds.
+(qa-err (icalendar--decode-isodatetime "20200101T240000Z") 'error)
+(qa-err (icalendar--decode-isodatetime "20200101T126000Z") 'error)
+(qa-err (icalendar--decode-isodatetime "20200101T120061Z") 'error)
+(qa-err (icalendar--decode-isodatetime "20200101T120060Z") 'error)
+(qa (condition-case nil
+        (progn (icalendar--decode-isodatetime "19970630T235960Z") t)
+      (error nil))
+    t)
+
 (princ (qa--done))

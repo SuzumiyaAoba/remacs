@@ -983,6 +983,14 @@ FIXME: multiple comma-separated values should be allowed!"
         (when (> (length isodatetimestring) 14)
           ;; seconds present
           (setq second (read (substring isodatetimestring 13 15))))
+        (unless (and (<= 0 hour 23)
+                     (<= 0 minute 59)
+                     (<= 0 second 60)
+                     (or (< second 60)
+                         (save-match-data
+                           (require 'iso8601)
+                           (iso8601-valid-p isodatetimestring))))
+          (error "Invalid ISO 8601 date-time: %s" isodatetimestring))
 	;; FIXME: Support subseconds.
         (when (> (length isodatetimestring) 15)
 	  (pcase (aref isodatetimestring 15)
