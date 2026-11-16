@@ -67,4 +67,14 @@
     (delete-directory root t)))
 (qa-err-data (file-modes 5) 'wrong-type-argument '(stringp 5))
 (qa-err-data (file-modes "a\0b") 'wrong-type-argument '(filenamep "a\0b"))
+
+(when qa--remacs
+  (qa-err (file-modes-symbolic-to-number "u+r,") 'error)
+  (let ((read-string-original (symbol-function 'read-string)))
+    (unwind-protect
+	(progn
+	  (fset 'read-string (lambda (&rest _) "u+r,"))
+	  (qa-err (read-file-modes) 'error))
+      (fset 'read-string read-string-original))))
+
 (princ (qa--done))

@@ -9589,6 +9589,10 @@ as in \"og+rX-w\"."
   (save-match-data
     (let ((case-fold-search nil)
 	  (num-modes (or from 0)))
+      (when (and (stringp modes)
+		 (> (length modes) 0)
+		 (eq (aref modes (1- (length modes))) ?,))
+	(error "Parse error in modes near `,'"))
       (while (/= (string-to-char modes) 0)
 	(if (string-match "^\\([ugoa]*\\)\\([+=-][rwxXstugo]*\\)+\\(,\\|\\)" modes)
 	    (let ((num-who (apply 'logior 0
