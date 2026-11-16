@@ -449,7 +449,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-text-lines", 0, 1, f_frame_height, ""),
     S!("frame-char-width", 0, 1, f_frame_char_width, ""),
     S!("frame-char-height", 0, 1, f_frame_char_height, ""),
-    S!("frame-fringe-width", 0, 1, f_zero_framep, ""),
+    S!("frame-fringe-width", 0, 1, f_frame_fringe_width, ""),
     S!(
         "frame-internal-border-width",
         0,
@@ -1225,6 +1225,21 @@ fn f_old_selected_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(symbol) = i.q_soft("remacs--mode-line-selected-window")
         && i.bound_p(symbol)
     {
+fn f_frame_fringe_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_any(i, &arg(&a, 0))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Int(0));
+    }
+    let parameters = frame.borrow().params.clone();
+    let width = crate::frontend::frame_fringe_pixels(i, &parameters, "left-fringe")
+        .saturating_add(crate::frontend::frame_fringe_pixels(
+            i,
+            &parameters,
+            "right-fringe",
+        ));
+    Ok(Value::Int(width as i128))
+}
+
         return Ok(i.symbol_value(symbol));
     }
     f_sel_window(i, a)

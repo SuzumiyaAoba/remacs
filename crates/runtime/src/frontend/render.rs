@@ -3383,7 +3383,7 @@ fn buffer_position_indicator(size: usize, start: usize, end: usize, specifier: c
     format!("{prefix}{percentage:2}%")
 }
 
-fn frame_fringe_pixels(i: &Interp, parameters: &Value, name: &str) -> usize {
+pub(crate) fn frame_fringe_pixels(i: &Interp, parameters: &Value, name: &str) -> usize {
     i.q_soft(name)
         .map(|parameter| crate::lisp::eval::plist_get(parameters, parameter))
         .and_then(|value| match value {

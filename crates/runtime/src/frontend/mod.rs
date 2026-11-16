@@ -916,6 +916,7 @@ pub(crate) use render::{position_at_display_cell, position_display_cell};
 pub(crate) use render::position_at_vertical_scrollbar_row;
 pub(crate) use render::{ImageSpecInfo, image_spec_info};
 pub(crate) use render::grid_tooltip_from_string;
+pub(crate) use render::frame_fringe_pixels;
 pub(crate) use render::window_text_pixel_rows;
 pub(crate) use render::{
     font_at_style_for_buffer_position, font_at_style_for_string_position,
