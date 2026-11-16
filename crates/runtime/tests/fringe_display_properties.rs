@@ -266,6 +266,46 @@ fn overlay_arrow_string_nil_suppresses_the_fringe_arrow() {
     assert_eq!(grid.rows[0].chars().next(), Some(' '));
 }
 
+#[test]
+fn zero_width_fringes_fall_back_to_text_edge_indicator_cells() {
+    let mut interp = graphical_fringe_interpreter();
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+          (set-window-fringes nil 0 0)
+          (setq-local truncate-lines nil)
+          (insert (make-string 50 ?x)))"#,
+    );
+    let area = grid.window_text_areas.first().unwrap();
+    assert_eq!((area.left_fringe, area.right_fringe), (0, 0));
+    assert!(
+        grid.rows[1].starts_with("↪"),
+        "row={:?}; area left={} width={}",
+        grid.rows[1],
+        area.text_left,
+        area.text_width
+    );
+
+    let grid = reset(
+        &mut interp,
+        r#"(progn
+          (set-window-fringes nil 0 0)
+          (setq-local truncate-lines t auto-hscroll-mode nil)
+          (insert (make-string 50 ?x))
+          (goto-char (point-min))
+          (set-window-hscroll nil 0))"#,
+    );
+    let area = grid.window_text_areas.first().unwrap();
+    let truncate_lines = eval(&mut interp, "truncate-lines").truthy();
+    assert_eq!(
+        grid.rows[0].chars().nth(39),
+        Some('›'),
+        "row={:?}; truncate-lines={truncate_lines}; text-width={}",
+        grid.rows[0],
+        area.text_width
+    );
+}
+
 fn body(grid: &Grid, row: usize) -> String {
     grid.rows[row]
         .chars()

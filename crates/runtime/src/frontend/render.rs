@@ -13784,7 +13784,9 @@ fn render_grid_internal(
                                 position,
                                 FringeIndicatorPosition::Left | FringeIndicatorPosition::Both
                             ) {
-                                left_indicator.clear();
+                                if fringe_left_cells > 0 {
+                                    left_indicator.clear();
+                                }
                                 remove_fringe_bitmap_at(&mut fringe_bitmaps, y, window_left);
                                 let bitmap = if use_last_line_bitmaps {
                                     bitmaps.left1.unwrap_or(bitmaps.left)
@@ -13809,7 +13811,9 @@ fn render_grid_internal(
                                 position,
                                 FringeIndicatorPosition::Right | FringeIndicatorPosition::Both
                             ) {
-                                right_indicator.clear();
+                                if fringe_right_cells > 0 {
+                                    right_indicator.clear();
+                                }
                                 remove_fringe_bitmap_at(&mut fringe_bitmaps, y, right_fringe_left);
                                 let bitmap = if use_last_line_bitmaps {
                                     bitmaps.right1.unwrap_or(bitmaps.right)
@@ -13875,22 +13879,26 @@ fn render_grid_internal(
                         place_bitmap("overlay-arrow", FringeIndicatorPosition::Left, false);
                     }
                 }
-                place_fringe_glyph(
-                    &mut screen_rows,
-                    y,
-                    window_left,
-                    fringe_left_cells,
-                    &left_indicator,
-                    fringe_style,
-                );
-                place_fringe_glyph(
-                    &mut screen_rows,
-                    y,
-                    right_fringe_left,
-                    fringe_right_cells,
-                    &right_indicator,
-                    fringe_style,
-                );
+                let left_indicator_column = if fringe_left_cells == 0 {
+                    content_left
+                } else {
+                    window_left
+                };
+                let left_indicator_width = if fringe_left_cells == 0 {
+                    usize::from(content_width > 0)
+                } else {
+                    fringe_left_cells
+                };
+                let right_indicator_column = if fringe_right_cells == 0 {
+                    content_left.saturating_add(content_width.saturating_sub(1))
+                } else {
+                    right_fringe_left
+                };
+                let right_indicator_width = if fringe_right_cells == 0 {
+                    usize::from(content_width > 0)
+                } else {
+                    fringe_right_cells
+                };
                 // User display specifications override automatic indicators.
                 // The last specification encountered on each side wins.
                 for left in [true, false] {
@@ -14140,6 +14148,22 @@ fn render_grid_internal(
                     }
                 }
                 place_rendered_row(&mut screen_rows[y], content_left, &rendered);
+                place_fringe_glyph(
+                    &mut screen_rows,
+                    y,
+                    left_indicator_column,
+                    left_indicator_width,
+                    &left_indicator,
+                    fringe_style,
+                );
+                place_fringe_glyph(
+                    &mut screen_rows,
+                    y,
+                    right_indicator_column,
+                    right_indicator_width,
+                    &right_indicator,
+                    fringe_style,
+                );
                 if !bidi_display_reordering && content_width > 0 {
                     bidi_disabled_cell_ranges.push((
                         y,
