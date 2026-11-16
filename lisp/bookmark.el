@@ -813,10 +813,61 @@ affect point."
   (save-excursion
     (goto-char (point-min))
     (if (search-forward bookmark-end-of-version-stamp-marker nil t)
-        (read (current-buffer))
+        (let* ((bookmarks (read (current-buffer)))
+               (tail (buffer-substring-no-properties (point) (point-max))))
+          (unless (bookmark--read-tail-valid-p tail 0)
+            (error "Trailing data in bookmark file"))
+          bookmarks)
       (if buffer-file-name
           (error "File not in bookmark format: %s" buffer-file-name)
         (error "Buffer not in bookmark format: %s" (buffer-name))))))
+
+(defun bookmark--read-tail-valid-p (string start)
+  "Return non-nil if STRING after START contains only whitespace or comments."
+  (let ((position start)
+        (limit (length string))
+        (valid t))
+    (while (and valid (< position limit))
+      (let ((character (aref string position)))
+        (cond
+         ((memq character '(?\s ?\t ?\n ?\r ?\f ?\v))
+          (setq position (1+ position)))
+         ((eq character ?\;)
+          (while (and (< position limit)
+                      (not (eq (aref string position) ?\n)))
+            (setq position (1+ position))))
+         ((and (eq character ?#)
+               (< (1+ position) limit)
+               (eq (aref string (1+ position)) ?\;))
+          (let ((discarded
+                 (condition-case nil
+                     (read-from-string string (+ position 2))
+                   (error nil))))
+            (if discarded
+                (setq position (cdr discarded))
+              (setq valid nil))))
+         ((and (eq character ?#)
+               (< (1+ position) limit)
+               (eq (aref string (1+ position)) ?|))
+          (setq position (+ position 2))
+          (let ((depth 1))
+            (while (and (> depth 0) (< (1+ position) limit))
+              (cond
+               ((and (eq (aref string position) ?#)
+                     (eq (aref string (1+ position)) ?|))
+                (setq depth (1+ depth)
+                      position (+ position 2)))
+               ((and (eq (aref string position) ?|)
+                     (eq (aref string (1+ position)) ?#))
+                (setq depth (1- depth)
+                      position (+ position 2)))
+               (t
+                (setq position (1+ position)))))
+            (when (> depth 0)
+              (setq valid nil))))
+         (t
+          (setq valid nil)))))
+    valid))
 
 (defun bookmark-upgrade-version-0-alist (old-list)
   "Upgrade a version 0 alist OLD-LIST to the current version."
