@@ -8604,7 +8604,7 @@ fn line_spacing_at_pos(
 enum LineHeightProperty {
     ContentsOnly,
     Minimum(usize),
-    Total(usize),
+    Total { height: usize, total: usize },
 }
 
 fn height_spec_pixels(
@@ -11062,12 +11062,14 @@ pub(crate) fn window_text_display_pixel_size(
         line_columns: &mut usize,
         max_width: &mut usize,
         row_heights: &mut Vec<usize>,
-        line_height: usize,
+        image_heights: &mut Vec<usize>,
+        default_row_height: usize,
     ) {
         *max_width = (*max_width).max(*line_width);
         *line_width = 0;
         *line_columns = 0;
-        row_heights.push(line_height);
+        row_heights.push(default_row_height);
+        image_heights.push(0);
     }
 
     fn add_text(
@@ -11078,11 +11080,19 @@ pub(crate) fn window_text_display_pixel_size(
         line_width: &mut usize,
         max_width: &mut usize,
         row_heights: &mut Vec<usize>,
-        line_height: usize,
+        image_heights: &mut Vec<usize>,
+        default_row_height: usize,
     ) {
         for character in text.chars() {
             if character == '\n' {
-                next_line(line_width, line_columns, max_width, row_heights, line_height);
+                next_line(
+                    line_width,
+                    line_columns,
+                    max_width,
+                    row_heights,
+                    image_heights,
+                    default_row_height,
+                );
             } else if character == '\t' {
                 let columns = tab_width - *line_columns % tab_width;
                 add_columns(columns, cell_width, line_columns, line_width);
@@ -11103,6 +11113,26 @@ pub(crate) fn window_text_display_pixel_size(
     let mut ctx = FaceCtx::new(i, Some(&frame));
     ctx.default_style = Some(ctx.builtin(i, "default", 0).finish());
     let faces = window_faces(i, &mut ctx, &buffer, &Value::Window(window.clone()), None);
+    let cell_width = cell_width.max(1);
+    let tab_width = tab_width.max(1);
+    let line_height = line_height.max(1);
+    let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let buffer_spacing = buffer_setting(i, "line-spacing", buffer_id);
+    let frame_spacing = i
+        .q_soft("line-spacing")
+        .map(|property| crate::lisp::eval::plist_get(&frame.borrow().params, property))
+        .unwrap_or(Value::Nil);
+    let spacing_value = if buffer_spacing.is_nil() {
+        frame_spacing
+    } else {
+        buffer_spacing
+    };
+    let default_spacing = if graphical {
+        line_spacing_pixels(&spacing_value, line_height).unwrap_or(0)
+    } else {
+        0
+    };
+    let default_row_height = line_height.saturating_add(default_spacing);
     let end = start.saturating_add(segment.chars().count());
     let has_replacement = faces
         .display_props
@@ -11111,17 +11141,20 @@ pub(crate) fn window_text_display_pixel_size(
         .any(|(range_start, range_end, replacement, _)| {
             *range_start < end && *range_end > start && replacement.is_some()
         });
-    if !has_replacement {
+    let has_line_metrics = default_spacing > 0
+        || !faces.line_spacing_props.is_empty()
+        || !faces.line_spacing_overlays.is_empty()
+        || !faces.line_height_props.is_empty()
+        || !faces.line_height_overlays.is_empty();
+    if !has_replacement && !has_line_metrics {
         return None;
     }
 
-    let cell_width = cell_width.max(1);
-    let tab_width = tab_width.max(1);
-    let line_height = line_height.max(1);
     let mut line_columns = 0usize;
     let mut line_width = 0usize;
     let mut max_width = 0usize;
-    let mut row_heights = vec![line_height];
+    let mut row_heights = vec![default_row_height];
+    let mut image_heights = vec![0usize];
     for (offset, source_character) in segment.chars().enumerate() {
         let position = start.saturating_add(offset);
         if let Some(replacement) = display_replacement_at(&faces, position) {
@@ -11135,7 +11168,8 @@ pub(crate) fn window_text_display_pixel_size(
                         &mut line_width,
                         &mut max_width,
                         &mut row_heights,
-                        line_height,
+                        &mut image_heights,
+                        default_row_height,
                     );
                 }
                 DisplayReplacement::StyledText(text) => {
@@ -11147,7 +11181,8 @@ pub(crate) fn window_text_display_pixel_size(
                         &mut line_width,
                         &mut max_width,
                         &mut row_heights,
-                        line_height,
+                        &mut image_heights,
+                        default_row_height,
                     );
                 }
                 DisplayReplacement::Space(columns) => add_columns(
@@ -11183,7 +11218,8 @@ pub(crate) fn window_text_display_pixel_size(
                     line_width = line_width.saturating_add(image_width);
                     if let Some(image_height) = image_height {
                         let row = row_heights.len().saturating_sub(1);
-                        row_heights[row] = row_heights[row].max(image_height);
+                        image_heights[row] = image_heights[row].max(image_height);
+                        row_heights[row] = row_heights[row].max(image_heights[row]);
                     }
                 }
                 DisplayReplacement::Fringe(_) | DisplayReplacement::Hidden => {}
@@ -11193,12 +11229,34 @@ pub(crate) fn window_text_display_pixel_size(
 
         let character = source_character.unicode().unwrap_or('\u{fffd}');
         if matches!(character, '\n' | '\r') {
+            let newline_spacing = line_spacing_at_pos(
+                i,
+                &faces,
+                position,
+                default_spacing,
+                line_height,
+            );
+            let explicit_line_height =
+                line_height_at_pos(i, &faces, &mut ctx, position, line_height);
+            let display_row_height = match explicit_line_height {
+                Some(LineHeightProperty::ContentsOnly) => line_height,
+                Some(LineHeightProperty::Total { height, total }) => {
+                    line_height.max(height).max(total)
+                }
+                Some(LineHeightProperty::Minimum(height)) => {
+                    line_height.max(height).saturating_add(newline_spacing)
+                }
+                None => line_height.saturating_add(newline_spacing),
+            };
+            let row = row_heights.len().saturating_sub(1);
+            row_heights[row] = display_row_height.max(image_heights[row]);
             next_line(
                 &mut line_width,
                 &mut line_columns,
                 &mut max_width,
                 &mut row_heights,
-                line_height,
+                &mut image_heights,
+                default_row_height,
             );
         } else if character == '\t' {
             let columns = tab_width - line_columns % tab_width;

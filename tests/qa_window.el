@@ -332,4 +332,33 @@
              (window-text-pixel-size window)))))
  '((8 . 16) (8 . 48) (8 . 16) (8 . 48)))
 
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'menu-bar-lines 0)
+   (set-frame-parameter nil 'tool-bar-lines 0)
+   (set-frame-parameter nil 'tab-bar-lines 0)
+   (set-frame-parameter nil 'char-width 8)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (setq-local line-spacing 12)
+     (insert "first\nsecond")
+     (window-text-pixel-size window)))
+ '(48 . 56))
+
+(qa
+ (let ((window (selected-window)))
+   (set-frame-parameter nil 'window-system 'gpui)
+   (set-frame-parameter nil 'menu-bar-lines 0)
+   (set-frame-parameter nil 'tool-bar-lines 0)
+   (set-frame-parameter nil 'tab-bar-lines 0)
+   (set-frame-parameter nil 'char-width 8)
+   (set-frame-parameter nil 'char-height 16)
+   (with-temp-buffer
+     (set-window-buffer window (current-buffer))
+     (insert "first" (propertize "\n" 'line-height 30) "second")
+     (window-text-pixel-size window)))
+ '(48 . 46))
+
 (princ (qa--done))
