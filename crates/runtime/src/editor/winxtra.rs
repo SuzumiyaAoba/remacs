@@ -1557,14 +1557,50 @@ fn f_prev_sibling(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     siblings(i, &arg(&a, 0), false)
 }
 
-/// GNU window.el: `window-text-height' = `(window-edges W t)' height —
-/// the body, i.e. total minus the mode-line row (none on
-/// minibuffer/internal windows).
+/// GNU `window-text-height': the text display area, excluding header/tab/mode
+/// lines and any partial-height row at the bottom.
 fn f_window_text_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    let wb = w.borrow();
-    let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
-    Ok(Value::Int(wb.height.saturating_sub(ml) as i128))
+    let (height, minibuffer, leaf) = {
+        let window = w.borrow();
+        (window.height, window.minibuffer, window.horiz.is_none())
+    };
+    let (header, tab, mode) = if leaf && !minibuffer {
+        (
+            window_format_line_height(i, &w, "header-line-format")?,
+            window_format_line_height(i, &w, "tab-line-format")?,
+            window_mode_line_height(i, &w)?,
+        )
+    } else {
+        (0, 0, 0)
+    };
+    let (scroll_height, _, _, horizontal_scroll_side, _) = window_scroll_bar_settings(i, &w);
+    let frame = crate::editor::frame_of_window(i, &w);
+    let char_height = frame
+        .as_ref()
+        .map_or(1, |frame| crate::editor::frame_char_height(i, frame).max(1));
+    let bottom_divider = frame
+        .as_ref()
+        .filter(|frame| !minibuffer && crate::editor::frame_is_graphical(i, frame))
+        .map(|frame| {
+            crate::editor::frame_parameter_positive_size(i, frame, "bottom-divider-width", 0)
+        })
+        .unwrap_or(0);
+    let total_pixels = (height as f64 * window_pixel_scale_y(i, &w)).round();
+    let decoration_pixels = (header + tab + mode).saturating_mul(char_height) as f64;
+    let scroll_pixels = if horizontal_scroll_side.is_some() {
+        scroll_height.unwrap_or(0) as f64
+    } else {
+        0.0
+    };
+    let body_pixels =
+        (total_pixels - decoration_pixels - scroll_pixels - bottom_divider as f64).max(0.0)
+            as usize;
+    if a.get(1).is_some_and(Value::truthy) {
+        Ok(Value::Int(body_pixels as i128))
+    } else {
+        Ok(Value::Int((body_pixels / char_height) as i128))
+    }
 }
 
 
