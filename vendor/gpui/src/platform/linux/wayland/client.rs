@@ -2001,7 +2001,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 }
                                 PlatformInput::FileDrop(FileDropEvent::Entered {
                                     position,
-                                    paths: crate::ExternalPaths(paths),
+                                    paths: crate::ExternalPaths::new(paths),
                                 })
                             };
 
@@ -2076,7 +2076,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         text: None,
                     })
                 } else {
-                    PlatformInput::FileDrop(FileDropEvent::Submit { position })
+                    PlatformInput::FileDrop(FileDropEvent::Submit {
+                        position,
+                        operation: crate::ExternalDragOperation::Copy,
+                    })
                 };
                 drop(state);
                 drag_window.handle_input(input);

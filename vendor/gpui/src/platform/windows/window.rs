@@ -1174,7 +1174,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 ReleaseStgMedium(&mut idata);
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                     position,
-                    paths: ExternalPaths(paths),
+                    paths: ExternalPaths::new(paths),
                 });
                 self.0.state.borrow_mut().external_text_dragged = false;
                 self.handle_drag_drop(input);
@@ -1289,7 +1289,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 text: None,
             })
         } else {
-            PlatformInput::FileDrop(FileDropEvent::Submit { position })
+            PlatformInput::FileDrop(FileDropEvent::Submit {
+                position,
+                operation: crate::ExternalDragOperation::Copy,
+            })
         };
         self.handle_drag_drop(input);
 

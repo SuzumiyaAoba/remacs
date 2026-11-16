@@ -2956,6 +2956,63 @@ extern "C" fn dragging_session_moved_to(
     let _ = return_frame_to_target(&source_state, target_window, target_frame_id);
 }
 
+fn external_file_drop_operation(source_operation: NSDragOperation) -> Option<ExternalDragOperation> {
+    let operations = [
+        (NSDragOperationCopy, ExternalDragOperation::Copy),
+        (NSDragOperationMove, ExternalDragOperation::Move),
+        (NSDragOperationLink, ExternalDragOperation::Link),
+        (NSDragOperationGeneric, ExternalDragOperation::Generic),
+    ];
+    operations
+        .iter()
+        .find(|(native, _)| source_operation == *native)
+        .or_else(|| {
+            operations
+                .iter()
+                .find(|(native, _)| source_operation & *native != 0)
+        })
+        .map(|(_, operation)| *operation)
+}
+
+fn native_drag_operation(operation: ExternalDragOperation) -> NSDragOperation {
+    match operation {
+        ExternalDragOperation::Copy => NSDragOperationCopy,
+        ExternalDragOperation::Move => NSDragOperationMove,
+        ExternalDragOperation::Link => NSDragOperationLink,
+        ExternalDragOperation::Generic => NSDragOperationGeneric,
+    }
+}
+
+#[cfg(test)]
+mod external_file_drop_operation_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_single_source_operation() {
+        assert_eq!(
+            external_file_drop_operation(NSDragOperationMove),
+            Some(ExternalDragOperation::Move)
+        );
+        assert_eq!(
+            external_file_drop_operation(NSDragOperationLink),
+            Some(ExternalDragOperation::Link)
+        );
+        assert_eq!(
+            external_file_drop_operation(NSDragOperationCopy),
+            Some(ExternalDragOperation::Copy)
+        );
+        assert_eq!(external_file_drop_operation(NSDragOperationNone), None);
+    }
+
+    #[test]
+    fn prefers_copy_when_the_source_allows_multiple_operations() {
+        assert_eq!(
+            external_file_drop_operation(NSDragOperationCopy | NSDragOperationMove),
+            Some(ExternalDragOperation::Copy)
+        );
+    }
+}
+
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
     let source_operation: NSUInteger =
@@ -2983,6 +3040,9 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
     if let Some(paths) = paths {
+        let Some(operation) = external_file_drop_operation(source_operation) else {
+            return NSDragOperationNone;
+        };
         if send_new_event(
             &window_state,
             PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }),
@@ -2990,7 +3050,7 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
             let mut state = window_state.lock();
             state.external_files_dragged = true;
             state.external_text_dragged = false;
-            return NSDragOperationCopy;
+            return native_drag_operation(operation);
         }
         return NSDragOperationNone;
     }
@@ -3036,16 +3096,25 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
     }
     let position = drag_event_position(&window_state, dragging_info);
     let text_dragged = window_state.lock().external_text_dragged;
-    let event = if text_dragged {
-        PlatformInput::TextDrop(TextDropEvent::Pending {
-            position,
-            text: external_color_from_event(dragging_info),
-        })
+    let (event, operation) = if text_dragged {
+        (
+            PlatformInput::TextDrop(TextDropEvent::Pending {
+                position,
+                text: external_color_from_event(dragging_info),
+            }),
+            NSDragOperationCopy,
+        )
     } else {
-        PlatformInput::FileDrop(FileDropEvent::Pending { position })
+        let Some(operation) = external_file_drop_operation(source_operation) else {
+            return NSDragOperationNone;
+        };
+        (
+            PlatformInput::FileDrop(FileDropEvent::Pending { position }),
+            native_drag_operation(operation),
+        )
     };
     if send_new_event(&window_state, event) {
-        NSDragOperationCopy
+        operation
     } else {
         NSDragOperationNone
     }
@@ -3085,7 +3154,13 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
             text: external_color_from_event(dragging_info),
         })
     } else {
-        PlatformInput::FileDrop(FileDropEvent::Submit { position })
+        let Some(operation) = external_file_drop_operation(source_operation) else {
+            return NO;
+        };
+        PlatformInput::FileDrop(FileDropEvent::Submit {
+            position,
+            operation,
+        })
     };
     send_new_event(&window_state, event).to_objc()
 }
@@ -3104,7 +3179,7 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
         };
         paths.push(PathBuf::from(path))
     }
-    Some(ExternalPaths(paths))
+    Some(ExternalPaths::new(paths))
 }
 
 fn external_text_from_event(dragging_info: *mut Object) -> Option<String> {

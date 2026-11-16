@@ -57,10 +57,21 @@ fn external_text_drop_event(position: Option<MousePosition>, text: &ExternalText
     }
 }
 
+fn external_file_drop_action(operation: ExternalDragOperation) -> &'static str {
+    match operation {
+        ExternalDragOperation::Copy => "copy",
+        ExternalDragOperation::Move => "move",
+        ExternalDragOperation::Link => "link",
+        ExternalDragOperation::Generic => "private",
+    }
+}
+
 #[cfg(test)]
 mod autoselect_tests;
 #[cfg(test)]
 mod color_drop_tests;
+#[cfg(test)]
+mod external_file_drop_tests;
 #[cfg(test)]
 mod window_activation_tests;
 #[cfg(test)]
@@ -2661,6 +2672,7 @@ impl Render for EditorView {
                     .iter()
                     .map(|path| file_drop_uri(path))
                     .collect::<Vec<_>>();
+                let action = external_file_drop_action(paths.operation()).to_owned();
                 let position =
                     frame_content_point(window.mouse_position(), window.viewport_size(), border)
                         .and_then(|point| {
@@ -2671,7 +2683,7 @@ impl Render for EditorView {
                 let _ = file_drop_tx.send(GuiEvent::Drop {
                     position,
                     urls,
-                    action: "copy".to_owned(),
+                    action,
                 });
                 window.prevent_default();
                 cx.stop_propagation();

@@ -868,7 +868,10 @@ impl X11Client {
                         }));
                     } else {
                         window
-                            .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+                            .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
+                                position,
+                                operation: crate::ExternalDragOperation::Copy,
+                            }));
                     }
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 }
@@ -904,7 +907,7 @@ impl X11Client {
                         .collect();
                     PlatformInput::FileDrop(FileDropEvent::Entered {
                         position,
-                        paths: crate::ExternalPaths(paths),
+                        paths: crate::ExternalPaths::new(paths),
                     })
                 } else if xdnd_is_text_atom(state.xdnd_state.drag_type, &state.atoms) {
                     let text = if reply.type_ == state.atoms.STRING {

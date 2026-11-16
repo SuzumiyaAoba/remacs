@@ -7,7 +7,8 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    ExternalColor, ExternalDragOperation, ExternalText, FileDropEvent, FontId, Global,
+    ExternalColor, ExternalDragOperation, ExternalPaths, ExternalText, FileDropEvent, FontId,
+    Global,
     GlobalElementId, GlyphId, GpuSpecs, Hsla,
     InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
@@ -3784,9 +3785,22 @@ impl Window {
                         modifiers: Modifiers::default(),
                     })
                 }
-                FileDropEvent::Submit { position } => {
+                FileDropEvent::Submit {
+                    position,
+                    operation,
+                } => {
                     cx.activate(true);
                     self.mouse_position = position;
+                    let paths = cx
+                        .active_drag
+                        .as_ref()
+                        .and_then(|drag| drag.value.downcast_ref::<ExternalPaths>())
+                        .cloned();
+                    if let Some(paths) = paths
+                        && let Some(active_drag) = cx.active_drag.as_mut()
+                    {
+                        active_drag.value = Arc::new(paths.with_operation(operation));
+                    }
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,

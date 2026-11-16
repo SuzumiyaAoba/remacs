@@ -17,14 +17,15 @@ pub trait KeyEvent: InputEvent {}
 /// A mouse event from the platform.
 pub trait MouseEvent: InputEvent {}
 
-/// The operation requested for an outgoing native text drag.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+/// The operation selected for a native drag session or external file drop.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum ExternalDragOperation {
-    /// Copy the text at the drop target.
+    /// Copy the dragged data at the drop target.
+    #[default]
     Copy,
-    /// Move the text to the drop target.
+    /// Move the dragged data to the drop target.
     Move,
-    /// Create a link to the dragged text.
+    /// Create a link to the dragged data.
     Link,
     /// Let the drop target choose a private operation.
     Generic,
@@ -511,12 +512,32 @@ impl Deref for MouseExitEvent {
 
 /// A collection of paths from the platform, such as from a file drop.
 #[derive(Debug, Clone, Default)]
-pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
+pub struct ExternalPaths {
+    paths: SmallVec<[PathBuf; 2]>,
+    operation: ExternalDragOperation,
+}
 
 impl ExternalPaths {
+    pub(crate) fn new(paths: SmallVec<[PathBuf; 2]>) -> Self {
+        Self {
+            paths,
+            operation: ExternalDragOperation::Copy,
+        }
+    }
+
     /// Convert this collection of paths into a slice.
     pub fn paths(&self) -> &[PathBuf] {
-        &self.0
+        &self.paths
+    }
+
+    /// Return the operation selected for this file drop.
+    pub fn operation(&self) -> ExternalDragOperation {
+        self.operation
+    }
+
+    pub(crate) fn with_operation(mut self, operation: ExternalDragOperation) -> Self {
+        self.operation = operation;
+        self
     }
 }
 
@@ -575,6 +596,8 @@ pub enum FileDropEvent {
     Submit {
         /// The position of the mouse relative to the window.
         position: Point<Pixels>,
+        /// The operation selected by the drag source and destination.
+        operation: ExternalDragOperation,
     },
     /// The user has stopped dragging the files over the window.
     Exited,
