@@ -5651,6 +5651,18 @@ fn f_window_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 return Ok(Value::Window(w.clone()));
             }
         }
+        if let Some(minibuffer) = &fb.minibuffer {
+            let mini = minibuffer.borrow();
+            let top = mini.top.saturating_sub(shift);
+            let bottom = mini.top.saturating_add(mini.height).saturating_sub(shift);
+            if x >= mini.left as i128
+                && x < mini.left.saturating_add(mini.width) as i128
+                && y >= top as i128
+                && y < bottom as i128
+            {
+                return Ok(Value::Window(minibuffer.clone()));
+            }
+        }
     }
     Ok(Value::Nil)
 }
