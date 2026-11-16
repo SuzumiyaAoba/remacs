@@ -6589,6 +6589,140 @@ fn frame_parameter_value(i: &Interp, frame: &crate::editor::FrameRef, name: &str
     crate::lisp::eval::plist_get_v(&params, &Value::Sym(parameter))
 }
 
+#[derive(Clone, Copy)]
+enum FrameSizeParameter {
+    TextPixels(usize),
+    Ratio(f64),
+}
+
+fn frame_size_parameter(i: &Interp, value: &Value) -> Option<FrameSizeParameter> {
+    match value {
+        Value::Float(ratio) if ratio.is_finite() && (0.0..=1.0).contains(&**ratio) => {
+            Some(FrameSizeParameter::Ratio(**ratio))
+        }
+        Value::Cons(cons) => {
+            let (unit, value) = {
+                let cons = cons.borrow();
+                (cons.car.clone(), cons.cdr.clone())
+            };
+            let Value::Sym(unit) = unit else {
+                return None;
+            };
+            let Value::Int(pixels) = value else {
+                return None;
+            };
+            if i.symbol_name(unit) == "text-pixels" {
+                usize::try_from(pixels.max(0))
+                    .ok()
+                    .map(FrameSizeParameter::TextPixels)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn frame_workarea_pixel_size(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+) -> Option<(usize, usize)> {
+    let monitors = frame_parameter_value(i, frame, "display-monitor-attributes-list")
+        .list_to_vec()
+        .ok()?;
+    let frame_id = frame.borrow().id;
+    let mut fallback = None;
+    for monitor in monitors {
+        let Ok(attributes) = monitor.list_to_vec() else {
+            continue;
+        };
+        let mut workarea = None;
+        let mut includes_frame = false;
+        for attribute in attributes {
+            let Ok(fields) = attribute.list_to_vec() else {
+                continue;
+            };
+            let Some(Value::Sym(key)) = fields.first() else {
+                continue;
+            };
+            match i.symbol_name(*key).as_str() {
+                "workarea" if fields.len() >= 5 => {
+                    let width = fields[3]
+                        .int()
+                        .and_then(|value| usize::try_from(value.max(0)).ok());
+                    let height = fields[4]
+                        .int()
+                        .and_then(|value| usize::try_from(value.max(0)).ok());
+                    workarea = width.zip(height);
+                }
+                "frames" => {
+                    if let Some(frames) = fields.get(1).and_then(|frames| frames.list_to_vec().ok())
+                    {
+                        includes_frame |= frames.iter().any(|value| {
+                            matches!(value, Value::Frame(other) if other.borrow().id == frame_id)
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if includes_frame {
+            return workarea.or(fallback);
+        }
+        if fallback.is_none() {
+            fallback = workarea;
+        }
+    }
+    fallback
+}
+
+fn frame_size_parameter_cells(
+    i: &Interp,
+    frame: Option<&crate::editor::FrameRef>,
+    value: &Value,
+    horizontal: bool,
+    use_frame_size_as_ratio_fallback: bool,
+) -> Option<usize> {
+    let size = frame_size_parameter(i, value)?;
+    let cell_size = frame.map_or_else(
+        || if horizontal { 8 } else { 19 },
+        |frame| {
+            if horizontal {
+                frame_char_width(i, frame)
+            } else {
+                frame_char_height(i, frame)
+            }
+        },
+    )
+    .max(1);
+    let pixels = match size {
+        FrameSizeParameter::TextPixels(pixels) => pixels,
+        FrameSizeParameter::Ratio(ratio) => {
+            let workarea = frame.and_then(|frame| {
+                frame_workarea_pixel_size(i, frame).map(|(width, height)| {
+                    if horizontal { width } else { height }
+                })
+            });
+            let available = workarea.or_else(|| {
+                use_frame_size_as_ratio_fallback
+                    .then(|| frame.map(|frame| {
+                        let (cells, cell_size) = if horizontal {
+                            (frame.borrow().width, cell_size)
+                        } else {
+                            (frame.borrow().height, cell_size)
+                        };
+                        cells.saturating_mul(cell_size)
+                    }))
+                    .flatten()
+            })?;
+            (available as f64 * ratio)
+                .floor()
+                .clamp(0.0, usize::MAX as f64) as usize
+        }
+    };
+    Some((pixels / cell_size).max(if horizontal { 10 } else { 3 }))
+}
+
 pub(crate) fn frame_parameter_positive_size(
     i: &Interp,
     frame: &crate::editor::FrameRef,
@@ -7143,6 +7277,17 @@ fn store_frame_parameter(
             }
             _ => {}
         }
+        if value.int().is_none() {
+            if name.as_deref() == Some("width")
+                && let Some(width) = frame_size_parameter_cells(i, Some(f), &value, true, false)
+            {
+                f.borrow_mut().width = width;
+            } else if name.as_deref() == Some("height")
+                && let Some(height) = frame_size_parameter_cells(i, Some(f), &value, false, false)
+            {
+                f.borrow_mut().height = height;
+            }
+        }
         if name.as_deref() == Some("name") {
             let current = f.borrow().name.borrow().clone();
             let new_value = if value.is_nil() {
@@ -7337,11 +7482,19 @@ fn f_make_frame(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 "width" => {
                     if let Some(value) = value.int().filter(|value| *value > 0) {
                         width = value as usize;
+                    } else if let Some(value) =
+                        frame_size_parameter_cells(i, selected.as_ref(), &value, true, true)
+                    {
+                        width = value;
                     }
                 }
                 "height" => {
                     if let Some(value) = value.int().filter(|value| *value > 1) {
                         height = value as usize;
+                    } else if let Some(value) =
+                        frame_size_parameter_cells(i, selected.as_ref(), &value, false, true)
+                    {
+                        height = value;
                     }
                 }
                 "window-system" => {

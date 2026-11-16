@@ -71,8 +71,8 @@ use dialog_items::dialog_prompt_items;
 use dialogs::dialog_prompt_buttons;
 use dialogs::dialog_prompt_level;
 use logic::{
-    ClipboardRequest, ClipboardTarget, FramePosition, FrameSnapshot, GuiEvent, GuiRequest,
-    start_logic_with_native_window,
+    ClipboardRequest, ClipboardTarget, FramePosition, FrameSizeSpec, FrameSnapshot, GuiEvent,
+    GuiRequest, start_logic_with_native_window,
 };
 use view::{EditorView, build_managed_editor_view};
 
@@ -1746,6 +1746,21 @@ fn frame_pixel_size(
     )
 }
 
+fn frame_size_dimension(
+    spec: Option<FrameSizeSpec>,
+    default: Pixels,
+    workarea: Option<Pixels>,
+    border: Pixels,
+) -> Pixels {
+    match spec {
+        Some(FrameSizeSpec::TextPixels(pixels)) => px(pixels as f32) + border,
+        Some(FrameSizeSpec::Ratio(ratio)) => workarea
+            .map(|available| available * ratio as f32 + border)
+            .unwrap_or(default),
+        None => default,
+    }
+}
+
 fn frame_window_options(
     frame: &FrameSnapshot,
     windows: &HashMap<usize, WindowHandle<EditorView>>,
@@ -1772,13 +1787,51 @@ fn frame_window_options(
         px(8.0),
         px(frame.grid.default_line_height.max(1) as f32),
     ));
-    let content_size = frame_pixel_size(
+    let reference_bounds =
+        base_window.and_then(|base| base.update(cx, |_view, window, _cx| window.bounds()).ok());
+    let parent_bounds = frame.parent_frame.and_then(|parent| {
+        windows
+            .get(&parent)
+            .and_then(|window| window.update(cx, |_view, window, _cx| window.bounds()).ok())
+    });
+    let workarea_bounds = base_window
+        .and_then(|base| {
+            base.update(cx, |_view, window, cx| {
+                window.display(cx).map(|display| display.bounds())
+            })
+            .ok()
+            .flatten()
+        })
+        .or_else(|| {
+            cx.update(|cx| cx.primary_display().map(|display| display.bounds()))
+                .ok()
+                .flatten()
+        });
+    let workarea_size = frame
+        .workarea_size
+        .map(|(width, height)| size(px(width as f32), px(height as f32)))
+        .or_else(|| workarea_bounds.map(|bounds| bounds.size));
+    let default_content_size = frame_pixel_size(
         frame.width,
         frame.height,
         &frame.grid,
         cell_width,
         line_height,
         frame.internal_border_width,
+    );
+    let content_size = size(
+        frame_size_dimension(
+            frame.width_size,
+            default_content_size.width,
+            workarea_size.map(|size| size.width),
+            px(internal_border),
+        ),
+        frame_size_dimension(
+            frame.height_size,
+            default_content_size.height,
+            workarea_size.map(|size| size.height),
+            px(internal_border),
+        ),
     );
     let window_min_size = frame_minimum_size(
         frame.min_width,
@@ -1808,13 +1861,6 @@ fn frame_window_options(
     let parent_window_handle = frame
         .parent_frame
         .and_then(|parent| windows.get(&parent).copied().map(Into::into));
-    let reference_bounds =
-        base_window.and_then(|base| base.update(cx, |_view, window, _cx| window.bounds()).ok());
-    let parent_bounds = frame.parent_frame.and_then(|parent| {
-        windows
-            .get(&parent)
-            .and_then(|window| window.update(cx, |_view, window, _cx| window.bounds()).ok())
-    });
     let has_position = frame.left.is_some() || frame.top.is_some();
     let parameter_position = if !has_position {
         None

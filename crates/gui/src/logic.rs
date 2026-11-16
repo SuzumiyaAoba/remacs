@@ -353,6 +353,12 @@ pub(super) enum FramePosition {
     FromEnd(f64),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum FrameSizeSpec {
+    TextPixels(usize),
+    Ratio(f64),
+}
+
 fn frame_position_offset(value: &Value) -> Option<f64> {
     match value {
         Value::Int(value) => Some(*value as f64),
@@ -401,9 +407,48 @@ fn frame_position_from_value(i: &Interp, value: &Value) -> Option<FramePosition>
     }
 }
 
+fn frame_size_from_value(i: &Interp, value: &Value) -> Option<FrameSizeSpec> {
+    match value {
+        Value::Float(ratio) if ratio.is_finite() && (0.0..=1.0).contains(&**ratio) => {
+            Some(FrameSizeSpec::Ratio(**ratio))
+        }
+        Value::Cons(cons) => {
+            let (unit, value) = {
+                let cons = cons.borrow();
+                (cons.car.clone(), cons.cdr.clone())
+            };
+            let Value::Sym(unit) = unit else {
+                return None;
+            };
+            let Value::Int(pixels) = value else {
+                return None;
+            };
+            if i.symbol_name(unit) == "text-pixels" {
+                usize::try_from(pixels.max(0))
+                    .ok()
+                    .map(FrameSizeSpec::TextPixels)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn frame_size_parameter(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+    name: &str,
+) -> Option<FrameSizeSpec> {
+    let value = frame_parameter_value(i, frame, name);
+    frame_size_from_value(i, &value)
+}
+
 #[cfg(test)]
 mod frame_position_parameter_tests {
-    use super::{FramePosition, frame_position_from_value};
+    use super::{
+        FramePosition, FrameSizeSpec, frame_position_from_value, frame_size_from_value,
+    };
     use remacs_runtime::{lisp::Interp, lisp::Value};
 
     #[test]
@@ -432,6 +477,24 @@ mod frame_position_parameter_tests {
         );
         assert_eq!(frame_position_from_value(&interp, &invalid), None);
     }
+
+    #[test]
+    fn parses_ratio_and_text_pixel_frame_sizes() {
+        let mut interp = Interp::new();
+        let ratio = interp.eval_str("0.5").unwrap();
+        let pixels = interp.eval_str("'(text-pixels . 720)").unwrap();
+        let invalid = interp.eval_str("'(other-pixels . 720)").unwrap();
+
+        assert_eq!(
+            frame_size_from_value(&interp, &ratio),
+            Some(FrameSizeSpec::Ratio(0.5))
+        );
+        assert_eq!(
+            frame_size_from_value(&interp, &pixels),
+            Some(FrameSizeSpec::TextPixels(720))
+        );
+        assert_eq!(frame_size_from_value(&interp, &invalid), None);
+    }
 }
 
 #[derive(Clone)]
@@ -449,6 +512,9 @@ pub(super) struct FrameSnapshot {
     pub alpha_background: u8,
     pub width: usize,
     pub height: usize,
+    pub width_size: Option<FrameSizeSpec>,
+    pub height_size: Option<FrameSizeSpec>,
+    pub workarea_size: Option<(usize, usize)>,
     pub internal_border_width: usize,
     pub left: Option<FramePosition>,
     pub top: Option<FramePosition>,
@@ -477,6 +543,7 @@ fn frame_snapshot(
     height: usize,
     primary_frame_id: Option<usize>,
     image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
+    workarea_size: Option<(usize, usize)>,
     grid: Grid,
 ) -> FrameSnapshot {
     let frame_id = frame.borrow().id;
@@ -513,6 +580,9 @@ fn frame_snapshot(
         alpha_background,
         width,
         height,
+        width_size: frame_size_parameter(i, frame, "width"),
+        height_size: frame_size_parameter(i, frame, "height"),
+        workarea_size,
         internal_border_width,
         left: frame_position_parameter(i, frame, "left"),
         top: frame_position_parameter(i, frame, "top"),
@@ -3619,6 +3689,17 @@ impl KeyIo for ChanIo {
                     .then(|| self.geometry.clone())
                     .flatten()
             });
+            let workarea_size = geometry.as_ref().and_then(|geometry| {
+                let monitor = geometry
+                    .monitors
+                    .iter()
+                    .find(|monitor| Some(monitor.display_id) == geometry.current_display_id)
+                    .or_else(|| geometry.monitors.first())?;
+                Some((
+                    usize::try_from(monitor.workarea[2].max(0)).ok()?,
+                    usize::try_from(monitor.workarea[3].max(0)).ok()?,
+                ))
+            });
             if let (Some(geometry), Some(keys)) = (geometry, self.geometry_symbols) {
                 let monitors = geometry
                     .monitors
@@ -3702,6 +3783,7 @@ impl KeyIo for ChanIo {
                     height,
                     self.primary_frame_id,
                     self.image_cache_entries.clone(),
+                    workarea_size,
                     grid,
                 ));
             }

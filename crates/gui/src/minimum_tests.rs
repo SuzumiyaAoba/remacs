@@ -1,5 +1,6 @@
-use super::{EditorView, frame_minimum_size, frame_window_options};
-use gpui::{TestAppContext, px, size};
+use super::{EditorView, frame_minimum_size, frame_size_dimension, frame_window_options};
+use super::logic::FrameSizeSpec;
+use gpui::{TestAppContext, WindowBounds, px, size};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, atomic::AtomicUsize, mpsc},
@@ -26,6 +27,37 @@ fn minimum_size_defaults_to_ten_columns_and_three_rows() {
 }
 
 #[test]
+fn frame_size_parameters_resolve_workarea_ratios_and_text_pixels() {
+    assert_eq!(
+        frame_size_dimension(
+            Some(FrameSizeSpec::Ratio(0.5)),
+            px(320.0),
+            Some(px(1600.0)),
+            px(4.0),
+        ),
+        px(804.0)
+    );
+    assert_eq!(
+        frame_size_dimension(
+            Some(FrameSizeSpec::TextPixels(720)),
+            px(320.0),
+            Some(px(1600.0)),
+            px(4.0),
+        ),
+        px(724.0)
+    );
+    assert_eq!(
+        frame_size_dimension(
+            Some(FrameSizeSpec::Ratio(0.5)),
+            px(320.0),
+            None,
+            px(4.0),
+        ),
+        px(320.0)
+    );
+}
+
+#[test]
 fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
     let frame = super::logic::FrameSnapshot {
         frame_id: 1,
@@ -41,6 +73,9 @@ fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
         alpha_background: 255,
         width: 40,
         height: 12,
+        width_size: None,
+        height_size: None,
+        workarea_size: None,
         internal_border_width: 0,
         left: None,
         top: None,
@@ -67,6 +102,25 @@ fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
     let options = frame_window_options(&frame, &HashMap::new(), &mut async_app);
 
     assert_eq!(options.window_min_size, Some(size(px(80.0), px(57.0))));
+
+    let mut pixel_frame = frame.clone();
+    pixel_frame.width_size = Some(FrameSizeSpec::TextPixels(720));
+    pixel_frame.height_size = Some(FrameSizeSpec::TextPixels(480));
+    let pixel_options = frame_window_options(&pixel_frame, &HashMap::new(), &mut async_app);
+    let WindowBounds::Windowed(bounds) = pixel_options.window_bounds.unwrap() else {
+        panic!("text-pixel size should open a windowed frame");
+    };
+    assert_eq!(bounds.size, size(px(720.0), px(480.0)));
+
+    let mut ratio_frame = frame.clone();
+    ratio_frame.width_size = Some(FrameSizeSpec::Ratio(0.5));
+    ratio_frame.height_size = Some(FrameSizeSpec::Ratio(0.5));
+    ratio_frame.workarea_size = Some((1600, 900));
+    let ratio_options = frame_window_options(&ratio_frame, &HashMap::new(), &mut async_app);
+    let WindowBounds::Windowed(bounds) = ratio_options.window_bounds.unwrap() else {
+        panic!("ratio size should open a windowed frame");
+    };
+    assert_eq!(bounds.size, size(px(800.0), px(450.0)));
 }
 
 #[test]
