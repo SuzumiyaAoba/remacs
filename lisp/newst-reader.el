@@ -333,7 +333,8 @@ Return the image."
                \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">
                <html xmlns=\"http://www.w3.org/1999/xhtml\">
                <body>")
-      (insert "<h1>" feed ": " (newsticker--title item) "</h1>")
+      (insert "<h1>" (xml-escape-string feed) ": "
+              (xml-escape-string (newsticker--title item)) "</h1>")
       (insert (format-time-string newsticker-date-format
                                   (newsticker--time item)))
       (insert "<br/>")

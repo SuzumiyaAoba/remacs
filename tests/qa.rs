@@ -116,6 +116,7 @@ qa!(qa_tramp_command_line_max, "qa_tramp_command_line_max.el");
 qa!(qa_network_nowait, "qa_network_nowait.el");
 qa!(qa_network_random_service, "qa_network_random_service.el");
 qa!(qa_nnrss_timezone_tokens, "qa_nnrss_timezone_tokens.el");
+qa!(qa_newsticker_browse_html_escape, "qa_newsticker_browse_html_escape.el");
 qa!(qa_nndiary_timezone, "qa_nndiary_timezone.el");
 qa!(qa_tcl_syntax, "qa_tcl_syntax.el");
 qa!(qa_nxml_parent_document, "qa_nxml_parent_document.el");
