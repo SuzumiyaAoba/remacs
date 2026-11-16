@@ -1029,22 +1029,29 @@ see Info node `(emacs) User Lisp Directory'." "31.1"))
   (package-vc--archives-initialize)
   (let* ((dir (if interactive dir (expand-file-name dir))) ;avoid double expansion
          (name (or name (file-name-base (directory-file-name dir))))
-         (pkg-dir (file-name-concat package-user-dir name)))
-    (when (file-exists-p pkg-dir)
-      (if (yes-or-no-p (format "Overwrite previous checkout for package `%s'?" name))
-          (package--delete-directory pkg-dir)
-        (error "There already exists a checkout for %s" name)))
-    (make-directory pkg-dir t)
-    ;; We store a custom package specification so that it is available
-    ;; for `package-vc--unpack-1' as well as `package-vc--checkout-dir'
-    ;; can later retrieve the actual checkout.
-    (package-vc--unpack-1
-     (package-desc-create
-      :name (intern name)
-      :extras (and (not (file-equal-p pkg-dir dir))
-                   `((:vc-dir . ,dir)))
-      :dir pkg-dir
-      :kind 'vc))))
+         (pkg-root (file-name-as-directory (expand-file-name package-user-dir))))
+    (unless (and (stringp name)
+                 (> (length name) 0)
+                 (not (file-name-absolute-p name))
+                 (equal name (file-name-nondirectory name))
+                 (not (member name '("." ".."))))
+      (user-error "Invalid package name: %s" name))
+    (let ((pkg-dir (file-name-concat pkg-root name)))
+      (when (file-exists-p pkg-dir)
+        (if (yes-or-no-p (format "Overwrite previous checkout for package `%s'?" name))
+            (package--delete-directory pkg-dir)
+          (error "There already exists a checkout for %s" name)))
+      (make-directory pkg-dir t)
+      ;; We store a custom package specification so that it is available
+      ;; for `package-vc--unpack-1' as well as `package-vc--checkout-dir'
+      ;; can later retrieve the actual checkout.
+      (package-vc--unpack-1
+       (package-desc-create
+        :name (intern name)
+        :extras (and (not (file-equal-p pkg-dir dir))
+                     `((:vc-dir . ,dir)))
+        :dir pkg-dir
+        :kind 'vc)))))
 
 ;;;###autoload
 (defun package-vc-rebuild (pkg-desc)
