@@ -721,6 +721,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::FrameMoved {
                 frame_id,
                 left,
+                text_width,
                 top,
             } => {
                 if let Err(flow) = dispatch_frame_moved(i, frame_id, left, top) {
@@ -729,6 +730,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             }
             InputEvent::FrameFontMetrics { frame_id, metrics } => {
                 i.frame_font_metrics.insert(frame_id, metrics);
+                text_width,
             }
         }
         render_needed = true;
@@ -2167,11 +2169,17 @@ fn dispatch_scroll_bar(
         GridScrollBarOrientation::Vertical => {
             let (begv, zv, target) = {
                 let bb = buffer.borrow();
-                let first_line = bb.text.line_of_pos(bb.begv);
-                let last_line = bb.text.line_of_pos(bb.zv);
-                let available = last_line.saturating_sub(first_line);
-                let line = first_line.saturating_add(offset.min(max_offset).min(available));
-                (bb.begv, bb.zv, bb.text.line_start(line).max(bb.begv))
+                let target = crate::frontend::position_at_vertical_scrollbar_row(
+                    i,
+                    buffer_id,
+                    &window,
+                    &bb.text,
+                    bb.begv,
+                    bb.zv,
+                    offset.min(max_offset),
+                    text_width,
+                );
+                (bb.begv, bb.zv, target)
             };
             let mut wb = window.borrow_mut();
             wb.start = target.clamp(begv, zv);
@@ -2221,7 +2229,7 @@ fn dispatch_scroll_bar_input<T: KeyIo>(
         .as_ref()
         .is_some_and(|mouse| scrollbar_mouse_binding(i, *mouse, keys));
     if !has_mouse_binding {
-        dispatch_scroll_bar(i, window_id, orientation, offset, max_offset);
+        dispatch_scroll_bar(i, window_id, orientation, offset, max_offset, text_width);
     }
     if let Some(mouse) = mouse {
         dispatch_mouse(term, i, mouse, keys, arg_mode)?;
@@ -2231,6 +2239,7 @@ fn dispatch_scroll_bar_input<T: KeyIo>(
 
 fn dispatch_drop(
     i: &mut Interp,
+    text_width: usize,
     position: Option<MousePosition>,
     urls: &[String],
     action: &str,
@@ -2303,6 +2312,7 @@ mod drop_target_tests {
     #[test]
     fn drop_handler_receives_the_window_under_the_drop_position() {
         std::thread::Builder::new()
+    text_width: usize,
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let mut interp = Interp::new();
@@ -3906,6 +3916,7 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
         .enumerate()
         .map(|(index, (overlay, _, _))| (*overlay, index))
         .collect();
+                text_width,
     crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
 
     let mut splices: Vec<(usize, usize, EmacsText)> = Vec::new();
@@ -3915,6 +3926,7 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
             if let Value::Str(string) = value {
                 let pos = if at_start { ov.start } else { ov.end };
                 splices.push((
+                    text_width,
                     pos,
                     usize::from(!at_start),
                     string.borrow().clone(),
@@ -3944,6 +3956,68 @@ fn splice_echo_text(text: EmacsText, mut splices: Vec<(usize, usize, EmacsText)>
 
 #[cfg(test)]
 #[path = "tests.rs"]
+#[cfg(test)]
+mod wrapped_vertical_scrollbar_tests {
+    use super::dispatch_scroll_bar;
+    use crate::frontend::{GridScrollBarOrientation, render_grid};
+    use crate::lisp::Interp;
+
+    #[test]
+    fn vertical_scrollbar_counts_and_dispatches_wrapped_rows() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(progn \
+                         (set-frame-parameter nil 'window-system 'gpui) \
+                         (set-frame-parameter nil 'vertical-scroll-bars 'right) \
+                         (set-frame-parameter nil 'menu-bar-lines 0) \
+                         (set-frame-parameter nil 'tool-bar-lines 0) \
+                         (set-frame-parameter nil 'tab-bar-lines 0) \
+                         (set-frame-size nil 80 12) \
+                         (setq-local truncate-lines nil) \
+                         (erase-buffer) \
+                         (insert (make-string 5000 ?x)) \
+                         (goto-char (point-min)))",
+                    )
+                    .unwrap();
+                let window = interp
+                    .selected_frame
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .selected
+                    .clone();
+                let window_id = window.borrow().id;
+                let grid = render_grid(&interp, 80, 12);
+                let (offset, max_offset, text_width) = grid
+                    .scroll_bars
+                    .iter()
+                    .find(|bar| bar.orientation == GridScrollBarOrientation::Vertical)
+                    .map(|bar| (bar.max_offset, bar.max_offset, bar.text_width))
+                    .expect("vertical scrollbar");
+                assert!(max_offset > 0, "wrapped rows should extend the scroll range");
+
+                dispatch_scroll_bar(
+                    &mut interp,
+                    window_id,
+                    GridScrollBarOrientation::Vertical,
+                    offset,
+                    max_offset,
+                    text_width,
+                );
+                let start = window.borrow().start;
+                assert!(start > 0, "dragging to later wrapped rows should move start");
+                assert!(start < 5000, "start should remain inside the long logical line");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
 mod tests;
 
 #[cfg(test)]

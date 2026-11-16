@@ -511,6 +511,8 @@ pub struct GridScrollBar {
     pub window_id: usize,
     pub buffer_id: usize,
     pub orientation: GridScrollBarOrientation,
+    /// Number of text columns in the viewport, used to map wrapped rows.
+    pub text_width: usize,
     /// Foreground colors the thumb; background colors the track.
     pub style: CellStyle,
     /// Frame-local pixel position and extent.
@@ -1746,6 +1748,28 @@ pub(crate) fn visual_line_ranges_for_window(
     line: &EmacsText,
     line_pos: usize,
 ) -> Option<Vec<Range<usize>>> {
+    visual_line_ranges_for_window_with_width(i, buffer_id, window, line, line_pos, None)
+}
+
+pub(crate) fn visual_line_ranges_for_window_at_width(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
+    line: &EmacsText,
+    line_pos: usize,
+    width: usize,
+) -> Option<Vec<Range<usize>>> {
+    visual_line_ranges_for_window_with_width(i, buffer_id, window, line, line_pos, Some(width))
+}
+
+fn visual_line_ranges_for_window_with_width(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
+    line: &EmacsText,
+    line_pos: usize,
+    width_override: Option<usize>,
+) -> Option<Vec<Range<usize>>> {
     let (window_buffer, total_width, hscroll) = {
         let window = window.borrow();
         (window.buffer, window.width, window.hscroll)
@@ -1753,7 +1777,9 @@ pub(crate) fn visual_line_ranges_for_window(
     if window_buffer != buffer_id {
         return None;
     }
-    let width = crate::editor::win_body_width(i, window).max(1);
+    let width = width_override
+        .unwrap_or_else(|| crate::editor::win_body_width(i, window))
+        .max(1);
     let root_width = crate::editor::frame_of_window(i, window)
         .map(|frame| {
             let frame = frame.borrow();
@@ -1961,6 +1987,116 @@ fn wrap_ranges_for_window(
 ) -> Vec<Range<usize>> {
     visual_line_ranges_for_window(i, buffer_id, window, line, line_pos)
         .unwrap_or_else(|| wrap_ranges(line, width, tab_width, ctl_arrow))
+}
+
+pub(crate) fn vertical_scrollbar_metrics(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
+    text: &crate::buffer::SharedText,
+    begv: usize,
+    zv: usize,
+    start: usize,
+    text_width: usize,
+) -> (usize, usize) {
+    let first_line = text.line_of_pos(begv);
+    let last_line = text.line_of_pos(zv);
+    let physical_rows = last_line.saturating_sub(first_line).saturating_add(1).max(1);
+    let start = start.clamp(begv, zv);
+    let start_line = text.line_of_pos(start);
+    if text_width == 0 {
+        return (physical_rows, start_line.saturating_sub(first_line));
+    }
+
+    let mut total_rows = 0usize;
+    let mut top_row = None;
+    for line_number in first_line..=last_line {
+        let line_start = text.line_start(line_number).max(begv);
+        if line_start > zv {
+            break;
+        }
+        let line_end = text.line_end(line_start).min(zv);
+        let line = text.substring(line_start, line_end);
+        let Some(ranges) = visual_line_ranges_for_window_at_width(
+            i,
+            buffer_id,
+            window,
+            &line,
+            line_start,
+            text_width,
+        ) else {
+            return (physical_rows, start_line.saturating_sub(first_line));
+        };
+        let line_rows = ranges.len().max(1);
+        if line_number == start_line {
+            let line_len = line.chars().count();
+            let start_offset = start.saturating_sub(line_start).min(line_len);
+            let row_in_line = ranges
+                .iter()
+                .position(|range| {
+                    start_offset >= range.start
+                        && (start_offset < range.end
+                            || (start_offset == range.end && range.end == line_len))
+                })
+                .or_else(|| ranges.iter().rposition(|range| range.start <= start_offset))
+                .unwrap_or(0);
+            top_row = Some(total_rows.saturating_add(row_in_line));
+        }
+        total_rows = total_rows.saturating_add(line_rows);
+    }
+
+    let total_rows = total_rows.max(1);
+    let top_row = top_row
+        .unwrap_or_else(|| start_line.saturating_sub(first_line))
+        .min(total_rows.saturating_sub(1));
+    (total_rows, top_row)
+}
+
+pub(crate) fn position_at_vertical_scrollbar_row(
+    i: &Interp,
+    buffer_id: usize,
+    window: &crate::editor::WindowRef,
+    text: &crate::buffer::SharedText,
+    begv: usize,
+    zv: usize,
+    row: usize,
+    text_width: usize,
+) -> usize {
+    let first_line = text.line_of_pos(begv);
+    let last_line = text.line_of_pos(zv);
+    if text_width == 0 {
+        let line = first_line.saturating_add(row.min(last_line.saturating_sub(first_line)));
+        return text.line_start(line).max(begv).min(zv);
+    }
+
+    let mut remaining = row;
+    for line_number in first_line..=last_line {
+        let line_start = text.line_start(line_number).max(begv);
+        if line_start > zv {
+            break;
+        }
+        let line_end = text.line_end(line_start).min(zv);
+        let line = text.substring(line_start, line_end);
+        let Some(ranges) = visual_line_ranges_for_window_at_width(
+            i,
+            buffer_id,
+            window,
+            &line,
+            line_start,
+            text_width,
+        ) else {
+            let line = first_line.saturating_add(row.min(last_line.saturating_sub(first_line)));
+            return text.line_start(line).max(begv).min(zv);
+        };
+        let line_rows = ranges.len().max(1);
+        if remaining < line_rows {
+            return line_start
+                .saturating_add(ranges.get(remaining).map_or(0, |range| range.start))
+                .clamp(begv, zv);
+        }
+        remaining = remaining.saturating_sub(line_rows);
+    }
+    zv
 }
 
 fn display_row_index_from_window(
@@ -12198,12 +12334,8 @@ fn render_grid_internal(
                 })
                 .unwrap_or((0, 0));
             let total_lines = last_line.saturating_sub(first_line).saturating_add(1);
-            let top_line = i
-                .buffers
-                .get(buf_id)
-                .map(|buffer| buffer.borrow().text.line_of_pos(start));
-            if let (Some(side), Some(bar_width), Some(top_line)) =
-                (vertical_scroll_side, scroll_width, top_line)
+            if let (Some(side), Some(bar_width)) =
+                (vertical_scroll_side, scroll_width)
                 && !minibuffer_window
                 && bar_width > 0
                 && text_rows > 0
@@ -12211,9 +12343,9 @@ fn render_grid_internal(
                 let track_height = text_rows.saturating_mul(frame_char_height);
                 if let Some((thumb_start, thumb_size)) = scroll_thumb(
                     track_height,
-                    total_lines,
+                    total_display_rows,
                     text_rows,
-                    top_line.saturating_sub(first_line),
+                    top_display_row,
                     frame_char_height.saturating_mul(2),
                 ) {
                     let bar_left = if side {
@@ -12235,16 +12367,16 @@ fn render_grid_internal(
                         height: track_height,
                         thumb_start,
                         thumb_size,
-                        max_offset: total_lines.saturating_sub(text_rows),
+                        max_offset: total_display_rows.saturating_sub(text_rows),
                     });
                     pending_scrollbar_geometry.push(PendingScrollBarGeometry::Vertical {
                         index,
                         window_id,
                         top_row: content_top,
                         bottom_row: content_bottom,
-                        total: total_lines,
+                        total: total_display_rows,
                         visible: text_rows,
-                        offset: top_line.saturating_sub(first_line),
+                        offset: top_display_row,
                         minimum_thumb_size: frame_char_height.saturating_mul(2),
                     });
                 }
@@ -12252,6 +12384,23 @@ fn render_grid_internal(
             if let (Some(side), Some(bar_height)) = (horizontal_scroll_side, scroll_height)
                 && minibuffer_horizontal_scroll_bar_enabled
                 && bar_height > 0
+                let (total_display_rows, top_display_row) = i
+                    .buffers
+                    .get(buf_id)
+                    .map(|buffer| {
+                        let buffer = buffer.borrow();
+                        vertical_scrollbar_metrics(
+                            i,
+                            buf_id,
+                            w,
+                            &buffer.text,
+                            buffer.begv,
+                            buffer.zv,
+                            start,
+                            content_width,
+                        )
+                    })
+                    .unwrap_or((total_lines, 0));
                 && content_width > 0
                 && text_rows > 0
                 && !wrap_lines
@@ -12272,6 +12421,7 @@ fn render_grid_internal(
                 let track_width = content_width.saturating_mul(frame_char_width);
                 if let Some((thumb_start, thumb_size)) = scroll_thumb(
                     track_width,
+                        text_width: content_width,
                     max_columns,
                     content_width,
                     hscroll,
@@ -12333,6 +12483,7 @@ fn render_grid_internal(
         if selected_window {
             default_row_height = frame_char_height.saturating_add(default_line_spacing);
         }
+                        text_width: content_width,
         if let Some(position) = mouse_position
             && position.buffer_id == buf_id
             && position.area.is_none()
@@ -13916,6 +14067,7 @@ fn render_grid_internal(
             position.x,
             (mini_top.saturating_mul(frame_char_height) as i128).saturating_add(position.y),
         ));
+            text_width: width,
     }
     if mini_visible_rows > 0 {
         let wf =

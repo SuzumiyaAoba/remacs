@@ -181,6 +181,7 @@ pub(super) enum GuiEvent {
         orientation: GridScrollBarOrientation,
         offset: usize,
         max_offset: usize,
+        text_width: usize,
         mouse: Option<MouseInput>,
     },
 }
@@ -3196,12 +3197,14 @@ impl KeyIo for ChanIo {
                 mouse,
             })),
         };
+                text_width,
         if let Ok(Some(input)) = &result {
             if !matches!(input, InputEvent::FrameMoved { .. }) {
                 self.last_input_at = Instant::now();
             }
         }
         result
+                text_width,
     }
 
     fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
@@ -3990,6 +3993,31 @@ mod native_frame_geometry_tests {
     use super::*;
 
     #[test]
+
+    #[test]
+    fn scrollbar_text_width_reaches_the_runtime_input_protocol() {
+        let (events, receiver) = mpsc::channel();
+        let (grids, _grid_receiver) = smol::channel::unbounded();
+        let mut io = ChanIo::new_for_test(receiver, grids);
+        events
+            .send(GuiEvent::ScrollBar {
+                window_id: 17,
+                orientation: GridScrollBarOrientation::Vertical,
+                offset: 3,
+                max_offset: 24,
+                text_width: 61,
+                mouse: None,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            io.poll_input(Duration::ZERO).unwrap(),
+            Some(InputEvent::ScrollBar {
+                text_width: 61,
+                ..
+            })
+        ));
+    }
     fn ns_frame_geometry_and_edges_use_gpui_window_bounds() {
         std::thread::Builder::new()
             .stack_size(128 << 20)

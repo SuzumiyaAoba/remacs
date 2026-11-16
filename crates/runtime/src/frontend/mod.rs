@@ -613,6 +613,7 @@ pub enum InputEvent {
         orientation: GridScrollBarOrientation,
         offset: usize,
         max_offset: usize,
+        text_width: usize,
         /// Mouse click or completed drag associated with this scroll update.
         mouse: Option<MouseInput>,
     },
@@ -912,6 +913,7 @@ pub use render::{
     render_grid_with_mouse_position_cached, render_grid_with_mouse_position_cached_mut,
 };
 pub(crate) use render::{position_at_display_cell, position_display_cell};
+pub(crate) use render::position_at_vertical_scrollbar_row;
 pub(crate) use render::{ImageSpecInfo, image_spec_info};
 pub(crate) use render::grid_tooltip_from_string;
 pub(crate) use render::window_text_pixel_rows;

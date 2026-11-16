@@ -604,11 +604,11 @@ fn horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs_inner
     .unwrap();
 
     let grid = render_grid(&i, 80, 25);
-    let (window_id, max_offset) = grid
+    let (window_id, max_offset, text_width) = grid
         .scroll_bars
         .iter()
         .find(|bar| bar.orientation == GridScrollBarOrientation::Horizontal)
-        .map(|bar| (bar.window_id, bar.max_offset))
+        .map(|bar| (bar.window_id, bar.max_offset, bar.text_width))
         .expect("graphical frame has a horizontal scroll bar");
     assert!(max_offset > 100, "display-column max offset: {max_offset}");
 
@@ -620,6 +620,7 @@ fn horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs_inner
         max_offset,
     );
     let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
+        text_width,
     assert_eq!(window.borrow().hscroll, max_offset);
 
     let scrolled = render_grid(&i, 80, 25);
@@ -659,11 +660,11 @@ fn vertical_scroll_bar_reaches_buffer_end_with_header_and_tab_lines_inner() {
     .unwrap();
 
     let grid = render_grid(&i, 80, 25);
-    let (window_id, max_offset) = grid
+    let (window_id, max_offset, text_width) = grid
         .scroll_bars
         .iter()
         .find(|bar| bar.orientation == GridScrollBarOrientation::Vertical)
-        .map(|bar| (bar.window_id, bar.max_offset))
+        .map(|bar| (bar.window_id, bar.max_offset, bar.text_width))
         .expect("graphical frame has a vertical scroll bar");
     assert!(max_offset > 0);
 
@@ -675,6 +676,7 @@ fn vertical_scroll_bar_reaches_buffer_end_with_header_and_tab_lines_inner() {
         max_offset,
     );
     let scrolled = render_grid(&i, 80, 25);
+        text_width,
     assert!(
         scrolled.rows.iter().any(|row| row.contains("line-099")),
         "last buffer line should be visible after scrolling to max_offset {max_offset}"

@@ -54,6 +54,7 @@ fn vertical_scroll_bar_click_and_drag_dispatch_to_its_keymap_inner() {
             GridScrollBarOrientation::Vertical,
             99,
             99,
+            80,
             Some(mouse),
             &mut keys,
             &mut arg_mode,

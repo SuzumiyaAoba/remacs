@@ -1146,6 +1146,7 @@ fn send_scroll_bar_event(
         orientation: bar.orientation,
         offset: scroll_bar_offset(bar, point, pointer_offset),
         max_offset: bar.max_offset,
+        text_width: bar.text_width,
         mouse,
     });
 }
@@ -6554,6 +6555,7 @@ mod scroll_bar_color_tests {
     }
 
     #[::core::prelude::v1::test]
+            text_width: 80,
     fn inverse_alpha_and_corrected_colors_use_the_common_style_rules() {
         let bar = bar(CellStyle {
             fg: Some(CellColor(128, 64, 32)),
