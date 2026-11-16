@@ -11563,7 +11563,22 @@ fn render_grid_internal(
             Value::Sym(position) if i.symbol_name(position) == "bottom"
         )
     });
-    let chrome_rows = tool_bar_rows.saturating_add(tab_bar_rows);
+    let tool_bar_at_bottom = i.q_soft("tool-bar-position").is_some_and(|property| {
+        matches!(
+            crate::lisp::eval::plist_get(&fb.params, property),
+            Value::Sym(position) if i.symbol_name(position) == "bottom"
+        )
+    });
+    let (top_chrome_rows, bottom_chrome_rows) = if tool_bar_at_bottom {
+        if tab_bar_at_bottom {
+            (0, tool_bar_rows.saturating_add(tab_bar_rows))
+        } else {
+            (tab_bar_rows, tool_bar_rows)
+        }
+    } else {
+        (tool_bar_rows.saturating_add(tab_bar_rows), 0)
+    };
+    let chrome_rows = top_chrome_rows.saturating_add(bottom_chrome_rows);
     let current_minibuffer_height = fb
         .minibuffer
         .as_ref()
@@ -11667,25 +11682,43 @@ fn render_grid_internal(
     let mut pixelwise_row_boundaries = Vec::<(usize, i128)>::new();
     let mut pixelwise_cell_segments = Vec::<(usize, usize, usize, i128, i128)>::new();
     if tab_bar_rows > 0 {
+        let row_offset = if tool_bar_at_bottom {
+            if tab_bar_at_bottom {
+                height.saturating_sub(chrome_rows)
+            } else {
+                0
+            }
+        } else if tab_bar_at_bottom {
+            tool_bar_rows
+        } else {
+            0
+        };
         tab_bar_items = render_tab_bar(
             i,
             fb.id,
             &fb.params,
             width,
             tab_bar_rows,
-            if tab_bar_at_bottom { tool_bar_rows } else { 0 },
+            row_offset,
             default_style,
             &mut fctx,
             &mut screen_rows,
         );
     }
     if tool_bar_rows > 0 {
+        let row_offset = if tool_bar_at_bottom {
+            height.saturating_sub(tool_bar_rows)
+        } else if tab_bar_at_bottom {
+            0
+        } else {
+            tab_bar_rows
+        };
         tool_bar_items = render_tool_bar(
             i,
             &fb,
             width,
             tool_bar_rows,
-            if tab_bar_at_bottom { 0 } else { tab_bar_rows },
+            row_offset,
             frame_char_width,
             default_style,
             &mut fctx,
@@ -11709,14 +11742,14 @@ fn render_grid_internal(
         pixelwise_windows.extend(children);
         if window_height > 0 {
             let top_row = scale_edge(top, root_top, scale_y, body_height)
-                .saturating_add(chrome_rows);
+                .saturating_add(top_chrome_rows);
             let bottom = scale_edge(
                 top.saturating_add(window_height),
                 root_top,
                 scale_y,
                 body_height,
             )
-            .saturating_add(chrome_rows)
+            .saturating_add(top_chrome_rows)
             .min(height);
             if bottom > top_row {
                 let (_, top_offset) =
@@ -11762,7 +11795,7 @@ fn render_grid_internal(
         };
         let raw_window_left = scale_edge(raw_left, root_left, scale_x, width);
         let raw_window_top = scale_edge(raw_top, root_top, scale_y, body_height)
-            .saturating_add(chrome_rows);
+            .saturating_add(top_chrome_rows);
         let raw_window_right = scale_edge(
             raw_left.saturating_add(raw_width),
             root_left,
@@ -11775,7 +11808,7 @@ fn render_grid_internal(
             scale_y,
             body_height,
         )
-        .saturating_add(chrome_rows);
+        .saturating_add(top_chrome_rows);
         let raw_window_width = raw_window_right.saturating_sub(raw_window_left);
         let raw_window_height = raw_window_bottom
             .saturating_sub(raw_window_top)
