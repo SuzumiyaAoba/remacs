@@ -293,6 +293,7 @@
 (qa (x-color-values "red") '(65535 0 0))
 (qa (x-color-values "qaf2-nocolor") nil)
 
+;; Graphical color getters use the same X11 name table as the renderer.
 ;; == display color capabilities in batch ==
 (qa (display-color-p) nil)
 (qa (tty-display-color-p) nil)
@@ -320,5 +321,19 @@
 (qa (fboundp 'face-inverse-p) nil)
 (qa (fboundp 'face-attrs-match-p) nil)
 (qa (fboundp 'tty-defined-color-alist) nil)
+
+;; tty-colors defines the shared X11 table before terminal setup can fail
+;; in this headless test.
+(qa (let ((old-window-system (frame-parameter nil 'window-system)))
+      (unwind-protect
+          (progn
+            (set-frame-parameter nil 'window-system 'ns)
+            (x-open-connection "test")
+            (condition-case nil
+                (require 'term/tty-colors)
+              (error nil))
+            (list (color-defined-p "pink") (color-values "pink")))
+        (set-frame-parameter nil 'window-system old-window-system)))
+    '(t (65535 49344 52171)))
 
 (princ (qa--done))

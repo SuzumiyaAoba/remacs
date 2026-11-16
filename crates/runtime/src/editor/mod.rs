@@ -7728,8 +7728,8 @@ fn f_color_values(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 /// `(r g b)' list for a parsed color, else nil.
-fn color_rgb_list(v: &Value) -> Value {
-    match crate::lisp::builtins::misc::parse_color_16(v) {
+fn color_rgb_list(i: &Interp, v: &Value) -> Value {
+    match crate::lisp::builtins::misc::parse_color_16_with_name_alist(i, v) {
         Some((r, g, b)) => Value::list(vec![
             Value::Int(r as i128),
             Value::Int(g as i128),
@@ -7756,7 +7756,7 @@ fn f_x_color_values(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !i.x_display_attempted && !i.color_db_init {
         return Err(i.error("Window system is not in use or not initialized"));
     }
-    Ok(color_rgb_list(&a[0]))
+    Ok(color_rgb_list(i, &a[0]))
 }
 
 /// `xw-color-values' — unlike `x-color-values' this needs a real X
@@ -7792,7 +7792,7 @@ fn f_xw_color_values(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
     }
-    Ok(color_rgb_list(&a[0]))
+    Ok(color_rgb_list(i, &a[0]))
 }
 
 /// `x-list-fonts' / `fontset-info' — GNU signals "Window system is

@@ -171,7 +171,9 @@ pub(super) fn f_xw_color_defined_p(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         return Err(i.error("Window system is not in use or not initialized"));
     }
     match &a[0] {
-        Value::Str(_) => Ok(Value::from_bool(parse_color_16(&a[0]).is_some())),
+        Value::Str(_) => Ok(Value::from_bool(
+            parse_color_16_with_name_alist(i, &a[0]).is_some(),
+        )),
         _ => Ok(Value::Nil),
     }
 }
@@ -1171,6 +1173,63 @@ pub(crate) fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
         }
     }
     None
+}
+
+/// Resolve a color through the parsed specification and the GUI color-name
+/// table used by the renderer.
+pub(crate) fn parse_color_16_with_name_alist(
+    i: &Interp,
+    value: &Value,
+) -> Option<(i64, i64, i64)> {
+    if let Some(rgb) = parse_color_16(value) {
+        return Some(rgb);
+    }
+    let Value::Str(name) = value else {
+        return None;
+    };
+    let name = name.borrow().to_lowercase().replace(' ', "");
+    let symbol = i.intern_soft("color-name-rgb-alist")?;
+    let Value::Cons(entries) = i.symbol_value(symbol) else {
+        return None;
+    };
+    let entries = Value::Cons(entries).list_to_vec().ok()?;
+    let mut result = None;
+    for entry in entries {
+        let Value::Cons(entry) = entry else {
+            continue;
+        };
+        let (key, value) = {
+            let entry = entry.borrow();
+            (entry.car.clone(), entry.cdr.clone())
+        };
+        let Value::Str(key) = key else {
+            continue;
+        };
+        if key.borrow().to_lowercase().replace(' ', "") != name {
+            continue;
+        }
+        let Ok(rgb) = value.list_to_vec() else {
+            continue;
+        };
+        if rgb.len() < 3 {
+            continue;
+        }
+        let component = |value: &Value| match value {
+            Value::Int(component) => Some((*component).clamp(0, 65535) as i64),
+            _ => None,
+        };
+        let Some(red) = component(&rgb[0]) else {
+            continue;
+        };
+        let Some(green) = component(&rgb[1]) else {
+            continue;
+        };
+        let Some(blue) = component(&rgb[2]) else {
+            continue;
+        };
+        result = Some((red, green, blue));
+    }
+    result
 }
 
 pub(super) fn f_color_distance(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

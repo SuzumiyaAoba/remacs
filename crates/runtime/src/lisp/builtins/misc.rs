@@ -217,7 +217,7 @@ use faces::{
     f_window_font_height, f_window_font_width, f_xw_color_defined_p,
 };
 #[allow(unused_imports)] // misc::* compatibility re-exports
-pub(crate) use faces::{parse_color_16, tty_color_desc};
+pub(crate) use faces::{parse_color_16, parse_color_16_with_name_alist, tty_color_desc};
 mod images;
 use chartables::f_optimize_char_table;
 #[allow(unused_imports)] // misc::* compatibility re-exports
