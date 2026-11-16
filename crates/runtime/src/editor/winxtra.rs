@@ -4348,11 +4348,11 @@ fn text_line_columns(text: &EmacsText, tab_width: usize) -> Vec<usize> {
 }
 
 fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (usize, usize) {
-    let (buffer, start, hscroll) = {
+    let (buffer_id, start, hscroll) = {
         let window = window.borrow();
         (window.buffer, window.start, window.hscroll)
     };
-    let Some(buffer) = i.buffers.get(buffer) else {
+    let Some(buffer) = i.buffers.get(buffer_id) else {
         return (0, 0);
     };
     let tab_width = i
@@ -4366,34 +4366,59 @@ fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (u
         .unwrap_or(8)
         .max(1);
     let buffer = buffer.borrow();
-    let start_line = buffer.text.line_of_pos(start);
-    let line_start = buffer.text.line_start(start_line.saturating_add(row));
-    let line_end = buffer.text.line_end(line_start);
-    let line = buffer.text.substring(line_start, line_end);
-    let mut column = 0usize;
-    let mut visible_columns = 0usize;
-    let mut first_visible_columns = 0usize;
-    for character in line.chars() {
-        let character = character.unicode().unwrap_or('\u{fffd}');
-        let width = if character == '\t' {
-            tab_width - column % tab_width
-        } else {
-            UnicodeWidthChar::width(character).unwrap_or(1)
-        };
-        let visible_start = column.max(hscroll);
-        let visible_width = column
-            .saturating_add(width)
-            .saturating_sub(visible_start)
-            .min(width);
-        if visible_width > 0 {
-            visible_columns = visible_columns.saturating_add(visible_width);
-            if first_visible_columns == 0 {
-                first_visible_columns = visible_width;
-            }
+    let start_line = buffer.text.line_of_pos(start.clamp(buffer.begv, buffer.zv));
+    let end_line = buffer.text.line_of_pos(buffer.zv.min(buffer.text_len()));
+    let mut row_in_display = row;
+    for line_number in start_line..=end_line {
+        let line_start = buffer.text.line_start(line_number).max(buffer.begv);
+        let line_end = buffer.text.line_end(line_start).min(buffer.zv);
+        let line = buffer.text.substring(line_start, line_end);
+        let line_len = line.chars().count();
+        // A physical line can occupy several display rows when it wraps.
+        let ranges = crate::frontend::visual_line_ranges_for_window(
+            i,
+            buffer.id,
+            window,
+            &line,
+            line_start,
+        )
+        .unwrap_or_else(|| vec![0..line_len]);
+        let displayed_rows = ranges.len().max(1);
+        if row_in_display >= displayed_rows {
+            row_in_display -= displayed_rows;
+            continue;
         }
-        column = column.saturating_add(width);
+        let Some(range) = ranges.get(row_in_display) else {
+            return (0, 0);
+        };
+        let mut column = 0usize;
+        let mut visible_columns = 0usize;
+        let mut first_visible_columns = 0usize;
+        for (index, character) in line.chars().enumerate() {
+            let character = character.unicode().unwrap_or('\u{fffd}');
+            let width = if character == '\t' {
+                tab_width - column % tab_width
+            } else {
+                UnicodeWidthChar::width(character).unwrap_or(1)
+            };
+            if (range.start..range.end).contains(&index) {
+                let visible_start = column.max(hscroll);
+                let visible_width = column
+                    .saturating_add(width)
+                    .saturating_sub(visible_start)
+                    .min(width);
+                if visible_width > 0 {
+                    visible_columns = visible_columns.saturating_add(visible_width);
+                    if first_visible_columns == 0 {
+                        first_visible_columns = visible_width;
+                    }
+                }
+            }
+            column = column.saturating_add(width);
+        }
+        return (visible_columns, first_visible_columns);
     }
-    (visible_columns, first_visible_columns)
+    (0, 0)
 }
 
 /// Find the last display row before POSITION and its pixel height.  Render a
