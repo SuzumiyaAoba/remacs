@@ -753,14 +753,17 @@ in plstore mode buffers."
   (when plstore-encoded
     (let ((store (plstore--decode (buffer-string)))
 	  (file (buffer-file-name)))
-      (unwind-protect
-	  (progn
-	    (set-visited-file-name nil)
-	    (with-temp-buffer
-	      (plstore--insert-buffer store)
-	      (write-region (buffer-string) nil file)))
-	(set-visited-file-name file)
-	(set-buffer-modified-p nil))
+      (let ((write-succeeded nil))
+	(unwind-protect
+	    (progn
+	      (set-visited-file-name nil)
+	      (with-temp-buffer
+		(plstore--insert-buffer store)
+		(write-region (buffer-string) nil file))
+	      (setq write-succeeded t))
+	  (set-visited-file-name file))
+	(when write-succeeded
+	  (set-buffer-modified-p nil)))
       t)))
 
 (defun plstore-mode-original ()
