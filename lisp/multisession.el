@@ -317,7 +317,14 @@ DOC should be a doc string, and ARGS are keywords as applicable to
 ;; Files Backend
 
 (defun multisession--encode-file-name (name)
-  (url-hexify-string name))
+  ;; Encode uppercase ASCII letters so case-insensitive filesystems keep names
+  ;; distinct.
+  (mapconcat (lambda (character)
+               (if (and (>= character ?A) (<= character ?Z))
+                   (format "%%%02X" character)
+                 (url-hexify-string (char-to-string character))))
+             (string-to-list name)
+             ""))
 
 (defun multisession--read-file-value (file object)
   (catch 'done
@@ -356,6 +363,16 @@ DOC should be a doc string, and ARGS are keywords as applicable to
            ".value")
    multisession-directory))
 
+(defun multisession--legacy-object-file-name (object)
+  "Return OBJECT's file path using the original case-preserving encoding."
+  (expand-file-name
+   (concat "files/"
+           (url-hexify-string (multisession--package object))
+           "/"
+           (url-hexify-string (multisession--key object))
+           ".value")
+   multisession-directory))
+
 (defun multisession--object-deletion-file-name (object)
   (concat (multisession--object-file-name object) ".deleted"))
 
@@ -364,9 +381,9 @@ DOC should be a doc string, and ARGS are keywords as applicable to
     (let ((attributes (file-attributes file)))
       (and attributes (file-attribute-modification-time attributes)))))
 
-(defun multisession--next-file-sequence-time (file)
+(defun multisession--next-file-sequence-time (file &optional legacy-file)
   (let ((time (current-time)))
-    (dolist (path (list file (concat file ".deleted")))
+    (dolist (path (delq nil (list file (concat file ".deleted") legacy-file)))
       (let ((old-time (multisession--file-modification-time path)))
         (when (and old-time
                    (not (time-less-p (time-add old-time 1) time)))
@@ -378,7 +395,13 @@ DOC should be a doc string, and ARGS are keywords as applicable to
 (cl-defmethod multisession-backend-value ((_type (eql 'files)) object)
   (let* ((file (multisession--object-file-name object))
          (deleted-file (multisession--object-deletion-file-name object))
-         (file-time (multisession--file-modification-time file))
+         (legacy-file (multisession--legacy-object-file-name object))
+         (data-file (if (or (file-exists-p file)
+                            (file-exists-p deleted-file)
+                            (equal file legacy-file))
+                        file
+                      legacy-file))
+         (file-time (multisession--file-modification-time data-file))
          (deleted-time (multisession--file-modification-time deleted-file))
          (cached-value (multisession--cached-value object)))
     (cond
@@ -393,7 +416,7 @@ DOC should be a doc string, and ARGS are keywords as applicable to
                   (multisession--cached-sequence object) deleted-time)
             (multisession--initial-value object))
         (if file-time
-            (multisession--read-file-value file object)
+            (multisession--read-file-value data-file object)
           ;; Nope, return the initial value.
           (multisession--initial-value object))))
      ;; We have a value, but we want to update in case some other
@@ -410,7 +433,7 @@ DOC should be a doc string, and ARGS are keywords as applicable to
         (multisession--initial-value object))
        ((and file-time
              (time-less-p (multisession--cached-sequence object) file-time))
-        (multisession--read-file-value file object))
+        (multisession--read-file-value data-file object))
        (t (multisession--cached-value object))))
      ;; Just return the cached value.
      (t
@@ -420,7 +443,8 @@ DOC should be a doc string, and ARGS are keywords as applicable to
                                                object value)
   (let* ((file (multisession--object-file-name object))
          (deleted-file (multisession--object-deletion-file-name object))
-         (time (multisession--next-file-sequence-time file)))
+         (legacy-file (multisession--legacy-object-file-name object))
+         (time (multisession--next-file-sequence-time file legacy-file)))
     ;; Ensure that the directory exists.
     (let ((dir (file-name-directory file)))
       (unless (file-exists-p dir)
@@ -465,7 +489,8 @@ DOC should be a doc string, and ARGS are keywords as applicable to
 (cl-defmethod multisession--backend-delete ((_type (eql 'files)) object)
   (let* ((file (multisession--object-file-name object))
          (deleted-file (multisession--object-deletion-file-name object))
-         (time (multisession--next-file-sequence-time file))
+         (legacy-file (multisession--legacy-object-file-name object))
+         (time (multisession--next-file-sequence-time file legacy-file))
          (dir (file-name-directory deleted-file)))
     (unless (file-exists-p dir)
       (make-directory dir t))
