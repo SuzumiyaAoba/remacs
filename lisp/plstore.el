@@ -373,8 +373,10 @@ symmetric encryption will be used."
   "Determine the merged alist of PLSTORE.
 Create the merged alist as a copy of the template alist with all
 placeholder properties that have corresponding properties in the
-secret alist replaced by their plain-text secret properties."
+secret alist replaced by their plain-text secret properties.  Discard
+secret entries whose public template entry has been deleted."
   (let ((alist (plstore--get-secret-alist plstore))
+	retained-alist
 	modified-alist
 	modified-plist
 	modified-entry
@@ -389,24 +391,30 @@ secret alist replaced by their plain-text secret properties."
       (setq entry (car alist)
 	    alist (cdr alist)
 	    plist (cdr entry)
-	    modified-entry (assoc (car entry) modified-alist)
-	    modified-plist (cdr modified-entry))
-      (while plist
-        ;; Search for a placeholder property in the merged alist
-        ;; corresponding to the current secret property.
-	(setq placeholder
-	      (plist-member
-	       modified-plist
-	       (intern (concat ":secret-"
-			       (substring (symbol-name (car plist)) 1)))))
-        ;; Replace its name with the real, secret property name.
-	(if placeholder
-	    (setcar placeholder (car plist)))
-        ;; Update its value to the plain-text secret property value.
-	(setq modified-plist
-	      (plist-put modified-plist (car plist) (car (cdr plist))))
-	(setq plist (nthcdr 2 plist)))
-      (setcdr modified-entry modified-plist))))
+	    modified-entry (assoc (car entry) modified-alist))
+      (when modified-entry
+	;; Keep only secrets with a public template.  A store can be
+	;; edited while its secret block is still encrypted, so that block
+	;; may contain entries that have since been deleted.
+	(setq retained-alist (cons entry retained-alist)
+	      modified-plist (cdr modified-entry))
+	(while plist
+          ;; Search for a placeholder property in the merged alist
+          ;; corresponding to the current secret property.
+	  (setq placeholder
+		(plist-member
+		 modified-plist
+		 (intern (concat ":secret-"
+				 (substring (symbol-name (car plist)) 1)))))
+          ;; Replace its name with the real, secret property name.
+	  (if placeholder
+	      (setcar placeholder (car plist)))
+          ;; Update its value to the plain-text secret property value.
+	  (setq modified-plist
+		(plist-put modified-plist (car plist) (car (cdr plist)))
+		plist (nthcdr 2 plist)))
+	(setcdr modified-entry modified-plist)))
+    (plstore--set-secret-alist plstore (nreverse retained-alist))))
 
 (defun plstore--decrypt (plstore)
   "Decrypt the encrypted data of PLSTORE.

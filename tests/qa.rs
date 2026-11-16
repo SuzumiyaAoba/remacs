@@ -653,6 +653,7 @@ qa!(qa_save_place_trailing_data, "qa_save_place_trailing_data.el");
 qa!(qa_save_place_limit_save, "qa_save_place_limit_save.el");
 qa!(qa_plstore_trailing_data, "qa_plstore_trailing_data.el");
 qa!(qa_plstore_write_failure, "qa_plstore_write_failure.el");
+qa!(qa_plstore_delete_orphaned_secrets, "qa_plstore_delete_orphaned_secrets.el");
 qa!(qa_calc_mode_reentry_locals, "qa_calc_mode_reentry_locals.el");
 qa!(qa_calc_user_undefine_head, "qa_calc_user_undefine_head.el");
 qa!(qa_regex, "qa_regex.el");
