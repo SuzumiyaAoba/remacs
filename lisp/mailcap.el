@@ -546,51 +546,78 @@ If SOURCE, mark the entry with this as the source."
 	  (mailcap-add-mailcap-entry major minor info))
 	(beginning-of-line)))))
 
+;;Remacs: RFC 1524 qchar pairs quote the following character.
+(defun mailcap--unescape-mtext (text)
+  "Remove qchar quoting backslashes from TEXT."
+  (let ((index 0)
+        (limit (length text))
+        characters)
+    (while (< index limit)
+      (let ((character (aref text index)))
+        (setq index (1+ index))
+        (when (and (= character ?\\) (< index limit))
+          (setq character (aref text index)
+                index (1+ index)))
+        (push character characters)))
+    (apply #'string (nreverse characters))))
+
 (defun mailcap-parse-mailcap-extras (st nd)
   "Grab all the extra stuff from a mailcap entry."
-  (let (
-	name				; From name=
-	value				; its value
-	results				; Assoc list of results
-	name-pos			; Start of XXXX= position
-	val-pos				; Start of value position
-	done				; Found end of \'d ;s?
-	)
+  (let (name                            ; From name=
+        value                           ; its value
+        results                         ; Assoc list of results
+        name-pos                        ; Start of XXXX= position
+        val-pos                         ; Start of value position
+        done)                           ; Found end of 'd ;s?
     (save-restriction
       (narrow-to-region st nd)
       (goto-char (point-min))
       (skip-chars-forward " \n\t;")
       (while (not (eobp))
-	(setq done nil)
-	(setq name-pos (point))
-	(skip-chars-forward "^ \n\t=;")
-	(downcase-region name-pos (point))
-	(setq name (buffer-substring name-pos (point)))
-	(skip-chars-forward " \t\n")
-	(if (not (eq (char-after (point)) ?=)) ; There is no value
-	    (setq value t)
-	  (skip-chars-forward " \t\n=")
-	  (setq val-pos (point))
-	  (if (memq (char-after val-pos) '(?\" ?'))
-	      (progn
-		(setq val-pos (1+ val-pos))
-		(condition-case nil
-		    (progn
-		      (forward-sexp 1)
-		      (backward-char 1))
-		  (error (goto-char (point-max)))))
-	    (while (not done)
-	      (skip-chars-forward "^;")
-	      (if (eq (char-after (1- (point))) ?\\ )
-		  (progn
-		    (delete-char -1)
-		    (skip-chars-forward ";"))
-		(setq done t))))
-	  (setq	value (buffer-substring val-pos (point))))
-	;; `test' as symbol, others like "copiousoutput" and "needsx11" as
-	;; strings
-	(push (cons (if (string-equal name "test") 'test name) value) results)
-	(skip-chars-forward " \";\n\t"))
+        (setq done nil
+              name-pos (point))
+        (skip-chars-forward "^ \n\t=;")
+        (downcase-region name-pos (point))
+        (setq name (buffer-substring name-pos (point)))
+        (skip-chars-forward " \t\n")
+        (if (not (eq (char-after (point)) ?=)) ; There is no value
+            (setq value t)
+          (progn
+            (forward-char)
+            (skip-chars-forward " \t\n")
+            (setq val-pos (point))
+            (if (memq (char-after val-pos) '(?\" ?'))
+                (progn
+                  (setq val-pos (1+ val-pos))
+                  (condition-case nil
+                      (progn
+                        (forward-sexp 1)
+                        (backward-char 1))
+                    (error (goto-char (point-max))))
+                  (setq value
+                        (mailcap--unescape-mtext
+                         (buffer-substring val-pos (point))))
+                  (when (memq (char-after (point)) '(?\" ?'))
+                    (forward-char)))
+              (progn
+                ;;Remacs: qchar pairs are consumed before testing field delimiters.
+                (while (not done)
+                  (cond
+                   ((eq (char-after (point)) ?;) (setq done t))
+                   ((eq (char-after (point)) ?\\)
+                    (if (char-after (1+ (point)))
+                        (progn
+                          (delete-char 1)
+                          (forward-char))
+                      (forward-char)
+                      (setq done t)))
+                   ((eobp) (setq done t))
+                   (t (forward-char))))
+                (setq value (buffer-substring val-pos (point)))))))
+        ;; test as symbol, others like "copiousoutput" and "needsx11" as
+        ;; strings
+        (push (cons (if (string-equal name "test") 'test name) value) results)
+        (skip-chars-forward " ;\n\t"))
       results)))
 
 (defun mailcap-mailcap-entry-passes-test (info)
