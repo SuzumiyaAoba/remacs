@@ -1,4 +1,6 @@
 //! Translate GPUI command keys to Emacs events; OS text uses the input client.
+use std::cell::Cell;
+
 use gpui::{Keystroke, ModifierKey, Modifiers};
 use remacs_runtime::{
     editor::{CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER},
@@ -212,6 +214,10 @@ pub(super) fn modifier_state_after_change(
     };
     *slot = is_down;
     state
+}
+
+pub(super) fn clear_physical_modifier_state(state: &Cell<PhysicalModifierState>) {
+    state.set(PhysicalModifierState::default());
 }
 
 /// Share function-key recognition across routing, modifiers, and event names.
@@ -517,6 +523,31 @@ pub(super) fn unicode_key_text(ks: &Keystroke) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_loss_clears_stale_left_modifier_before_right_modifier_input() {
+        let mapping = ModifierMapping {
+            left_alternate: ModifierSetting::all(Some(EmacsModifier::Meta)),
+            right_alternate: ModifierSetting::all(Some(EmacsModifier::Hyper)),
+            ..ModifierMapping::default()
+        };
+        let modifiers = Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        };
+        let left_down = modifier_state_after_change(
+            PhysicalModifierState::default(),
+            ModifierKey::LeftAlt,
+            true,
+        );
+        let both_down = modifier_state_after_change(left_down, ModifierKey::RightAlt, true);
+        assert_eq!(mouse_modifier_bits(&modifiers, mapping, both_down), CHAR_META | CHAR_HYPER);
+
+        let state = Cell::new(left_down);
+        clear_physical_modifier_state(&state);
+        let right_down = modifier_state_after_change(state.get(), ModifierKey::RightAlt, true);
+        assert_eq!(mouse_modifier_bits(&modifiers, mapping, right_down), CHAR_HYPER);
+    }
 
     fn shifted(key: &str, text: &str) -> Keystroke {
         Keystroke {

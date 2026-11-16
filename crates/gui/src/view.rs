@@ -1,7 +1,8 @@
 //! GPUI view construction and painting of frontend-neutral grids.
 use super::{
     keys::{
-        ModifierMapping, PhysicalModifierState, command_keystroke_with_mapping,
+        ModifierMapping, PhysicalModifierState, clear_physical_modifier_state,
+        command_keystroke_with_mapping,
         is_native_command_w, keystroke_to_code_with_mapping, modifier_state_after_change,
         mouse_modifier_bits, pass_text_to_os, unicode_key_text,
     },
@@ -6649,7 +6650,9 @@ pub(super) fn build_managed_editor_view(
         close_events.send_delete_request_or_defer().is_err()
     });
     let frame_events = view.tx.clone();
+    let focus_modifier_state = view.physical_modifier_state.clone();
     let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, _cx| {
+        clear_physical_modifier_state(&focus_modifier_state);
         if let Some(frame_id) = frame_events.frame_id() {
             let visibility = crate::native_frame_visibility(window);
             let _ = frame_events.send_visibility_update(frame_id, visibility);
