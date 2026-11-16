@@ -800,9 +800,10 @@ If TEST is not given, it defaults to t."
            `((viewer . ,viewer)
              (test . ,(if test test t))
              (type . ,type))))
-      ;; Store it.
-      (mailcap-add-mailcap-entry (car tl) (cadr tl) entry
-                                 'mailcap-user-mime-data)
+      ;; Keep the custom variable's internal flat viewer list.  The
+      ;; selector scans these alists directly; the major/minor tree is
+      ;; only for `mailcap--computed-mime-data'.
+      (push entry mailcap-user-mime-data)
       ;; Make it available for usage.
       (mailcap-add-mailcap-entry (car tl) (cadr tl) entry))))
 
