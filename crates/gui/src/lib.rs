@@ -1620,6 +1620,7 @@ pub fn run_gui_with_dump(
                         text,
                         paths,
                         action,
+                        return_frame_mode,
                         allow_same_frame,
                         follow_tooltip,
                         tooltip,
@@ -1640,6 +1641,17 @@ pub fn run_gui_with_dump(
                                 ExternalDragOperation::Generic
                             }
                         };
+                        let return_frame_mode = match return_frame_mode {
+                            remacs_runtime::frontend::DragReturnFrameMode::Never => {
+                                gpui::DragReturnFrameMode::Never
+                            }
+                            remacs_runtime::frontend::DragReturnFrameMode::Now => {
+                                gpui::DragReturnFrameMode::Now
+                            }
+                            remacs_runtime::frontend::DragReturnFrameMode::Eventually => {
+                                gpui::DragReturnFrameMode::Eventually
+                            }
+                        };
                         let result = if let Some(handle) = windows.get(&frame_id).copied() {
                             handle
                                 .update(cx, move |view, window, cx| {
@@ -1649,27 +1661,41 @@ pub fn run_gui_with_dump(
                                         text,
                                         paths,
                                         operation,
+                                        return_frame_mode,
                                         allow_same_frame,
                                         follow_tooltip,
                                         tooltip,
-                                        move |operation| {
-                                            let operation = operation.map(|operation| {
-                                                match operation {
-                                                    ExternalDragOperation::Copy => {
-                                                        remacs_runtime::frontend::DragAction::Copy
-                                                    }
-                                                    ExternalDragOperation::Move => {
-                                                        remacs_runtime::frontend::DragAction::Move
-                                                    }
-                                                    ExternalDragOperation::Link => {
-                                                        remacs_runtime::frontend::DragAction::Link
-                                                    }
-                                                    ExternalDragOperation::Generic => {
-                                                        remacs_runtime::frontend::DragAction::Private
-                                                    }
+                                        move |outcome| {
+                                            let result = match outcome {
+                                                DragSessionOutcome::Operation(None) => {
+                                                    remacs_runtime::frontend::DragResult::Cancelled
                                                 }
-                                            });
-                                            let _ = completed.send(operation);
+                                                DragSessionOutcome::Operation(Some(operation)) => {
+                                                    let action = match operation {
+                                                        ExternalDragOperation::Copy => {
+                                                            remacs_runtime::frontend::DragAction::Copy
+                                                        }
+                                                        ExternalDragOperation::Move => {
+                                                            remacs_runtime::frontend::DragAction::Move
+                                                        }
+                                                        ExternalDragOperation::Link => {
+                                                            remacs_runtime::frontend::DragAction::Link
+                                                        }
+                                                        ExternalDragOperation::Generic => {
+                                                            remacs_runtime::frontend::DragAction::Private
+                                                        }
+                                                    };
+                                                    remacs_runtime::frontend::DragResult::Action(
+                                                        action,
+                                                    )
+                                                }
+                                                DragSessionOutcome::ReturnFrame(frame_id) => {
+                                                    remacs_runtime::frontend::DragResult::ReturnFrame(
+                                                        frame_id,
+                                                    )
+                                                }
+                                            };
+                                            let _ = completed.send(result);
                                         },
                                     );
                                     if result.is_err() && follow_tooltip {

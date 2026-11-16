@@ -447,6 +447,28 @@ pub enum DragAction {
     Private,
 }
 
+/// When an outgoing drag should return the frame the pointer enters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DragReturnFrameMode {
+    /// Keep the drag in the native system until it is dropped or cancelled.
+    #[default]
+    Never,
+    /// Return a frame as soon as the pointer enters it.
+    Now,
+    /// Wait until the pointer first leaves the source frame, then return a
+    /// frame that it enters.
+    Eventually,
+}
+
+/// Result of an outgoing drag session.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DragResult {
+    #[default]
+    Cancelled,
+    Action(DragAction),
+    ReturnFrame(usize),
+}
+
 /// Host operating-system bridge for outgoing GUI drags.
 pub trait DragBackend {
     /// Begin dragging the supplied TEXT and file PATHS from FRAME, then wait
@@ -457,10 +479,11 @@ pub trait DragBackend {
         text: Option<&str>,
         paths: &[String],
         action: DragAction,
+        return_frame: DragReturnFrameMode,
         allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<&str>,
-    ) -> Result<Option<DragAction>, String>;
+    ) -> Result<DragResult, String>;
 }
 
 /// Host application visibility bridge for NS hide commands.

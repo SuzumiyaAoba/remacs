@@ -791,11 +791,12 @@ pub(super) enum GuiRequest {
         text: Option<String>,
         paths: Vec<String>,
         action: DragAction,
+        return_frame_mode: remacs_runtime::frontend::DragReturnFrameMode,
         allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<String>,
         started: SyncSender<Result<(), String>>,
-        completed: SyncSender<Option<DragAction>>,
+        completed: SyncSender<remacs_runtime::frontend::DragResult>,
     },
     EndDrag {
         frame_id: usize,
@@ -1041,10 +1042,11 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
         text: Option<&str>,
         paths: &[String],
         action: DragAction,
+        return_frame_mode: remacs_runtime::frontend::DragReturnFrameMode,
         allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<&str>,
-    ) -> Result<Option<DragAction>, String> {
+    ) -> Result<remacs_runtime::frontend::DragResult, String> {
         let (started, start_response) = mpsc::sync_channel(1);
         let (completed, completion_response) = mpsc::sync_channel(1);
         self.requests
@@ -1053,6 +1055,7 @@ impl remacs_runtime::frontend::DragBackend for GuiDragBackend {
                 text: text.map(str::to_owned),
                 paths: paths.to_vec(),
                 action,
+                return_frame_mode,
                 allow_same_frame,
                 follow_tooltip,
                 tooltip: tooltip.map(str::to_owned),

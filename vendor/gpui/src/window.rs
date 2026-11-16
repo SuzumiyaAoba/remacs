@@ -1757,6 +1757,11 @@ impl Window {
         self.platform_window.set_represented_file(path);
     }
 
+    /// Associate this native window with its host application's frame.
+    pub fn set_client_frame_id(&self, frame_id: Option<usize>) {
+        self.platform_window.set_client_frame_id(frame_id);
+    }
+
     /// Update whether this window has native decorations and a transparent titlebar.
     pub fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
         self.platform_window
@@ -1772,15 +1777,17 @@ impl Window {
         text: Option<String>,
         paths: Vec<String>,
         operation: ExternalDragOperation,
+        return_frame_mode: crate::DragReturnFrameMode,
         allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<String>,
-        completion: impl FnOnce(Option<ExternalDragOperation>) + Send + 'static,
+        completion: impl FnOnce(crate::DragSessionOutcome) + Send + 'static,
     ) -> std::result::Result<(), String> {
         self.platform_window.begin_drag_session(
             text,
             paths,
             operation,
+            return_frame_mode,
             allow_same_frame,
             follow_tooltip,
             tooltip,

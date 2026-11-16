@@ -265,6 +265,11 @@ unsafe fn build_classes() {
                         as extern "C" fn(&Object, Sel, id, NSUInteger) -> NSUInteger,
                 );
                 decl.add_method(
+                    sel!(draggingSession:movedToPoint:),
+                    dragging_session_moved_to
+                        as extern "C" fn(&Object, Sel, id, NSPoint),
+                );
+                decl.add_method(
                     sel!(draggingSession:endedAtPoint:operation:),
                     dragging_session_ended
                         as extern "C" fn(&Object, Sel, id, NSPoint, NSUInteger),
@@ -433,6 +438,7 @@ struct MacWindowState {
     transparent_titlebar: bool,
     undecorated: bool,
     decorated_style_mask: NSWindowStyleMask,
+    client_frame_id: Option<usize>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
@@ -441,9 +447,10 @@ struct MacWindowState {
     drag_mouse_down_event: Option<id>,
     drag_session: Option<id>,
     drag_operation: Option<NSDragOperation>,
-    drag_completion: Option<Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>>,
+    drag_completion: Option<Box<dyn FnOnce(crate::DragSessionOutcome) + Send>>,
     // The active drag's source window rejects drops back onto itself by default.
     disallow_same_frame_drop: bool,
+    return_frame_mode: crate::DragReturnFrameMode,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     // Keep the physical left-button gesture's mapping until its release.
@@ -761,6 +768,7 @@ impl MacWindow {
                 transparent_titlebar,
                 undecorated,
                 decorated_style_mask,
+                client_frame_id: None,
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
                 do_command_handled: None,
@@ -771,6 +779,7 @@ impl MacWindow {
                 drag_operation: None,
                 drag_completion: None,
                 disallow_same_frame_drop: false,
+                return_frame_mode: crate::DragReturnFrameMode::Never,
                 first_mouse: false,
                 control_click: false,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -1599,6 +1608,10 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_client_frame_id(&self, frame_id: Option<usize>) {
+        self.0.lock().client_frame_id = frame_id;
+    }
+
     fn set_titlebar_appearance(&self, decorated: bool, transparent: bool) {
         let (window, style_mask) = {
             let mut state = self.0.lock();
@@ -1633,10 +1646,11 @@ impl PlatformWindow for MacWindow {
         text: Option<String>,
         paths: Vec<String>,
         operation: ExternalDragOperation,
+        return_frame_mode: crate::DragReturnFrameMode,
         allow_same_frame: bool,
         follow_tooltip: bool,
         tooltip: Option<String>,
-        completion: Box<dyn FnOnce(Option<ExternalDragOperation>) + Send>,
+        completion: Box<dyn FnOnce(crate::DragSessionOutcome) + Send>,
     ) -> std::result::Result<(), String> {
         let tooltip = follow_tooltip.then_some(tooltip).flatten();
         if text.is_none() && paths.is_empty() {
@@ -1649,7 +1663,7 @@ impl PlatformWindow for MacWindow {
             }
             let Some(event) = state.drag_mouse_down_event.take() else {
                 drop(state);
-                completion(None);
+                completion(crate::DragSessionOutcome::Operation(None));
                 return Ok(());
             };
             state.drag_operation = Some(match operation {
@@ -1660,6 +1674,7 @@ impl PlatformWindow for MacWindow {
             });
             state.drag_completion = Some(completion);
             state.disallow_same_frame_drop = !allow_same_frame;
+            state.return_frame_mode = return_frame_mode;
             (state.native_view.as_ptr() as id, event)
         };
 
@@ -1722,10 +1737,11 @@ impl PlatformWindow for MacWindow {
                 let mut state = self.0.lock();
                 state.drag_operation = None;
                 state.disallow_same_frame_drop = false;
+                state.return_frame_mode = crate::DragReturnFrameMode::Never;
                 state.drag_completion.take()
             };
             if let Some(completion) = completion {
-                completion(None);
+                completion(crate::DragSessionOutcome::Operation(None));
             }
         } else {
             let session: id = unsafe { msg_send![session, retain] };
@@ -2014,6 +2030,7 @@ extern "C" fn dragging_session_ended(
         }
         state.drag_operation = None;
         state.disallow_same_frame_drop = false;
+        state.return_frame_mode = crate::DragReturnFrameMode::Never;
         (state.drag_session.take(), state.drag_completion.take())
     };
     if let Some(drag_session) = drag_session {
@@ -2033,7 +2050,7 @@ extern "C" fn dragging_session_ended(
         None
     };
     if let Some(completion) = completion {
-        completion(operation);
+        completion(crate::DragSessionOutcome::Operation(operation));
     }
 }
 
@@ -2487,7 +2504,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             let _: () = msg_send![drag_session, release];
         }
         if let Some(drag_completion) = drag_completion {
-            drag_completion(None);
+            drag_completion(crate::DragSessionOutcome::Operation(None));
         }
         if let Some(callback) = close_callback {
             callback();
@@ -2788,11 +2805,105 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     point(px(window_x as f32), px(window_y as f32))
 }
 
+fn window_at_screen_point(position: NSPoint) -> id {
+    unsafe {
+        let window_number: NSInteger = msg_send![
+            class!(NSWindow),
+            windowNumberAtPoint: position
+            belowWindowWithWindowNumber: 0
+        ];
+        let application: id = msg_send![class!(NSApplication), sharedApplication];
+        msg_send![application, windowWithWindowNumber: window_number]
+    }
+}
+
+fn client_frame_id_for_window(window: id) -> Option<usize> {
+    if window.is_null() {
+        return None;
+    }
+    unsafe {
+        let is_gpui_window: BOOL = msg_send![window, isKindOfClass: class!(GPUIWindow)];
+        if is_gpui_window != YES {
+            return None;
+        }
+        let state = get_window_state(&*(window as *const Object));
+        state.lock().client_frame_id
+    }
+}
+
+fn return_frame_to_target(
+    source_state: &Arc<Mutex<MacWindowState>>,
+    target_window: id,
+    target_frame_id: Option<usize>,
+) -> bool {
+    let completion = {
+        let mut source = source_state.lock();
+        match source.return_frame_mode {
+            crate::DragReturnFrameMode::Never => return false,
+            crate::DragReturnFrameMode::Eventually
+                if target_window != source.native_window =>
+            {
+                source.return_frame_mode = crate::DragReturnFrameMode::Now;
+            }
+            crate::DragReturnFrameMode::Eventually => return false,
+            crate::DragReturnFrameMode::Now => {}
+        }
+        let Some(target_frame_id) = target_frame_id else {
+            return false;
+        };
+        if source.client_frame_id == Some(target_frame_id) {
+            return false;
+        }
+        let Some(completion) = source.drag_completion.take() else {
+            return false;
+        };
+        source.return_frame_mode = crate::DragReturnFrameMode::Never;
+        source.drag_operation = Some(NSDragOperationNone);
+        Some((completion, target_frame_id))
+    };
+    if let Some((completion, frame_id)) = completion {
+        completion(crate::DragSessionOutcome::ReturnFrame(frame_id));
+        true
+    } else {
+        false
+    }
+}
+
+extern "C" fn dragging_session_moved_to(
+    this: &Object,
+    _: Sel,
+    _session: id,
+    position: NSPoint,
+) {
+    let source_state = unsafe { get_window_state(this) };
+    let target_window = window_at_screen_point(position);
+    let target_frame_id = client_frame_id_for_window(target_window);
+    let _ = return_frame_to_target(&source_state, target_window, target_frame_id);
+}
+
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
+    let source_operation: NSUInteger =
+        unsafe { msg_send![dragging_info, draggingSourceOperationMask] };
+    if source_operation == NSDragOperationNone {
+        return NSDragOperationNone;
+    }
     // This is the source window when a drag returns to its originating frame.
     if window_state.lock().disallow_same_frame_drop {
         return NSDragOperationNone;
+    }
+    let target_frame_id = window_state.lock().client_frame_id;
+    let source_view: id = unsafe { msg_send![dragging_info, draggingSource] };
+    if !source_view.is_null() {
+        let is_gpui_view: BOOL =
+            unsafe { msg_send![source_view, isKindOfClass: class!(GPUIView)] };
+        if is_gpui_view == YES {
+            let source_state = unsafe { get_window_state(&*(source_view as *const Object)) };
+            let target_window = this as *const Object as id;
+            if return_frame_to_target(&source_state, target_window, target_frame_id) {
+                return NSDragOperationNone;
+            }
+        }
     }
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
@@ -2843,6 +2954,11 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
+    let source_operation: NSUInteger =
+        unsafe { msg_send![dragging_info, draggingSourceOperationMask] };
+    if source_operation == NSDragOperationNone {
+        return NSDragOperationNone;
+    }
     let position = drag_event_position(&window_state, dragging_info);
     let text_dragged = window_state.lock().external_text_dragged;
     let event = if text_dragged {
@@ -2881,6 +2997,11 @@ extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
+    let source_operation: NSUInteger =
+        unsafe { msg_send![dragging_info, draggingSourceOperationMask] };
+    if source_operation == NSDragOperationNone {
+        return NO;
+    }
     let position = drag_event_position(&window_state, dragging_info);
     let text_dragged = window_state.lock().external_text_dragged;
     let event = if text_dragged {

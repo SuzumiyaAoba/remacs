@@ -500,6 +500,27 @@ pub(crate) struct RequestFrameOptions {
     pub(crate) force_render: bool,
 }
 
+/// Controls when an outgoing drag returns the destination window to its caller.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DragReturnFrameMode {
+    /// Keep the drag in the native system until it completes or is cancelled.
+    #[default]
+    Never,
+    /// Return as soon as the pointer enters another client frame.
+    Now,
+    /// Wait until the pointer leaves the source frame, then return a client frame.
+    Eventually,
+}
+
+/// Result of an outgoing drag session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragSessionOutcome {
+    /// The native drop completed with the selected operation, or was cancelled.
+    Operation(Option<crate::ExternalDragOperation>),
+    /// The pointer entered a client frame, so the drag caller should resume there.
+    ReturnFrame(usize),
+}
+
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
@@ -553,6 +574,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_opacity(&self, _opacity: f32) {}
     fn set_window_appearance(&self, _appearance: Option<WindowAppearance>) {}
     fn set_represented_file(&self, _path: Option<String>) {}
+    fn set_client_frame_id(&self, _frame_id: Option<usize>) {}
     fn set_titlebar_appearance(&self, decorated: bool, _transparent: bool) {
         self.request_decorations(if decorated {
             WindowDecorations::Server
@@ -565,10 +587,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         _text: Option<String>,
         _paths: Vec<String>,
         _operation: crate::ExternalDragOperation,
+        _return_frame_mode: DragReturnFrameMode,
         _allow_same_frame: bool,
         _follow_tooltip: bool,
         _tooltip: Option<String>,
-        _completion: Box<dyn FnOnce(Option<crate::ExternalDragOperation>) + Send>,
+        _completion: Box<dyn FnOnce(DragSessionOutcome) + Send>,
     ) -> std::result::Result<(), String> {
         Err("External dragging is not supported on this platform".to_owned())
     }

@@ -1343,6 +1343,13 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         Some(value) => return Err(i.wrong_type_mut("symbolp", value)),
     };
+    let return_frame = match a.get(3) {
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol).as_str() == "now" => {
+            crate::frontend::DragReturnFrameMode::Now
+        }
+        Some(value) if !value.is_nil() => crate::frontend::DragReturnFrameMode::Eventually,
+        _ => crate::frontend::DragReturnFrameMode::Never,
+    };
     let allow_same_frame = a.get(4).is_some_and(|value| !value.is_nil());
     let follow_tooltip = a.get(5).is_some_and(|value| !value.is_nil());
     let tooltip = if follow_tooltip {
@@ -1356,6 +1363,7 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             text.as_deref(),
             &files,
             action,
+            return_frame,
             allow_same_frame,
             follow_tooltip,
             tooltip.as_deref(),
@@ -1365,11 +1373,30 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         crate::lisp::builtins::misc::clear_gui_tip(i)?;
     }
     let result = match result {
-        None => Value::Nil,
-        Some(crate::frontend::DragAction::Copy) => Value::Sym(i.intern("XdndActionCopy")),
-        Some(crate::frontend::DragAction::Move) => Value::Sym(i.intern("XdndActionMove")),
-        Some(crate::frontend::DragAction::Link) => Value::Sym(i.intern("XdndActionLink")),
-        Some(crate::frontend::DragAction::Private) => Value::Sym(i.intern("XdndActionPrivate")),
+        crate::frontend::DragResult::Cancelled => Value::Nil,
+        crate::frontend::DragResult::ReturnFrame(frame_id)
+            if return_frame != crate::frontend::DragReturnFrameMode::Never =>
+        {
+            i.frames
+                .iter()
+                .find(|frame| frame.borrow().id == frame_id)
+                .cloned()
+                .map(Value::Frame)
+                .unwrap_or(Value::Nil)
+        }
+        crate::frontend::DragResult::ReturnFrame(_) => Value::Nil,
+        crate::frontend::DragResult::Action(crate::frontend::DragAction::Copy) => {
+            Value::Sym(i.intern("XdndActionCopy"))
+        }
+        crate::frontend::DragResult::Action(crate::frontend::DragAction::Move) => {
+            Value::Sym(i.intern("XdndActionMove"))
+        }
+        crate::frontend::DragResult::Action(crate::frontend::DragAction::Link) => {
+            Value::Sym(i.intern("XdndActionLink"))
+        }
+        crate::frontend::DragResult::Action(crate::frontend::DragAction::Private) => {
+            Value::Sym(i.intern("XdndActionPrivate"))
+        }
     };
     Ok(result)
 }

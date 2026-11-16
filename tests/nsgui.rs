@@ -11,13 +11,19 @@
 mod common;
 use common::{ev, ev_err};
 use remacs_runtime::{
-    frontend::{DragAction, DragBackend},
-    lisp::Interp,
+    frontend::{DragAction, DragBackend, DragResult, DragReturnFrameMode},
+    lisp::{Interp, Value},
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[derive(Default)]
-struct DragRecorder(RefCell<Vec<(usize, bool, Option<String>)>>);
+struct DragRecorder {
+    calls: RefCell<Vec<(usize, DragReturnFrameMode, bool, Option<String>)>>,
+    result: Cell<DragResult>,
+}
 
 impl DragBackend for DragRecorder {
     fn begin_drag(
@@ -26,16 +32,18 @@ impl DragBackend for DragRecorder {
         text: Option<&str>,
         _paths: &[String],
         _action: DragAction,
+        return_frame: DragReturnFrameMode,
         allow_same_frame: bool,
         _follow_tooltip: bool,
         _tooltip: Option<&str>,
-    ) -> Result<Option<DragAction>, String> {
-        self.0.borrow_mut().push((
+    ) -> Result<DragResult, String> {
+        self.calls.borrow_mut().push((
             frame_id,
+            return_frame,
             allow_same_frame,
             text.map(str::to_owned),
         ));
-        Ok(None)
+        Ok(self.result.get())
     }
 }
 
@@ -58,13 +66,70 @@ fn ns_begin_drag_forwards_allow_same_frame() {
         assert_eq!(interp.prin1_to_string(&result).to_unicode_lossy(), "nil");
     }
 
-    let calls = backend.0.borrow();
+    let calls = backend.calls.borrow();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].0, calls[1].0);
-    assert!(!calls[0].1);
-    assert!(calls[1].1);
-    assert_eq!(calls[0].2.as_deref(), Some("dragged text"));
-    assert_eq!(calls[1].2.as_deref(), Some("dragged text"));
+    assert_eq!(calls[0].1, DragReturnFrameMode::Never);
+    assert_eq!(calls[1].1, DragReturnFrameMode::Never);
+    assert!(!calls[0].2);
+    assert!(calls[1].2);
+    assert_eq!(calls[0].3.as_deref(), Some("dragged text"));
+    assert_eq!(calls[1].3.as_deref(), Some("dragged text"));
+}
+
+#[test]
+fn ns_begin_drag_returns_the_frame_requested_by_return_frame() {
+    let mut interp = Interp::new();
+    let backend = Rc::new(DragRecorder::default());
+    interp.set_drag_backend(Some(backend.clone()));
+    interp
+        .eval_str("(set-frame-parameter nil 'window-system 'ns)")
+        .unwrap();
+    let target = interp
+        .eval_str("(make-frame '((window-system . ns)))")
+        .unwrap();
+    let Value::Frame(target) = target else {
+        panic!("make-frame did not return a frame");
+    };
+    let target_id = target.borrow().id;
+    backend.result.set(DragResult::ReturnFrame(target_id));
+
+    for (form, mode) in [
+        (
+            "(ns-begin-drag nil '((string . \"dragged text\")) 'XdndActionCopy)",
+            DragReturnFrameMode::Never,
+        ),
+        (
+            "(ns-begin-drag nil '((string . \"dragged text\")) 'XdndActionCopy 'now)",
+            DragReturnFrameMode::Now,
+        ),
+        (
+            "(ns-begin-drag nil '((string . \"dragged text\")) 'XdndActionCopy t)",
+            DragReturnFrameMode::Eventually,
+        ),
+    ] {
+        let result = interp
+            .eval_str(form)
+            .unwrap_or_else(|flow| panic!("{form}: {flow:?}"));
+        if mode == DragReturnFrameMode::Never {
+            assert!(result.is_nil());
+        } else {
+            let Value::Frame(returned) = result else {
+                panic!("{form} did not return a frame");
+            };
+            assert!(Rc::ptr_eq(&returned, &target));
+        }
+    }
+
+    let calls = backend.calls.borrow();
+    assert_eq!(
+        calls.iter().map(|call| call.1).collect::<Vec<_>>(),
+        vec![
+            DragReturnFrameMode::Never,
+            DragReturnFrameMode::Now,
+            DragReturnFrameMode::Eventually,
+        ]
+    );
 }
 
 /// Interp::new pays the prelude cost once per `ev', so each test

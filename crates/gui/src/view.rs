@@ -2183,6 +2183,7 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_client_frame_id(self.tx.frame_id());
         if !self.mouse_position_poll_started {
             self.mouse_position_poll_started = true;
             cx.spawn_in(window, async move |this, cx| {
