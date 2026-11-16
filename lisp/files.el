@@ -9498,12 +9498,9 @@ If CHAR is in [Xugo], the value is taken from FROM (or 0 if omitted)."
 	((eq char ?t) #o1000)
 	;; Rights relative to the previous file modes.
 	((eq char ?X) (if (= (logand from #o111) 0) 0 #o0111))
-	((eq char ?u) (let ((uright (logand #o4700 from)))
-		        ;; FIXME: These divisions/shifts seem to be right
-                        ;; for the `7' part of the #o4700 mask, but not
-                        ;; for the `4' part.  Same below for `g' and `o'.
+	((eq char ?u) (let ((uright (logand #o0700 from)))
 		        (+ uright (/ uright #o10) (/ uright #o100))))
-	((eq char ?g) (let ((gright (logand #o2070 from)))
+	((eq char ?g) (let ((gright (logand #o0070 from)))
 		        (+ gright (/ gright #o10) (* gright #o10))))
 	((eq char ?o) (let ((oright (logand #o1007 from)))
 		        (+ oright (* oright #o10) (* oright #o100))))

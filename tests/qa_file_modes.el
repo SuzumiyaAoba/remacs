@@ -75,6 +75,11 @@
 	(progn
 	  (fset 'read-string (lambda (&rest _) "u+r,"))
 	  (qa-err (read-file-modes) 'error))
-      (fset 'read-string read-string-original))))
+      (fset 'read-string read-string-original)))
+  (qa (file-modes-symbolic-to-number "g=u" #o4000) #o4000)
+  (qa (file-modes-symbolic-to-number "u=g" #o2000) #o2000)
+  (qa (file-modes-symbolic-to-number "u+s") #o4000)
+  (qa (file-modes-symbolic-to-number "g+s") #o2000)
+  (qa (file-modes-symbolic-to-number "o+t") #o1000))
 
 (princ (qa--done))
