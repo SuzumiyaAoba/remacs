@@ -1031,6 +1031,7 @@ qa!(qa_sqlite_parameters, "qa_sqlite_parameters.el");
 qa!(qa_sqlite_lazy_sets, "qa_sqlite_lazy_sets.el");
 qa!(qa_sqlite_errors, "qa_sqlite_errors.el");
 qa!(qa_sqlite_validation, "qa_sqlite_validation.el");
+qa!(qa_multisession_pragmas, "qa_multisession_pragmas.el");
 
 qa!(qa_process_large_send, "qa_process_large_send.el");
 
