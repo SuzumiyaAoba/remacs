@@ -441,12 +441,24 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-id", 0, 1, f_frame_id, "Opaque frame id."),
     S!("frame-native-width", 0, 1, f_frame_native_width, ""),
     S!("frame-native-height", 0, 1, f_frame_native_height, ""),
-    S!("frame-text-width", 0, 1, f_frame_width, ""),
-    S!("frame-text-height", 0, 1, f_frame_height, ""),
+    S!(
+        "frame-text-width",
+        0,
+        1,
+        f_frame_text_width,
+        "Return text area width of FRAME in pixels."
+    ),
+    S!(
+        "frame-text-height",
+        0,
+        1,
+        f_frame_text_height,
+        "Return text area height of FRAME in pixels."
+    ),
     S!("frame-total-cols", 0, 1, f_frame_width, ""),
     S!("frame-total-lines", 0, 1, f_frame_height, ""),
-    S!("frame-text-cols", 0, 1, f_frame_width, ""),
-    S!("frame-text-lines", 0, 1, f_frame_height, ""),
+    S!("frame-text-cols", 0, 1, f_frame_text_cols, ""),
+    S!("frame-text-lines", 0, 1, f_frame_text_lines, ""),
     S!("frame-char-width", 0, 1, f_frame_char_width, ""),
     S!("frame-char-height", 0, 1, f_frame_char_height, ""),
     S!("frame-fringe-width", 0, 1, f_frame_fringe_width, ""),
@@ -3177,6 +3189,45 @@ fn f_frame_id(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_frame_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let f = crate::editor::frame_of(i, &arg(&a, 0))?;
     Ok(Value::Int(f.borrow().width as i128))
+}
+
+fn f_frame_text_cols(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_frame_width(i, a)
+}
+
+fn frame_text_lines(i: &Interp, frame: &crate::editor::FrameRef) -> usize {
+    let (height, text_margin) = {
+        let frame = frame.borrow();
+        (frame.height, frame.text_margin)
+    };
+    let mut lines = height.saturating_sub(text_margin);
+    if crate::editor::frame_is_graphical(i, frame) {
+        let tool_bar_rows = crate::frontend::tool_bar_rows_for_frame(i, frame, height);
+        let tab_bar_rows =
+            crate::editor::frame_parameter_positive_size(i, frame, "tab-bar-lines", 0)
+                .min(height.saturating_sub(1 + tool_bar_rows));
+        lines = lines.saturating_sub(tool_bar_rows).saturating_sub(tab_bar_rows);
+    }
+    lines
+}
+
+fn f_frame_text_lines(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(frame_text_lines(i, &frame) as i128))
+}
+
+fn f_frame_text_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_of(i, &arg(&a, 0))?;
+    let width = frame.borrow().width;
+    let pixels = width.saturating_mul(crate::editor::frame_char_width(i, &frame));
+    Ok(Value::Int(pixels as i128))
+}
+
+fn f_frame_text_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_of(i, &arg(&a, 0))?;
+    let pixels = frame_text_lines(i, &frame)
+        .saturating_mul(crate::editor::frame_char_height(i, &frame));
+    Ok(Value::Int(pixels as i128))
 }
 
 fn f_frame_native_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
