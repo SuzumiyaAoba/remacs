@@ -659,25 +659,29 @@ to them.  It is guaranteed that FILTER receives only a list of single
 menu-elements (no sub-menu)."
   (if (and l (functionp filter))
       (let ((case-fold-search recentf-case-fold-search)
-            elts others)
+            others)
         ;; split L into two sub-lists, one of sub-menus elements and
         ;; another of single menu elements.
         (dolist (elt l)
-          (if (recentf-sub-menu-element-p elt)
-              (push elt elts)
+          (unless (recentf-sub-menu-element-p elt)
             (push elt others)))
         ;; Apply FILTER to single elements.
         (when others
           (setq others (funcall filter (nreverse others))))
-        ;; Apply FILTER to sub-menu elements.
-        (setq l nil)
-        (dolist (elt elts)
-          (recentf-set-menu-element-value
-           elt (recentf-apply-menu-filter
-                filter (recentf-menu-element-value elt)))
-          (push elt l))
-        ;; Return the new filtered menu element list.
-        (nconc l others))
+        ;; Reinsert filtered single elements into their original slots.
+        (let (result)
+          (dolist (elt l)
+            (push
+             (if (recentf-sub-menu-element-p elt)
+                 (progn
+                   (recentf-set-menu-element-value
+                    elt (recentf-apply-menu-filter
+                         filter (recentf-menu-element-value elt)))
+                   elt)
+               (pop others))
+             result))
+          ;; Append any elements added by FILTER after the original slots.
+          (nconc (delq nil (nreverse result)) others)))
     l))
 
 ;; Count the number of assigned menu shortcuts.
