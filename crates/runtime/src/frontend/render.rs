@@ -4051,6 +4051,90 @@ fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
     i.native_menus.clone()
 }
 
+pub(crate) fn tool_bar_rows_for_frame(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    frame_height: usize,
+) -> usize {
+    if !crate::editor::frame_is_graphical(i, frame) {
+        return 0;
+    }
+    let configured = crate::editor::frame_parameter_positive_size(i, frame, "tool-bar-lines", 0);
+    let frame_id = frame.borrow().id;
+    // An empty separator in a prepared toolbar snapshot marks a secondary row.
+    let wrapped_rows = i
+        .native_menu_commands
+        .tool_bar(frame_id)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.item.separator && item.item.label.is_empty())
+                .count()
+        })
+        .unwrap_or(0);
+    configured
+        .saturating_add(wrapped_rows)
+        .min(frame_height.saturating_sub(1))
+}
+
+pub(crate) fn tool_bar_pixel_height_for_frame(
+    i: &Interp,
+    frame: &crate::editor::FrameRef,
+    rows: usize,
+) -> usize {
+    let (frame_id, width) = {
+        let frame = frame.borrow();
+        (frame.id, frame.width)
+    };
+    let cell_width = crate::editor::frame_char_width(i, frame).max(1);
+    let mut row_heights = vec![crate::editor::frame_char_height(i, frame).max(1); rows];
+    let Some(items) = i.native_menu_commands.tool_bar(frame_id) else {
+        return row_heights.into_iter().fold(0, usize::saturating_add);
+    };
+
+    let mut row = 0usize;
+    let mut column = 0usize;
+    for prepared in items {
+        let binding = &prepared.item;
+        if binding.separator {
+            if binding.label.is_empty() {
+                row = row.saturating_add(1);
+                column = 0;
+            } else {
+                column = column.saturating_add(1);
+            }
+            continue;
+        }
+
+        let label_width = binding
+            .label
+            .chars()
+            .map(display_char_width)
+            .sum::<usize>()
+            .max(1);
+        let image_width = prepared.image.as_ref().map(|image| image.width.unwrap_or(24));
+        let image_height = prepared.image.as_ref().map(|image| image.height.unwrap_or(24));
+        let image_columns = image_width.map(|pixels| pixels.div_ceil(cell_width));
+        let button_width = image_columns
+            .map(|columns| columns.saturating_add(2))
+            .unwrap_or_else(|| label_width.saturating_add(2))
+            .min(width.max(1));
+        if column.saturating_add(button_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        if row >= rows || width == 0 {
+            break;
+        }
+        if let Some(image_height) = image_height {
+            row_heights[row] = row_heights[row].max(image_height);
+        }
+        column = column.saturating_add(button_width).saturating_add(1);
+    }
+
+    row_heights.into_iter().fold(0, usize::saturating_add)
+}
+
 fn render_tool_bar(
     i: &Interp,
     frame: &crate::editor::Frame,
@@ -11466,26 +11550,7 @@ fn render_grid_internal(
         mini_wrap_lines,
         mini_ctl_arrow,
     );
-    let tool_bar_rows = if graphical {
-        let configured =
-            crate::editor::frame_parameter_positive_size(i, &frame, "tool-bar-lines", 0);
-        // An empty separator in a prepared toolbar snapshot marks a secondary row.
-        let wrapped_rows = i
-            .native_menu_commands
-            .tool_bar(frame.borrow().id)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter(|item| item.item.separator && item.item.label.is_empty())
-                    .count()
-            })
-            .unwrap_or(0);
-        configured
-            .saturating_add(wrapped_rows)
-            .min(height.saturating_sub(1))
-    } else {
-        0
-    };
+    let tool_bar_rows = tool_bar_rows_for_frame(i, &frame, height);
     let tab_bar_rows = if graphical {
         crate::editor::frame_parameter_positive_size(i, &frame, "tab-bar-lines", 0)
             .min(height.saturating_sub(1 + tool_bar_rows))

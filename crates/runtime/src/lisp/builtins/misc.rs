@@ -1182,7 +1182,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_display_monitor_attributes_list,
         ""
     ),
-    S!("tool-bar-height", 0, 2, f_zero, ""),
+    S!(
+        "tool-bar-height",
+        0,
+        2,
+        f_tool_bar_height,
+        "Return the height of FRAME's tool bar in lines or pixels."
+    ),
     S!("tool-bar-pixel-width", 0, 1, f_zero, ""),
     S!(
         "frame-monitor-attributes",
@@ -2152,6 +2158,18 @@ fn f_not_useful(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 fn f_zero(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(0))
+}
+
+fn f_tool_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = crate::editor::frame_any(i, &arg(&a, 0))?;
+    let frame_height = frame.borrow().height;
+    let rows = crate::frontend::tool_bar_rows_for_frame(i, &frame, frame_height);
+    let height = if arg(&a, 1).truthy() {
+        crate::frontend::tool_bar_pixel_height_for_frame(i, &frame, rows)
+    } else {
+        rows
+    };
+    Ok(Value::Int(height as i128))
 }
 
 // ---------- windows ----------
