@@ -989,8 +989,25 @@ FIXME: multiple comma-separated values should be allowed!"
             (?Z
              (setq source-zone t))
 	    ((or ?- ?+)
-             (setq source-zone
-                   (concat "UTC" (substring isodatetimestring 15))))))
+             (save-match-data
+               (let ((offset (substring isodatetimestring 15)))
+                 (unless (and (string-match
+                               "^\\([+-]\\)\\([0-9][0-9]\\):?\\([0-9][0-9]\\)\\'"
+                               offset)
+                              (= (match-beginning 0) 0))
+                   (error "Invalid ISO 8601 time zone offset: %s" offset))
+                 (let ((offset-sign (if (equal (match-string 1 offset) "-")
+                                        -1 1))
+                       (offset-hours
+                        (string-to-number (match-string 2 offset)))
+                       (offset-minutes
+                        (string-to-number (match-string 3 offset))))
+                   (when (or (> offset-hours 23) (> offset-minutes 59))
+                     (error "Invalid ISO 8601 time zone offset: %s" offset))
+                   ;; encode-time accepts numeric offsets as seconds east of UTC.
+                   (setq source-zone
+                         (* offset-sign
+                            (+ (* offset-hours 3600) (* offset-minutes 60))))))))))
         ;; shift if necessary
         (if day-shift
             (let ((mdy (calendar-gregorian-from-absolute
