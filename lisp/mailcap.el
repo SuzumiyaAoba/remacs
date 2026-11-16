@@ -626,28 +626,21 @@ This function supports only `test -n $DISPLAY' and `test -z $DISPLAY',
 replaces them with t or nil.  As for others or if INFO has an interactive
 spec (needsterm, needsterminal, or needsx11) but DISPLAY is not set,
 the test clause will be unchanged."
-  (let ((test (assq 'test info))	; The test clause
-	status)
-    (setq status (and test (split-string (cdr test) " ")))
-    (if (and (or (assoc "needsterm" info)
-		 (assoc "needsterminal" info)
-		 (assoc "needsx11" info))
-	     (not (getenv "DISPLAY")))
-	(setq status nil)
-      (cond
-       ((and (equal (nth 0 status) "test")
-	     (equal (nth 1 status) "-n")
-	     (or (equal (nth 2 status) "$DISPLAY")
-		 (equal (nth 2 status) "\"$DISPLAY\"")))
-	(setq status (if (getenv "DISPLAY") t nil)))
-       ((and (equal (nth 0 status) "test")
-	     (equal (nth 1 status) "-z")
-	     (or (equal (nth 2 status) "$DISPLAY")
-		 (equal (nth 2 status) "\"$DISPLAY\"")))
-	(setq status (if (getenv "DISPLAY") nil t)))
-       (test nil)
-       (t nil)))
-    (and test (listp test) (setcdr test status))))
+  (let* ((test (assq 'test info))	; The test clause
+	 (words (and test (split-string (cdr test) " ")))
+	 (display (getenv "DISPLAY")))
+    (unless (and (or (assoc "needsterm" info)
+		     (assoc "needsterminal" info)
+		     (assoc "needsx11" info))
+		 (not display))
+      (when (and (equal (nth 0 words) "test")
+		 (member (nth 1 words) '("-n" "-z"))
+		 (member (nth 2 words) '("$DISPLAY" "\"$DISPLAY\"")))
+	(setcdr test
+		(if (equal (nth 1 words) "-n")
+		    (and display (not (equal display "")))
+		  (or (not display) (equal display ""))))))
+    (and test (listp test) (cdr test))))
 
 ;;;
 ;;; The action routines.
