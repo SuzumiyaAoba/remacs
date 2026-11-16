@@ -142,9 +142,12 @@ this happens automatically before saving `save-place-alist' to
           (goto-char (point-min))
           (let (alist)
             (condition-case err
-                (setq alist
-                      (car (read-from-string
-                            (buffer-substring (point-min) (point-max)))))
+                (let* ((contents (buffer-substring (point-min) (point-max)))
+                       (read-result (read-from-string contents)))
+                  (unless (save-place--read-tail-valid-p
+                           contents (cdr read-result))
+                    (error "Trailing data in save-place-file"))
+                  (setq alist (car read-result)))
               (error
                (setq save-place--load-failed t)
                (message "Error reading save-place-file: %S" err)))
@@ -153,6 +156,53 @@ this happens automatically before saving `save-place-alist' to
               (save-place--truncate-alist)))))
       (unless save-place--load-failed
         (save-place--normalize-alist)))))
+
+(defun save-place--read-tail-valid-p (string start)
+  "Return non-nil if STRING after START contains only whitespace or comments."
+  (let ((position start)
+        (limit (length string))
+        (valid t))
+    (while (and valid (< position limit))
+      (let ((character (aref string position)))
+        (cond
+         ((memq character '(?\s ?\t ?\n ?\r ?\f ?\v))
+          (setq position (1+ position)))
+         ((eq character ?\;)
+          (while (and (< position limit)
+                      (not (eq (aref string position) ?\n)))
+            (setq position (1+ position))))
+         ((and (eq character ?#)
+               (< (1+ position) limit)
+               (eq (aref string (1+ position)) ?\;))
+          (let ((discarded
+                 (condition-case nil
+                     (read-from-string string (+ position 2))
+                   (error nil))))
+            (if discarded
+                (setq position (cdr discarded))
+              (setq valid nil))))
+         ((and (eq character ?#)
+               (< (1+ position) limit)
+               (eq (aref string (1+ position)) ?|))
+          (setq position (+ position 2))
+          (let ((depth 1))
+            (while (and (> depth 0) (< (1+ position) limit))
+              (cond
+               ((and (eq (aref string position) ?#)
+                     (eq (aref string (1+ position)) ?|))
+                (setq depth (1+ depth)
+                      position (+ position 2)))
+               ((and (eq (aref string position) ?|)
+                     (eq (aref string (1+ position)) ?#))
+                (setq depth (1- depth)
+                      position (+ position 2)))
+               (t
+                (setq position (1+ position)))))
+            (when (> depth 0)
+              (setq valid nil))))
+         (t
+          (setq valid nil)))))
+    valid))
 
 (defcustom save-place-abbreviate-file-names nil
   "If non-nil, abbreviate file names before saving them.

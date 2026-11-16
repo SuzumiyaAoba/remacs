@@ -647,6 +647,7 @@ qa!(qa_reader_circles, "qa_reader_circles.el");
 qa!(qa_rect, "qa_rect.el");
 qa!(qa_rect_load, "qa_rect_load.el");
 qa!(qa_recentf_menu_filter, "qa_recentf_menu_filter.el");
+qa!(qa_save_place_trailing_data, "qa_save_place_trailing_data.el");
 qa!(qa_calc_mode_reentry_locals, "qa_calc_mode_reentry_locals.el");
 qa!(qa_calc_user_undefine_head, "qa_calc_user_undefine_head.el");
 qa!(qa_regex, "qa_regex.el");
