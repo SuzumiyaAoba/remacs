@@ -828,7 +828,7 @@ regular specifiers."
             (val (cadr spec)))
         (cons (cl-case tag
                 (:color (cons "color" (hfy-box-color val)))
-                (:width (cons "width"  val))
+                ((:line-width :width) (cons "width"  val))
                 (:style (cons "style"  val)))
               (hfy-box-to-border-assoc (cddr spec))))))
 
