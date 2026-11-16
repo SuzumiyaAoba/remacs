@@ -162,10 +162,29 @@ DOC should be a doc string, and ARGS are keywords as applicable to
         ;; Create the table.
         (sqlite-execute
          multisession--db
-         "create table multisession (package text not null, key text not null, sequence number not null default 1, value text not null)")
+         "create table multisession (package text not null, key text not null, sequence number not null default 1, value text not null, deleted integer not null default 0)")
         (sqlite-execute
          multisession--db
-         "create unique index multisession_idx on multisession (package, key)")))))
+         "create unique index multisession_idx on multisession (package, key)"))
+      ;; Existing databases need a tombstone column so deletes can advance
+      ;; the same per-key sequence as writes.
+      (unless (member "deleted"
+                      (mapcar #'cadr
+                              (sqlite-select multisession--db
+                                             "pragma table_info(multisession)")))
+        (sqlite-execute multisession--db
+                        "alter table multisession add column deleted integer not null default 0")))))
+
+(defun multisession--cache-sqlite-row (object row)
+  (let ((sequence (cadr row)))
+    (if (= (nth 2 row) 1)
+        (setf (multisession--cached-value object)
+              (multisession--initial-value object)
+              (multisession--cached-sequence object) sequence)
+      (setf (multisession--cached-value object)
+            (car (read-from-string (car row)))
+            (multisession--cached-sequence object) sequence))
+    (multisession--cached-value object)))
 
 (cl-defmethod multisession-backend-value ((_type (eql 'sqlite)) object)
   (if (not (sqlite-available-p))
@@ -180,13 +199,10 @@ DOC should be a doc string, and ARGS are keywords as applicable to
                (car
                 (sqlite-select
                  multisession--db
-                 "select value, sequence from multisession where package = ? and key = ?"
+                 "select value, sequence, deleted from multisession where package = ? and key = ?"
                  id))))
           (if stored
-              (let ((value (car (read-from-string (car stored)))))
-                (setf (multisession--cached-value object) value
-                      (multisession--cached-sequence object) (cadr stored))
-                value)
+              (multisession--cache-sqlite-row object stored)
             ;; Nothing; return the initial value.
             (multisession--initial-value object))))
        ;; We have a value, but we want to update in case some other
@@ -196,13 +212,10 @@ DOC should be a doc string, and ARGS are keywords as applicable to
                (car
                 (sqlite-select
                  multisession--db
-                 "select value, sequence from multisession where sequence > ? and package = ? and key = ?"
+                 "select value, sequence, deleted from multisession where sequence > ? and package = ? and key = ?"
                  (cons (multisession--cached-sequence object) id)))))
           (if stored
-              (let ((value (car (read-from-string (car stored)))))
-                (setf (multisession--cached-value object) value
-                      (multisession--cached-sequence object) (cadr stored))
-                value)
+              (multisession--cache-sqlite-row object stored)
             ;; Nothing, return the cached value.
             (multisession--cached-value object))))
        ;; Just return the cached value.
@@ -237,7 +250,7 @@ DOC should be a doc string, and ARGS are keywords as applicable to
         (error "Unable to store unreadable value: %s" value))
       (sqlite-execute
        multisession--db
-       "insert into multisession(package, key, sequence, value) values(?, ?, 1, ?) on conflict(package, key) do update set sequence = sequence + 1, value = ?"
+       "insert into multisession(package, key, sequence, value, deleted) values(?, ?, 1, ?, 0) on conflict(package, key) do update set sequence = sequence + 1, value = ?, deleted = 0"
        (append id (list pvalue pvalue)))
       (setf (multisession--cached-sequence object)
             (caar (sqlite-select
@@ -252,15 +265,27 @@ DOC should be a doc string, and ARGS are keywords as applicable to
         (multisession--ensure-db)
         (sqlite-select
          multisession--db
-         "select package, key, value from multisession order by package, key")))
+         "select package, key, value from multisession where deleted = 0 order by package, key")))
 
 (cl-defmethod multisession--backend-delete ((_type (eql 'sqlite)) object)
-      (if (not (sqlite-available-p))
-          (cl-call-next-method)
-        (sqlite-execute multisession--db
-                        "delete from multisession where package = ? and key = ?"
-                        (list (multisession--package object)
-                              (multisession--key object)))))
+  (if (not (sqlite-available-p))
+      (cl-call-next-method)
+    (multisession--ensure-db)
+    (let ((id (list (multisession--package object)
+                    (multisession--key object))))
+      (with-sqlite-transaction multisession--db
+        (sqlite-execute
+         multisession--db
+         "insert into multisession(package, key, sequence, value, deleted) values(?, ?, 1, 'nil', 1) on conflict(package, key) do update set sequence = sequence + 1, value = 'nil', deleted = 1"
+         id)
+        (setf (multisession--cached-value object)
+              (multisession--initial-value object)
+              (multisession--cached-sequence object)
+              (caar (sqlite-select
+                     multisession--db
+                     "select sequence from multisession where package = ? and key = ?"
+                     id)))))
+    nil))
 
 ;; Files Backend
 
@@ -304,33 +329,71 @@ DOC should be a doc string, and ARGS are keywords as applicable to
            ".value")
    multisession-directory))
 
+(defun multisession--object-deletion-file-name (object)
+  (concat (multisession--object-file-name object) ".deleted"))
+
+(defun multisession--file-modification-time (file)
+  (when (file-exists-p file)
+    (let ((attributes (file-attributes file)))
+      (and attributes (file-attribute-modification-time attributes)))))
+
+(defun multisession--next-file-sequence-time (file)
+  (let ((time (current-time)))
+    (dolist (path (list file (concat file ".deleted")))
+      (let ((old-time (multisession--file-modification-time path)))
+        (when (and old-time
+                   (not (time-less-p (time-add old-time 1) time)))
+          ;; Keep updates distinguishable on file systems with coarse mtime
+          ;; resolution, including a set that follows a deletion.
+          (setq time (time-add old-time 1))))
+    time)))
+
 (cl-defmethod multisession-backend-value ((_type (eql 'files)) object)
-  (let ((file (multisession--object-file-name object)))
+  (let* ((file (multisession--object-file-name object))
+         (deleted-file (multisession--object-deletion-file-name object))
+         (file-time (multisession--file-modification-time file))
+         (deleted-time (multisession--file-modification-time deleted-file))
+         (cached-value (multisession--cached-value object)))
     (cond
      ;; We have no value yet; see whether it's stored.
-     ((eq (multisession--cached-value object) multisession--unbound)
-      (if (file-exists-p file)
-          (multisession--read-file-value file object)
-        ;; Nope; return the initial value.
-        (multisession--initial-value object)))
+     ((eq cached-value multisession--unbound)
+      (if (and deleted-time
+               (or (null file-time)
+                   (not (time-less-p deleted-time file-time))))
+          (progn
+            (setf (multisession--cached-value object)
+                  (multisession--initial-value object)
+                  (multisession--cached-sequence object) deleted-time)
+            (multisession--initial-value object))
+        (if file-time
+            (multisession--read-file-value file object)
+          ;; Nope, return the initial value.
+          (multisession--initial-value object))))
      ;; We have a value, but we want to update in case some other
      ;; Emacs instance has updated.
      ((multisession--synchronized object)
-      (if (and (file-exists-p file)
-               (time-less-p (multisession--cached-sequence object)
-                            (file-attribute-modification-time
-                             (file-attributes file))))
-          (multisession--read-file-value file object)
-        ;; Nothing, return the cached value.
-        (multisession--cached-value object)))
+      (cond
+       ((and deleted-time
+             (or (null file-time)
+                 (not (time-less-p deleted-time file-time)))
+             (time-less-p (multisession--cached-sequence object) deleted-time))
+        (setf (multisession--cached-value object)
+              (multisession--initial-value object)
+              (multisession--cached-sequence object) deleted-time)
+        (multisession--initial-value object))
+       ((and file-time
+             (time-less-p (multisession--cached-sequence object) file-time))
+        (multisession--read-file-value file object))
+       (t (multisession--cached-value object))))
      ;; Just return the cached value.
      (t
-      (multisession--cached-value object)))))
+      cached-value))))
 
 (cl-defmethod multisession--backend-set-value ((_type (eql 'files))
                                                object value)
-  (let ((file (multisession--object-file-name object))
-        (time (current-time)))
+  (let* ((file (multisession--object-file-name object))
+         (deleted-file (multisession--object-deletion-file-name object))
+         (time (multisession--next-file-sequence-time file)))
     ;; Ensure that the directory exists.
     (let ((dir (file-name-directory file)))
       (unless (file-exists-p dir)
@@ -352,7 +415,9 @@ DOC should be a doc string, and ARGS are keywords as applicable to
             (write-region-inhibit-fsync nil))
         (write-region (point-min) (point-max) temp nil 'silent)
         (set-file-times temp time)
-        (rename-file temp file t)))
+        (rename-file temp file t))
+      (when (file-exists-p deleted-file)
+        (delete-file deleted-file)))
     (setf (multisession--cached-sequence object) time
           (multisession--cached-value object) value)))
 
@@ -371,9 +436,26 @@ DOC should be a doc string, and ARGS are keywords as applicable to
            "\\.value\\'")))
 
 (cl-defmethod multisession--backend-delete ((_type (eql 'files)) object)
-  (let ((file (multisession--object-file-name object)))
+  (let* ((file (multisession--object-file-name object))
+         (deleted-file (multisession--object-deletion-file-name object))
+         (time (multisession--next-file-sequence-time file))
+         (dir (file-name-directory deleted-file)))
+    (unless (file-exists-p dir)
+      (make-directory dir t))
+    ;; Publish the tombstone before removing the value so synchronized readers
+    ;; cannot observe a missing file while retaining an older cached value.
+    (let ((temp (make-temp-name deleted-file))
+          (create-lockfiles nil)
+          (write-region-inhibit-fsync nil))
+      (write-region "deleted" nil temp nil 'silent)
+      (set-file-times temp time)
+      (rename-file temp deleted-file t))
     (when (file-exists-p file)
-      (delete-file file))))
+      (delete-file file))
+    (setf (multisession--cached-value object)
+          (multisession--initial-value object)
+          (multisession--cached-sequence object) time)
+    nil))
 
 ;; Mode for editing.
 
