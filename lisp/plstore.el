@@ -664,12 +664,63 @@ GnuPG key, silently save with symmetric encryption." ; (FIXME)
 	     "\n")
 	    ")")))
 
+(defun plstore--read-tail-valid-p (string start)
+  "Return non-nil if STRING after START contains only whitespace or comments."
+  (let ((position start)
+        (limit (length string))
+        (valid t))
+    (while (and valid (< position limit))
+      (let ((character (aref string position)))
+        (cond
+         ((memq character '(?\s ?\t ?\n ?\r ?\f ?\v))
+          (setq position (1+ position)))
+         ((eq character ?\;)
+          (while (and (< position limit)
+                      (not (eq (aref string position) ?\n)))
+            (setq position (1+ position))))
+         ((and (eq character ?#)
+               (< (1+ position) limit)
+               (eq (aref string (1+ position)) ?\;))
+          (let ((discarded
+                 (condition-case nil
+                     (read-from-string string (+ position 2))
+                   (error nil))))
+            (if discarded
+                (setq position (cdr discarded))
+              (setq valid nil))))
+         ((and (eq character ?#)
+               (< (1+ position) limit)
+               (eq (aref string (1+ position)) ?|))
+          (setq position (+ position 2))
+          (let ((depth 1))
+            (while (and (> depth 0) (< (1+ position) limit))
+              (cond
+               ((and (eq (aref string position) ?#)
+                     (eq (aref string (1+ position)) ?|))
+                (setq depth (1+ depth)
+                      position (+ position 2)))
+               ((and (eq (aref string position) ?|)
+                     (eq (aref string (1+ position)) ?#))
+                (setq depth (1- depth)
+                      position (+ position 2)))
+               (t
+                (setq position (1+ position)))))
+            (when (> depth 0)
+              (setq valid nil))))
+         (t
+          (setq valid nil)))))
+    valid))
+
 (defun plstore--decode (string)
   "Create a plstore instance from STRING.
 STRING should be the printed representation of a decoded alist of
 some plstore."
-  (let* ((alist (car (read-from-string string)))
-	 (pointer alist)
+  (let* ((read-result (read-from-string string))
+         (alist (car read-result))
+         (pointer
+          (if (plstore--read-tail-valid-p string (cdr read-result))
+              alist
+            (error "Trailing data in plstore contents")))
 	 secret-alist
 	 plist
 	 entry)
