@@ -1027,52 +1027,75 @@ FIXME: multiple comma-separated values should be allowed!"
   (declare (obsolete icalendar-read-dur-value "31.1"))
   (if isodurationstring
       (save-match-data
-        (string-match
-         (concat
-          "^P[+-]?\\("
-          "\\(\\([0-9]+\\)D\\)"         ; days only
-          "\\|"
-          "\\(\\(\\([0-9]+\\)D\\)?T\\(\\([0-9]+\\)H\\)?" ; opt days
-          "\\(\\([0-9]+\\)M\\)?\\(\\([0-9]+\\)S\\)?\\)"  ; mand. time
-          "\\|"
-          "\\(\\([0-9]+\\)W\\)"         ; weeks only
-          "\\)$") isodurationstring)
-        (let ((seconds 0)
+        (let ((sign 1)
+              (body nil)
+              (seconds 0)
               (minutes 0)
               (hours 0)
               (days 0)
-              (months 0)
-              (years 0))
+              (date-only nil)
+              (time-value nil))
+          (unless (and (string-match "^\\([+-]\\)?P\\(.*\\)\\'"
+                                    isodurationstring)
+                       (= (match-beginning 0) 0))
+            (error "Invalid ISO 8601 duration: %s" isodurationstring))
+          (setq sign (if (equal (match-string 1 isodurationstring) "-") -1 1)
+                body (match-string 2 isodurationstring))
           (cond
-           ((match-beginning 2)         ;days only
-            (setq days (read (substring isodurationstring
-                                        (match-beginning 3)
-                                        (match-end 3))))
-            (when duration-correction
-              (setq days (1- days))))
-           ((match-beginning 4)         ;days and time
-            (if (match-beginning 5)
-                (setq days (read (substring isodurationstring
-                                            (match-beginning 6)
-                                            (match-end 6)))))
-            (if (match-beginning 7)
-                (setq hours (read (substring isodurationstring
-                                             (match-beginning 8)
-                                             (match-end 8)))))
-            (if (match-beginning 9)
-                (setq minutes (read (substring isodurationstring
-                                               (match-beginning 10)
-                                               (match-end 10)))))
-	    ;; FIXME: Support subseconds.
-            (if (match-beginning 11)
-                (setq seconds (read (substring isodurationstring
-                                               (match-beginning 12)
-                                               (match-end 12))))))
-           ((match-beginning 13)        ;weeks only
-            (setq days (* 7 (read (substring isodurationstring
-                                             (match-beginning 14)
-                                             (match-end 14)))))))
-          (list seconds minutes hours days months years)))
+           ;; Weeks cannot be mixed with date or time components.
+           ((and (string-match "^\\([0-9]+\\)W\\'" body)
+                 (= (match-beginning 0) 0))
+            (setq days (* 7 (string-to-number (match-string 1 body)))))
+           ((and (string-match
+                  "^\\([0-9]+\\)D\\(?:T\\(.*\\)\\)?\\'" body)
+                 (= (match-beginning 0) 0))
+            (setq days (string-to-number (match-string 1 body))
+                  time-value (match-string 2 body)
+                  date-only (not time-value))
+            (when (and time-value (equal time-value ""))
+              (error "Invalid ISO 8601 duration: %s" isodurationstring)))
+           ((and (string-match "^T\\(.+\\)\\'" body)
+                 (= (match-beginning 0) 0))
+            (setq time-value (match-string 1 body)))
+           (t
+            (error "Invalid ISO 8601 duration: %s" isodurationstring)))
+          (when time-value
+            (let ((remaining time-value)
+                  (last-unit 0)
+                  (hour-p nil)
+                  (minute-p nil)
+                  (time-p nil))
+              (while (> (length remaining) 0)
+                (unless (and (string-match "^\\([0-9]+\\)\\([HMS]\\)" remaining)
+                             (= (match-beginning 0) 0))
+                  (error "Invalid ISO 8601 duration: %s" isodurationstring))
+                (let* ((amount (string-to-number (match-string 1 remaining)))
+                       (unit (upcase (match-string 2 remaining)))
+                       (unit-order (cond ((equal unit "H") 1)
+                                         ((equal unit "M") 2)
+                                         (t 3)))
+                       (rest (substring remaining (match-end 0))))
+                  (unless (> unit-order last-unit)
+                    (error "Invalid ISO 8601 duration: %s" isodurationstring))
+                  ;; Seconds after hours require an intervening minutes field.
+                  (when (and (equal unit "S") hour-p (not minute-p))
+                    (error "Invalid ISO 8601 duration: %s" isodurationstring))
+                  (setq last-unit unit-order
+                        time-p t
+                        remaining rest)
+                  (cond
+                   ((equal unit "H")
+                    (setq hours amount hour-p t))
+                   ((equal unit "M")
+                    (setq minutes amount minute-p t))
+                   (t
+                    (setq seconds amount)))))
+              (unless time-p
+                (error "Invalid ISO 8601 duration: %s" isodurationstring))))
+          (when (and duration-correction date-only)
+            (setq days (1- days)))
+          (list (* sign seconds) (* sign minutes) (* sign hours)
+                (* sign days) 0 0)))
     ;; isodatetimestring == nil
     nil))
 
