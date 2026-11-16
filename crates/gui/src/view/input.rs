@@ -729,6 +729,21 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         .flatten()
 }
 
+pub(super) fn mouse_up_position(
+    hit: Option<MousePosition>,
+    down: Option<MousePosition>,
+    release_x: i128,
+    release_y: i128,
+) -> Option<MousePosition> {
+    hit.or_else(|| {
+        down.map(|mut position| {
+            position.x = release_x;
+            position.y = release_y;
+            position
+        })
+    })
+}
+
 fn grid_base_font(grid: &Grid, window: &mut Window) -> (gpui::Font, Pixels) {
     let style = grid.default_style;
     let requested_family = style
@@ -1535,6 +1550,54 @@ mod tests {
         );
         assert_eq!(margin_area_hit(&grid, 1, 10), None);
         assert_eq!(margin_area_hit(&grid, 0, 4), None);
+    }
+
+    #[test]
+    fn mouse_up_without_a_hit_uses_the_down_position_and_release_coordinates() {
+        let down = MousePosition {
+            buffer_id: 7,
+            buffer_position: 19,
+            utf16_offset: 19,
+            x: 12,
+            y: 24,
+            row: 3,
+            column: 4,
+            window_id: Some(11),
+            area: None,
+            object: None,
+            timestamp: 5,
+            mode_line_buffer_name: false,
+        };
+
+        let position = mouse_up_position(None, Some(down), 101, 205).unwrap();
+        assert_eq!(position.buffer_id, down.buffer_id);
+        assert_eq!(position.buffer_position, down.buffer_position);
+        assert_eq!(position.window_id, down.window_id);
+        assert_eq!((position.x, position.y), (101, 205));
+    }
+
+    #[test]
+    fn mouse_up_hit_takes_precedence_over_the_down_position() {
+        let hit = MousePosition {
+            buffer_id: 9,
+            buffer_position: 27,
+            utf16_offset: 27,
+            x: 31,
+            y: 42,
+            row: 5,
+            column: 6,
+            window_id: Some(12),
+            area: Some(MouseArea::ModeLine),
+            object: None,
+            timestamp: 8,
+            mode_line_buffer_name: false,
+        };
+        let down = MousePosition {
+            buffer_id: 7,
+            ..hit
+        };
+
+        assert_eq!(mouse_up_position(Some(hit), Some(down), 101, 205), Some(hit));
     }
 
     #[test]

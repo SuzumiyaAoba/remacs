@@ -1718,7 +1718,7 @@ pub(super) struct EditorView {
     scroll_bar_drag: Option<ScrollBarDrag>,
     tab_bar_drag: Option<TabBarDrag>,
     follow_tooltip_drag: bool,
-    mouse_down_position: Option<remacs_runtime::frontend::MousePosition>,
+    mouse_down_positions: HashMap<MouseButton, MousePosition>,
     mouse_position_poll_started: bool,
     consumed_mouse_buttons: HashSet<MouseButton>,
     pressed_button: Option<PressedButton>,
@@ -1891,7 +1891,7 @@ impl EditorView {
             scroll_bar_drag: None,
             tab_bar_drag: None,
             follow_tooltip_drag: false,
-            mouse_down_position: None,
+            mouse_down_positions: HashMap::new(),
             mouse_position_poll_started: false,
             consumed_mouse_buttons: HashSet::new(),
             pressed_button: None,
@@ -2742,7 +2742,7 @@ impl Render for EditorView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.mouse_down_position = None;
+                    this.mouse_down_positions.remove(&MouseButton::Left);
                     this.pressed_button = None;
                     this.tab_bar_drag = None;
                     this.consumed_mouse_buttons.remove(&MouseButton::Left);
@@ -2815,7 +2815,8 @@ impl Render for EditorView {
                             window.scale_factor(),
                         )
                     }) {
-                        this.mouse_down_position = Some(position);
+                        this.mouse_down_positions
+                            .insert(MouseButton::Left, position);
                         let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
                             button: RemacsMouseButton::Left,
                             click_count: event.click_count,
@@ -2923,6 +2924,7 @@ impl Render for EditorView {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    let down_position = this.mouse_down_positions.remove(&MouseButton::Left);
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
                         let pressed = this.pressed_button.take();
                         let current =
@@ -3000,7 +3002,7 @@ impl Render for EditorView {
                         return;
                     }
                     let point = frame_content_point(event.position, window.viewport_size(), border);
-                    let position = point
+                    let hit = point
                         .and_then(|point| {
                             input::mouse_position_for_point_with_cell_width(
                                 &left_mouse_up_grid,
@@ -3016,17 +3018,14 @@ impl Render for EditorView {
                                     window.scale_factor(),
                                 )
                             })
-                        })
-                        .or_else(|| {
-                            this.mouse_down_position.map(|mut position| {
-                                position.x =
-                                    device_pixels(event.position.x - border, window.scale_factor());
-                                position.y =
-                                    device_pixels(event.position.y - border, window.scale_factor());
-                                position
-                            })
                         });
-                    this.mouse_down_position = None;
+                    let scale_factor = window.scale_factor();
+                    let position = input::mouse_up_position(
+                        hit,
+                        down_position,
+                        device_pixels(event.position.x - border, scale_factor),
+                        device_pixels(event.position.y - border, scale_factor),
+                    );
                     if let Some(position) = position {
                         let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
                             button: RemacsMouseButton::Left,
@@ -3044,6 +3043,7 @@ impl Render for EditorView {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|this, _event: &MouseUpEvent, window, cx| {
+                    this.mouse_down_positions.remove(&MouseButton::Left);
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
                         this.tab_bar_drag = None;
                         if let Some(event) = this
@@ -3077,6 +3077,7 @@ impl Render for EditorView {
                     element = element.on_mouse_down(
                         button,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.mouse_down_positions.remove(&button);
                             if button == MouseButton::Middle {
                                 this.middle_tab_close_index = None;
                             }
@@ -3123,6 +3124,7 @@ impl Render for EditorView {
                                     )
                                 })
                             }) {
+                                this.mouse_down_positions.insert(button, position);
                                 let _ = down_tx.send(GuiEvent::MouseDown {
                                     button: remacs_button,
                                     click_count: event.click_count,
@@ -3142,6 +3144,7 @@ impl Render for EditorView {
                     element = element.on_mouse_up(
                         button,
                         cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                            let down_position = this.mouse_down_positions.remove(&button);
                             if this.consumed_mouse_buttons.remove(&button) {
                                 if button == MouseButton::Middle
                                     && let Some(tab_index) = this.middle_tab_close_index.take()
@@ -3169,7 +3172,7 @@ impl Render for EditorView {
                             }
                             let point =
                                 frame_content_point(event.position, window.viewport_size(), border);
-                            if let Some(position) = point.and_then(|point| {
+                            let hit = point.and_then(|point| {
                                 input::mouse_position_for_point_with_cell_width(
                                     &up_grid, point, cell_width, window,
                                 )
@@ -3181,7 +3184,14 @@ impl Render for EditorView {
                                         window.scale_factor(),
                                     )
                                 })
-                            }) {
+                            });
+                            let scale_factor = window.scale_factor();
+                            if let Some(position) = input::mouse_up_position(
+                                hit,
+                                down_position,
+                                device_pixels(event.position.x - border, scale_factor),
+                                device_pixels(event.position.y - border, scale_factor),
+                            ) {
                                 let _ = up_tx.send(GuiEvent::MouseUp {
                                     button: remacs_button,
                                     click_count: event.click_count,
@@ -3199,6 +3209,7 @@ impl Render for EditorView {
                         element = element.on_mouse_up_out(
                             button,
                             cx.listener(move |this, _event: &MouseUpEvent, window, cx| {
+                                this.mouse_down_positions.remove(&button);
                                 if this.middle_tab_close_index.take().is_some() {
                                     this.consumed_mouse_buttons.remove(&button);
                                     window.prevent_default();
