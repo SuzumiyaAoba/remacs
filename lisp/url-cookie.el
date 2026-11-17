@@ -549,9 +549,17 @@ Compare names without regard to case.  With nil PREDICATE, accept any value."
         (setq result attribute)))))
 
 (defun url-cookie-handle-set-cookie (str)
-  (setq url-cookies-changed-since-last-save t)
-  (let* ((args (url-parse-args str t))
-	 (attributes (cdr args))
+  (let ((args (url-parse-args str t)))
+    ;; RFC 6265 section 5.2 ignores a Set-Cookie string without a name=value
+    ;; pair, and also ignores a pair with an empty name.
+    (if (not (and (consp args)
+                  (consp (car args))
+                  (stringp (caar args))
+                  (> (length (caar args)) 0)
+                  (stringp (cdar args))))
+        nil
+      (setq url-cookies-changed-since-last-save t)
+      (let* ((attributes (cdr args))
 	 (case-fold-search t)
 	 (secure (and (url-cookie--last-attribute "secure" attributes) t))
 	 (domain-attribute
@@ -662,7 +670,7 @@ Compare names without regard to case.  With nil PREDICATE, accept any value."
 			expires stored-domain localpart secure))
      (t
       (url-lazy-message "%s tried to set a cookie for domain %s - rejected."
-			(url-host url-current-object) domain)))))
+			(url-host url-current-object) domain)))))))
 
 (defvar url-cookie-timer nil)
 

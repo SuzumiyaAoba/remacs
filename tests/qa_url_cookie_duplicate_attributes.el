@@ -18,6 +18,21 @@
           (length (url-cookie-retrieve "example.com" "/second/file"))
           (length (url-cookie-retrieve "sub.example.com" "/dir/file")))))
 
+(defun qa-url-cookie--result (header)
+  (let ((url-cookie-storage nil)
+        (url-cookie-secure-storage nil)
+        (url-cookie-confirmation nil)
+        (url-cookie-trusted-urls nil)
+        (url-cookie-untrusted-urls nil)
+        (url-privacy-level nil)
+        (url-cookies-changed-since-last-save nil)
+        (url-current-object
+         (url-generic-parse-url "http://example.com/")))
+    (url-cookie-handle-set-cookie header)
+    (list (length (url-cookie-retrieve "example.com" "/"))
+          (url-cookie-generate-header-lines "example.com" "/" nil)
+          url-cookies-changed-since-last-save)))
+
 (qa (qa-url-cookie--duplicates "sid=v; Max-Age=0; mAx-AgE=3600") '(1 0 0 0))
 (qa (qa-url-cookie--duplicates "sid=v; Max-Age=3600; Max-Age=0") '(0 0 0 0))
 (qa (qa-url-cookie--duplicates
@@ -46,5 +61,11 @@
 (qa (qa-url-cookie--duplicates "Secure=v") '(1 0 0 0))
 (qa (mapcar #'car (url-parse-args "sid=v; Path=/first; Path=/second" t))
     '("sid" "Path" "Path"))
+
+;; RFC 6265 requires an '=' in the first name-value pair; empty values remain valid.
+(qa (qa-url-cookie--result "sid") '(0 "" nil))
+(qa (qa-url-cookie--result "sid; Path=/") '(0 "" nil))
+(qa (qa-url-cookie--result "=value") '(0 "" nil))
+(qa (qa-url-cookie--result "sid=") '(1 "Cookie: sid=\r\n" t))
 
 (princ (qa--done))
