@@ -2588,7 +2588,7 @@ parameter in the calendar."
 S should contain the printed representation of a value type in a \"VALUE=...\"
 property parameter.  If S represents a known type in `icalendar-value-types',
 it is read as the associated type symbol.  Otherwise S is returned unchanged."
-  (let ((type-assoc (assoc s icalendar-value-types)))
+  (let ((type-assoc (assoc-string s icalendar-value-types t)))
     (if type-assoc
         (cdr type-assoc)
       s)))
