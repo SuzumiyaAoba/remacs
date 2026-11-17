@@ -328,7 +328,7 @@ Return a modified address list."
             (setq address (replace-match "" nil nil address 2))))
         ;; If this address contains <...>, replace it with just
         ;; the part between the <...>.
-        (while (setq pos (string-match "\\(,\\s-*\\|\\`\\)\\([^,]*<\\([^>,:]*\\)>[^,]*\\)\\(\\s-*,\\|\\'\\)"
+        (while (setq pos (string-match "\\(,\\s-*\\|\\`\\)\\([^,]*<\\([^>,:]*\\(?:\\[[^]]*\\][^>,:]*\\)?\\)>[^,]*\\)\\(\\s-*,\\|\\'\\)"
                                        address))
           (setq address (replace-match (match-string 3 address)
                                        nil 'literal address 2)))
@@ -527,7 +527,20 @@ The buffer should be narrowed to just the headers."
 	 ;; A From: header can contain multiple addresses, a "From "
 	 ;; line must contain only one.  (Bug#7760)
 	 ;; See, e.g., RFC 5322, 3.6.2. Originator Fields.
-	 (end (string-match "[ \t]*[,\n]" from)))
+	 (end (let* ((newline (string-match "\\n" from))
+		    (separator (mail-dont-reply-to--next-separator from 0))
+		    (comma (cond ((eq (car-safe separator) 'comma)
+				  (cdr separator))
+				 ((eq (car-safe separator) 'unmatched-quote)
+				  (string-match "," from))))
+		    (pos (cond ((and comma newline) (min comma newline))
+			       (comma comma)
+			       (t newline))))
+	       (when pos
+		 (while (and (> pos 0)
+			     (memq (aref from (1- pos)) '(?\s ?\t)))
+		   (setq pos (1- pos)))
+		 pos))))
     (format "From %s %s\n" (if end
 			       (substring from 0 end)
 			     from)
