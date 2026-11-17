@@ -4021,7 +4021,9 @@ This function is called by the additional validator functions for
 component nodes (e.g. `icalendar-vevent-validator'); it is not normally
 necessary to call it directly."
   (let* ((rrule (icalendar-ast-node-first-child-of 'icalendar-rrule node))
-         (recval (when rrule (icalendar-ast-node-value rrule)))
+         (recval (when rrule
+                   (icalendar-ast-node-value
+                    (icalendar-ast-node-value rrule))))
          (dtstart (icalendar-ast-node-first-child-of 'icalendar-dtstart node))
          (start (when dtstart (icalendar-ast-node-value dtstart)))
          (rdates (icalendar-ast-node-children-of 'icalendar-rdate node))
@@ -4066,44 +4068,44 @@ necessary to call it directly."
                      "rules when `icalendar-dtstart' is a plain date")
              :node node)))
         (when until
-          (unless (eq (icalendar-ast-node-type start)
-                      (icalendar-ast-node-type until))
+          (unless (cl-typep until (icalendar-ast-node-type start))
             (icalendar-signal-validation-error
              (concat "`icalendar-rrule' UNTIL clause must agree with "
                      "type of `icalendar-dtstart' property")
              :node node))
-          (when (eq 'icalendar-date-time (icalendar-ast-node-type until))
-            (let ((until-zone
-                   (decoded-time-zone (icalendar-ast-node-value until)))
-                  (start-zone
-                   (decoded-time-zone (icalendar-ast-node-value start))))
-              ;; "If the "DTSTART" property is specified as a date
-              ;; with local time, then the UNTIL rule part MUST also
-              ;; be specified as a date with local time":
-              (when (and (null start-zone) (not (null until-zone)))
+          (when (cl-typep until 'icalendar-date-time)
+            (let* ((until-zone (decoded-time-zone until))
+                   (start-zone
+                    (decoded-time-zone (icalendar-ast-node-value start)))
+                   (start-has-tzid
+                    (icalendar-ast-node-first-child-of
+                     'icalendar-tzidparam dtstart))
+                   (local-observance
+                    (memq (icalendar-ast-node-type node)
+                          '(icalendar-standard icalendar-daylight))))
+              (cond
+               (local-observance
+                ;; STANDARD and DAYLIGHT DTSTART values are local, but
+                ;; their UNTIL values must always be UTC.
+                (unless (icalendar-date-time-is-utc-p until)
+                  (icalendar-signal-validation-error
+                   (concat "`icalendar-rrule' UNTIL clause must be in UTC time "
+                           "in `icalendar-standard' and `icalendar-daylight' components")
+                   :node node)))
+               ((or start-has-tzid start-zone)
+                ;; UTC DTSTARTs and local DTSTARTs qualified by TZID both
+                ;; require UNTIL in UTC.
+                (unless (icalendar-date-time-is-utc-p until)
+                  (icalendar-signal-validation-error
+                   (concat "`icalendar-rrule' UNTIL clause must be in UTC time "
+                           "if `icalendar-dtstart' has a defined time zone")
+                   :node node)))
+               (until-zone
+                ;; Floating DTSTARTs require floating UNTIL values.
                 (icalendar-signal-validation-error
-                  (concat "`icalendar-rrule' UNTIL clause must be in "
-                          "local time if `icalendar-dtstart' is")
-                  :node node))
-              ;; "If the "DTSTART" property is specified as a date
-              ;; with UTC time or a date with local time and time zone
-              ;; reference, then the UNTIL rule part MUST be specified
-              ;; as a date with UTC time":
-              (when (and (integerp start-zone)
-                         (not (icalendar-date-time-is-utc-p until)))
-                (icalendar-signal-validation-error
-                  (concat "`icalendar-rrule' UNTIL clause must be in UTC time "
-                          "if `icalendar-dtstart' has a defined time zone")
-                  :node node))))
-          (when (memq (icalendar-ast-node-type node) '(icalendar-standard icalendar-daylight))
-            ;; "In the case of the "STANDARD" and "DAYLIGHT"
-            ;; sub-components the UNTIL rule part MUST always be
-            ;; specified as a date with UTC time":
-            (unless (icalendar-date-time-is-utc-p until)
-              (icalendar-signal-validation-error
-               (concat "`icalendar-rrule' UNTIL clause must be in UTC time in "
-                       "`icalendar-standard' and `icalendar-daylight' components")
-               :node node))))
+                 (concat "`icalendar-rrule' UNTIL clause must be in "
+                         "local time if `icalendar-dtstart' is")
+                 :node node))))))
 
         ;; "DTSTART in this usage [i.e., in STANDARD and DAYLIGHT
         ;; subcomponents] MUST be specified as a date with a local
