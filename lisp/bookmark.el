@@ -1895,8 +1895,11 @@ unique numeric suffixes \"<2>\", \"<3>\", etc."
 	  ;; matches FILE.  `bookmark-save' can ignore this key.
 	  ;; Would this be a useful option?
 	  (if overwrite
-	      (setq bookmark-alist blist
-		    bookmark-alist-modification-count 0)
+	      (progn
+		(dolist (bookmark bookmark-alist)
+		  (bookmark--remove-fringe-mark (cdr bookmark)))
+		(setq bookmark-alist blist
+		      bookmark-alist-modification-count 0))
 	    (bookmark-import-new-list blist)
 	    (setq bookmark-alist-modification-count
 		  (1+ bookmark-alist-modification-count)))
