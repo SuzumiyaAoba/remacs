@@ -437,7 +437,8 @@ data in ERROR-PLIST, if `icalendar-debug-level' is
                        error-plist))))
     ;; Make sure buffer name doesn't take too much space:
     (when (< 8 (length name))
-      (if (equal " *UNFOLDED:" (substring name 0 11))
+      (if (and (<= 11 (length name))
+               (equal " *UNFOLDED:" (substring name 0 11)))
           (put-text-property 0 11 'display "..." name)
         (put-text-property 9 (length name) 'display "..." name)))
     (format "(%s)%s:%s: %s\n%s" level name pos message debug-info)))
