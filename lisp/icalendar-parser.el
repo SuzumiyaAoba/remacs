@@ -2080,9 +2080,15 @@ with `decode-time' and related functions."
 (defun icalendar-maybe-quote-param-value (s &optional always)
   "Add quotes around param value string S if required.
 If ALWAYS is non-nil, add quotes to S regardless of its contents."
+  (unless (and (stringp s)
+               (string-match-p
+                (rx string-start (zero-or-more icalendar-qsafe-char) string-end)
+                s))
+    (icalendar-signal-print-error
+     "Parameter value contains a character that cannot be quoted"))
   (if (or always
-          (not (string-match (rx icalendar-paramtext) s))
-          (< (match-end 0) (length s)))
+          (not (string-match-p
+                (rx string-start icalendar-paramtext string-end) s)))
       (concat "\"" s "\"")
     s))
 
