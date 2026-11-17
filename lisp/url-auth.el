@@ -282,14 +282,20 @@ DIRKEY should be obtained using `url-digest-auth-directory-id'.
 Realm keys match exactly; URL directory keys may inherit from ancestors."
   (or (assoc dirkey keylist)
       (and (eq (car-safe dirkey) 'directory)
-           (let ((directory (cdr dirkey)) match)
-             (while (and (null match) keylist)
-               (let ((cached-key (caar keylist)))
+           (let ((directory (cdr dirkey))
+                 (best-match nil)
+                 (best-length 0))
+             ;; Cache entries are most-recent-first; select the longest
+             ;; ancestor instead of depending on insertion order.
+             (dolist (entry keylist best-match)
+               (let* ((cached-key (car-safe entry))
+                      (cached-directory (cdr-safe cached-key)))
                  (when (and (eq (car-safe cached-key) 'directory)
-                            (string-prefix-p (cdr cached-key) directory))
-                   (setq match (car keylist))))
-               (setq keylist (cdr keylist)))
-             match))))
+                            (stringp cached-directory)
+                            (string-prefix-p cached-directory directory)
+                            (< best-length (length cached-directory)))
+                   (setq best-match entry
+                         best-length (length cached-directory)))))))))
 
 (defun url-digest-cached-key (url realm)
   "Find best match for URL and REALM from `url-digest-auth-storage'.
