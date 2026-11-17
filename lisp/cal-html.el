@@ -152,7 +152,8 @@
 
 (defun cal-html-href (link string)
   "Return a hyperlink to url LINK with text STRING."
-  (format "<A HREF=\"%s\">%s</A>" link string))
+  (format "<A HREF=\"%s\">%s</A>"
+          (cal-html-htmlify-attribute link) string))
 
 (defun cal-html-h3 (string)
   "Return STRING as html header h3."

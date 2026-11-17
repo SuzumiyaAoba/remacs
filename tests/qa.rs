@@ -84,6 +84,7 @@ qa!(
     "qa_calendar_date_from_day_of_year.el"
 );
 qa!(qa_cal_html_escape_custom_labels, "qa_cal_html_escape_custom_labels.el");
+qa!(qa_cal_html_href_attribute, "qa_cal_html_href_attribute.el");
 qa!(qa_cal_html_year_index_cols, "qa_cal_html_year_index_cols.el");
 qa!(qa_htmlfontify_escape_attributes, "qa_htmlfontify_escape_attributes.el");
 qa!(qa_htmlfontify_escape_family, "qa_htmlfontify_escape_family.el");
