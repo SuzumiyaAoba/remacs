@@ -239,8 +239,8 @@ for formatting."
                             (string-match
                              (rx bol "http" (? "s") "://" (* nonl)) i))
                        (let ((pos (point)))
-                         (insert i " ") ; avoid self-reference from the
-                                        ; nt-link thing
+                         (insert (if htmlish (xml-escape-string i) i) " ")
+                         ;; Avoid self-reference from the `nt-link' property.
                          (add-text-properties
                           pos (point)
                           (list 'mouse-face 'highlight
@@ -248,10 +248,12 @@ for formatting."
                                 'help-echo
                                 (format "mouse-2: visit (%s)" i)
                                 'keymap keymap)))
-                     (insert (format "%s" i))))
+                     (let ((text (format "%s" i)))
+                       (insert (if htmlish (xml-escape-string text) text)))))
                  contents))
           (t
-           (insert (format "%s" contents))))
+           (let ((text (format "%s" contents)))
+             (insert (if htmlish (xml-escape-string text) text)))))
     (if htmlish
         (insert "</li>")
       (insert "\n"))))
