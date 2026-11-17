@@ -1629,8 +1629,18 @@ probably because we were called from there."
   (let ((will-go (bookmark-get-bookmark bookmark-name 'noerror)))
     (bookmark--remove-fringe-mark will-go)
     (setq bookmark-alist (delq will-go bookmark-alist))
-    ;; Added by db, nil bookmark-current-bookmark if the last
-    ;; occurrence has been deleted
+    ;; `bookmark-current-bookmark' is buffer-local.  Clear references in
+    ;; every buffer only when its final record has been deleted.
+    (when (and will-go
+               (not (bookmark-get-bookmark bookmark-name 'noerror)))
+      (when (equal (default-value 'bookmark-current-bookmark) bookmark-name)
+        (setq-default bookmark-current-bookmark nil))
+      (dolist (buffer (buffer-list))
+        (with-current-buffer buffer
+          (when (and (local-variable-p 'bookmark-current-bookmark)
+                     (equal bookmark-current-bookmark bookmark-name))
+            (setq-local bookmark-current-bookmark nil)))))
+    ;; Also clear another stale name in the current buffer, if there is one.
     (or (bookmark-get-bookmark bookmark-current-bookmark 'noerror)
         (setq bookmark-current-bookmark nil)))
   (unless batch
