@@ -3475,6 +3475,7 @@ property's value, and both must specify times in the same way
                              icalendar-tzidparam
                              icalendar-rangeparam)
                :zero-or-more (icalendar-otherparam))
+  :other-validator icalendar-property-w/tzid-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4")
 
 (icalendar-define-property icalendar-related-to "RELATED-TO"

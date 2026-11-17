@@ -92,6 +92,7 @@ qa!(qa_htmlfontify_escape_box, "qa_htmlfontify_escape_box.el");
 qa!(qa_extract_rectangle_zero_width, "qa_extract_rectangle_zero_width.el");
 qa!(qa_icalendar_recurring_dtstart, "qa_icalendar_recurring_dtstart.el");
 qa!(qa_icalendar_rrule_until, "qa_icalendar_rrule_until.el");
+qa!(qa_icalendar_recurrence_id_tzid, "qa_icalendar_recurrence_id_tzid.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");
 qa!(qa_diary_icalendar_all_day_duration, "qa_diary_icalendar_all_day_duration.el");
