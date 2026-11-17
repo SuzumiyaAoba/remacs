@@ -3026,6 +3026,35 @@ times according to `diary-icalendar-time-zone-export-strategy'."
       (push (icalendar-make-property icalendar-duration dur-value) nodes))
     nodes))
 
+(defun diary-icalendar--valid-dates-in-year (months days year)
+  "Return the valid dates in YEAR selected by MONTHS and DAYS."
+  (let ((month-values (if (eq months t) (number-sequence 1 12) months))
+        (day-values (if (eq days t) (number-sequence 1 31) days)))
+    (mapcan
+     (lambda (month)
+       (mapcan
+        (lambda (day)
+          (let ((date (list month day year)))
+            (when (and (<= 0 year 9999)
+                       (calendar-date-is-valid-p date))
+              (list date))))
+        day-values))
+     month-values)))
+
+(defun diary-icalendar--first-valid-date (months days start-year)
+  "Return the first valid date selected by MONTHS and DAYS from START-YEAR."
+  (let* ((year (max 0 start-year))
+         ;; Gregorian leap-year patterns repeat every 400 years.
+         (last-year (min 9999 (+ year 399)))
+         dates)
+    (while (and (not dates) (<= year last-year))
+      (setq dates (diary-icalendar--valid-dates-in-year months days year))
+      (unless dates
+        (setq year (1+ year))))
+    (or (and dates (apply #'icalendar-date/time-min dates))
+        (diary-icalendar-signal-export-error
+         "No valid dates in diary-date recurrence"))))
+
 (defun diary-icalendar-dates-to-recurrence (months days years)
   "Convert values representing one or more dates to iCalendar recurrences.
 
@@ -3062,10 +3091,8 @@ nil, if MONTHS, DAYS and YEARS are all integers)."
              (setq freq 'YEARLY
                    bymonth months
                    bymonthday days
-                   dtstart
-                   (list (apply #'min months)
-                         (apply #'min days)
-                         diary-icalendar-recurring-start-year)))
+                   dtstart (diary-icalendar--first-valid-date
+                            months days diary-icalendar-recurring-start-year)))
             ;; The remaining cases are not representable as RRULEs,
             ;; because there is no BYYEAR clause.  So we generate an RDATE
             ;; covering each specified date.
@@ -3090,19 +3117,13 @@ nil, if MONTHS, DAYS and YEARS are all integers)."
                    rdates
                    (mapcan
                     (lambda (y)
-                      (mapcan
-                       (lambda (m)
-                         (mapcar
-                          (lambda (d) (list m d y))
-                          (if (listp days) days
-                            ;; days = t:
-                            (number-sequence 1 (calendar-last-day-of-month m y)))))
-                       (if (listp months) months
-                         ;; months = t:
-                         (number-sequence 1 12))))
-                    years)
-                   ;; ensure dtstart is the earliest recurrence:
-                   dtstart (apply #'icalendar-date/time-min rdates)
+                      (diary-icalendar--valid-dates-in-year months days y))
+                    years))
+             (unless rdates
+               (diary-icalendar-signal-export-error
+                "No valid dates in finite diary-date recurrence"))
+             ;; Ensure DTSTART is the earliest valid recurrence.
+             (setq dtstart (apply #'icalendar-date/time-min rdates)
                    rdates (seq-remove (apply-partially #'equal dtstart) rdates))))
 
       ;; Return the pair of nodes (DTSTART RRULE) or (DTSTART RDATE):
