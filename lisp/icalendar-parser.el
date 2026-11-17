@@ -945,15 +945,20 @@ for functions that work with this representation."
 S should be a match against rx `icalendar-time'."
   (require 'icalendar-utils) ; for icalendar-make-date-time; avoids circular require
   (declare-function icalendar-make-date-time "icalendar-utils")
-  (let ((hour (string-to-number (substring s 0 2)))
+  (let* ((utc-suffix (and (length= s 7) (substring s 6 7)))
+         (hour (string-to-number (substring s 0 2)))
         (minute (string-to-number (substring s 2 4)))
         (second (icalendar--normalize-leap-second
                   (string-to-number (substring s 4 6))))
-        (utcoffset (if (and (length= s 7)
-                            (equal "Z" (substring s 6 7)))
+        (utcoffset (if (or (equal "Z" utc-suffix)
+                           (and (not icalendar-parse-strictly)
+                                (equal "z" utc-suffix)))
                        t ; UTC
                      ;; unknown/'floating' time zone:
                      nil)))
+    (when (and icalendar-parse-strictly (equal "z" utc-suffix))
+      (icalendar-signal-parse-error
+       "TIME UTC marker must be uppercase Z"))
     (icalendar-make-date-time :second second
                          :minute minute
                          :hour hour
@@ -1041,7 +1046,9 @@ fields and DST are ignored when printed."
   "Read an `icalendar-date-time' from a string S.
 S should be a match against rx `icalendar-date-time'."
   (require 'icalendar-utils) ; for icalendar-make-date-time; avoids circular requires
-  (let ((year (string-to-number (substring s 0 4)))
+  (let* ((separator (substring s 8 9))
+         (utc-suffix (and (length= s 16) (substring s 15 16)))
+         (year (string-to-number (substring s 0 4)))
         (month (string-to-number (substring s 4 6)))
         (day (string-to-number (substring s 6 8)))
         ;; "T" is index 8
@@ -1049,11 +1056,18 @@ S should be a match against rx `icalendar-date-time'."
         (minute (string-to-number (substring s 11 13)))
         (second (icalendar--normalize-leap-second
                   (string-to-number (substring s 13 15))))
-        (utcoffset (if (and (length= s 16)
-                            (equal "Z" (substring s 15 16)))
+        (utcoffset (if (or (equal "Z" utc-suffix)
+                           (and (not icalendar-parse-strictly)
+                                (equal "z" utc-suffix)))
                        t ; UTC
                      ;; unknown/'floating' time zone:
                      nil)))
+    (when (and icalendar-parse-strictly (not (equal "T" separator)))
+      (icalendar-signal-parse-error
+       "DATE-TIME separator must be uppercase T"))
+    (when (and icalendar-parse-strictly (equal "z" utc-suffix))
+      (icalendar-signal-parse-error
+       "DATE-TIME UTC marker must be uppercase Z"))
     (icalendar-make-date-time :second second
                          :minute minute
                          :hour hour

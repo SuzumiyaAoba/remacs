@@ -100,6 +100,7 @@ qa!(qa_icalendar_print_error_once, "qa_icalendar_print_error_once.el");
 qa!(qa_icalendar_audio_attach_type, "qa_icalendar_audio_attach_type.el");
 qa!(qa_icalendar_email_attendee_mailto, "qa_icalendar_email_attendee_mailto.el");
 qa!(qa_icalendar_case_fold_boolean, "qa_icalendar_case_fold_boolean.el");
+qa!(qa_icalendar_date_time_case, "qa_icalendar_date_time_case.el");
 qa!(qa_icalendar_value_type_case, "qa_icalendar_value_type_case.el");
 qa!(qa_icalendar_rrule_weekday_case, "qa_icalendar_rrule_weekday_case.el");
 qa!(qa_icalendar_recurrences_window_repeat, "qa_icalendar_recurrences_window_repeat.el");
