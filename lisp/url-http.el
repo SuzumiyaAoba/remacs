@@ -393,7 +393,12 @@ Use `url-http-referer' as the Referer-header (subject to `url-privacy-level')."
                        ;; Bug#35969.
                        (not (equal "https" (url-type url-http-target-url))))
                   (let ((url (copy-sequence url-http-target-url)))
-                    (setf (url-host url) (puny-encode-domain (url-host url)))
+                    ;;Remacs: absolute-form request-targets must not contain
+                    ;; userinfo or fragments.
+                    (setf (url-user url) nil
+                          (url-password url) nil
+                          (url-target url) nil
+                          (url-host url) (puny-encode-domain (url-host url)))
                     (url-recreate-url url))
                 real-fname))
              " HTTP/" url-http-version "\r\n"
