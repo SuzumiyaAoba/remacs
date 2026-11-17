@@ -166,20 +166,36 @@ DT may be either an `icalendar-date' or an `icalendar-date-time'."
     (icalendar-date (calendar-extract-day dt))
     (icalendar-date-time (decoded-time-day dt))))
 
+(defun icalendar--week-start-of-year (year weekstart)
+  "Return the absolute day that begins YEAR's first WEEKSTART week."
+  (let* ((jan4 (list 1 4 year))
+         (jan4-absolute (calendar-absolute-from-gregorian jan4))
+         (jan4-weekday (calendar-day-of-week jan4)))
+    (- jan4-absolute (mod (- jan4-weekday weekstart) 7))))
+
 (defun icalendar-date/time-weekno (dt &optional weekstart)
-  "Return DT's ISO week number.
+  "Return DT's week number using WEEKSTART as the first day of the week.
 DT may be either an `icalendar-date' or an `icalendar-date-time'.
-WEEKSTART defaults to 1; it represents the day which starts the week,
-and should be an integer between 0 (= Sunday) and 6 (= Saturday)."
-  ;; TODO: Add support for weekstart.
-  ;; calendar-iso-from-absolute doesn't support this yet.
-  (when (and weekstart (not (= weekstart 1)))
-    (error "Support for WEEKSTART other than 1 (=Monday) not implemented yet"))
-  (let* ((gdate (icalendar-date/time-to-date dt))
-         (isodate (calendar-iso-from-absolute
-                   (calendar-absolute-from-gregorian gdate)))
-         (weekno (car isodate)))
-    weekno))
+WEEKSTART defaults to 1 (Monday) and should be an integer from 0
+(Sunday) to 6 (Saturday).  Week 1 is the first week containing at least
+four days of the calendar year."
+  (let* ((weekstart (or weekstart 1))
+         (_ (unless (and (integerp weekstart)
+                         (>= weekstart 0)
+                         (<= weekstart 6))
+              (error "WEEKSTART must be an integer from 0 to 6")))
+         (gdate (icalendar-date/time-to-date dt))
+         (absolute (calendar-absolute-from-gregorian gdate))
+         (year (nth 2 gdate))
+         (year-start (icalendar--week-start-of-year year weekstart))
+         (next-year-start (icalendar--week-start-of-year (1+ year) weekstart)))
+    (cond
+     ((< absolute year-start)
+      (/ (- year-start (icalendar--week-start-of-year (1- year) weekstart)) 7))
+     ((>= absolute next-year-start)
+      1)
+     (t
+      (1+ (/ (- absolute year-start) 7))))))
 
 (defun icalendar-date/time-weekday (dt)
   "Return DT's day of the week.
