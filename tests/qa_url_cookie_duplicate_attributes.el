@@ -33,6 +33,21 @@
           (url-cookie-generate-header-lines "example.com" "/" nil)
           url-cookies-changed-since-last-save)))
 
+(defun qa-url-cookie--idna-result (set-host request-host &optional domain)
+  (let ((url-cookie-storage nil)
+        (url-cookie-secure-storage nil)
+        (url-cookie-confirmation nil)
+        (url-cookie-trusted-urls nil)
+        (url-cookie-untrusted-urls nil)
+        (url-privacy-level nil)
+        (url-current-object
+         (url-generic-parse-url (concat "http://" set-host "/"))))
+    (url-cookie-handle-set-cookie
+     (concat "sid=x; Path=/" (if domain (concat "; Domain=" domain) "")))
+    (list (caar url-cookie-storage)
+          (url-cookie-generate-header-lines set-host "/" nil)
+          (url-cookie-generate-header-lines request-host "/" nil))))
+
 (qa (qa-url-cookie--duplicates "sid=v; Max-Age=0; mAx-AgE=3600") '(1 0 0 0))
 (qa (qa-url-cookie--duplicates "sid=v; Max-Age=3600; Max-Age=0") '(0 0 0 0))
 (qa (qa-url-cookie--duplicates
@@ -67,5 +82,17 @@
 (qa (qa-url-cookie--result "sid; Path=/") '(0 "" nil))
 (qa (qa-url-cookie--result "=value") '(0 "" nil))
 (qa (qa-url-cookie--result "sid=") '(1 "Cookie: sid=\r\n" t))
+
+;; Cookie identity uses canonical A-label domains in both directions (#2590).
+(qa (qa-url-cookie--idna-result "bücher.example" "xn--bcher-kva.example")
+    '("xn--bcher-kva.example" "Cookie: sid=x\r\n" "Cookie: sid=x\r\n"))
+(qa (qa-url-cookie--idna-result "xn--bcher-kva.example" "bücher.example")
+    '("xn--bcher-kva.example" "Cookie: sid=x\r\n" "Cookie: sid=x\r\n"))
+(qa (qa-url-cookie--idna-result
+     "bücher.example" "xn--bcher-kva.example" "xn--bcher-kva.example")
+    '(".xn--bcher-kva.example" "Cookie: sid=x\r\n" "Cookie: sid=x\r\n"))
+(qa (qa-url-cookie--idna-result
+     "xn--bcher-kva.example" "bücher.example" "bücher.example")
+    '(".xn--bcher-kva.example" "Cookie: sid=x\r\n" "Cookie: sid=x\r\n"))
 
 (princ (qa--done))

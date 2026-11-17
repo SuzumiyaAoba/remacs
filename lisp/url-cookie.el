@@ -172,6 +172,26 @@ Session cookies remain in memory but are not saved to disk."
         (when cookies
           (push (cons (car domain) cookies) result))))))
 
+(defun url-cookie--canonicalize-host-name (host)
+  "Return HOST in lowercase A-label form.
+Preserve a final dot, if any, while canonicalizing its domain labels."
+  ;;Remacs: use the same A-label form for storage and comparisons.
+  (if (not (stringp host))
+      host
+    (let* ((trailing-dot (string-suffix-p "." host))
+           (labels (if trailing-dot (substring host 0 -1) host)))
+      (concat (downcase (if (= (length labels) 0)
+                            labels
+                          (puny-encode-domain labels)))
+              (if trailing-dot "." "")))))
+
+(defun url-cookie--canonicalize-domain (domain)
+  "Return DOMAIN in lowercase A-label form, preserving its leading dot."
+  (if (and (stringp domain) (string-prefix-p "." domain))
+      (concat "." (url-cookie--canonicalize-host-name
+                    (substring domain 1)))
+    (url-cookie--canonicalize-host-name domain)))
+
 (defun url-cookie-write-file (&optional fname)
   (when (and url-cookies-changed-since-last-save
              url-cookie-file)
@@ -207,7 +227,8 @@ Session cookies remain in memory but are not saved to disk."
   "Store a cookie."
   (prog1
       (when (> (length name) 0)
-    (let* ((storage-var (if secure 'url-cookie-secure-storage
+    (let* ((domain (url-cookie--canonicalize-domain domain))
+           (storage-var (if secure 'url-cookie-secure-storage
                           'url-cookie-storage))
            (other-var (if secure 'url-cookie-storage
                         'url-cookie-secure-storage))
@@ -434,8 +455,8 @@ Session cookies remain in memory but are not saved to disk."
   ;; preserve host-only semantics.
   "Return non-nil if HOST matches DOMAIN.
 When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
-  (let ((host (downcase host))
-	(domain (downcase domain)))
+  (let ((host (url-cookie--canonicalize-host-name host))
+	(domain (url-cookie--canonicalize-host-name domain)))
     (or (string= host domain)
 	(and include-subdomains
 	     ;; RFC 6265 §5.1.3 allows suffix matching only for host names.
@@ -531,10 +552,11 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
   :type '(repeat regexp))
 
 (defun url-cookie-host-can-set-p (host domain)
-  (let ((domain (if (and (> (length domain) 0)
-			 (eq ?. (aref domain 0)))
-		    (substring domain 1)
-		  domain)))
+  (let* ((domain (if (and (> (length domain) 0)
+			  (eq ?. (aref domain 0)))
+		     (substring domain 1)
+		   domain))
+	       (domain (url-cookie--canonicalize-host-name domain)))
     (cond
      ((and (> (length domain) 0)
 	   (url-cookie--domain-match-p host domain))
@@ -582,10 +604,11 @@ Compare names without regard to case.  With nil PREDICATE, accept any value."
 		      (cdr-safe domain-attribute)
 		    (url-host url-current-object)))
 	 (domain-without-leading-dot
-	  (if (and (> (length domain) 0)
-	           (eq ?. (aref domain 0)))
-	      (substring domain 1)
-	    domain))
+	  (url-cookie--canonicalize-host-name
+	   (if (and (> (length domain) 0)
+	            (eq ?. (aref domain 0)))
+	       (substring domain 1)
+	     domain)))
 	 ;; RFC 6265 §5.3 turns an exact-host public-suffix Domain attribute
 	 ;; into an empty attribute, making the cookie host-only.
 	 (host-only-domain
@@ -594,7 +617,7 @@ Compare names without regard to case.  With nil PREDICATE, accept any value."
 	       (url-cookie--domain-match-p
 	        (url-host url-current-object) domain-without-leading-dot)
 	       (not (url-domsuf-cookie-allowed-p
-	             (downcase domain-without-leading-dot)))))
+	             domain-without-leading-dot))))
 	 ;; A leading dot records a Domain attribute; no dot means host-only.
 	 (stored-domain
 	  (if (and domain-attribute
