@@ -662,6 +662,7 @@ qa!(qa_package_vc_checkout_name, "qa_package_vc_checkout_name.el");
 qa!(qa_calc_mode_reentry_locals, "qa_calc_mode_reentry_locals.el");
 qa!(qa_calc_user_undefine_head, "qa_calc_user_undefine_head.el");
 qa!(qa_regex, "qa_regex.el");
+qa!(qa_rfc2047_helpers_loaded, "qa_rfc2047_helpers_loaded.el");
 qa!(qa_regex_properties, "qa_regex_properties.el");
 qa!(qa_regexp_classes, "qa_regexp_classes.el");
 qa!(qa_regexp_errors, "qa_regexp_errors.el");

@@ -978,12 +978,12 @@ ENCODED-WORD)."
 			      text
 			      (when (and have-output
 					 (not output-starts-with-space))
-				" "))))
+				" ")))))
 	(push part parts)
 	(when (> (length part) 0)
 	  (setq output-starts-with-space (eq (aref part 0) ? )))
 	(setq have-output t
-	      rest (cdr rest)))
+	      rest (cdr rest))))
     (when parts
       (mapconcat #'identity parts ""))))
 
@@ -1023,7 +1023,7 @@ ENCODED-WORD)."
                          (skip-chars-forward "^ \t\n,;<>:\"()[]")
                          (string-match-p
                           "@" (buffer-substring-no-properties
-                               start (point))))))))))))
+                               start (point)))))))))))))
 
 (defun rfc2047--field-body-start-p (position)
   "Return non-nil if POSITION immediately follows a header field name."
@@ -1044,7 +1044,7 @@ ENCODED-WORD)."
                (and address-mime (eq before ?\())))
            (or (= end (point-max))
                (memq after '(?\s ?\t ?\r ?\n))
-               (and address-mime (eq after ?\))))))))
+               (and address-mime (eq after ?\)))))))
 
 (defun rfc2047--encoded-word-has-text-p ()
   ;;Remacs: RFC 2047 requires at least one encoded-text character.
