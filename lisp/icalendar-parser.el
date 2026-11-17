@@ -1905,12 +1905,19 @@ values of this type with any other scheme."
 (defun icalendar-read-utc-offset (s)
   "Read a UTC offset from a string.
 S should be a match against rx `icalendar-utc-offset'"
-  (let ((sign (if (equal (substring s 0 1) "-") -1 1))
-        (nhours (string-to-number (substring s 1 3)))
-        (nminutes (string-to-number (substring s 3 5)))
-        (nseconds (if (length= s 7)
-                      (string-to-number (substring s 5 7))
-                    0)))
+  (let* ((negative (equal (substring s 0 1) "-"))
+         (sign (if negative -1 1))
+         (nhours (string-to-number (substring s 1 3)))
+         (nminutes (string-to-number (substring s 3 5)))
+         (nseconds (if (length= s 7)
+                       (string-to-number (substring s 5 7))
+                     0)))
+    (when (or (> nhours 23)
+              (> nminutes 59)
+              (> nseconds 59)
+              (and negative
+                   (zerop nhours) (zerop nminutes) (zerop nseconds)))
+      (icalendar-signal-parse-error (format "Invalid UTC-OFFSET value: %s" s)))
     (* sign (+ nseconds (* 60 nminutes) (* 60 60 nhours)))))
 
 (defun icalendar-print-utc-offset (utcoff)
@@ -1932,7 +1939,7 @@ When printed, a sign followed by a string of digits, like +HHMM
 or -HHMMSS.  When read, an integer representing the number of
 seconds offset from UTC.  This representation is for compatibility
 with `decode-time' and related functions."
-  '(integer -999999 999999)
+  '(integer -86399 86399)
   (seq (or ?+ ?-) ; + is not optional for positive values!
        (= 4 digit) ; HHMM
        (zero-or-one (= 2 digit))) ; SS

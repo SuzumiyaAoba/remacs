@@ -91,6 +91,11 @@
         t)
     (error nil)))
 
+(defun qa-icalendar-duration--utc-offset-valid-p (text)
+  (condition-case nil
+      (progn (icalendar-parse-from-string 'icalendar-utc-offset text) t)
+    (error nil)))
+
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
       "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250102T100000Z")))
@@ -289,6 +294,17 @@
 (qa (qa-icalendar-duration--geo-valid-p "0.0;-181.0") nil)
 (qa (qa-icalendar-duration--geo-valid-p "90.0;180.0") t)
 (qa (qa-icalendar-duration--geo-valid-p "-90.0;-180.0") t)
+
+;; UTC-OFFSET fields and negative zero are constrained by RFC 5545 (#2531).
+(qa (qa-icalendar-duration--utc-offset-valid-p "+2500") nil)
+(qa (qa-icalendar-duration--utc-offset-valid-p "+0060") nil)
+(qa (qa-icalendar-duration--utc-offset-valid-p "+000060") nil)
+(qa (qa-icalendar-duration--utc-offset-valid-p "-0000") nil)
+(qa (qa-icalendar-duration--utc-offset-valid-p "-000000") nil)
+(qa (qa-icalendar-duration--utc-offset-valid-p "+0000") t)
+(qa (qa-icalendar-duration--utc-offset-valid-p "+2359") t)
+(qa (qa-icalendar-duration--utc-offset-valid-p "+235959") t)
+(qa (qa-icalendar-duration--utc-offset-valid-p "-000001") t)
 
 ;; STATUS and ATTENDEE PARTSTAT use their component-specific value sets (#2529/#2530).
 (qa (qa-icalendar-duration--component-valid-p
