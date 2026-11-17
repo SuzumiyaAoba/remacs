@@ -2927,7 +2927,7 @@ beginning of the next content line."
         (icalendar-ast-node-meta-set node :original-name property-name))
 
       ;; Set point up for the next property parser.
-      (while (not (bolp))
+      (while (and (< (point) (point-max)) (not (bolp)))
         (forward-char))
 
       ;; Return the syntax node
