@@ -757,6 +757,7 @@ qa!(qa_mailcap_display_test, "qa_mailcap_display_test.el");
 qa!(qa_mail_unquote_printable_incomplete, "qa_mail_unquote_printable_incomplete.el");
 qa!(qa_mail_dont_reply_to_domain_literal, "qa_mail_dont_reply_to_domain_literal.el");
 qa!(qa_mail_mbox_from_domain_literal, "qa_mail_mbox_from_domain_literal.el");
+qa!(qa_mailclient_charset_parameter_order, "qa_mailclient_charset_parameter_order.el");
 qa!(qa_tool_bar_height, "qa_tool_bar_height.el");
 qa!(qa_modula2_pointer_tokens, "qa_modula2_pointer_tokens.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");

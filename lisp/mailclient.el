@@ -129,11 +129,6 @@ The mail client is taken to be the handler of mailto URLs."
 		  (< (point) delimline))
 	(replace-match "\n"))
       (let ((case-fold-search t)
-	    (mime-charset-pattern
-	     (concat
-	      "^content-type:[ \t]*text/plain;"
-	      "\\(?:[ \t\n]*\\(?:format\\|delsp\\)=\"?[-a-z0-9]+\"?;\\)*"
-	      "[ \t\n]*charset=\"?\\([^ \t\n\";]+\\)\"?"))
 	    coding-system
 	    character-coding
 	    ;; Use the external browser function to send the
@@ -156,9 +151,17 @@ The mail client is taken to be the handler of mailto URLs."
                 (error "Choose a different `send-mail-function' to send attachments")))
 	    (goto-char (point-min))
 	    (setq coding-system
-		  (if (re-search-forward mime-charset-pattern nil t)
-		      (coding-system-from-name (match-string 1))
-		    'undecided))
+	      (let* ((content-type (mail-fetch-field "content-type"))
+	             (parsed-type
+	              (and content-type
+	                   (mail-header-parse-content-type content-type)))
+	             (charset
+	              (and (consp parsed-type)
+	                   (string= (car parsed-type) "text/plain")
+	                   (mail-content-type-get parsed-type 'charset))))
+	        (if charset
+	            (coding-system-from-name charset)
+	          'undecided)))
 	    (setq character-coding
 		  (mail-fetch-field "content-transfer-encoding"))
 	    (when character-coding
