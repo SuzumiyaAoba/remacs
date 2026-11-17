@@ -3917,6 +3917,45 @@ necessary to call it directly."
     ;; Success:
     node))
 
+(defun icalendar--date-time-form (value tzid)
+  "Return a description of the DATE-TIME representation in VALUE and TZID."
+  (let ((zone (decoded-time-zone value)))
+    (cond (tzid (cons 'tzid tzid))
+          ((eq zone t) 'utc)
+          ((null zone) 'floating)
+          (t (cons 'zone zone)))))
+
+(defun icalendar--validate-end-after-start (start-node end-node end-type component)
+  "Validate that END-NODE is later than START-NODE in COMPONENT.
+END-TYPE names the property represented by END-NODE.  If either property
+is absent, do nothing."
+  (when (and start-node end-node)
+    (require 'icalendar-utils)
+    (declare-function icalendar-date/time< "icalendar-utils")
+    (icalendar-with-property start-node
+        ((icalendar-tzidparam :first start-tzid))
+      (let ((start-type value-type)
+            (start-value value))
+        (icalendar-with-property end-node
+            ((icalendar-tzidparam :first end-tzid))
+          (unless (eq start-type value-type)
+            (icalendar-signal-validation-error
+             (format "`%s' and `icalendar-dtstart' properties must have the same value type"
+                     end-type)
+             :node component))
+          (when (eq start-type 'icalendar-date-time)
+            (unless (equal (icalendar--date-time-form start-value start-tzid)
+                           (icalendar--date-time-form value end-tzid))
+              (icalendar-signal-validation-error
+               (format "`%s' and `icalendar-dtstart' properties must use the same local/UTC form"
+                       end-type)
+               :node component)))
+          (unless (icalendar-date/time< start-value value)
+            (icalendar-signal-validation-error
+             (format "`%s' must be later in time than `icalendar-dtstart'"
+                     end-type)
+             :node component)))))))
+
 (defun icalendar-vevent-validator (node)
   "Additional validator for an `icalendar-vevent' NODE.
 Checks that NODE has does not have both `icalendar-duration' and
@@ -3938,18 +3977,21 @@ VEVENT nodes; it is not normally necessary to call it directly."
        (concat "`icalendar-dtend' and `icalendar-duration' properties must "
                "not appear in the same `icalendar-vevent'")
        :node node))
-    ;; don't allow time-based durations with dates
-    ;; TODO: check that the standard disallows this...?
+    ;; RFC 5545 section 3.8.2.5 requires durations related to DATE-valued
+    ;; DTSTART properties to use only days or weeks.
     (when (and dtstart duration
-               (eq 'icalendar-date (icalendar-ast-node-type dtstart))
-               (or (not (integerp dur-value))
-                   (decoded-time-hour dur-value)
-                   (decoded-time-minute dur-value)
-                   (decoded-time-second dur-value)))
+               (eq 'icalendar-date
+                   (icalendar-ast-node-type (icalendar-ast-node-value dtstart)))
+               (and (not (integerp dur-value))
+                    (or (/= (decoded-time-hour dur-value) 0)
+                        (/= (decoded-time-minute dur-value) 0)
+                        (/= (decoded-time-second dur-value) 0))))
       (icalendar-signal-validation-error
        (concat "Event with `icalendar-date' value in `icalendar-dtstart' "
                "cannot have time units in `icalendar-duration'")
        :node node))
+
+    (icalendar--validate-end-after-start dtstart dtend 'icalendar-dtend node)
 
   (icalendar-rrule-validator node)
   ;; success:
@@ -4027,7 +4069,23 @@ VTODO nodes; it is not normally necessary to call it directly."
       (icalendar-signal-validation-error
        (concat "`icalendar-duration' requires `icalendar-dtstart' "
                "property in the same `icalendar-vtodo'")
-       :node node)))
+       :node node))
+    ;; Like VEVENT, a DATE-valued start may only be paired with a duration
+    ;; expressed in days or weeks.
+    (when (and dtstart duration
+               (eq 'icalendar-date
+                   (icalendar-ast-node-type (icalendar-ast-node-value dtstart)))
+               (let ((dur-value (icalendar-ast-node-value
+                                 (icalendar-ast-node-value duration))))
+                 (and (not (integerp dur-value))
+                      (or (/= (decoded-time-hour dur-value) 0)
+                          (/= (decoded-time-minute dur-value) 0)
+                          (/= (decoded-time-second dur-value) 0)))))
+      (icalendar-signal-validation-error
+       (concat "To-do with `icalendar-date' value in `icalendar-dtstart' "
+               "cannot have time units in `icalendar-duration'")
+       :node node))
+    (icalendar--validate-end-after-start dtstart due 'icalendar-due node))
   (icalendar-rrule-validator node)
   ;; success:
   node)

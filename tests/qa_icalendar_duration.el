@@ -41,4 +41,100 @@
       (error nil))
     t)
 
+;; Component end dates must match DTSTART's value type and time form, and
+;; must be strictly later (#2517, including the related VEVENT rule #2518).
+(require 'icalendar-parser)
+(require 'icalendar-utils)
+
+(defun qa-icalendar-duration--component-valid-p (text)
+  (with-temp-buffer
+    (insert text)
+    (goto-char (point-min))
+    (condition-case nil
+        (progn
+          (icalendar-ast-node-valid-p
+           (icalendar-parse-component (point-max)) t)
+          t)
+      (icalendar-validation-error nil))))
+
+(defun qa-icalendar-duration--component (component properties)
+  (format "BEGIN:%s\nUID:qa-end-order\nDTSTAMP:20250101T000000Z\n%s\nEND:%s"
+          component (mapconcat #'identity properties "\n") component))
+
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250102T100000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART:20250102T090000" "DUE:20250102T100000")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250101T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250102T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART:20250102T090000" "DUE:20250102T100000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART;VALUE=DATE:20250102"
+                "DUE:20250103T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART;VALUE=DATE:20250102"
+                "DUE;VALUE=DATE:20250103")))
+    t)
+
+;; A DATE DTSTART in VTODO also limits DURATION to whole days or weeks (#2516).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART;VALUE=DATE:20250102" "DURATION:PT1H")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART;VALUE=DATE:20250102" "DURATION:P1D")))
+    t)
+
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250102T090000Z" "DTEND:20250102T100000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250102T090000" "DTEND:20250102T100000")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250102T090000Z" "DTEND:20250101T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250102T090000" "DTEND:20250102T100000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART;VALUE=DATE:20250102"
+                 "DTEND:20250103T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART;VALUE=DATE:20250102"
+                 "DTEND;VALUE=DATE:20250103")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:PT1H")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:P1D")))
+    t)
+
 (princ (qa--done))
