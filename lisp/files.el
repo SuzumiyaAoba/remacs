@@ -9486,10 +9486,11 @@ for the specified category of users."
 	((eq char ?a) #o7777)
         (t (error "%c: Bad `who' character" char))))
 
-(defun file-modes-char-to-right (char &optional from)
+(defun file-modes-char-to-right (char &optional from directory)
   "Convert CHAR to a numeric value of mode bits.
 CHAR is in [rwxXstugo] and represents symbolic access permissions.
-If CHAR is in [Xugo], the value is taken from FROM (or 0 if omitted)."
+If CHAR is in [Xugo], the value is taken from FROM (or 0 if omitted).
+DIRECTORY is non-nil if FROM describes a directory."
   (or from (setq from 0))
   (cond ((eq char ?r) #o0444)
 	((eq char ?w) #o0222)
@@ -9497,7 +9498,11 @@ If CHAR is in [Xugo], the value is taken from FROM (or 0 if omitted)."
 	((eq char ?s) #o6000)
 	((eq char ?t) #o1000)
 	;; Rights relative to the previous file modes.
-	((eq char ?X) (if (= (logand from #o111) 0) 0 #o0111))
+	((eq char ?X)
+	 (if (or directory
+		 (/= (logand from #o111) 0))
+	     #o0111
+	   0))
 	((eq char ?u) (let ((uright (logand #o0700 from)))
 		        (+ uright (/ uright #o10) (/ uright #o100))))
 	((eq char ?g) (let ((gright (logand #o0070 from)))
@@ -9506,14 +9511,14 @@ If CHAR is in [Xugo], the value is taken from FROM (or 0 if omitted)."
 		        (+ oright (* oright #o10) (* oright #o100))))
         (t (error "%c: Bad right character" char))))
 
-(defun file-modes-rights-to-number (rights who-mask &optional from)
+(defun file-modes-rights-to-number (rights who-mask &optional from directory)
   "Convert a symbolic mode string specification to an equivalent number.
 RIGHTS is the symbolic mode spec, it should match \"([+=-][rwxXstugo]*)+\".
 WHO-MASK is the bit-mask specifying the category of users to which to
 apply the access permissions.  See `file-modes-char-to-who'.
 FROM (or 0 if nil) gives the mode bits on which to base permissions if
 RIGHTS request to add, remove, or set permissions based on existing ones,
-as in \"og+rX-w\"."
+as in \"og+rX-w\".  DIRECTORY is non-nil if FROM describes a directory."
   (let* ((num-rights (or from 0))
 	 (list-rights (string-to-list rights))
 	 (op (pop list-rights)))
@@ -9524,7 +9529,7 @@ as in \"og+rX-w\"."
 		     '(?r ?w ?x ?X ?s ?t ?u ?g ?o))
 	  (setq num-right
 		(logior num-right
-			(file-modes-char-to-right char-right num-rights))))
+			(file-modes-char-to-right char-right num-rights directory))))
 	(setq num-right (logand who-mask num-right)
 	      num-rights
 	      (cond ((= op ?+) (logior num-rights num-right))
@@ -9574,7 +9579,7 @@ the leading `-' character."
        (if (zerop (logand   1 mode)) ?- ?x)
      (if (zerop (logand   1 mode)) ?T ?t))))
 
-(defun file-modes-symbolic-to-number (modes &optional from)
+(defun file-modes-symbolic-to-number (modes &optional from directory)
   "Convert symbolic file modes to numeric file modes.
 MODES is the string to convert, it should match
 \"[ugoa]*([+=-][rwxXstugo]*)+,...\".
@@ -9582,7 +9587,7 @@ See Info node `(coreutils)File permissions' for more information on this
 notation.
 FROM (or 0 if nil) gives the mode bits on which to base permissions if
 MODES request to add, remove, or set permissions based on existing ones,
-as in \"og+rX-w\"."
+as in \"og+rX-w\".  DIRECTORY is non-nil if FROM describes a directory."
   (save-match-data
     (let ((case-fold-search nil)
 	  (num-modes (or from 0)))
@@ -9599,7 +9604,7 @@ as in \"og+rX-w\"."
 		(setq num-who (logior #o7000 (default-file-modes))))
 	      (setq num-modes
 		    (file-modes-rights-to-number (substring modes (match-end 1))
-						 num-who num-modes)
+						 num-who num-modes directory)
 		    modes (substring modes (match-end 3))))
 	  (error "Parse error in modes near `%s'" (substring modes 0))))
       num-modes)))
@@ -9635,7 +9640,8 @@ based on existing mode bits, as in \"og+rX-w\"."
                (string-to-number value 8))
               (octal-prefix-end
                (user-error "Invalid octal file mode: %s" value))
-              (t (file-modes-symbolic-to-number value modes)))))))
+              (t (file-modes-symbolic-to-number
+                  value modes (and orig-file (file-directory-p orig-file)))))))))
 
 (define-obsolete-variable-alias 'cache-long-line-scans
   'cache-long-scans "24.4")

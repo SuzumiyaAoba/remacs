@@ -546,7 +546,8 @@ has no effect on MS-Windows."
       (set-file-modes
        file
        (if num-modes num-modes
-	 (file-modes-symbolic-to-number modes (file-modes file 'nofollow)))
+	 (file-modes-symbolic-to-number modes (file-modes file 'nofollow)
+					(file-directory-p file)))
        'nofollow))
     (dired-do-redisplay arg))
   (dired-post-do-command))
