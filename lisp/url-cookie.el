@@ -142,17 +142,21 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
 
 (defun url-cookie-clean-up (&optional secure)
   (let ((var (if secure 'url-cookie-secure-storage 'url-cookie-storage))
-	new new-cookies)
+	new new-cookies removed)
     (dolist (cur (symbol-value var))
       (setq new-cookies nil)
       (dolist (cur-cookie (cdr cur))
-	(or (not (url-cookie-p cur-cookie))
-	    (url-cookie-expired-p cur-cookie)
-	    (setq new-cookies (cons cur-cookie new-cookies))))
+	(if (and (url-cookie-p cur-cookie)
+	         (not (url-cookie-expired-p cur-cookie)))
+	    (setq new-cookies (cons cur-cookie new-cookies))
+	  (setq removed t)))
       (when new-cookies
 	(setcdr cur new-cookies)
 	(setq new (cons cur new))))
-    (set var new)))
+    (set var new)
+    (when removed
+      ;;Remacs: keep expiry eviction dirty even when no cookie file is set.
+      (setq url-cookies-changed-since-last-save t))))
 
 (defun url-cookie--persistent-storage (storage)
   "Return a copy of STORAGE without session cookies.
@@ -201,7 +205,8 @@ Session cookies remain in memory but are not saved to disk."
 
 (defun url-cookie-store (name value &optional expires domain localpart secure)
   "Store a cookie."
-  (when (> (length name) 0)
+  (prog1
+      (when (> (length name) 0)
     (let* ((storage-var (if secure 'url-cookie-secure-storage
                           'url-cookie-storage))
            (other-var (if secure 'url-cookie-storage
@@ -258,7 +263,9 @@ Session cookies remain in memory but are not saved to disk."
               (secure
                (setq url-cookie-secure-storage (list (list domain tmp))))
               (t
-               (setq url-cookie-storage (list (list domain tmp)))))))))
+               (setq url-cookie-storage (list (list domain tmp))))))))
+    (url-cookie-clean-up)
+    (url-cookie-clean-up t)))
 
 (defconst url-cookie--cookie-date-months
   '(("jan" . 1) ("feb" . 2) ("mar" . 3) ("apr" . 4)
@@ -462,6 +469,8 @@ When INCLUDE-SUBDOMAINS is non-nil, require a DNS-label boundary."
 
 (defun url-cookie-retrieve (host &optional localpart secure)
   "Retrieve all cookies for a specified HOST and LOCALPART."
+  (url-cookie-clean-up)
+  (url-cookie-clean-up t)
   (let ((storage (if secure
                      (append url-cookie-secure-storage url-cookie-storage)
                    url-cookie-storage))
@@ -723,6 +732,8 @@ instead delete all cookies that do not match REGEXP."
   "Display a buffer listing the current URL cookies, if there are any.
 Use \\<url-cookie-mode-map>\\[url-cookie-delete] to remove cookies."
   (interactive)
+  (url-cookie-clean-up)
+  (url-cookie-clean-up t)
   (unless (or url-cookie-secure-storage
               url-cookie-storage)
     (error "No cookies are defined"))
