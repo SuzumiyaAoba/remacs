@@ -85,9 +85,6 @@
 ;; line. This is due to strange behavior in open-line. But it should
 ;; be easily avoided.
 
-;; The 'o tag is also a problem when including the region. This will
-;; be looked into.
-
 ;; There is a bug in some emacs versions that prevents completion from
 ;; working. If it doesn't work for you, send me a note indicating your
 ;; emacs version and your problems.
