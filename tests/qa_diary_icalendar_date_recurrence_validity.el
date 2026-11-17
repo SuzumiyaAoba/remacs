@@ -31,4 +31,31 @@
       (icalendar-diary-export-error t))
     t)
 
+;; GNU 31.1 currently emits invalid BYYEARDAY=0 for this case.  The offset
+;; must either be represented correctly or rejected before emitting a node.
+(defun qa--diary-offset-year-day (year-day ndays)
+  (let* ((nodes
+          (diary-icalendar-offset-sexp-to-nodes
+           `(diary-offset
+             (diary-rrule :start '(1 1 2025)
+                          :rule '((FREQ YEARLY) (BYYEARDAY (,year-day))))
+             ,ndays)))
+         (rrule-node (cadr nodes))
+         (value (icalendar-ast-node-value
+                 (icalendar-ast-node-value rrule-node))))
+    (list (caar (alist-get 'BYYEARDAY value))
+          (icalendar-rrule-value-p value))))
+
+(qa (qa--diary-offset-year-day 1 -1) '(-1 t))
+(qa (qa--diary-offset-year-day 1 -2) '(-2 t))
+(qa (qa--diary-offset-year-day -1 1) '(1 t))
+(qa (condition-case nil
+        (progn (qa--diary-offset-year-day 365 1) nil)
+      (icalendar-diary-export-error t))
+    t)
+(qa (condition-case nil
+        (progn (qa--diary-offset-year-day 366 -1) nil)
+      (icalendar-diary-export-error t))
+    t)
+
 (princ (qa--done))

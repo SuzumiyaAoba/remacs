@@ -2908,14 +2908,6 @@ recurrence rule values in these nodes are adjusted NDAYS forward."
                (format "Cannot export `diary-offset': inner SEXP %s contains %s"
                        inner-sexp
                        "BYMONTHDAY clause that could cross month bounds")))
-            (when (seq-some (lambda (yd)
-                              (or (and (< 0 yd) (< 365 (+ yd ndays)))
-                                  (and (< yd 0) (< 0 (+ yd ndays)))))
-                            ydays)
-              (diary-icalendar-signal-export-error
-               (format "Cannot export `diary-offset': inner SEXP %s contains %s"
-                       inner-sexp
-                       "BYYEARDAY clause that could cross year bounds")))
             ;; Adjust the rule's clauses to account for the offset:
             (when mdays
               (setf (alist-get 'BYMONTHDAY value)
@@ -2924,7 +2916,38 @@ recurrence rule values in these nodes are adjusted NDAYS forward."
             (when ydays
               (setf (alist-get 'BYYEARDAY value)
                     (list
-                     (mapcar (apply-partially #'+ ndays) ydays))))
+                     (mapcar
+                      (lambda (yd)
+                        (let ((shifted (+ yd ndays)))
+                          (cond
+                           ;; BYYEARDAY 366/-366 only denotes a date in leap
+                           ;; years.  Shifting it to an ordinary ordinal would
+                           ;; introduce occurrences in other years.
+                           ((and (/= ndays 0) (memq yd '(366 -366)))
+                            (diary-icalendar-signal-export-error
+                             (format
+                              "Cannot export `diary-offset': inner SEXP %s contains %s"
+                              inner-sexp
+                              "BYYEARDAY clause that could cross year bounds")))
+                           ;; Crossing the start of a year is expressible with
+                           ;; the opposite sign.  Zero itself is not a valid
+                           ;; BYYEARDAY value: 1 - 1 is the previous year's
+                           ;; final day (-1), and -1 + 1 is day 1.
+                           ((and (< 0 yd) (<= shifted 0)) (1- shifted))
+                           ((and (< yd 0) (>= shifted 0)) (1+ shifted))
+                           ;; At the other end, the shifted date depends on
+                           ;; whether the recurrence year is a leap year, so a
+                           ;; single BYYEARDAY value cannot preserve it.
+                           ((and (/= ndays 0)
+                                 (or (and (< 0 yd) (< 365 shifted))
+                                     (and (< yd 0) (< shifted -365))))
+                            (diary-icalendar-signal-export-error
+                             (format
+                              "Cannot export `diary-offset': inner SEXP %s contains %s"
+                              inner-sexp
+                              "BYYEARDAY clause that could cross year bounds")))
+                           (t shifted))))
+                      ydays))))
             (when dows
               (setf (alist-get 'BYDAY value)
                     (list
