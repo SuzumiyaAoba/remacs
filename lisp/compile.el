@@ -2026,6 +2026,144 @@ Keep a leading tilde literal, as the shell does inside double quotes."
           (concat "./" path)
         path))))
 
+(defun compilation--leading-cd-path (command)
+  "Return the raw path argument of a leading cd in COMMAND.
+Return `:not-cd' if COMMAND does not start with a cd command, and nil if
+that command has no path argument."
+  (let ((index 0)
+        (length (length command)))
+    (while (and (< index length)
+                (memq (aref command index) '(?\s ?\t ?\r ?\n)))
+      (setq index (1+ index)))
+    (if (not (and (<= (+ index 2) length)
+                  (string= (substring command index (+ index 2)) "cd")
+                  (or (= (+ index 2) length)
+                      (memq (aref command (+ index 2))
+                            '(?\s ?\t ?\r ?\n ?; ?&)))))
+        :not-cd
+      (setq index (+ index 2))
+      (while (and (< index length)
+                  (memq (aref command index) '(?\s ?\t)))
+        (setq index (1+ index)))
+      (if (or (= index length)
+              (memq (aref command index) '(?\r ?\n ?; ?&)))
+          nil
+        (let ((start index)
+              quote
+              done
+              unsupported-operator)
+          (while (and (< index length) (not done))
+            (let ((character (aref command index)))
+              (cond
+               ((eq quote 'single)
+                (when (= character ?')
+                  (setq quote nil))
+                (setq index (1+ index)))
+               ((eq quote 'double)
+                (cond ((= character ?\\)
+                       (setq index (min length (+ index 2))))
+                      ((= character ?\")
+                       (setq quote nil
+                             index (1+ index)))
+                      (t
+                       (setq index (1+ index)))))
+               ((= character ?')
+                (setq quote 'single
+                      index (1+ index)))
+               ((= character ?\")
+                (setq quote 'double
+                      index (1+ index)))
+               ((= character ?\\)
+                (setq index (min length (+ index 2))))
+               ((memq character '(?\s ?\t ?\r ?\n ?; ?&))
+                (setq done t))
+               ((memq character '(?| ?< ?>))
+                (setq done t
+                      unsupported-operator t))
+               (t
+                (setq index (1+ index))))))
+          (if (or quote unsupported-operator)
+              :not-cd
+            (substring command start index)))))))
+
+(defun compilation--unquote-shell-word (string)
+  "Unquote one shell word in STRING and expand its variables."
+  (let ((index 0)
+        (length (length string))
+        (word-start t)
+        tilde-expandable
+        segment
+        parts)
+    (while (< index length)
+      (let ((character (aref string index)))
+        (cond
+         ((= character ?')
+          (when segment
+            (push (substitute-env-vars (apply #'concat (nreverse segment)))
+                  parts)
+            (setq segment nil))
+          (setq word-start nil)
+          (let ((end (string-match "'" string (1+ index))))
+            (if end
+                (progn
+                  (push (substring string (1+ index) end) parts)
+                  (setq index (1+ end)))
+              (push (substring string (1+ index)) parts)
+              (setq index length))))
+         ((= character ?\")
+          (when segment
+            (push (substitute-env-vars (apply #'concat (nreverse segment)))
+                  parts)
+            (setq segment nil))
+          (let ((at-word-start word-start)
+                (start (1+ index))
+                (end (1+ index)))
+            (while (and (< end length)
+                        (/= (aref string end) ?\"))
+              (if (and (= (aref string end) ?\\)
+                       (< (1+ end) length))
+                  (setq end (+ end 2))
+                (setq end (1+ end))))
+            (let ((part (compilation--unquote-shell-double-quoted-path
+                         (substring string start end))))
+              (when (and (not at-word-start)
+                         (>= (length part) 3)
+                         (string= (substring part 0 3) "./~"))
+                (setq part (substring part 2)))
+              (push part parts))
+            (setq index (if (< end length) (1+ end) length)
+                  word-start nil)))
+         ((= character ?\\)
+          (when segment
+            (push (substitute-env-vars (apply #'concat (nreverse segment)))
+                  parts)
+            (setq segment nil))
+          (if (and (< (1+ index) length)
+                   (= (aref string (1+ index)) ?\n))
+              (setq index (+ index 2))
+            (if (< (1+ index) length)
+                (let ((escaped (aref string (1+ index))))
+                  (push (char-to-string escaped) parts)
+                  (setq index (+ index 2)
+                        word-start nil))
+              (push "\\" parts)
+              (setq index (1+ index)
+                    word-start nil))))
+         (t
+          (when (and word-start (= character ?~))
+            (setq tilde-expandable t))
+          (push (char-to-string character) segment)
+          (setq index (1+ index)
+                word-start nil)))))
+    (when segment
+      (push (substitute-env-vars (apply #'concat (nreverse segment))) parts))
+    (let ((path (apply #'concat (nreverse parts))))
+      (if (and (not tilde-expandable)
+               (> (length path) 0)
+               (= (aref path 0) ?~))
+          (concat "./" path)
+        path))))
+
 ;;;###autoload
 (defun compilation-start (command &optional mode name-function highlight-regexp
                                   continue)
@@ -2093,28 +2231,20 @@ Returns the compilation buffer created."
 	;; Then evaluate a cd command if any, but don't perform it yet, else
 	;; start-command would do it again through the shell: (cd "..") AND
 	;; sh -c "cd ..; make"
-	(cd (cond
-             ((not (string-match "\\`\\s *cd\\(?:\\s +\\('[^']*'\\|\"\\(?:[^\"`\\]\\|\\\\.\\)*\"\\|\\S +?\\)\\)?\\s *[;&\n]"
-                                 command))
-              default-directory)
-             ((not (match-end 1)) "~")
-             ((eq (aref command (match-beginning 1)) ?\')
-              (substring command (1+ (match-beginning 1))
-                         (1- (match-end 1))))
-             ((eq (aref command (match-beginning 1)) ?\")
-              (compilation--unquote-shell-double-quoted-path
-               (substring command (1+ (match-beginning 1))
-                          (1- (match-end 1)))))
-             ;; Try globbing as well (bug#15417).
-             (t (let* ((substituted-dir
-                        (substitute-env-vars (match-string 1 command)))
-                       ;; FIXME: This also tries to expand `*' that were
-                       ;; introduced by the envvar expansion!
-                       (expanded-dir
-                        (file-expand-wildcards substituted-dir)))
-                  (if (= (length expanded-dir) 1)
-                      (car expanded-dir)
-                    substituted-dir)))))
+	(cd (let ((cd-path (compilation--leading-cd-path command)))
+	      (cond
+	       ((eq cd-path :not-cd) default-directory)
+	       ((null cd-path) "~")
+	       ((not (string-match-p "[\"'\\\\]" cd-path))
+		;; Try globbing as well (bug#15417).
+		(let* ((substituted-dir (substitute-env-vars cd-path))
+		       ;; FIXME: This also tries to expand `*' that were
+		       ;; introduced by the envvar expansion!
+		       (expanded-dir (file-expand-wildcards substituted-dir)))
+		  (if (= (length expanded-dir) 1)
+		      (car expanded-dir)
+		    substituted-dir)))
+	       (t (compilation--unquote-shell-word cd-path)))))
         (if continue
             (progn
               ;; Save the point so we can restore it.
