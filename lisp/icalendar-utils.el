@@ -541,54 +541,77 @@ returned value will be of the same type as START.  DURATION should be an
     (icalendar-date-time
      (icalendar-date-time-add start duration vtimezone))))
 
+(defun icalendar--seconds-to-duration (seconds)
+  "Convert signed integer SECONDS to a normalized decoded-time duration."
+  (let* ((sign (if (< seconds 0) -1 1))
+         (magnitude (abs seconds))
+         (days (/ magnitude 86400))
+         (remainder-after-days (mod magnitude 86400))
+         (hours (/ remainder-after-days 3600))
+         (remainder-after-hours (mod remainder-after-days 3600))
+         (minutes (/ remainder-after-hours 60))
+         (seconds (mod remainder-after-hours 60)))
+    (make-decoded-time :day (* sign days)
+                       :hour (* sign hours)
+                       :minute (* sign minutes)
+                       :second (* sign seconds))))
+
 (defun icalendar-duration-between (start end)
   "Return the duration between START and END.
 
 START should be an `icalendar-date' or `icalendar-date-time'; END must
 be of the same type as START.  The returned value is an
 `icalendar-dur-value', i.e., a time delta in the sense of
-`decoded-time-add'."
+`decoded-time-add'.  If date-times have distinct explicit UTC offsets,
+the duration represents their elapsed time."
   (cl-typecase start
     (icalendar-date
      (make-decoded-time :day (- (calendar-absolute-from-gregorian end)
                                 (calendar-absolute-from-gregorian start))))
     (icalendar-date-time
-     (let* ((calendar-days
-             (- (calendar-absolute-from-gregorian
-                 (icalendar-date-time-to-date end))
-                (calendar-absolute-from-gregorian
-                 (icalendar-date-time-to-date start))))
-            (wall-delta
-             (- (+ (* 3600 (decoded-time-hour end))
-                   (* 60 (decoded-time-minute end))
-                   (decoded-time-second end))
-                (+ (* 3600 (decoded-time-hour start))
-                   (* 60 (decoded-time-minute start))
-                   (decoded-time-second start))))
-            ;; Use calendar days rather than 86400-second blocks so DST
-            ;; transitions do not change a same-clock-time day interval.
-            ;; Normalize the clock-time difference so all duration
-            ;; components have the same sign, as required by RFC 5545.
-            (days (cond ((and (> calendar-days 0) (< wall-delta 0))
-                         (1- calendar-days))
-                        ((and (< calendar-days 0) (> wall-delta 0))
-                         (1+ calendar-days))
-                        (t calendar-days)))
-            (time-delta (cond ((and (> calendar-days 0) (< wall-delta 0))
-                               (+ wall-delta (* 60 60 24)))
-                              ((and (< calendar-days 0) (> wall-delta 0))
-                               (- wall-delta (* 60 60 24)))
-                              (t wall-delta)))
-            (sign (if (< time-delta 0) -1 1))
-            (magnitude (abs time-delta))
-            (hours (/ magnitude (* 60 60)))
-            (remainder (mod magnitude (* 60 60)))
-            (minutes (/ remainder 60))
-            (seconds (mod remainder 60)))
-       (make-decoded-time :day days
-                          :hour (* sign hours)
-                          :minute (* sign minutes)
-                          :second (* sign seconds))))))
+     (let ((start-zone (decoded-time-zone start))
+           (end-zone (decoded-time-zone end)))
+       (if (and start-zone end-zone (not (equal start-zone end-zone)))
+           (icalendar--seconds-to-duration
+            (time-convert
+             (time-subtract (encode-time end) (encode-time start))
+             'integer))
+         (let* ((calendar-days
+                 (- (calendar-absolute-from-gregorian
+                     (icalendar-date-time-to-date end))
+                    (calendar-absolute-from-gregorian
+                     (icalendar-date-time-to-date start))))
+                (wall-delta
+                 (- (+ (* 3600 (decoded-time-hour end))
+                       (* 60 (decoded-time-minute end))
+                       (decoded-time-second end))
+                    (+ (* 3600 (decoded-time-hour start))
+                       (* 60 (decoded-time-minute start))
+                       (decoded-time-second start))))
+                ;; Use calendar days rather than 86400-second blocks so DST
+                ;; transitions do not change a same-clock-time day interval.
+                ;; Normalize the clock-time difference so all duration
+                ;; components have the same sign, as required by RFC 5545.
+                (days (cond ((and (> calendar-days 0) (< wall-delta 0))
+                             (1- calendar-days))
+                            ((and (< calendar-days 0) (> wall-delta 0))
+                             (1+ calendar-days))
+                            (t calendar-days)))
+                (time-delta (cond ((and (> calendar-days 0) (< wall-delta 0))
+                                   (+ wall-delta (* 60 60 24)))
+                                  ((and (< calendar-days 0) (> wall-delta 0))
+                                   (- wall-delta (* 60 60 24)))
+                                  (t wall-delta)))
+                (sign (if (< time-delta 0) -1 1))
+                (magnitude (abs time-delta))
+                (hours (/ magnitude (* 60 60)))
+                (remainder (mod magnitude (* 60 60)))
+                (minutes (/ remainder 60))
+                (seconds (mod remainder 60)))
+           (make-decoded-time :day days
+                              :hour (* sign hours)
+                              :minute (* sign minutes)
+                              :second (* sign seconds))))))))
 
 (defun icalendar-date/time-to-local (dt)
   "Reinterpret DT in Emacs local time if necessary.
