@@ -564,6 +564,56 @@ none of the parser functions are able to parse a value, an
        :position start))
     value))
 
+(defun icalendar--split-list-string (string separators omit-nulls trim)
+  "Split STRING on SEPARATORS outside quoted strings and escapes.
+OMIT-NULLS and TRIM match the corresponding split-string arguments."
+  (let* ((literal-separators
+          (cond ((null separators) ",;")
+                ((member separators '("," ";"))
+                 separators)))
+         (trim-regexp (or trim (string 34)))
+         (string-length (length string))
+         (position 0)
+         (start 0)
+         (quoted nil)
+         values)
+    (while (< position string-length)
+      (let ((char (aref string position)))
+        (cond
+         ((= char 92)
+          ;; A backslash protects the following separator character.
+          (setq position (min string-length (+ position 2))))
+         ((= char 34)
+          (setq quoted (not quoted)
+                position (1+ position)))
+         (quoted
+          (setq position (1+ position)))
+         (t
+          (let ((separator-end
+                 (if literal-separators
+                     (and (memq char (string-to-list literal-separators))
+                          (1+ position))
+                   (save-match-data
+                     (when (and separators
+                                (string-match separators string position)
+                                (= (match-beginning 0) position)
+                                (> (match-end 0) position))
+                       (match-end 0))))))
+            (if separator-end
+                (let ((value (string-trim
+                              (substring string start position)
+                              trim-regexp trim-regexp)))
+                  (unless (and omit-nulls (string-empty-p value))
+                    (push value values))
+                  (setq position separator-end
+                        start separator-end))
+              (setq position (1+ position))))))))
+    (let ((value (string-trim (substring string start string-length)
+                              trim-regexp trim-regexp)))
+      (unless (and omit-nulls (string-empty-p value))
+        (push value values)))
+    (nreverse values)))
+
 (defun icalendar-read-list-with (reader string
                             &optional value-regex separators omit-nulls trim)
   "Read a list of values from STRING with READER.
@@ -571,7 +621,8 @@ none of the parser functions are able to parse a value, an
 READER should be a reader function that accepts a single string argument.
 SEPARATORS, OMIT-NULLS, and TRIM are as in `split-string'.
 SEPARATORS defaults to \"[^\\][,;]\".  TRIM defaults to matching a
-double quote character.
+double quote character.  Separators inside double-quoted strings and
+separators escaped with a backslash are preserved.
 
 VALUE-REGEX should be a regular expression if READER assumes that
 individual substrings in STRING have previously been matched
@@ -591,9 +642,8 @@ before READER is called."
                    (icalendar-signal-parse-error
                     (format "Expected list of values matching '%s'" value-regex)))
                  (funcall reader (match-string 0))))))
-         (seps (or separators "[^\\][,;]"))
-         (trm (or trim "\""))
-         (raw-values (split-string string seps omit-nulls trm)))
+         (raw-values (icalendar--split-list-string
+                      string separators omit-nulls trim)))
 
     (unless (functionp reader)
       (signal 'icalendar-parser-error
