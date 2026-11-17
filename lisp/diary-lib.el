@@ -664,6 +664,7 @@ any entries were found."
               entry-start date-start specifier-start temp)
           (goto-char (point-min))
           (while (re-search-forward regexp nil t)
+            (setq specifier-start (match-beginning 1))
             (if backup (re-search-backward "\\<" nil t))
             ;; regexp moves us past the end of date, onto the next line.
             ;; Trailing whitespace after date not allowed (see diary-file).
@@ -672,8 +673,7 @@ any entries were found."
                 (backward-char 1)
               ;; Found a nonempty diary entry--make it
               ;; visible and add it to the list.
-                (setq date-start (line-end-position 0)
-                      specifier-start (line-beginning-position))
+                (setq date-start (line-end-position 0))
                 ;; Actual entry starts on the next-line?
                 (if (looking-at "[ \t]*\n[ \t]") (forward-line 1))
                 (setq entry-found t
