@@ -4163,6 +4163,32 @@ is absent, do nothing."
                      end-type)
              :node component)))))))
 
+(defun icalendar--validate-recurrence-id (component dtstart)
+  "Check that COMPONENT's RECURRENCE-ID matches its DTSTART value type and form."
+  (let ((recurrence-id
+         (icalendar-ast-node-first-child-of 'icalendar-recurrence-id component)))
+    (when (and dtstart recurrence-id)
+      (icalendar-with-property dtstart
+          ((icalendar-tzidparam :first start-tzid))
+        (let ((start-type value-type)
+              (start-value value))
+          (icalendar-with-property recurrence-id
+              ((icalendar-tzidparam :first recurrence-id-tzid))
+            (unless (eq start-type value-type)
+              (icalendar-signal-validation-error
+               (format (concat "`icalendar-recurrence-id' must have the same "
+                               "value type as `icalendar-dtstart' in `%s'")
+                       (icalendar-ast-node-type component))
+               :node recurrence-id))
+            (when (eq start-type 'icalendar-date-time)
+              (unless (equal (icalendar--date-time-form start-value start-tzid)
+                             (icalendar--date-time-form value recurrence-id-tzid))
+                (icalendar-signal-validation-error
+                 (format (concat "`icalendar-recurrence-id' must use the same "
+                                 "local/UTC form as `icalendar-dtstart' in `%s'")
+                         (icalendar-ast-node-type component))
+                 :node recurrence-id)))))))))
+
 (defun icalendar--validate-valarm-trigger-parent
     (alarm start end duration component end-property)
   "Validate ALARM's relative trigger against its parent COMPONENT.
@@ -4249,6 +4275,7 @@ VEVENT nodes; it is not normally necessary to call it directly."
        :node node))
 
     (icalendar--validate-end-after-start dtstart dtend 'icalendar-dtend node)
+    (icalendar--validate-recurrence-id node dtstart)
     (dolist (alarm (icalendar-ast-node-children-of 'icalendar-valarm node))
       (icalendar--validate-valarm-trigger-parent
        alarm dtstart dtend duration 'icalendar-vevent 'icalendar-dtend))
@@ -4350,6 +4377,7 @@ VTODO nodes; it is not normally necessary to call it directly."
                "cannot have time units in `icalendar-duration'")
        :node node))
     (icalendar--validate-end-after-start dtstart due 'icalendar-due node)
+    (icalendar--validate-recurrence-id node dtstart)
     (dolist (alarm (icalendar-ast-node-children-of 'icalendar-valarm node))
       (icalendar--validate-valarm-trigger-parent
        alarm dtstart due duration 'icalendar-vtodo 'icalendar-due))
@@ -4368,6 +4396,8 @@ VTODO nodes; it is not normally necessary to call it directly."
    node 'icalendar-vjournal
    '("DRAFT" "FINAL" "CANCELLED")
    '("NEEDS-ACTION" "ACCEPTED" "DECLINED"))
+  (icalendar--validate-recurrence-id
+   node (icalendar-ast-node-first-child-of 'icalendar-dtstart node))
   (icalendar-rrule-validator node))
 
 (icalendar-define-component icalendar-vjournal "VJOURNAL"

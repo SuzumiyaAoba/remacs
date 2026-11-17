@@ -561,6 +561,48 @@
                   "DESCRIPTION:Reminder" "END:VALARM"))
     t)
 
+;; RECURRENCE-ID must match DTSTART's value type and local/UTC form (#2543).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "RECURRENCE-ID;VALUE=DATE:20250101")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000"
+                 "RECURRENCE-ID:20250101T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "RECURRENCE-ID:20250101T090000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000"
+                 "RECURRENCE-ID:20250101T090000")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART;VALUE=DATE:20250101"
+                "RECURRENCE-ID;VALUE=DATE:20250101")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("DTSTART;VALUE=DATE:20250101"
+                "RECURRENCE-ID:20250101T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VJOURNAL" '("DTSTART:20250101T090000Z"
+                   "RECURRENCE-ID:20250101T090000")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VJOURNAL" '("DTSTART;VALUE=DATE:20250101"
+                   "RECURRENCE-ID;VALUE=DATE:20250101")))
+    t)
+
 ;; REPEAT counts additional alarm firings and cannot be negative (#2539).
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
