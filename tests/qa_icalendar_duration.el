@@ -84,6 +84,13 @@
   (qa-icalendar-duration--calendar-component-valid-p
    method "VEVENT" event-properties))
 
+(defun qa-icalendar-duration--geo-valid-p (text)
+  (condition-case nil
+      (progn
+        (icalendar-parse-from-string 'icalendar-geo-coordinates text)
+        t)
+    (error nil)))
+
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
       "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250102T100000Z")))
@@ -274,6 +281,14 @@
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component "VEVENT" '("PRIORITY:9")))
     t)
+
+;; GEO coordinates stay within latitude/longitude limits (#2528).
+(qa (qa-icalendar-duration--geo-valid-p "91.0;0.0") nil)
+(qa (qa-icalendar-duration--geo-valid-p "-91.0;0.0") nil)
+(qa (qa-icalendar-duration--geo-valid-p "0.0;181.0") nil)
+(qa (qa-icalendar-duration--geo-valid-p "0.0;-181.0") nil)
+(qa (qa-icalendar-duration--geo-valid-p "90.0;180.0") t)
+(qa (qa-icalendar-duration--geo-valid-p "-90.0;-180.0") t)
 
 ;; Relative VALARM triggers require the corresponding parent start or end
 ;; time, even when METHOD otherwise permits a VEVENT without DTSTART (#2523/#2524).

@@ -2870,8 +2870,12 @@ notification text for a DISPLAY or EMAIL alarm."
 
 (defun icalendar-read-geo-coordinates (s)
   "Read an `icalendar-geo-coordinates' value from string S."
-  (let ((vals (mapcar #'string-to-number (string-split s ";"))))
-    (cons (car vals) (cadr vals))))
+  (let* ((vals (mapcar #'string-to-number (string-split s ";")))
+         (coordinates (cons (car vals) (cadr vals))))
+    (unless (icalendar-geo-coordinates-p coordinates)
+      (icalendar-signal-parse-error
+       "GEO latitude and longitude must be within their valid ranges"))
+    coordinates))
 
 (defun icalendar-print-geo-coordinates (val)
   "Serialize an `icalendar-geo-coordinates' value to a string."
@@ -2879,7 +2883,11 @@ notification text for a DISPLAY or EMAIL alarm."
 
 (defun icalendar-geo-coordinates-p (val)
   "Return non-nil if VAL is an `icalendar-geo-coordinates' value."
-  (and (floatp (car val)) (floatp (cdr val))))
+  (and (consp val)
+       (floatp (car val))
+       (floatp (cdr val))
+       (<= -90.0 (car val) 90.0)
+       (<= -180.0 (cdr val) 180.0)))
 
 (icalendar-define-type icalendar-geo-coordinates nil ; don't add to icalendar-value-types
   "Type for global positions.
