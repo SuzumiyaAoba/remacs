@@ -335,12 +335,14 @@ Return a modified address list."
         address))))
 
 (defun mail-dont-reply-to--next-separator (string start)
-  "Find the next unquoted, uncommented comma in STRING after START.
+  "Find the next comma outside quotes, comments, and domain-literals.
+Search STRING after START.
 Return (comma . POSITION), or (unmatched-quote . POSITION) if a quoted
 string is not closed."
   (let ((pos start)
 	quote-start
 	(comment-depth 0)
+	domain-literal
 	escaped
 	separator)
     (while (and (< pos (length string)) (not separator))
@@ -355,10 +357,15 @@ string is not closed."
 	 (quote-start
 	  (cond ((= char ?\\) (setq escaped t))
 		((= char ?\") (setq quote-start nil))))
+	 (domain-literal
+	  (cond ((= char ?\\) (setq escaped t))
+		((= char ?\]) (setq domain-literal nil))))
 	 ((= char ?\")
 	  (setq quote-start pos))
 	 ((= char ?\()
 	  (setq comment-depth 1))
+	 ((= char ?\[)
+	  (setq domain-literal t))
 	 ((= char ?,)
 	  (setq separator (cons 'comma pos))))
 	(setq pos (1+ pos))))
