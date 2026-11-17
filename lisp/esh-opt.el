@@ -229,7 +229,7 @@ argument list will be modified."
         (progn
           (setcdr (assq (nth 3 opt) opt-vals)
                   (or value
-                      (if (> ai (length eshell--args))
+                      (if (>= ai (length eshell--args))
                           (error "%s: missing option argument" name)
                         (pop (nthcdr ai eshell--args)))))
           nil)
