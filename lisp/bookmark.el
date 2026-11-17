@@ -509,10 +509,35 @@ See user option `bookmark-fringe-mark'."
                   "x" 'display
                   `(left-fringe bookmark-fringe-mark bookmark-face)))))
 
-(defun bookmark--remove-fringe-mark (bm)
+(defun bookmark--fringe-mark-shared-p (filename position)
+  "Return non-nil if another bookmark in the current file shares POSITION's line."
+  (let ((line-start
+         (save-excursion
+           (save-restriction
+             (widen)
+             (goto-char position)
+             (pos-bol))))
+        shared)
+    (dolist (other bookmark-alist)
+      (let ((other-filename (cdr (assq 'filename other)))
+            (other-position (cdr (assq 'position other))))
+        (when (and other-filename other-position
+                   (equal filename (expand-file-name other-filename))
+                   (equal line-start
+                          (ignore-errors
+                            (save-excursion
+                              (save-restriction
+                                (widen)
+                                (goto-char other-position)
+                                (pos-bol))))))
+          (setq shared t))))
+    shared))
+
+(defun bookmark--remove-fringe-mark (bm &optional preserve-shared)
   "Remove a bookmark's colorized overlay.
 BM is a bookmark as returned from function `bookmark-get-bookmark'.
-See user option `bookmark-fringe-mark'."
+If PRESERVE-SHARED is non-nil, keep the overlay when another bookmark
+still points to the same line.  See user option `bookmark-fringe-mark'."
   (let ((filename (cdr (assq 'filename bm)))
         (pos (cdr (assq 'position bm)))
         ;; Don't expand file names for non-existing remote connections.
@@ -532,7 +557,10 @@ See user option `bookmark-fringe-mark'."
               ;; when the Info page was under your home directory).
               (let ((this-fname-normalized (expand-file-name filename))
                     (bkmk-fname-normalized (expand-file-name bkmk-fname)))
-                (when (equal this-fname-normalized bkmk-fname-normalized)
+                (when (and (equal this-fname-normalized bkmk-fname-normalized)
+                           (or (not preserve-shared)
+                               (not (bookmark--fringe-mark-shared-p
+                                     this-fname-normalized pos))))
                   (setq overlays
                         (save-excursion
                           (save-restriction
@@ -1627,8 +1655,8 @@ probably because we were called from there."
   (bookmark-maybe-historicize-string bookmark-name)
   (bookmark-maybe-load-default-file)
   (let ((will-go (bookmark-get-bookmark bookmark-name 'noerror)))
-    (bookmark--remove-fringe-mark will-go)
     (setq bookmark-alist (delq will-go bookmark-alist))
+    (bookmark--remove-fringe-mark will-go t)
     ;; `bookmark-current-bookmark' is buffer-local.  Clear references in
     ;; every buffer only when its final record has been deleted.
     (when (and will-go
