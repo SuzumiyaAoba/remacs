@@ -587,6 +587,30 @@ still points to the same line.  See user option `bookmark-fringe-mark'."
                     (when (eq 'bookmark (overlay-get temp 'category))
                       (delete-overlay (setq found temp)))))))))))))
 
+(defun bookmark--set-fringe-mark-in-open-buffers (filename position)
+  "Set the bookmark fringe mark at FILENAME and POSITION in open buffers."
+  (when (and bookmark-fringe-mark filename position)
+    (let ((filename (expand-file-name filename))
+          (non-essential t))
+      (dolist (buffer (buffer-list))
+        (with-current-buffer buffer
+          (let ((bkmk-fname (ignore-errors (bookmark-buffer-file-name))))
+            (when (and bkmk-fname
+                       (equal filename (expand-file-name bkmk-fname)))
+              (save-excursion
+                (save-restriction
+                  (widen)
+                  (when (and (<= (point-min) position)
+                             (<= position (point-max)))
+                    (goto-char position)
+                    (let ((overlays (overlays-in (pos-bol) (1+ (pos-bol))))
+                          temp found)
+                      (while (and (not found) (setq temp (pop overlays)))
+                        (when (eq 'bookmark (overlay-get temp 'category))
+                          (setq found t)))
+                      (unless found
+                        (bookmark--set-fringe-mark)))))))))))))
+
 (defun bookmark-maybe-sort-alist ()
   "Return `bookmark-alist' for display.
 If `bookmark-sort-flag' is T, then return a sorted by name copy of the alist.
@@ -1523,12 +1547,17 @@ after a bookmark was set in it."
       (user-error "Cannot relocate bookmark of type \"%s\""
                   (bookmark-type-from-full-record
                    (bookmark-get-bookmark bookmark-name))))
-    (let ((newloc (abbreviate-file-name
-                   (expand-file-name
-                    (read-file-name
-                     (format "Relocate %s to: " bookmark-name)
-                     (file-name-directory bmrk-filename))))))
+    (let* ((bookmark-position (bookmark-get-position bookmark-name))
+           (old-mark (list (cons 'filename bmrk-filename)
+                           (cons 'position bookmark-position)))
+           (newloc (abbreviate-file-name
+                    (expand-file-name
+                     (read-file-name
+                      (format "Relocate %s to: " bookmark-name)
+                      (file-name-directory bmrk-filename))))))
       (bookmark-set-filename bookmark-name newloc)
+      (bookmark--remove-fringe-mark old-mark t)
+      (bookmark--set-fringe-mark-in-open-buffers newloc bookmark-position)
       (bookmark-update-last-modified bookmark-name)
       (setq bookmark-alist-modification-count
             (1+ bookmark-alist-modification-count))
