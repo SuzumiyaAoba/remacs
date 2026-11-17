@@ -764,6 +764,7 @@ qa!(qa_mm_body_encoding_line_limit, "qa_mm_body_encoding_line_limit.el");
 qa!(qa_svg_print_xml_attribute_escape, "qa_svg_print_xml_attribute_escape.el");
 qa!(qa_dom_xml_character_validity, "qa_dom_xml_character_validity.el");
 qa!(qa_dom_xml_comment_validation, "qa_dom_xml_comment_validation.el");
+qa!(qa_dom_add_child_before_cl_lib, "qa_dom_add_child_before_cl_lib.el");
 qa!(qa_tool_bar_height, "qa_tool_bar_height.el");
 qa!(qa_modula2_pointer_tokens, "qa_modula2_pointer_tokens.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");

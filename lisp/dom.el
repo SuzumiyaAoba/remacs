@@ -10,6 +10,8 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+
 (defsubst dom-tag (node)
   "Return the NODE tag."
   ;; Called on a list of nodes.  Use the first.
