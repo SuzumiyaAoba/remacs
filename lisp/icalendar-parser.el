@@ -4764,6 +4764,17 @@ VALARM nodes; it is not normally necessary to call it directly."
                 (concat "AUDIO `icalendar-valarm' may not have "
                         "more than one `icalendar-attach'")
                 :node node))
+             (dolist (attachment
+                      (icalendar-ast-node-children-of 'icalendar-attach node))
+               (let ((mime-type
+                      (icalendar-with-param-of
+                       attachment 'icalendar-fmttypeparam)))
+                 (when (and mime-type
+                            (not (string-prefix-p "audio/"
+                                                  (downcase mime-type))))
+                   (icalendar-signal-validation-error
+                    "AUDIO `icalendar-attach' must have an audio FMTTYPE"
+                    :node attachment))))
              node)
 
             ((equal "DISPLAY" action-str)
