@@ -61,12 +61,13 @@
   (format "BEGIN:%s\nUID:qa-end-order\nDTSTAMP:20250101T000000Z\n%s\nEND:%s"
           component (mapconcat #'identity properties "\n") component))
 
-(defun qa-icalendar-duration--calendar-valid-p (method event-properties)
+(defun qa-icalendar-duration--calendar-component-valid-p
+    (method component properties)
   (with-temp-buffer
     (insert "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//qa//remacs//EN\n")
     (when method
       (insert "METHOD:PUBLISH\n"))
-    (insert (qa-icalendar-duration--component "VEVENT" event-properties)
+    (insert (qa-icalendar-duration--component component properties)
             "\nEND:VCALENDAR")
     (goto-char (point-min))
     (condition-case nil
@@ -75,6 +76,10 @@
            (icalendar-parse-component (point-max)) t)
           t)
       (icalendar-validation-error nil))))
+
+(defun qa-icalendar-duration--calendar-valid-p (method event-properties)
+  (qa-icalendar-duration--calendar-component-valid-p
+   method "VEVENT" event-properties))
 
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
@@ -207,6 +212,59 @@
     t)
 (qa (qa-icalendar-duration--calendar-valid-p
      nil '("DTSTART:20250101T120000Z"))
+    t)
+
+;; Relative VALARM triggers require the corresponding parent start or end
+;; time, even when METHOD otherwise permits a VEVENT without DTSTART (#2523/#2524).
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     t "VEVENT" '("BEGIN:VALARM" "ACTION:DISPLAY" "TRIGGER:-PT15M"
+                  "DESCRIPTION:Reminder" "END:VALARM"))
+    nil)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     t "VEVENT" '("DTSTART:20250101T120000Z"
+                  "BEGIN:VALARM" "ACTION:DISPLAY" "TRIGGER:-PT15M"
+                  "DESCRIPTION:Reminder" "END:VALARM"))
+    t)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     t "VEVENT" '("DTSTART:20250101T120000Z"
+                  "BEGIN:VALARM" "ACTION:DISPLAY"
+                  "TRIGGER;RELATED=END:-PT15M"
+                  "DESCRIPTION:Reminder" "END:VALARM"))
+    nil)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     t "VEVENT" '("DTSTART:20250101T120000Z" "DTEND:20250101T130000Z"
+                  "BEGIN:VALARM" "ACTION:DISPLAY"
+                  "TRIGGER;RELATED=END:-PT15M"
+                  "DESCRIPTION:Reminder" "END:VALARM"))
+    t)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     t "VEVENT" '("DTSTART:20250101T120000Z" "DURATION:PT1H"
+                  "BEGIN:VALARM" "ACTION:DISPLAY"
+                  "TRIGGER;RELATED=END:-PT15M"
+                  "DESCRIPTION:Reminder" "END:VALARM"))
+    t)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     nil "VTODO" '("DTSTART:20250101T120000Z"
+                   "BEGIN:VALARM" "ACTION:DISPLAY"
+                   "TRIGGER;RELATED=END:-PT15M"
+                   "DESCRIPTION:Reminder" "END:VALARM"))
+    nil)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     nil "VTODO" '("DUE:20250101T130000Z"
+                   "BEGIN:VALARM" "ACTION:DISPLAY"
+                   "TRIGGER;RELATED=END:-PT15M"
+                   "DESCRIPTION:Reminder" "END:VALARM"))
+    t)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     nil "VTODO" '("DTSTART:20250101T120000Z" "DURATION:PT1H"
+                   "BEGIN:VALARM" "ACTION:DISPLAY"
+                   "TRIGGER;RELATED=END:-PT15M"
+                   "DESCRIPTION:Reminder" "END:VALARM"))
+    t)
+(qa (qa-icalendar-duration--calendar-component-valid-p
+     t "VEVENT" '("BEGIN:VALARM" "ACTION:DISPLAY"
+                  "TRIGGER;VALUE=DATE-TIME:20250101T130000Z"
+                  "DESCRIPTION:Reminder" "END:VALARM"))
     t)
 
 (princ (qa--done))

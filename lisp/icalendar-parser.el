@@ -3956,6 +3956,35 @@ is absent, do nothing."
                      end-type)
              :node component)))))))
 
+(defun icalendar--validate-valarm-trigger-parent
+    (alarm start end duration component end-property)
+  "Validate ALARM's relative trigger against its parent COMPONENT.
+START, END, and DURATION are the corresponding parent properties;
+END-PROPERTY names END in validation errors."
+  (let* ((trigger (icalendar-ast-node-first-child-of 'icalendar-trigger alarm))
+         (trigger-value (and trigger (icalendar-ast-node-value trigger))))
+    (when (and trigger
+               (eq 'icalendar-dur-value
+                   (icalendar-ast-node-type trigger-value)))
+      (let ((related (or (icalendar-with-param-of trigger 'icalendar-trigrelparam)
+                         "START")))
+        (cond
+         ((equal related "START")
+          (unless start
+            (icalendar-signal-validation-error
+             (format (concat "`icalendar-valarm' with `RELATED=START' requires "
+                             "`icalendar-dtstart' in `%s'")
+                     component)
+             :node alarm)))
+         ((equal related "END")
+          (unless (or end (and start duration))
+            (icalendar-signal-validation-error
+             (format (concat "`icalendar-valarm' with `RELATED=END' requires "
+                             "`%s' or both `icalendar-dtstart' and "
+                             "`icalendar-duration' in `%s'")
+                     end-property component)
+             :node alarm))))))))
+
 (defun icalendar-vevent-validator (node)
   "Additional validator for an `icalendar-vevent' NODE.
 Checks that NODE has does not have both `icalendar-duration' and
@@ -3992,6 +4021,9 @@ VEVENT nodes; it is not normally necessary to call it directly."
        :node node))
 
     (icalendar--validate-end-after-start dtstart dtend 'icalendar-dtend node)
+    (dolist (alarm (icalendar-ast-node-children-of 'icalendar-valarm node))
+      (icalendar--validate-valarm-trigger-parent
+       alarm dtstart dtend duration 'icalendar-vevent 'icalendar-dtend))
 
   (icalendar-rrule-validator node)
   ;; success:
@@ -4085,7 +4117,10 @@ VTODO nodes; it is not normally necessary to call it directly."
        (concat "To-do with `icalendar-date' value in `icalendar-dtstart' "
                "cannot have time units in `icalendar-duration'")
        :node node))
-    (icalendar--validate-end-after-start dtstart due 'icalendar-due node))
+    (icalendar--validate-end-after-start dtstart due 'icalendar-due node)
+    (dolist (alarm (icalendar-ast-node-children-of 'icalendar-valarm node))
+      (icalendar--validate-valarm-trigger-parent
+       alarm dtstart due duration 'icalendar-vtodo 'icalendar-due)))
   (icalendar-rrule-validator node)
   ;; success:
   node)
