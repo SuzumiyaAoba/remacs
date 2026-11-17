@@ -51,6 +51,7 @@ const NEGATIVE: &str = r##"
 
 const POSITIVE: &str = r##"
 (progn
+  ;; #2541: 2025 has 52 weeks, so positive BYWEEKNO=53 must not wrap back.
   (let ((event (remacs-test-week-event "20201230" 53 3)))
     (remacs-test-week-expect "Nonexistent week 53 in 2025"
       (icalendar-recur-recurrences-in-window
