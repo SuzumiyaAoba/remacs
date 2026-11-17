@@ -1471,7 +1471,8 @@ value in an `icalendar-rdate' property, START and END are determined by
 the period."
   (icalendar-with-component component
     ((icalendar-duration :value duration)
-     (icalendar-rdate :all rdate-nodes))
+     (icalendar-rdate :all rdate-nodes)
+     (icalendar-exdate :all exdate-nodes))
     ;; TODO: for higher-level applications showing a schedule, it might
     ;; be useful to include recurrences which start outside the window,
     ;; but end inside it.  This would mean we can't simply use
@@ -1480,11 +1481,16 @@ the period."
             (icalendar-recur-recurrences-in-window lower upper component vtimezone))
            (rdate-values
             (apply #'append (mapcar #'icalendar-ast-node-value rdate-nodes)))
+           (exdates
+            (mapcar #'icalendar-ast-node-value
+                    (apply #'append
+                           (mapcar #'icalendar-ast-node-value exdate-nodes))))
            (periods
             (seq-filter
              (lambda (period)
                (let ((start (icalendar-period-start period)))
-                 (and (icalendar-date/time<= lower start)
+                 (and (not (member start exdates))
+                      (icalendar-date/time<= lower start)
                       (icalendar-date/time< start upper))))
              (mapcar #'icalendar-ast-node-value
                      (seq-filter
