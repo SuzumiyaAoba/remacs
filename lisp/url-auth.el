@@ -235,7 +235,17 @@ Quoted-string values escape double quotes and backslashes.  The
              pairs ", "))
 
 (defun url-digest-auth-escape-quoted-string (string)
-  "Escape quote and backslash characters in Digest quoted STRING."
+  "Escape quote and backslash characters in Digest quoted STRING.
+Signal an error if STRING contains a control character not allowed by
+the HTTP quoted-string grammar."
+  ;;Remacs: a quoted string must never inject an HTTP header line.
+  (let ((index 0))
+    (while (< index (length string))
+      (let ((char (aref string index)))
+        (when (or (= char 127)
+                  (and (< char 32) (/= char ?\t)))
+          (error "Control character in Digest quoted string")))
+      (setq index (1+ index))))
   (setq string (replace-regexp-in-string
                 (regexp-quote "\\") (concat "\\" "\\") string t t))
   (replace-regexp-in-string
