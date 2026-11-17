@@ -1241,6 +1241,18 @@ Match data is altered to reflect the token."
         (match-string-no-properties 1)
       (auth-source-netrc-parse-next-interesting))))
 
+(defun auth-source-netrc-skip-macdef-body ()
+  "Skip a netrc macro name and its body.
+Point should be at the macro name.  The body extends through the
+next empty line, or to the end of the file."
+  (when (auth-source-netrc-looking-at-token)
+    (forward-char (length (match-string 0)))
+    (forward-line 1)
+    (while (and (not (eobp)) (not (eolp)))
+      (forward-line 1))
+    (unless (eobp)
+      (forward-line 1))))
+
 ;; with thanks to org-mode
 (defsubst auth-source-current-line (&optional pos)
   (save-excursion
@@ -1259,28 +1271,31 @@ Match data is altered to reflect the token."
                  all))
         item item2 all alist default)
     (while (setq item (auth-source-netrc-parse-one))
-      (setq default (equal item "default"))
-      ;; We're starting a new machine.  Save the old one.
-      (when (and alist
-                 (or default
-                     (equal item "machine")))
-        ;; (auth-source-do-trivia
-        ;;  "auth-source-netrc-parse-entries: got entry %S" alist)
-        (setq all (funcall adder check alist all)
-              alist nil))
-      ;; In default entries, we don't have a next token.
-      ;; We store them as ("machine" . t)
-      (if default
-          (push (cons "machine" t) alist)
-        ;; Not a default entry.  Grab the next item.
-        (when (setq item2 (auth-source-netrc-parse-one))
-          ;; Did we get a "machine" value?
-          (if (equal item2 "machine")
-	      (error
-	       "%s: Unexpected `machine' token at line %d"
-	       "auth-source-netrc-parse-entries"
-	       (auth-source-current-line))
-            (push (cons item item2) alist)))))
+      (if (equal item "macdef")
+          (auth-source-netrc-skip-macdef-body)
+        (progn
+          (setq default (equal item "default"))
+          ;; We're starting a new machine.  Save the old one.
+          (when (and alist
+                     (or default
+                         (equal item "machine")))
+            ;; (auth-source-do-trivia
+            ;;  "auth-source-netrc-parse-entries: got entry %S" alist)
+            (setq all (funcall adder check alist all)
+                  alist nil))
+          ;; In default entries, we don't have a next token.
+          ;; We store them as ("machine" . t)
+          (if default
+              (push (cons "machine" t) alist)
+            ;; Not a default entry.  Grab the next item.
+            (when (setq item2 (auth-source-netrc-parse-one))
+              ;; Did we get a "machine" value?
+              (if (equal item2 "machine")
+                  (error
+                   "%s: Unexpected `machine' token at line %d"
+                   "auth-source-netrc-parse-entries"
+                   (auth-source-current-line))
+                (push (cons item item2) alist)))))))
 
     ;; Clean up: if there's an entry left over, use it.
     (when alist
