@@ -75,6 +75,13 @@
           t)
       (icalendar-validation-error nil))))
 
+(defun qa-icalendar-duration--parse-calendar (content)
+  (with-temp-buffer
+    (insert "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//qa//remacs//EN\n"
+            content "\nEND:VCALENDAR")
+    (goto-char (point-min))
+    (icalendar-parse-calendar (point-max))))
+
 (defun qa-icalendar-duration--calendar-component-valid-p
     (method component properties)
   (qa-icalendar-duration--calendar-content-valid-p
@@ -275,6 +282,75 @@
           "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
           "TZOFFSETFROM:+0000\nTZOFFSETTO:+0000\n"
           "RDATE:20250101T000000Z\nEND:STANDARD\nEND:VTIMEZONE"))
+    nil)
+
+;; TZID applies to every DATE-TIME in list-valued RDATE/EXDATE; it is invalid
+;; on DATE or UTC values in those lists (#2534/#2535).
+(qa (let* ((calendar
+            (qa-icalendar-duration--parse-calendar
+             (concat
+              "BEGIN:VTIMEZONE\nTZID:Test/PlusOne\n"
+              "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+              "TZOFFSETFROM:+0100\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+              "END:VTIMEZONE\n"
+              "BEGIN:VEVENT\nUID:tzid-lists\n"
+              "DTSTAMP:20250101T000000Z\n"
+              "DTSTART;TZID=Test/PlusOne:20250101T090000\n"
+              "RDATE;TZID=Test/PlusOne:20250102T090000,20250103T090000\n"
+              "EXDATE;TZID=Test/PlusOne:20250104T090000,20250105T090000\n"
+              "END:VEVENT")))
+           (event (car (icalendar-ast-node-children-of 'icalendar-vevent calendar)))
+           (dtstart (icalendar-ast-node-value
+                     (icalendar-ast-node-value
+                      (icalendar-ast-node-first-child-of 'icalendar-dtstart event))))
+           (rdate (icalendar-ast-node-value
+                   (icalendar-ast-node-first-child-of 'icalendar-rdate event)))
+           (exdate (icalendar-ast-node-value
+                    (icalendar-ast-node-first-child-of 'icalendar-exdate event))))
+      (list (decoded-time-zone dtstart)
+            (mapcar (lambda (node)
+                      (decoded-time-zone (icalendar-ast-node-value node)))
+                    rdate)
+            (mapcar (lambda (node)
+                      (decoded-time-zone (icalendar-ast-node-value node)))
+                    exdate)))
+    '(3600 (3600 3600) (3600 3600)))
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/PlusOne\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0100\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VEVENT\nUID:bad-rdate-tzid\n"
+          "DTSTAMP:20250101T000000Z\n"
+          "DTSTART;TZID=Test/PlusOne:20250101T090000\n"
+          "RDATE;TZID=Test/PlusOne:20250102T090000Z,20250103T090000Z\n"
+          "END:VEVENT"))
+    nil)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/PlusOne\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0100\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VEVENT\nUID:bad-exdate-tzid\n"
+          "DTSTAMP:20250101T000000Z\n"
+          "DTSTART;TZID=Test/PlusOne:20250101T090000\n"
+          "EXDATE;TZID=Test/PlusOne;VALUE=DATE:20250104,20250105\n"
+          "END:VEVENT"))
+    nil)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/PlusOne\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0100\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VEVENT\nUID:bad-period-tzid\n"
+          "DTSTAMP:20250101T000000Z\n"
+          "DTSTART;TZID=Test/PlusOne:20250101T090000\n"
+          "RDATE;TZID=Test/PlusOne;VALUE=PERIOD:"
+          "20250102T090000Z/20250102T100000Z\n"
+          "END:VEVENT"))
     nil)
 
 ;; Numeric iCalendar properties enforce their inclusive RFC ranges (#2526/#2527).

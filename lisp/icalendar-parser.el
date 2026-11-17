@@ -3033,21 +3033,42 @@ property."
 
 ;;;;; Section 3.8.2: Date and Time Component Properties
 
+(defun icalendar--tzid-invalid-value-reason (value-node)
+  "Return why VALUE-NODE cannot be combined with a `TZID' parameter."
+  (let ((type (icalendar-ast-node-type value-node))
+        (value (icalendar-ast-node-value value-node)))
+    (cond
+     ((eq type 'icalendar-date) 'date)
+     ((and (eq type 'icalendar-date-time)
+           (icalendar-date-time-is-utc-p value))
+      'utc)
+     ((and (eq type 'icalendar-period)
+           (or (icalendar-date-time-is-utc-p (icalendar-period-start value))
+               (and (icalendar-period--defined-end value)
+                    (icalendar-date-time-is-utc-p
+                     (icalendar-period--defined-end value)))))
+      'utc))))
+
 (defun icalendar-property-w/tzid-validator (node)
   "Additional validator for property NODE with `icalendar-tzid' parameters.
-Checks that this parameter does not occur in combination with an
-`icalendar-date' value or an `icalendar-date-time' in UTC time."
+Checks scalar and list values, including explicit PERIOD endpoints, to
+ensure TZID is not combined with DATE or UTC DATE-TIME values."
   (icalendar-with-property node
-     ((icalendar-tzidparam :first tzidnode))
-    (when (and tzidnode (eq value-type 'icalendar-date))
-      (icalendar-signal-validation-error
-       "Property cannot contain `icalendar-tzidparam' with `icalendar-date' value"
-       :node node))
-    (when (and tzidnode (eq value-type 'icalendar-date-time)
-               (icalendar-date-time-is-utc-p value))
-      (icalendar-signal-validation-error
-       "Property cannot contain `icalendar-tzidparam' in combination with UTC time"
-       :node node))))
+      ((icalendar-tzidparam :first tzidnode))
+    (when tzidnode
+      (let ((reason (or (when value-node
+                          (icalendar--tzid-invalid-value-reason value-node))
+                        (seq-some #'icalendar--tzid-invalid-value-reason
+                                  value-nodes))))
+        (pcase reason
+          ('date
+           (icalendar-signal-validation-error
+            "Property cannot contain `icalendar-tzidparam' with `icalendar-date' value"
+            :node node))
+          ('utc
+           (icalendar-signal-validation-error
+            "Property cannot contain `icalendar-tzidparam' in combination with UTC time"
+            :node node)))))))
 
 (icalendar-define-property icalendar-completed "COMPLETED"
   "Time completed.
