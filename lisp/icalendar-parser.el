@@ -1145,6 +1145,16 @@ S should be a match against rx `icalendar-dur-value'."
                   (integerp hours) (zerop hours)
                   (integerp days) (zerop days))))))
 
+(defun icalendar--duration-positive-p (duration)
+  "Return non-nil if DURATION is a positive interval."
+  (if (integerp duration)
+      (> duration 0)
+    (> (+ (* 86400 (or (decoded-time-day duration) 0))
+          (* 3600 (or (decoded-time-hour duration) 0))
+          (* 60 (or (decoded-time-minute duration) 0))
+          (or (decoded-time-second duration) 0))
+       0)))
+
 (icalendar-define-type icalendar-dur-value "DURATION"
   "Type for Duration values.
 
@@ -3907,6 +3917,10 @@ VEVENT nodes; it is not normally necessary to call it directly."
                                      (icalendar-ast-node-value duration))))
          (dtend (icalendar-ast-node-first-child-of 'icalendar-dtend node))
          (dtstart (icalendar-ast-node-first-child-of 'icalendar-dtstart node)))
+    (when (and duration (not (icalendar--duration-positive-p dur-value)))
+      (icalendar-signal-validation-error
+       "`icalendar-duration' must be positive in an `icalendar-vevent'"
+       :node duration))
     (when (and dtend duration)
       (icalendar-signal-validation-error
        (concat "`icalendar-dtend' and `icalendar-duration' properties must "
@@ -3985,7 +3999,13 @@ This function is called by `icalendar-ast-node-valid-p' for
 VTODO nodes; it is not normally necessary to call it directly."
   (let* ((due (icalendar-ast-node-first-child-of 'icalendar-due node))
          (duration (icalendar-ast-node-first-child-of 'icalendar-duration node))
+         (dur-value (when duration (icalendar-ast-node-value
+                                     (icalendar-ast-node-value duration))))
          (dtstart (icalendar-ast-node-first-child-of 'icalendar-dtstart node)))
+    (when (and duration (not (icalendar--duration-positive-p dur-value)))
+      (icalendar-signal-validation-error
+       "`icalendar-duration' must be positive in an `icalendar-vtodo'"
+       :node duration))
     (when (and due duration)
       (icalendar-signal-validation-error
        (concat "`icalendar-due' and `icalendar-duration' properties "
@@ -4226,8 +4246,15 @@ This function is called by `icalendar-ast-node-valid-p' for
 VALARM nodes; it is not normally necessary to call it directly."
   (let* ((action (icalendar-ast-node-first-child-of 'icalendar-action node))
          (duration (icalendar-ast-node-first-child-of 'icalendar-duration node))
+         (dur-value (when duration (icalendar-ast-node-value
+                                     (icalendar-ast-node-value duration))))
          (repeat (icalendar-ast-node-first-child-of 'icalendar-repeat node))
          (child-counts (icalendar-count-children-by-type node)))
+
+    (when (and duration (not (icalendar--duration-positive-p dur-value)))
+      (icalendar-signal-validation-error
+       "`icalendar-duration' must be positive in an `icalendar-valarm'"
+       :node duration))
 
     (when (and duration (not repeat))
       (icalendar-signal-validation-error
