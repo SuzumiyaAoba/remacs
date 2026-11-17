@@ -450,6 +450,7 @@ qa!(qa_url_cookie_huge_negative_max_age, "qa_url_cookie_huge_negative_max_age.el
 qa!(qa_url_cookie_duplicate_attributes, "qa_url_cookie_duplicate_attributes.el");
 qa!(qa_url_cookie_hyphen_date, "qa_url_cookie_hyphen_date.el");
 qa!(qa_url_cookie_zero_prefixed_year, "qa_url_cookie_zero_prefixed_year.el");
+qa!(qa_url_cookie_session_cleanup, "qa_url_cookie_session_cleanup.el");
 qa!(qa_url_expand_dot_segments, "qa_url_expand_dot_segments.el");
 qa!(qa_symbol_with_pos_dynamic_mode, "qa_symbol_with_pos_dynamic_mode.el");
 qa!(qa_dired_newline_filename, "qa_dired_newline_filename.el");

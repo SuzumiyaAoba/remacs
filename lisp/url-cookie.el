@@ -148,12 +148,25 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
       (dolist (cur-cookie (cdr cur))
 	(or (not (url-cookie-p cur-cookie))
 	    (url-cookie-expired-p cur-cookie)
-	    (null (url-cookie-expires cur-cookie))
 	    (setq new-cookies (cons cur-cookie new-cookies))))
       (when new-cookies
 	(setcdr cur new-cookies)
 	(setq new (cons cur new))))
     (set var new)))
+
+(defun url-cookie--persistent-storage (storage)
+  "Return a copy of STORAGE without session cookies.
+Session cookies remain in memory but are not saved to disk."
+  (let (result)
+    (dolist (domain storage (nreverse result))
+      (let ((cookies
+             (cl-remove-if-not
+              (lambda (cookie)
+                (and (url-cookie-p cookie)
+                     (url-cookie-expires cookie)))
+              (cdr domain))))
+        (when cookies
+          (push (cons (car domain) cookies) result))))))
 
 (defun url-cookie-write-file (&optional fname)
   (when (and url-cookies-changed-since-last-save
@@ -171,7 +184,12 @@ i.e. 1970-1-1) are loaded as expiring one year from now instead."
       (insert ";; Emacs-W3 HTTP cookies file  -*- lexical-binding: t -*-\n"
 	      ";; Automatically generated file!!! DO NOT EDIT!!!\n\n"
 	      "(setq url-cookie-storage\n '")
-      (let ((print-length nil) (print-level nil))
+      (let ((print-length nil)
+            (print-level nil)
+            (url-cookie-storage
+             (url-cookie--persistent-storage url-cookie-storage))
+            (url-cookie-secure-storage
+             (url-cookie--persistent-storage url-cookie-secure-storage)))
 	(pp url-cookie-storage (current-buffer))
 	(insert ")\n(setq url-cookie-secure-storage\n '")
 	(pp url-cookie-secure-storage (current-buffer)))
