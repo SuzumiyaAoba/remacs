@@ -21,4 +21,18 @@
                 ",")))
  '(t t t t t))
 
+(defun qa--icalendar-categories (text)
+  (with-temp-buffer
+    (insert text "\n")
+    (goto-char (point-min))
+    (mapcar #'icalendar-text-to-string
+            (icalendar-ast-node-value (icalendar-parse-property (point-max))))))
+
+(qa (qa--icalendar-categories
+     (concat "CATEGORIES:foo" (string 92) ",bar"))
+    '("foo,bar"))
+(qa (qa--icalendar-categories
+     (concat "CATEGORIES:foo" (string 92) ",bar,baz"))
+    '("foo,bar" "baz"))
+
 (princ (qa--done))
