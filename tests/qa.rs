@@ -104,6 +104,7 @@ qa!(qa_icalendar_calendar_case_fold, "qa_icalendar_calendar_case_fold.el");
 qa!(qa_icalendar_date_time_case, "qa_icalendar_date_time_case.el");
 qa!(qa_icalendar_uri_empty_hierpart, "qa_icalendar_uri_empty_hierpart.el");
 qa!(qa_icalendar_parse_from_string_eof, "qa_icalendar_parse_from_string_eof.el");
+qa!(qa_icalendar_historic_timezone, "qa_icalendar_historic_timezone.el");
 qa!(qa_icalendar_value_type_case, "qa_icalendar_value_type_case.el");
 qa!(qa_icalendar_rrule_weekday_case, "qa_icalendar_rrule_weekday_case.el");
 qa!(qa_icalendar_recurrences_window_repeat, "qa_icalendar_recurrences_window_repeat.el");

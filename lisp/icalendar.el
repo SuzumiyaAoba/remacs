@@ -950,29 +950,56 @@ RDATE-only schedules are handled by `icalendar--rdate-zone-schedule'."
 			 ":"
 			 (substring dtstart -2)))))))))
 
+(defun icalendar--legacy-property-to-content-line (property)
+  "Serialize legacy PROPERTY data as one unfolded content line."
+  (let ((name (car property))
+        (params (cadr property))
+        (value (or (nth 2 property) ""))
+        param-text)
+    (while (and (consp params) (consp (cdr params)))
+      (let ((param-name (pop params))
+            (param-value (pop params)))
+        (setq param-text
+              (concat param-text
+                      ";"
+                      (if (symbolp param-name)
+                          (symbol-name param-name)
+                        param-name)
+                      "="
+                      (icalendar-maybe-quote-param-value
+                       (format "%s" param-value))))))
+    (concat (if (symbolp name) (symbol-name name) name)
+            param-text ":" value "\n")))
+
+(defun icalendar--legacy-component-to-content-lines (component)
+  "Serialize legacy COMPONENT data as unfolded iCalendar content lines."
+  (let ((name (car component))
+        (properties (car (cddr component)))
+        (children (cadr (cddr component))))
+    (concat "BEGIN:" (if (symbolp name) (symbol-name name) name) "\n"
+            (mapconcat #'icalendar--legacy-property-to-content-line
+                       properties "")
+            (mapconcat #'icalendar--legacy-component-to-content-lines
+                       children "")
+            "END:" (if (symbolp name) (symbol-name name) name) "\n")))
+
 (defun icalendar--parse-vtimezone (alist)
-  "Turn a VTIMEZONE ALIST into an (ID . ZONE) pair.
-ZONE is a POSIX TZ string or an explicit RDATE schedule.
-Return nil if the timezone cannot be parsed."
+  "Turn legacy VTIMEZONE ALIST into an (ID . COMPONENT) pair.
+COMPONENT is a parsed `icalendar-vtimezone' node with all observances."
   (declare (obsolete nil "31.1"))
-  (let* ((tz-id (icalendar--convert-string-for-import
-                 (icalendar--get-event-property alist 'TZID)))
-         (rdate-zone (icalendar--rdate-zone-schedule alist))
-         (daylight (cadr (cdar (icalendar--get-most-recent-observance
-                                alist 'DAYLIGHT))))
-         (day (and daylight (icalendar--convert-tz-offset daylight t)))
-         (standard (cadr (cdar (icalendar--get-most-recent-observance
-                                alist 'STANDARD))))
-         (std (and standard (icalendar--convert-tz-offset standard nil))))
-    (cond
-     ((and tz-id rdate-zone)
-      (cons tz-id rdate-zone))
-     ((and tz-id std)
-      (cons tz-id
-            (if day
-                (concat (car std) (car day)
-                        "," (cdr day) "," (cdr std))
-              (car std)))))))
+  (let ((tz-id (icalendar--convert-string-for-import
+                (icalendar--get-event-property alist 'TZID))))
+    (when tz-id
+      (require 'icalendar-parser)
+      (let ((component
+             (condition-case nil
+                 (with-temp-buffer
+                   (insert (icalendar--legacy-component-to-content-lines alist))
+                   (goto-char (point-min))
+                   (icalendar-parse-component (point-max)))
+               (error nil))))
+        (when component
+          (cons tz-id component))))))
 
 (defun icalendar--get-most-recent-observance (alist sub-comp)
   "Return the latest observance for SUB-COMP DAYLIGHT or STANDARD.
@@ -999,7 +1026,7 @@ ALIST is a VTIMEZONE potentially containing historical records."
 
 (defun icalendar--convert-all-timezones (icalendar)
   "Convert all timezones in the ICALENDAR into an alist.
-Each element of the alist is a cons (ID . TZ-STRING),
+Each element of the alist is a cons (ID . ZONE-DATA),
 like `icalendar--parse-vtimezone'."
   (declare (obsolete nil "31.1"))
   (let (result)
@@ -1010,7 +1037,7 @@ like `icalendar--parse-vtimezone'."
     result))
 
 (defun icalendar--find-time-zone (prop-list zone-map)
-  "Return a timezone string for the time zone in PROP-LIST, or nil if none.
+  "Return zone data for the time zone in PROP-LIST, or nil if none.
 ZONE-MAP is a timezone alist as returned by `icalendar--convert-all-timezones'."
   (declare (obsolete nil "31.1"))
   (let ((id (plist-get prop-list 'TZID)))
@@ -1026,8 +1053,9 @@ ISODATETIMESTRING specifies UTC time (trailing letter Z) the
 decoded time is given in the local time zone!  If optional
 parameter DAY-SHIFT is non-nil the result is shifted by DAY-SHIFT
 days.
-SOURCE-ZONE, if provided, is the timezone for decoding the time,
-in any format understood by `encode-time'.
+SOURCE-ZONE, if provided, is the timezone for decoding the time.  It may
+be a value understood by `encode-time', an explicit RDATE schedule, or a
+VTIMEZONE component.
 RESULT-ZONE, if provided, is the timezone for encoding the result
 in any format understood by `decode-time'.
 FIXME: multiple comma-separated values should be allowed!"
@@ -1097,15 +1125,26 @@ FIXME: multiple comma-separated values should be allowed!"
                  (format "%04d%02d%02dT%02d%02d%02d"
                          year month day hour minute second))))
         ;; create the decoded date-time
-        ;; FIXME!?!
-	(let ((decoded-time (list second minute hour day month year
-				  nil -1 source-zone)))
-	  (condition-case nil
-	      (decode-time (encode-time decoded-time) result-zone)
-	    (error
-	     (message "Cannot decode \"%s\"" isodatetimestring)
-	     ;; Hope for the best....
-	     decoded-time))))
+        (let* ((vtimezone
+                (and (fboundp 'icalendar-vtimezone-component-p)
+                     (icalendar-vtimezone-component-p source-zone)))
+               (decoded-time
+                (if vtimezone
+                    (progn
+                      (require 'icalendar-recur)
+                      (require 'icalendar-utils)
+                      (icalendar-recur-tz-set-zone
+                       (icalendar-make-date-time
+                        :second second :minute minute :hour hour
+                        :day day :month month :year year)
+                       source-zone))
+                  (list second minute hour day month year nil -1 source-zone))))
+          (condition-case nil
+              (decode-time (encode-time decoded-time) result-zone)
+            (error
+             (message "Cannot decode \"%s\"" isodatetimestring)
+             ;; Hope for the best....
+             decoded-time))))
     ;; isodatetimestring == nil
     nil))
 
