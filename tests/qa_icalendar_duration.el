@@ -61,6 +61,21 @@
   (format "BEGIN:%s\nUID:qa-end-order\nDTSTAMP:20250101T000000Z\n%s\nEND:%s"
           component (mapconcat #'identity properties "\n") component))
 
+(defun qa-icalendar-duration--calendar-valid-p (method event-properties)
+  (with-temp-buffer
+    (insert "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//qa//remacs//EN\n")
+    (when method
+      (insert "METHOD:PUBLISH\n"))
+    (insert (qa-icalendar-duration--component "VEVENT" event-properties)
+            "\nEND:VCALENDAR")
+    (goto-char (point-min))
+    (condition-case nil
+        (progn
+          (icalendar-ast-node-valid-p
+           (icalendar-parse-component (point-max)) t)
+          t)
+      (icalendar-validation-error nil))))
+
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
       "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250102T100000Z")))
@@ -182,5 +197,16 @@
      (qa-icalendar-duration--component
       "VFREEBUSY" '("FREEBUSY:20250101T090000/P1D")))
     nil)
+
+;; A VEVENT needs DTSTART unless its containing calendar specifies METHOD (#2522).
+(qa (qa-icalendar-duration--calendar-valid-p
+     nil '("SUMMARY:Missing start"))
+    nil)
+(qa (qa-icalendar-duration--calendar-valid-p
+     t '("SUMMARY:Method allows missing start"))
+    t)
+(qa (qa-icalendar-duration--calendar-valid-p
+     nil '("DTSTART:20250101T120000Z"))
+    t)
 
 (princ (qa--done))

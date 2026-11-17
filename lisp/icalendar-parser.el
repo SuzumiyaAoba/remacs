@@ -3767,8 +3767,8 @@ only be direct children of an `icalendar-vcalendar'; they cannot
 be subcomponents of any other component."
   :child-spec (:one (icalendar-dtstamp icalendar-uid)
                :zero-or-one (icalendar-dtstart
-                             ;; TODO: dtstart required if METHOD not present
-                             ;; in parent calendar
+                             ;; Required in calendars without METHOD; checked
+                             ;; by `icalendar-vcalendar-validator'.
                              icalendar-class
                              icalendar-created
                              icalendar-description
@@ -4474,7 +4474,8 @@ components, the calendar object must contain an
 
 Checks that NODE has at least one component child and that all of the
 `ical-tzidparam' values appearing in subcomponents have a corresponding
-`icalendar-vtimezone' definition.
+`icalendar-vtimezone' definition.  It also requires `icalendar-dtstart' in
+each VEVENT unless the calendar has a `icalendar-method' property.
 
 This function is called by `icalendar-ast-node-valid-p' for
 VCALENDAR nodes; it is not normally necessary to call it directly."
@@ -4495,6 +4496,15 @@ VCALENDAR nodes; it is not normally necessary to call it directly."
       (icalendar-signal-validation-error
        "`icalendar-vcalendar' must contain at least one component"
        :node node))
+
+    ;; RFC 5545 section 3.6.1 makes DTSTART optional in VEVENT only when
+    ;; the containing VCALENDAR has a METHOD property.
+    (unless (icalendar-ast-node-first-child-of 'icalendar-method node)
+      (dolist (vevent (icalendar-ast-node-children-of 'icalendar-vevent node))
+        (unless (icalendar-ast-node-first-child-of 'icalendar-dtstart vevent)
+          (icalendar-signal-validation-error
+           "`icalendar-vevent' requires `icalendar-dtstart' when `icalendar-vcalendar' has no `icalendar-method'"
+           :node vevent))))
 
     (let ((seen nil))
       (dolist (tzid appearing-tzids)
