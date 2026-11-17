@@ -11,10 +11,10 @@
 (provide 'url-auth)
 (require 'url-http)
 
-(defun qa--url-http-request-with-headers (headers)
+(defun qa--url-http-request-with-headers (headers &optional proxy)
   (let ((url-http-target-url (url-generic-parse-url "http://example.com/path"))
         (url-http-extra-headers headers)
-        (url-http-proxy nil)
+        (url-http-proxy proxy)
         (url-http-referer nil)
         (url-http-method "GET")
         (url-http-data nil)
@@ -48,5 +48,28 @@
       (list (and (string-match-p "authorization: Bearer custom" request) t)
             (and (string-match-p "Authorization: Basic saved" request) t)))
     '(t nil))
+
+;; Proxy-Authorization is omitted for direct requests but kept for a proxy.
+(qa (let ((request
+           (qa--url-http-request-with-headers
+            '(("proxy-authorization" . "Basic proxy-secret")))))
+      (and (not (string-match-p
+                 "proxy-authorization: Basic proxy-secret" request))
+           (not (string-match-p "Proxy-Authorization: Basic saved" request))))
+    t)
+(qa (let ((request
+           (qa--url-http-request-with-headers
+            '(("proxy-authorization" . "Basic proxy-secret"))
+            "http://proxy.example:8080")))
+      (list (and (string-match-p
+                  "proxy-authorization: Basic proxy-secret" request) t)
+            (and (string-match-p "Proxy-Authorization: Basic saved" request) t)))
+    '(t nil))
+;; Redirect filtering strips both field names case-insensitively.
+(qa (url-http--remove-authentication-headers
+     '(("authorization" . "Bearer origin")
+       ("proxy-authorization" . "Basic proxy")
+       ("X-Test" . "keep")))
+    '(("X-Test" . "keep")))
 
 (princ (qa--done))
