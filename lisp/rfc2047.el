@@ -863,6 +863,13 @@ Return the new end point."
   "Return a PARAM=VALUE string encoded in the RFC2047-like style.
 This is a substitution for the `rfc2231-encode-string' function, that
 is the standard but many mailers don't support it."
+  (when (or (and (stringp param)
+                  (or (string-match-p "\n" param)
+                      (string-match-p "\r" param)))
+            (and (stringp value)
+                 (or (string-match-p "\n" value)
+                     (string-match-p "\r" value))))
+    (error "MIME parameter contains a newline"))
   (let ((rfc2047-encoding-type 'mime)
 	(rfc2047-encode-max-chars nil))
     (rfc2045-encode-string param (rfc2047-encode-string value t))))

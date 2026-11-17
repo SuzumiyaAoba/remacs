@@ -909,6 +909,11 @@ type detected."
 
 (defun mml-insert-mime-headers (cont type charset encoding flowed)
   (let (parameters id disposition description)
+    (setq description (cdr (assq 'description cont)))
+    (when (and (stringp description)
+               (or (string-match-p "\n" description)
+                   (string-match-p "\r" description)))
+      (error "Content-Description contains a newline"))
     (setq parameters
 	  (mml-parameter-string
 	   cont mml-content-type-parameters))
@@ -952,7 +957,7 @@ type detected."
       (insert "\n"))
     (unless (eq encoding '7bit)
       (insert (format "Content-Transfer-Encoding: %s\n" encoding)))
-    (when (setq description (cdr (assq 'description cont)))
+    (when description
       (insert "Content-Description: "
 	      ;; The current buffer is unibyte, so do the description
 	      ;; encoding in a temporary buffer.
