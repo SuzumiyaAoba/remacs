@@ -419,6 +419,32 @@
       '("LAST-MODIFIED:20250101T010000Z")))
     t)
 
+;; LANGUAGE subtags must be nonempty and separated by single hyphens (#2538).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("SUMMARY;LANGUAGE=en--US:Meeting")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("SUMMARY;LANGUAGE=-en:Meeting")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("SUMMARY;LANGUAGE=en-:Meeting")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("SUMMARY;LANGUAGE=en-US:Meeting")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("SUMMARY;LANGUAGE=zh-Hant-TW:Meeting")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("SUMMARY;LANGUAGE=de-CH-1901:Meeting")))
+    t)
+
 ;; STATUS and ATTENDEE PARTSTAT use their component-specific value sets (#2529/#2530).
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component "VEVENT" '("STATUS:COMPLETED")))

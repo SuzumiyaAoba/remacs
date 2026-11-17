@@ -2223,7 +2223,8 @@ Other values are treated like BUSY."
   :default "BUSY"
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.2.9")
 
-;; TODO: see https://www.rfc-editor.org/rfc/rfc5646#section-2.1
+;; Retain malformed tags in the AST so the parameter validator can reject
+;; them rather than silently skipping an unrecognized parameter.
 (rx-define icalendar-rfc5646-lang
   (one-or-more (any "A-Za-z0-9" ?-)))
 
@@ -2236,6 +2237,25 @@ Norwegian.  Valid language tags are defined in RFC5646; see
 URL `https://www.rfc-editor.org/rfc/rfc5646'"
   icalendar-rfc5646-lang
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.2.10")
+
+(defun icalendar-languageparam-validator (node)
+  "Validate that LANGUAGE parameter NODE has no empty subtags."
+  (icalendar-with-param node
+    (unless (string-match-p
+             (rx string-start
+                 (one-or-more (any "A-Za-z0-9"))
+                 (zero-or-more (seq ?- (one-or-more (any "A-Za-z0-9"))))
+                 string-end)
+             value)
+      (icalendar-signal-validation-error
+       (format "Malformed RFC 5646 LANGUAGE tag: %s" value)
+       :node node)))
+  node)
+
+;; Eager macro expansion may evaluate parameter declarations before
+;; validator function cells are installed; publish the validator afterwards.
+(put 'icalendar-languageparam 'icalendar-other-validator
+     #'icalendar-languageparam-validator)
 
 (icalendar-define-param icalendar-memberparam "MEMBER"
   "Group or List Membership.
