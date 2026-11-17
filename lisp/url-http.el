@@ -262,6 +262,10 @@ request.")
     (if (not (url-p url-current-lastloc))
         (setq url-current-lastloc (url-generic-parse-url url-current-lastloc)))
     (let ((referer (copy-sequence url-current-lastloc)))
+      ;;Remacs: RFC 9110 section 10.1.3 forbids userinfo and fragments in Referer.
+      (setf (url-user referer) nil
+            (url-password referer) nil
+            (url-target referer) nil)
       (setf (url-host referer) (puny-encode-domain (url-host referer)))
       (let ((referer-string (url-recreate-url referer)))
         (when (and (not (memq url-privacy-level '(low high paranoid)))
