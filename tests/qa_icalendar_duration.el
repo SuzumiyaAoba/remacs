@@ -261,6 +261,22 @@
           "END:VEVENT"))
     t)
 
+;; VTIMEZONE RDATE onsets must be local even without RRULE (#2533).
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/RDATE\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0000\nTZOFFSETTO:+0000\n"
+          "RDATE:20250101T000000\nEND:STANDARD\nEND:VTIMEZONE"))
+    t)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/RDATE\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0000\nTZOFFSETTO:+0000\n"
+          "RDATE:20250101T000000Z\nEND:STANDARD\nEND:VTIMEZONE"))
+    nil)
+
 ;; Numeric iCalendar properties enforce their inclusive RFC ranges (#2526/#2527).
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component "VTODO" '("PERCENT-COMPLETE:-1")))

@@ -3853,31 +3853,30 @@ necessary to call it directly."
                      (mapcar #'icalendar-ast-node-value
                              (apply #'append
                                     (mapcar #'icalendar-ast-node-value rdates))))))
+    (when (and included
+               (memq (icalendar-ast-node-type node)
+                     '(icalendar-standard icalendar-daylight)))
+      ;; RDATE onsets in STANDARD and DAYLIGHT are local DATE-TIME values
+      ;; relative to TZOFFSETFROM, whether or not the observance has RRULE.
+      (unless (icalendar-list-of-p included 'icalendar-date-time)
+        (icalendar-signal-validation-error
+         (format
+          (concat "`icalendar-rdate' values must be `icalendar-date-time' "
+                  "values in %s components")
+          (icalendar-ast-node-type node))
+         :node node))
+      (when (seq-some #'decoded-time-zone included)
+        (icalendar-signal-validation-error
+         (format
+          (concat "`icalendar-rdate' values must be in local (\"floating\") "
+                  "time in %s components")
+          (icalendar-ast-node-type node))
+         :node node)))
     (when rrule
       (unless dtstart
         (icalendar-signal-validation-error
          "An `icalendar-rrule' requires an `icalendar-dtstart' property"
          :node node))
-      (when included
-        ;; ""RDATE" in this usage [i.e., in STANDARD and DAYLIGHT
-        ;; subcomponents] MUST be specified as a date with local time
-        ;; value, relative to the UTC offset specified in the
-        ;; "TZOFFSETFROM" property."
-        (when (and (memq (icalendar-ast-node-type node) '(icalendar-standard icalendar-daylight)))
-          (unless (icalendar-list-of-p included 'icalendar-date-time)
-            (icalendar-signal-validation-error
-             (format
-              (concat "`icalendar-rdate' values must be `icalendar-date-time' "
-                      "values in %s components")
-              (icalendar-ast-node-type node))
-             :node node))
-          (when (seq-some #'decoded-time-zone included)
-            (icalendar-signal-validation-error
-             (format
-              (concat "`icalendar-rdate' values must be in local (\"floating\")"
-                      "time in %s components")
-              (icalendar-ast-node-type node))
-             :node node))))
 
       (let* ((freq (car (alist-get 'FREQ recval)))
              (until (car (alist-get 'UNTIL recval))))
@@ -4417,6 +4416,11 @@ component and cannot contain other subcomponents."
                               icalendar-other-property)
                :other-validator icalendar-rrule-validator)
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.6.5")
+
+;; Eager macro expansion may leave these validators unset before their
+;; function cell is evaluated; publish them explicitly after the declarations.
+(put 'icalendar-standard 'icalendar-other-validator #'icalendar-rrule-validator)
+(put 'icalendar-daylight 'icalendar-other-validator #'icalendar-rrule-validator)
 
 (icalendar-define-component icalendar-valarm "VALARM"
   "Represents an alarm.
