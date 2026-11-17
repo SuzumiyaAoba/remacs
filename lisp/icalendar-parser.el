@@ -1258,8 +1258,15 @@ period's start and duration.  VTIMEZONE, if given, should be the
   (and (listp val)
        (length= val 3)
        (cl-typep (icalendar-period-start val) 'icalendar-date-time)
-       (cl-typep (icalendar-period-end val) '(or null icalendar-date-time))
-       (cl-typep (icalendar-period-dur-value val) '(or null icalendar-dur-value))))
+       (let ((end (icalendar-period--defined-end val))
+             (duration (icalendar-period-dur-value val)))
+         (if duration
+             (and (cl-typep duration 'icalendar-dur-value)
+                  (icalendar--duration-positive-p duration))
+           (and (cl-typep end 'icalendar-date-time)
+                (condition-case nil
+                    (icalendar-date-time< (icalendar-period-start val) end)
+                  (error nil)))))))
 
 (cl-defun icalendar-make-period (start &key end duration)
   "Make an `icalendar-period' value.
@@ -1279,13 +1286,18 @@ S should match rx `icalendar-period'."
   (save-match-data
     ;; Remacs: match the argument independently; the rx is registered below.
     (string-match (rx-to-string 'icalendar-period) s)
-    (let ((start (match-string 11 s))
-          (end (match-string 12 s))
-          (dur (match-string 13 s)))
-      (icalendar-make-period
-       (icalendar-read-date-time start)
-       :end (when end (icalendar-read-date-time end))
-       :duration (when dur (icalendar-read-dur-value dur))))))
+    (let* ((start (match-string 11 s))
+           (end (match-string 12 s))
+           (dur (match-string 13 s))
+           (period
+            (icalendar-make-period
+             (icalendar-read-date-time start)
+             :end (when end (icalendar-read-date-time end))
+             :duration (when dur (icalendar-read-dur-value dur)))))
+      (unless (icalendar-period-p period)
+        (icalendar-signal-parse-error
+         (format "Invalid PERIOD value: %s" s)))
+      period)))
 
 (defun icalendar-print-period (per)
   "Serialize an `icalendar-period' to a string."
