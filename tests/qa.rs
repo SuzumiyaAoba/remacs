@@ -476,6 +476,7 @@ qa!(qa_icalendar_weekno_weekstart, "qa_icalendar_weekno_weekstart.el");
 qa!(qa_icalendar_exdate_rdate_period, "qa_icalendar_exdate_rdate_period.el");
 qa!(qa_icalendar_tzid_rdate_period, "qa_icalendar_tzid_rdate_period.el");
 qa!(qa_icalendar_leap_second_normalization, "qa_icalendar_leap_second_normalization.el");
+qa!(qa_icalendar_text_escape_roundtrip, "qa_icalendar_text_escape_roundtrip.el");
 qa!(qa_icalendar_tz_gap_fold_cross_midnight, "qa_icalendar_tz_gap_fold_cross_midnight.el");
 qa!(qa_format_string_substitution_properties, "qa_format_string_substitution_properties.el");
 qa!(qa_text_scale_buffer_local, "qa_text_scale_buffer_local.el");

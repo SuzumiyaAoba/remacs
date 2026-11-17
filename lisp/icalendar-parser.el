@@ -1718,16 +1718,24 @@ BUFFER."
   (cdr r))
 
 (defun icalendar-unescape-text-in-region (begin end)
- "Unescape the text between BEGIN and END.
-Unescaping replaces literal '\\n' and '\\N' with newline, and removes
-backslashes that escape commas, semicolons, and backslashes."
- (with-restriction begin end
-   (save-excursion
-    (replace-string-in-region "\\N" "\n" (point-min) (point-max))
-    (replace-string-in-region "\\n" "\n" (point-min) (point-max))
-    (replace-string-in-region "\\," "," (point-min) (point-max))
-    (replace-string-in-region "\\;" ";" (point-min) (point-max)))
-    (replace-string-in-region (concat "\\" "\\") "\\" (point-min) (point-max))))
+  "Decode iCalendar TEXT escapes from BEGIN to END, consuming them left to right.
+Backslash pairs become one literal backslash; \\n and \\N become newlines.
+Escaped commas and semicolons are unescaped."
+  (with-restriction begin end
+    (save-excursion
+      (goto-char (point-min))
+      (while (search-forward "\\" nil t)
+        (let ((escape-start (1- (point)))
+              (escaped-char (char-after)))
+          (cond
+           ((memq escaped-char '(92 44 59))
+            (delete-region escape-start (point))
+            (when (= escaped-char 92)
+              (forward-char 1)))
+           ((memq escaped-char '(110 78))
+            (delete-region escape-start (1+ (point)))
+            (goto-char escape-start)
+            (insert (string 10)))))))))
 
 (defun icalendar-unescape-text-string (s)
  "Unescape the text in string S.
