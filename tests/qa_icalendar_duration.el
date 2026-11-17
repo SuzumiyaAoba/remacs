@@ -249,6 +249,32 @@
           "END:VEVENT"))
     t)
 
+;; Numeric iCalendar properties enforce their inclusive RFC ranges (#2526/#2527).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VTODO" '("PERCENT-COMPLETE:-1")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VTODO" '("PERCENT-COMPLETE:101")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VTODO" '("PERCENT-COMPLETE:0")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VTODO" '("PERCENT-COMPLETE:100")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("PRIORITY:-1")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("PRIORITY:10")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("PRIORITY:0")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("PRIORITY:9")))
+    t)
+
 ;; Relative VALARM triggers require the corresponding parent start or end
 ;; time, even when METHOD otherwise permits a VEVENT without DTSTART (#2523/#2524).
 (qa (qa-icalendar-duration--calendar-component-valid-p

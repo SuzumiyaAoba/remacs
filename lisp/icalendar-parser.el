@@ -2918,7 +2918,23 @@ structured location information."
                :zero-or-more (icalendar-otherparam))
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.7")
 
-;; TODO: type for percentages?
+(defun icalendar--integer-range-validator (node minimum maximum label)
+  "Require NODE's integer value to be in the inclusive range MINIMUM..MAXIMUM."
+  (icalendar-with-property node nil
+    (unless (and (integerp value) (<= minimum value maximum))
+      (icalendar-signal-validation-error
+       (format "`%s' must be between %d and %d" label minimum maximum)
+       :node node)))
+  node)
+
+(defun icalendar-percent-complete-validator (node)
+  "Validate that PERCENT-COMPLETE has a value between 0 and 100."
+  (icalendar--integer-range-validator node 0 100 "PERCENT-COMPLETE"))
+
+(defun icalendar-priority-validator (node)
+  "Validate that PRIORITY has a value between 0 and 9."
+  (icalendar--integer-range-validator node 0 9 "PRIORITY"))
+
 (icalendar-define-property icalendar-percent-complete "PERCENT-COMPLETE"
   "Percent Complete.
 
@@ -2926,23 +2942,24 @@ This property describes progress toward the completion of an
 `icalendar-vtodo' component.  It can appear at most once in such a
 component.  If this TODO is assigned to multiple people, the value
 represents the completion state for each person individually.  The
-value should be between 0 and 100 (though this is not currently
-enforced here)."
+value must be between 0 and 100, inclusive."
   icalendar-integer
   :child-spec (:zero-or-more (icalendar-otherparam))
+  :other-validator icalendar-percent-complete-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.8")
 
-;; TODO: type for priority values?
 (icalendar-define-property icalendar-priority "PRIORITY"
   "Priority.
 
 This property describes the priority of a component. 0 means an
-undefined priority.  Other values range from 1 (highest priority)
-to 9 (lowest priority).  See RFC5545 for suggestions on how to
-represent other priority schemes with this property."
+undefined priority. Values from 1 through 9 give decreasing
+priority, from highest to lowest. Values must be in the range 0
+through 9, inclusive. See RFC5545 for suggestions on how to represent
+other priority schemes with this property."
   icalendar-integer
   :default "0"
   :child-spec (:zero-or-more (icalendar-otherparam))
+  :other-validator icalendar-priority-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.1.9")
 
 (icalendar-define-property icalendar-resources "RESOURCES"
