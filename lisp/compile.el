@@ -1991,7 +1991,8 @@ which is not a string, but instead a symbol or a list."
   (downcase (format-mode-line mode)))
 
 (defun compilation--unquote-shell-double-quoted-path (string)
-  "Unquote STRING and expand its unescaped environment variables."
+  "Unquote STRING and expand its unescaped environment variables.
+Keep a leading tilde literal, as the shell does inside double quotes."
   (let ((index 0)
         (length (length string))
         segment
@@ -2019,7 +2020,11 @@ which is not a string, but instead a symbol or a list."
     (push (substitute-env-vars
            (apply #'concat (nreverse segment)))
           parts)
-    (apply #'concat (nreverse parts))))
+    (let ((path (apply #'concat (nreverse parts))))
+      (if (and (> (length path) 0)
+               (= (aref path 0) ?~))
+          (concat "./" path)
+        path))))
 
 ;;;###autoload
 (defun compilation-start (command &optional mode name-function highlight-regexp

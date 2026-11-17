@@ -225,6 +225,7 @@ qa!(qa_json_cycles, "qa_json_cycles.el");
 qa!(qa_fileattr, "qa_fileattr.el");
 qa!(qa_file_modes, "qa_file_modes.el");
 qa!(qa_dired_chmod_directory_x, "qa_dired_chmod_directory_x.el");
+qa!(qa_compilation_quoted_tilde, "qa_compilation_quoted_tilde.el");
 qa!(qa_file_attributes_pre_epoch, "qa_file_attributes_pre_epoch.el");
 qa!(qa_file_system_info_handler, "qa_file_system_info_handler.el");
 qa!(qa_file_accessible_directory_handler, "qa_file_accessible_directory_handler.el");
