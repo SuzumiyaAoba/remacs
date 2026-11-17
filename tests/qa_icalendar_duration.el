@@ -61,14 +61,12 @@
   (format "BEGIN:%s\nUID:qa-end-order\nDTSTAMP:20250101T000000Z\n%s\nEND:%s"
           component (mapconcat #'identity properties "\n") component))
 
-(defun qa-icalendar-duration--calendar-component-valid-p
-    (method component properties)
+(defun qa-icalendar-duration--calendar-content-valid-p (method content)
   (with-temp-buffer
     (insert "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//qa//remacs//EN\n")
     (when method
       (insert "METHOD:PUBLISH\n"))
-    (insert (qa-icalendar-duration--component component properties)
-            "\nEND:VCALENDAR")
+    (insert content "\nEND:VCALENDAR")
     (goto-char (point-min))
     (condition-case nil
         (progn
@@ -76,6 +74,11 @@
            (icalendar-parse-component (point-max)) t)
           t)
       (icalendar-validation-error nil))))
+
+(defun qa-icalendar-duration--calendar-component-valid-p
+    (method component properties)
+  (qa-icalendar-duration--calendar-content-valid-p
+   method (qa-icalendar-duration--component component properties)))
 
 (defun qa-icalendar-duration--calendar-valid-p (method event-properties)
   (qa-icalendar-duration--calendar-component-valid-p
@@ -212,6 +215,38 @@
     t)
 (qa (qa-icalendar-duration--calendar-valid-p
      nil '("DTSTART:20250101T120000Z"))
+    t)
+
+;; VCALENDAR cannot define a TZID more than once (#2525).
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/Duplicate\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0000\nTZOFFSETTO:+0000\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VTIMEZONE\nTZID:Test/Duplicate\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0100\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VEVENT\nUID:duplicate-zone\n"
+          "DTSTAMP:20250101T000000Z\n"
+          "DTSTART;TZID=Test/Duplicate:20250101T090000\n"
+          "END:VEVENT"))
+    nil)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/One\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0000\nTZOFFSETTO:+0000\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VTIMEZONE\nTZID:Test/Two\n"
+          "BEGIN:STANDARD\nDTSTART:19700101T000000\n"
+          "TZOFFSETFROM:+0100\nTZOFFSETTO:+0100\nEND:STANDARD\n"
+          "END:VTIMEZONE\n"
+          "BEGIN:VEVENT\nUID:distinct-zones\n"
+          "DTSTAMP:20250101T000000Z\n"
+          "DTSTART;TZID=Test/One:20250101T090000\n"
+          "END:VEVENT"))
     t)
 
 ;; Relative VALARM triggers require the corresponding parent start or end

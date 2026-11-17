@@ -4532,6 +4532,14 @@ VCALENDAR nodes; it is not normally necessary to call it directly."
        "`icalendar-vcalendar' must contain at least one component"
        :node node))
 
+    (let ((seen-defined-tzs nil))
+      (dolist (tzid defined-tzs)
+        (when (and tzid (member tzid seen-defined-tzs))
+          (icalendar-signal-validation-error
+           (format "Duplicate `icalendar-vtimezone' TZID '%s' in calendar" tzid)
+           :node node))
+        (push tzid seen-defined-tzs)))
+
     ;; RFC 5545 section 3.6.1 makes DTSTART optional in VEVENT only when
     ;; the containing VCALENDAR has a METHOD property.
     (unless (icalendar-ast-node-first-child-of 'icalendar-method node)
