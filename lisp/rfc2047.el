@@ -850,7 +850,7 @@ Return the new end point."
   "Quoted-printable-encode the header in STRING."
   (let ((class (if (eq rfc2047-encoding-type 'address-mime)
                    ;; RFC 2047 section 5(3) restricts Q-encoded phrases.
-                   "- !*+/0-9A-Z_a-z"
+                   "- !*+/0-9A-Za-z"
                  ;; Use a wider printable set in unstructured fields/comments.
                  "-\b\n\f !#-'*+0-9A-Z\\^`-~\d")))
     (mm-with-unibyte-buffer
