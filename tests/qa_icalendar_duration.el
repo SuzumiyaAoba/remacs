@@ -175,6 +175,8 @@
       "VEVENT" '("DTSTART;VALUE=DATE:20250102"
                  "DTEND;VALUE=DATE:20250103")))
     t)
+;; RFC 5545 section 3.6.1 restricts DATE-valued VEVENT durations to days or
+;; weeks (#2578); the PT1H rejection and P1D control were already covered.
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
       "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:PT1H")))
@@ -182,6 +184,10 @@
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
       "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:P1D")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:P1W")))
     t)
 
 ;; VFREEBUSY timestamps and every explicit FREEBUSY PERIOD endpoint are UTC
