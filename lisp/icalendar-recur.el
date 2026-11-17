@@ -2108,36 +2108,54 @@ clock time in DT to an existing one; see
       (icalendar-recur-tz-observance-on dt vtimezone t nonexistent)))
     dt))
 
+(defun icalendar-recur--set-zone-in-period (period vtimezone)
+  "Return PERIOD with its start and end interpreted in VTIMEZONE."
+  (let ((start (icalendar-recur-tz-set-zone
+                (icalendar-period-start period) vtimezone)))
+    (if (icalendar-period-dur-value period)
+        (icalendar-make-period
+         start :duration (icalendar-period-dur-value period))
+      (icalendar-make-period
+       start
+       :end (icalendar-recur-tz-set-zone
+             (icalendar-period--defined-end period) vtimezone)))))
+
+(defun icalendar-recur--set-zone-in-value-node (node vtimezone)
+  "Set date-time or period values in NODE to VTIMEZONE."
+  (let ((value (icalendar-ast-node-value node)))
+    (cond
+     ((eq (icalendar-ast-node-type node) 'icalendar-date-time)
+      (icalendar-ast-node-set-value
+       node (icalendar-recur-tz-set-zone value vtimezone)))
+     ((eq (icalendar-ast-node-type node) 'icalendar-period)
+      (icalendar-ast-node-set-value
+       node (icalendar-recur--set-zone-in-period value vtimezone))))))
+
 (defun icalendar-recur-tz-set-zones-in (vtimezones node)
   "Recursively set time zone offset and dst flags in times in NODE.
 
 VTIMEZONES should be a list of the `icalendar-vtimezone' components in
 the calendar containing NODE.  NODE can be any iCalendar syntax node.  If
-NODE is a property node with an `icalendar-tzidparam' parameter and an
-`icalendar-date-time' or `icalendar-period' value, the appropriate time
-zone observance for its value is looked up in VTIMEZONES, and used to
-set the zone and dst slots in its value.  Otherwise, the function is
-called recursively on NODE's children."
+NODE is a property node with an `icalendar-tzidparam' parameter and a
+date-time value or list of date-time or period values, the appropriate
+time zone observance for its values is looked up in VTIMEZONES and used
+to set their zone and dst slots.  Otherwise, the function is called
+recursively on NODE's children."
   (cond
    ((icalendar-property-node-p node)
     (icalendar-with-property node
       ((icalendar-tzidparam :value tzid))
-      (when (and tzid (eq value-type 'icalendar-date-time))
-        (let* ((tz (icalendar-recur-tz-for tzid vtimezones))
-               updated)
-          (cond ((eq value-type 'icalendar-date-time)
-                 (setq updated (icalendar-recur-tz-set-zone value tz)))
-                ((eq value-type 'icalendar-period)
-                 (setq updated
-                       (icalendar-make-period
-                        (icalendar-recur-tz-set-zone (icalendar-period-start value) tz)
-                        :end
-                        (if (icalendar-period--defined-end value)
-                            (icalendar-recur-tz-set-zone (icalendar-period--defined-end value) tz)
-                          (icalendar-period-end value tz))
-                        :duration (icalendar-period-dur-value value)))))
-          (icalendar-ast-node-set-value value-node updated)))))
-   ((icalendar-component-node-p node) ; includes VCALENDAR nodes
+      (when (and tzid
+                 (or (memq value-type '(icalendar-date-time icalendar-period))
+                     value-nodes))
+        (let ((tz (icalendar-recur-tz-for tzid vtimezones)))
+          (cond
+           ((memq value-type '(icalendar-date-time icalendar-period))
+            (icalendar-recur--set-zone-in-value-node value-node tz))
+           (value-nodes
+            (dolist (value-node value-nodes)
+              (icalendar-recur--set-zone-in-value-node value-node tz))))))))
+   ((icalendar-component-node-p node)
     (dolist (nd (icalendar-ast-node-children node))
       (icalendar-recur-tz-set-zones-in vtimezones nd)))
    (t nil)))

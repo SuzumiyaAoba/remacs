@@ -474,6 +474,7 @@ qa!(qa_eshell_missing_option_argument, "qa_eshell_missing_option_argument.el");
 qa!(qa_icalendar_vtimezone_rdate_transitions, "qa_icalendar_vtimezone_rdate_transitions.el");
 qa!(qa_icalendar_weekno_weekstart, "qa_icalendar_weekno_weekstart.el");
 qa!(qa_icalendar_exdate_rdate_period, "qa_icalendar_exdate_rdate_period.el");
+qa!(qa_icalendar_tzid_rdate_period, "qa_icalendar_tzid_rdate_period.el");
 qa!(qa_icalendar_tz_gap_fold_cross_midnight, "qa_icalendar_tz_gap_fold_cross_midnight.el");
 qa!(qa_format_string_substitution_properties, "qa_format_string_substitution_properties.el");
 qa!(qa_text_scale_buffer_local, "qa_text_scale_buffer_local.el");
