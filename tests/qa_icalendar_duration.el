@@ -103,6 +103,11 @@
       (progn (icalendar-parse-from-string 'icalendar-utc-offset text) t)
     (error nil)))
 
+(defun qa-icalendar-duration--uri-valid-p (text)
+  (condition-case nil
+      (progn (icalendar-parse-from-string 'icalendar-uri text) t)
+    (error nil)))
+
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component
       "VTODO" '("DTSTART:20250102T090000Z" "DUE:20250102T100000Z")))
@@ -408,6 +413,20 @@
 (qa (qa-icalendar-duration--utc-offset-valid-p "+2359") t)
 (qa (qa-icalendar-duration--utc-offset-valid-p "+235959") t)
 (qa (qa-icalendar-duration--utc-offset-valid-p "-000001") t)
+
+;; URI parsing validates percent escapes and component-specific syntax (#2540).
+(qa (qa-icalendar-duration--uri-valid-p "https://example.com/%ZZ") nil)
+(qa (qa-icalendar-duration--uri-valid-p "https://example.com/%") nil)
+(qa (qa-icalendar-duration--uri-valid-p "https://example.com/%2G") nil)
+(qa (qa-icalendar-duration--uri-valid-p "http://[xyz]/") nil)
+(qa (qa-icalendar-duration--uri-valid-p "http://example.com:abc/") nil)
+(qa (qa-icalendar-duration--uri-valid-p "http://example.com/path[abc]") nil)
+(qa (qa-icalendar-duration--uri-valid-p "https://example.com/%2Fpath") t)
+(qa (qa-icalendar-duration--uri-valid-p "http://example.com:8080/path") t)
+(qa (qa-icalendar-duration--uri-valid-p "http://[2001:db8::1]/") t)
+(qa (qa-icalendar-duration--uri-valid-p "http://[v1.foo]/") t)
+(qa (qa-icalendar-duration--uri-valid-p "urn:isbn:0451450523") t)
+(qa (qa-icalendar-duration--uri-valid-p "https://example.com/path?q=a%20b#frag") t)
 
 ;; LAST-MODIFIED values are UTC timestamps (#2537).
 (qa (qa-icalendar-duration--component-valid-p

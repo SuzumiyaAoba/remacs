@@ -1863,8 +1863,7 @@ printing iCalendar data."
   ;; except we make an effort to parse the scheme, because otherwise the
   ;; regex is either too permissive (icalendar-binary, in particular, matches
   ;; a subset of the characters allowed in a URI) or too complicated to
-  ;; be useful.
-  ;; TODO: use url-parse.el to parse to struct?
+  ;; be useful.  Component structure is checked by `icalendar-uri-valid-p'.
   (seq (group-n 11 (any "a-zA-Z") (zero-or-more (any ?- ?+ ?. "A-Za-z0-9")))
        ":"
        (group-n 12
@@ -1874,12 +1873,137 @@ printing iCalendar data."
                ?! ?$ ?& ?' ?\( ?\) ?* ?+ ?, ?\; ?= ; sub-delims
                ?%)))))                             ; for %-encoding
 
+(defun icalendar--uri-string-matches-p (string regexp)
+  "Return non-nil if STRING entirely matches REGEXP."
+  (and (stringp string)
+       (string-match-p (concat "\\`" regexp "\\'") string)))
+
+(defun icalendar--uri-percent-encoding-valid-p (uri)
+  "Return non-nil if all percent escapes in URI contain two hex digits."
+  (let ((position 0)
+        (length (length uri))
+        (valid t))
+    (while (and valid (< position length))
+      (if (= (aref uri position) ?%)
+          (if (and (< (+ position 2) length)
+                   (string-match-p
+                    "\\`[0-9A-Fa-f][0-9A-Fa-f]\\'"
+                    (substring uri (1+ position) (+ position 3))))
+              (setq position (+ position 3))
+            (setq valid nil))
+        (setq position (1+ position))))
+    valid))
+
+(defun icalendar--uri-ip-literal-valid-p (literal)
+  "Return non-nil if LITERAL is an RFC 3986 IPv6 or IPvFuture address."
+  (or (icalendar--uri-string-matches-p
+       literal "[vV][0-9A-Fa-f]+\\.[A-Za-z0-9._~!$&'()*+,;=:-]+")
+      (progn
+        (require 'net-utils)
+        (declare-function nslookup--ipv6-address-p "net-utils")
+        (nslookup--ipv6-address-p literal))))
+
+(defun icalendar--uri-port-valid-p (port)
+  "Return non-nil if PORT contains only decimal digits (or is empty)."
+  (icalendar--uri-string-matches-p port "[0-9]*"))
+
+(defun icalendar--uri-reg-name-valid-p (name)
+  "Return non-nil if NAME uses only RFC 3986 registered-name characters."
+  (icalendar--uri-string-matches-p name "[A-Za-z0-9._~!$&'()*+,;=%-]*"))
+
+(defun icalendar--uri-userinfo-valid-p (userinfo)
+  "Return non-nil if USERINFO uses only RFC 3986 userinfo characters."
+  (icalendar--uri-string-matches-p userinfo "[A-Za-z0-9._~!$&'()*+,;=:%-]*"))
+
+(defun icalendar--uri-hostport-valid-p (hostport)
+  "Return non-nil if HOSTPORT has a valid host and optional numeric port."
+  (if (and (length> hostport 0) (= (aref hostport 0) ?\[))
+      (let ((close (string-match (regexp-quote "]") hostport)))
+        (and close
+             (icalendar--uri-ip-literal-valid-p
+              (substring hostport 1 close))
+             (let ((suffix (substring hostport (1+ close))))
+               (or (equal suffix "")
+                   (and (string-prefix-p ":" suffix)
+                        (icalendar--uri-port-valid-p
+                         (substring suffix 1)))))))
+    (let ((colon (string-match (regexp-quote ":") hostport)))
+      (if colon
+          (and (not (string-match (regexp-quote ":") hostport (1+ colon)))
+               (icalendar--uri-reg-name-valid-p
+                (substring hostport 0 colon))
+               (icalendar--uri-port-valid-p (substring hostport (1+ colon))))
+        (icalendar--uri-reg-name-valid-p hostport)))))
+
+(defun icalendar--uri-authority-valid-p (authority)
+  "Return non-nil if AUTHORITY follows RFC 3986 authority syntax."
+  (let* ((at (string-match (regexp-quote "@") authority))
+         (userinfo (and at (substring authority 0 at)))
+         (hostport (if at (substring authority (1+ at)) authority)))
+    (and (or (null at)
+             (and (not (string-match (regexp-quote "@") authority (1+ at)))
+                  (icalendar--uri-userinfo-valid-p userinfo)))
+         (icalendar--uri-hostport-valid-p hostport))))
+
+(defun icalendar--uri-path-valid-p (path)
+  "Return non-nil if PATH uses only RFC 3986 pchar and slash characters."
+  (icalendar--uri-string-matches-p path "[A-Za-z0-9._~!$&'()*+,;=:@%/-]*"))
+
+(defun icalendar--uri-query-or-fragment-valid-p (text)
+  "Return non-nil if TEXT uses only RFC 3986 query or fragment characters."
+  (icalendar--uri-string-matches-p text "[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*"))
+
+(defun icalendar--uri-hier-part-valid-p (hier-part)
+  "Return non-nil if HIER-PART has valid authority and path components."
+  (and (length> hier-part 0)
+       (if (string-prefix-p "//" hier-part)
+           (let* ((path-start (string-match (regexp-quote "/") hier-part 2))
+                  (authority (substring hier-part 2 path-start))
+                  (path (if path-start (substring hier-part path-start) "")))
+             (and (icalendar--uri-authority-valid-p authority)
+                  (icalendar--uri-path-valid-p path)))
+         (icalendar--uri-path-valid-p hier-part))))
+
+(defun icalendar-uri-valid-p (uri)
+  "Return non-nil if URI has valid RFC 3986 component syntax."
+  (and (stringp uri)
+       (string-match-p
+        (concat "\\`" (rx-to-string 'icalendar-uri-with-scheme) "\\'")
+        uri)
+       (icalendar--uri-percent-encoding-valid-p uri)
+       (let* ((scheme-end (string-match (regexp-quote ":") uri))
+              (after-scheme (substring uri (1+ scheme-end)))
+              (fragment-start (string-match (regexp-quote "#") after-scheme))
+              (before-fragment
+               (if fragment-start (substring after-scheme 0 fragment-start)
+                 after-scheme))
+              (fragment
+               (when fragment-start (substring after-scheme (1+ fragment-start))))
+              (query-start (string-match (regexp-quote "?") before-fragment))
+              (hier-part
+               (if query-start (substring before-fragment 0 query-start)
+                 before-fragment))
+              (query
+               (when query-start (substring before-fragment (1+ query-start)))))
+         (and (icalendar--uri-hier-part-valid-p hier-part)
+              (or (null query)
+                  (icalendar--uri-query-or-fragment-valid-p query))
+              (or (null fragment)
+                  (icalendar--uri-query-or-fragment-valid-p fragment))))))
+
+(defun icalendar-read-uri (uri)
+  "Read URI after verifying its component syntax."
+  (unless (icalendar-uri-valid-p uri)
+    (icalendar-signal-parse-error (format "Invalid URI value: %s" uri)))
+  uri)
+
 (icalendar-define-type icalendar-uri "URI"
    "Type for URI values.
 
 The parsed and printed representations are the same: a URI string."
-   '(satisfies icalendar-match-uri-value)
+   '(satisfies icalendar-uri-valid-p)
    icalendar-uri-with-scheme
+   :reader icalendar-read-uri
    :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.3.13")
 
 ;;;; 3.3.3 Calendar User Address
