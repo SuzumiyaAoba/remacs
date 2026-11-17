@@ -1657,78 +1657,43 @@ UTC offsets local to that time zone."
 
 ;; TODO: verify that these functions are correct for time zones other
 ;; than US Eastern.
+(defun icalendar-recur--local-seconds-add (date-time seconds)
+  "Return DATE-TIME shifted by local clock SECONDS, ignoring its zone."
+  (decoded-time-add (icalendar-date-time-variant date-time)
+                    (make-decoded-time :second seconds)))
+
 (defun icalendar-recur-nonexistent-date-time-p (dt obs-onset observance)
-  "Return non-nil if DT does not exist in a given OBSERVANCE.
+  "Return non-nil if DT is a nonexistent local time after OBS-ONSET.
 
-Some local date-times do not exist in a given time zone.  When switching
-from standard to daylight savings time, the local clock time jumps over
-a certain range of times.  This function tests whether DT is one of those
-non-existent local times.
-
-DT and OBS-ONSET should be `icalendar-date-time' values; OBS-ONSET
-should be the (local) time immediately at the onset of the
-OBSERVANCE.  OBSERVANCE should be an `icalendar-standard' or
-`icalendar-daylight' component.
-
-If this function returns t, then per RFC5545 Section 3.3.5, DT must be
-interpreted using the UTC offset in effect prior to the onset of
-OBSERVANCE.  For example, at the switch from Standard to Daylight
-Savings time in US Eastern, the nonexistent time 2:30AM (Standard) must
-be re-interpreted as 3:30AM DST."
+OBS-ONSET should be the local time immediately before a DAYLIGHT
+observance's forward offset transition.  The gap may continue into the
+next calendar day."
   (when (icalendar-daylight-component-p observance)
     (icalendar-with-component observance
         ((icalendar-tzoffsetfrom :value offset-from)
          (icalendar-tzoffsetto :value offset-to))
-      (and (= (decoded-time-year dt) (decoded-time-year obs-onset))
-           (= (decoded-time-month dt) (decoded-time-month obs-onset))
-           (= (decoded-time-day dt) (decoded-time-day obs-onset))
-           (let* ((onset-secs (+ (decoded-time-second obs-onset)
-                                 (* 60 (decoded-time-minute obs-onset))
-                                 (* 60 60 (decoded-time-hour obs-onset))))
-                  (dt-secs (+ (decoded-time-second dt)
-                              (* 60 (decoded-time-minute dt))
-                              (* 60 60 (decoded-time-hour dt))))
-                  (jumped (abs (- offset-from offset-to)))
-                  (after-jumped (+ onset-secs jumped)))
-             (and
-              (<= onset-secs dt-secs)
-              (< dt-secs after-jumped)))))))
+      (let ((jump (- offset-to offset-from)))
+        (when (> jump 0)
+          (let ((gap-end (icalendar-recur--local-seconds-add obs-onset jump)))
+            (and (icalendar-date-time-locally<= obs-onset dt)
+                 (icalendar-date-time-locally< dt gap-end))))))))
 
 (defun icalendar-recur-date-time-occurs-twice-p (dt obs-onset observance)
   "Return non-nil if DT occurs twice in the given OBSERVANCE.
 
-Some local date-times occur twice in a given time zone.  When switching
-from daylight savings to standard time time, the local clock time is
-typically set back, so that a certain range of clock times occurs twice,
-once in daylight savings time and once in standard time.  This function
-tests whether DT is one of those local times which occur twice.
-
-DT and OBS-ONSET should be `icalendar-date-time' values; OBS-ONSET
-should be the (local) time immediately at the relevant onset of the
-OBSERVANCE.  OBSERVANCE should be an `icalendar-standard' or
-`icalendar-daylight' component.
-
-If this function returns t, then per RFC5545 Section 3.3.5, DT must be
-interpreted as the first occurrence of this clock time, i.e., in
-daylight savings time, prior to OBS-ONSET."
+OBS-ONSET should be the local time of a STANDARD backward offset
+transition.  The repeated interval may begin on the previous calendar
+day."
   (when (icalendar-standard-component-p observance)
     (icalendar-with-component observance
         ((icalendar-tzoffsetfrom :value offset-from)
          (icalendar-tzoffsetto :value offset-to))
-      (and (= (decoded-time-year dt) (decoded-time-year obs-onset))
-           (= (decoded-time-month dt) (decoded-time-month obs-onset))
-           (= (decoded-time-day dt) (decoded-time-day obs-onset))
-           (let* ((onset-secs (+ (decoded-time-second obs-onset)
-                                 (* 60 (decoded-time-minute obs-onset))
-                                 (* 60 60 (decoded-time-hour obs-onset))))
-                  (dt-secs (+ (decoded-time-second dt)
-                              (* 60 (decoded-time-minute dt))
-                              (* 60 60 (decoded-time-hour dt))))
-                  (repeated (abs (- offset-from offset-to)))
-                  (start-repeateds (- onset-secs repeated)))
-             (and
-              (<= start-repeateds dt-secs)
-              (< dt-secs onset-secs)))))))
+      (let ((repeated (- offset-from offset-to)))
+        (when (> repeated 0)
+          (let ((repeat-start
+                 (icalendar-recur--local-seconds-add obs-onset (- repeated))))
+            (and (icalendar-date-time-locally<= repeat-start dt)
+                 (icalendar-date-time-locally< dt obs-onset))))))))
 
 (defun icalendar-recur-tz--get-updated-in (dt obs-onset observance)
   "Determine how to update DT's zone and dst slots from OBSERVANCE.
