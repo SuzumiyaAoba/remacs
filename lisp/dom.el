@@ -296,14 +296,24 @@ white-space."
   "Return non-nil if TAG names an HTML raw-text element."
   (member (downcase (format "%s" tag)) dom--html-raw-text-elements))
 
-(defun dom--insert-entities (string &optional attribute)
-  "Escape markup characters in STRING for HTML/XML output.
-When ATTRIBUTE is non-nil, preserve tabs and line breaks with references."
+(defun dom--xml-char-p (char)
+  "Return non-nil if CHAR is allowed by XML 1.0."
+  (or (memq char '(9 10 13))
+      (and (>= char #x20) (<= char #xd7ff))
+      (and (>= char #xe000) (<= char #xfffd))
+      (and (>= char #x10000) (<= char #x10ffff))))
+
+(defun dom--insert-entities (string &optional attribute xml)
+  "Escape markup in STRING for HTML/XML output.
+If ATTRIBUTE, encode tabs and line breaks as character references.
+If XML, reject characters forbidden by XML 1.0."
   (mapconcat
    (lambda (c)
-     (cond ((and attribute (eq c ?\t)) "&#9;")
+     (cond ((and xml (not (dom--xml-char-p c)))
+            (error "Invalid XML 1.0 character U+%04X" c))
+           ((and attribute (eq c ?\t)) "&#9;")
            ((and attribute (eq c ?\n)) "&#10;")
-           ((and attribute (eq c ?\r)) "&#13;")
+           ((and (or attribute xml) (eq c ?\r)) "&#13;")
            ((eq c ?&) "&amp;")
            ((eq c ?<) "&lt;")
            ((eq c ?>) "&gt;")
@@ -335,7 +345,7 @@ If XML, generate XML instead of HTML."
            (if (and (not xml) (dom--html-boolean-attribute-p attr))
                (format " %s" attr)
              (format " %s=\"%s\"" attr (dom--insert-entities
-                                         (format "%s" value) t)))))))
+                                         (format "%s" value) t xml)))))))
     (let* ((children (dom-children dom))
 	   (raw-text (and (not xml)
 			  (dom--html-raw-text-element-p (dom-tag dom))))
@@ -348,7 +358,7 @@ If XML, generate XML instead of HTML."
 	(insert ">")
         (dolist (child children)
 	  (if (stringp child)
-	      (insert (if raw-text child (dom--insert-entities child)))
+	      (insert (if raw-text child (dom--insert-entities child nil xml)))
 	    (setq non-text t)
 	    (when pretty
               (insert "\n")
