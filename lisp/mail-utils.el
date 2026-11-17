@@ -195,6 +195,15 @@ and tabs inside it."
 	(t
 	 (error "Malformed MIME quoted-printable message"))))
 
+(defun mail-unquote-printable--incomplete-escape-p (string)
+  "Return non-nil if STRING ends in an incomplete quoted-printable escape."
+  (let ((length (length string)))
+    (or (and (> length 0)
+             (= (aref string (1- length)) ?=))
+        (and (> length 1)
+             (= (aref string (- length 2)) ?=)
+             (not (= (aref string (1- length)) ?\n))))))
+
 ;;;###autoload
 (defun mail-unquote-printable (string &optional wrapper)
   "Undo the \"quoted printable\" encoding.
@@ -219,6 +228,8 @@ we expect to find and remove the wrapper characters =?ISO-8859-1?Q?....?=."
 				       (aref string (1+ (match-beginning 1))))))
 		      strings)))
 	(setq i (match-end 0)))
+	(when (mail-unquote-printable--incomplete-escape-p string)
+	  (error "Malformed MIME quoted-printable message"))
       (apply #'concat (nreverse (cons (substring string i) strings))))))
 
 ;; FIXME Gnus for some reason has `quoted-printable-decode-region' in qp.el.
@@ -247,7 +258,7 @@ as Rmail does."
 		     (looking-at "\\`=\\?ISO-8859-1\\?Q\\?\\([^?]*\\)\\?"))
 	    (delete-region (match-end 1) end)
 	    (delete-region (point) (match-beginning 1)))
-	  (while (re-search-forward "=\\(\\([0-9A-F][0-9A-F]\\)\\|[=\n]\\|\r?\n\\|..\\)" nil t)
+	  (while (re-search-forward "=\\(\\([0-9A-F][0-9A-F]\\)\\|\r?\n\\|..\\)" nil t)
 	    (goto-char (match-end 0))
 	    (cond ((let ((start (match-beginning 1)))
 		     (or (= (char-after start) ?\n)
@@ -272,6 +283,12 @@ as Rmail does."
 		   (setq failed t))
 		  (t
 		   (error "Malformed MIME quoted-printable message"))))
+	  (when (mail-unquote-printable--incomplete-escape-p
+	         (buffer-substring-no-properties
+	          (max (point-min) (- (point-max) 2)) (point-max)))
+	    (if noerror
+	        (setq failed t)
+	      (error "Malformed MIME quoted-printable message")))
 	  (not failed))))))
 
 (autoload 'rfc822-addresses "rfc822")
