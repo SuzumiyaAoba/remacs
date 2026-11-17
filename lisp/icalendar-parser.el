@@ -805,7 +805,8 @@ Returns a syntax node containing the value."
 Returns a syntax node containing the value."
   (let ((value-regex (rx-to-string (get type 'icalendar-value-rx))))
 
-    (unless (re-search-forward value-regex limit t)
+    (unless (let ((case-fold-search t))
+              (re-search-forward value-regex limit t))
       (icalendar-signal-parse-error
        (format "No %s value between %d and %d" type (point) limit)))
 
@@ -2195,7 +2196,8 @@ syntax node representing the parameter."
             (rx (group-n 2 (or icalendar-quoted-string
                                (zero-or-more (not (any ?: ?\;))))))))
 
-    (unless (re-search-forward full-value-regex limit t)
+    (unless (let ((case-fold-search t))
+              (re-search-forward full-value-regex limit t))
       (icalendar-signal-parse-error
        (format "Unable to parse `%s' value between %d and %d"
                type (point) limit)))
@@ -2729,7 +2731,8 @@ PARAMS."
               (rx (group-n 2 (zero-or-more (not (any control))))
                   line-end)))
 
-    (unless (re-search-forward full-value-regex limit t)
+    (unless (let ((case-fold-search t))
+              (re-search-forward full-value-regex limit t))
       (icalendar-signal-parse-error
        (format "Unable to parse `%s' property value between %d and %d"
                type start limit)
