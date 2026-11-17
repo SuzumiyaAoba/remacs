@@ -20,4 +20,13 @@
       (icalendar-print-error t))
     t)
 
+;; Quoting must not make CR/LF legal parameter text.
+(qa (condition-case nil
+        (icalendar-print-param-node
+         (icalendar-make-param
+          icalendar-cnparam
+          (concat "Alice" (string 13 10) "SUMMARY:INJECTED")))
+      (icalendar-print-error :rejected))
+    :rejected)
+
 (princ (qa--done))
