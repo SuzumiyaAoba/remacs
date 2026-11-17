@@ -98,6 +98,7 @@ qa!(qa_icalendar_member_quoted_comma, "qa_icalendar_member_quoted_comma.el");
 qa!(qa_icalendar_unknown_param_values, "qa_icalendar_unknown_param_values.el");
 qa!(qa_icalendar_print_error_once, "qa_icalendar_print_error_once.el");
 qa!(qa_icalendar_audio_attach_type, "qa_icalendar_audio_attach_type.el");
+qa!(qa_icalendar_email_attendee_mailto, "qa_icalendar_email_attendee_mailto.el");
 qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");
 qa!(qa_diary_icalendar_all_day_duration, "qa_diary_icalendar_all_day_duration.el");

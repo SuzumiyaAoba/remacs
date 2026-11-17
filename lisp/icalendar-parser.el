@@ -4800,7 +4800,15 @@ VALARM nodes; it is not normally necessary to call it directly."
                (icalendar-signal-validation-error
                 (concat "EMAIL `icalendar-valarm' must have "
                         "at least one `icalendar-attendee'")
-                :node node))
+               :node node))
+             (dolist (attendee
+                      (icalendar-ast-node-children-of 'icalendar-attendee node))
+               (let* ((value-node (icalendar-ast-node-value attendee))
+                      (address (icalendar-ast-node-value value-node)))
+                 (unless (string-prefix-p "mailto:" (downcase address))
+                   (icalendar-signal-validation-error
+                    "EMAIL `icalendar-attendee' must use a mailto URI"
+                    :node attendee))))
              node)
 
             (t
