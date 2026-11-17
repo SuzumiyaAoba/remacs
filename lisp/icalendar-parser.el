@@ -1932,7 +1932,7 @@ printing iCalendar data."
   (seq (group-n 11 (any "a-zA-Z") (zero-or-more (any ?- ?+ ?. "A-Za-z0-9")))
        ":"
        (group-n 12
-         (one-or-more
+         (zero-or-more
           (any "A-Za-z0-9" ?- ?. ?_ ?~             ; unreserved chars
                ?: ?/ ?? ?# ?\[ ?\] ?@              ; gen-delims
                ?! ?$ ?& ?' ?\( ?\) ?* ?+ ?, ?\; ?= ; sub-delims
@@ -2020,14 +2020,13 @@ printing iCalendar data."
 
 (defun icalendar--uri-hier-part-valid-p (hier-part)
   "Return non-nil if HIER-PART has valid authority and path components."
-  (and (length> hier-part 0)
-       (if (string-prefix-p "//" hier-part)
-           (let* ((path-start (string-match (regexp-quote "/") hier-part 2))
-                  (authority (substring hier-part 2 path-start))
-                  (path (if path-start (substring hier-part path-start) "")))
-             (and (icalendar--uri-authority-valid-p authority)
-                  (icalendar--uri-path-valid-p path)))
-         (icalendar--uri-path-valid-p hier-part))))
+  (if (string-prefix-p "//" hier-part)
+      (let* ((path-start (string-match (regexp-quote "/") hier-part 2))
+             (authority (substring hier-part 2 path-start))
+             (path (if path-start (substring hier-part path-start) "")))
+        (and (icalendar--uri-authority-valid-p authority)
+             (icalendar--uri-path-valid-p path)))
+    (icalendar--uri-path-valid-p hier-part)))
 
 (defun icalendar-uri-valid-p (uri)
   "Return non-nil if URI has valid RFC 3986 component syntax."

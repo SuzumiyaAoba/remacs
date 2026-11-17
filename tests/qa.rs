@@ -102,6 +102,7 @@ qa!(qa_icalendar_email_attendee_mailto, "qa_icalendar_email_attendee_mailto.el")
 qa!(qa_icalendar_case_fold_boolean, "qa_icalendar_case_fold_boolean.el");
 qa!(qa_icalendar_calendar_case_fold, "qa_icalendar_calendar_case_fold.el");
 qa!(qa_icalendar_date_time_case, "qa_icalendar_date_time_case.el");
+qa!(qa_icalendar_uri_empty_hierpart, "qa_icalendar_uri_empty_hierpart.el");
 qa!(qa_icalendar_value_type_case, "qa_icalendar_value_type_case.el");
 qa!(qa_icalendar_rrule_weekday_case, "qa_icalendar_rrule_weekday_case.el");
 qa!(qa_icalendar_recurrences_window_repeat, "qa_icalendar_recurrences_window_repeat.el");
