@@ -511,8 +511,7 @@ BUFFER defaults to the current buffer."
                           (or skip-msg "skipping"))))
     (setq err-plist (plist-put err-plist :message new-msg))
     (setq err-plist (plist-put err-plist :severity 1))
-    (icalendar-handle-generic-error (cons err-sym err-plist) err-buffer))
-  (icalendar-handle-generic-error err-data err-buffer))
+    (icalendar-handle-generic-error (cons err-sym err-plist) err-buffer)))
 
 ;;;; Some utilities:
 (defun icalendar-parse-from-string (type s)
