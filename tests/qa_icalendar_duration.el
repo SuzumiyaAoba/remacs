@@ -137,4 +137,50 @@
       "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:P1D")))
     t)
 
+;; VFREEBUSY timestamps and every explicit FREEBUSY PERIOD endpoint are UTC
+;; (#2519, including the related ordering and endpoint reports #2520/#2521).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("DTSTART:20250101T090000"
+                    "DTEND:20250101T100000")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("DTSTART;VALUE=DATE:20250101")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("DTSTART:20250101T090000Z"
+                    "DTEND:20250101T100000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("DTSTART:20250102T090000Z"
+                    "DTEND:20250101T090000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("FREEBUSY:20250101T090000/20250101T100000")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("FREEBUSY:20250101T090000Z/20250101T100000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("FREEBUSY:20250101T090000Z/20250103T100000")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("FREEBUSY:20250101T090000/20250103T100000Z")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("FREEBUSY:20250101T090000Z/P1D")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VFREEBUSY" '("FREEBUSY:20250101T090000/P1D")))
+    nil)
+
 (princ (qa--done))

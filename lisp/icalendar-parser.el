@@ -4161,7 +4161,43 @@ other component, and cannot contain subcomponents."
                               icalendar-freebusy
                               icalendar-request-status
                               icalendar-other-property))
+  :other-validator icalendar-vfreebusy-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.6.4")
+
+(defun icalendar--validate-utc-date-time-property (property)
+  "Signal a validation error if PROPERTY is not a UTC DATE-TIME value."
+  (when property
+    (icalendar-with-property property nil
+      (unless (and (eq value-type 'icalendar-date-time)
+                   (icalendar-date-time-is-utc-p value))
+        (icalendar-signal-validation-error
+         (format "`%s' in `icalendar-vfreebusy' must be a UTC date-time"
+                 (icalendar-ast-node-type property))
+         :node property)))))
+
+(defun icalendar-vfreebusy-validator (node)
+  "Additional validator for a `icalendar-vfreebusy' NODE.
+Checks that any `icalendar-dtstart' and `icalendar-dtend' values are UTC,
+that `icalendar-dtend' is later than `icalendar-dtstart', and that every
+explicit FREEBUSY PERIOD endpoint is UTC."
+  (let ((dtstart (icalendar-ast-node-first-child-of 'icalendar-dtstart node))
+        (dtend (icalendar-ast-node-first-child-of 'icalendar-dtend node)))
+    (icalendar--validate-utc-date-time-property dtstart)
+    (icalendar--validate-utc-date-time-property dtend)
+    (icalendar--validate-end-after-start dtstart dtend 'icalendar-dtend node)
+    (dolist (property (icalendar-ast-node-children-of 'icalendar-freebusy node))
+      (icalendar-with-property property nil
+        (dolist (period values)
+          (unless (and (icalendar-date-time-is-utc-p
+                        (icalendar-period-start period))
+                       (or (null (icalendar-period--defined-end period))
+                           (icalendar-date-time-is-utc-p
+                            (icalendar-period--defined-end period))))
+            (icalendar-signal-validation-error
+             "FREEBUSY PERIOD date-times must be specified in UTC"
+             :node property)))))
+  ;; success:
+  node))
 
 ;; TODO: RFC7808 defines additional properties that are relevant here:
 ;; https://www.rfc-editor.org/rfc/rfc7808.html#section-7
