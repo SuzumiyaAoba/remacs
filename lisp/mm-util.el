@@ -426,13 +426,14 @@ non-nil."
 If POS is nil, it defaults to the current point.
 If POS is out of range, the value is nil."
   (let ((char (char-after pos)) charset)
-    (if (< char 128)
-	(setq charset 'ascii)
-      (setq charset (char-charset char))
-      (if (and charset (not (memq charset '(ascii eight-bit-control
-						  eight-bit-graphic))))
-	  charset
-	(mm-guess-charset)))))
+    (when char
+      (if (< char 128)
+          (setq charset 'ascii)
+        (setq charset (char-charset char))
+        (if (and charset (not (memq charset '(ascii eight-bit-control
+                                              eight-bit-graphic))))
+            charset
+          (mm-guess-charset))))))
 
 (defun mm-mime-charset (charset)
   "Return the MIME charset corresponding to the given Mule CHARSET."
