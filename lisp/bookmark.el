@@ -1899,7 +1899,13 @@ unique numeric suffixes \"<2>\", \"<3>\", etc."
 		(dolist (bookmark bookmark-alist)
 		  (bookmark--remove-fringe-mark (cdr bookmark)))
 		(setq bookmark-alist blist
-		      bookmark-alist-modification-count 0))
+		      bookmark-alist-modification-count 0)
+		(dolist (buffer (buffer-list))
+		  (with-current-buffer buffer
+		    (when (and (local-variable-p 'bookmark-current-bookmark)
+			       bookmark-current-bookmark
+			       (not (assoc bookmark-current-bookmark bookmark-alist)))
+		      (setq-local bookmark-current-bookmark nil)))))
 	    (bookmark-import-new-list blist)
 	    (setq bookmark-alist-modification-count
 		  (1+ bookmark-alist-modification-count)))
