@@ -542,4 +542,24 @@
                   "DESCRIPTION:Reminder" "END:VALARM"))
     t)
 
+;; REPEAT counts additional alarm firings and cannot be negative (#2539).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T120000Z" "BEGIN:VALARM"
+                 "ACTION:DISPLAY" "TRIGGER:-PT5M" "REPEAT:-1"
+                 "DURATION:PT1M" "DESCRIPTION:Reminder" "END:VALARM")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T120000Z" "BEGIN:VALARM"
+                 "ACTION:DISPLAY" "TRIGGER:-PT5M" "REPEAT:0"
+                 "DURATION:PT1M" "DESCRIPTION:Reminder" "END:VALARM")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T120000Z" "BEGIN:VALARM"
+                 "ACTION:DISPLAY" "TRIGGER:-PT5M" "REPEAT:2"
+                 "DURATION:PT1M" "DESCRIPTION:Reminder" "END:VALARM")))
+    t)
+
 (princ (qa--done))

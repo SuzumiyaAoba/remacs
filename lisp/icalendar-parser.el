@@ -3471,6 +3471,10 @@ property in an alarm component."
   :child-spec (:zero-or-more (icalendar-otherparam))
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.1")
 
+(defun icalendar-repeat-validator (node)
+  "Validate that REPEAT is a non-negative number of additional triggers."
+  (icalendar--integer-range-validator node 0 2147483647 "REPEAT"))
+
 (icalendar-define-property icalendar-repeat "REPEAT"
   "Repeat Count (after initial trigger).
 
@@ -3481,6 +3485,7 @@ alarm triggers more than once."
   icalendar-integer
   :default "0"
   :child-spec (:zero-or-more (icalendar-otherparam))
+  :other-validator icalendar-repeat-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.6.2")
 
 (icalendar-define-property icalendar-trigger "TRIGGER"
