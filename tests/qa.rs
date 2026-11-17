@@ -469,6 +469,7 @@ qa!(qa_bookmark_rename_duplicate, "qa_bookmark_rename_duplicate.el");
 qa!(qa_bookmark_trailing_data, "qa_bookmark_trailing_data.el");
 qa!(qa_bookmark_load_overwrite_fringe_marks, "qa_bookmark_load_overwrite_fringe_marks.el");
 qa!(qa_bookmark_load_overwrite_current_name, "qa_bookmark_load_overwrite_current_name.el");
+qa!(qa_bookmark_rename_current_names, "qa_bookmark_rename_current_names.el");
 qa!(qa_format_string_substitution_properties, "qa_format_string_substitution_properties.el");
 qa!(qa_text_scale_buffer_local, "qa_text_scale_buffer_local.el");
 qa!(qa_symbol_with_pos_printing, "qa_symbol_with_pos_printing.el");

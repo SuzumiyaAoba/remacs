@@ -1571,6 +1571,11 @@ name."
       (bookmark-set-name bookmark final-new-name))
     (bookmark-update-last-modified final-new-name)
     (setq bookmark-current-bookmark final-new-name)
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (and (local-variable-p 'bookmark-current-bookmark)
+                   (equal bookmark-current-bookmark old-name))
+          (setq-local bookmark-current-bookmark final-new-name))))
     (bookmark-bmenu-surreptitiously-rebuild-list)
     (setq bookmark-alist-modification-count
           (1+ bookmark-alist-modification-count))
