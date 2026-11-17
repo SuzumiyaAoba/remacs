@@ -837,19 +837,78 @@ children."
                 (append result (list (list param-name param-value)))))))
     result))
 
+(defun icalendar--rdate-time-key (date-time)
+  "Return DATE-TIME normalized to YYYYMMDDTHHMMSS for comparison."
+  (let ((length (length date-time)))
+    (cond ((= length 8) (concat date-time "T000000"))
+          ((= length 13) (concat date-time "00"))
+          (t (substring date-time 0 (min length 15))))))
+
+(defun icalendar--rdate-offset-to-seconds (offset)
+  "Convert an iCalendar UTC-OFFSET string OFFSET to seconds east of UTC."
+  (let ((sign (if (eq (aref offset 0) ?-) -1 1))
+        (hours (string-to-number (substring offset 1 3)))
+        (minutes (string-to-number (substring offset 3 5)))
+        (seconds (if (> (length offset) 5)
+                     (string-to-number (substring offset 5 7))
+                   0)))
+    (* sign (+ (* hours 3600) (* minutes 60) seconds))))
+
+(defun icalendar--rdate-zone-p (zone)
+  "Return non-nil if ZONE is an explicit RDATE timezone schedule."
+  (and (consp zone) (eq (car zone) 'icalendar-rdate-zone)))
+
+(defun icalendar--rdate-zone-offset (zone date-time)
+  "Return the UTC offset in explicit RDATE ZONE at local DATE-TIME."
+  (let ((key (icalendar--rdate-time-key date-time))
+        (offset (nth 1 zone)))
+    (dolist (transition (nth 2 zone))
+      (when (not (string-lessp key (car transition)))
+        (setq offset (nth 2 transition))))
+    (icalendar--rdate-offset-to-seconds offset)))
+
+(defun icalendar--rdate-zone-schedule (vtimezone)
+  "Return the explicit RDATE schedule of VTIMEZONE, or nil if it recurs.
+A schedule is used when its STANDARD/DAYLIGHT observances have explicit
+RDATE onsets but no RRULE.  A POSIX TZ string cannot represent that finite
+set of transitions."
+  (let ((observances (append (icalendar--get-children vtimezone 'STANDARD)
+                             (icalendar--get-children vtimezone 'DAYLIGHT)))
+        has-rdate has-rrule transitions)
+    (dolist (observance observances)
+      (let ((dtstart (icalendar--get-event-property observance 'DTSTART))
+            (rdates (delq ""
+                          (icalendar--get-event-properties observance 'RDATE)))
+            (offset-from (icalendar--get-event-property
+                          observance 'TZOFFSETFROM))
+            (offset-to (icalendar--get-event-property
+                        observance 'TZOFFSETTO)))
+        (when rdates
+          (setq has-rdate t))
+        (when (icalendar--get-event-property observance 'RRULE)
+          (setq has-rrule t))
+        (dolist (onset (append (and dtstart (list dtstart)) rdates))
+          (when (and (stringp onset) offset-from offset-to)
+            (push (list (icalendar--rdate-time-key onset)
+                        offset-from offset-to)
+                  transitions)))))
+    (when (and has-rdate (not has-rrule) transitions)
+      (setq transitions
+            (sort transitions (lambda (a b) (string-lessp (car a) (car b))))
+            )
+      (list 'icalendar-rdate-zone (nth 1 (car transitions)) transitions))))
+
 (defun icalendar--convert-tz-offset (alist dst-p)
-  "Return a cons of two strings representing a timezone start.
+  "Return a POSIX TZ transition for ALIST, or nil if it cannot be represented.
 ALIST is an alist entry from a VTIMEZONE, like STANDARD.
 DST-P is non-nil if this is for daylight savings time.
-The strings are suitable for assembling into a TZ variable."
+RDATE-only schedules are handled by `icalendar--rdate-zone-schedule'."
   (declare (obsolete nil "31.1"))
   (let* ((offsetto (car (cddr (assq 'TZOFFSETTO alist))))
 	 (offsetfrom (car (cddr (assq 'TZOFFSETFROM alist))))
 	 (rrule-value (car (cddr (assq 'RRULE alist))))
-         (rdate-p (and (assq 'RDATE alist) t))
 	 (dtstart (car (cddr (assq 'DTSTART alist))))
-	 (no-dst (or rdate-p (equal offsetto offsetfrom))))
-    ;; FIXME: the presence of an RDATE is assumed to denote the first day of the year
+	 (no-dst (equal offsetto offsetfrom)))
     (when (and offsetto dtstart (or rrule-value no-dst))
       (let* ((rrule (icalendar--split-value rrule-value))
 	     (freq (cadr (assq 'FREQ rrule)))
@@ -892,22 +951,28 @@ The strings are suitable for assembling into a TZ variable."
 			 (substring dtstart -2)))))))))
 
 (defun icalendar--parse-vtimezone (alist)
-  "Turn a VTIMEZONE ALIST into a cons (ID . TZ-STRING).
-Consider only the most recent date specification.
-Return nil if timezone cannot be parsed."
+  "Turn a VTIMEZONE ALIST into an (ID . ZONE) pair.
+ZONE is a POSIX TZ string or an explicit RDATE schedule.
+Return nil if the timezone cannot be parsed."
   (declare (obsolete nil "31.1"))
   (let* ((tz-id (icalendar--convert-string-for-import
                  (icalendar--get-event-property alist 'TZID)))
-	 (daylight (cadr (cdar (icalendar--get-most-recent-observance alist 'DAYLIGHT))))
-	 (day (and daylight (icalendar--convert-tz-offset daylight t)))
-	 (standard (cadr (cdar (icalendar--get-most-recent-observance alist 'STANDARD))))
-	 (std (and standard (icalendar--convert-tz-offset standard nil))))
-    (if (and tz-id std)
-	(cons tz-id
-	      (if day
-		  (concat (car std) (car day)
-			  "," (cdr day) "," (cdr std))
-		(car std))))))
+         (rdate-zone (icalendar--rdate-zone-schedule alist))
+         (daylight (cadr (cdar (icalendar--get-most-recent-observance
+                                alist 'DAYLIGHT))))
+         (day (and daylight (icalendar--convert-tz-offset daylight t)))
+         (standard (cadr (cdar (icalendar--get-most-recent-observance
+                                alist 'STANDARD))))
+         (std (and standard (icalendar--convert-tz-offset standard nil))))
+    (cond
+     ((and tz-id rdate-zone)
+      (cons tz-id rdate-zone))
+     ((and tz-id std)
+      (cons tz-id
+            (if day
+                (concat (car std) (car day)
+                        "," (cdr day) "," (cdr std))
+              (car std)))))))
 
 (defun icalendar--get-most-recent-observance (alist sub-comp)
   "Return the latest observance for SUB-COMP DAYLIGHT or STANDARD.
@@ -1025,6 +1090,12 @@ FIXME: multiple comma-separated values should be allowed!"
               (setq month (nth 0 mdy))
               (setq day   (nth 1 mdy))
               (setq year  (nth 2 mdy))))
+        (when (icalendar--rdate-zone-p source-zone)
+          (setq source-zone
+                (icalendar--rdate-zone-offset
+                 source-zone
+                 (format "%04d%02d%02dT%02d%02d%02d"
+                         year month day hour minute second))))
         ;; create the decoded date-time
         ;; FIXME!?!
 	(let ((decoded-time (list second minute hour day month year
