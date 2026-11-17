@@ -290,6 +290,50 @@
 (qa (qa-icalendar-duration--geo-valid-p "90.0;180.0") t)
 (qa (qa-icalendar-duration--geo-valid-p "-90.0;-180.0") t)
 
+;; STATUS and ATTENDEE PARTSTAT use their component-specific value sets (#2529/#2530).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("STATUS:COMPLETED")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("STATUS:CONFIRMED")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VTODO" '("STATUS:TENTATIVE")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VTODO" '("STATUS:COMPLETED")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VJOURNAL" '("STATUS:NEEDS-ACTION")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VJOURNAL" '("STATUS:DRAFT")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("ATTENDEE;PARTSTAT=COMPLETED:mailto:person@example.org")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("ATTENDEE;PARTSTAT=TENTATIVE:mailto:person@example.org")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("ATTENDEE;PARTSTAT=IN-PROCESS:mailto:person@example.org")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VTODO" '("ATTENDEE;PARTSTAT=COMPLETED:mailto:person@example.org")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VJOURNAL" '("ATTENDEE;PARTSTAT=TENTATIVE:mailto:person@example.org")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VJOURNAL" '("ATTENDEE;PARTSTAT=ACCEPTED:mailto:person@example.org")))
+    t)
+
 ;; Relative VALARM triggers require the corresponding parent start or end
 ;; time, even when METHOD otherwise permits a VEVENT without DTSTART (#2523/#2524).
 (qa (qa-icalendar-duration--calendar-component-valid-p

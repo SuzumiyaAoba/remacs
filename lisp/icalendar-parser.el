@@ -4010,6 +4010,27 @@ END-PROPERTY names END in validation errors."
                      end-property component)
              :node alarm))))))))
 
+(defun icalendar--validate-component-enums
+    (node component status-values partstat-values)
+  "Validate STATUS and ATTENDEE PARTSTAT values in NODE for COMPONENT."
+  (let ((status (icalendar-ast-node-first-child-of 'icalendar-status node)))
+    (when status
+      (icalendar-with-property status nil
+        (unless (member value status-values)
+          (icalendar-signal-validation-error
+           (format "Invalid STATUS value `%s' in `%s'" value component)
+           :node status)))))
+  (dolist (attendee (icalendar-ast-node-children-of 'icalendar-attendee node))
+    (let ((partstat (icalendar-ast-node-first-child-of
+                     'icalendar-partstatparam attendee)))
+      (when partstat
+        (icalendar-with-param partstat
+          (unless (member value partstat-values)
+            (icalendar-signal-validation-error
+             (format "Invalid PARTSTAT value `%s' in `%s'" value component)
+             :node partstat))))))
+  node)
+
 (defun icalendar-vevent-validator (node)
   "Additional validator for an `icalendar-vevent' NODE.
 Checks that NODE has does not have both `icalendar-duration' and
@@ -4049,6 +4070,10 @@ VEVENT nodes; it is not normally necessary to call it directly."
     (dolist (alarm (icalendar-ast-node-children-of 'icalendar-valarm node))
       (icalendar--validate-valarm-trigger-parent
        alarm dtstart dtend duration 'icalendar-vevent 'icalendar-dtend))
+    (icalendar--validate-component-enums
+     node 'icalendar-vevent
+     '("TENTATIVE" "CONFIRMED" "CANCELLED")
+     '("NEEDS-ACTION" "ACCEPTED" "DECLINED" "TENTATIVE" "DELEGATED"))
 
   (icalendar-rrule-validator node)
   ;; success:
@@ -4145,10 +4170,23 @@ VTODO nodes; it is not normally necessary to call it directly."
     (icalendar--validate-end-after-start dtstart due 'icalendar-due node)
     (dolist (alarm (icalendar-ast-node-children-of 'icalendar-valarm node))
       (icalendar--validate-valarm-trigger-parent
-       alarm dtstart due duration 'icalendar-vtodo 'icalendar-due)))
+       alarm dtstart due duration 'icalendar-vtodo 'icalendar-due))
+    (icalendar--validate-component-enums
+     node 'icalendar-vtodo
+     '("NEEDS-ACTION" "COMPLETED" "IN-PROCESS" "CANCELLED")
+     '("NEEDS-ACTION" "ACCEPTED" "DECLINED" "TENTATIVE" "DELEGATED"
+       "COMPLETED" "IN-PROCESS")))
   (icalendar-rrule-validator node)
   ;; success:
   node)
+
+(defun icalendar-vjournal-validator (node)
+  "Validate STATUS and PARTSTAT values and recurrence properties in NODE."
+  (icalendar--validate-component-enums
+   node 'icalendar-vjournal
+   '("DRAFT" "FINAL" "CANCELLED")
+   '("NEEDS-ACTION" "ACCEPTED" "DECLINED"))
+  (icalendar-rrule-validator node))
 
 (icalendar-define-component icalendar-vjournal "VJOURNAL"
   "Represents a journal entry.
@@ -4185,8 +4223,12 @@ other component."
                               icalendar-rdate
                               icalendar-request-status
                               icalendar-other-property)
-               :other-validator icalendar-rrule-validator)
+               :other-validator icalendar-vjournal-validator)
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.6.3")
+
+;; Eager expansion can evaluate the declaration before the validator's
+;; function cell exists, so publish it explicitly once the file is loaded.
+(put 'icalendar-vjournal 'icalendar-other-validator #'icalendar-vjournal-validator)
 
 (icalendar-define-component icalendar-vfreebusy "VFREEBUSY"
   "Represents a published set of free/busy time blocks, or a request
