@@ -2713,10 +2713,70 @@ Returns a pair of nodes (START RRULE)."
      (icalendar-make-property icalendar-dtstart dtstart (icalendar-valuetypeparam 'icalendar-date))
      (icalendar-make-property icalendar-rrule rrule))))
 
-(defun diary-icalendar-float-sexp-to-recurrence (sexp)
-  "Convert `diary-float' SEXP to `icalendar-dtstart' and `icalendar-rrule'.
-Returns a pair of nodes (START RRULE)."
+(defun diary-icalendar--float-explicit-day-to-rdate-nodes
+    (month-selector months dow n day)
+  "Enumerate explicit-day diary-float recurrences as DTSTART and RDATE."
+  (unless (and (integerp dow) (<= 0 dow 6)
+               (integerp n) (/= n 0)
+               (integerp day)
+               (seq-every-p (lambda (month) (and (<= 1 month) (<= month 12)))
+                            months))
+    (diary-icalendar-signal-export-error
+     "Malformed explicit-day diary-float S-expression"))
+  (let ((months-to-check (if (eq month-selector t)
+                             (number-sequence 1 12)
+                           months))
+        (first-year (max 0 diary-icalendar-recurring-start-year))
+        recurrences)
+    ;; Enumerate through iCalendar's four-digit year range.  An explicit day
+    ;; can move a weekday recurrence across a month boundary, and its ordinal
+    ;; can vary from year to year.
+    (dolist (year (number-sequence first-year 9999))
+      (dolist (month months-to-check)
+        (let ((date (calendar-nth-named-day n dow month year day)))
+          (when (and (<= 0 (calendar-extract-year date) 9999)
+                     (calendar-dlet ((date date) (entry ""))
+                       (diary-float month-selector dow n day)))
+            (push date recurrences)))))
+    (setq recurrences
+          (sort (seq-uniq (nreverse recurrences) #'equal)
+                #'icalendar-date/time<))
+    (unless recurrences
+      (diary-icalendar-signal-export-error
+       "No recurrences in explicit-day diary-float S-expression"))
+    (let ((dtstart (car recurrences))
+          (rdates (cdr recurrences)))
+      (delq nil
+            (list
+             (icalendar-make-property
+              icalendar-dtstart dtstart (icalendar-valuetypeparam 'icalendar-date))
+             (when rdates
+               (icalendar-make-property
+                icalendar-rdate rdates (icalendar-valuetypeparam 'icalendar-date))))))))
+
+(defun diary-icalendar--float-explicit-day-sexp-to-rdate-nodes (sexp)
+  "Convert explicit-DAY diary-float SEXP to a DTSTART and RDATE node."
   (let* ((month-exp (nth 1 sexp))
+         (months (cond ((eq month-exp t) nil)
+                       ((integerp month-exp) (list month-exp))
+                       ((and (listp month-exp) (eq 'quote (car month-exp)))
+                        (eval month-exp nil))
+                       (t month-exp)))
+         (dow (nth 2 sexp))
+         (n (nth 3 sexp))
+         (day (nth 4 sexp)))
+    (unless (seq-every-p #'integerp months)
+      (diary-icalendar-signal-export-error
+       (format "Malformed month(s) in `diary-float' S-expression:\n%s" sexp)))
+    (diary-icalendar--float-explicit-day-to-rdate-nodes
+     (if (eq month-exp t) t months) months dow n day)))
+
+(defun diary-icalendar-float-sexp-to-recurrence (sexp)
+  "Convert `diary-float' SEXP to DTSTART and recurrence properties.
+Returns DTSTART and an RRULE or RDATE node."
+  (if (nth 4 sexp)
+      (diary-icalendar--float-explicit-day-sexp-to-rdate-nodes sexp)
+    (let* ((month-exp (nth 1 sexp))
          (months (cond ((eq month-exp t) nil) ; don't add a BYMONTH clause
                        ((integerp month-exp) (list month-exp))
                        ((and (listp month-exp) (eq 'quote (car month-exp)))
@@ -2782,7 +2842,7 @@ Returns a pair of nodes (START RRULE)."
 
     (list (icalendar-make-property icalendar-dtstart dtstart
             (icalendar-valuetypeparam 'icalendar-date))
-          (icalendar-make-property icalendar-rrule rrule))))
+          (icalendar-make-property icalendar-rrule rrule)))))
 
 (defun diary-icalendar-offset-sexp-to-nodes (sexp)
   "Convert a `diary-offset' SEXP to a list of property nodes.
