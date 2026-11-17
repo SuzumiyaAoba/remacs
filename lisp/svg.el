@@ -210,16 +210,24 @@ function is much faster than `svg-embed'."
     (svg--encode-text text))))
 
 (defun svg--encode-text (text)
-  ;; Apparently the SVG renderer needs to have all non-ASCII
-  ;; characters encoded, and only certain special characters.
+  "Escape TEXT for XML 1.0, rejecting disallowed characters."
   (with-temp-buffer
     (insert text)
+    (let ((position (point-min)))
+      (while (< position (point-max))
+        (let ((char (char-after position)))
+          (unless (or (= char 9) (= char 10) (= char 13)
+                      (and (>= char #x20) (<= char #xd7ff))
+                      (and (>= char #xe000) (<= char #xfffd))
+                      (and (>= char #x10000) (<= char #x10ffff)))
+            (error "Invalid XML 1.0 character U+%04X" char)))
+        (setq position (1+ position))))
     (dolist (substitution '(("&" . "&amp;")
-			    ("<" . "&lt;")
-			    (">" . "&gt;")))
+                            ("<" . "&lt;")
+                            (">" . "&gt;")))
       (goto-char (point-min))
       (while (search-forward (car substitution) nil t)
-	(replace-match (cdr substitution) t t nil)))
+        (replace-match (cdr substitution) t t nil)))
     (goto-char (point-min))
     (while (not (eobp))
       (let ((char (following-char)))
@@ -228,6 +236,11 @@ function is much faster than `svg-embed'."
           (delete-char 1)
           (insert "&#" (format "%d" char) ";"))))
     (buffer-string)))
+
+(defun svg--encode-attribute (value)
+  "Encode VALUE for a double-quoted XML attribute."
+  (replace-regexp-in-string
+   (string 34) "&quot;" (svg--encode-text (format "%s" value)) t t))
 
 (defun svg--append (svg node)
   (let ((old (and (dom-attr node 'id)
@@ -328,7 +341,7 @@ If the SVG is later changed, the image will also be updated."
     (dolist (attr (nth 1 dom))
       ;; Ignore attributes that start with a colon.
       (unless (= (aref (format "%s" (car attr)) 0) ?:)
-        (insert (format " %s=\"%s\"" (car attr) (cdr attr)))))
+        (insert (format " %s=\"%s\"" (car attr) (svg--encode-attribute (cdr attr))))))
     (insert ">")
     (dolist (elem (nthcdr 2 dom))
       (svg-print elem))

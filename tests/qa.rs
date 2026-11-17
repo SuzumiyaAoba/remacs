@@ -761,6 +761,7 @@ qa!(qa_mailclient_charset_parameter_order, "qa_mailclient_charset_parameter_orde
 qa!(qa_mail_header_crlf_validation, "qa_mail_header_crlf_validation.el");
 qa!(qa_mm_charset_after_bounds, "qa_mm_charset_after_bounds.el");
 qa!(qa_mm_body_encoding_line_limit, "qa_mm_body_encoding_line_limit.el");
+qa!(qa_svg_print_xml_attribute_escape, "qa_svg_print_xml_attribute_escape.el");
 qa!(qa_tool_bar_height, "qa_tool_bar_height.el");
 qa!(qa_modula2_pointer_tokens, "qa_modula2_pointer_tokens.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");
