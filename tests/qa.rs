@@ -263,6 +263,7 @@ qa!(qa_hash2, "qa_hash2.el");
 qa!(qa_hash_free_slot_lifo, "qa_hash_free_slot_lifo.el");
 qa!(qa_hash_index_size_capacity, "qa_hash_index_size_capacity.el");
 qa!(qa_help, "qa_help.el");
+qa!(qa_help_uni_confusable_fullwidth_quote, "qa_help_uni_confusable_fullwidth_quote.el");
 qa!(qa_hook, "qa_hook.el");
 qa!(qa_hooks2, "qa_hooks2.el");
 qa!(qa_hook_traversal, "qa_hook_traversal.el");

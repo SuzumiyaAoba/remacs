@@ -2451,7 +2451,7 @@ the same names as used in the original source code, when possible."
     (#x201D . "\"") ;; RIGHT DOUBLE QUOTATION MARK
     (#x201F . "\"") ;; DOUBLE HIGH-REVERSED-9 QUOTATION MARK
     (#x301E . "\"") ;; DOUBLE PRIME QUOTATION MARK
-    (#xFF02 . "'") ;; FULLWIDTH QUOTATION MARK
+    (#xFF02 . "\"") ;; FULLWIDTH QUOTATION MARK
     (#xFF07 . "'") ;; FULLWIDTH APOSTROPHE
     )
   "An alist of confusable characters to give hints about.
