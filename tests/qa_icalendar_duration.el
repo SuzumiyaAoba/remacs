@@ -190,6 +190,39 @@
       "VEVENT" '("DTSTART;VALUE=DATE:20250102" "DURATION:P1W")))
     t)
 
+;; RDATE/EXDATE value types must agree with DTSTART without an RRULE (#2579).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "RDATE;VALUE=DATE:20250102")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "EXDATE;VALUE=DATE:20250102")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "RDATE:20250102T090000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "EXDATE:20250102T090000Z")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART:20250101T090000Z"
+                 "RDATE;VALUE=PERIOD:20250102T090000Z/PT2H")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component
+      "VEVENT" '("DTSTART;VALUE=DATE:20250101"
+                 "RDATE;VALUE=DATE:20250102"
+                 "EXDATE;VALUE=DATE:20250103")))
+    t)
+
 ;; VFREEBUSY timestamps and every explicit FREEBUSY PERIOD endpoint are UTC
 ;; (#2519, including the related ordering and endpoint reports #2520/#2521).
 (qa (qa-icalendar-duration--component-valid-p

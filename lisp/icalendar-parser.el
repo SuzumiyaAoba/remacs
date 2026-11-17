@@ -4096,9 +4096,11 @@ be subcomponents of any other component."
   "Validate that NODE has the properties required by a recurrence rule.
 
 NODE should represent an iCalendar component.  When NODE has an
-`icalendar-rrule' property, this function validates that its
-`icalendar-dtstart', `icalendar-rdate', and `icalendar-exdate'
-properties satisfy the requirements imposed by this rule.
+`icalendar-dtstart' property, this function validates that its
+`icalendar-rdate' and `icalendar-exdate' values use compatible value
+types, even when NODE has no `icalendar-rrule'.  If NODE has an
+`icalendar-rrule' property, it also validates that its recurrence
+properties satisfy the requirements imposed by that rule.
 
 This function is called by the additional validator functions for
 component nodes (e.g. `icalendar-vevent-validator'); it is not normally
@@ -4110,10 +4112,38 @@ necessary to call it directly."
          (dtstart (icalendar-ast-node-first-child-of 'icalendar-dtstart node))
          (start (when dtstart (icalendar-ast-node-value dtstart)))
          (rdates (icalendar-ast-node-children-of 'icalendar-rdate node))
-         (included (when rdates
-                     (mapcar #'icalendar-ast-node-value
-                             (apply #'append
-                                    (mapcar #'icalendar-ast-node-value rdates))))))
+         (rdate-value-nodes
+          (when rdates
+            (apply #'append (mapcar #'icalendar-ast-node-value rdates))))
+         (included (when rdate-value-nodes
+                     (mapcar #'icalendar-ast-node-value rdate-value-nodes)))
+         (exdates (icalendar-ast-node-children-of 'icalendar-exdate node))
+         (exdate-value-nodes
+          (when exdates
+            (apply #'append (mapcar #'icalendar-ast-node-value exdates)))))
+    (when (and start (or rdate-value-nodes exdate-value-nodes))
+      (let ((start-type (icalendar-ast-node-type start)))
+        ;; RDATE may use PERIOD with a DATE-TIME DTSTART, but DATE and
+        ;; DATE-TIME recurrence values must otherwise match DTSTART.
+        (when (seq-some
+               (lambda (value-node)
+                 (let ((value-type (icalendar-ast-node-type value-node)))
+                   (not (or (eq value-type start-type)
+                            (and (eq start-type 'icalendar-date-time)
+                                 (eq value-type 'icalendar-period))))))
+               rdate-value-nodes)
+          (icalendar-signal-validation-error
+           (concat "`icalendar-rdate' values must match the value type of "
+                   "`icalendar-dtstart'")
+           :node node))
+        (when (seq-some
+               (lambda (value-node)
+                 (not (eq (icalendar-ast-node-type value-node) start-type)))
+               exdate-value-nodes)
+          (icalendar-signal-validation-error
+           (concat "`icalendar-exdate' values must match the value type of "
+                   "`icalendar-dtstart'")
+           :node node))))
     (when (and included
                (memq (icalendar-ast-node-type node)
                      '(icalendar-standard icalendar-daylight)))
