@@ -3931,7 +3931,8 @@ point is at the beginning of the next line following the component
         (body-end-pos nil)
         (begin-regex (rx line-start "BEGIN:" (group-n 2 icalendar-name) line-end)))
 
-    (unless (re-search-forward begin-regex limit t)
+    (unless (let ((case-fold-search t))
+              (re-search-forward begin-regex limit t))
       (icalendar-signal-parse-error "Not at start of a component"))
 
     (setq begin-pos (match-beginning 0)
@@ -3946,7 +3947,8 @@ point is at the beginning of the next line following the component
 
       ;; Find end of component:
       (save-excursion
-        (if (re-search-forward (concat "^END:" component-name "$") limit t)
+        (if (let ((case-fold-search t))
+              (re-search-forward (concat "^END:" component-name "$") limit t))
             (setq end-pos (match-end 0)
                   body-end-pos (1- (match-beginning 0))) ; end of prev. line
           (icalendar-signal-parse-error
@@ -3989,7 +3991,8 @@ point is at the beginning of the next line following the component
   "Parse a component or a property at point, up to LIMIT.
 Point should be at the beginning of a line which begins a
 component or contains a property."
-  (cond ((looking-at-p (rx line-start "BEGIN:" icalendar-name line-end))
+  (cond ((let ((case-fold-search t))
+           (looking-at-p (rx line-start "BEGIN:" icalendar-name line-end)))
          (icalendar-parse-component limit))
         ((looking-at-p (rx line-start icalendar-name))
          (icalendar-parse-property (line-end-position)))
@@ -4956,7 +4959,8 @@ buffer.  Returns the position where parsing should start, or nil."
   (with-current-buffer (or buffer (current-buffer))
     (save-excursion
       (goto-char (point-min))
-      (when (re-search-forward "^BEGIN:VCALENDAR" nil t)
+      (when (let ((case-fold-search t))
+              (re-search-forward "^BEGIN:VCALENDAR" nil t))
         (beginning-of-line)
         (point)))))
 
@@ -4974,7 +4978,8 @@ at the beginning of the next line following the calendar (or end of the
 buffer).  Returns a syntax node representing the calendar."
   (require 'icalendar-recur) ; for icalendar-recur-tz-set-zones-in; avoids circular require
   (declare-function icalendar-recur-tz-set-zones-in "icalendar-recur")
-  (unless (looking-at-p "^BEGIN:VCALENDAR")
+  (unless (let ((case-fold-search t))
+            (looking-at-p "^BEGIN:VCALENDAR"))
     (icalendar-signal-parse-error "Not at start of VCALENDAR"))
   (let ((cal-node (icalendar-parse-component limit)))
       ;(when (icalendar-ast-node-valid-p cal-node t)
