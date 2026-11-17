@@ -758,17 +758,15 @@ other special requirements like quoting or escaping."
   (seq ?\" (zero-or-more icalendar-qsafe-char) ?\"))
 
 (rx-define icalendar-paramtext
-  ;; RFC5545 allows *zero* characters here, but that would mean we could
-  ;; have parameters like ;FOO=;BAR="somethingelse", and what would then
-  ;; be the value of FOO?  I see no reason to allow this and it breaks
-  ;; parameter parsing so I have required at least one char here
-  (one-or-more icalendar-safe-char))
+  ;; RFC 5545 defines paramtext as zero or more SAFE-CHARs.
+  (zero-or-more icalendar-safe-char))
 
 (rx-define icalendar-param-name
   (or icalendar-iana-token icalendar-x-name))
 
 (rx-define icalendar-param-value
-  (or icalendar-paramtext icalendar-quoted-string))
+  ;; Match quoted values first because paramtext may now be empty.
+  (or icalendar-quoted-string icalendar-paramtext))
 
 (rx-define icalendar-value-char
   (any #x09 #x20 (#x21 . #x7E) nonascii))
@@ -2165,7 +2163,13 @@ separator for TYPE and read individually."
          ;; this by default; in the single value case, use string-trim
          (read-val (if list-sep
                        (icalendar-read-list-with one-val-reader raw-val
-                                            value-regex list-sep)
+                                            ;; This regex includes quotes;
+                                            ;; full-value-rx already validated
+                                            ;; unknown parameter values before
+                                            ;; read-list-with removes them.
+                                            (unless (eq type 'icalendar-otherparam)
+                                              value-regex)
+                                            list-sep)
                      (funcall one-val-reader
                               (string-trim raw-val "\"" "\"")))))
     (icalendar-make-ast-node type
@@ -2650,10 +2654,11 @@ type."
   "Parameter with an unknown name.
 
 This is not a parameter type defined by RFC5545; it represents
-parameters with an unknown name (matching rx `icalendar-param-name')
-whose values must be parsed and preserved but not further
-interpreted."
-  icalendar-param-value)
+parameters with an unknown name (matching rx `icalendar-param-name').
+Their comma-separated values are parsed and preserved without further
+interpretation."
+  icalendar-param-value
+  :list-sep ",")
 
 (rx-define icalendar-other-param-safe
   ;; we use this rx to skip params when matching properties and
