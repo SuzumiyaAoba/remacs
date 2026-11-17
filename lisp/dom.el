@@ -303,15 +303,26 @@ white-space."
       (and (>= char #xe000) (<= char #xfffd))
       (and (>= char #x10000) (<= char #x10ffff))))
 
+(defun dom--validate-xml-string (string)
+  "Signal an error if STRING contains characters forbidden by XML 1.0."
+  (let ((position 0)
+        (length (length string)))
+    (while (< position length)
+      (let ((char (aref string position)))
+        (unless (dom--xml-char-p char)
+          (error "Invalid XML 1.0 character U+%04X" char)))
+      (setq position (1+ position))))
+  string)
+
 (defun dom--insert-entities (string &optional attribute xml)
   "Escape markup in STRING for HTML/XML output.
 If ATTRIBUTE, encode tabs and line breaks as character references.
 If XML, reject characters forbidden by XML 1.0."
+  (when xml
+    (dom--validate-xml-string string))
   (mapconcat
    (lambda (c)
-     (cond ((and xml (not (dom--xml-char-p c)))
-            (error "Invalid XML 1.0 character U+%04X" c))
-           ((and attribute (eq c ?\t)) "&#9;")
+     (cond ((and attribute (eq c ?\t)) "&#9;")
            ((and attribute (eq c ?\n)) "&#10;")
            ((and (or attribute xml) (eq c ?\r)) "&#13;")
            ((eq c ?&) "&amp;")
@@ -326,7 +337,14 @@ If XML, reject characters forbidden by XML 1.0."
 If PRETTY, indent the HTML/XML logically.
 If XML, generate XML instead of HTML."
   (if (eq (dom-tag dom) 'comment)
-      (insert "<!--" (mapconcat #'identity (dom-children dom) "") "-->")
+      (let ((comment (mapconcat #'identity (dom-children dom) "")))
+        (when xml
+          (dom--validate-xml-string comment)
+          (when (or (string-match-p "--" comment)
+                    (and (> (length comment) 0)
+                         (= (aref comment (1- (length comment))) ?-)))
+            (error "Invalid XML comment content")))
+        (insert "<!--" comment "-->"))
     (dom--print-element dom pretty xml)))
 
 (defun dom--print-element (dom pretty xml)
