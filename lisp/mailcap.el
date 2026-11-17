@@ -474,7 +474,7 @@ If SOURCE, mark the entry with this as the source."
       (set-syntax-table mailcap-parse-args-syntax-table)
       ;;Remacs: RFC 1524 comments are whole lines; keep hashes in commands.
       (mailcap-replace-regexp "^#.*$" "")	; Remove all comments
-      (mailcap-replace-regexp "\\\\[ \t]*\n" " ") ; And collapse spaces
+      (mailcap-replace-regexp "\\\\\n" " ") ; And collapse spaces
       (mailcap-replace-regexp "\n+" "\n") ; And blank lines
       (goto-char (point-max))
       (skip-chars-backward " \t\n")
