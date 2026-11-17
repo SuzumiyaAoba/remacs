@@ -1437,8 +1437,10 @@ pair (WEEKDAY . OFFSET).  Thus \"SU\" becomes 0, \"-1SU\"
 becomes (0 . -1), etc.  S should match rx `icalendar-weekdaynum'."
   (save-match-data
     ;; Remacs: read the supplied weekday independently of caller matches.
-    (string-match (rx-to-string 'icalendar-weekdaynum) s)
-    (let ((dayno (cdr (assoc (match-string 20 s) icalendar-weekday-numbers)))
+    (let ((case-fold-search t))
+      (string-match (rx-to-string 'icalendar-weekdaynum) s))
+    (let ((dayno (cdr (assoc (upcase (match-string 20 s))
+                             icalendar-weekday-numbers)))
           (weekno (match-string 19 s)))
       (if weekno
           (cons dayno (string-to-number weekno))
@@ -1479,7 +1481,7 @@ itself be a list, depending on the values allowed by KEYWORD."
           (BYDAY
            (icalendar-read-list-with #'icalendar-read-weekdaynum values
                                 (rx icalendar-weekdaynum) ","))
-          (WKST (cdr (assoc values icalendar-weekday-numbers))))))))
+          (WKST (cdr (assoc (upcase values) icalendar-weekday-numbers))))))))
 
 (defun icalendar-print-rrule-part (part)
   "Serialize recur rule part PART to a string."
@@ -1532,8 +1534,9 @@ itself be a list, depending on the values allowed by KEYWORD."
   "Read a recurrence rule value from string S.
 S should be a match against rx `icalendar-recur'."
   (let ((parts
-         (icalendar-read-list-with
-          #'icalendar-read-rrule-part s (rx icalendar-rrule-part) ";")))
+         (let ((case-fold-search t))
+           (icalendar-read-list-with
+            #'icalendar-read-rrule-part s (rx icalendar-rrule-part) ";"))))
     (unless (eq 'FREQ (car-safe (car-safe parts)))
       (icalendar-signal-parse-error "FREQ must be the first RRULE part"))
     parts))
