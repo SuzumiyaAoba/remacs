@@ -141,7 +141,7 @@ If no encoding was done, nil is returned."
   (when (stringp encoding)
     (setq encoding (intern (downcase encoding))))
   (let ((bits (mm-body-7-or-8))
-	(longp (mm-long-lines-p 1000)))
+	(longp (mm-long-lines-p 998)))
     (require 'message)
     (cond
      ((and (not longp)
