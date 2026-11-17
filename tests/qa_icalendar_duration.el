@@ -409,6 +409,16 @@
 (qa (qa-icalendar-duration--utc-offset-valid-p "+235959") t)
 (qa (qa-icalendar-duration--utc-offset-valid-p "-000001") t)
 
+;; LAST-MODIFIED values are UTC timestamps (#2537).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT"
+      '("LAST-MODIFIED:20250101T010000")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT"
+      '("LAST-MODIFIED:20250101T010000Z")))
+    t)
+
 ;; STATUS and ATTENDEE PARTSTAT use their component-specific value sets (#2529/#2530).
 (qa (qa-icalendar-duration--component-valid-p
      (qa-icalendar-duration--component "VEVENT" '("STATUS:COMPLETED")))

@@ -3567,9 +3567,10 @@ The value must be in UTC time."
 
 This property specifies when the data in an `icalendar-vevent',
 `icalendar-vtodo', `icalendar-vjournal', or `icalendar-vtimezone'
-was last modified in the calendar database."
+was last modified in the calendar database. Its value must be in UTC."
   icalendar-date-time
   :child-spec (:zero-or-more (icalendar-otherparam))
+  :other-validator icalendar-requires-utc-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.3")
 
 (defun icalendar-sequence-validator (node)
