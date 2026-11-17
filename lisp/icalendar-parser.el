@@ -4163,6 +4163,24 @@ necessary to call it directly."
                   "time in %s components")
           (icalendar-ast-node-type node))
          :node node)))
+    ;; STANDARD and DAYLIGHT require a local DATE-TIME DTSTART without TZID,
+    ;; independently of whether the observance has an RRULE.
+    (when (memq (icalendar-ast-node-type node)
+                '(icalendar-standard icalendar-daylight))
+      (unless (and start
+                   (eq 'icalendar-date-time (icalendar-ast-node-type start)))
+        (icalendar-signal-validation-error
+         (concat "`icalendar-dtstart' must be an `icalendar-date-time' in "
+                 "`icalendar-standard' and `icalendar-daylight' components")
+         :node node))
+      (when (or (decoded-time-zone (icalendar-ast-node-value start))
+                (icalendar-ast-node-first-child-of
+                 'icalendar-tzidparam dtstart))
+        (icalendar-signal-validation-error
+         (concat "`icalendar-dtstart' must be local and must not have a "
+                 "`TZID' parameter in `icalendar-standard' and "
+                 "`icalendar-daylight' components")
+         :node node)))
     (when rrule
       (unless dtstart
         (icalendar-signal-validation-error
@@ -4218,23 +4236,7 @@ necessary to call it directly."
                 (icalendar-signal-validation-error
                  (concat "`icalendar-rrule' UNTIL clause must be in "
                          "local time if `icalendar-dtstart' is")
-                 :node node))))))
-
-        ;; "DTSTART in this usage [i.e., in STANDARD and DAYLIGHT
-        ;; subcomponents] MUST be specified as a date with a local
-        ;; time value."
-        (when (memq (icalendar-ast-node-type node) '(icalendar-standard icalendar-daylight))
-          (unless (eq 'icalendar-date-time (icalendar-ast-node-type start))
-            (icalendar-signal-validation-error
-              (concat "`icalendar-dtstart' must be an `icalendar-date-time' in "
-                      "`icalendar-standard' and `icalendar-daylight' components")
-              :node node))
-
-          (when (decoded-time-zone (icalendar-ast-node-value start))
-            (icalendar-signal-validation-error
-             (concat "`icalendar-dtstart' must be in local (\"floating\") time in "
-                     "`icalendar-standard' and `icalendar-daylight' components")
-             :node node)))))
+                 :node node))))))))
 
     ;; Success:
     node))

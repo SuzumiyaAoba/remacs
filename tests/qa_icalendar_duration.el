@@ -328,6 +328,36 @@
           "RDATE:20250101T000000Z\nEND:STANDARD\nEND:VTIMEZONE"))
     nil)
 
+;; STANDARD DTSTART must be a floating DATE-TIME, even without an RRULE (#2580).
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/Start\n"
+          "BEGIN:STANDARD\nDTSTART:20250101T020000\n"
+          "TZOFFSETFROM:-0500\nTZOFFSETTO:-0500\n"
+          "END:STANDARD\nEND:VTIMEZONE"))
+    t)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/Start\n"
+          "BEGIN:STANDARD\nDTSTART:20250101T020000Z\n"
+          "TZOFFSETFROM:-0500\nTZOFFSETTO:-0500\n"
+          "END:STANDARD\nEND:VTIMEZONE"))
+    nil)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/Start\n"
+          "BEGIN:STANDARD\nDTSTART;VALUE=DATE:20250101\n"
+          "TZOFFSETFROM:-0500\nTZOFFSETTO:-0500\n"
+          "END:STANDARD\nEND:VTIMEZONE"))
+    nil)
+(qa (qa-icalendar-duration--calendar-content-valid-p
+     nil (concat
+          "BEGIN:VTIMEZONE\nTZID:Test/Start\n"
+          "BEGIN:STANDARD\nDTSTART;TZID=Test/Start:20250101T020000\n"
+          "TZOFFSETFROM:-0500\nTZOFFSETTO:-0500\n"
+          "END:STANDARD\nEND:VTIMEZONE"))
+    nil)
+
 ;; TZID applies to every DATE-TIME in list-valued RDATE/EXDATE; it is invalid
 ;; on DATE or UTC values in those lists (#2534/#2535).
 (qa (let* ((calendar
