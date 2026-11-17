@@ -886,7 +886,11 @@ for functions that work with this representation."
 ;; (Defined here so that icalendar-time RX can be used in icalendar-date-time)
 (cl-deftype icalendar-numeric-hour () '(integer 0 23))
 (cl-deftype icalendar-numeric-minute () '(integer 0 59))
-(cl-deftype icalendar-numeric-second () '(integer 0 60)) ; 60 represents a leap second
+(cl-deftype icalendar-numeric-second () '(integer 0 59)) ; leap seconds are normalized to 59 on input
+
+(defun icalendar--normalize-leap-second (second)
+  "Return SECOND clamped to 59 because Emacs does not support leap seconds."
+  (if (= second 60) 59 second))
 
 (defun icalendar-read-time (s)
   "Read an `icalendar-time' from a string S.
@@ -895,7 +899,8 @@ S should be a match against rx `icalendar-time'."
   (declare-function icalendar-make-date-time "icalendar-utils")
   (let ((hour (string-to-number (substring s 0 2)))
         (minute (string-to-number (substring s 2 4)))
-        (second (string-to-number (substring s 4 6)))
+        (second (icalendar--normalize-leap-second
+                  (string-to-number (substring s 4 6))))
         (utcoffset (if (and (length= s 7)
                             (equal "Z" (substring s 6 7)))
                        t ; UTC
@@ -994,7 +999,8 @@ S should be a match against rx `icalendar-date-time'."
         ;; "T" is index 8
         (hour (string-to-number (substring s 9 11)))
         (minute (string-to-number (substring s 11 13)))
-        (second (string-to-number (substring s 13 15)))
+        (second (icalendar--normalize-leap-second
+                  (string-to-number (substring s 13 15))))
         (utcoffset (if (and (length= s 16)
                             (equal "Z" (substring s 15 16)))
                        t ; UTC
