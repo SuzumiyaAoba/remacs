@@ -3572,6 +3572,10 @@ was last modified in the calendar database."
   :child-spec (:zero-or-more (icalendar-otherparam))
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.3")
 
+(defun icalendar-sequence-validator (node)
+  "Validate that SEQUENCE is a non-negative revision number."
+  (icalendar--integer-range-validator node 0 2147483647 "SEQUENCE"))
+
 (icalendar-define-property icalendar-sequence "SEQUENCE"
   "Revision Sequence Number.
 
@@ -3584,6 +3588,7 @@ component represents."
   icalendar-integer
   :default "0"
   :child-spec (:zero-or-more (icalendar-otherparam))
+  :other-validator icalendar-sequence-validator
   :link "https://www.rfc-editor.org/rfc/rfc5545#section-3.8.7.4")
 
 ;;;;; Section 3.8.8: Miscellaneous Component Properties

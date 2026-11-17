@@ -379,6 +379,17 @@
      (qa-icalendar-duration--component "VEVENT" '("PRIORITY:9")))
     t)
 
+;; SEQUENCE is a non-negative revision counter (#2536).
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("SEQUENCE:-1")))
+    nil)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("SEQUENCE:0")))
+    t)
+(qa (qa-icalendar-duration--component-valid-p
+     (qa-icalendar-duration--component "VEVENT" '("SEQUENCE:3")))
+    t)
+
 ;; GEO coordinates stay within latitude/longitude limits (#2528).
 (qa (qa-icalendar-duration--geo-valid-p "91.0;0.0") nil)
 (qa (qa-icalendar-duration--geo-valid-p "-91.0;0.0") nil)
