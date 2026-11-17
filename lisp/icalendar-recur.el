@@ -1420,8 +1420,9 @@ UTC offsets local to that time zone."
                 (setq recurrences
                       (nconc
                        (reverse
-                        (icalendar-recur-recurrences-in-interval
-                         curr-interval component vtimezone))
+                        (copy-sequence
+                         (icalendar-recur-recurrences-in-interval
+                          curr-interval component vtimezone)))
                        recurrences))
                 (setq curr-interval (icalendar-recur-next-interval
                                      curr-interval rrule vtimezone)))
