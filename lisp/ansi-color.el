@@ -994,6 +994,16 @@ unset all properties and colors."
              (25 (aset basic-faces 5 nil)
                  (aset basic-faces 6 nil))
              (27 (aset basic-faces 7 nil))))
+        (5 (pcase new
+             (58
+              ;; Underline colors are unsupported, but consume their
+              ;; extended parameters without resetting existing faces.
+              (pcase (funcall iterator)
+                (5 (funcall iterator))
+                ((or 2 3) (dotimes (_ 3) (funcall iterator)))
+                (4 (dotimes (_ 4) (funcall iterator)))))
+             (59 nil)
+             (_ (setq do-clear t))))
         ((or 3 4 9 10)
          (let ((r (mod new 10))
                (cell (if (memq q '(3 9)) colors (cdr colors))))
