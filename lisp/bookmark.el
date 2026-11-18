@@ -1329,19 +1329,25 @@ it to the name of the bookmark currently being set, advancing
     (t (error "Buffer not visiting a file or directory")))))
 
 (defvar bookmark--watch-already-asked-mtime nil
-  "Mtime for which we already queried about reloading.
-The value `:missing' records that we already asked about a deleted file.")
+  "File and mtime for which we already queried about reloading.
+The mtime may be `:missing' if we already asked about a deleted file.")
 
-(defun bookmark--watch-file-already-queried-p (new-mtime)
-  ;; Don't ask repeatedly if the user already said "no" for this mtime.
-  ;; A missing file needs its own sentinel, since nil equals nil as a time.
-  (let ((already-asked
-         (if new-mtime
-             (and bookmark--watch-already-asked-mtime
-                  (not (eq bookmark--watch-already-asked-mtime :missing))
-                  (time-equal-p new-mtime bookmark--watch-already-asked-mtime))
-           (eq bookmark--watch-already-asked-mtime :missing))))
-    (setq bookmark--watch-already-asked-mtime (or new-mtime :missing))
+(defun bookmark--watch-file-already-queried-p (file new-mtime)
+  ;; Don't ask repeatedly if the user already said "no" for this file
+  ;; and mtime.  A missing file needs its own sentinel, since nil equals
+  ;; nil as a time.
+  (let* ((previous bookmark--watch-already-asked-mtime)
+         (previous-mtime (and (consp previous)
+                              (equal file (car previous))
+                              (cdr previous)))
+         (already-asked
+          (if new-mtime
+              (and previous-mtime
+                   (not (eq previous-mtime :missing))
+                   (time-equal-p new-mtime previous-mtime))
+            (eq previous-mtime :missing))))
+    (setq bookmark--watch-already-asked-mtime
+          (cons file (or new-mtime :missing)))
     already-asked))
 
 (defun bookmark--clear-after-file-deletion (file)
@@ -1372,7 +1378,7 @@ The value `:missing' records that we already asked about a deleted file.")
           ((and bookmark-watch-bookmark-file
                 file
                 (not (time-equal-p new-mtime old-mtime))
-                (not (bookmark--watch-file-already-queried-p new-mtime))
+                (not (bookmark--watch-file-already-queried-p file new-mtime))
                 (or (eq 'silent bookmark-watch-bookmark-file)
                     (yes-or-no-p
                      (if new-mtime
