@@ -1954,41 +1954,49 @@ unique numeric suffixes \"<2>\", \"<3>\", etc."
 	   (unless no-msg
 	     (make-progress-reporter
 	      (format "Loading bookmarks from %s..." file)))))
-      (with-current-buffer (let (enable-local-variables)
-			     (find-file-noselect file))
-	(goto-char (point-min))
-	(let ((blist (bookmark-alist-from-buffer)))
-	  (unless (listp blist)
-	    (error "Invalid bookmark list in %s" file))
-	  ;; RW: Upon loading the bookmarks, we could add to each bookmark
-	  ;; in `bookmark-alist' an extra key `bookmark-file', so that
-	  ;; upon reloading the bookmarks with OVERWRITE non-nil,
-	  ;; we overwrite only those bookmarks for which the key `bookmark-file'
-	  ;; matches FILE.  `bookmark-save' can ignore this key.
-	  ;; Would this be a useful option?
-	  (if overwrite
-	      (progn
-		(dolist (bookmark bookmark-alist)
-		  (bookmark--remove-fringe-mark (cdr bookmark)))
-		(setq bookmark-alist blist
-		      bookmark-alist-modification-count 0)
-		(dolist (buffer (buffer-list))
-		  (with-current-buffer buffer
-		    (when (and (local-variable-p 'bookmark-current-bookmark)
-			       bookmark-current-bookmark
-			       (not (assoc bookmark-current-bookmark bookmark-alist)))
-		      (setq-local bookmark-current-bookmark nil)))))
-	    (bookmark-import-new-list blist)
-	    (setq bookmark-alist-modification-count
-		  (1+ bookmark-alist-modification-count)))
-	  (if (or default
-		  (string= file (or (car bookmark-bookmarks-timestamp)
-				    (expand-file-name bookmark-default-file))))
-	      (setq bookmark-bookmarks-timestamp
-		    (cons file (nth 5 (file-attributes file)))))
-	  (bookmark-bmenu-surreptitiously-rebuild-list)
-	  (setq bookmark-file-coding-system buffer-file-coding-system))
-	(kill-buffer (current-buffer)))
+	  ;; `find-file-noselect' may return a buffer the user already had open.
+	  ;; Only kill buffers created by this call.
+	(let* ((buffers-before-load (buffer-list))
+	       (buffer (let (enable-local-variables)
+			 (find-file-noselect file)))
+	       (new-buffer-p (not (memq buffer buffers-before-load))))
+	  (unwind-protect
+	      (with-current-buffer buffer
+		(save-excursion
+		  (goto-char (point-min))
+		  (let ((blist (bookmark-alist-from-buffer)))
+		    (unless (listp blist)
+		      (error "Invalid bookmark list in %s" file))
+		    ;; RW: Upon loading the bookmarks, we could add to each bookmark
+		    ;; in `bookmark-alist' an extra key `bookmark-file', so that
+		    ;; upon reloading the bookmarks with OVERWRITE non-nil,
+		    ;; we overwrite only those bookmarks for which the key `bookmark-file'
+		    ;; matches FILE.  `bookmark-save' can ignore this key.
+		    ;; Would this be a useful option?
+		    (if overwrite
+			(progn
+			  (dolist (bookmark bookmark-alist)
+			    (bookmark--remove-fringe-mark (cdr bookmark)))
+			  (setq bookmark-alist blist
+				bookmark-alist-modification-count 0)
+			  (dolist (buffer (buffer-list))
+			    (with-current-buffer buffer
+			      (when (and (local-variable-p 'bookmark-current-bookmark)
+					 bookmark-current-bookmark
+					 (not (assoc bookmark-current-bookmark bookmark-alist)))
+				(setq-local bookmark-current-bookmark nil)))))
+		      (bookmark-import-new-list blist)
+		      (setq bookmark-alist-modification-count
+			    (1+ bookmark-alist-modification-count)))
+		    (if (or default
+			    (string= file (or (car bookmark-bookmarks-timestamp)
+					      (expand-file-name bookmark-default-file))))
+			(setq bookmark-bookmarks-timestamp
+			      (cons file (nth 5 (file-attributes file)))))
+		    (bookmark-bmenu-surreptitiously-rebuild-list)
+		    (setq bookmark-file-coding-system buffer-file-coding-system))))
+	    (when (and new-buffer-p (buffer-live-p buffer))
+	      (kill-buffer buffer))))
       (run-hooks 'bookmark-after-load-file-hook)
       (unless no-msg
 	(progress-reporter-done reporter)))))
