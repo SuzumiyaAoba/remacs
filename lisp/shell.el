@@ -1501,7 +1501,7 @@ Environment variables are expanded, see function `substitute-in-file-name'."
   (let ((old-dir default-directory)
 	(new-dir (cond ((zerop (length arg)) (concat comint-file-name-prefix
 							    "~"))
-		       ((string-equal "-" arg)
+	       ((member arg '("-" "~-"))
 			(let ((oldpwd (getenv "OLDPWD")))
 			  (or shell-last-dir
 			      (and oldpwd (> (length oldpwd) 0)
