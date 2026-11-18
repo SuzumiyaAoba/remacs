@@ -628,19 +628,9 @@ locate database using the shell command in `locate-update-command'."
 	(progn
 	  ;; Get rid of the mouse-face property that file names have.
 	  (set-text-properties 0 (length file) nil file)
-	  (setq file (file-name-directory file))
-	  ;; Unquote names quoted by ls or by dired-insert-directory.
-	  ;; Using read to unquote is much faster than substituting
-	  ;; \007 (4 chars) -> ^G  (1 char) etc. in a lisp loop.
-	  (setq file
-		(read
-		 (concat "\""
-			 ;; some ls -b don't escape quotes, argh!
-			 ;; This is not needed for GNU ls, though.
-			 (or (dired-string-replace-match
-			      "\\([^\\]\\|\\`\\)\"" file "\\1\\\\\"" nil t)
-			     file)
-			 "\"")))))
+	  ;; `locate' writes to a pipe here, so use the file name as-is.
+	  ;; Reading it as a Lisp string would interpret backslash escapes.
+	  (setq file (file-name-directory file))))
     (and file buffer-file-coding-system
 	 (not file-name-coding-system)
 	 (setq file (encode-coding-string file buffer-file-coding-system)))
