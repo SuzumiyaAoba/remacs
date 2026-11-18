@@ -606,8 +606,16 @@ INFO is a plist holding contextual information.  See
 	 (type (org-element-property :type link))
 	 (raw-path (org-element-property :path link))
 	 (path (cond
-		((string-equal  type "file")
-		 (org-export-file-uri (funcall link-org-files-as-md-maybe raw-path)))
+		((string-equal type "file")
+		 (let* ((path
+			 (org-export-file-uri
+			  (funcall link-org-files-as-md-maybe raw-path)))
+			(search-option (org-element-property :search-option link)))
+		   (if search-option
+		       (concat path "#"
+			       (org-publish-resolve-external-link
+				search-option raw-path t))
+		     path)))
 		(t (concat type ":" raw-path)))))
     (cond
      ;; Link type is handled by a special function.
