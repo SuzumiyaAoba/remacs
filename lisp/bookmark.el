@@ -1329,31 +1329,59 @@ it to the name of the bookmark currently being set, advancing
     (t (error "Buffer not visiting a file or directory")))))
 
 (defvar bookmark--watch-already-asked-mtime nil
-  "Mtime for which we already queried about reloading.")
+  "Mtime for which we already queried about reloading.
+The value `:missing' records that we already asked about a deleted file.")
 
 (defun bookmark--watch-file-already-queried-p (new-mtime)
-  ;; Don't ask repeatedly if user already said "no" to reloading a
-  ;; file with this mtime:
-  (prog1 (time-equal-p new-mtime bookmark--watch-already-asked-mtime)
-    (setq bookmark--watch-already-asked-mtime new-mtime)))
+  ;; Don't ask repeatedly if the user already said "no" for this mtime.
+  ;; A missing file needs its own sentinel, since nil equals nil as a time.
+  (let ((already-asked
+         (if new-mtime
+             (and bookmark--watch-already-asked-mtime
+                  (not (eq bookmark--watch-already-asked-mtime :missing))
+                  (time-equal-p new-mtime bookmark--watch-already-asked-mtime))
+           (eq bookmark--watch-already-asked-mtime :missing))))
+    (setq bookmark--watch-already-asked-mtime (or new-mtime :missing))
+    already-asked))
+
+(defun bookmark--clear-after-file-deletion (file)
+  "Forget bookmarks after the watched default FILE has been deleted."
+  (dolist (bookmark bookmark-alist)
+    (bookmark--remove-fringe-mark (cdr bookmark)))
+  (setq bookmark-alist nil
+        bookmark-alist-modification-count 0
+        bookmark-bookmarks-timestamp (cons file nil)
+        bookmark-file-coding-system nil)
+  (setq-default bookmark-current-bookmark nil)
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (local-variable-p 'bookmark-current-bookmark)
+        (kill-local-variable 'bookmark-current-bookmark))))
+  (bookmark-bmenu-surreptitiously-rebuild-list)
+  (run-hooks 'bookmark-after-load-file-hook))
 
 (defun bookmark-maybe-load-default-file ()
   "If bookmarks have not been loaded from the default place, load them."
-  (cond ((and (not bookmark-bookmarks-timestamp)
-              (null bookmark-alist)
-              (file-readable-p bookmark-default-file)
-              (bookmark-load bookmark-default-file t t)))
-        ((and bookmark-watch-bookmark-file
-              (let ((new-mtime (nth 5 (file-attributes
-                                       (car bookmark-bookmarks-timestamp))))
-                    (old-mtime (cdr bookmark-bookmarks-timestamp)))
-		(and (not (time-equal-p new-mtime old-mtime))
-                     (not (bookmark--watch-file-already-queried-p new-mtime))
-                     (or (eq 'silent bookmark-watch-bookmark-file)
-                         (yes-or-no-p
-                          (format "Bookmarks %s changed on disk.  Reload? "
-                                  (car bookmark-bookmarks-timestamp)))))))
-         (bookmark-load (car bookmark-bookmarks-timestamp) t t))))
+  (let* ((file (car bookmark-bookmarks-timestamp))
+         (new-mtime (and file (nth 5 (file-attributes file))))
+         (old-mtime (cdr bookmark-bookmarks-timestamp)))
+    (cond ((and (not bookmark-bookmarks-timestamp)
+                (null bookmark-alist)
+                (file-readable-p bookmark-default-file)
+                (bookmark-load bookmark-default-file t t)))
+          ((and bookmark-watch-bookmark-file
+                file
+                (not (time-equal-p new-mtime old-mtime))
+                (not (bookmark--watch-file-already-queried-p new-mtime))
+                (or (eq 'silent bookmark-watch-bookmark-file)
+                    (yes-or-no-p
+                     (if new-mtime
+                         (format "Bookmarks %s changed on disk.  Reload? " file)
+                       (format "Bookmarks file %s was deleted.  Forget its bookmarks? "
+                               file)))))
+           (if new-mtime
+               (bookmark-load file t t)
+             (bookmark--clear-after-file-deletion file))))))
 
 
 
