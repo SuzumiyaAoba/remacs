@@ -362,26 +362,48 @@ is a wrapper for this function which can be added to that list."
       (when (not (bolp))
         (let ((inhibit-field-text-motion t))
           (beginning-of-line)))
-      (let ((bol (point))
-            (eol (make-marker))
-            (reg-end (make-marker))
+      (let ((reg-end (copy-marker end))
             (line-fold (if use-tabs "\n\t" "\n ")))
-        (set-marker reg-end end)
-        (while (< bol reg-end)
-          (let ((inhibit-field-text-motion t))
-            (end-of-line))
-          (set-marker eol (point))
-          (when (< 75 (- (position-bytes (marker-position eol))
-                         (position-bytes bol)))
-            (goto-char
-             ;; the max of 75 excludes the two CR-LF
-             ;; characters we're about to add:
-             (byte-to-position (+ 75 (position-bytes bol))))
-            (if annotate-only
-                (push (cons (point) line-fold) annotations)
-              (insert line-fold))
-            (set-marker eol (point)))
-          (setq bol (goto-char (1+ eol))))))
+        (if annotate-only
+            ;; Simulate continuation lines without inserting them.  The
+            ;; leading space on each continuation line uses one of its 75
+            ;; octets, so subsequent chunks can carry at most 74 data octets.
+            (let ((line-start (point)))
+              (while (< line-start reg-end)
+                (goto-char line-start)
+                (let ((line-end
+                       (let ((inhibit-field-text-motion t))
+                         (end-of-line)
+                         (point)))
+                      (chunk-start line-start)
+                      (chunk-limit 75))
+                  (while (> (- (position-bytes line-end)
+                               (position-bytes chunk-start))
+                            chunk-limit)
+                    (let ((fold-position
+                           (byte-to-position
+                            (+ (position-bytes chunk-start) chunk-limit))))
+                      (push (cons fold-position line-fold) annotations)
+                      (setq chunk-start fold-position
+                            chunk-limit 74)))
+                  (setq line-start (if (< line-end reg-end)
+                                       (1+ line-end)
+                                     reg-end))))
+          (let ((bol (point))
+                (eol (make-marker)))
+            (while (< bol reg-end)
+              (let ((inhibit-field-text-motion t))
+                (end-of-line))
+              (set-marker eol (point))
+              (when (< 75 (- (position-bytes (marker-position eol))
+                             (position-bytes bol)))
+                (goto-char
+                 ;; The max of 75 excludes the two CR-LF
+                 ;; characters we're about to add.
+                 (byte-to-position (+ 75 (position-bytes bol))))
+                (insert line-fold)
+                (set-marker eol (point)))
+              (setq bol (goto-char (1+ eol)))))))
     ;; Return annotations, or nil if we modified the buffer directly:
     (nreverse annotations)))
 
