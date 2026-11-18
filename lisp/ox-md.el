@@ -651,15 +651,21 @@ INFO is a plist holding contextual information.  See
 		       (org-md--link-destination
 			(concat "#" (org-export-get-reference destination info)))))))))
      ((org-export-inline-image-p link org-html-inline-image-rules)
-      (let ((path (cond ((not (string-equal type "file"))
-			 (concat type ":" raw-path))
-			((not (file-name-absolute-p raw-path)) raw-path)
-			(t (expand-file-name raw-path))))
-	    (caption (org-export-data
-		      (org-export-get-caption
-		       (org-element-parent-element link))
-		      info)))
-	(format "![img](%s)"
+      (let* ((path (cond ((not (string-equal type "file"))
+			  (concat type ":" raw-path))
+			 ((not (file-name-absolute-p raw-path)) raw-path)
+			 (t (expand-file-name raw-path))))
+	     (caption (org-export-data
+		       (org-export-get-caption
+			(org-element-parent-element link))
+		       info))
+	     (alt (or (org-string-nw-p desc)
+		      (org-string-nw-p caption)
+		      (org-md-plain-text
+		       (file-name-sans-extension (file-name-nondirectory path))
+		       info))))
+	(format "![%s](%s)"
+		alt
 		(if (not (org-string-nw-p caption))
 		    (org-md--link-destination path)
 		  (format "%s \"%s\""
