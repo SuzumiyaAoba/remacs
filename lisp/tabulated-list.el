@@ -533,7 +533,7 @@ changing `tabulated-list-sort-key'."
             (apply tabulated-list-printer elt)
           (while (let ((local-id (tabulated-list-get-id)))
                    ;; If we find id, then nothing to update.
-                   (cond ((equal id local-id)
+                   (cond ((and id (equal id local-id))
                           (forward-line 1)
                           nil)
                          ;; If this entry sorts after id (or it's the
