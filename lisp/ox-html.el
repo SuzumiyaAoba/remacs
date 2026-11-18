@@ -538,6 +538,29 @@ Option settings will replace the %MANAGER-OPTIONS cookie."
   :package-version '(Org . "9.4")
   :type 'string)
 
+(defun org-html--validate-infojs-option-value (option value)
+  "Validate the normalized INFOJS option VALUE for OPTION."
+  (let ((value (format "%s" value)))
+    (pcase option
+      ('view
+       (unless (member value '("info" "overview" "content" "showall"))
+         (error "Invalid InfoJS view: %S" value)))
+      ('toc
+       (unless (or (member value '("0" "1" "true" "false"))
+                   (string-match-p "\\`[0-9]+\\'" value))
+         (error "Invalid InfoJS TOC option: %S" value)))
+      ((or 'ftoc 'buttons)
+       (unless (member value '("0" "1" "true" "false"))
+         (error "Invalid InfoJS %s option: %S" option value)))
+      ('ltoc
+       (unless (member value '("0" "1" "true" "false" "above"))
+         (error "Invalid InfoJS local TOC option: %S" value)))
+      ((or 'tdepth 'sdepth)
+       (unless (or (string= value "max")
+                   (string-match-p "\\`[0-9]+\\'" value))
+         (error "Invalid InfoJS %s option: %S" option value))))
+    value))
+
 (defun org-html-infojs-install-script (exp-plist _backend)
   "Install script in export options when appropriate.
 EXP-PLIST is a plist containing export options.  BACKEND is the
@@ -576,13 +599,17 @@ export backend currently used."
 			(match-string 1 options)
 		      default)))
 	  (pcase opt
-	    (`path (setq template
-			 (replace-regexp-in-string
-			  "%SCRIPT_PATH" (org-html--encode-attribute-value val)
-			  template t t)))
-	    (`sdepth (when (integerp (read val))
+	    (`path (unless (stringp val)
+		     (error "Invalid InfoJS script path: %S" val))
+		    (setq template
+			  (replace-regexp-in-string
+			   "%SCRIPT_PATH" (org-html--encode-attribute-value val)
+			   template t t)))
+	    (`sdepth (setq val (org-html--validate-infojs-option-value opt val))
+		     (when (integerp (read val))
 		       (setq sdepth (min (read val) sdepth))))
-	    (`tdepth (when (integerp (read val))
+	    (`tdepth (setq val (org-html--validate-infojs-option-value opt val))
+		     (when (integerp (read val))
 		       (setq tdepth (min (read val) tdepth))))
 	    (_ (setq val
 		     (cond
@@ -590,6 +617,7 @@ export backend currently used."
 		      ((or (eq val nil) (equal val "nil")) "0")
 		      ((stringp val) val)
 		      (t (format "%s" val))))
+	       (setq val (org-html--validate-infojs-option-value opt val))
 	       (push (cons var val) style)))))
       ;; Now we set the depth of the *generated* TOC to SDEPTH,
       ;; because the toc will actually determine the splitting.  How
@@ -604,7 +632,10 @@ export backend currently used."
       (setq style (mapconcat
 		   (lambda (x)
 		     (format "org_html_manager.set(\"%s\", \"%s\");"
-			     (car x) (cdr x)))
+			     (org-html--encode-js-string-content
+			      (format "%s" (car x)) 34)
+			     (org-html--encode-js-string-content
+			      (format "%s" (cdr x)) 34)))
 		   style "\n"))
       (when (and style (> (length style) 0))
 	(and (string-match "%MANAGER_OPTIONS" template)
@@ -2091,25 +2122,28 @@ INFO is a plist used as a communication channel."
 			  info))
     (when (plist-get info :html-head-include-scripts) org-html-scripts))))
 
-(defun org-html--encode-js-string-content (value)
-  "Escape VALUE for inclusion inside a single-quoted JavaScript string."
-  (mapconcat
-   (lambda (character)
-     (cond ((= character 92) (concat (string 92) (string 92)))
-           ((= character 39) (concat (string 92) (string 39)))
-           ((= character 60) (concat (string 92) "x3C"))
-           ((= character 8) (concat (string 92) "b"))
-           ((= character 9) (concat (string 92) "t"))
-           ((= character 10) (concat (string 92) "n"))
-           ((= character 12) (concat (string 92) "f"))
-           ((= character 13) (concat (string 92) "r"))
-           ((or (= character #x2028) (= character #x2029))
-            (concat (string 92) (format "u%04X" character)))
-           ((or (< character 32) (= character 127))
-            (concat (string 92) (format "x%02X" character)))
-           (t (char-to-string character))))
-   (string-to-list value)
-   ""))
+(defun org-html--encode-js-string-content (value &optional quote-character)
+  "Escape VALUE for a JavaScript string delimited by QUOTE-CHARACTER.
+The delimiter defaults to a single quote."
+  (let ((quote-character (or quote-character 39)))
+    (mapconcat
+     (lambda (character)
+       (cond ((= character 92) (concat (string 92) (string 92)))
+             ((= character quote-character)
+              (concat (string 92) (char-to-string character)))
+             ((= character 60) (concat (string 92) "x3C"))
+             ((= character 8) (concat (string 92) "b"))
+             ((= character 9) (concat (string 92) "t"))
+             ((= character 10) (concat (string 92) "n"))
+             ((= character 12) (concat (string 92) "f"))
+             ((= character 13) (concat (string 92) "r"))
+             ((or (= character #x2028) (= character #x2029))
+              (concat (string 92) (format "u%04X" character)))
+             ((or (< character 32) (= character 127))
+              (concat (string 92) (format "x%02X" character)))
+             (t (char-to-string character))))
+     (string-to-list value)
+     "")))
 
 (defun org-html--mathjax-validate-option (option value allowed)
   "Return VALUE if it is an allowed value for MathJax OPTION."
