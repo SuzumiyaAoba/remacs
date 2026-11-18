@@ -742,10 +742,12 @@ contextual information."
                 (push (char-to-string character) result)
                 (setq index (1+ index))))))
           (apply #'concat (nreverse result))))
-  ;; Protect ambiguous #.  This will protect # at the beginning of
-  ;; a line, but not at the beginning of a paragraph.  See
-  ;; `org-md-paragraph'.
-  (setq text (replace-regexp-in-string "\n#" "\n\\\\#" text))
+  ;; Protect ATX heading markers after up to three spaces at line starts.
+  (setq text
+        (replace-regexp-in-string
+         "\\(^\\|\n\\)\\([ ]\\{0,3\\}\\)#"
+         "\\1\\2\\\\#"
+         text))
   ;; Protect ambiguous !
   (setq text (replace-regexp-in-string "\\(!\\)\\[" "\\\\!" text nil nil 1))
   ;; Handle special strings, if required.
