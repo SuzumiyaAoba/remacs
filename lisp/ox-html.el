@@ -2315,10 +2315,11 @@ holding export options."
    (org-html--build-pre/postamble 'preamble info)
    ;; Document contents.
    (let ((div (assq 'content (plist-get info :html-divs))))
-     (format "<%s id=\"%s\" class=\"%s\">\n"
+     (format "<%s id=\"%s\" %s>\n"
              (nth 1 div)
              (nth 2 div)
-             (plist-get info :html-content-class)))
+             (org-html--make-attribute-string
+              (list :class (plist-get info :html-content-class)))))
    ;; Document title.
    (when (plist-get info :with-title)
      (let ((title (and (plist-get info :with-title)
@@ -2905,18 +2906,22 @@ holding contextual information."
 	      (headline-class
 	       (org-element-property :HTML_HEADLINE_CLASS headline))
               (first-content (car (org-element-contents headline))))
-          (format "<%s %s class=\"%s\">%s%s</%s>\n"
+          (format "<%s %s %s>%s%s</%s>\n"
                   (org-html--container headline info)
                   (org-html--make-attribute-string
                    (list :id (format "outline-container-%s" id)))
-                  (concat (format "outline-%d" level)
-                          (and extra-class " ")
-                          extra-class)
+                  (org-html--make-attribute-string
+                   (list :class
+                         (concat (format "outline-%d" level)
+                                 (and extra-class " ")
+                                 extra-class)))
                   (format "\n<h%d %s%s>%s</h%d>\n"
                           level
                           (org-html--make-attribute-string (list :id id))
 			  (if (not headline-class) ""
-			    (format " class=\"%s\"" headline-class))
+			    (format " %s"
+				    (org-html--make-attribute-string
+				     (list :class headline-class))))
                           (concat
                            (and numberedp
                                 (format
