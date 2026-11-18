@@ -54,6 +54,34 @@ lists.  The first assoc list is keyed by the server name.  The cdr of
 this is an assoc list based on the \"directory\" specified by the URL we
 are looking up.")
 
+(defun url-basic-auth--directory-prefix-p (directory file)
+  "Return non-nil if DIRECTORY is an ancestor directory of FILE."
+  (let ((directory-length (length directory))
+        (file-length (length file)))
+    (and (> directory-length 0)
+         (<= directory-length file-length)
+         (string= directory (substring file 0 directory-length))
+         (or (= directory-length file-length)
+             (= (aref directory (1- directory-length)) ?/)
+             (= (aref file directory-length) ?/)))))
+
+(defun url-basic-auth--find-entry (file entries &optional realm)
+  "Return the best credential entry for FILE from ENTRIES.
+An exact match takes precedence, then the longest matching directory
+prefix.  Realm entries are a fallback when FILE is a directory path."
+  (or (assoc file entries)
+      (when (and (not realm) (string-search "/" file))
+        (let (best-directory realm-entry)
+          (dolist (entry entries)
+            (let ((key (car entry)))
+              (if (not (and (stringp key) (string-search "/" key)))
+                  (unless realm-entry (setq realm-entry entry))
+                (when (url-basic-auth--directory-prefix-p key file)
+                  (when (or (null best-directory)
+                            (> (length key) (length (car best-directory))))
+                    (setq best-directory entry)))))
+          (or best-directory realm-entry)))))
+
 (defun url-basic-auth (url &optional prompt overwrite realm _args)
   "Get the username/password for the specified URL.
 If optional argument PROMPT is non-nil, ask for the username/password
@@ -72,7 +100,7 @@ instead of the filename inheritance method."
 	 (pass (url-password href))
 	 (enable-recursive-minibuffers t) ; for url-handler-mode (bug#10298)
 	 (serverport (format "%s:%d" server port))
-	 byserv retval data)
+	 byserv retval)
     (setq file (cond
 		(realm realm)
 		((string= "" file) "/")
@@ -107,17 +135,8 @@ instead of the filename inheritance method."
 				      t))))
 		   (symbol-value url-basic-auth-storage)))))
      (byserv
-      (setq retval (cdr-safe (assoc file byserv)))
-      (if (and (not retval)
-	       (string-search "/" file))
- 	  (while (and byserv (not retval))
-	    (setq data (car (car byserv)))
-	    (if (or (not (string-search "/" data)) ; It's a realm - take it!
-		    (and
-		     (>= (length file) (length data))
-		     (string= data (substring file 0 (length data)))))
-		(setq retval (cdr (car byserv))))
-	    (setq byserv (cdr byserv))))
+	(let ((entry (url-basic-auth--find-entry file byserv realm)))
+	  (setq retval (cdr-safe entry)))
       (if (or (and (not retval) prompt) overwrite)
 	  (progn
 	    (setq user (or
