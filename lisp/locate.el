@@ -114,6 +114,7 @@
 (defvar locate-local-filter nil)
 (defvar locate-local-search nil)
 (defvar locate-local-prompt nil)
+(defvar-local locate--nul-separated-output nil)
 
 (defgroup locate nil
   "Interface to the locate command."
@@ -127,9 +128,10 @@ The value should be a program that can be called from a shell
 with one argument, SEARCH-STRING.  The program determines which
 database it searches.  The output of the program should consist
 of those file names in the database that match SEARCH-STRING,
-listed one per line, possibly with leading or trailing
-whitespace.  If the output is in another form, you may have to
-redefine the function `locate-get-file-positions'.
+listed one per line, possibly with leading or trailing whitespace.
+NUL-separated output is also supported and is displayed with escaped
+filenames.  If the output is in another form, you may have to redefine
+the function `locate-get-file-positions'.
 
 The program may interpret SEARCH-STRING as a literal string, a
 shell pattern or a regular expression.  The exact rules of what
@@ -229,8 +231,62 @@ that is, with a prefix arg, you get the default behavior."
   (unless (executable-find locate-command)
     (error "Can't find the %s command" locate-command))
   (if (string-match "\\`-" search-string)
-      (list locate-command "--" search-string)
-    (list locate-command search-string)))
+      (list locate-command "-0" "--" search-string)
+    (list locate-command "-0" search-string)))
+
+(defun locate--split-nul-output (output)
+  "Return (t . FILES) if OUTPUT contains NUL-separated file names."
+  (let ((index 0)
+        (start 0)
+        (limit (length output))
+        files found)
+    (while (< index limit)
+      (when (= (aref output index) 0)
+        (setq found t)
+        (when (< start index)
+          (push (substring output start index) files))
+        (setq start (1+ index)))
+      (setq index (1+ index)))
+    (when (and found (< start limit))
+      (push (substring output start) files))
+    (when found
+      (cons t (nreverse files)))))
+
+(defun locate--quote-filename (filename)
+  "Return a one-line Lisp-readable display form of FILENAME."
+  (let* ((printed (let ((print-escape-newlines t)
+                        (print-escape-control-characters t))
+                    (prin1-to-string filename)))
+         (quoted (substring printed 1 -1))
+         (length (length filename)))
+    ;; Whitespace at the edges would be trimmed by
+    ;; `locate-get-file-positions'; encode boundary spaces explicitly.
+    (cond
+     ((and (= length 1) (= (aref filename 0) ?\s)) "\\u0020")
+     (t
+      (when (and (> length 0) (= (aref filename 0) ?\s))
+        (setq quoted (concat "\\u0020" (substring quoted 1))))
+      (when (and (> length 0) (= (aref filename (1- length)) ?\s))
+        (setq quoted (concat (substring quoted 0 -1) "\\u0020")))
+      quoted))))
+
+(defun locate--prepare-nul-output ()
+  "Convert NUL-separated command output into quoted filename lines."
+  (let* ((parsed (locate--split-nul-output (buffer-string)))
+         (files (cdr parsed)))
+    (when parsed
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (setq-local locate--nul-separated-output t)
+        (dolist (file files)
+          (insert (locate--quote-filename file) "\n")))
+      t)))
+
+(defun locate--unquote-filename (filename)
+  "Decode FILENAME from the display form used for NUL-separated output."
+  (if locate--nul-separated-output
+      (read (concat "\"" (substring-no-properties filename) "\""))
+    filename))
 
 (defun locate-word-at-point ()
   (let ((pt (point)))
@@ -309,6 +365,7 @@ then `locate-post-command-hook'."
       (let ((inhibit-read-only t)
 	    (buffer-undo-list t))
 	(erase-buffer)
+	(setq-local locate--nul-separated-output nil)
 
 	(setq locate-current-filter filter)
         (setq-local locate-local-search search-string)
@@ -319,6 +376,7 @@ then `locate-post-command-hook'."
 	    (shell-command search-string locate-buffer-name)
 	  (apply #'call-process locate-cmd nil t nil locate-cmd-args))
 
+	(locate--prepare-nul-output)
 	(and filter
 	     (locate-filter-output filter))
 
@@ -421,7 +479,8 @@ listed by the locate program, using the function
 	(lineno (locate-current-line-number)))
     (and (not (eq lineno 1))
 	 (not (eq lineno 2))
-	 (buffer-substring (elt pos 0) (elt pos 1)))))
+	 (locate--unquote-filename
+	  (buffer-substring (elt pos 0) (elt pos 1))))))
 
 (defun locate-main-listing-line-p ()
   "Return t if current line contains a file name listed by locate.
@@ -628,6 +687,7 @@ locate database using the shell command in `locate-update-command'."
 	(progn
 	  ;; Get rid of the mouse-face property that file names have.
 	  (set-text-properties 0 (length file) nil file)
+	  (setq file (locate--unquote-filename file))
 	  ;; `locate' writes to a pipe here, so use the file name as-is.
 	  ;; Reading it as a Lisp string would interpret backslash escapes.
 	  (setq file (file-name-directory file))))
@@ -657,7 +717,8 @@ the database on the command line."
   (let ((locate-make-command-line
          (lambda (string)
            (cons locate-command
-                 (list (concat "--database="
+                 (list "-0"
+                       (concat "--database="
                                (expand-file-name database))
                        string)))))
     (locate search-string)))
