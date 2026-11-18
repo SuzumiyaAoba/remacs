@@ -2151,6 +2151,22 @@ INFO is a plist used as a communication channel."
                                    t
                                    t template 1)))))))))
 
+(defun org-html--encode-mailto-address (email)
+  "URI-encode EMAIL for use as a `mailto' recipient."
+  (let* ((bytes (if (multibyte-string-p email)
+		    (encode-coding-string email 'utf-8)
+		  email))
+	 (allowed-chars
+	  (string-to-list
+	   (concat "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		   "0123456789-._~!$'()*+;@"))))
+    (mapconcat (lambda (byte)
+		 (if (memq byte allowed-chars)
+		     (char-to-string byte)
+		   (format "%%%02X" byte)))
+	       (string-to-list bytes)
+	       "")))
+
 (defun org-html-format-spec (info)
   "Return format specification for preamble and postamble.
 INFO is a plist used as a communication channel."
@@ -2162,7 +2178,13 @@ INFO is a plist used as a communication channel."
       (?T . ,(format-time-string timestamp-format))
       (?a . ,(org-export-data (plist-get info :author) info))
       (?e . ,(mapconcat
-	      (lambda (e) (format "<a href=\"mailto:%s\">%s</a>" e e))
+	      (lambda (email)
+		(format "<a %s>%s</a>"
+			(org-html--make-attribute-string
+			 (list :href
+			       (concat "mailto:"
+				       (org-html--encode-mailto-address email))))
+			(org-html-encode-plain-text email)))
 	      (split-string (plist-get info :email)  ",+ *")
 	      ", "))
       (?c . ,(plist-get info :creator))
