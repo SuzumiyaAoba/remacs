@@ -357,17 +357,28 @@ a communication channel."
 
 ;;;; Code and Verbatim
 
+(defun org-md--code-span-delimiter (value)
+  "Return a backtick delimiter longer than any run in VALUE."
+  (let ((longest 0)
+        (current 0))
+    (dotimes (index (length value))
+      (if (= (aref value index) ?`)
+          (setq current (1+ current)
+                longest (max longest current))
+        (setq current 0)))
+    (make-string (1+ longest) ?`)))
+
 (defun org-md-verbatim (verbatim _contents _info)
   "Transcode VERBATIM object into Markdown format.
 CONTENTS is nil.  INFO is a plist used as a communication
 channel."
-  (let ((value (org-element-property :value verbatim)))
-    (format (cond ((not (string-match "`" value)) "`%s`")
-		  ((or (string-prefix-p "`" value)
-		       (string-suffix-p "`" value))
-		   "`` %s ``")
-		  (t "``%s``"))
-	    value)))
+  (let* ((value (org-element-property :value verbatim))
+         (delimiter (org-md--code-span-delimiter value))
+         (value (if (or (string-prefix-p "`" value)
+                        (string-suffix-p "`" value))
+                    (concat " " value " ")
+                  value)))
+    (format "%s%s%s" delimiter value delimiter)))
 
 
 ;;;; Example Block, Src Block and Export Block
