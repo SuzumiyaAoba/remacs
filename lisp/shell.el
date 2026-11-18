@@ -1114,6 +1114,83 @@ solution."
                 arguments (cons arg arguments))))))
     (car arguments)))
 
+;; Remacs: read a here-document delimiter with shell quote removal.
+(defun shell-directory-tracker--read-here-doc-delimiter (command start)
+  (let ((index start)
+        (limit (length command))
+        (quote-char nil)
+        escaped started done
+        characters)
+    (while (and (< index limit)
+                (memq (aref command index) '(?\s ?\t)))
+      (setq index (1+ index)))
+    (while (and (< index limit) (not done))
+      (let ((character (aref command index)))
+        (cond
+         (escaped
+          (push character characters)
+          (setq escaped nil
+                started t))
+         ((and (= character ?\\) (not (eq quote-char ?')))
+          (setq escaped t
+                started t))
+         (quote-char
+          (if (= character quote-char)
+              (setq quote-char nil)
+            (push character characters)))
+         ((memq character '(?' ?\"))
+          (setq quote-char character
+                started t))
+         ((memq character '(?\s ?\t ?\n ?\r ?\; ?& ?| ?< ?> ?\( ?\)))
+          (setq done t))
+         (t
+          (push character characters)
+          (setq started t))))
+      (unless done
+        (setq index (1+ index))))
+    (when started
+      (cons (apply #'string (nreverse characters)) index))))
+
+;; Remacs: mask here-document input so it is not parsed as shell commands.
+(defun shell-directory-tracker--mask-here-doc-bodies
+    (command copy newline-position here-docs)
+  (let ((position (1+ newline-position))
+        (limit (length command))
+        (remaining (nreverse here-docs)))
+    (aset copy newline-position 32)
+    (while (and remaining (< position limit))
+      (let ((delimiter (caar remaining))
+            (strip-tabs (cdar remaining))
+            found)
+        (while (and (< position limit) (not found))
+          (let* ((line-end (or (string-match "\n" command position) limit))
+                 (content-end
+                  (if (and (> line-end position)
+                           (= (aref command (1- line-end)) ?\r))
+                      (1- line-end)
+                    line-end))
+                 (line (substring command position content-end))
+                 (comparison-line line))
+            (when strip-tabs
+              (let ((tab-count 0))
+                (while (and (< tab-count (length line))
+                            (= (aref line tab-count) ?\t))
+                  (setq tab-count (1+ tab-count)))
+                (setq comparison-line (substring line tab-count))))
+            (let ((index position))
+              (while (< index line-end)
+                (aset copy index 32)
+                (setq index (1+ index))))
+            (setq found (string= comparison-line delimiter))
+            (setq position
+                  (if (< line-end limit) (1+ line-end) limit))
+            (when (and (< line-end limit)
+                       (or (not found) (cdr remaining)))
+              (aset copy line-end 32))))
+        (when found
+          (setq remaining (cdr remaining))))
+    position))
+
 ;; Remacs: mask command separators inside quotes and subshells while scanning.
 (defun shell-directory-tracker--mask-nested-separators (command)
   "Return a same-length copy of COMMAND with nested separators masked.
@@ -1122,7 +1199,7 @@ This lets the directory tracker split only commands in the parent shell."
         (index 0)
         (limit (length command))
         (contexts (list (vector nil 0 nil nil)))
-        context quote-char depth subshell escaped char next)
+        context quote-char depth subshell escaped char next next2 here-docs comment)
     (while (< index limit)
       (setq context (car contexts)
             quote-char (aref context 0)
@@ -1131,8 +1208,20 @@ This lets the directory tracker split only commands in the parent shell."
             escaped (aref context 3)
             char (aref command index)
             next (and (< (1+ index) limit)
-                      (aref command (1+ index))))
+                      (aref command (1+ index)))
+            next2 (and (< (+ index 2) limit)
+                       (aref command (+ index 2))))
       (cond
+       (comment
+        (if (eq char ?\n)
+            (progn
+              (setq comment nil)
+              (when here-docs
+                (setq index
+                      (1- (shell-directory-tracker--mask-here-doc-bodies
+                           command copy index here-docs))
+                      here-docs nil)))
+          (aset copy index 32)))
        (escaped
         (when (memq char '(?\; ?& ?| ?\n))
           (aset copy index 32))
@@ -1166,6 +1255,14 @@ This lets the directory tracker split only commands in the parent shell."
           (aset copy index 32))))
        (t
         (cond
+         ((and (zerop depth)
+               (not subshell)
+               (eq char ?#)
+               (or (= index 0)
+                   (memq (aref command (1- index))
+                         '(?\s ?\t ?\n ?\; ?& ?| ?\( ?\{ ?\}))))
+          (setq comment t)
+          (aset copy index 32))
          ((eq char ?\\)
           (aset context 3 t))
          ((eq char ?')
@@ -1185,6 +1282,30 @@ This lets the directory tracker split only commands in the parent shell."
             (aset context 1 depth)
             (when (and (zerop depth) subshell)
               (pop contexts))))
+         ((and (zerop depth)
+               (not subshell)
+               (eq char ?<)
+               (not (and (> index 0)
+                         (eq (aref command (1- index)) ?<)))
+               (eq next ?<)
+               (not (eq next2 ?<)))
+          (let* ((strip-tabs (eq next2 ?-))
+                 (delimiter-start (+ index (if strip-tabs 3 2)))
+                 (delimiter
+                  (shell-directory-tracker--read-here-doc-delimiter
+                   command delimiter-start)))
+            (when delimiter
+              (push (cons (car delimiter) strip-tabs) here-docs)
+              (let ((mask-index index))
+                (while (< mask-index (cdr delimiter))
+                  (aset copy mask-index 32)
+                  (setq mask-index (1+ mask-index))))
+              (setq index (1- (cdr delimiter)))))
+         ((and (eq char ?\n) here-docs (zerop depth) (not subshell))
+          (setq index
+                (1- (shell-directory-tracker--mask-here-doc-bodies
+                     command copy index here-docs))
+                here-docs nil))
          ((and (> depth 0) (memq char '(?\; ?& ?| ?\n)))
           (aset copy index 32)))))
       (setq index (1+ index)))
