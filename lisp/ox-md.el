@@ -580,6 +580,16 @@ channel."
     "")
    ">"))
 
+(defun org-md--escape-link-title (title)
+  "Escape backslashes and double quotes in a CommonMark link TITLE."
+  (mapconcat
+   (lambda (character)
+     (if (memq character '(?\\ ?\"))
+         (concat "\\" (char-to-string character))
+       (char-to-string character)))
+   (string-to-list title)
+   ""))
+
 (defun org-md-link (link desc info)
   "Transcode LINK object into Markdown format.
 DESC is the description part of the link, or the empty string.
@@ -653,7 +663,8 @@ INFO is a plist holding contextual information.  See
 		(if (not (org-string-nw-p caption))
 		    (org-md--link-destination path)
 		  (format "%s \"%s\""
-		          (org-md--link-destination path) caption)))))
+		          (org-md--link-destination path)
+		          (org-md--escape-link-title caption)))))
      ((string= type "coderef")
       (format (org-export-get-coderef-format path desc)
 	      (org-export-resolve-coderef path info)))
