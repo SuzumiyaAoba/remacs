@@ -59,6 +59,25 @@ are looking up.")
   (or (url-port-if-non-default url)
       (url-type url)))
 
+(defun url-basic-auth--encode-credentials (user password args)
+  "Return base64-encoded Basic credentials for USER and PASSWORD.
+When ARGS advertises `charset=UTF-8', normalize the whole credential
+pair to NFC before encoding it as UTF-8."
+  (let* ((charset
+          (catch 'found
+            (dolist (entry args)
+              (let ((key (car-safe entry)))
+                (when (or (eq key 'charset)
+                          (and (stringp key)
+                               (string-equal (downcase key) "charset")))
+                  (throw 'found (cdr-safe entry))))))
+         (user-pass (concat user ":" (or password ""))))
+    (when (and (stringp charset)
+               (string-equal (downcase charset) "utf-8"))
+      (require 'ucs-normalize)
+      (setq user-pass (ucs-normalize-NFC-string user-pass)))
+    (base64-encode-string (encode-coding-string user-pass 'utf-8) t)))
+
 (defun url-basic-auth--directory-prefix-p (directory file)
   "Return non-nil if DIRECTORY is an ancestor directory of FILE."
   (let ((directory-length (length directory))
@@ -87,7 +106,7 @@ prefix.  Realm entries are a fallback when FILE is a directory path."
                     (setq best-directory entry)))))
           (or best-directory realm-entry)))))
 
-(defun url-basic-auth (url &optional prompt overwrite realm _args)
+(defun url-basic-auth (url &optional prompt overwrite realm args)
   "Get the username/password for the specified URL.
 If optional argument PROMPT is non-nil, ask for the username/password
 to use for the url and its descendants.  If optional third argument
@@ -116,7 +135,7 @@ instead of the filename inheritance method."
     (cond
      ((and user pass)
       ;; Explicit http://user:pass@foo/ URL.  Just return the credentials.
-      (setq retval (base64-encode-string (format "%s:%s" user pass) t)))
+      (setq retval (url-basic-auth--encode-credentials user pass args)))
      ((and prompt (not byserv))
       (setq user (or
 		  (url-do-auth-source-search server auth-source-port :user)
@@ -132,12 +151,8 @@ instead of the filename inheritance method."
 	     (cons (list serverport
 			 (cons file
 			       (setq retval
-				     (base64-encode-string
-				      (format "%s:%s" user
-					      (if pass
-						  (encode-coding-string pass 'utf-8)
-						""))
-				      t))))
+				     (url-basic-auth--encode-credentials
+				      user pass args))))
 		   (symbol-value url-basic-auth-storage)))))
      (byserv
 	(let ((entry (url-basic-auth--find-entry file byserv realm)))
@@ -154,7 +169,7 @@ instead of the filename inheritance method."
 			(and (url-interactive-p)
 			     (read-passwd "Password: "))))
 	    (when user
-	      (setq retval (base64-encode-string (format "%s:%s" user pass) t)
+	      (setq retval (url-basic-auth--encode-credentials user pass args)
 		    byserv (assoc serverport (symbol-value url-basic-auth-storage)))
 	      (setcdr byserv
 		      (cons (cons file retval) (cdr byserv)))))))
