@@ -34,7 +34,11 @@ or 2; use the latter if you need a 24-bit specification of a color."
   (or digits-per-component (setq digits-per-component 4))
   (let* ((maxval (if (= digits-per-component 2) 255 65535))
          (fmt (if (= digits-per-component 2) "#%02x%02x%02x" "#%04x%04x%04x")))
-    (format fmt (* red maxval) (* green maxval) (* blue maxval))))
+    ;; CSS rounds sRGB components to the nearest integer, with halfway
+    ;; values rounded upward.  FORMAT's integer conversion truncates floats.
+    (format fmt (floor (+ (* red maxval) 0.5))
+            (floor (+ (* green maxval) 0.5))
+            (floor (+ (* blue maxval) 0.5)))))
 
 (defun color-complement (color-name)
   "Return the color that is the complement of COLOR-NAME.
