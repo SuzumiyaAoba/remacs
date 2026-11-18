@@ -1729,6 +1729,11 @@ alist."
          ((org-html--valid-doctype-p dt) dt)
          (t (error "Invalid HTML doctype: %S" dt))))))
 
+(defun org-html--encode-attribute-value (value)
+  "Escape VALUE for inclusion in a double-quoted HTML attribute."
+  (replace-regexp-in-string
+   "\"" "&quot;" (org-html-encode-plain-text value) t t))
+
 (defun org-html--make-attribute-string (attributes)
   "Return a list of attributes, as a string.
 ATTRIBUTES is a plist where values are either strings or nil.  An
@@ -1738,8 +1743,7 @@ attribute with a nil value will be omitted from the result."
       (cond ((null item) (pop output))
             ((symbolp item) (push (substring (symbol-name item) 1) output))
             (t (let ((key (car output))
-                     (value (replace-regexp-in-string
-                             "\"" "&quot;" (org-html-encode-plain-text item))))
+                     (value (org-html--encode-attribute-value item)))
                  (setcar output (format "%s=\"%s\"" key value))))))))
 
 (defun org-html--reference (datum info &optional named-only)
@@ -2332,8 +2336,8 @@ holding export options."
 	 (link-home (org-trim (plist-get info :html-link-home))))
      (unless (and (string= link-up "") (string= link-home ""))
        (format (plist-get info :html-home/up-format)
-	       (or link-up link-home)
-	       (or link-home link-up))))
+	       (org-html--encode-attribute-value (or link-up link-home))
+	       (org-html--encode-attribute-value (or link-home link-up)))))
    ;; Preamble.
    (org-html--build-pre/postamble 'preamble info)
    ;; Document contents.
