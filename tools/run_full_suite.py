@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run every compiled Rust test target, recording failures without stopping."""
 import argparse
-import concurrent.futures
 import datetime
 import json
 import os
@@ -9,6 +8,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,41 +21,66 @@ def save(path, value):
     temporary.replace(path)
 
 
-def run(command, log, env, timeout):
+def interrupt_handler(signum, _frame):
+    raise KeyboardInterrupt(f"received signal {signum}")
+
+
+def stop_process_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=7)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+
+
+def run(command, log, env, timeout, rss_mib=8192, log_mib=32):
     started = time.monotonic()
-    deadline = started + timeout
+    deadline = started + timeout + 10
     next_progress = started + 30
     timed_out = False
     last_finished = started
     finished_count = 0
-    with log.open("w") as output:
-        proc = subprocess.Popen(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
-                                stdout=output, stderr=subprocess.STDOUT,
-                                start_new_session=True)
-        try:
-            while proc.poll() is None:
-                now = time.monotonic()
-                if now >= deadline:
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_bytes(b"")
+    guarded_command = [
+        sys.executable, str(ROOT / "tools/guarded_exec.py"),
+        "--preset", "full-test", "--timeout", str(timeout),
+        "--rss-mib", str(rss_mib), "--cpu-secs", str(timeout),
+        "--log-mib", str(log_mib), "--log", str(log), "--", *command,
+    ]
+    proc = subprocess.Popen(guarded_command, cwd=ROOT, env=env,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        while proc.poll() is None:
+            now = time.monotonic()
+            if now >= deadline:
+                timed_out = True
+                stop_process_group(proc)
+                break
+            if now >= next_progress:
+                rows = FINISHED.findall(log.read_text(errors="replace"))
+                if len(rows) != finished_count:
+                    finished_count = len(rows)
+                    last_finished = now
+                elif now - last_finished >= 180:
                     timed_out = True
-                    os.killpg(proc.pid, signal.SIGKILL)
+                    stop_process_group(proc)
                     break
-                if now >= next_progress:
-                    rows = FINISHED.findall(log.read_text(errors="replace"))
-                    if len(rows) != finished_count:
-                        finished_count = len(rows)
-                        last_finished = now
-                    elif now - last_finished >= 180:
-                        timed_out = True
-                        os.killpg(proc.pid, signal.SIGKILL)
-                        break
-                    print(f"{log.stem}: {len(rows)} finished, {now-started:.0f}s", flush=True)
-                    next_progress = now + 30
-                time.sleep(1)
-            proc.wait()
-        finally:
-            if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
+                print(f"{log.stem}: {len(rows)} finished, {now-started:.0f}s", flush=True)
+                next_progress = now + 30
+            time.sleep(1)
+    finally:
+        if proc.poll() is None:
+            stop_process_group(proc)
+    proc.wait()
     rows = FINISHED.findall(log.read_text(errors="replace"))
     return dict(command=command, returncode=proc.returncode, timed_out=timed_out,
                 seconds=round(time.monotonic()-started, 2), log=log.name,
@@ -67,11 +92,14 @@ def main():
     ap.add_argument("--output-dir", default="tests/audit/current/full-suite")
     ap.add_argument("--gnu", required=True)
     ap.add_argument("--dbus-daemon")
-    ap.add_argument("--test-threads", type=int, default=4)
+    ap.add_argument("--test-threads", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=3600)
     ap.add_argument("--isolated-timeout", type=int, default=120)
+    ap.add_argument("--rss-mib", type=int, default=8192)
+    ap.add_argument("--log-mib", type=int, default=32)
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
+    signal.signal(signal.SIGTERM, interrupt_handler)
     directory = (ROOT / args.output_dir).resolve()
     build = json.loads((directory / "build-summary.json").read_text())
     assert build["returncode"] == 0
@@ -113,7 +141,8 @@ def main():
             print(f"Starting {label}: {len(target['tests'])} tests", flush=True)
             command = [target["executable"], "--test-threads", str(args.test_threads)]
             prior = next((r for r in state["targets"] if r["label"] == label), None)
-            result = prior if prior else run(command, directory / f"{label}.log", env, args.timeout)
+            result = prior if prior else run(command, directory / f"{label}.log", env,
+                                             args.timeout, args.rss_mib, args.log_mib)
             result["label"] = label
             result["expected_tests"] = len(target["tests"])
             done_names = {r["name"] for r in result["results"]}
@@ -121,15 +150,13 @@ def main():
             result.setdefault("isolated_retries", [])
             pending -= {r["name"] for r in result["isolated_retries"]}
             if pending:
-                def retry_one(job):
-                    index, name = job
+                for index, name in enumerate(sorted(pending)):
                     print(f"Retrying unreported test {label}::{name}", flush=True)
                     retry = run([target["executable"], name, "--exact", "--nocapture"],
-                                directory / f"{label}-remaining-{index}.log", env, args.isolated_timeout)
+                                directory / f"{label}-remaining-{index}.log", env,
+                                args.isolated_timeout, min(args.rss_mib, 4096), args.log_mib)
                     retry["name"] = name
-                    return retry
-                with concurrent.futures.ThreadPoolExecutor(max_workers=args.test_threads) as pool:
-                    result["isolated_retries"].extend(pool.map(retry_one, enumerate(sorted(pending))))
+                    result["isolated_retries"].append(retry)
             result["complete"] = True
             state["targets"] = [t for t in state["targets"] if t["label"] != label]
             state["targets"].append(result)

@@ -74,6 +74,17 @@ debug = "line-tables-only"
 opt-level = 0
 debug = false
 
+# Faster local builds when binary runtime speed and debug symbols are not
+# needed. This profile keeps dev's incremental compilation enabled.
+[profile.fast-dev]
+inherits = "dev"
+opt-level = 0
+debug = false
+
+[profile.fast-dev.package."*"]
+opt-level = 0
+debug = false
+
 # Restore full symbols and optimized dependencies when debugging into libraries.
 [profile.debugging]
 inherits = "dev"

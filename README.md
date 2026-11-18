@@ -19,11 +19,14 @@ and `remacs-gui` (GPUI and OS input). The root package preserves the existing
 `remacs` API and integrated executable.
 
 ```sh
-cargo run -p remacs-runtime --bin remacs-lisp -- --eval '(+ 1 2)'
-cargo run -p remacs-cli -- --batch --eval '(princ (+ 1 2))'
-cargo run -p remacs-cli -- -nw
-cargo run -p remacs-gui -- README.md
-cargo build --no-default-features # Integrated CLI without GPUI
+python3 tools/guarded_exec.py --preset focused-test --timeout 300 -- \
+  cargo run -p remacs-runtime --bin remacs-lisp -- --eval '(+ 1 2)'
+python3 tools/guarded_exec.py --preset focused-test --timeout 300 -- \
+  cargo run -p remacs-cli -- --batch --eval '(princ (+ 1 2))'
+makers run-nw
+makers run README.md
+python3 tools/guarded_exec.py --preset build -- \
+  cargo build --no-default-features # Integrated CLI without GPUI
 python3 tools/check_architecture.py
 ```
 
@@ -74,14 +77,36 @@ See [architecture and dependency boundaries](docs/architecture.md).
 ## Building
 
 ```sh
-cargo build            # debug
-cargo build --profile debugging # full debug info, including dependencies
-cargo build --release  # optimized
+python3 tools/guarded_exec.py --preset build -- cargo build
+python3 tools/guarded_exec.py --preset build -- cargo build --profile fast-dev
+python3 tools/guarded_exec.py --preset build -- cargo build --profile debugging
+python3 tools/guarded_exec.py --preset build -- cargo build --release
 ```
 
 The default development build keeps line-table debug info and compiles
 third-party dependencies without optimization. Use the `debugging` profile
 when you need full debug info, including variables in dependencies.
+Use `fast-dev` for quicker edit/build cycles when slower runtime performance
+and the lack of debug symbols are acceptable. It keeps incremental compilation
+enabled; its first build uses a separate profile directory.
+For runtime-only changes, use
+`python3 tools/guarded_exec.py --preset check -- cargo check -p remacs-runtime`;
+it skips code generation and linking for faster feedback.
+
+ビルドとテストは `tools/guarded_exec.py` を通して実行してください。監視役は
+プロセスグループ全体の RSS、実行時間、CPU 時間、ログサイズを制限し、上限超過や
+監視中断時には子プロセスを終了します。`makers build`、`makers check`、
+`makers clippy`、`makers test` もこの監視役を使います。メモリー上限は 200ms 間隔で
+RSS を確認して適用します。上限は環境変数 `REMACS_GUARD_TIMEOUT`、
+`REMACS_GUARD_RSS_MIB`、`REMACS_GUARD_CPU_SECS`、`REMACS_GUARD_LOG_MIB` で
+調整できます。通常の `cargo` を直接実行すると監視されないため、上記の形式か
+`makers build` / `makers check` / `makers clippy` / `makers test` を使ってください。
+
+| 実行種別 | 経過時間上限 | グループ RSS 上限 | CPU 上限（各プロセス） | ログ上限 |
+| --- | ---: | ---: | ---: | ---: |
+| ビルド・型チェック | 30 分 | 8 GiB | 30 分 | 32 MiB |
+| 個別テスト | 2 分 | 4 GiB | 2 分 | 20 MiB |
+| 全テスト | 60 分 | 8 GiB | 60 分 | 32 MiB |
 
 Rust 2024 edition. No external build-time dependencies beyond crates;
 optional libraries (`libgnutls`, `liblcms2`, `libdbus-1`) are dlopen'd
@@ -131,12 +156,18 @@ python3 tools/gen_embedded.py
 ### Tests
 
 ```sh
-cargo test --test lisp_core     # core evaluator/reader/print/equality
-cargo test --test lisp_libs     # Lisp library probes
-cargo test --test nativecomp    # .eln pipeline (needs cc)
-cargo test --test nsgui         # macOS-gated NS primitives
-cargo test --test extlib        # gnutls/lcms2/dbus/filenotify (slow)
-cargo test --test compat        # GNU-parity command checks
+python3 tools/guarded_exec.py --preset focused-test -- \
+  cargo test --test lisp_core -- --test-threads=1
+python3 tools/guarded_exec.py --preset focused-test -- \
+  cargo test --test lisp_libs -- --test-threads=1
+python3 tools/guarded_exec.py --preset focused-test -- \
+  cargo test --test nativecomp -- --test-threads=1
+python3 tools/guarded_exec.py --preset focused-test -- \
+  cargo test --test nsgui -- --test-threads=1
+python3 tools/guarded_exec.py --preset focused-test -- \
+  cargo test --test extlib -- --test-threads=1
+python3 tools/guarded_exec.py --preset focused-test -- \
+  cargo test --test compat -- --test-threads=1
 ```
 
 Note: most `ev()` calls boot the full prelude (~30 s each), so the

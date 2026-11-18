@@ -19,18 +19,21 @@ alias = "build"
 
 [tasks.build]
 description = "Build remacs (debug)."
-command = "cargo"
-args = ["build"]
+script = '''
+exec python3 tools/guarded_exec.py --preset build -- cargo build --jobs 2
+'''
 
 [tasks.build-release]
 description = "Build remacs (release)."
-command = "cargo"
-args = ["build", "--release"]
+script = '''
+exec python3 tools/guarded_exec.py --preset build -- cargo build --release --jobs 2
+'''
 
 [tasks.check]
 description = "Type-check without building."
-command = "cargo"
-args = ["check", "--workspace", "--all-targets"]
+script = '''
+exec python3 tools/guarded_exec.py --preset check -- cargo check --workspace --all-targets --jobs 2
+'''
 
 [tasks.clean]
 description = "Remove build artifacts."
@@ -46,6 +49,7 @@ set --
 old_ifs=$IFS; IFS=';'
 for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
 IFS=$old_ifs
+python3 tools/guarded_exec.py --preset build -- cargo build --jobs 2 || exit $?
 exec cargo run -- "$@"
 '''
 
@@ -56,6 +60,7 @@ set --
 old_ifs=$IFS; IFS=';'
 for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
 IFS=$old_ifs
+python3 tools/guarded_exec.py --preset build -- cargo build --release --jobs 2 || exit $?
 exec cargo run --release -- "$@"
 '''
 
@@ -66,6 +71,7 @@ set --
 old_ifs=$IFS; IFS=';'
 for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
 IFS=$old_ifs
+python3 tools/guarded_exec.py --preset build -- cargo build --jobs 2 || exit $?
 exec cargo run -- -nw "$@"
 '''
 
@@ -76,33 +82,42 @@ set --
 old_ifs=$IFS; IFS=';'
 for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
 IFS=$old_ifs
+python3 tools/guarded_exec.py --preset build -- cargo build --release --jobs 2 || exit $?
 exec cargo run --release -- -nw "$@"
 '''
 
 [tasks.eval]
 description = "Evaluate a Lisp form in batch mode: makers eval \"(message \\\"hi\\\")\""
 script = '''
-exec cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --eval "${CARGO_MAKE_TASK_ARGS}"
+exec python3 tools/guarded_exec.py --preset focused-test --timeout 300 \
+    --rss-mib 4096 --cpu-secs 300 -- \
+    cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --eval "${CARGO_MAKE_TASK_ARGS}"
 '''
 
 [tasks.load]
 description = "Load a Lisp file in batch mode: makers load file.el"
 script = '''
-exec cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --load "${CARGO_MAKE_TASK_ARGS}"
+exec python3 tools/guarded_exec.py --preset focused-test --timeout 300 \
+    --rss-mib 4096 --cpu-secs 300 -- \
+    cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --load "${CARGO_MAKE_TASK_ARGS}"
 '''
 
 [tasks.script]
 description = "Run a Lisp file and exit: makers script file.el"
 script = '''
-exec cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --script "${CARGO_MAKE_TASK_ARGS}"
+exec python3 tools/guarded_exec.py --preset focused-test --timeout 300 \
+    --rss-mib 4096 --cpu-secs 300 -- \
+    cargo run --quiet -p remacs-runtime --bin remacs-lisp -- --script "${CARGO_MAKE_TASK_ARGS}"
 '''
 
 # ----------------------------------------------------------------- test
 
 [tasks.test]
-description = "Run the test suite."
-command = "cargo"
-args = ["test", "--workspace"]
+description = "Run the workspace tests with process, time, and memory limits."
+script = '''
+exec python3 tools/guarded_exec.py --preset full-test -- \
+    cargo test --workspace --jobs 2 -- --test-threads=1
+'''
 
 [tasks.probe]
 description = "Diff remacs vs GNU Emacs on a corpus file: makers probe corpus/arith.txt [-v]"
@@ -116,7 +131,8 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 file=$1; shift
-exec python3 tools/probe_gen.py "$file" target/debug/remacs "$@"
+exec python3 tools/guarded_exec.py --preset focused-test -- \
+    python3 tools/probe_gen.py "$file" target/debug/remacs "$@"
 '''
 
 # ----------------------------------------------------------------- lint
@@ -133,8 +149,10 @@ args = ["fmt", "--all", "--", "--check"]
 
 [tasks.clippy]
 description = "Lint with clippy."
-command = "cargo"
-args = ["clippy", "--workspace", "--all-targets"]
+script = '''
+exec python3 tools/guarded_exec.py --preset check -- \
+    cargo clippy --workspace --all-targets --jobs 2
+'''
 
 [tasks.verify]
 description = "architecture + fmt-check + clippy + test."
@@ -147,15 +165,21 @@ args = ["tools/check_architecture.py"]
 
 [tasks.build-runtime]
 description = "Build the standalone Lisp runner without a frontend."
-command = "cargo"
-args = ["build", "-p", "remacs-runtime"]
+script = '''
+exec python3 tools/guarded_exec.py --preset build -- \
+    cargo build -p remacs-runtime --jobs 2
+'''
 
 [tasks.build-cli]
 description = "Build the terminal CLI without GPUI."
-command = "cargo"
-args = ["build", "-p", "remacs-cli"]
+script = '''
+exec python3 tools/guarded_exec.py --preset build -- \
+    cargo build -p remacs-cli --jobs 2
+'''
 
 [tasks.build-gui]
 description = "Build the GUI without the terminal adapter."
-command = "cargo"
-args = ["build", "-p", "remacs-gui"]
+script = '''
+exec python3 tools/guarded_exec.py --preset build -- \
+    cargo build -p remacs-gui --jobs 2
+'''
