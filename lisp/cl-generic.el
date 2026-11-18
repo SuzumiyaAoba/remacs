@@ -222,7 +222,10 @@ CALL-CON indicates the calling convention expected by FUNCTION:
              origname))
     (if generic
         (cl-assert (eq name (cl--generic-name generic)))
-      (setf (cl--generic name) (setq generic (cl--generic-make name))))
+      ;; Remacs: this source is interpreted, and the late `gv' rollback
+      ;; leaves `setf' autoloaded.  Store the generic property directly so
+      ;; first dispatch does not load gv.el just to initialize its metadata.
+      (put name 'cl--generic (setq generic (cl--generic-make name))))
     ;; remacs: re-register fallback `cl--methods' entries through the
     ;; real machinery so early `cl-defmethod's aren't lost.
     (when (and (fboundp 'remacs--migrate-fallback-methods)
@@ -362,8 +365,8 @@ DEFAULT-BODY, if present, is used as the body of a default method.
                (apo (assq :argument-precedence-order options)))
     (unless (fboundp name)
       ;; If the generic function was fmakunbound, throw away previous methods.
-      (setf (cl--generic-dispatches generic) nil)
-      (setf (cl--generic-method-table generic) nil))
+      (aset generic 2 nil)
+      (aset generic 3 nil))
     (when apo
       (dolist (arg (cdr apo))
         (let ((pos (memq arg mandatory)))
@@ -371,9 +374,8 @@ DEFAULT-BODY, if present, is used as the body of a default method.
           (let* ((argno (- (length mandatory) (length pos)))
                  (dispatches (cl--generic-dispatches generic))
                  (dispatch (or (assq argno dispatches) (list argno))))
-            (setf (cl--generic-dispatches generic)
-                  (cons dispatch (delq dispatch dispatches)))))))
-    (setf (cl--generic-options generic) options)
+            (aset generic 2 (cons dispatch (delq dispatch dispatches)))))))
+    (aset generic 4 options)
     (cl--generic-make-function generic)))
 
 (defmacro cl-generic-current-method-specializers ()
@@ -659,20 +661,19 @@ The set of acceptable TYPEs (also called \"specializers\") is defined
              (x (assoc key dispatches)))
         (unless x
           (setq x (cons key (cl-generic-generalizers t)))
-          (setf (cl--generic-dispatches generic)
-                (setq dispatches (cons x dispatches))))
+          (aset generic 2 (setq dispatches (cons x dispatches))))
         (dolist (generalizer generalizers)
           (unless (member generalizer (cdr x))
-            (setf (cdr x)
-                  (sort (cons generalizer (cdr x))
-                        (lambda (x y)
-                          (> (cl--generic-generalizer-priority x)
-                             (cl--generic-generalizer-priority y)))))))
+            (setcdr x
+                    (sort (cons generalizer (cdr x))
+                          (lambda (x y)
+                            (> (cl--generic-generalizer-priority x)
+                               (cl--generic-generalizer-priority y)))))))
         (setq i (1+ i))))
     ;; We used to (setcar me method), but that can cause false positives in
     ;; the hash-consing table of the method-builder (bug#20644).
     ;; See also the related FIXME in cl--generic-build-combined-method.
-    (setf (cl--generic-method-table generic)
+    (aset generic 3
           (if (null me)
               (cons method mt)
             ;; Keep the ordering; important for methods with :extra qualifiers.
@@ -699,6 +700,15 @@ The set of acceptable TYPEs (also called \"specializers\") is defined
           (defalias sym gfun))))))
 
 (defvar cl--generic-dispatchers (make-hash-table :test #'equal))
+
+;; Remacs interprets the dumped cl-generic source before its gv rollback.
+;; Avoid the `with-memoization' macro in runtime dispatch paths: its place
+;; expansion autoloads gv.el when these caches are first populated.
+(defun cl--generic-memoized-gethash (table key thunk)
+  (or (gethash key table)
+      (let ((value (funcall thunk)))
+        (puthash key value table)
+        value)))
 
 (defvar cl--generic-compiler
   ;; Don't byte-compile the dispatchers if cl-generic itself is not
@@ -757,11 +767,14 @@ SPECIALIZERS is as returned by `cl--generic-collect-specializers'."
           (cdr binding+code))))
 
 (defun cl--generic-get-dispatcher (dispatch)
-  (with-memoization
-      ;; We need `copy-sequence` here because this `dispatch' object might be
-      ;; modified by side-effect in `cl-generic-define-method' (bug#46722).
-      (gethash (copy-sequence dispatch) cl--generic-dispatchers)
+  (cl--generic-memoized-gethash
+   cl--generic-dispatchers
+   ;; We need `copy-sequence` here because this `dispatch' object might be
+   ;; modified by side-effect in `cl-generic-define-method' (bug#46722).
+   (copy-sequence dispatch)
+   (lambda () (cl--generic-get-dispatcher-uncached dispatch))))
 
+(defun cl--generic-get-dispatcher-uncached (dispatch)
     (when (and purify-flag ;FIXME: Is this a reliable test of the final dump?
                (eq cl--generic-compiler #'byte-compile))
       ;; We don't want to preload the byte-compiler!!
@@ -829,20 +842,24 @@ You might need to add: %S"
       ;; FIXME: For generic functions with a single method (or with 2 methods,
       ;; one of which always matches), using a tagcode + hash-table is
       ;; overkill: better just use a `cl-typep' test.
-      (funcall
-       cl--generic-compiler
-       `(lambda (generic dispatches-left methods)
-          (let* ((method-cache (make-hash-table :test #'eql))
-                 ,@(nreverse outer-bindings))
-            (lambda (,@fixedargs &rest args)
-              (let ,bindings
-                (apply (with-memoization
-                           (gethash ,tag-exp method-cache)
-                         (cl--generic-cache-miss
-                          generic ',dispatch-arg dispatches-left methods
-                          ,(if (cdr typescodes)
-                               `(append ,@typescodes) (car typescodes))))
-                       ,@fixedargs args)))))))))
+       (funcall
+        cl--generic-compiler
+        `(lambda (generic dispatches-left methods)
+           (let* ((method-cache (make-hash-table :test #'eql))
+                  ,@(nreverse outer-bindings))
+             (lambda (,@fixedargs &rest args)
+               (let ,bindings
+                 (let* ((tag ,tag-exp)
+                        (method
+                         (cl--generic-memoized-gethash
+                          method-cache tag
+                          (lambda ()
+                            (cl--generic-cache-miss
+                             generic ',dispatch-arg dispatches-left methods
+                             ,(if (cdr typescodes)
+                                  `(append ,@typescodes)
+                                (car typescodes)))))))
+                   (apply method ,@fixedargs args)))))))))
 
 (defun cl--generic-make-function (generic)
   "Return the function to put into the `symbol-function' of GENERIC."
@@ -854,21 +871,26 @@ You might need to add: %S"
   ;; we first return a "lazy" function, which waits until the
   ;; first call to the method to really compute the dispatch function,
   ;; at which point we replace the dummy with the real one.
-  (with-memoization (cl--generic-lazy-function generic)
-    (lambda (&rest args)
-      (let* ((real
-              (cl--generic-make-next-function generic
-                                              (cl--generic-dispatches generic)
-                                              (cl--generic-method-table generic)))
-             (sym (cl--generic-name generic))
-             (old-adv-cc (get-advertised-calling-convention
-                          (symbol-function sym))))
-        (when (listp old-adv-cc)
-          (set-advertised-calling-convention real old-adv-cc nil))
-        (when (symbol-function sym)
-          (let ((current-load-list nil))
-            (defalias sym real)))
-        (apply real args)))))
+  (or (cl--generic-lazy-function generic)
+      (let ((function
+             (lambda (&rest args)
+               (let* ((real
+                       (cl--generic-make-next-function
+                        generic (cl--generic-dispatches generic)
+                        (cl--generic-method-table generic)))
+                      (sym (cl--generic-name generic))
+                      (old-adv-cc (get-advertised-calling-convention
+                                   (symbol-function sym))))
+                 (when (listp old-adv-cc)
+                   (set-advertised-calling-convention real old-adv-cc nil))
+                 (when (symbol-function sym)
+                   (let ((current-load-list nil))
+                     (defalias sym real)))
+                 (apply real args)))))
+        ;; Remacs: CL--GENERIC slots are a record, so set the lazy cell
+        ;; directly instead of expanding WITH-MEMOIZATION through gv.el.
+        (aset generic 5 function)
+        function)))
 
 (defun cl--generic-make-next-function (generic dispatches methods)
   (let* ((dispatch
@@ -908,15 +930,17 @@ for all those different tags in the method-cache.")
     (pcase (gethash key cl--generic-combined-method-memoization)
       (:cl--generic--under-construction
        ;; Fallback to the standard method combination.
-       (setf (gethash key cl--generic-combined-method-memoization)
-             (cl--generic-standard-method-combination generic methods)))
+       ;; Remacs: cl-generic.el is interpreted during bootstrap; avoid
+       ;; autoloading gv just to expand this cache update.
+       (puthash key (cl--generic-standard-method-combination generic methods)
+                cl--generic-combined-method-memoization))
       ('nil
-       (setf (gethash key cl--generic-combined-method-memoization)
-             :cl--generic--under-construction)
+       (puthash key :cl--generic--under-construction
+                cl--generic-combined-method-memoization)
        (let ((f nil))
          (unwind-protect
              (setq f (cl-generic-combine-methods generic methods))
-           (setf (gethash key cl--generic-combined-method-memoization) f))))
+           (puthash key f cl--generic-combined-method-memoization))))
       (f f))))
 
 (oclosure-define cl--generic-nnm
@@ -1418,9 +1442,9 @@ These match if the argument is a cons cell whose car is `eql' to VAL."
   ;; since we can't use the `head' specializer to implement itself.
   (if (not (eq (car-safe specializer) 'head))
       (cl-call-next-method)
-    (with-memoization
-        (gethash (cadr specializer) cl--generic-head-used)
-      specializer)
+    (let ((key (cadr specializer)))
+      (or (gethash key cl--generic-head-used)
+          (puthash key specializer cl--generic-head-used)))
     (list cl--generic-head-generalizer)))
 
 (cl--generic-prefill-dispatchers 0 (head eql))
@@ -1564,7 +1588,7 @@ Used internally for the (major-mode MODE) context specializers."
       (let* ((mt (cl--generic-method-table generic))
              (me (cl--generic-member-method specializers qualifiers mt)))
         (when me
-          (setf (cl--generic-method-table generic) (delq (car me) mt)))))))
+          (aset generic 3 (delq (car me) mt)))))))
 
 
 (provide 'cl-generic)

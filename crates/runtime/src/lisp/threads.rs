@@ -141,6 +141,8 @@ thread_context! {
     macroexp_call_depth: usize = 0,
     current_lambda_dumped: bool = false,
     current_body_compiled: bool = false,
+    current_compiled_macro_cache: Option<crate::lisp::value::CompiledMacroCache> = None,
+    current_compiled_macro_path: Vec<u128> = Vec::new(),
     compiled_macro_expansion: bool = false,
     expand_unadvised_depth: usize = 0,
     loading_compiled_library: bool = false,

@@ -29,6 +29,10 @@ use locate::{embedded_entry, path_is_bundled_source};
 use policy::{POSTBOOT_AOT_LIBRARIES, STANDALONE_POSTBOOT_AOT_LIBRARIES};
 use source::{eval_src, eval_src_opts};
 
+fn is_org_load_modules_maybe(i: &Interp, function: &Value) -> bool {
+    matches!(function, Value::Sym(id) if i.intern_soft("org-load-modules-maybe") == Some(*id))
+}
+
 /// Consuming input for direct/compiled loads, exposed as GNU's private
 /// `get-file-char' stream symbol. Source loads use their real buffer.
 pub(crate) struct LoadStream {
@@ -90,16 +94,14 @@ pub(crate) fn load_library_opts_msg<N: crate::lisp::text::TextSource + ?Sized>(
         if nomessage || i.boot_loading {
             return;
         }
-        let fmt = if file.ends_with(".el") {
-            "Loading %s (source)..."
+        let msg = if file.ends_with(".el") {
+            format!("Loading {file} (source)...")
         } else {
-            "Loading %s..."
+            format!("Loading {file}...")
         };
-        let msg = i.q("message");
-        let _ = i.apply(
-            &Value::Sym(msg),
-            vec![Value::string(fmt), Value::string(file)],
-        );
+        // GNU Fload uses the C `message_with_string' path; it does not call
+        // the Lisp `message' function or its `set-message-function'.
+        i.message(&msg);
     };
     // A bundled library stands in for GNU's shipped .elc: its
     // macroexpansion ran at byte-compile time, so the `gensym-counter'
@@ -127,9 +129,10 @@ pub(crate) fn load_library_opts_msg<N: crate::lisp::text::TextSource + ?Sized>(
                 Some("org" | "org-element")
             )
         });
-    let org_modules_loading = i.lisp_stack.iter().any(|(function, _)| {
-        matches!(function, Value::Sym(id) if i.symbol_name(*id) == "org-load-modules-maybe")
-    });
+    let org_modules_loading = i
+        .lisp_stack
+        .iter()
+        .any(|(function, _)| is_org_load_modules_maybe(i, function));
     let postboot_org_aot = POSTBOOT_AOT_LIBRARIES.contains(&registry_stem)
         && !name.ends_with(".el")
         && (matches!(registry_stem, "org" | "org-element")
@@ -141,7 +144,7 @@ pub(crate) fn load_library_opts_msg<N: crate::lisp::text::TextSource + ?Sized>(
         || (stem == "shortdoc-doc" && !name.ends_with(".el"))
         || postboot_org_aot
         || standalone_postboot_aot;
-    let found = locate_full(i, &name, nosuffix, mustsuffix);
+    let found = locate_full(i, &name, nosuffix, mustsuffix)?;
     let bundled = match &found {
         Some(Found::File(path)) => path_is_bundled_source(path) && embedded(path).is_some(),
         Some(Found::Dir(_)) => false,
@@ -368,4 +371,22 @@ pub(crate) fn load_library_opts_msg<N: crate::lisp::text::TextSource + ?Sized>(
         }
     }
     result
+}
+
+#[cfg(test)]
+mod org_aot_caller_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn aot_caller_gate_uses_the_canonical_function_symbol() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let canonical = interp.intern("org-load-modules-maybe");
+        let uninterned = interp.make_symbol("org-load-modules-maybe");
+
+        assert!(is_org_load_modules_maybe(&interp, &Value::Sym(canonical)));
+        assert!(!is_org_load_modules_maybe(&interp, &Value::Sym(uninterned)));
+        assert!(!is_org_load_modules_maybe(&interp, &Value::Nil));
+    }
 }

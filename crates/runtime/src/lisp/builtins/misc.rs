@@ -9,11 +9,12 @@ use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, SymId, Value};
 
 mod functions;
-use functions::{f_closurep, f_func_arity, f_gensym, f_interpreted_function_p, f_subr_arity};
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use functions::{
-    f_make_interpreted_closure, lambda_slot_values, make_interpreted_closure, raw_arglist_arity,
+    FunctionArity, LambdaSlotBorrowed, f_make_interpreted_closure, lambda_slot_values_checked,
+    make_interpreted_closure, raw_arglist_arity,
 };
+use functions::{f_closurep, f_func_arity, f_gensym, f_interpreted_function_p, f_subr_arity};
 mod time;
 // Preserve the pre-existing misc::* compatibility surface, including currently unused helpers.
 #[allow(unused_imports)]
@@ -89,10 +90,12 @@ use keymaps::{
 mod chartables;
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use chartables::{
-    CT_MAX_CHAR, CharTableSnapshot, char_table_raw, char_table_ref, char_table_vec, ct_collect,
-    ct_copy, ct_effective_runs, ct_extra, ct_raw_tag, ct_refresh_ascii, ct_replay, ct_set,
-    ct_set_range, heal_standard_case_table, is_char_table, is_sub_ct_tag, is_uniprop_table,
-    make_ct, set_case_table_fill,
+    CT_MAX_CHAR, CharTableSnapshot, char_table_raw, char_table_ref, char_table_ref_checked,
+    char_table_sequence_subseq_checked, char_table_vec, ct_collect, ct_copy, ct_copy_checked,
+    ct_effective_runs, ct_extra, ct_raw_tag, ct_ref_defalt_checked, ct_refresh_ascii, ct_replay,
+    ct_set, ct_set_checked, ct_set_range, ct_set_range_checked, fill_char_table_checked,
+    heal_standard_case_table, is_char_table, is_sub_ct_tag, is_uniprop_table, make_ct,
+    set_case_table_fill,
 };
 use chartables::{
     f_char_table_extra_slot, f_char_table_p, f_char_table_parent, f_char_table_range,
@@ -162,8 +165,8 @@ use compat::{
     f_internal_handle_focus_in, f_make_glyph_code, f_message_box, f_module_load,
     f_network_lookup_address_info, f_process_arg_err, f_profiler_cpu_running_p,
     f_re_describe_compiled, f_send_string_to_terminal, f_set_output_flow_control, f_signal_names,
-    f_version_list_not_zero, f_x_close_connection, f_x_get_resource, f_x_hide_tip, f_x_open_connection,
-    f_x_parse_geometry, f_x_show_tip,
+    f_version_list_not_zero, f_x_close_connection, f_x_get_resource, f_x_hide_tip,
+    f_x_open_connection, f_x_parse_geometry, f_x_show_tip,
 };
 mod buffers;
 use buffers::{
@@ -179,38 +182,35 @@ use diagnostics::{
 };
 use keymaps::f_set_this_command_keys;
 mod display;
+pub(crate) use display::f_display_grayscale_p;
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use display::{
     decode_display, mouse_coordinate, warp_mouse_absolute, win_min_size, window_is_size_fixed,
 };
-pub(crate) use display::f_display_grayscale_p;
 use display::{
     f_current_frame_configuration, f_delete_other_windows_internal, f_delete_windows_on,
     f_display_false, f_display_mm, f_display_monitor_attributes_list, f_display_pixel_height,
     f_display_pixel_width, f_display_planes, f_display_pred_false, f_display_screens,
-    f_display_selections_p,
-    f_display_visual_class, f_fit_window_to_buffer, f_frame_configuration_p, f_frame_geometry,
-    f_frame_height_val, f_frame_monitor_attributes, f_frame_or_buffer_changed_p,
-    f_frame_outer_height, f_frame_outer_width, f_frame_width_val, f_get_display_property,
-    f_get_window_pred,
-    f_line_number_display_width, f_move_to_window_line, f_ns_display,
-    f_ns_display_mm_height, f_ns_display_mm_width, f_ns_frame_stub_err,
-    f_pos_visible, f_scroll_bar_scale,
-    f_set_buffer_redisplay, f_set_mouse_absolute_pixel_position, f_set_mouse_pixel_position,
-    f_set_mouse_position, f_tab_bar_height, f_window_at_side_p, f_window_child,
-    f_window_child_count, f_window_combined_p, f_window_cursor_info, f_window_display_buffer,
-    f_window_in_direction, f_window_left_column, f_window_line, f_window_main_window,
-    f_window_max_chars, f_window_norm_buffer, f_window_norm_frame, f_window_normalize,
-    f_window_preserve_size, f_window_sizable, f_window_with_parameter, f_windowp_nil,
-    f_xw_display_color_p,
+    f_display_selections_p, f_display_visual_class, f_fit_window_to_buffer,
+    f_frame_configuration_p, f_frame_geometry, f_frame_height_val, f_frame_monitor_attributes,
+    f_frame_or_buffer_changed_p, f_frame_outer_height, f_frame_outer_width, f_frame_width_val,
+    f_get_display_property, f_get_window_pred, f_line_number_display_width, f_move_to_window_line,
+    f_ns_display, f_ns_display_mm_height, f_ns_display_mm_width, f_ns_frame_stub_err,
+    f_pos_visible, f_scroll_bar_scale, f_set_buffer_redisplay, f_set_mouse_absolute_pixel_position,
+    f_set_mouse_pixel_position, f_set_mouse_position, f_tab_bar_height, f_window_at_side_p,
+    f_window_child, f_window_child_count, f_window_combined_p, f_window_cursor_info,
+    f_window_display_buffer, f_window_in_direction, f_window_left_column, f_window_line,
+    f_window_main_window, f_window_max_chars, f_window_norm_buffer, f_window_norm_frame,
+    f_window_normalize, f_window_preserve_size, f_window_sizable, f_window_with_parameter,
+    f_windowp_nil, f_xw_display_color_p,
 };
 mod faces;
 use faces::{
     f_close_font, f_color_defined_p, f_color_distance, f_color_gray_p,
     f_color_values_from_color_spec, f_define_fringe_bitmap, f_destroy_fringe_bitmap,
     f_face_attributes_as_vector, f_face_documentation, f_face_font, f_face_name, f_font_at,
-    f_font_face_attributes, f_font_has_char_p, f_font_info, f_font_match_p,
-    f_font_object_stub, f_font_shape_gstring, f_font_spec, f_glyph_face, f_internal_copy_lisp_face,
+    f_font_face_attributes, f_font_has_char_p, f_font_info, f_font_match_p, f_font_object_stub,
+    f_font_shape_gstring, f_font_spec, f_glyph_face, f_internal_copy_lisp_face,
     f_internal_make_lisp_face, f_invert_face, f_query_fontset, f_select_font,
     f_set_alt_font_family_alist, f_set_alt_font_registry_alist, f_set_font_selection_order,
     f_set_frame_font, f_set_fringe_bitmap_face, f_set_lisp_face_attr_resource,
@@ -243,9 +243,8 @@ use crypto::f_secure_hash_algorithms;
 pub(crate) use events::decode_popup_position;
 use events::{
     f_current_input_mode, f_display_popup_menus_p, f_lossage_size, f_mouse_pixel_position,
-    f_mouse_position,
-    f_mouse_position_root, f_popup_menu, f_remember_mouse_glyph, f_tooltip_mode, popup_car_safe,
-    popup_fcar, popup_fcdr,
+    f_mouse_position, f_mouse_position_root, f_popup_menu, f_remember_mouse_glyph, f_tooltip_mode,
+    popup_car_safe, popup_fcar, popup_fcdr,
 };
 use files::{
     f_file_selinux_context, f_move_file_to_trash, f_set_file_acl, f_set_file_selinux_context,
@@ -1170,11 +1169,29 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-pixel-height", 0, 1, f_display_pixel_height, ""),
     S!("display-mm-width", 0, 1, f_display_mm, ""),
     S!("display-mm-height", 0, 1, f_display_mm, ""),
-    S!("display-backing-store", 0, 1, display::f_display_backing_store, ""),
+    S!(
+        "display-backing-store",
+        0,
+        1,
+        display::f_display_backing_store,
+        ""
+    ),
     S!("display-visual-class", 0, 1, f_display_visual_class, ""),
     S!("display-planes", 0, 1, f_display_planes, ""),
-    S!("display-color-cells", 0, 1, display::f_display_color_cells, ""),
-    S!("display-save-under", 0, 1, display::f_display_save_under, ""),
+    S!(
+        "display-color-cells",
+        0,
+        1,
+        display::f_display_color_cells,
+        ""
+    ),
+    S!(
+        "display-save-under",
+        0,
+        1,
+        display::f_display_save_under,
+        ""
+    ),
     S!(
         "display-monitor-attributes-list",
         0,
@@ -1491,8 +1508,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
     // `keymap-of' does not exist in GNU Emacs 31.
     // ---------- display/font/image stubs (no GUI) ----------
-    S!("default-font-width", 0, 0, f_default_font_width, "Char cell width."),
-    S!("default-font-height", 0, 0, f_default_font_height, "Char cell height."),
+    S!(
+        "default-font-width",
+        0,
+        0,
+        f_default_font_width,
+        "Char cell width."
+    ),
+    S!(
+        "default-font-height",
+        0,
+        0,
+        f_default_font_height,
+        "Char cell height."
+    ),
     S!(
         "window-font-width",
         0,
@@ -2072,9 +2101,9 @@ fn f_next_read_file_uses_dialog_p(i: &mut Interp, _a: crate::lisp::Argv) -> Eval
     let enabled = i.symbol_value(use_dialog_box).truthy()
         && i.symbol_value(use_file_dialog).truthy()
         && event_allows_dialog
-        && i.selected_frame.as_ref().is_some_and(|frame| {
-            crate::editor::frame_is_graphical(i, frame)
-        });
+        && i.selected_frame
+            .as_ref()
+            .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame));
     Ok(Value::from_bool(enabled))
 }
 
@@ -2186,14 +2215,14 @@ fn f_tool_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_default_font_width(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     Ok(Value::Int(
-        crate::editor::frame_char_width(i, &frame) as i128,
+        crate::editor::frame_char_width(i, &frame) as i128
     ))
 }
 
 fn f_default_font_height(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     Ok(Value::Int(
-        crate::editor::frame_char_height(i, &frame) as i128,
+        crate::editor::frame_char_height(i, &frame) as i128
     ))
 }
 

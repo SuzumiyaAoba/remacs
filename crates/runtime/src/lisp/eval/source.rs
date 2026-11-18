@@ -45,6 +45,7 @@ impl Interp {
         let mut pos = 0usize;
         let mut last = Value::Nil;
         loop {
+            self.maybe_quit()?;
             let next = {
                 let mut reader = Reader::with_chars(self, chars.clone());
                 reader.set_position(pos);
@@ -104,17 +105,29 @@ impl Interp {
     }
 
     pub(crate) fn eval_first_object(&mut self, source: &Value) -> EvalResult {
+        self.with_eval_context(false, |i| i.eval_first_object_inner(source))
+    }
+
+    fn eval_first_object_inner(&mut self, source: &Value) -> EvalResult {
         // read-from-string signals end-of-file for empty/comment-only input;
         // the reader's end position is deliberately ignored by the CLI.
         let Value::Str(text) = source else {
             return Err(self.wrong_type_mut("stringp", source));
         };
-        let text = text.borrow().clone();
+        let text = text
+            .try_borrow()
+            .map(|text| text.clone())
+            .map_err(|_| self.error("Cannot inspect a mutably borrowed source string"))?;
         let multibyte = crate::lisp::builtins::strfn::string_multibyte_p(self, source);
         let (form, _) = self.read_from_string_kind(&text, 0, None, multibyte)?;
         let mark = self.specbind_depth();
         let lb = self.q("lexical-binding");
-        self.specbind(lb, Value::t())?;
+        if let Err(error) = self.specbind(lb, Value::t()) {
+            // A watcher can signal after specbind has installed its unwind
+            // entry. Restore that entry before returning the binding error.
+            self.unbind_to(mark)?;
+            return Err(error);
+        }
         let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
         let result =
             self.with_call_frame("eval", vec![form.clone(), Value::t()], |i| i.eval(&form));
@@ -133,32 +146,42 @@ impl Interp {
     /// Evaluate every top-level form in SRC, returning the last value.
     /// Command-line --eval/--execute use eval_first_form instead.
     pub fn eval_forms(&mut self, src: &str) -> EvalResult {
+        self.with_eval_context(false, |i| i.eval_forms_inner(src))
+    }
+
+    fn eval_forms_inner(&mut self, src: &str) -> EvalResult {
+        let chars: Rc<Vec<crate::lisp::text::EmacsChar>> =
+            Rc::new(src.chars().map(Into::into).collect());
         let mut pos = 0usize;
         let mut last = Value::Nil;
         loop {
-            let (form, end) = match self.read_from_string(src, pos) {
-                Ok(v) => v,
-                Err(Flow::Signal(signal)) => {
-                    // A read error past the last real form behaves
-                    // like EOF: trailing whitespace/comments only.
-                    let is_eof = matches!(&signal.symbol(), Value::Sym(id) if {
-                        let n = self.symbol_name(*id);
-                        n == "end-of-file"
-                    });
-                    if is_eof {
-                        break;
-                    }
-                    return Err(Flow::Signal(signal));
+            self.maybe_quit()?;
+            let next = {
+                let mut reader = Reader::with_chars(self, chars.clone());
+                reader.set_position(pos);
+                match reader.read() {
+                    Ok(Some(form)) => Some((form, reader.position())),
+                    // Reader::read distinguishes clean EOF after skipped
+                    // whitespace/comments from EOF inside an unfinished
+                    // object. Do not turn the latter into successful eval.
+                    Ok(None) => None,
+                    Err(error) => return Err(error),
                 }
-                Err(f) => return Err(f),
             };
+            let Some((form, end)) = next else { break };
             if end <= pos {
                 break; // reader made no progress — done
             }
             pos = end;
             let mark = self.specbind_depth();
             let lb = self.q("lexical-binding");
-            let _ = self.specbind(lb, Value::t());
+            if let Err(error) = self.specbind(lb, Value::t()) {
+                // specbind may have pushed its unwind record before a
+                // variable watcher signals. Unwind it, allowing cleanup
+                // errors to replace the original binding error.
+                self.unbind_to(mark)?;
+                return Err(error);
+            }
             let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
             let r = self.with_call_frame("eval", vec![form.clone(), Value::t()], |i| i.eval(&form));
             self.lexenv = saved_lexenv;
@@ -235,5 +258,71 @@ impl Interp {
             None => Err(self.signal(sym::END_OF_FILE, Value::Nil)),
             Some(v) => Ok((v, reader.position())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eval_entry_points_unwind_lexical_binding_watcher_errors() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar eval-forms-watcher-ran nil)\
+                         (defun eval-forms-watcher (_symbol _value operation _where)\
+                           (if (eq operation 'let) (signal 'file-error '(\"bind\")) nil))\
+                         (add-variable-watcher 'lexical-binding #'eval-forms-watcher)",
+                    )
+                    .unwrap();
+
+                let mark = interp.specbind_depth();
+                let result = interp.eval_forms("(setq eval-forms-watcher-ran t)");
+                let signal_name = match &result {
+                    Err(Flow::Signal(signal)) => interp.princ_to_string(&signal.symbol()),
+                    _ => "<non-signal>".into(),
+                };
+                assert!(
+                    matches!(result, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)),
+                    "unexpected eval_forms result: {result:?}, signal={signal_name}"
+                );
+                assert!(
+                    interp
+                        .symbol_value(interp.intern_soft("eval-forms-watcher-ran").unwrap())
+                        .is_nil()
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+
+                let result = interp.eval_str("(when t (setq eval-forms-watcher-ran t))");
+                assert!(
+                    matches!(result, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)),
+                    "unexpected macro expansion result: {result:?}"
+                );
+                assert!(
+                    interp
+                        .symbol_value(interp.intern_soft("eval-forms-watcher-ran").unwrap())
+                        .is_nil()
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+
+                let result = interp.eval_first_form("(setq eval-forms-watcher-ran t)");
+                assert!(
+                    matches!(result, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)),
+                    "unexpected eval_first_form result: {result:?}"
+                );
+                assert!(
+                    interp
+                        .symbol_value(interp.intern_soft("eval-forms-watcher-ran").unwrap())
+                        .is_nil()
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

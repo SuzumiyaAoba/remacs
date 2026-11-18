@@ -32,11 +32,15 @@ pub(crate) struct CaseHandler {
 
 impl CaseHandler {
     pub fn single(conditions: Value) -> Self {
-        Self { clauses: vec![conditions] }
+        Self {
+            clauses: vec![conditions],
+        }
     }
 
     pub fn matching_clause(&self, i: &Interp, signal: &Signal) -> Option<usize> {
-        self.clauses.iter().position(|conditions| signal.matches(i, conditions))
+        self.clauses
+            .iter()
+            .position(|conditions| signal.matches(i, conditions))
     }
 }
 

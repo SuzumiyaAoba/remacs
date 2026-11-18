@@ -149,9 +149,10 @@ impl Reader<'_> {
                         .unwrap_or(0x1000_0000);
                     // GNU caps at CHAR_META | (CHAR_META - 1) = 0xFFFFFFF.
                     if val > CHAR_META | (CHAR_META - 1) {
+                        self.pos += 1;
                         return Err(plain_err(
                             self.interp,
-                            &format!("Hex character out of range: \\x{val:x}"),
+                            &format!("Hex character out of range: \\x{val:x}..."),
                         ));
                     }
                     self.pos += 1;
@@ -177,14 +178,14 @@ impl Reader<'_> {
 
     /// GNU `\u'/`\U' escapes need exactly N hex digits; a non-hex
     /// character or EOF is an error.
-    fn read_exact_hex(&mut self, n: usize) -> Result<i128, Flow> {
+    fn read_exact_hex(&mut self, n: usize, escape: char) -> Result<i128, Flow> {
         let mut v: i128 = 0;
         for _ in 0..n {
             match self.next()? {
                 None => {
                     return Err(plain_err(
                         self.interp,
-                        &format!("Malformed Unicode escape: \\u{v:x}"),
+                        &format!("Malformed Unicode escape: \\{escape}{v:x}"),
                     ));
                 }
                 Some(c) => match c.to_digit(16) {
@@ -207,8 +208,14 @@ impl Reader<'_> {
     /// GNU `\N{name}' — Unicode char name (whitespace normalized to a
     /// single space) or `U+XXXX'.
     fn read_named_char(&mut self) -> Result<i128, Flow> {
-        if self.next()? != Some('{') {
-            return Err(read_err(self.interp, "Expected opening brace after \\N"));
+        match self.next()? {
+            Some('{') => {}
+            Some(_) => {
+                return Err(self.read_err_after_char("Expected opening brace after \\N"));
+            }
+            None => {
+                return Err(self.read_err_after_char("Expected opening brace after \\N"));
+            }
         }
         let mut name = String::new();
         let mut ws = false;
@@ -217,10 +224,8 @@ impl Reader<'_> {
                 None => return Err(eof_err(self.interp)),
                 Some('}') => break,
                 Some(c) if (c as u32) >= 0x80 => {
-                    return Err(read_err(
-                        self.interp,
-                        &format!("Invalid character U+{:04X} in character name", c as u32),
-                    ));
+                    let message = format!("Invalid character U+{:04X} in character name", c as u32);
+                    return Err(self.read_err_after_char(&message));
                 }
                 Some(c) if matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c') => {
                     if !ws {
@@ -231,21 +236,31 @@ impl Reader<'_> {
                 Some(c) => {
                     ws = false;
                     name.push(c);
+                    // GNU bounds this buffer at 200 characters before
+                    // looking up the Unicode name.
+                    if name.len() > 200 {
+                        return Err(self.read_err_after_char("Character name too long"));
+                    }
                 }
             }
         }
         if name.is_empty() {
-            return Err(read_err(self.interp, "Empty character name"));
+            return Err(self.read_err_after_char("Empty character name"));
         }
-        let code: Option<i128> = if name.len() > 2 && name[..2].eq_ignore_ascii_case("u+") {
+        let code: Option<i128> = if name.starts_with("U+") {
             i128::from_str_radix(&name[2..], 16).ok()
         } else {
             unicode_names2::character(&name).map(|c| c as i128)
         };
         match code {
             Some(n) if (0..=0x10_ffff).contains(&n) && !(0xd800..0xe000).contains(&n) => Ok(n),
-            _ => Err(read_err(self.interp, &format!("\\N{{{name}}}"))),
+            _ => Err(self.read_err_after_char(&format!("\\N{{{name}}}"))),
         }
+    }
+
+    fn read_err_after_char(&mut self, message: &str) -> Flow {
+        self.pos = self.pos.saturating_sub(1);
+        read_err(self.interp, message)
     }
 
     /// Char literal after `?\`.
@@ -297,7 +312,7 @@ impl Reader<'_> {
             Some('v') => Ok(11),
             Some('x') => self.read_hex_char_escape().map(|(n, _)| n),
             Some('u') => {
-                let n = self.read_exact_hex(4)?;
+                let n = self.read_exact_hex(4, 'u')?;
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
@@ -305,7 +320,7 @@ impl Reader<'_> {
                 Ok(n)
             }
             Some('U') => {
-                let n = self.read_exact_hex(8)?;
+                let n = self.read_exact_hex(8, 'U')?;
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
@@ -329,10 +344,13 @@ impl Reader<'_> {
                 self.interp,
                 "Invalid escape char syntax: \\<newline>",
             )),
-            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A')) => Err(plain_err(
-                self.interp,
-                &format!("Invalid escape char syntax: \\{c} not followed by -"),
-            )),
+            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A')) => {
+                let _ = self.next()?;
+                Err(plain_err(
+                    self.interp,
+                    &format!("Invalid escape char syntax: \\{c} not followed by -"),
+                ))
+            }
             Some(c) if c.is_digit(8) => {
                 let mut n = (c as i128) - ('0' as i128);
                 for _ in 0..2 {

@@ -61,6 +61,7 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> crate::lisp::text::EmacsTex
                 items
             }
             Err(crate::lisp::value::ListError::Circular(_)) => Vec::new(),
+            Err(crate::lisp::value::ListError::Borrowed) => Vec::new(),
         }
     }
     let (errname, data) = match obj {
@@ -485,7 +486,10 @@ pub(super) fn f_describe_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     // checks VECTOR-OR-CHAR-TABLE.
     let depth = i.specbind_depth();
     let curbuf = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
-    i.specbind(i.standard_output_sym, curbuf)?;
+    if let Err(error) = i.specbind(i.standard_output_sym, curbuf) {
+        i.unbind_to(depth)?;
+        return Err(error);
+    }
     let result = if !matches!(&a[0], Value::Vec(_)) && !is_char_table(i, &a[0]) {
         Err(i.wrong_type_mut("vector-or-char-table-p", &a[0]))
     } else {
@@ -502,7 +506,7 @@ pub(super) fn f_describe_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
             false,
         )
     };
-    let _ = i.unbind_to(depth);
+    i.unbind_to(depth)?;
     result.map(|_| Value::Nil)
 }
 
@@ -652,7 +656,10 @@ pub(super) fn f_internal_describe_syntax_value(i: &mut Interp, a: crate::lisp::A
 pub(super) fn f_help_describe_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let depth = i.specbind_depth();
     let curbuf = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
-    i.specbind(i.standard_output_sym, curbuf)?;
+    if let Err(error) = i.specbind(i.standard_output_sym, curbuf) {
+        i.unbind_to(depth)?;
+        return Err(error);
+    }
     let result = if !matches!(&a[0], Value::Vec(_)) && !is_char_table(i, &a[0]) {
         Err(i.wrong_type_mut("vector-or-char-table-p", &a[0]))
     } else {
@@ -669,7 +676,7 @@ pub(super) fn f_help_describe_vector(i: &mut Interp, a: crate::lisp::Argv) -> Ev
             a[6].truthy(),
         )
     };
-    let _ = i.unbind_to(depth);
+    i.unbind_to(depth)?;
     result.map(|_| Value::Nil)
 }
 
@@ -853,4 +860,45 @@ pub(super) fn f_backtrace_frame_internal(i: &mut Interp, a: crate::lisp::Argv) -
             Value::Nil,
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describe_vector_entry_points_unwind_failed_output_bindings() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-describe-output-watcher\
+                               (_symbol _value operation _where)\
+                           (when (eq operation 'let)\
+                             (signal 'file-error '(\"standard output bind\"))))\
+                         (add-variable-watcher 'standard-output\
+                                               #'qa-describe-output-watcher)",
+                    )
+                    .unwrap();
+
+                let args: crate::lisp::Argv = vec![Value::vector(vec![Value::Int(1)])].into();
+                let depth = interp.specbind_depth();
+                for result in [
+                    f_describe_vector(&mut interp, args.clone()),
+                    f_help_describe_vector(&mut interp, args.clone()),
+                ] {
+                    assert!(matches!(
+                        result,
+                        Err(crate::lisp::Flow::Signal(ref signal))
+                            if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                    ));
+                    assert_eq!(interp.specbind_depth(), depth);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

@@ -980,7 +980,7 @@ Returns nil only if there's no match for `ansi-color-parameter-regexp'."
            (_ 'unknown))))
     (unless (eq face-index 'unknown)
       (dolist (index '(4 8 9 10 11))
-        (aset basic-faces index (eq index face-index)))))
+        (aset basic-faces index (eq index face-index))))))
 
 (defun ansi-color-apply-sequence (escape-sequence codes)
   "Apply ESCAPE-SEQUENCE to CODES and return the new list of codes.

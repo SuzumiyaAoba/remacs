@@ -217,3 +217,72 @@ fn gunzip(bytes: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     d.read_to_end(&mut out).ok().map(|_| out)
 }
+
+#[cfg(test)]
+mod script_load_tests {
+    use super::eval_file_script;
+    use crate::lisp::Interp;
+
+    #[test]
+    fn script_evaluation_uses_a_lexical_load_buffer_and_accepts_elc_suffix() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let path = std::env::temp_dir().join(format!(
+                    "remacs-script-load-{}.elc",
+                    std::process::id()
+                ));
+                let source = concat!(
+                    "#!/usr/bin/env remacs-lisp\n",
+                    "(setq qa-script-load-state\n",
+                    "      (list (bufferp standard-input)\n",
+                    "            (eq standard-input (current-buffer))\n",
+                    "            lexical-binding\n",
+                    "            (with-current-buffer standard-input lexical-binding)\n",
+                    "            (string-prefix-p \";; -*- lexical-binding: t -*-\\n\"\n",
+                    "                             (with-current-buffer standard-input (buffer-string)))))\n",
+                    "(setq qa-script-load-closure\n",
+                    "      (let ((captured 'script-lexical)) (lambda () captured)))\n"
+                );
+                std::fs::write(&path, source).unwrap();
+
+                let result = (|| {
+                    let mut interp = Interp::new();
+                    interp
+                        .eval_str(
+                            "(defvar qa-script-load-state nil)\
+                             (defvar qa-script-load-closure nil)",
+                        )
+                        .unwrap();
+                    let original_buffer = interp.current_buffer;
+                    let standard_input = interp.q("standard-input");
+                    let original_input = interp.symbol_value(standard_input);
+                    let lexical_binding = interp.q("lexical-binding");
+                    let original_lexical = interp.symbol_value(lexical_binding);
+                    eval_file_script(&mut interp, &path.to_string_lossy()).unwrap();
+
+                    let state = interp.q("qa-script-load-state");
+                    assert_eq!(interp.prin1_to_string(&interp.symbol_value(state)), "(t t t t t)");
+                    let closure = interp.q("qa-script-load-closure");
+                    let function = interp.symbol_value(closure);
+                    let value = interp.apply(&function, vec![]).unwrap();
+                    assert_eq!(interp.prin1_to_string(&value), "script-lexical");
+                    assert_eq!(interp.current_buffer, original_buffer);
+                    assert!(crate::lisp::builtins::eq_values(
+                        &interp.symbol_value(standard_input),
+                        &original_input
+                    ));
+                    assert!(crate::lisp::builtins::eq_values(
+                        &interp.symbol_value(lexical_binding),
+                        &original_lexical
+                    ));
+                })();
+
+                let _ = std::fs::remove_file(path);
+                result
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}

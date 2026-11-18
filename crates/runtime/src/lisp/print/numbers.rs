@@ -1,30 +1,37 @@
 //! GNU numeric output descriptors, shortest round-tripping floats, and character notation.
 
+use super::render::{PrintMode, Printer};
 use crate::lisp::{Interp, print_text::PrintText, value::Value};
 use std::fmt::Write;
-use super::render::PrintMode;
 
 impl Interp {
     /// Print a number using the dynamically bound GNU output descriptor.
     pub(crate) fn format_float_output(&self, value: f64) -> String {
         let format = self.print_var("float-output-format");
         if let Value::Str(s) = format {
-            if let Some(output) = s
-                .borrow()
-                .is_ascii()
-                .then(|| format_float_descriptor(value, &s.borrow().to_unicode_lossy()))
-                .flatten()
-            {
-                return output;
+            if let Ok(spec) = s.try_borrow() {
+                if spec.is_ascii()
+                    && let Some(output) =
+                        format_float_descriptor(value, &spec.to_unicode_lossy())
+                {
+                    return output;
+                }
             }
         }
         format_float(value)
     }
+}
 
+impl Printer<'_> {
     /// GNU print.c: only independent graphic characters and the six
-    /// common named escapes use character notation.  `princ' omits the
-    /// extra quoting for delimiter characters, but keeps named escapes.
-    pub(super) fn print_integer(&self, n: i128, out: &mut PrintText, mode: PrintMode) {
+    /// common named escapes use character notation. Display mode omits
+    /// the extra quoting for delimiter characters, but keeps named escapes.
+    pub(super) fn print_integer(
+        &mut self,
+        n: i128,
+        out: &mut PrintText,
+        mode: PrintMode,
+    ) -> Result<(), crate::lisp::error::Flow> {
         if self.print_var("print-integers-as-characters").truthy() && (0..=0x10ffff).contains(&n) {
             let named = match n {
                 8 => Some('b'),
@@ -41,28 +48,29 @@ impl Interp {
                 if (crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(&cat)
                     && !matches!(cat, 6..=8 | 23..=28 | 30));
             if let Some(named) = named {
-                out.push('?');
-                out.push('\\');
-                out.push(named);
-                return;
+                self.push_char(out, '?')?;
+                self.push_char(out, '\\')?;
+                self.push_char(out, named)?;
+                return Ok(());
             }
             if graphic {
                 if let Some(c) = char::from_u32(n as u32) {
-                    out.push('?');
+                    self.push_char(out, '?')?;
                     if mode.escaped()
                         && matches!(
                             c,
                             ';' | '"' | '\'' | '\\' | '(' | ')' | '{' | '}' | '[' | ']'
                         )
                     {
-                        out.push('\\');
+                        self.push_char(out, '\\')?;
                     }
-                    out.push(c);
-                    return;
+                    self.push_char(out, c)?;
+                    return Ok(());
                 }
             }
         }
-        let _ = write!(out, "{n}");
+        self.push_format(out, format_args!("{n}"))?;
+        Ok(())
     }
 }
 

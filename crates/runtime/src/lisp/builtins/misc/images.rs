@@ -337,21 +337,22 @@ pub(super) fn known_image_type(i: &Interp, v: &Value) -> bool {
     let Value::Sym(s) = v else {
         return false;
     };
-    matches!(
-        i.symbol_name(*s).as_str(),
-        "png"
-            | "gif"
-            | "jpeg"
-            | "webp"
-            | "bmp"
-            | "xpm"
-            | "pbm"
-            | "xbm"
-            | "postscript"
-            | "tiff"
-            | "svg"
-            | "heic"
-    )
+    [
+        "png",
+        "gif",
+        "jpeg",
+        "webp",
+        "bmp",
+        "xpm",
+        "pbm",
+        "xbm",
+        "postscript",
+        "tiff",
+        "svg",
+        "heic",
+    ]
+    .iter()
+    .any(|name| i.intern_soft(name) == Some(*s))
 }
 
 /// `image-type-available-p' — the image formats the GUI renderer can decode.
@@ -370,9 +371,10 @@ pub(super) fn valid_image_spec(i: &Interp, v: &Value) -> bool {
     let Value::Cons(c) = v else {
         return false;
     };
-    if !matches!(&c.borrow().car, Value::Sym(s) if i.symbol_name(*s) == "image") {
+    if !matches!(&c.borrow().car, Value::Sym(s) if i.intern_soft("image") == Some(*s)) {
         return false;
     }
+    let type_key = i.intern_soft(":type");
     let mut ty = false;
     let mut src = false;
     let mut cur = c.borrow().cdr.clone();
@@ -385,7 +387,7 @@ pub(super) fn valid_image_spec(i: &Interp, v: &Value) -> bool {
                 _ => Value::Nil,
             };
             match n.as_str() {
-                ":type" => {
+                ":type" if type_key == Some(*id) => {
                     if known_image_type(i, &val) {
                         ty = true;
                     }
@@ -498,7 +500,8 @@ pub(super) fn f_clear_image_cache(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
 
 pub(super) fn f_image_cache_size(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::Int(
-        i.gui_image_cache_size.load(std::sync::atomic::Ordering::Acquire) as i128,
+        i.gui_image_cache_size
+            .load(std::sync::atomic::Ordering::Acquire) as i128,
     ))
 }
 
@@ -506,10 +509,9 @@ fn renderer_supports_image_type(i: &Interp, value: &Value) -> bool {
     let Value::Sym(symbol) = value else {
         return false;
     };
-    matches!(
-        i.symbol_name(*symbol).as_str(),
-        "png" | "gif" | "jpeg" | "webp" | "bmp" | "pbm" | "tiff" | "svg"
-    )
+    ["png", "gif", "jpeg", "webp", "bmp", "pbm", "tiff", "svg"]
+        .iter()
+        .any(|name| i.intern_soft(name) == Some(*symbol))
 }
 
 pub(super) fn f_bitmap_spec_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {

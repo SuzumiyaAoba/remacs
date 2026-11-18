@@ -91,7 +91,7 @@ enum Object {
     Cons(Weak<RefCell<Cons>>),
     Float(Weak<f64>),
     BigInt(Weak<num_bigint::BigInt>),
-    String(Weak<RefCell<super::text::EmacsText>>),
+    String(Weak<RefCell<super::text::EmacsText>>, bool),
     Vector(Weak<RefCell<Vec<Value>>>),
     Hash(Weak<RefCell<LispHash>>),
     Lambda(Weak<Lambda>),
@@ -109,10 +109,13 @@ enum Object {
 impl Object {
     fn alive(&self) -> bool {
         macro_rules! alive { ($($variant:ident),*) => {
-            match self { $(Self::$variant(value) => value.strong_count() != 0,)* }
+            match self {
+                Self::String(value, _) => value.strong_count() != 0,
+                $(Self::$variant(value) => value.strong_count() != 0,)*
+            }
         }; }
         alive!(
-            Cons, Float, BigInt, String, Vector, Hash, Lambda, Buffer, Marker, Window, Frame,
+            Cons, Float, BigInt, Vector, Hash, Lambda, Buffer, Marker, Window, Frame,
             Process, Thread, Mutex, CondVar, Finalizer
         )
     }
@@ -142,14 +145,20 @@ impl Object {
                     .map_or(0, |n| n.bits().div_ceil(64) as usize * 8);
                 vector(heap_size::<num_bigint::BigInt>() + bytes)
             }
-            Self::String(weak) => {
+            Self::String(weak, multibyte) => {
                 let string = weak.upgrade();
                 let string = string.as_ref().and_then(|s| s.try_borrow().ok());
                 Metrics {
                     strings: 1,
                     // GNU counts allocated string bytes, including the
                     // bytes of multibyte characters (alloc.c).
-                    chars: string.as_ref().map_or(0, |s| s.len()),
+                    chars: string.as_ref().map_or(0, |s| {
+                        if *multibyte {
+                            s.chars().map(|character| character.storage_len()).sum()
+                        } else {
+                            s.len()
+                        }
+                    }),
                     string_bytes: string.as_ref().map_or(0, |s| s.capacity()),
                     bytes: string_size() + string.as_ref().map_or(0, |s| s.capacity()),
                     ..Metrics::default()
@@ -230,7 +239,19 @@ pub fn allocated(value: &Value) {
         Value::Cons(v) => object!(v, Cons),
         Value::Float(v) => object!(v, Float),
         Value::BigInt(v) => object!(v, BigInt),
-        Value::Str(v) => object!(v, String),
+        // Directly constructed string Values are unmarked; use GNU's
+        // content-based default byte-kind. Constructors that know an explicit
+        // kind call `allocated_string` below.
+        Value::Str(v) => (
+            Rc::as_ptr(v) as usize,
+            Object::String(
+                Rc::downgrade(v),
+                v.try_borrow().map_or(true, |s| {
+                    s.chars()
+                        .any(|character| character.code() > 0x7f && character.byte8().is_none())
+                }),
+            ),
+        ),
         Value::Vec(v) | Value::Record(v) => object!(v, Vector),
         Value::Hash(v) => object!(v, Hash),
         Value::Lambda(v) => object!(v, Lambda),
@@ -245,6 +266,17 @@ pub fn allocated(value: &Value) {
         Value::Finalizer(v) => object!(v, Finalizer),
         _ => return,
     };
+    insert_object(id, object);
+}
+
+pub fn allocated_string(value: &StrRef, multibyte: bool) {
+    insert_object(
+        Rc::as_ptr(value) as usize,
+        Object::String(Rc::downgrade(value), multibyte),
+    );
+}
+
+fn insert_object(id: usize, object: Object) {
     OBJECTS.with(|objects| {
         let mut objects = objects.borrow_mut();
         if objects.entries.contains_key(&id) {
@@ -336,7 +368,6 @@ pub fn collect_interp(i: &mut super::Interp) -> bool {
     let start = std::time::Instant::now();
     // Memoized expansions are implementation caches, not Lisp roots.
     i.macro_cache.clear();
-    i.macroexpand_all_cache.borrow_mut().1.clear();
     prune_side_tables(i);
     weak::sweep(i);
     // A dead string's property values can own another string with its
@@ -630,6 +661,21 @@ mod tests {
         assert_eq!(released.strings, live.strings);
         assert_eq!(released.vectors, live.vectors);
         assert_eq!(counts(), after);
+    }
+
+    #[test]
+    fn string_byte_counts_follow_lisp_byte_kind() {
+        let raw_byte = EmacsText::from_codes([0x3fff00 + 0xe9]).unwrap();
+
+        let before = counts()[CHARS];
+        let unibyte = Value::string_with_kind(raw_byte.clone(), false);
+        assert_eq!(counts()[CHARS] - before, 1);
+
+        let before = counts()[CHARS];
+        let multibyte = Value::string_with_kind(raw_byte, true);
+        assert_eq!(counts()[CHARS] - before, 2);
+
+        drop((unibyte, multibyte));
     }
 
     #[test]

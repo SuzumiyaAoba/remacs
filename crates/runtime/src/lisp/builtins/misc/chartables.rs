@@ -116,7 +116,7 @@ pub(super) fn make_sub_ct(i: &mut Interp, depth: usize, min_char: u32, fill: Val
     v.push(Value::Int(depth as i128));
     v.push(Value::Int(min_char as i128));
     v.extend(std::iter::repeat_n(fill, CHARTAB_SIZE[depth]));
-    Value::record(v)
+    Value::record_with_kind(v, crate::lisp::value::RecordKind::SubCharTable)
 }
 
 /// Raw value stored for C in the 65-slot contents vec CB — no
@@ -128,12 +128,19 @@ fn ct_raw(i: &Interp, cb: &[Value], c: u32, uniprop: bool) -> Value {
 /// GNU `UNIPROP_TABLE_P': purpose `char-code-property-table' with
 /// exactly five extra slots.
 pub(crate) fn is_uniprop_table(i: &Interp, v: &Value) -> bool {
+    let Some(char_table_tag) = i.intern_soft("char-table") else {
+        return false;
+    };
+    let Some(char_code_property_table) = i.intern_soft("char-code-property-table") else {
+        return false;
+    };
     match v {
         Value::Record(r) => {
             let rr = r.borrow();
-            rr.len() == 8
-                && matches!(rr.first(), Some(Value::Sym(s)) if i.symbol_name(*s) == "char-table")
-                && matches!(rr.get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "char-code-property-table")
+            v.record_kind() == Some(crate::lisp::value::RecordKind::CharTable)
+                && rr.len() == 8
+                && matches!(rr.first(), Some(Value::Sym(s)) if *s == char_table_tag)
+                && matches!(rr.get(1), Some(Value::Sym(s)) if *s == char_code_property_table)
                 && matches!(rr.get(2), Some(Value::Vec(_)))
         }
         _ => false,
@@ -467,7 +474,11 @@ fn sub_ct_copy(i: &mut Interp, v: &Value) -> Value {
             });
         }
     }
-    Value::record(rec)
+    if v.record_kind() == Some(crate::lisp::value::RecordKind::SubCharTable) {
+        Value::record_with_kind(rec, crate::lisp::value::RecordKind::SubCharTable)
+    } else {
+        Value::record(rec)
+    }
 }
 
 /// `copy_char_table': deep copy of TABLE's contents (recursive
@@ -524,6 +535,76 @@ pub(crate) fn ct_copy(i: &mut Interp, table: &Value) -> Value {
         i.set_char_table_parent(&t, parent);
     }
     t
+}
+
+fn check_subtable_copy_borrows(
+    i: &mut Interp,
+    value: &Value,
+    seen: &mut HashSet<usize>,
+) -> Result<(), Flow> {
+    let Value::Record(record) = value else {
+        return Ok(());
+    };
+    let identity = Rc::as_ptr(record) as usize;
+    if !seen.insert(identity) {
+        return Ok(());
+    }
+    let Some(tag) = i.q_soft("sub-char-table") else {
+        return Ok(());
+    };
+    let children = {
+        let slots = record
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed sub-character-table"))?;
+        let depth = match (slots.first(), slots.get(1), slots.get(2)) {
+            (Some(Value::Sym(head)), Some(Value::Int(depth)), Some(Value::Int(_)))
+                if *head == tag && (1..=3).contains(depth) =>
+            {
+                *depth as usize
+            }
+            _ => return Ok(()),
+        };
+        slots
+            .iter()
+            .skip(3)
+            .take(CHARTAB_SIZE[depth])
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    for child in children {
+        check_subtable_copy_borrows(i, &child, seen)?;
+    }
+    Ok(())
+}
+
+/// Checked form for the Lisp-facing `copy-sequence' char-table path.
+pub(crate) fn ct_copy_checked(i: &mut Interp, table: &Value) -> Result<Value, Flow> {
+    let Value::Record(record) = table else {
+        return Ok(table.clone());
+    };
+    let contents = {
+        let slots = record
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed char-table"))?;
+        match slots.get(2) {
+            Some(Value::Vec(contents)) => Some(contents.clone()),
+            _ => None,
+        }
+    };
+    let Some(contents) = contents else {
+        return Ok(table.clone());
+    };
+    let children = {
+        let slots = contents
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?;
+        slots.iter().skip(1).cloned().collect::<Vec<_>>()
+    };
+    let mut seen = HashSet::new();
+    for child in children {
+        check_subtable_copy_borrows(i, &child, &mut seen)?;
+    }
+    Ok(ct_copy(i, table))
 }
 
 /// Replay GNU-extracted `(R LO HI VAL)'/`(L OFF VALS)' ops (see
@@ -604,7 +685,7 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> EvalResult {
         return Ok(sub.clone());
     };
     let n = CHARTAB_SIZE[depth];
-    let eq_test = matches!(test, Value::Sym(s) if i.symbol_name(*s) == "eq");
+    let eq_test = matches!(test, Value::Sym(s) if i.intern_soft("eq") == Some(*s));
     let test_fn = test.clone();
     let mut first = {
         let b = r.borrow();
@@ -688,6 +769,52 @@ pub(super) fn ct_ref_defalt(i: &Interp, table: &Value, idx: usize) -> Value {
         return raw;
     }
     i.char_table_defalt(table)
+}
+
+/// Checked range-only form used by `char-table-range' with a cons RANGE.
+pub(crate) fn ct_ref_defalt_checked(
+    i: &mut Interp,
+    table: &Value,
+    idx: usize,
+) -> Result<Value, Flow> {
+    let Some((contents, uniprop)) = checked_char_table_contents(i, table)? else {
+        return Ok(Value::Nil);
+    };
+    if idx < 128 && uniprop {
+        let ascii = contents
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+            .first()
+            .cloned()
+            .unwrap_or(Value::Nil);
+        if let Value::Str(string) = ascii {
+            drop(string.try_borrow_mut().map_err(|_| {
+                i.error("Cannot inspect a mutably borrowed char-code property string")
+            })?);
+        }
+    }
+    let slot = if idx < 128 {
+        0
+    } else {
+        1 + ((idx as u32) >> 16) as usize
+    };
+    let raw = contents
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+        .get(slot)
+        .cloned()
+        .unwrap_or(Value::Nil);
+    if idx < 128 {
+        check_ascii_record(i, &raw)?;
+    } else {
+        check_raw_subtable_path(i, raw, idx as u32, uniprop)?;
+    }
+    let raw = char_table_raw(i, table, idx);
+    if !raw.is_nil() {
+        Ok(raw)
+    } else {
+        Ok(i.char_table_defalt(table))
+    }
 }
 
 /// GNU `char_table_ref': raw content slot → this table's defalt →
@@ -793,6 +920,386 @@ pub(crate) fn char_table_ref(i: &Interp, table: &Value, idx: usize) -> Value {
     Value::Nil
 }
 
+/// Check the mutable cells that the Lisp-facing character-table accessors
+/// will traverse before calling the legacy infallible helpers below.
+/// Internal Rust callers may still hold a RefCell guard while re-entering
+/// Lisp; return a Lisp error instead of allowing that guard to panic.
+fn checked_char_table_contents(
+    i: &mut Interp,
+    table: &Value,
+) -> Result<Option<(Rc<RefCell<Vec<Value>>>, bool)>, Flow> {
+    let Value::Record(record) = table else {
+        return Ok(None);
+    };
+    let contents = {
+        let slots = record
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed char-table"))?;
+        match slots.get(2) {
+            Some(Value::Vec(contents)) => contents.clone(),
+            _ => return Ok(None),
+        }
+    };
+    let uniprop = is_uniprop_table(i, table);
+    drop(
+        contents
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?,
+    );
+    Ok(Some((contents, uniprop)))
+}
+
+/// Checked `fillarray' write for char-tables. Preserve the ASCII cache
+/// slot exactly as GNU does; only the trie roots, defalt and extra slots
+/// are replaced.
+pub(crate) fn fill_char_table_checked(
+    i: &mut Interp,
+    table: &Value,
+    value: Value,
+) -> Result<(), Flow> {
+    let Some((contents, _)) = checked_char_table_contents(i, table)? else {
+        return Ok(());
+    };
+    for slot in contents
+        .try_borrow_mut()
+        .map_err(|_| i.error("Cannot modify mutably borrowed char-table storage"))?
+        .iter_mut()
+        .skip(1)
+    {
+        *slot = value.clone();
+    }
+    i.set_char_table_defalt(table, value.clone());
+    if let Value::Record(record) = table {
+        for slot in record
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot modify a mutably borrowed char-table"))?
+            .iter_mut()
+            .skip(3)
+        {
+            *slot = value.clone();
+        }
+    }
+    Ok(())
+}
+
+/// Check a raw trie branch, including every record and compressed string
+/// that `ct_raw_tag' or `sub_ct_set' may inspect or mutate.
+fn check_raw_subtable_path(
+    i: &mut Interp,
+    value: Value,
+    code: u32,
+    uniprop: bool,
+) -> Result<(), Flow> {
+    let Some(tag) = i.q_soft("sub-char-table") else {
+        return Ok(());
+    };
+    let mut current = value;
+    let mut seen = HashSet::new();
+    loop {
+        match current {
+            Value::Record(record) => {
+                if !seen.insert(Rc::as_ptr(&record) as usize) {
+                    return Ok(());
+                }
+                let child = {
+                    let slots = record.try_borrow_mut().map_err(|_| {
+                        i.error("Cannot inspect a mutably borrowed sub-character-table")
+                    })?;
+                    let depth = match (slots.first(), slots.get(1), slots.get(2)) {
+                        (
+                            Some(Value::Sym(head)),
+                            Some(Value::Int(depth)),
+                            Some(Value::Int(min)),
+                        ) if *head == tag && (1..=3).contains(depth) => {
+                            (*depth as usize, *min as u32)
+                        }
+                        _ => return Ok(()),
+                    };
+                    let slot = (code.saturating_sub(depth.1) >> CHARTAB_BITS[depth.0]) as usize;
+                    slots.get(3 + slot).cloned().unwrap_or(Value::Nil)
+                };
+                if uniprop && let Value::Str(string) = &child {
+                    drop(string.try_borrow_mut().map_err(|_| {
+                        i.error("Cannot inspect a mutably borrowed char-code property string")
+                    })?);
+                }
+                current = child;
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// The ASCII cache uses a one-level direct index instead of the general
+/// sub-table walk. Even a non-sub-table record is inspected by the tag
+/// check, so make its RefCell borrowable before the caller gets there.
+fn check_ascii_record(i: &mut Interp, value: &Value) -> Result<(), Flow> {
+    if let Value::Record(record) = value {
+        drop(
+            record
+                .try_borrow_mut()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed sub-character-table"))?,
+        );
+    }
+    Ok(())
+}
+
+/// Checked form for Lisp's `aref'/`elt' char-table path. The ordinary
+/// internal helper remains infallible because editor rendering also uses
+/// it without a Lisp error channel.
+pub(crate) fn char_table_ref_checked(
+    i: &mut Interp,
+    table: &Value,
+    idx: usize,
+) -> Result<Value, Flow> {
+    char_table_ref_checked_with_seen(i, table, idx, &mut HashSet::new())
+}
+
+fn char_table_ref_checked_with_seen(
+    i: &mut Interp,
+    table: &Value,
+    idx: usize,
+    seen: &mut HashSet<usize>,
+) -> Result<Value, Flow> {
+    seen.clear();
+    let code = idx as u32;
+    let mut current = table.clone();
+    loop {
+        let Some(identity) = char_table_identity(i, &current) else {
+            return Ok(Value::Nil);
+        };
+        if !seen.insert(identity) {
+            return Ok(Value::Nil);
+        }
+        let Some((contents, uniprop)) = checked_char_table_contents(i, &current)? else {
+            return Ok(Value::Nil);
+        };
+        if idx < 128 && uniprop {
+            let ascii = contents
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+                .first()
+                .cloned()
+                .unwrap_or(Value::Nil);
+            if let Value::Str(string) = ascii {
+                drop(string.try_borrow_mut().map_err(|_| {
+                    i.error("Cannot inspect a mutably borrowed char-code property string")
+                })?);
+            }
+        }
+        let slot = if idx < 128 {
+            0
+        } else {
+            1 + (code >> 16) as usize
+        };
+        let raw = contents
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+            .get(slot)
+            .cloned()
+            .unwrap_or(Value::Nil);
+        if idx < 128 {
+            check_ascii_record(i, &raw)?;
+        } else {
+            check_raw_subtable_path(i, raw, code, uniprop)?;
+        }
+
+        let value = char_table_raw(i, &current, idx);
+        if !value.is_nil() {
+            return Ok(value);
+        }
+        let default = i.char_table_defalt(&current);
+        if !default.is_nil() {
+            return Ok(default);
+        }
+        current = i.char_table_parent(&current);
+    }
+}
+
+/// Copy a char-table range into a vector without evaluating one Lisp form
+/// per character.  The `seq.el` char-table method uses this helper for its
+/// fixed-size sequence extension; reusing the parent-cycle set avoids a
+/// per-character allocation while preserving `aref`'s checked borrow path.
+pub(crate) fn char_table_sequence_subseq_checked(
+    i: &mut Interp,
+    table: &Value,
+    start: usize,
+    end: usize,
+) -> Result<Vec<Value>, Flow> {
+    if !is_char_table(i, table) {
+        return Err(i.wrong_type_mut("char-table-p", table));
+    }
+    let length = CT_MAX_CHAR as usize + 1;
+    if start > end || end > length {
+        return Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![
+                table.clone(),
+                Value::Int(start as i128),
+                Value::Int(end as i128),
+            ],
+        ));
+    }
+
+    let mut values = Vec::with_capacity(end - start);
+    let mut seen = HashSet::new();
+    for index in start..end {
+        values.push(char_table_ref_checked_with_seen(
+            i, table, index, &mut seen,
+        )?);
+    }
+    Ok(values)
+}
+
+/// Checked mutation path for Lisp's `aset' char-table branch.
+pub(crate) fn ct_set_checked(
+    i: &mut Interp,
+    table: &Value,
+    code: u32,
+    value: Value,
+) -> Result<(), Flow> {
+    if code > CT_MAX_CHAR {
+        return Ok(());
+    }
+    let Some((contents, uniprop)) = checked_char_table_contents(i, table)? else {
+        return Ok(());
+    };
+    if code < 128 {
+        let ascii = contents
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+            .first()
+            .cloned()
+            .unwrap_or(Value::Nil);
+        check_ascii_record(i, &ascii)?;
+        if code == 0 {
+            check_ascii_record(i, &value)?;
+        }
+    }
+    let block = contents
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+        .get(1 + (code >> 16) as usize)
+        .cloned()
+        .unwrap_or(Value::Nil);
+    check_raw_subtable_path(i, block.clone(), code, uniprop)?;
+    if code < 128 {
+        // `ct_refresh_ascii' reads the zero path of the first block.
+        check_raw_subtable_path(i, block, 0, uniprop)?;
+    }
+
+    ct_set(i, table, code, value);
+    Ok(())
+}
+
+/// Preflight the partial sub-table branches that `sub_ct_set_range' will
+/// inspect. Fully covered slots are replaced directly and need no child
+/// access; partial slots recurse into the existing trie.
+fn check_subtable_range_path(
+    i: &mut Interp,
+    value: Value,
+    from: u32,
+    to: u32,
+    uniprop: bool,
+) -> Result<(), Flow> {
+    let Some(tag) = i.q_soft("sub-char-table") else {
+        return Ok(());
+    };
+    let Value::Record(record) = value else {
+        return Ok(());
+    };
+    let children = {
+        let slots = record
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed sub-character-table"))?;
+        let (depth, min) = match (slots.first(), slots.get(1), slots.get(2)) {
+            (Some(Value::Sym(head)), Some(Value::Int(depth)), Some(Value::Int(min)))
+                if *head == tag && (1..=3).contains(depth) =>
+            {
+                (*depth as usize, *min as u32)
+            }
+            _ => return Ok(()),
+        };
+        let chars = 1u32 << CHARTAB_BITS[depth];
+        let start = from.max(min);
+        let mut index = (start.saturating_sub(min) >> CHARTAB_BITS[depth]) as usize;
+        let mut first = min + chars * index as u32;
+        let mut partial = Vec::new();
+        while index < CHARTAB_SIZE[depth] && first <= to {
+            let last = first + chars - 1;
+            if !(start <= first && last <= to) {
+                partial.push(slots.get(3 + index).cloned().unwrap_or(Value::Nil));
+            }
+            index += 1;
+            first += chars;
+        }
+        partial
+    };
+
+    for child in children {
+        if uniprop && let Value::Str(string) = &child {
+            drop(string.try_borrow_mut().map_err(|_| {
+                i.error("Cannot inspect a mutably borrowed char-code property string")
+            })?);
+        }
+        check_subtable_range_path(i, child, from, to, uniprop)?;
+    }
+    Ok(())
+}
+
+/// Checked range writer for Lisp-facing char-table mutation.
+pub(crate) fn ct_set_range_checked(
+    i: &mut Interp,
+    table: &Value,
+    from: u32,
+    to: u32,
+    value: Value,
+) -> Result<(), Flow> {
+    if from > to || from > CT_MAX_CHAR {
+        return Ok(());
+    }
+    let to = to.min(CT_MAX_CHAR);
+    if from == to {
+        return ct_set_checked(i, table, from, value);
+    }
+    let Some((contents, uniprop)) = checked_char_table_contents(i, table)? else {
+        return Ok(());
+    };
+
+    let mut index = (from >> 16) as usize;
+    let last_index = (to >> 16) as usize;
+    while index <= last_index {
+        let first = (index as u32) << 16;
+        let last = first + 65535;
+        if !(from <= first && last <= to) {
+            let subtable = contents
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+                .get(1 + index)
+                .cloned()
+                .unwrap_or(Value::Nil);
+            check_subtable_range_path(i, subtable, from, to, uniprop)?;
+        }
+        index += 1;
+    }
+
+    if from < 128 && !(from == 0 && to >= 65535) {
+        let ascii_source = contents
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect mutably borrowed char-table storage"))?
+            .get(1)
+            .cloned()
+            .unwrap_or(Value::Nil);
+        check_raw_subtable_path(i, ascii_source, 0, uniprop)?;
+        if from == 0 {
+            check_ascii_record(i, &value)?;
+        }
+    }
+
+    ct_set_range(i, table, from, to, value);
+    Ok(())
+}
+
 pub(super) fn f_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU `Fchar_table_range': nil RANGE reads the table's own
     // default; a character RANGE resolves via `char_table_ref'
@@ -810,7 +1317,7 @@ pub(super) fn f_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
             if !(0..=CT_MAX_CHAR as i128).contains(n) {
                 return Err(i.error_q::<str>("Invalid RANGE argument to `char-table-range'", &[]));
             }
-            Ok(char_table_ref(i, &a[0], *n as usize))
+            char_table_ref_checked(i, &a[0], *n as usize)
         }
         Value::Cons(c) => {
             let (from, to) = {
@@ -825,7 +1332,7 @@ pub(super) fn f_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
                 Value::Int(t) if (0..=CT_MAX_CHAR as i128).contains(t) => {}
                 _ => return Err(i.wrong_type_mut("characterp", &to)),
             }
-            Ok(ct_ref_defalt(i, &a[0], from))
+            ct_ref_defalt_checked(i, &a[0], from)
         }
         _ => Err(i.error_q::<str>("Invalid RANGE argument to `char-table-range'", &[])),
     }
@@ -877,9 +1384,11 @@ pub(super) fn f_set_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> Ev
     }
     let val = a[2].clone();
     match &a[1] {
-        Value::Sym(s) if i.symbol_name(*s) == "t" => {
-            if let Some(v) = char_table_vec(&a[0]) {
-                let mut vv = v.borrow_mut();
+        Value::Sym(s) if *s == sym::T => {
+            if let Some((v, _)) = checked_char_table_contents(i, &a[0])? {
+                let mut vv = v
+                    .try_borrow_mut()
+                    .map_err(|_| i.error("Cannot modify mutably borrowed char-table storage"))?;
                 for slot in vv.iter_mut() {
                     *slot = val.clone();
                 }
@@ -894,7 +1403,7 @@ pub(super) fn f_set_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> Ev
                     i.error_q::<str>("Invalid RANGE argument to `set-char-table-range'", &[])
                 );
             }
-            ct_set(i, &a[0], *n as u32, val.clone());
+            ct_set_checked(i, &a[0], *n as u32, val.clone())?;
         }
         Value::Cons(c) => {
             let (from, to) = {
@@ -911,7 +1420,7 @@ pub(super) fn f_set_char_table_range(i: &mut Interp, a: crate::lisp::Argv) -> Ev
             };
             // GNU: a reversed (FROM > TO) cons silently sets nothing.
             if from <= to {
-                ct_set_range(i, &a[0], from, to, val.clone());
+                ct_set_range_checked(i, &a[0], from, to, val.clone())?;
             }
         }
         _ => return Err(i.error_q::<str>("Invalid RANGE argument to `set-char-table-range'", &[])),
@@ -1368,6 +1877,174 @@ pub(super) fn f_set_char_table_extra_slot(i: &mut Interp, a: crate::lisp::Argv) 
     };
     rr[3 + n] = a[2].clone();
     Ok(a[2].clone())
+}
+
+#[cfg(test)]
+mod char_table_range_borrow_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    fn interp() -> Interp {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        interp
+    }
+
+    fn table(interp: &mut Interp) -> Value {
+        let subtype = Value::Sym(interp.intern("range-borrow-test-char-table"));
+        make_ct(interp, subtype, Value::Nil, Vec::new())
+    }
+
+    fn is_lisp_error(result: Result<EvalResult, Box<dyn std::any::Any + Send>>) -> bool {
+        matches!(
+            result,
+            Ok(Err(Flow::Signal(ref signal))) if signal.is_symbol(sym::ERROR)
+        )
+    }
+
+    #[test]
+    fn character_range_rejects_a_mutably_borrowed_table_without_panicking() {
+        let mut interp = interp();
+        let value = table(&mut interp);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let held_borrow = record.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_char_table_range(&mut interp, vec![value.clone(), Value::Int(128)].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn cons_range_rejects_mutably_borrowed_char_table_storage_without_panicking() {
+        let mut interp = interp();
+        let value = table(&mut interp);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let contents = match record.borrow().get(2) {
+            Some(Value::Vec(contents)) => contents.clone(),
+            _ => unreachable!(),
+        };
+        let held_borrow = contents.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_char_table_range(
+                &mut interp,
+                vec![value.clone(), Value::cons(Value::Int(128), Value::Int(129))].into(),
+            )
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn set_character_range_rejects_a_mutably_borrowed_table_without_panicking() {
+        let mut interp = interp();
+        let value = table(&mut interp);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let held_borrow = record.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_set_char_table_range(
+                &mut interp,
+                vec![value.clone(), Value::Int(128), Value::Int(42)].into(),
+            )
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn set_cons_range_rejects_mutably_borrowed_char_table_storage_without_panicking() {
+        let mut interp = interp();
+        let value = table(&mut interp);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let contents = match record.borrow().get(2) {
+            Some(Value::Vec(contents)) => contents.clone(),
+            _ => unreachable!(),
+        };
+        let held_borrow = contents.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_set_char_table_range(
+                &mut interp,
+                vec![
+                    value.clone(),
+                    Value::cons(Value::Int(128), Value::Int(129)),
+                    Value::Int(42),
+                ]
+                .into(),
+            )
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn character_and_cons_ranges_keep_unborrowed_values() {
+        let mut interp = interp();
+        let value = table(&mut interp);
+        assert!(matches!(
+            f_set_char_table_range(
+                &mut interp,
+                vec![value.clone(), Value::Int(128), Value::Int(7)].into()
+            ),
+            Ok(Value::Int(7))
+        ));
+        assert!(matches!(
+            f_char_table_range(&mut interp, vec![value.clone(), Value::Int(128)].into()),
+            Ok(Value::Int(7))
+        ));
+        assert!(matches!(
+            f_set_char_table_range(
+                &mut interp,
+                vec![
+                    value.clone(),
+                    Value::cons(Value::Int(128), Value::Int(129)),
+                    Value::Int(8),
+                ]
+                .into()
+            ),
+            Ok(Value::Int(8))
+        ));
+        assert!(matches!(
+            f_char_table_range(
+                &mut interp,
+                vec![value, Value::cons(Value::Int(128), Value::Int(129))].into()
+            ),
+            Ok(Value::Int(8))
+        ));
+
+        let value = table(&mut interp);
+        assert!(matches!(
+            f_set_char_table_range(
+                &mut interp,
+                vec![value.clone(), Value::t(), Value::Int(9)].into()
+            ),
+            Ok(Value::Int(9))
+        ));
+        assert!(matches!(
+            f_char_table_range(&mut interp, vec![value.clone(), Value::Int(65)].into()),
+            Ok(Value::Int(9))
+        ));
+        assert!(matches!(
+            f_char_table_range(&mut interp, vec![value.clone(), Value::Int(128)].into()),
+            Ok(Value::Int(9))
+        ));
+        assert!(matches!(
+            f_char_table_range(&mut interp, vec![value, Value::Nil].into()),
+            Ok(Value::Nil)
+        ));
+    }
 }
 
 /// `optimize-char-table' — collapse uniform sub-tables bottom-up

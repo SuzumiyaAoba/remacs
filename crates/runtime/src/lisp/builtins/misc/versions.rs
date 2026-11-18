@@ -156,8 +156,9 @@ fn version_list_of(i: &mut Interp, v: &Value) -> Result<Vec<BigInt>, Flow> {
         }
         Ok(out)
     })();
-    let _ = i.unbind_to(bind_depth);
+    let unwind = i.unbind_to(bind_depth);
     i.match_data = saved_match;
+    unwind?;
     result
 }
 

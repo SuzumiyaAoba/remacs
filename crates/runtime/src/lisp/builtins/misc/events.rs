@@ -1016,8 +1016,41 @@ pub(super) fn f_tooltip_mode(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         _ => true,
     };
     let v = Value::from_bool(on);
-    let _ = i.set_symbol(sid, v.clone());
+    i.set_symbol(sid, v.clone())?;
     Ok(v)
+}
+
+#[cfg(test)]
+mod tooltip_mode_watcher_tests {
+    use super::*;
+
+    #[test]
+    fn tooltip_mode_propagates_a_watcher_error() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-tooltip-mode-watcher\
+                               (_symbol _value operation _where)\
+                           (when (eq operation 'set)\
+                             (signal 'file-error '(\"tooltip watcher\"))))\
+                         (add-variable-watcher 'tooltip-mode\
+                                               #'qa-tooltip-mode-watcher)",
+                    )
+                    .unwrap();
+                let result = f_tooltip_mode(&mut interp, vec![Value::Int(0)].into());
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 pub(super) fn f_mouse_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -1059,7 +1092,9 @@ pub(super) fn f_mouse_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> E
 /// first (arg must be a frame when non-nil), then the tty result nil.
 pub(super) fn f_display_popup_menus_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = decode_display(i, &arg(&a, 0))?;
-    Ok(Value::from_bool(crate::editor::frame_is_graphical(i, &frame)))
+    Ok(Value::from_bool(crate::editor::frame_is_graphical(
+        i, &frame,
+    )))
 }
 
 pub(super) fn f_current_input_mode(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -1133,10 +1168,9 @@ pub(super) fn f_mouse_position_root(i: &mut Interp, _a: crate::lisp::Argv) -> Ev
         let Some(parent_frame) = parent_frame else {
             break;
         };
-        let Value::Frame(parent) = crate::lisp::eval::plist_get_v(
-            &params,
-            &Value::Sym(parent_frame),
-        ) else {
+        let Value::Frame(parent) =
+            crate::lisp::eval::plist_get_v(&params, &Value::Sym(parent_frame))
+        else {
             break;
         };
         if parent.borrow().dead {

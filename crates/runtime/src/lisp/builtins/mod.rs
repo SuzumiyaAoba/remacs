@@ -124,7 +124,11 @@ pub(crate) fn dump_subrs() -> Vec<&'static Subr> {
 /// Calls made by native-compiled dumped Lisp can use a C subr directly until
 /// fset installs its trampoline. Dedicated inlined byte-code operations use
 /// the canonical entry even when the symbol's function cell has changed.
-pub(crate) fn call_native_builtin(interp: &mut Interp, name: &str, args: Vec<Value>) -> Result<Value, Flow> {
+pub(crate) fn call_native_builtin(
+    interp: &mut Interp,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value, Flow> {
     if interp.native_trampolines.contains(name) {
         let function = Value::Sym(interp.q(name));
         return interp.apply(&function, args);
@@ -132,10 +136,22 @@ pub(crate) fn call_native_builtin(interp: &mut Interp, name: &str, args: Vec<Val
     call_canonical_builtin(interp, name, args)
 }
 
-pub(crate) fn call_canonical_builtin(interp: &mut Interp, name: &str, args: Vec<Value>) -> Result<Value, Flow> {
-    static SUBRS: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, &'static Subr>> = std::sync::OnceLock::new();
-    let subrs = SUBRS.get_or_init(|| dump_subrs().into_iter().map(|subr| (subr.name, subr)).collect());
-    let Some(subr) = subrs.get(name) else { return Err(interp.error(format!("Unknown native primitive: {name}"))); };
+pub(crate) fn call_canonical_builtin(
+    interp: &mut Interp,
+    name: &str,
+    args: Vec<Value>,
+) -> Result<Value, Flow> {
+    static SUBRS: std::sync::OnceLock<rustc_hash::FxHashMap<&'static str, &'static Subr>> =
+        std::sync::OnceLock::new();
+    let subrs = SUBRS.get_or_init(|| {
+        dump_subrs()
+            .into_iter()
+            .map(|subr| (subr.name, subr))
+            .collect()
+    });
+    let Some(subr) = subrs.get(name) else {
+        return Err(interp.error(format!("Unknown native primitive: {name}")));
+    };
     let mut scope = interp.symbol_position_scope();
     let result = (subr.func)(interp, args.into());
     let result = interp.offer_flow(result);
@@ -442,7 +458,10 @@ pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
 
 pub(crate) fn want_string(i: &mut Interp, v: &Value) -> Result<super::text::EmacsText, Flow> {
     match v {
-        Value::Str(s) => Ok(s.borrow().clone()),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|text| (*text).clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed string")),
         _ => Err(i.wrong_type_mut("stringp", v)),
     }
 }
@@ -462,13 +481,7 @@ pub(crate) fn want_cons(i: &mut Interp, v: &Value) -> Result<super::value::ConsR
 }
 
 pub(crate) fn want_list(i: &mut Interp, v: &Value) -> Result<Vec<Value>, Flow> {
-    match v.list_to_vec() {
-        Ok(items) => Ok(items),
-        Err(super::value::ListError::Circular(tail)) => {
-            Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail]))
-        }
-        Err(super::value::ListError::Dotted(tail)) => Err(i.wrong_type_mut("listp", &tail)),
-    }
+    i.proper_list_to_vec(v)
 }
 
 /// Object identity without interpreter-dependent symbol-position handling.
@@ -542,8 +555,10 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
 
 pub fn eql_values_with_interp(interp: &Interp, a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Int(_) | Value::BigInt(_) | Value::Float(_),
-         Value::Int(_) | Value::BigInt(_) | Value::Float(_)) => eql_values(a, b),
+        (
+            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+        ) => eql_values(a, b),
         _ => eq_values_with_interp(interp, a, b),
     }
 }
@@ -691,13 +706,27 @@ fn equal_values_1(
     }
     Ok(match (a, b) {
         (Value::Str(x), Value::Str(y)) => {
-            strfn::string_contents_equal(interp, x, y)
+            // Hold shared guards while helpers inspect the strings. This
+            // first rejects an outstanding mutable borrow, while nested
+            // immutable reads remain legal.
+            let _x_contents = x
+                .try_borrow()
+                .map_err(|_| interp.error("Cannot compare a mutably borrowed string"))?;
+            let _y_contents = y
+                .try_borrow()
+                .map_err(|_| interp.error("Cannot compare a mutably borrowed string"))?;
+            strfn::string_contents_equal(interp, x, y)?
                 && (!with_properties || equal_string_properties(interp, x, y)?)
         }
         (Value::Marker(x), Value::Marker(y)) => {
             // GNU `equal' on markers compares buffer + position (they're
             // `misc' objects with value semantics), not identity.
-            let (xb, yb) = (x.borrow(), y.borrow());
+            let xb = x
+                .try_borrow()
+                .map_err(|_| interp.error("Cannot compare a mutably borrowed marker"))?;
+            let yb = y
+                .try_borrow()
+                .map_err(|_| interp.error("Cannot compare a mutably borrowed marker"))?;
             xb.buffer == yb.buffer && (xb.buffer.is_none() || xb.position == yb.position)
         }
         (Value::Cons(_x), Value::Cons(_y)) => {
@@ -714,14 +743,18 @@ fn equal_values_1(
             loop {
                 match (&ax, &bx) {
                     (Value::Cons(ac), Value::Cons(bc)) => {
-                        let (acar, acdr) = {
-                            let ab = ac.borrow();
-                            (ab.car.clone(), ab.cdr.clone())
-                        };
-                        let (bcar, bcdr) = {
-                            let bb = bc.borrow();
-                            (bb.car.clone(), bb.cdr.clone())
-                        };
+                        let (acar, acdr) = ac
+                            .try_borrow()
+                            .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                            .map_err(|_| {
+                                interp.error("Cannot compare a mutably borrowed cons cell")
+                            })?;
+                        let (bcar, bcdr) = bc
+                            .try_borrow()
+                            .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                            .map_err(|_| {
+                                interp.error("Cannot compare a mutably borrowed cons cell")
+                            })?;
                         if !equal_values_1(interp, &acar, &bcar, depth + 1, seen, with_properties)?
                         {
                             return Ok(false);
@@ -771,24 +804,34 @@ fn equal_values_1(
             // shortcut above, distinct obarrays are never structurally equal.
             false
         }
-        (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => equal_items(
-            interp,
-            &x.borrow(),
-            &y.borrow(),
-            depth,
-            seen,
-            with_properties,
-        )?,
+        (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => {
+            let x_items = x.try_borrow().map(|items| items.clone()).map_err(|_| {
+                interp.error("Cannot compare a mutably borrowed vector-like object")
+            })?;
+            let y_items = y.try_borrow().map(|items| items.clone()).map_err(|_| {
+                interp.error("Cannot compare a mutably borrowed vector-like object")
+            })?;
+            equal_items(interp, &x_items, &y_items, depth, seen, with_properties)?
+        }
         (Value::Lambda(x), Value::Lambda(y)) => {
+            if x.is_macro != y.is_macro {
+                return Ok(false);
+            }
             // `#[...]' byte-code objects are pseudovectors in GNU:
             // `equal' compares their elements (argdesc, bytecode
             // string, constants vector, ...) pairwise.
             match (&x.bc_items, &y.bc_items) {
                 (Some(xi), Some(yi)) => {
+                    let x_items = xi.try_borrow().map(|items| items.clone()).map_err(|_| {
+                        interp.error("Cannot compare a mutably borrowed byte-code object")
+                    })?;
+                    let y_items = yi.try_borrow().map(|items| items.clone()).map_err(|_| {
+                        interp.error("Cannot compare a mutably borrowed byte-code object")
+                    })?;
                     return Ok(equal_items(
                         interp,
-                        &xi.borrow(),
-                        &yi.borrow(),
+                        &x_items,
+                        &y_items,
                         depth,
                         seen,
                         with_properties,
@@ -797,30 +840,14 @@ fn equal_values_1(
                 (None, None) => {}
                 _ => return Ok(false),
             }
-            // GNU compares interpreted lambdas as list structure.
-            if x.is_macro != y.is_macro
-                || x.required != y.required
-                || x.rest != y.rest
-                || x.optional.len() != y.optional.len()
-            {
-                return Ok(false);
-            }
-            for (a, b) in x.optional.iter().zip(y.optional.iter()) {
-                if a.sym != b.sym || a.supplied != b.supplied {
-                    return Ok(false);
-                }
-                match (&a.default, &b.default) {
-                    (Some(d), Some(e)) => {
-                        if !equal_values_1(interp, d, e, depth + 1, seen, with_properties)? {
-                            return Ok(false);
-                        }
-                    }
-                    (None, None) => {}
-                    _ => return Ok(false),
-                }
-            }
-            equal_items(interp, &x.body, &y.body, depth, seen, with_properties)?
-                && x.env.is_none() == y.env.is_none()
+            // GNU compares interpreted closures through their vector-like
+            // slots, including the captured lexical environment and
+            // doc/interactive metadata, rather than just env presence.
+            let x_slots = crate::lisp::builtins::misc::lambda_slot_values_checked(x)
+                .map_err(|error| error.into_flow(interp))?;
+            let y_slots = crate::lisp::builtins::misc::lambda_slot_values_checked(y)
+                .map_err(|error| error.into_flow(interp))?;
+            equal_items(interp, &x_slots, &y_slots, depth, seen, with_properties)?
         }
         _ => eql_values(a, b),
     })
@@ -843,4 +870,176 @@ fn equal_items(
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod equal_borrow_tests {
+    use super::*;
+
+    #[test]
+    fn equal_rejects_a_cons_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let interp = Interp::new();
+                let left = Value::list(vec![Value::Int(1), Value::Int(2)]);
+                let right = Value::list(vec![Value::Int(1), Value::Int(2)]);
+                let Value::Cons(cell) = &left else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = equal_values(&interp, &left, &right);
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::obarray::sym::ERROR)
+                ));
+                assert!(equal_values(&interp, &left, &right).unwrap());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn equal_rejects_a_vector_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let interp = Interp::new();
+                let left = Value::vector(vec![Value::Int(1), Value::Int(2)]);
+                let right = Value::vector(vec![Value::Int(1), Value::Int(2)]);
+                let Value::Vec(cell) = &left else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = equal_values(&interp, &left, &right);
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::obarray::sym::ERROR)
+                ));
+                assert!(equal_values(&interp, &left, &right).unwrap());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn equal_rejects_a_record_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let interp = Interp::new();
+                let left = Value::record(vec![Value::Int(1), Value::Int(2)]);
+                let right = Value::record(vec![Value::Int(1), Value::Int(2)]);
+                let Value::Record(cell) = &left else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = equal_values(&interp, &left, &right);
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::obarray::sym::ERROR)
+                ));
+                assert!(equal_values(&interp, &left, &right).unwrap());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn equal_rejects_a_string_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let interp = Interp::new();
+                let left = Value::string("same");
+                let right = Value::string("same");
+                let Value::Str(cell) = &left else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = equal_values(&interp, &left, &right);
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::obarray::sym::ERROR)
+                ));
+                assert!(equal_values(&interp, &left, &right).unwrap());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn equal_rejects_a_marker_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let left = interp.eval_str("(make-marker)").unwrap();
+                let right = interp.eval_str("(make-marker)").unwrap();
+                let Value::Marker(cell) = &left else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = equal_values(&interp, &left, &right);
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::obarray::sym::ERROR)
+                ));
+                assert!(equal_values(&interp, &left, &right).unwrap());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn equal_rejects_byte_code_slots_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let left = interp
+                    .eval_str("(make-byte-code 0 (unibyte-string 192 135) [ok] 1)")
+                    .unwrap();
+                let right = interp
+                    .eval_str("(make-byte-code 0 (unibyte-string 192 135) [ok] 1)")
+                    .unwrap();
+                let Value::Lambda(function) = &left else {
+                    unreachable!();
+                };
+                let items = function.bc_items.as_ref().expect("byte-code slots").clone();
+                let held_borrow = items.borrow_mut();
+
+                let result = equal_values(&interp, &left, &right);
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::obarray::sym::ERROR)
+                ));
+                assert!(equal_values(&interp, &left, &right).is_ok());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

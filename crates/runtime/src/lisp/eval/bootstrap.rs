@@ -154,12 +154,13 @@ impl Interp {
             macroexp_call_depth: 0,
             current_lambda_dumped: false,
             current_body_compiled: false,
+            current_compiled_macro_cache: None,
+            current_compiled_macro_path: Vec::new(),
             compiled_macro_expansion: false,
             expand_unadvised_depth: 0,
             loading_compiled_library: false,
             macro_cache: HashMap::default(),
             macro_gen: 0,
-            macroexpand_all_cache: std::cell::RefCell::new((0, HashMap::default())),
             stderr_need_newline: false,
             out_last_char: None,
             tz_rule: None,
@@ -262,6 +263,7 @@ impl Interp {
             fixed_symbols: HashMap::default(),
             pending_frames: Vec::new(),
             compiled_fn_names: std::cell::RefCell::new(Vec::new()),
+            special_macro_snapshots: HashMap::default(),
             subr_prof: std::collections::HashMap::new(),
             cur_head_form: Value::Nil,
             last_error_stack: std::cell::RefCell::new(Vec::new()),
@@ -838,14 +840,16 @@ command-line arguments.\" \
             // GNU records every dumped library in `load-history'; do the
             // same for the embedded prelude so `symbol-file' and the
             // find-func family can locate prelude-defined symbols.
-            crate::lisp::load::record_prelude_load_history(
+            if let Err(flow) = crate::lisp::load::record_prelude_load_history(
                 interp,
                 concat!(
                     env!("REMACS_SOURCE_ROOT"),
                     "/crates/runtime/src/lisp/prelude.el"
                 ),
                 crate::lisp::prelude::PRELUDE,
-            );
+            ) {
+                eprintln!("[prelude] load-history recording failed: {flow:?}");
+            }
         }
         // GNU startup.el runs `lisp-interaction-mode' on *scratch*
         // AFTER loadup: characters.el's bare `modify-syntax-entry'
@@ -904,10 +908,16 @@ command-line arguments.\" \
         crate::lisp::builtins::register_extlib_features(interp);
         // `icons' faces created by boot-time loads are likewise
         // hidden until a real `load' triggers them.
-        let icon_faces: Vec<_> = ["icon", "icon-button"].iter()
-            .filter_map(|name| interp.intern_soft(name)).collect();
-        interp.face_table.retain(|(face, _)| !icon_faces.contains(face));
-        interp.face_t_table.retain(|(face, _)| !icon_faces.contains(face));
+        let icon_faces: Vec<_> = ["icon", "icon-button"]
+            .iter()
+            .filter_map(|name| interp.intern_soft(name))
+            .collect();
+        interp
+            .face_table
+            .retain(|(face, _)| !icon_faces.contains(face));
+        interp
+            .face_t_table
+            .retain(|(face, _)| !icon_faces.contains(face));
         // Interactive boot can evaluate the real deffaces.  Roll their
         // declarations and registration back with the realized faces,
         // otherwise custom-declare-face skips recreating them on require.
@@ -935,7 +945,10 @@ command-line arguments.\" \
         // (id . lface) entry so `face-list'/`frame-face-alist' see
         // the same faces at -Q.
         {
-            let mut names: Vec<_> = crate::editor::KNOWN_FACES.iter().map(|name| interp.q(name)).collect();
+            let mut names: Vec<_> = crate::editor::KNOWN_FACES
+                .iter()
+                .map(|name| interp.q(name))
+                .collect();
             names.extend(interp.face_table.iter().map(|(face, _)| *face));
             for n in &names {
                 crate::editor::face_register_global(interp, n);
@@ -982,6 +995,7 @@ command-line arguments.\" \
             }
         }
         Self::normalize_boot_session(interp, rollback);
+        interp.capture_special_macro_snapshots();
     }
 
     fn evaluate_boot_prelude(interp: &mut Self, _init_t0: std::time::Instant) {

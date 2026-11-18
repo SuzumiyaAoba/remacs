@@ -501,8 +501,12 @@ impl Image {
             let new_normal = decoder.value(i, &data.new_normal)?;
             let old_buffer = decoder.value(i, &data.old_buffer)?;
             let cursor_type = decoder.value(i, &data.cursor_type)?;
-            let old_point_marker = data.old_point_marker.as_ref()
-                .map(|marker| decoder.value(i, marker)).transpose()?.unwrap_or(Value::Nil);
+            let old_point_marker = data
+                .old_point_marker
+                .as_ref()
+                .map(|marker| decoder.value(i, marker))
+                .transpose()?
+                .unwrap_or(Value::Nil);
             let mut w = object.borrow_mut();
             w.buffer = data.buffer;
             w.point = data.point;
@@ -568,7 +572,11 @@ impl Image {
         for data in &self.window_data {
             if data.old_point_marker.is_none() && !data.dead && data.horiz.is_none() {
                 if let Some(Value::Window(window)) = externals.get(&format!("window:{}", data.id)) {
-                    crate::editor::set_window_old_point(i, &mut window.borrow_mut(), data.old_point);
+                    crate::editor::set_window_old_point(
+                        i,
+                        &mut window.borrow_mut(),
+                        data.old_point,
+                    );
                 }
             }
             if data.normal_size.is_none() {
@@ -841,9 +849,12 @@ impl Image {
         let nodes = encoder.finish()?;
         let mut source_caches = Vec::new();
         if let Some(cache) = crate::lisp::embedded_cache::directory() {
-            source_caches.push(encode_text(&crate::lisp::text::EmacsText::from_os_str(cache.as_os_str())));
+            source_caches.push(encode_text(&crate::lisp::text::EmacsText::from_os_str(
+                cache.as_os_str(),
+            )));
             if let Ok(real) = std::fs::canonicalize(&cache) {
-                let real = encode_text(&crate::lisp::text::EmacsText::from_os_str(real.as_os_str()));
+                let real =
+                    encode_text(&crate::lisp::text::EmacsText::from_os_str(real.as_os_str()));
                 if !source_caches.contains(&real) {
                     source_caches.push(real);
                 }
@@ -1032,7 +1043,11 @@ impl Image {
             suspend_hscroll: w.suspend_hscroll,
             suspend_vscroll: w.suspend_vscroll,
             old_point: w.old_point_position(),
-            old_point_marker: if w.old_point_marker.is_nil() { None } else { Some(e.value(&w.old_point_marker)?) },
+            old_point_marker: if w.old_point_marker.is_nil() {
+                None
+            } else {
+                Some(e.value(&w.old_point_marker)?)
+            },
             min_hscroll: w.min_hscroll,
             scroll_bars: w.scroll_bars,
             use_time: w.use_time,
@@ -1216,7 +1231,9 @@ mod tests {
                 assert_eq!(restored.prin1_to_string(&point), "9");
                 restored.eval_str("(erase-buffer)").unwrap();
                 crate::frontend::render_grid(&restored, 80, 25);
-                let point = restored.eval_str("(window-old-point dump288-other)").unwrap();
+                let point = restored
+                    .eval_str("(window-old-point dump288-other)")
+                    .unwrap();
                 assert_eq!(restored.prin1_to_string(&point), "1");
             })
             .unwrap()

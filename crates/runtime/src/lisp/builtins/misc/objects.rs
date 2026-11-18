@@ -11,7 +11,7 @@ use super::bool_vectors::bool_vec_of;
 
 use super::is_opaque_record;
 
-use super::functions::lambda_slot_values;
+use super::functions::lambda_slot_values_checked;
 
 use super::positions::sym_pos_parts;
 
@@ -121,7 +121,9 @@ pub(super) fn f_cl_type_of(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
         }
         Value::Lambda(l) => {
-            if l.is_bytecode() {
+            if l.try_is_bytecode()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?
+            {
                 "byte-code-function"
             } else {
                 "interpreted-function"
@@ -206,7 +208,9 @@ pub(super) fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
             return Err(i.wrong_type_mut("sequencep", v));
         }
         Value::Record(x) => x.borrow().len() as i128,
-        Value::Lambda(l) => lambda_slot_values(l).len() as i128,
+        Value::Lambda(l) => lambda_slot_values_checked(l)
+            .map_err(|error| error.into_flow(i))?
+            .len() as i128,
         // Hash tables aren't sequences (GNU signals sequencep).
         _ => return Err(i.wrong_type_mut("sequencep", v)),
     })
@@ -264,6 +268,7 @@ pub(super) fn value_order_kind(i: &Interp, value: &Value) -> Option<ValueOrderKi
         Value::Record(_) => match value.record_kind() {
             Some(RecordKind::BoolVector) => K::BoolVector,
             Some(RecordKind::CharTable) => K::CharTable,
+            Some(RecordKind::SubCharTable) => K::Record,
             Some(RecordKind::Obarray) => K::Obarray,
             Some(RecordKind::FontSpec) => K::Font,
             Some(RecordKind::SymbolWithPos) => K::SymbolWithPos,

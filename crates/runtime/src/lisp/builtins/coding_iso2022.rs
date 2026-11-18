@@ -1,7 +1,7 @@
 //! ISO-2022 designation/invocation codec.  The coding and charset plists
 //! supply the repertoires, initial graphic sets, dimensions and final bytes.
-use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use super::{charset, misc};
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::lisp::{
     Interp,
     value::{Value, eight_bit_byte, lisp_char, lisp_char_code, mule_seq_char},
@@ -312,7 +312,9 @@ pub(crate) struct DecoderState {
 }
 
 impl DecoderState {
-    pub(crate) fn has_pending(&self) -> bool { !self.pending.is_empty() }
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
 }
 
 pub(super) fn decode_stream(

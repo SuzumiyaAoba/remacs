@@ -6,6 +6,7 @@ use crate::lisp::{
     obarray::sym,
     value::{SymId, Value},
 };
+use num_traits::ToPrimitive;
 
 impl Interp {
     /// Connect an asynchronous frontend quit source to this interpreter.
@@ -43,8 +44,12 @@ impl Interp {
         // GNU consults the live limit on every entry, so a lower `let'
         // or `setq' must take effect before comparing against the cache.
         let vid = self.q("max-lisp-eval-depth");
-        if let Value::Int(d) = self.symbol_value(vid) {
-            self.max_lisp_eval_depth = d.clamp(0, usize::MAX as i128) as usize;
+        if let Some(d) = self
+            .symbol_value(vid)
+            .as_bigint()
+            .and_then(|integer| integer.to_isize())
+        {
+            self.max_lisp_eval_depth = (d as i128).clamp(0, usize::MAX as i128) as usize;
         }
         if self.eval_depth > self.max_lisp_eval_depth {
             // GNU raises undersized limits to 100 only when exceeded.
@@ -214,9 +219,17 @@ impl Interp {
     ) -> EvalResult {
         let max = self.q("max-lisp-eval-depth");
         let reserve = self.q("lisp-eval-depth-reserve");
-        let (Value::Int(old_max), Value::Int(available)) =
-            (self.symbol_value(max), self.symbol_value(reserve))
-        else {
+        let old_max = self
+            .symbol_value(max)
+            .as_bigint()
+            .and_then(|integer| integer.to_isize())
+            .map(|integer| integer as i128);
+        let available = self
+            .symbol_value(reserve)
+            .as_bigint()
+            .and_then(|integer| integer.to_isize())
+            .map(|integer| integer as i128);
+        let (Some(old_max), Some(available)) = (old_max, available) else {
             return invoke(self);
         };
         let additional = (self.eval_depth as i128 + room - old_max).min(available);
@@ -228,9 +241,17 @@ impl Interp {
         self.max_lisp_eval_depth = (old_max + additional).clamp(0, usize::MAX as i128) as usize;
         let result = invoke(self);
         let result = self.offer_flow(result);
-        if let (Value::Int(current_max), Value::Int(remaining)) =
-            (self.symbol_value(max), self.symbol_value(reserve))
-        {
+        let current_max = self
+            .symbol_value(max)
+            .as_bigint()
+            .and_then(|integer| integer.to_isize())
+            .map(|integer| integer as i128);
+        let remaining = self
+            .symbol_value(reserve)
+            .as_bigint()
+            .and_then(|integer| integer.to_isize())
+            .map(|integer| integer as i128);
+        if let (Some(current_max), Some(remaining)) = (current_max, remaining) {
             self.store_error_limit(reserve, remaining + current_max - old_max);
         }
         self.store_error_limit(max, old_max);
@@ -239,7 +260,7 @@ impl Interp {
     }
 
     fn store_error_limit(&mut self, symbol: SymId, value: i128) {
-        self.store_internal_value(symbol, Value::Int(value));
+        self.store_internal_value(symbol, Value::integer(value));
     }
 
     pub(crate) fn store_internal_value(&mut self, symbol: SymId, value: Value) {
@@ -256,7 +277,7 @@ impl Interp {
     }
 
     pub(super) fn synchronize_quit_symbol(&mut self, symbol: SymId) {
-        if self.quit_flag && self.symbol_name(symbol) == "quit-flag" {
+        if self.quit_flag && self.intern_soft("quit-flag") == Some(symbol) {
             self.synchronize_quit_request();
         }
     }
@@ -357,5 +378,28 @@ impl Interp {
             }
         };
         self.offer_flow(result).map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_emacs_int_bignum_limit_is_used_by_the_evaluator() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let result = interp
+                    .eval_str(
+                        "(progn (defun qa-depth-bigint-rec (n) (if (zerop n) 'done (qa-depth-bigint-rec (1- n)))) (let ((max-lisp-eval-depth 9223372036854775807)) (qa-depth-bigint-rec 1610)))",
+                    )
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&result), "done");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

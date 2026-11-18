@@ -8,9 +8,9 @@
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use rustc_hash::FxHashMap as HashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::buffer::Buffer;
 use crate::editor::{Frame, Window};
@@ -19,6 +19,9 @@ use crate::editor::{Frame, Window};
 pub type SymId = u32;
 
 pub type ConsRef = Rc<RefCell<Cons>>;
+pub(crate) type CompiledMacroCache =
+    Rc<RefCell<HashMap<(usize, Vec<u128>), (Weak<RefCell<Cons>>, Value)>>>;
+
 pub use super::text::{EmacsChar, EmacsText};
 pub type StrRef = Rc<RefCell<EmacsText>>;
 pub type VecRef = Rc<RefCell<Vec<Value>>>;
@@ -30,6 +33,7 @@ pub(crate) enum RecordKind {
     Obarray,
     FontSpec,
     SymbolWithPos,
+    SubCharTable,
 }
 pub type HashRef = Rc<RefCell<LispHash>>;
 pub type LambdaRef = Rc<Lambda>;
@@ -121,6 +125,39 @@ pub struct Cons {
     pub cdr: Value,
 }
 
+thread_local! {
+    static CONS_DROP_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static CONS_DROP_PENDING: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
+fn drain_cons_children(cdr: Value, car: Value) {
+    let nested = CONS_DROP_ACTIVE.with(|active| active.replace(true));
+    CONS_DROP_PENDING.with(|pending| pending.borrow_mut().extend([cdr, car]));
+    if nested {
+        return;
+    }
+
+    loop {
+        let value = CONS_DROP_PENDING.with(|pending| pending.borrow_mut().pop());
+        let Some(value) = value else {
+            break;
+        };
+        drop(value);
+    }
+    CONS_DROP_ACTIVE.with(|active| active.set(false));
+}
+
+impl Drop for Cons {
+    fn drop(&mut self) {
+        // A long proper list would recursively drop each cdr through Rc.
+        // Drain child values iteratively; nested Cons drops append their
+        // children to the same worklist instead of recursing on the Rust stack.
+        let car = std::mem::replace(&mut self.car, Value::Nil);
+        let cdr = std::mem::replace(&mut self.cdr, Value::Nil);
+        drain_cons_children(cdr, car);
+    }
+}
+
 impl Cons {
     pub fn new(car: Value, cdr: Value) -> ConsRef {
         let cell = Rc::new(RefCell::new(Cons { car, cdr }));
@@ -147,16 +184,17 @@ pub(crate) enum HashWeakness {
 
 impl HashWeakness {
     pub(crate) fn from_value(i: &crate::lisp::Interp, value: &Option<Value>) -> Option<Self> {
-        let name = value
-            .as_ref()
-            .and_then(|value| i.sym_id(value))
-            .map(|id| i.symbol_name(id));
-        match name.as_deref() {
-            Some("key") => Some(Self::Key),
-            Some("value") => Some(Self::Value),
-            Some("key-and-value" | "t") => Some(Self::KeyAndValue),
-            Some("key-or-value") => Some(Self::KeyOrValue),
-            _ => None,
+        let id = value.as_ref().and_then(|value| i.sym_id(value))?;
+        if Some(id) == i.intern_soft("key") {
+            Some(Self::Key)
+        } else if Some(id) == i.intern_soft("value") {
+            Some(Self::Value)
+        } else if id == crate::lisp::obarray::sym::T || Some(id) == i.intern_soft("key-and-value") {
+            Some(Self::KeyAndValue)
+        } else if Some(id) == i.intern_soft("key-or-value") {
+            Some(Self::KeyOrValue)
+        } else {
+            None
         }
     }
 }
@@ -385,6 +423,10 @@ pub struct Lambda {
     pub optional: Vec<OptParam>,
     pub rest: Option<SymId>,
     pub body: Vec<Value>,
+    /// Raw body list retained by `make-interpreted-closure'. `body` is a
+    /// convenient parsed view, while this preserves list identity and
+    /// dotted/circular spines that a Vec cannot represent.
+    pub(crate) body_value: Option<Value>,
     /// Captured lexical environment (used when `lexical-binding` is t).
     pub env: crate::lisp::LexEnv,
     pub doc: Option<EmacsText>,
@@ -412,13 +454,17 @@ pub struct Lambda {
     /// GNU's `advice' oclosure layers.
     pub advice_link: Option<usize>,
     /// True for functions whose source would be byte-compiled in GNU
-    /// (dumped/shipped-library functions, plus closures created while
-    /// one is running — e.g. `trace-make-advice''s wrapper).  Such a
+    /// (dumped/shipped-library functions, plus closures created directly
+    /// in their compiled bodies — e.g. `trace-make-advice''s wrapper). Such a
     /// function's symbol-head calls to byte-op primitives resolve to
     /// the canonical subr directly, bypassing `symbol-function' like
     /// GNU's Bcar/Bcdr/... opcodes, so `advice' on a primitive can't
     /// recurse into the advice machinery's own calls.
     pub compiled: bool,
+    /// Macro expansions for compiled-equivalent source callsites live with
+    /// their owning lambda, so garbage collection or unrelated cache churn
+    /// cannot make an already-compiled callsite expand again.
+    pub(crate) compiled_macro_cache: CompiledMacroCache,
     /// `Some(items)' for objects read via `#[...]' — GNU treats those
     /// as byte-code objects, which are `arrayp' and `aref'-able.  We
     /// keep the original element list so `aref'/`length' see GNU's
@@ -453,9 +499,13 @@ impl Lambda {
     /// DEPTH ...]'); a cons code slot reads as an interpreted closure
     /// (lread.c read_bytecode).  Ordinary lambdas never are.
     pub fn is_bytecode(&self) -> bool {
+        self.try_is_bytecode().unwrap_or(false)
+    }
+
+    pub fn try_is_bytecode(&self) -> Result<bool, std::cell::BorrowError> {
         match &self.bc_items {
-            Some(items) => matches!(items.borrow().get(1), Some(Value::Str(_))),
-            None => false,
+            Some(items) => Ok(matches!(items.try_borrow()?.get(1), Some(Value::Str(_)))),
+            None => Ok(false),
         }
     }
 }
@@ -535,7 +585,7 @@ pub(crate) fn auto_string_bytes(bytes: &[u8]) -> (EmacsText, bool) {
 
 /// Decode one canonical Emacs UTF-8 character, excluding byte8's reserved
 /// representations. Surrogates and extended four/five-byte Mule are valid.
-fn canonical_emacs_char(bytes: &[u8]) -> Option<(u32, usize)> {
+pub(crate) fn canonical_emacs_char(bytes: &[u8]) -> Option<(u32, usize)> {
     let first = *bytes.first()?;
     let length = match first {
         0..=127 => 1,
@@ -563,8 +613,8 @@ pub(crate) fn multibyte_string_bytes(bytes: &[u8]) -> EmacsText {
     let mut text = EmacsText::new();
     let mut at = 0;
     while at < bytes.len() {
-        let (code, length) = canonical_emacs_char(&bytes[at..])
-            .unwrap_or((0x3fff00 + u32::from(bytes[at]), 1));
+        let (code, length) =
+            canonical_emacs_char(&bytes[at..]).unwrap_or((0x3fff00 + u32::from(bytes[at]), 1));
         text.push(lisp_char(code).unwrap_or_else(|| mule_seq_char(code)));
         at += length;
     }
@@ -586,7 +636,8 @@ pub(crate) fn emacs_string_bytes(bytes: &[u8]) -> EmacsText {
             0xf8 => 5,
             _ => 0,
         };
-        if length == 0 || at + length > bytes.len()
+        if length == 0
+            || at + length > bytes.len()
             || bytes[at + 1..at + length].iter().any(|b| b & 0xc0 != 0x80)
         {
             result.push(lisp_char(0x3fff00 + first as u32).unwrap());
@@ -594,8 +645,12 @@ pub(crate) fn emacs_string_bytes(bytes: &[u8]) -> EmacsText {
             continue;
         }
         let mut code = u32::from(first & [0, 127, 31, 15, 7, 3][length]);
-        for byte in &bytes[at + 1..at + length] { code = (code << 6) | u32::from(byte & 63); }
-        if first < 0xc2 && length == 2 { code += 0x3fff80; }
+        for byte in &bytes[at + 1..at + length] {
+            code = (code << 6) | u32::from(byte & 63);
+        }
+        if first < 0xc2 && length == 2 {
+            code += 0x3fff80;
+        }
         if code > 0x3fffff {
             result.push(lisp_char(0x3fff00 + first as u32).unwrap());
             at += 1;
@@ -616,17 +671,30 @@ pub use super::print_text::OutputToken;
 
 /// Inspect a typed raw-byte instruction. Unicode characters are never markers.
 pub fn raw_byte_marker(c: impl Into<OutputToken>) -> Option<u8> {
-    match c.into() { OutputToken::RawByte(byte) => Some(byte), _ => None }
+    match c.into() {
+        OutputToken::RawByte(byte) => Some(byte),
+        _ => None,
+    }
 }
 pub const PRINT_EIGHT_BIT_BASE: u32 = 0xF_0C00;
-pub fn print_eight_bit_char(byte: u8) -> OutputToken { OutputToken::PrintedByte(byte) }
+pub fn print_eight_bit_char(byte: u8) -> OutputToken {
+    OutputToken::PrintedByte(byte)
+}
 pub fn print_eight_bit_byte(c: impl Into<OutputToken>) -> Option<u8> {
-    match c.into() { OutputToken::PrintedByte(byte) => Some(byte), _ => None }
+    match c.into() {
+        OutputToken::PrintedByte(byte) => Some(byte),
+        _ => None,
+    }
 }
 pub const WRITE_CHAR_BASE: u32 = 0xF_0D00;
-pub fn write_char_eight_bit(byte: u8) -> OutputToken { OutputToken::WrittenByte(byte) }
+pub fn write_char_eight_bit(byte: u8) -> OutputToken {
+    OutputToken::WrittenByte(byte)
+}
 pub fn write_char_eight_bit_byte(c: impl Into<OutputToken>) -> Option<u8> {
-    match c.into() { OutputToken::WrittenByte(byte) => Some(byte), _ => None }
+    match c.into() {
+        OutputToken::WrittenByte(byte) => Some(byte),
+        _ => None,
+    }
 }
 
 thread_local! {
@@ -681,8 +749,8 @@ thread_local! {
     // GNU's zero-vector is shared and permanently live. Keep records on
     // their own allocation path: their identity is never canonicalized.
     static ZERO_VECTOR: VecRef = Value::allocate_vector_ref(Vec::new());
-    static EMPTY_UNIBYTE_STRING: StrRef = Value::allocate_string_ref(String::new());
-    static EMPTY_MULTIBYTE_STRING: StrRef = Value::allocate_string_ref(String::new());
+    static EMPTY_UNIBYTE_STRING: StrRef = Value::allocate_string_ref(String::new(), false);
+    static EMPTY_MULTIBYTE_STRING: StrRef = Value::allocate_string_ref(String::new(), true);
 }
 
 /// Preserve an extended GNU character code without a process-local registry.
@@ -795,7 +863,11 @@ impl Value {
     }
 
     pub fn string_ref(s: impl Into<EmacsText>) -> StrRef {
-        Self::string_ref_with_kind(s, false)
+        let s = s.into();
+        let multibyte = s
+            .chars()
+            .any(|character| character.code() > 0x7f && character.byte8().is_none());
+        Self::string_ref_with_kind(s, multibyte)
     }
 
     pub(crate) fn string_with_kind(s: impl Into<EmacsText>, multibyte: bool) -> Value {
@@ -813,7 +885,7 @@ impl Value {
                 EMPTY_UNIBYTE_STRING.with(Rc::clone)
             };
         }
-        Self::allocate_string_ref(s)
+        Self::allocate_string_ref(s, multibyte)
     }
 
     pub(crate) fn empty_string_kind(string: &StrRef) -> Option<bool> {
@@ -826,9 +898,9 @@ impl Value {
         }
     }
 
-    fn allocate_string_ref(s: impl Into<EmacsText>) -> StrRef {
+    fn allocate_string_ref(s: impl Into<EmacsText>, multibyte: bool) -> StrRef {
         let string = Rc::new(RefCell::new(s.into()));
-        super::memory::allocated(&Value::Str(string.clone()));
+        super::memory::allocated_string(&string, multibyte);
         string
     }
 
@@ -862,7 +934,9 @@ impl Value {
     }
 
     pub(crate) fn set_record_kind(&self, kind: RecordKind) {
-        let (Value::Vec(values) | Value::Record(values)) = self else { return; };
+        let (Value::Vec(values) | Value::Record(values)) = self else {
+            return;
+        };
         RECORD_KINDS.with(|kinds| {
             let mut kinds = kinds.borrow_mut();
             if kinds.len() & 255 == 0 {
@@ -873,11 +947,16 @@ impl Value {
     }
 
     pub(crate) fn record_kind(&self) -> Option<RecordKind> {
-        let (Value::Vec(values) | Value::Record(values)) = self else { return None; };
+        let (Value::Vec(values) | Value::Record(values)) = self else {
+            return None;
+        };
         RECORD_KINDS.with(|kinds| {
             let kinds = kinds.borrow();
             let (object, kind) = kinds.get(&(Rc::as_ptr(values) as usize))?;
-            object.upgrade().filter(|object| Rc::ptr_eq(object, values)).map(|_| *kind)
+            object
+                .upgrade()
+                .filter(|object| Rc::ptr_eq(object, values))
+                .map(|_| *kind)
         })
     }
 
@@ -934,7 +1013,7 @@ impl Value {
             match cur {
                 Value::Nil => return Ok(out),
                 Value::Cons(c) => {
-                    let b = c.borrow();
+                    let b = c.try_borrow().map_err(|_| ListError::Borrowed)?;
                     let next = b.cdr.clone();
                     out.push(b.car.clone());
                     drop(b);
@@ -969,6 +1048,8 @@ pub enum ListError {
     Dotted(Value),
     /// Circular list detected; carries GNU's meeting tail.
     Circular(Value),
+    /// A caller currently holds a mutable borrow of one of the cons cells.
+    Borrowed,
 }
 
 impl fmt::Debug for Value {
@@ -980,7 +1061,10 @@ impl fmt::Debug for Value {
             Value::Float(x) => write!(f, "{}", **x),
             Value::Sym(id) => write!(f, "Sym({id})"),
             Value::Cons(_) => write!(f, "Cons(..)"),
-            Value::Str(s) => write!(f, "{:?}", s.borrow()),
+            Value::Str(s) => match s.try_borrow() {
+                Ok(text) => fmt_emacs_text_debug(f, &text),
+                Err(_) => f.write_str("Str(<borrowed>)"),
+            },
             Value::Vec(_) => write!(f, "Vec(..)"),
             Value::Record(_) => write!(f, "Record(..)"),
             Value::Hash(_) => write!(f, "Hash(..)"),
@@ -997,6 +1081,26 @@ impl fmt::Debug for Value {
             Value::Finalizer(_) => write!(f, "Finalizer(..)"),
         }
     }
+}
+
+fn fmt_emacs_text_debug(f: &mut fmt::Formatter<'_>, text: &EmacsText) -> fmt::Result {
+    f.write_str("\"")?;
+    for character in text.chars() {
+        match character.unicode() {
+            Some('"') => f.write_str("\\\"")?,
+            Some('\\') => f.write_str("\\\\")?,
+            Some('\0') => f.write_str("\\0")?,
+            Some('\t') => f.write_str("\\t")?,
+            Some('\n') => f.write_str("\\n")?,
+            Some('\r') => f.write_str("\\r")?,
+            Some(character) if character.is_control() => {
+                write!(f, "\\u{{{:x}}}", character as u32)?;
+            }
+            Some(character) => write!(f, "{character}")?,
+            None => write!(f, "\\x{{{:x}}}", character.code())?,
+        }
+    }
+    f.write_str("\"")
 }
 
 #[cfg(test)]
@@ -1018,6 +1122,11 @@ mod tests {
             (Value::Sym(7), "Sym(7)"),
             (Value::cons(Value::Nil, Value::Nil), "Cons(..)"),
             (Value::string("hi"), "\"hi\""),
+            (Value::string("line\n\""), "\"line\\n\\\"\""),
+            (
+                Value::string(EmacsText::from_codes([0x3fff80]).unwrap()),
+                "\"\\x{3fff80}\"",
+            ),
             (Value::vector(vec![]), "Vec(..)"),
             (Value::record(vec![]), "Record(..)"),
             (
@@ -1033,6 +1142,13 @@ mod tests {
         for (v, want) in cases {
             assert_eq!(format!("{v:?}"), want);
         }
+        let borrowed_string = Value::string("borrowed");
+        let Value::Str(string) = &borrowed_string else {
+            unreachable!();
+        };
+        let held_borrow = string.borrow_mut();
+        assert_eq!(format!("{borrowed_string:?}"), "Str(<borrowed>)");
+        drop(held_borrow);
         // Rc-backed variants: build via an Interp where needed.
         let mut i = crate::lisp::Interp::new();
         let lam = i.eval_str("(lambda (x) x)").unwrap();
@@ -1047,5 +1163,18 @@ mod tests {
         assert_eq!(format!("{f:?}"), "Frame(..)");
         let p = i.eval_str("(make-process :name \"pdbg\")").unwrap();
         assert_eq!(format!("{p:?}"), "Process(..)");
+    }
+
+    #[test]
+    fn dropping_deep_cons_nesting_does_not_recurse_on_the_rust_stack() {
+        let mut nested = Value::Nil;
+        for index in 0..500_001 {
+            nested = if index % 2 == 0 {
+                Value::cons(nested, Value::Nil)
+            } else {
+                Value::cons(Value::Nil, nested)
+            };
+        }
+        drop(nested);
     }
 }

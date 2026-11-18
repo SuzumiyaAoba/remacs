@@ -6,13 +6,14 @@
 //! provided for ASCII), and coding-system type resolution.
 
 use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
+use rustc_hash::FxHashSet;
 use std::rc::Rc;
 
 use super::misc::{coding_known, is_char_table};
 use super::{S, arg, eq_values, misc};
 use crate::lisp::error::Flow;
-use crate::lisp::value::{Subr, Value, lisp_char_code};
-use crate::lisp::{EvalResult, Interp};
+use crate::lisp::value::{Subr, SymId, Value, lisp_char_code};
+use crate::lisp::{EvalResult, Interp, obarray::sym};
 
 fn want_sym(i: &mut Interp, v: &Value) -> Result<u32, Flow> {
     i.sym_id(v).ok_or_else(|| i.wrong_type_mut("symbolp", v))
@@ -336,7 +337,7 @@ fn f_define_charset_alias(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let cl = i.q("charset-list");
         let cur = i.symbol_value(cl);
         let cell = Value::cons(a[0].clone(), cur);
-        let _ = i.set_symbol_default(cl, cell);
+        i.set_symbol_default_no_watchers(cl, cell)?;
     }
     Ok(Value::Nil)
 }
@@ -542,7 +543,9 @@ fn f_find_charset_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn region_charset_character(character: EmacsChar, unibyte: bool) -> EmacsChar {
     if unibyte && (128..=255).contains(&character.code()) {
         EmacsChar::new(0x3fff00 + character.code()).unwrap()
-    } else { character }
+    } else {
+        character
+    }
 }
 
 fn f_find_charset_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -583,10 +586,14 @@ fn f_find_charset_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ));
     }
     let (lo, hi) = ((lo1 - 1) as usize, (hi1 - 1) as usize);
-    let sub: crate::lisp::text::EmacsText = text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+    let sub: crate::lisp::text::EmacsText =
+        text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
     let multibyte = i.q("enable-multibyte-characters");
     let unibyte = i.symbol_value(multibyte).is_nil();
-    Ok(find_charset_of_chars(i, sub.chars().map(|c| region_charset_character(c, unibyte))))
+    Ok(find_charset_of_chars(
+        i,
+        sub.chars().map(|c| region_charset_character(c, unibyte)),
+    ))
 }
 
 fn f_char_resolve_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -603,7 +610,9 @@ fn f_char_resolve_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 pub(crate) fn resolve_modifier_mask(mut code: i128) -> i128 {
     use crate::editor::{CHAR_CTL, CHAR_MODIFIER_MASK, CHAR_SHIFT};
     let base = code & !CHAR_MODIFIER_MASK;
-    if !(0..128).contains(&base) { return code; }
+    if !(0..128).contains(&base) {
+        return code;
+    }
     if code & CHAR_SHIFT != 0 {
         if (65..=90).contains(&(code & 255)) {
             code &= !CHAR_SHIFT;
@@ -627,30 +636,51 @@ pub(crate) fn resolve_modifier_mask(mut code: i128) -> i128 {
 
 // ---------- char-code properties ----------
 
-fn prop_table<'a>(i: &'a mut Interp, name: &str) -> &'a mut Vec<(i64, Value)> {
-    if i.char_code_props.iter().all(|(n, _)| n != name) {
-        i.char_code_props.push((name.to_string(), Vec::new()));
-    }
-    &mut i
-        .char_code_props
-        .iter_mut()
-        .find(|(n, _)| n == name)
-        .unwrap()
-        .1
-}
-
 /// GNU's `define-char-code-property': push `(NAME . TABLE-OR-FILE)'
 /// onto `char-code-property-alist', replacing an existing entry's cdr.
-fn register_prop_alist(i: &mut Interp, name: &str, backing: Value) {
-    let entry = prop_alist_entry(i, name);
+fn register_prop_alist(i: &mut Interp, property: SymId, backing: Value) -> Result<(), Flow> {
+    let entry = prop_alist_entry_symbol(i, property);
     if let Value::Cons(c) = entry {
         c.borrow_mut().cdr = backing;
     } else {
         let vid = i.q("char-code-property-alist");
         let alist = i.symbol_value(vid);
-        let cell = Value::cons(Value::Sym(i.intern(name)), backing);
-        let _ = i.set_symbol(vid, Value::cons(cell, alist));
+        let cell = Value::cons(Value::Sym(property), backing);
+        i.set_symbol(vid, Value::cons(cell, alist))?;
     }
+    Ok(())
+}
+
+/// Entry lookup for a Lisp property symbol. The registry is an `assq'
+/// alist, so two uninterned symbols with equal names remain distinct.
+fn prop_alist_entry_symbol(i: &mut Interp, property: SymId) -> Value {
+    let variable = i.q("char-code-property-alist");
+    let mut tail = i.symbol_value(variable);
+    let mut seen = FxHashSet::default();
+    while let Value::Cons(cell) = tail {
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            // Preserve an earlier match, but do not loop forever if a
+            // missing property is searched in a circular alist.
+            return Value::Nil;
+        }
+        let (entry, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        if let Value::Cons(pair) = &entry {
+            let key = pair.borrow().car.clone();
+            if i.sym_id(&key) == Some(property) {
+                return entry;
+            }
+        }
+        tail = next;
+    }
+    Value::Nil
+}
+
+fn symbol_is_interned(i: &Interp, property: SymId) -> bool {
+    let name = i.symbol_name(property);
+    i.intern_soft(&name) == Some(property)
 }
 
 fn f_define_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -658,20 +688,50 @@ fn f_define_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     let name = i.symbol_name(sid);
     match &a[1] {
         v if is_char_table(i, v) => {
+            let expected_subtype = i.q("char-code-property-table");
+            let valid_table = match v {
+                Value::Record(record) => {
+                    let record = record.borrow();
+                    matches!(
+                        record.get(1),
+                        Some(Value::Sym(subtype)) if *subtype == expected_subtype
+                    ) && record
+                        .get(3)
+                        .is_some_and(|name| eq_values(name, &Value::Sym(sid)))
+                }
+                _ => false,
+            };
+            if !valid_table {
+                let shown = i.prin1_to_string(v);
+                return Err(i.error(&format!("Invalid char-table: {shown}")));
+            }
             // Keep the char-table as the property's backing store.
-            prop_table(i, &name);
-            i.char_code_prop_tables.retain(|(n, _)| n != &name);
-            i.char_code_prop_tables.push((name.clone(), v.clone()));
-            register_prop_alist(i, &name, v.clone());
+            register_prop_alist(i, sid, v.clone())?;
+            if symbol_is_interned(i, sid) {
+                i.char_code_prop_tables.retain(|(n, _)| n != &name);
+                i.char_code_prop_tables.push((name.clone(), v.clone()));
+            }
             Ok(Value::Nil)
         }
         Value::Str(_) => {
             // File-based property table. GNU keeps the file name as the
             // backing; any put/get then signals char-table-p — mirror that
             // by registering the string as the backing table.
-            i.char_code_prop_tables.retain(|(n, _)| n != &name);
-            i.char_code_prop_tables.push((name.clone(), a[1].clone()));
-            register_prop_alist(i, &name, a[1].clone());
+            // If the file is being reloaded after it already installed its
+            // table, preserve that table. GNU's Lisp definition skips this
+            // recursive-load reset so the live table stays available.
+            let current = match prop_alist_entry_symbol(i, sid) {
+                Value::Cons(entry) => entry.borrow().cdr.clone(),
+                _ => Value::Nil,
+            };
+            if is_char_table(i, &current) {
+                return Ok(Value::Nil);
+            }
+            register_prop_alist(i, sid, a[1].clone())?;
+            if symbol_is_interned(i, sid) {
+                i.char_code_prop_tables.retain(|(n, _)| n != &name);
+                i.char_code_prop_tables.push((name.clone(), a[1].clone()));
+            }
             Ok(Value::Nil)
         }
         other => Err(i.error(format!(
@@ -917,7 +977,8 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                     };
                     let mut name = EmacsText::from("HANGUL SYLLABLE ");
                     name.append(&jamo_name(0, l));
-                    name.append(&jamo_name(1, v)); name.append(&tail);
+                    name.append(&jamo_name(1, v));
+                    name.append(&tail);
                     Value::string(name)
                 }
                 "CJK IDEOGRAPH"
@@ -964,28 +1025,131 @@ pub(crate) fn uniprop_lookup(i: &mut Interp, tbl: &Value, ch: u32, raw: Value) -
     }
 }
 
-fn get_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
-    if let Some(e) = i.char_code_props.iter().find(|(n, _)| n == prop) {
-        if let Some((_, v)) = e.1.iter().find(|(c, _)| *c == ch) {
-            return v.clone();
+fn get_char_prop(i: &mut Interp, ch: i64, prop: &str, property: &Value) -> Result<Value, Flow> {
+    // Registered tables take precedence over fallback plists, like GNU's
+    // `get-char-code-property'. A property can gain a table after values
+    // were previously written to the fallback store.
+    let entry = match property {
+        Value::Sym(sid) => prop_alist_entry_symbol(i, *sid),
+        _ => prop_alist_entry(i, prop),
+    };
+    let tbl = match entry {
+        Value::Cons(entry) => entry.borrow().cdr.clone(),
+        _ => Value::Nil,
+    };
+    if is_char_table(i, &tbl) {
+        let decoder = char_table_extra_slot(i, &tbl, 1)?;
+        let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
+        if super::data::functionp_val(i, &decoder) {
+            return i.apply(&decoder, vec![Value::Int(ch as i128), raw, tbl]);
+        }
+        return Ok(uniprop_lookup(i, &tbl, ch.max(0) as u32, raw));
+    }
+    if let Some(value) =
+        get_symbol_fallback_char_code_property(i, &Value::Int(ch as i128), property)?
+    {
+        return Ok(value);
+    }
+    // Portable images from earlier runtimes serialized this fallback
+    // cache separately from the Lisp char-table. Keep those values visible
+    // only when the authoritative table has no property entry.
+    if let Value::Sym(sid) = property
+        && symbol_is_interned(i, *sid)
+        && let Some((_, values)) = i.char_code_props.iter().find(|(name, _)| name == prop)
+    {
+        if let Some((_, value)) = values.iter().find(|(code, _)| *code == ch) {
+            return Ok(value.clone());
         }
     }
-    // GNU `get-char-code-property': materialize the property's table
-    // (lazily loading its backing file), then apply the table's own
-    // decoder — a Lisp function in extra slot 1, or the fixnum C
-    // decoder index (run-length through extra slot 4).
-    let tbl = unicode_prop_table(i, prop);
-    if is_char_table(i, &tbl) {
-        let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
-        return uniprop_lookup(i, &tbl, ch.max(0) as u32, raw);
+    // Built-in defaults are keyed by GNU's interned property symbols.
+    // An uninterned symbol with the same spelling is a distinct alist key
+    // and must not inherit that property's C-backed default.
+    if matches!(property, Value::Sym(sid) if symbol_is_interned(i, *sid)) {
+        // GNU `get-char-code-property': materialize the property's table
+        // (lazily loading its backing file), then apply the table's own
+        // decoder — a Lisp function in extra slot 1, or the fixnum C
+        // decoder index (run-length through extra slot 4).
+        Ok(builtin_char_prop(i, ch, prop))
+    } else {
+        Ok(Value::Nil)
     }
-    builtin_char_prop(i, ch, prop)
+}
+
+/// Return both the fallback value and whether its property key is present.
+/// A stored nil must suppress the small C-data fallback below just as
+/// `plist-get' would in GNU's Lisp implementation.
+fn get_symbol_fallback_char_code_property(
+    i: &mut Interp,
+    character: &Value,
+    property: &Value,
+) -> Result<Option<Value>, Flow> {
+    let table_symbol = i.q("char-code-property-table");
+    let table = i.eval(&Value::Sym(table_symbol))?;
+    let aref = Value::Sym(i.q("aref"));
+    let plist = i.apply(&aref, vec![table, character.clone()])?;
+    let member = Value::Sym(i.q("plist-member"));
+    if i.apply(&member, vec![plist.clone(), property.clone()])?
+        .is_nil()
+    {
+        return Ok(None);
+    }
+    let plist_get = Value::Sym(i.q("plist-get"));
+    Ok(Some(i.apply(&plist_get, vec![plist, property.clone()])?))
+}
+
+fn get_fallback_char_code_property(
+    i: &mut Interp,
+    character: &Value,
+    property: &Value,
+) -> EvalResult {
+    let table_symbol = i.q("char-code-property-table");
+    let table = i.eval(&Value::Sym(table_symbol))?;
+    let aref = Value::Sym(i.q("aref"));
+    let plist = i.apply(&aref, vec![table, character.clone()])?;
+    let plist_get = Value::Sym(i.q("plist-get"));
+    i.apply(&plist_get, vec![plist, property.clone()])
+}
+
+fn put_fallback_char_code_property(
+    i: &mut Interp,
+    character: &Value,
+    property: &Value,
+    value: &Value,
+) -> EvalResult {
+    let table_symbol = i.q("char-code-property-table");
+    let table = i.eval(&Value::Sym(table_symbol))?;
+    let aref = Value::Sym(i.q("aref"));
+    let plist = i.apply(&aref, vec![table.clone(), character.clone()])?;
+    let plist_put = Value::Sym(i.q("plist-put"));
+    let updated = i.apply(
+        &plist_put,
+        vec![plist.clone(), property.clone(), value.clone()],
+    )?;
+    if !eq_values(&plist, &updated) {
+        let aset = Value::Sym(i.q("aset"));
+        i.apply(&aset, vec![table, character.clone(), updated])?;
+    }
+    Ok(value.clone())
+}
+
+/// `get-char-code-property` and `put-char-code-property` access these
+/// slots through `char-table-extra-slot', which signals on an undersized
+/// table instead of treating a missing slot as nil.
+fn char_table_extra_slot(i: &mut Interp, table: &Value, slot: usize) -> Result<Value, Flow> {
+    let Value::Record(record) = table else {
+        return Err(i.wrong_type_mut("char-table-p", table));
+    };
+    if record.borrow().len().saturating_sub(3) <= slot {
+        let condition = i.q("args-out-of-range");
+        return Err(i.signal_data(condition, vec![table.clone(), Value::Int(slot as i128)]));
+    }
+    Ok(record.borrow()[3 + slot].clone())
 }
 
 /// GNU charprop.c lazily loads the file backing a char-code property —
 /// `(load FILE nil t)' — and the uni-*.el file re-registers the property
 /// with a real char-table.
-fn load_file_backed_prop(i: &mut Interp, prop: &str) {
+fn load_file_backed_prop(i: &mut Interp, prop: &str) -> Result<(), Flow> {
     let file = i
         .char_code_prop_tables
         .iter()
@@ -1007,8 +1171,16 @@ fn load_file_backed_prop(i: &mut Interp, prop: &str) {
         });
     if let Some(file) = file {
         // GNU uniprop_table loads the table file with NOMESSAGE = t.
-        let _ = crate::lisp::load::load_library_opts_msg(i, &(file).to_unicode_lossy(), false, false, true, true);
+        crate::lisp::load::load_library_opts_msg(
+            i,
+            &file.to_unicode_lossy(),
+            false,
+            false,
+            true,
+            true,
+        )?;
     }
+    Ok(())
 }
 
 /// `char-code-property-alist' is the authoritative registry — GNU's
@@ -1017,26 +1189,20 @@ fn load_file_backed_prop(i: &mut Interp, prop: &str) {
 /// without the Rust cache seeing the define call.  Mirror a table
 /// found there back into `char_code_prop_tables'.
 fn sync_prop_table(i: &mut Interp, prop: &str) {
-    if let Value::Cons(c) = prop_alist_entry(i, prop) {
-        let v = c.borrow().cdr.clone();
-        if is_char_table(i, &v) {
-            let stale = i
-                .char_code_prop_tables
-                .iter()
-                .find(|(n, _)| n == prop)
-                .map(|(_, t)| t.clone());
-            if stale.as_ref().map_or(true, |t| !eq_values(t, &v)) {
-                i.char_code_prop_tables.retain(|(n, _)| n != prop);
-                i.char_code_prop_tables.push((prop.to_string(), v));
-            }
-        }
+    let backing = match prop_alist_entry(i, prop) {
+        Value::Cons(entry) => entry.borrow().cdr.clone(),
+        _ => Value::Nil,
+    };
+    i.char_code_prop_tables.retain(|(name, _)| name != prop);
+    if is_char_table(i, &backing) {
+        i.char_code_prop_tables.push((prop.to_string(), backing));
     }
 }
 
 /// GNU signals `wrong-type-argument (char-table-p FILE)` when a property
 /// registered with a file name is used for lookup or storage.
 fn check_prop_backing(i: &mut Interp, prop: &str) -> Result<(), Flow> {
-    load_file_backed_prop(i, prop);
+    load_file_backed_prop(i, prop)?;
     sync_prop_table(i, prop);
     let bad = i
         .char_code_prop_tables
@@ -1053,6 +1219,33 @@ fn check_prop_backing(i: &mut Interp, prop: &str) -> Result<(), Flow> {
         });
     if let Some(tbl) = bad {
         return Err(i.wrong_type_mut("char-table-p", &tbl));
+    }
+    Ok(())
+}
+
+fn check_prop_backing_symbol(i: &mut Interp, property: SymId, name: &str) -> Result<(), Flow> {
+    if symbol_is_interned(i, property) {
+        return check_prop_backing(i, name);
+    }
+    let entry = prop_alist_entry_symbol(i, property);
+    let backing = match entry {
+        Value::Cons(cell) => cell.borrow().cdr.clone(),
+        _ => return Ok(()),
+    };
+    if let Value::Str(file) = &backing {
+        // Preserve exact symbol identity for uninterned properties while
+        // giving their file-backed entries the same lazy-load behavior.
+        let file = file.borrow().clone();
+        crate::lisp::load::load_library_opts_msg(i, &file, false, false, true, true)?;
+        let refreshed = prop_alist_entry_symbol(i, property);
+        let backing = match refreshed {
+            Value::Cons(cell) => cell.borrow().cdr.clone(),
+            _ => Value::Nil,
+        };
+        if matches!(backing, Value::Str(_)) {
+            return Err(i.wrong_type_mut("char-table-p", &backing));
+        }
+        return Ok(());
     }
     Ok(())
 }
@@ -1097,14 +1290,24 @@ fn builtin_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
 }
 
 fn f_get_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    // `unicode-property-table-internal' returns nil for a non-symbol. The
+    // fallback `aref' still validates CHAR, then `plist-get' returns nil.
+    let Some(property) = i.sym_id(&a[1]) else {
+        return get_fallback_char_code_property(i, &a[0], &a[1]);
+    };
+    let prop = i.symbol_name(property);
+    check_prop_backing_symbol(i, property, &prop)?;
+    if let Value::Cons(entry) = prop_alist_entry_symbol(i, property) {
+        let table = entry.borrow().cdr.clone();
+        if is_char_table(i, &table) {
+            let _decoder = char_table_extra_slot(i, &table, 1)?;
+        }
+    }
     let ch = match &a[0] {
-        Value::Int(n) => *n as i64,
+        Value::Int(n) if (0..=misc::CT_MAX_CHAR as i128).contains(n) => *n as i64,
         _ => return Err(i.wrong_type_mut("characterp", &a[0])),
     };
-    let pid2 = want_sym(i, &a[1])?;
-    let prop = i.symbol_name(pid2);
-    check_prop_backing(i, &prop)?;
-    Ok(get_char_prop(i, ch, &prop))
+    get_char_prop(i, ch, &prop, &a[1])
 }
 
 /// GNU `put-unicode-property-internal' without the arg checking:
@@ -1141,20 +1344,32 @@ fn put_unicode_internal(i: &mut Interp, tbl: &Value, ch: u32, val: Value) -> Eva
 }
 
 fn f_put_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let Some(pid2) = i.sym_id(&a[1]) else {
+        return put_fallback_char_code_property(i, &a[0], &a[1], &a[2]);
+    };
+    let prop = i.symbol_name(pid2);
+    check_prop_backing_symbol(i, pid2, &prop)?;
+    let tbl = match prop_alist_entry_symbol(i, pid2) {
+        Value::Cons(entry) => entry.borrow().cdr.clone(),
+        _ => Value::Nil,
+    };
+    if is_char_table(i, &tbl) {
+        let setter = char_table_extra_slot(i, &tbl, 2)?;
+        if super::data::functionp_val(i, &setter) {
+            i.apply(&setter, vec![a[0].clone(), a[2].clone(), tbl])?;
+            return Ok(a[2].clone());
+        }
+    }
     let ch = match &a[0] {
         Value::Int(n) => *n,
         _ => return Err(i.wrong_type_mut("characterp", &a[0])),
     };
-    let pid2 = want_sym(i, &a[1])?;
-    let prop = i.symbol_name(pid2);
-    check_prop_backing(i, &prop)?;
     // Validate the original integer before narrowing it for native storage.
     // Otherwise negative or oversized codes can alias a valid table entry.
     if !(0..=misc::CT_MAX_CHAR as i128).contains(&ch) {
         return Err(i.wrong_type_mut("characterp", &a[0]));
     }
     let ch = ch as i64;
-    let tbl = unicode_prop_table(i, &prop);
     if is_char_table(i, &tbl) {
         match ct_extra(&tbl, 2) {
             Value::Int(_) | Value::Nil => {
@@ -1175,15 +1390,15 @@ fn f_put_char_code_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         }
         return Ok(a[2].clone());
     }
-    // Non-table property: GNU stores into `char-code-property-table'
-    // plists; our overlay keeps the same get-side semantics.
-    let store = prop_table(i, &prop);
-    if let Some(e) = store.iter_mut().find(|(c, _)| *c == ch) {
-        e.1 = a[2].clone();
-    } else {
-        store.push((ch, a[2].clone()));
+    // Non-table properties share the Lisp char-table used by GNU's
+    // `get-char-code-property' fallback, including direct Lisp edits.
+    let result = put_fallback_char_code_property(i, &a[0], &a[1], &a[2])?;
+    if symbol_is_interned(i, pid2)
+        && let Some((_, values)) = i.char_code_props.iter_mut().find(|(name, _)| name == &prop)
+    {
+        values.retain(|(code, _)| *code != ch as i64);
     }
-    Ok(a[2].clone())
+    Ok(result)
 }
 
 fn f_char_code_property_description(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1194,7 +1409,9 @@ fn f_char_code_property_description(i: &mut Interp, a: crate::lisp::Argv) -> Eva
     };
     let prop = i.symbol_name(pid2);
     let val = i.symbol_name(vid);
-    if prop == "general-category" {
+    let interned_property = symbol_is_interned(i, pid2);
+    let interned_value = symbol_is_interned(i, vid);
+    if interned_property && interned_value && prop == "general-category" {
         let desc = match val.as_str() {
             "Lu" => "Letter, Uppercase",
             "Ll" => "Letter, Lowercase",
@@ -1230,7 +1447,7 @@ fn f_char_code_property_description(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         };
         return Ok(Value::string(desc));
     }
-    if prop == "bidi-class" {
+    if interned_property && interned_value && prop == "bidi-class" {
         let desc = match val.as_str() {
             "L" => "Left-to-Right",
             "R" => "Right-to-Left",
@@ -1264,6 +1481,63 @@ fn f_char_code_property_description(i: &mut Interp, a: crate::lisp::Argv) -> Eva
 
 // ---------- translation tables ----------
 
+fn add_translation_mapping(
+    i: &mut Interp,
+    table: &Value,
+    revlist: &mut Vec<(i128, Vec<i128>)>,
+    elt: &Value,
+) -> Result<(), Flow> {
+    let (from, to) = match elt {
+        Value::Cons(c) => {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        }
+        Value::Nil => (Value::Nil, Value::Nil),
+        other => return Err(i.wrong_type_mut("listp", other)),
+    };
+    // GNU evaluates `(aref table TO)' before `(aset table FROM TO)'.
+    // Validate TO first; AREF checks the index as a fixnum and then
+    // rejects integers outside the character domain.
+    let to_fixnum = super::want_fixnum(i, &to)?;
+    if !(0..=misc::CT_MAX_CHAR as i128).contains(&to_fixnum) {
+        return Err(i.wrong_type_mut("characterp", &to));
+    }
+    let mut to_c = to_fixnum;
+    // (if (setq to-alt (aref table to)) (setq to to-alt))
+    if let Value::Int(ta) = misc::char_table_ref(i, table, to_c as usize) {
+        to_c = ta;
+    }
+    // ASET checks FROM only after the earlier AREF has completed.
+    let from_fixnum = super::want_fixnum(i, &from)?;
+    if !(0..=misc::CT_MAX_CHAR as i128).contains(&from_fixnum) {
+        return Err(i.wrong_type_mut("characterp", &from));
+    }
+    misc::ct_set(i, table, from_fixnum as u32, Value::Int(to_c));
+    // Chars previously mapped to FROM now map to TO.
+    let mut rev_from: Vec<i128> = vec![];
+    if let Some(pos) = revlist.iter().position(|(k, _)| *k == from_fixnum) {
+        let (_, list) = revlist.remove(pos);
+        for e in &list {
+            misc::ct_set(i, table, *e as u32, Value::Int(to_c));
+        }
+        rev_from = list;
+    }
+    match revlist.iter_mut().find(|(k, _)| *k == to_c) {
+        Some((_, list)) => {
+            let mut new_list = vec![from_fixnum];
+            new_list.append(list);
+            new_list.extend(rev_from);
+            *list = new_list;
+        }
+        None => {
+            let mut list = vec![from_fixnum];
+            list.extend(rev_from);
+            revlist.push((to_c, list));
+        }
+    }
+    Ok(())
+}
+
 fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU mule.el: each arg is a list of (FROM . TO) pairs.  A prior
     // mapping TO -> TO-ALT makes FROM also map to TO-ALT, and chars
@@ -1273,47 +1547,27 @@ fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
     let mut revlist: Vec<(i128, Vec<i128>)> = vec![];
     for arg in a.iter() {
-        let mut elts = Vec::new();
-        arg.each_car(|v| elts.push(v.clone()));
-        for elt in elts {
-            let (from, to) = match &elt {
-                Value::Cons(c) => {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                }
-                _ => continue,
+        let mut tail = arg.clone();
+        let mut seen = FxHashSet::default();
+        while let Value::Cons(cell) = &tail {
+            if !seen.insert(Rc::as_ptr(cell) as usize) {
+                // This input is specified as a finite list of mappings.
+                return Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail.clone()]));
+            }
+            let (elt, next) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
             };
-            let (Value::Int(f), Value::Int(t0)) = (&from, &to) else {
-                return Err(i.wrong_type_mut("fixnump", &from));
-            };
-            let (f, mut to_c) = (*f, *t0);
-            // (if (setq to-alt (aref table to)) (setq to to-alt))
-            if let Value::Int(ta) = misc::char_table_ref(i, &t, to_c as usize) {
-                to_c = ta;
-            }
-            misc::ct_set(i, &t, f as u32, Value::Int(to_c));
-            // Chars previously mapped to FROM now map to TO.
-            let mut rev_from: Vec<i128> = vec![];
-            if let Some(pos) = revlist.iter().position(|(k, _)| *k == f) {
-                let (_, list) = revlist.remove(pos);
-                for e in &list {
-                    misc::ct_set(i, &t, *e as u32, Value::Int(to_c));
-                }
-                rev_from = list;
-            }
-            match revlist.iter_mut().find(|(k, _)| *k == to_c) {
-                Some((_, l)) => {
-                    let mut nl = vec![f];
-                    nl.append(l);
-                    nl.extend(rev_from);
-                    *l = nl;
-                }
-                None => {
-                    let mut l = vec![f];
-                    l.extend(rev_from);
-                    revlist.push((to_c, l));
-                }
-            }
+            // GNU's `dolist' processes each mapping before reading its next
+            // cdr. Preserve that error order for dotted lists and malformed
+            // mappings while still detecting circular spines.
+            add_translation_mapping(i, &t, &mut revlist, &elt)?;
+            tail = next;
+        }
+        if !tail.is_nil() {
+            // GNU's `dolist' signals `listp' for a dotted tail only after
+            // processing the preceding mapping elements.
+            return Err(i.wrong_type_mut("listp", &tail));
         }
     }
     // GNU sets extra slot 1 to 1 (max-lookup).
@@ -1321,6 +1575,127 @@ fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         r.borrow_mut()[4] = Value::Int(1);
     }
     Ok(t)
+}
+
+#[cfg(test)]
+mod translation_table_cycle_tests {
+    use super::*;
+
+    #[test]
+    fn make_translation_table_rejects_a_circular_mapping_list() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let pairs = Value::cons(
+                    Value::cons(Value::Int('a' as i128), Value::Int('b' as i128)),
+                    Value::Nil,
+                );
+                if let Value::Cons(cell) = &pairs {
+                    cell.borrow_mut().cdr = pairs.clone();
+                }
+                let result = f_make_translation_table(&mut interp, vec![pairs].into());
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn make_translation_table_checks_mapping_indexes_in_aref_aset_order() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let bad = Value::Sym(interp.intern("bad"));
+                let cases = [
+                    (Value::list(vec![bad.clone()]), "(listp bad)"),
+                    (
+                        Value::list(vec![Value::cons(Value::Int(65), Value::string("bad"))]),
+                        "(fixnump \"bad\")",
+                    ),
+                    (
+                        Value::list(vec![Value::cons(Value::Int(65), Value::Int(-1))]),
+                        "(characterp -1)",
+                    ),
+                    (
+                        Value::list(vec![Value::cons(Value::string("bad"), Value::Int(65))]),
+                        "(fixnump \"bad\")",
+                    ),
+                    (
+                        Value::list(vec![Value::cons(Value::Int(-1), Value::Int(65))]),
+                        "(characterp -1)",
+                    ),
+                ];
+                for (mappings, expected) in cases {
+                    let result = f_make_translation_table(&mut interp, vec![mappings].into());
+                    let Err(Flow::Signal(signal)) = result else {
+                        panic!("expected an index error, got {result:?}");
+                    };
+                    assert_eq!(interp.prin1_to_string(&signal.data()), expected);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn make_translation_table_from_vector_builds_reverse_mapping_and_reads_arrays() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let mut entries = vec![Value::Nil; 257];
+                entries[65] = Value::Int(256);
+                entries[66] = Value::Int(67);
+                entries[256] = Value::Int(400);
+                let table = f_make_translation_table_from_vector(
+                    &mut interp,
+                    vec![Value::vector(entries)].into(),
+                )
+                .unwrap();
+                let reverse = ct_extra(&table, 0);
+                assert!(eq_values(&ct_extra(&table, 1), &Value::Int(1)));
+                assert!(eq_values(&ct_extra(&reverse, 1), &Value::Int(1)));
+                assert!(eq_values(
+                    &misc::char_table_ref(&interp, &table, 65),
+                    &Value::Int(256)
+                ));
+                assert!(misc::char_table_ref(&interp, &table, 256).is_nil());
+                assert!(eq_values(
+                    &misc::char_table_ref(&interp, &reverse, 256),
+                    &Value::Int(65)
+                ));
+
+                let string_table = f_make_translation_table_from_vector(
+                    &mut interp,
+                    vec![Value::string("a".repeat(256))].into(),
+                )
+                .unwrap();
+                assert!(eq_values(
+                    &misc::char_table_ref(&interp, &string_table, 0),
+                    &Value::Int('a' as i128)
+                ));
+
+                let short = f_make_translation_table_from_vector(
+                    &mut interp,
+                    vec![Value::vector(vec![Value::Nil; 255])].into(),
+                );
+                assert!(matches!(
+                    short,
+                    Err(Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::ARGS_OUT_OF_RANGE)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1340,33 +1715,57 @@ fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
         _ => f_make_translation_table(i, a[1..].to_vec().into())?,
     };
     let ttv = i.q("translation-table-vector");
-    let mut vec = match i.symbol_value(ttv) {
-        Value::Vec(v) => v.borrow().clone(),
-        _ => Vec::new(),
-    };
-    if vec.is_empty() {
-        vec = vec![Value::Nil; 16];
-    }
+    let length_fn = Value::Sym(i.q("length"));
+    let aref_fn = Value::Sym(i.q("aref"));
+    let aset_fn = Value::Sym(i.q("aset"));
+    let car_fn = Value::Sym(i.q("car"));
+    let make_vector_fn = Value::Sym(i.q("make-vector"));
+    let vconcat_fn = Value::Sym(i.q("vconcat"));
+    // GNU's Lisp implementation computes LENGTH before setting SYMBOL's
+    // property. Keep the ordinary sequence/array type errors from those
+    // primitives instead of silently replacing a user-bound value.
+    let current_vector = i.symbol_value(ttv);
+    let len_value = i.apply(&length_fn, vec![current_vector])?;
+    let len = super::want_int(i, &len_value)?;
+    let len = usize::try_from(len).map_err(|_| i.wrong_type_mut("wholenump", &len_value))?;
+    // GNU mutates an available slot with `aset', preserving the vector's
+    // identity and avoiding variable watchers.  It only assigns the Lisp
+    // variable when it has to grow the vector.
+    let prop = i.q("translation-table");
+    i.put_prop(id, prop, table.clone());
     let mut tid = 0usize;
     loop {
-        if tid >= vec.len() {
-            let n = vec.len();
-            vec.extend(std::iter::repeat(Value::Nil).take(n));
+        if tid >= len {
+            // The Lisp call is `(vconcat translation-table-vector
+            // (make-vector ...))', so its first argument is read before
+            // an advised `make-vector' runs.
+            let current_vector = i.symbol_value(ttv);
+            let padding = i.apply(&make_vector_fn, vec![Value::Int(len as i128), Value::Nil])?;
+            let grown = i.apply(&vconcat_fn, vec![current_vector, padding])?;
+            // `setq' runs watchers before storing.  If one signals, GNU
+            // has already installed the table property above, while the
+            // translation-table vector itself remains unchanged.
+            i.set_symbol(ttv, grown)?;
         }
-        let use_slot = match &vec[tid] {
-            Value::Nil => true,
-            Value::Cons(c) => matches!(&c.borrow().car, Value::Sym(s) if *s == id),
-            _ => false,
+        let current_vector = i.symbol_value(ttv);
+        let slot = i.apply(&aref_fn, vec![current_vector, Value::Int(tid as i128)])?;
+        let use_slot = if slot.is_nil() {
+            true
+        } else {
+            let head = i.apply(&car_fn, vec![slot])?;
+            eq_values(&head, &Value::Sym(id))
         };
         if use_slot {
+            let slot = Value::cons(Value::Sym(id), table.clone());
+            let current_vector = i.symbol_value(ttv);
+            i.apply(
+                &aset_fn,
+                vec![current_vector, Value::Int(tid as i128), slot],
+            )?;
             break;
         }
         tid += 1;
     }
-    vec[tid] = Value::cons(Value::Sym(id), table.clone());
-    let _ = i.set_symbol(ttv, Value::vector(vec));
-    let prop = i.q("translation-table");
-    i.put_prop(id, prop, table);
     let tidp = i.q("translation-table-id");
     i.put_prop(id, tidp, Value::Int(tid as i128));
     Ok(Value::Int(tid as i128))
@@ -1375,31 +1774,31 @@ fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 fn f_make_translation_table_from_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (make-translation-table-from-vector VEC) — VEC is a 256-element array
     // mapping unibyte codes to multibyte chars.
-    let slots: Vec<Value> = match &a[0] {
-        Value::Vec(v) => {
-            let v = v.borrow();
-            if v.len() != 256 {
-                let s = i.q("args-out-of-range");
-                return Err(i.signal_data(s, vec![a[0].clone(), Value::Int(v.len() as i128)]));
-            }
-            v.clone()
-        }
-        _ => return Err(i.wrong_type_mut("vectorp", &a[0])),
-    };
     let tag = symv(i, "translation-table");
-    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
-    for (k, v) in slots.iter().enumerate() {
-        if !v.is_nil() {
-            misc::ct_set(i, &t, k as u32, v.clone());
+    let table = misc::make_ct(i, tag.clone(), Value::Nil, vec![Value::Nil, Value::Nil]);
+    let reverse = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil, Value::Nil]);
+    let aref = Value::Sym(i.q("aref"));
+    let aset = Value::Sym(i.q("aset"));
+    let ge = Value::Sym(i.q(">="));
+    for index in 0..256 {
+        let value = i.apply(&aref, vec![a[0].clone(), Value::Int(index)])?;
+        if value.is_nil() {
+            continue;
+        }
+        i.apply(&aset, vec![table.clone(), Value::Int(index), value.clone()])?;
+        if i.apply(&ge, vec![value.clone(), Value::Int(256)])?.truthy() {
+            i.apply(&aset, vec![reverse.clone(), value, Value::Int(index)])?;
         }
     }
-    Ok(t)
-}
-
-fn f_set_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = &a;
-    let _ = i;
-    Ok(Value::Nil)
+    if let Value::Record(record) = &table {
+        let mut record = record.borrow_mut();
+        record[3] = reverse.clone();
+        record[4] = Value::Int(1);
+    }
+    if let Value::Record(record) = &reverse {
+        record.borrow_mut()[4] = Value::Int(1);
+    }
+    Ok(table)
 }
 
 // ---------- coding systems ----------
@@ -1508,7 +1907,11 @@ fn coding_plist_key(i: &Interp, name: &str) -> String {
     // Resolve explicit aliases before interpreting suffixes in their names.
     let mut resolved = name.to_string();
     for _ in 0..16 {
-        match i.extra_coding_aliases.iter().find(|(alias, _)| *alias == resolved) {
+        match i
+            .extra_coding_aliases
+            .iter()
+            .find(|(alias, _)| *alias == resolved)
+        {
             Some((_, target)) => resolved = target.clone(),
             None => break,
         }
@@ -1664,6 +2067,7 @@ fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     }
     let mut seen: Vec<String> = Vec::new();
     let mut moved: Vec<Value> = Vec::new();
+    let mut detection_members = i.coding_detection_members.clone();
     for v in a.iter() {
         let Some((cat, base)) = coding_category_member(i, v) else {
             continue;
@@ -1672,8 +2076,7 @@ fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
             continue;
         }
         if let Value::Sym(symbol) = v {
-            i.coding_detection_members
-                .insert(cat.clone(), i.symbol_name(*symbol).to_string());
+            detection_members.insert(cat.clone(), i.symbol_name(*symbol).to_string());
         }
         seen.push(cat);
         moved.push(symv(i, &base));
@@ -1705,7 +2108,11 @@ fn f_set_coding_system_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
             cur = cdr;
         }
         moved.extend(rest);
-        let _ = i.set_symbol(var, Value::list(moved));
+        // Variable watchers run before the Lisp cell is stored. Commit the
+        // Rust-side category map only after that store succeeds; an erroring
+        // watcher must not leave the two priority views out of sync.
+        i.set_symbol(var, Value::list(moved))?;
+        i.coding_detection_members = detection_members;
     }
     Ok(Value::Nil)
 }
@@ -1733,12 +2140,6 @@ fn f_set_keyboard_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -
         a[0].clone()
     };
     i.keyboard_coding = sym.clone();
-    // `keyboard-coding-system' is ALSO a defcustom that the mule.el
-    // wrapper setqs; keep it in sync so the var and the subr agree.
-    let kc = i.q("keyboard-coding-system");
-    if i.bound_p(kc) {
-        let _ = i.set_symbol(kc, sym.clone());
-    }
     Ok(Value::Nil)
 }
 
@@ -2338,7 +2739,12 @@ fn iso_chars_96(i: &mut Interp, plist: &Value) -> bool {
 /// `:iso-final-char' matches FC, `:dimension' matches DIM, and whose
 /// chars flag matches — last definition wins; explicit
 /// `iso_charset_overrides' entries win over all.
-pub(crate) fn iso_charset_lookup(i: &mut Interp, dim: i64, chars96: bool, fc: i64) -> Option<String> {
+pub(crate) fn iso_charset_lookup(
+    i: &mut Interp,
+    dim: i64,
+    chars96: bool,
+    fc: i64,
+) -> Option<String> {
     let mut found: Option<String> = None;
     for name in charsets_ordered(i) {
         let plist = effective_charset_plist(i, &name);
@@ -2676,22 +3082,10 @@ fn f_clear_charset_maps(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Entry `(prop . TABLE)' in `char-code-property-alist', or nil.
 fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
-    let vid = i.q("char-code-property-alist");
-    let alist = i.symbol_value(vid);
-    for e in alist.list_to_vec().unwrap_or_default() {
-        if let Value::Cons(c) = &e {
-            let (k, _) = {
-                let cc = c.borrow();
-                (cc.car.clone(), cc.cdr.clone())
-            };
-            if let Value::Sym(s) = &k {
-                if i.symbol_name(*s) == prop {
-                    return e;
-                }
-            }
-        }
-    }
-    Value::Nil
+    let Some(property) = i.intern_soft(prop) else {
+        return Value::Nil;
+    };
+    prop_alist_entry_symbol(i, property)
 }
 
 /// Materialize PROP's table: GNU loads the backing file, which
@@ -2699,8 +3093,8 @@ fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
 /// is absent or does not self-register, return the file-name string —
 /// GNU's `uniprop_table' likewise leaves the alist cdr alone so a
 /// later attempt can retry the load.
-fn install_prop_table(i: &mut Interp, prop: &str) -> Value {
-    load_file_backed_prop(i, prop);
+fn install_prop_table(i: &mut Interp, prop: &str) -> Result<Value, Flow> {
+    load_file_backed_prop(i, prop)?;
     sync_prop_table(i, prop);
     let found = i
         .char_code_prop_tables
@@ -2708,32 +3102,34 @@ fn install_prop_table(i: &mut Interp, prop: &str) -> Value {
         .find(|(n, _)| n == prop)
         .map(|(_, t)| t.clone());
     if let Some(t) = found {
-        if is_char_table(i, &t) {
+        if misc::is_uniprop_table(i, &t) {
             let entry = prop_alist_entry(i, prop);
             if let Value::Cons(c) = entry {
                 c.borrow_mut().cdr = t.clone();
             }
+            return Ok(t);
         }
-        return t;
     }
-    match prop_alist_entry(i, prop) {
-        Value::Cons(c) => c.borrow().cdr.clone(),
-        _ => Value::Nil,
-    }
+    // GNU `uniprop_table' returns nil if loading the file did not
+    // register a Unicode property char-table, including a missing file.
+    Ok(Value::Nil)
 }
 
-/// char-table for PROP — GNU's `Funicode_property_table_internal':
-/// consult `char-code-property-alist' and return nil for unknown
-/// properties; a string cdr names a data file that loads into a table.
-pub(crate) fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
+/// Internal registry lookup used by GNU Lisp callers.  `uniprop_table'
+/// is a separate C helper that lazily loads string-valued entries.
+pub(crate) fn unicode_prop_table(i: &mut Interp, prop: &str) -> Result<Value, Flow> {
+    // The Lisp alist can be rebound or mutated after a table was cached.
+    // Refresh it before consulting the C-side cache so removed registrations
+    // cannot keep returning a stale table.
+    sync_prop_table(i, prop);
     let dbg = i.dbg_flags & 0x100000 != 0;
     if let Some((_, t)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
         return match t {
-            t if is_char_table(i, t) => {
+            t if misc::is_uniprop_table(i, t) => {
                 if dbg {
                     eprintln!("[uniprop] {prop}: cache hit table");
                 }
-                t.clone()
+                Ok(t.clone())
             }
             // File-backed registration: GNU loads the file, which builds
             // the table via `define-char-code-property'/`put-unicode-
@@ -2742,7 +3138,7 @@ pub(crate) fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
                 if dbg {
                     eprintln!("[uniprop] {prop}: cache Str -> install");
                 }
-                let v = install_prop_table(i, prop);
+                let v = install_prop_table(i, prop)?;
                 if dbg {
                     let tn = match &v {
                         Value::Nil => "nil",
@@ -2757,9 +3153,9 @@ pub(crate) fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
                         is_char_table(i, &v)
                     );
                 }
-                v
+                Ok(v)
             }
-            _ => t.clone(),
+            _ => Ok(Value::Nil),
         };
     }
     if dbg {
@@ -2772,15 +3168,15 @@ pub(crate) fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
                 eprintln!("[uniprop] {prop}: alist cdr hit");
             }
             match cdr {
-                v if is_char_table(i, &v) => {
+                v if misc::is_uniprop_table(i, &v) => {
                     i.char_code_prop_tables.push((prop.to_string(), v.clone()));
-                    v
+                    Ok(v)
                 }
                 Value::Str(_) => install_prop_table(i, prop),
-                _ => cdr,
+                _ => Ok(Value::Nil),
             }
         }
-        _ => Value::Nil,
+        _ => Ok(Value::Nil),
     }
 }
 
@@ -2790,7 +3186,22 @@ fn f_unicode_property_table_internal(i: &mut Interp, a: crate::lisp::Argv) -> Ev
         return Ok(Value::Nil);
     };
     let prop = i.symbol_name(pid);
-    Ok(unicode_prop_table(i, &prop))
+    if !symbol_is_interned(i, pid) {
+        return Ok(match prop_alist_entry_symbol(i, pid) {
+            Value::Cons(entry) => entry.borrow().cdr.clone(),
+            _ => Value::Nil,
+        });
+    }
+    let table = unicode_prop_table(i, &prop)?;
+    if misc::is_char_table(i, &table) {
+        return Ok(table);
+    }
+    // GNU falls back to the raw alist cdr when uniprop_table cannot
+    // materialize a Unicode table (e.g. an unavailable backing file).
+    Ok(match prop_alist_entry(i, &prop) {
+        Value::Cons(entry) => entry.borrow().cdr.clone(),
+        _ => Value::Nil,
+    })
 }
 
 /// Property name a table was registered under (identity match).
@@ -2960,13 +3371,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         f_make_translation_table_from_vector,
         "Make a translation table from a 256-vector."
-    ),
-    S!(
-        "set-translation-table",
-        1,
-        3,
-        f_set_translation_table,
-        "Set current translation table."
     ),
     S!(
         "coding-system-type",
@@ -3297,39 +3701,43 @@ fn charset_map_dirs() -> Vec<std::path::PathBuf> {
 
 /// Load (and cache) `etc/charsets/NAME.map'.  A missing file caches an
 /// empty table so we don't rescan per character.
-fn charset_table<T: TextSource + ?Sized>(i: &Interp, mapname: &T, name: &str) -> Option<Rc<CharsetTable>> {
+fn charset_table<T: TextSource + ?Sized>(
+    i: &Interp,
+    mapname: &T,
+    name: &str,
+) -> Option<Rc<CharsetTable>> {
     mapname.with_text(|mapname| {
-    let plist = charset_entry(i, name)
-        .map(|e| e.1.clone())
-        .unwrap_or(Value::Nil);
-    let dims = charset_dims(i, &plist);
-    let codes: Vec<_> = mapname.chars().map(EmacsChar::code).collect();
-    let key = format!("filemap:{codes:?}:{dims:?}");
-    if let Some(t) = i.charset_maps.borrow().get(&key) {
-        return if t.dec.is_empty() {
-            None
-        } else {
-            Some(t.clone())
-        };
-    }
-    for d in charset_map_dirs() {
-        let mut filename = mapname.to_string(); filename.push_str(".map");
-        let p = d.join(filename.to_os_string().ok()?);
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            let t = Rc::new(parse_charset_map(&text, dims.as_deref()));
-            i.charset_maps.borrow_mut().insert(key.clone(), t.clone());
-            return Some(t);
+        let plist = charset_entry(i, name)
+            .map(|e| e.1.clone())
+            .unwrap_or(Value::Nil);
+        let dims = charset_dims(i, &plist);
+        let codes: Vec<_> = mapname.chars().map(EmacsChar::code).collect();
+        let key = format!("filemap:{codes:?}:{dims:?}");
+        if let Some(t) = i.charset_maps.borrow().get(&key) {
+            return if t.dec.is_empty() {
+                None
+            } else {
+                Some(t.clone())
+            };
         }
-    }
-    i.charset_maps.borrow_mut().insert(
-        key,
-        Rc::new(CharsetTable {
-            dec: Vec::new(),
-            enc: Vec::new(),
-        }),
-    );
-    None
-
+        for d in charset_map_dirs() {
+            let mut filename = mapname.to_string();
+            filename.push_str(".map");
+            let p = d.join(filename.to_os_string().ok()?);
+            if let Ok(text) = std::fs::read_to_string(&p) {
+                let t = Rc::new(parse_charset_map(&text, dims.as_deref()));
+                i.charset_maps.borrow_mut().insert(key.clone(), t.clone());
+                return Some(t);
+            }
+        }
+        i.charset_maps.borrow_mut().insert(
+            key,
+            Rc::new(CharsetTable {
+                dec: Vec::new(),
+                enc: Vec::new(),
+            }),
+        );
+        None
     })
 }
 
@@ -4213,7 +4621,7 @@ fn define_charset_internal_impl(i: &mut Interp, a: &[Value]) -> EvalResult {
             let cl = i.q("charset-list");
             let cur = i.symbol_value(cl);
             let cell = Value::cons(Value::Sym(sid), cur);
-            let _ = i.set_symbol_default(cl, cell);
+            i.set_symbol_default_no_watchers(cl, cell)?;
         }
         if supp {
             let mut st = i.charset_order.borrow_mut();
@@ -4359,12 +4767,488 @@ mod wide_charset_region_tests {
     #[test]
     fn unibyte_octets_are_classified_as_byte8() {
         let input = [65u32, 127, 128, 255].map(|code| EmacsChar::new(code).unwrap());
-        assert_eq!(input.map(|c| region_charset_character(c, true).code()), [65, 127, 0x3fff80, 0x3fffff]);
-        assert_eq!(input.map(|c| region_charset_character(c, false).code()), [65, 127, 128, 255]);
+        assert_eq!(
+            input.map(|c| region_charset_character(c, true).code()),
+            [65, 127, 0x3fff80, 0x3fffff]
+        );
+        assert_eq!(
+            input.map(|c| region_charset_character(c, false).code()),
+            [65, 127, 128, 255]
+        );
     }
     #[test]
     fn multibyte_private_use_and_extended_codes_keep_their_identity() {
         let input = [0xf0080u32, 0xf0100, 0xd800, 0x110000, 0x3fff80];
-        assert_eq!(input.map(|code| region_charset_character(EmacsChar::new(code).unwrap(), false).code()), input);
+        assert_eq!(
+            input.map(|code| region_charset_character(EmacsChar::new(code).unwrap(), false).code()),
+            input
+        );
+    }
+}
+
+#[cfg(test)]
+mod coding_priority_tests {
+    use super::*;
+
+    #[test]
+    fn priority_watcher_error_propagates_without_partially_committing() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-coding-priority-watcher (_symbol _value operation _where)\
+                           (when (eq operation 'set)\
+                             (signal 'file-error '(\"priority watcher\"))))\
+                         (add-variable-watcher 'remacs-coding-system-priorities\
+                                               #'qa-coding-priority-watcher)",
+                    )
+                    .unwrap();
+
+                let variable = interp.intern("remacs-coding-system-priorities");
+                let old_priorities = interp.symbol_value(variable);
+                let old_members = interp.coding_detection_members.clone();
+                let mark = interp.specbind_depth();
+                let coding = Value::Sym(interp.intern("iso-latin-2"));
+                let result = f_set_coding_system_priority(&mut interp, vec![coding].into());
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+                assert_eq!(interp.specbind_depth(), mark);
+                assert_eq!(
+                    interp.prin1_to_string(&interp.symbol_value(variable)),
+                    interp.prin1_to_string(&old_priorities)
+                );
+                assert_eq!(interp.coding_detection_members, old_members);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn charset_alias_c_global_update_does_not_notify_charset_list_watchers() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar qa-charset-list-events nil)\
+                         (defun qa-charset-list-watcher\
+                                (_symbol _value operation _where)\
+                           (push operation qa-charset-list-events))\
+                         (add-variable-watcher 'charset-list\
+                                               #'qa-charset-list-watcher)",
+                    )
+                    .unwrap();
+                let events = interp.intern("qa-charset-list-events");
+                let charset_list = interp.intern("charset-list");
+                let alias = Value::Sym(interp.intern("qa-audit-charset-alias"));
+                let ascii = Value::Sym(interp.intern("ascii"));
+                let result = f_define_charset_alias(&mut interp, vec![alias.clone(), ascii].into());
+                assert!(result.is_ok_and(|value| value.is_nil()));
+                assert!(interp.symbol_value(events).is_nil());
+                assert!(matches!(
+                    interp.symbol_value(charset_list).list_to_vec().unwrap().first(),
+                    Some(Value::Sym(symbol)) if *symbol == interp.sym_id(&alias).unwrap()
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod file_backed_property_load_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct RemoveDir(PathBuf);
+
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn char_code_property_load_errors_are_not_replaced_by_table_type_errors() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let suffix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let directory = std::env::temp_dir().join(format!(
+                    "remacs-char-property-{}-{suffix}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&directory).unwrap();
+                let _cleanup = RemoveDir(directory.clone());
+                std::fs::write(
+                    directory.join("qa-file-backed-prop.el"),
+                    "(signal 'file-error '(\"property backing file\"))\n",
+                )
+                .unwrap();
+
+                let mut interp = Interp::new();
+                let load_path = interp.q("load-path");
+                interp
+                    .set_symbol_no_watchers(
+                        load_path,
+                        Value::list(vec![Value::string(directory.to_string_lossy().as_ref())]),
+                    )
+                    .unwrap();
+                let property = interp.intern("qa-file-backed-prop");
+                let alist = interp.q("char-code-property-alist");
+                let entry = Value::cons(Value::Sym(property), Value::string("qa-file-backed-prop"));
+                let entries = Value::cons(entry, interp.symbol_value(alist));
+                interp.set_symbol_no_watchers(alist, entries).unwrap();
+
+                let result = f_get_char_code_property(
+                    &mut interp,
+                    vec![Value::Int(65), Value::Sym(property)].into(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn bundled_unicode_property_source_replaces_its_file_backing() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new_with_noninteractive(true);
+                let property = interp.intern("name");
+                assert!(matches!(
+                    prop_alist_entry(&mut interp, "name"),
+                    Value::Cons(ref entry) if matches!(&entry.borrow().cdr, Value::Str(_))
+                ));
+
+                let result = f_unicode_property_table_internal(
+                    &mut interp,
+                    vec![Value::Sym(property)].into(),
+                )
+                .unwrap();
+                assert!(misc::is_uniprop_table(&interp, &result));
+                let table = match prop_alist_entry(&mut interp, "name") {
+                    Value::Cons(entry) => entry.borrow().cdr.clone(),
+                    other => panic!("property entry disappeared: {other:?}"),
+                };
+                assert!(misc::is_uniprop_table(&interp, &table));
+                assert!(eq_values(&result, &table));
+                assert!(
+                    interp
+                        .char_code_prop_tables
+                        .iter()
+                        .any(|(property, cached)| {
+                            property == "name" && eq_values(cached, &table)
+                        })
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn unicode_property_table_internal_returns_nil_for_missing_or_generic_tables() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let suffix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let directory = std::env::temp_dir().join(format!(
+                    "remacs-unicode-property-{}-{suffix}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&directory).unwrap();
+                let _cleanup = RemoveDir(directory.clone());
+
+                let mut interp = Interp::new();
+                let load_path = interp.q("load-path");
+                interp
+                    .set_symbol_no_watchers(
+                        load_path,
+                        Value::list(vec![Value::string(directory.to_string_lossy().as_ref())]),
+                    )
+                    .unwrap();
+                let alist = interp.q("char-code-property-alist");
+                let missing = interp.intern("qa-missing-uniprop-table");
+                let missing_entry = Value::cons(
+                    Value::Sym(missing),
+                    Value::string("qa-no-such-uniprop-file"),
+                );
+                let old_alist = interp.symbol_value(alist);
+                interp
+                    .set_symbol_no_watchers(alist, Value::cons(missing_entry, old_alist))
+                    .unwrap();
+                assert!(
+                    unicode_prop_table(&mut interp, "qa-missing-uniprop-table")
+                        .unwrap()
+                        .is_nil()
+                );
+
+                let generic = interp.intern("qa-generic-uniprop-table");
+                let purpose = Value::Sym(interp.intern("qa-generic-purpose"));
+                let table = crate::lisp::builtins::seq::make_char_table_raw(
+                    &mut interp,
+                    purpose,
+                    Value::Nil,
+                );
+                let old_alist = interp.symbol_value(alist);
+                let entry = Value::cons(Value::Sym(generic), table);
+                interp
+                    .set_symbol_no_watchers(alist, Value::cons(entry, old_alist))
+                    .unwrap();
+                assert!(
+                    unicode_prop_table(&mut interp, "qa-generic-uniprop-table")
+                        .unwrap()
+                        .is_nil()
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod registered_property_callback_tests {
+    use super::*;
+
+    #[test]
+    fn property_alist_lookup_keeps_matches_before_circular_or_dotted_tails() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let result = interp
+                    .eval_str(
+                        "(let* ((property 'general-category)\
+                                (character 945)\
+                                (expected (get-char-code-property character property))\
+                                (entry (assq property char-code-property-alist))\
+                                (cycle (cons entry nil)))\
+                           (setcdr cycle cycle)\
+                           (let ((char-code-property-alist cycle))\
+                             (let ((from-cycle\
+                                    (get-char-code-property character property)))\
+                               (let ((char-code-property-alist (cons entry 'dotted)))\
+                                 (list expected from-cycle\
+                                       (get-char-code-property character property))))))",
+                    )
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&result), "(Ll Ll Ll)");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn registered_property_tables_use_their_getter_and_setter_callbacks() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let property = interp.intern("qa-char-code-callback-prop");
+                let seen = interp.intern("qa-char-code-callback-setter-seen");
+                interp.store_internal_value(seen, Value::Nil);
+                let getter = interp
+                    .eval_str("#'(lambda (char raw _table) (list 'decoded char raw))")
+                    .unwrap();
+                let setter = interp
+                    .eval_str(
+                        "#'(lambda (char value _table)\
+                           (setq qa-char-code-callback-setter-seen\
+                                 (list char value)))",
+                    )
+                    .unwrap();
+                let subtype = interp.q("char-code-property-table");
+                let extra_slots = interp.q("char-table-extra-slots");
+                interp.put_prop(subtype, extra_slots, Value::Int(5));
+                let table = crate::lisp::builtins::seq::make_char_table_raw(
+                    &mut interp,
+                    Value::Sym(subtype),
+                    Value::Nil,
+                );
+                if let Value::Record(record) = &table {
+                    let mut record = record.borrow_mut();
+                    record[3] = Value::Sym(property);
+                    record[4] = getter;
+                    record[5] = setter;
+                }
+                let raw_value = interp.intern("raw-value");
+                misc::ct_set(&mut interp, &table, 65, Value::Sym(raw_value));
+                let alist = interp.q("char-code-property-alist");
+                let old_alist = interp.symbol_value(alist);
+                interp.store_internal_value(
+                    alist,
+                    Value::cons(Value::cons(Value::Sym(property), table), old_alist),
+                );
+                let fallback_value = interp.intern("fallback-value");
+                let fallback_table_symbol = interp.q("char-code-property-table");
+                let fallback_table = interp.symbol_value(fallback_table_symbol);
+                misc::ct_set(
+                    &mut interp,
+                    &fallback_table,
+                    65,
+                    Value::list(vec![Value::Sym(property), Value::Sym(fallback_value)]),
+                );
+
+                let decoded = f_get_char_code_property(
+                    &mut interp,
+                    vec![Value::Int(65), Value::Sym(property)].into(),
+                )
+                .unwrap();
+                assert_eq!(interp.prin1_to_string(&decoded), "(decoded 65 raw-value)");
+
+                let value = Value::Sym(interp.intern("callback-value"));
+                let result = f_put_char_code_property(
+                    &mut interp,
+                    vec![
+                        Value::Int(misc::CT_MAX_CHAR as i128 + 1),
+                        Value::Sym(property),
+                        value.clone(),
+                    ]
+                    .into(),
+                )
+                .unwrap();
+                assert!(eq_values(&result, &value));
+                assert_eq!(
+                    interp.prin1_to_string(&interp.symbol_value(seen)),
+                    format!("({} callback-value)", misc::CT_MAX_CHAR + 1)
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn native_property_lookup_signals_for_a_missing_decoder_slot() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let property = interp.intern("qa-char-code-generic-property");
+                let subtype = interp.intern("qa-char-code-generic-purpose");
+                let table = crate::lisp::builtins::seq::make_char_table_raw(
+                    &mut interp,
+                    Value::Sym(subtype),
+                    Value::Nil,
+                );
+                let alist = interp.q("char-code-property-alist");
+                let old_alist = interp.symbol_value(alist);
+                interp.store_internal_value(
+                    alist,
+                    Value::cons(Value::cons(Value::Sym(property), table.clone()), old_alist),
+                );
+
+                let result = f_get_char_code_property(
+                    &mut interp,
+                    vec![Value::Int(65), Value::Sym(property)].into(),
+                );
+                let condition = interp.q("args-out-of-range");
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(condition)
+                ));
+
+                let absent = interp.intern("qa-char-code-no-property");
+                let invalid_character = f_get_char_code_property(
+                    &mut interp,
+                    vec![Value::Int(-1), Value::Sym(absent)].into(),
+                );
+                let wrong_type = interp.q("wrong-type-argument");
+                assert!(matches!(
+                    invalid_character,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(wrong_type)
+                ));
+
+                assert!(
+                    f_get_char_code_property(
+                        &mut interp,
+                        vec![Value::Int(65), Value::Int(42)].into(),
+                    )
+                    .unwrap()
+                    .is_nil()
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn native_fallback_property_storage_accepts_non_symbol_keys() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let property = Value::Int(42);
+                let character = Value::Int(65);
+                let value = Value::Sym(interp.intern("non-symbol-property-value"));
+
+                let stored = f_put_char_code_property(
+                    &mut interp,
+                    vec![character.clone(), property.clone(), value.clone()].into(),
+                )
+                .unwrap();
+                assert!(eq_values(&stored, &value));
+                let found = f_get_char_code_property(&mut interp, vec![character, property].into())
+                    .unwrap();
+                assert!(eq_values(&found, &value));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod char_code_property_subtype_identity_tests {
+    use super::*;
+    use crate::lisp::{obarray::Obarray, value::RecordKind};
+
+    #[test]
+    fn registration_rejects_a_same_named_uninterned_subtype() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let property = interp.make_symbol("qa-char-code-property");
+        let subtype = interp.make_symbol("char-code-property-table");
+        let tag = interp.intern("char-table");
+        let table = Value::record_with_kind(
+            vec![
+                Value::Sym(tag),
+                Value::Sym(subtype),
+                Value::vector(vec![Value::Nil; 65]),
+                Value::Sym(property),
+            ],
+            RecordKind::CharTable,
+        );
+
+        let result =
+            f_define_char_code_property(&mut interp, vec![Value::Sym(property), table].into());
+        assert!(matches!(
+            result,
+            Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+        ));
     }
 }

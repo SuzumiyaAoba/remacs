@@ -41,7 +41,9 @@ impl Sources {
             let Some(key) = crate::lisp::load::dump_source_identity(&text) else {
                 return Ok(());
             };
-            let native = text.to_os_string().map_err(|_| "Cannot encode image source path")?;
+            let native = text
+                .to_os_string()
+                .map_err(|_| "Cannot encode image source path")?;
             if let Some(parent) = Path::new(&native).parent() {
                 if let Ok(parent) = std::fs::canonicalize(parent) {
                     roots.insert(parent);
@@ -98,7 +100,12 @@ impl Sources {
                 return Ok(());
             };
             let text = text.borrow().clone();
-            if text.to_os_string().ok().and_then(|path| std::fs::canonicalize(path).ok()).is_some_and(|root| roots.contains(&root)) {
+            if text
+                .to_os_string()
+                .ok()
+                .and_then(|path| std::fs::canonicalize(path).ok())
+                .is_some_and(|root| roots.contains(&root))
+            {
                 if let Ref::Object(id) = encoder.value(value)? {
                     sources.directories.push(Directory {
                         old: encode_text(&text),
@@ -150,11 +157,19 @@ impl Sources {
             for entry in &self.directories {
                 // An existing source tree may contain user edits. Keep
                 // its search/default directory while it remains usable.
-                if decode_text(&entry.old).to_os_string().ok().is_some_and(|path| Path::new(&path).is_dir()) {
+                if decode_text(&entry.old)
+                    .to_os_string()
+                    .ok()
+                    .is_some_and(|path| Path::new(&path).is_dir())
+                {
                     continue;
                 }
                 let text = if entry.trailing_slash {
-                    { let mut path = directory.clone(); path.push('/'); path }
+                    {
+                        let mut path = directory.clone();
+                        path.push('/');
+                        path
+                    }
                 } else {
                     directory.clone()
                 };

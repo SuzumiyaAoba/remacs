@@ -14,7 +14,9 @@ pub(super) fn encode_text<T: crate::lisp::text::TextSource + ?Sized>(text: &T) -
     text.with_text(|text| text.chars().map(EmacsChar::code).collect())
 }
 pub(super) fn decode_text(text: &[u32]) -> EmacsText {
-    text.iter().map(|code| EmacsChar::new(*code).unwrap_or_else(|| EmacsChar::from('?'))).collect()
+    text.iter()
+        .map(|code| EmacsChar::new(*code).unwrap_or_else(|| EmacsChar::from('?')))
+        .collect()
 }
 
 pub(super) type Result<T> = std::result::Result<T, String>;
@@ -124,6 +126,7 @@ impl Node {
                     .iter()
                     .chain(l.rest.iter())
                     .chain(l.body.iter())
+                    .chain(l.body_value.iter())
                     .chain(l.interactive.iter())
                     .chain(l.arglist.iter())
                     .chain(l.bc_items.iter())
@@ -200,6 +203,8 @@ pub(super) struct LambdaData {
     optional: Vec<(Ref, Option<Ref>, Option<Ref>)>,
     rest: Option<Ref>,
     body: Vec<Ref>,
+    #[serde(default)]
+    body_value: Option<Ref>,
     environment: Option<u32>,
     doc: Option<Vec<u32>>,
     interactive: Option<Ref>,
@@ -363,7 +368,10 @@ impl<'a> Encoder<'a> {
                 Work::Symbol(id) => {
                     let symbol = self.interp.obarray.symbol(id);
                     let data = SymbolData {
-                        name: match &symbol.name_string { Some(text) => encode_text(&text.borrow()), None => encode_text(&symbol.name) },
+                        name: match &symbol.name_string {
+                            Some(text) => encode_text(&text.borrow()),
+                            None => encode_text(&symbol.name),
+                        },
                         internment_key: symbol.internment_key.clone(),
                         name_string: symbol
                             .name_string
@@ -531,6 +539,7 @@ impl<'a> Encoder<'a> {
                     .collect::<Result<_>>()?,
                 rest: lambda.rest.map(|id| self.symbol(id)).transpose()?,
                 body: self.values(&lambda.body)?,
+                body_value: self.optional(&lambda.body_value)?,
                 environment: lambda
                     .env
                     .as_ref()
@@ -651,14 +660,24 @@ impl<'a> Decoder<'a> {
                                     i.obarray.intern_with_key(&name, key.clone())
                                 }
                             }
-                            None => i.obarray.intern_with_key(&name, crate::lisp::obarray::InternKey::from_text(&name)),
+                            None => i.obarray.intern_with_key(
+                                &name,
+                                crate::lisp::obarray::InternKey::from_text(&name),
+                            ),
                         }
                     };
                     allocated_symbols.insert(id);
                     decoder.symbols[index] = Some(id);
                     Some(i.sym(id))
                 }
-                Node::String { text, representation, .. } => Some(Value::string_with_kind(decode_text(text), *representation == 2)),
+                Node::String {
+                    text,
+                    representation,
+                    ..
+                } => Some(Value::string_with_kind(
+                    decode_text(text),
+                    *representation == 2,
+                )),
                 Node::Float(bits) => Some(Value::float(f64::from_bits(*bits))),
                 Node::BigInt(text) => Some(Value::from_bigint(
                     text.parse().map_err(|_| "Invalid dumped bignum")?,
@@ -747,6 +766,7 @@ impl<'a> Decoder<'a> {
                 let references = data
                     .body
                     .iter()
+                    .chain(data.body_value.iter())
                     .chain(
                         data.optional
                             .iter()
@@ -879,6 +899,7 @@ impl<'a> Decoder<'a> {
                 .collect::<Result<_>>()?,
             rest: data.rest.as_ref().map(|r| self.symbol(r)).transpose()?,
             body: self.values(i, &data.body)?,
+            body_value: self.optional(i, &data.body_value)?,
             env: data
                 .environment
                 .map(|id| {
@@ -907,6 +928,7 @@ impl<'a> Decoder<'a> {
                 .transpose()?,
             bc_closure: data.bc_closure,
             bc_prog: RefCell::new(None),
+            compiled_macro_cache: crate::lisp::value::CompiledMacroCache::default(),
             doc_value: self.optional(i, &data.doc_value)?,
             env_value: self.optional(i, &data.env_value)?,
         };
@@ -926,7 +948,10 @@ impl<'a> Decoder<'a> {
                     cell.car = car;
                     cell.cdr = cdr;
                 }
-                (Node::Vector(items) | Node::TypedVector(_, items) | Node::OverlayVector(items), Some(Value::Vec(vector))) => {
+                (
+                    Node::Vector(items) | Node::TypedVector(_, items) | Node::OverlayVector(items),
+                    Some(Value::Vec(vector)),
+                ) => {
                     *vector.borrow_mut() = self.values(i, items)?;
                     if matches!(node, Node::OverlayVector(_)) {
                         i.register_overlay(&Value::Vec(vector));
@@ -968,7 +993,11 @@ impl<'a> Decoder<'a> {
                     let mut mutex = mutex.borrow_mut();
                     mutex.owner = self.optional(i, owner)?;
                     // Earlier images had one lock level for an owned mutex.
-                    mutex.count = if mutex.owner.is_some() { (*count).max(1) } else { 0 };
+                    mutex.count = if mutex.owner.is_some() {
+                        (*count).max(1)
+                    } else {
+                        0
+                    };
                 }
                 (Node::CondVar { mutex, .. }, Some(Value::CondVar(condvar))) => {
                     condvar.borrow_mut().mutex = self.value(i, mutex)?;

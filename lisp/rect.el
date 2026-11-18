@@ -464,7 +464,10 @@ no text on the right side of the rectangle."
         (forward-char -1))
       (unless (and (not fill)
                    (= (point) (line-end-position)))
-        (insert (make-string (- endcol startcol) ?\s))))))
+        ;; Remacs: keep the requested width when STARTCOL is inside a
+        ;; wide character, and inherit sticky properties as `indent-to'
+        ;; does in GNU.
+        (insert-and-inherit (make-string (- endcol startcol) ?\s))))))
 
 (defun delete-whitespace-rectangle-line (startcol _endcol fill)
   (when (= (move-to-column startcol (if fill t 'coerce)) startcol)

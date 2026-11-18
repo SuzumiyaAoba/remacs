@@ -219,6 +219,9 @@ impl EmacsStr {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn get(&self, index: usize) -> Option<EmacsChar> {
+        self.0.get(index).copied()
+    }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -1121,19 +1124,33 @@ impl EmacsStr {
 }
 
 impl From<std::borrow::Cow<'_, str>> for EmacsText {
-    fn from(text: std::borrow::Cow<'_, str>) -> Self { Self::from(text.as_ref()) }
+    fn from(text: std::borrow::Cow<'_, str>) -> Self {
+        Self::from(text.as_ref())
+    }
 }
 impl TextSource for std::borrow::Cow<'_, str> {
-    fn with_text<R>(&self, f: impl FnOnce(&EmacsStr) -> R) -> R { self.as_ref().with_text(f) }
+    fn with_text<R>(&self, f: impl FnOnce(&EmacsStr) -> R) -> R {
+        self.as_ref().with_text(f)
+    }
 }
 impl PartialEq<&EmacsStr> for EmacsText {
-    fn eq(&self, other: &&EmacsStr) -> bool { self.as_str() == *other }
+    fn eq(&self, other: &&EmacsStr) -> bool {
+        self.as_str() == *other
+    }
 }
 impl PartialEq<EmacsText> for &EmacsStr {
-    fn eq(&self, other: &EmacsText) -> bool { *self == other.as_str() }
+    fn eq(&self, other: &EmacsText) -> bool {
+        *self == other.as_str()
+    }
 }
 impl<const N: usize> TextPattern for [char; N] {
-    fn characters(&self) -> Vec<EmacsChar> { self.iter().copied().map(EmacsChar::from).collect() }
+    fn characters(&self) -> Vec<EmacsChar> {
+        self.iter().copied().map(EmacsChar::from).collect()
+    }
 }
 
-impl EmacsStr { pub(crate) fn as_ptr(&self) -> *const EmacsChar { self.0.as_ptr() } }
+impl EmacsStr {
+    pub(crate) fn as_ptr(&self) -> *const EmacsChar {
+        self.0.as_ptr()
+    }
+}

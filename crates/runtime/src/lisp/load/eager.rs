@@ -44,9 +44,10 @@ pub(super) fn eval_str_for_load(
         Value::Nil
     };
     let lrf_sym = i.q("load-read-function");
-    let source_multibyte = load_buffer
-        .map(|buffer| crate::lisp::builtins::readfn::buffer_source_multibyte(i, buffer))
-        .unwrap_or(true);
+    let source_multibyte = match load_buffer {
+        Some(buffer) => crate::lisp::builtins::readfn::buffer_source_multibyte(i, buffer)?,
+        None => true,
+    };
     let stream_source = i.load_stream_symbol.map(Value::Sym).unwrap_or(Value::Nil);
     let result = 'load: loop {
         if let Some(buffer) = load_buffer {
@@ -83,9 +84,36 @@ pub(super) fn eval_str_for_load(
         let next = {
             let lrf = i.symbol_value(lrf_sym);
             let is_default = matches!(&lrf, Value::Nil)
-                || matches!(&lrf, Value::Sym(s) if i.symbol_name(*s) == "read");
+                || matches!(&lrf, Value::Sym(s) if i.intern_soft("read") == Some(*s));
             if is_default {
-                if pos >= chars.len() {
+                // GNU's readevalloop consumes top-level whitespace and
+                // semicolon comments before calling the reader.  In
+                // particular, a comment-only tail is clean EOF rather than
+                // an `end-of-file' signal from the reader.
+                let mut read_pos = pos;
+                loop {
+                    while read_pos < chars.len()
+                        && syntax_at(read_pos).is_some_and(|c| {
+                            matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}')
+                        })
+                    {
+                        read_pos += 1;
+                    }
+                    if read_pos < chars.len() && syntax_at(read_pos) == Some(';') {
+                        while read_pos < chars.len() && syntax_at(read_pos) != Some('\n') {
+                            read_pos += 1;
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                if let Some(buffer) = load_buffer {
+                    buffer.borrow_mut().set_point(read_pos);
+                }
+                if let Some(stream) = &stream {
+                    stream.borrow_mut().position = read_pos;
+                }
+                if read_pos >= chars.len() {
                     break 'load Ok(last);
                 }
                 let _rt = std::time::Instant::now();
@@ -94,7 +122,7 @@ pub(super) fn eval_str_for_load(
                 let (read, end) = crate::lisp::builtins::readfn::read_parser_at_with_codes(
                     i,
                     chars.clone(),
-                    pos,
+                    read_pos,
                     None,
                     load_buffer.is_some(),
                     source_multibyte,
@@ -216,15 +244,18 @@ pub(super) fn eval_str_for_load(
                     stream.borrow_mut().position = end;
                 }
                 let t0 = (i.dbg_flags & 0x200 != 0).then(std::time::Instant::now);
-                match eval_for_load(i, form.clone(), &expander) {
+                let evaluated = eval_for_load(i, form.clone(), &expander);
+                // comp.el/comp-run.el initialize the real GNU helper
+                // surface, but their libgccjit driver cannot replace this
+                // build's cc backend. Restore the backend after every form,
+                // including one whose eager expansion or evaluation signals:
+                // a defun may install its function cell before a declaration
+                // action fails.
+                for (symbol, function) in &native_bridges {
+                    i.obarray.symbol_mut(*symbol).function = function.clone();
+                }
+                match evaluated {
                     Ok(v) => {
-                        // comp.el/comp-run.el initialize the real GNU helper
-                        // surface, but their libgccjit driver cannot replace
-                        // this build's cc backend. Restore before subsequent
-                        // forms, provide callbacks and after-load hooks.
-                        for (symbol, function) in &native_bridges {
-                            i.obarray.symbol_mut(*symbol).function = function.clone();
-                        }
                         last = v;
                         if let Some(t0) = t0 {
                             let ms = t0.elapsed().as_millis();
@@ -341,23 +372,15 @@ fn eval_for_load(i: &mut Interp, form: Value, expander: &Value) -> EvalResult {
         // and cycles, and remains observable to advice and redefinition.
         expand_for_load(i, expander, head, true)?
     };
-    match i.eval(&expanded) {
-        // GNU records definitions via LOADHIST_ATTACH inside the
-        // defining subrs (defalias/defvar/defvaralias/provide/require/
-        // internal--define-uninitialized-variable) — evaluation-time,
-        // so `byte-code'-wrapped defs in `.elc' files register too.
-        Ok(v) => Ok(v),
-        Err(crate::lisp::Flow::Throw(tag, val)) => {
-            let nc = i.q("no-catch");
-            Err(i.signal_data(nc, vec![tag, val]))
-        }
-        Err(f) => Err(f),
-    }
+    // Preserve a matched `throw' across the load boundary. `f_throw' has
+    // already converted unmatched tags to `no-catch'; converting a matched
+    // Flow::Throw here prevents a surrounding Lisp `catch' from receiving it.
+    i.eval(&expanded)
 }
 
 fn expand_for_load(i: &mut Interp, expander: &Value, form: Value, full: bool) -> EvalResult {
     i.macroexp_call_depth += 1;
-    let compiled = i.loading_compiled_library || i.boot_loading;
+    let compiled = i.loading_compiled_library || i.boot_loading || i.loading_dumped;
     let saved_expansion = std::mem::replace(&mut i.compiled_macro_expansion, compiled);
     let result = i.apply(expander, vec![form, Value::from_bool(full)]);
     i.compiled_macro_expansion = saved_expansion;

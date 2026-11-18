@@ -6,11 +6,11 @@
 
 pub mod buffer;
 pub mod editor;
-pub mod lisp;
-pub mod lifecycle;
-pub mod stdio;
 pub mod frontend;
 pub mod host;
+pub mod lifecycle;
+pub mod lisp;
+pub mod stdio;
 
 #[cfg(test)]
 #[path = "../../../tests/support/probe.rs"]

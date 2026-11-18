@@ -80,7 +80,8 @@ fn region_text(i: &mut Interp, a: &[Value]) -> Result<String, Flow> {
     }
     Ok((bb
         .text
-        .substring(s.min(e) as usize - 1, s.max(e) as usize - 1)).to_unicode_lossy())
+        .substring(s.min(e) as usize - 1, s.max(e) as usize - 1))
+    .to_unicode_lossy())
 }
 
 /// GNU `parse_region' also CHECK_STRINGs BASE-URL when non-nil (after
@@ -467,9 +468,19 @@ fn html_tag_end(text: &str, mut position: usize) -> usize {
 fn html_boolean_attribute(name: &str) -> bool {
     matches!(
         name,
-        "checked" | "compact" | "declare" | "defer" | "disabled" | "ismap"
-            | "multiple" | "nohref" | "noresize" | "noshade" | "nowrap"
-            | "readonly" | "selected"
+        "checked"
+            | "compact"
+            | "declare"
+            | "defer"
+            | "disabled"
+            | "ismap"
+            | "multiple"
+            | "nohref"
+            | "noresize"
+            | "noshade"
+            | "nowrap"
+            | "readonly"
+            | "selected"
     )
 }
 
@@ -485,9 +496,7 @@ fn html_raw_text_end(text: &str, tag: &str, start: usize) -> Option<usize> {
         }
         let end = position + needle.len();
         if text[position..end].eq_ignore_ascii_case(&needle)
-            && (end == bytes.len()
-                || html_space(bytes[end])
-                || matches!(bytes[end], b'/' | b'>'))
+            && (end == bytes.len() || html_space(bytes[end]) || matches!(bytes[end], b'/' | b'>'))
         {
             return Some(position);
         }
@@ -536,9 +545,7 @@ fn normalize_html_boolean_attributes(text: &str) -> String {
             || matches!(bytes[open + 1], b'!' | b'?' | b'/')
             || !bytes[open + 1].is_ascii_alphabetic()
         {
-            let end = if open + 1 < bytes.len()
-                && matches!(bytes[open + 1], b'!' | b'?' | b'/')
-            {
+            let end = if open + 1 < bytes.len() && matches!(bytes[open + 1], b'!' | b'?' | b'/') {
                 html_tag_end(text, open + 2)
             } else {
                 open + 1
@@ -633,9 +640,10 @@ fn normalize_html_boolean_attributes(text: &str) -> String {
         output.push_str(&text[copied..end]);
         position = end;
 
-        if matches!(tag_name.as_str(), "script" | "style" | "textarea" | "title"
-            | "xmp" | "iframe" | "noembed" | "noframes")
-        {
+        if matches!(
+            tag_name.as_str(),
+            "script" | "style" | "textarea" | "title" | "xmp" | "iframe" | "noembed" | "noframes"
+        ) {
             if let Some(close) = html_raw_text_end(text, &tag_name, position) {
                 output.push_str(&text[position..close]);
                 position = close;

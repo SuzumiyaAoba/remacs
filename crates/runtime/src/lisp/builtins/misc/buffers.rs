@@ -273,21 +273,95 @@ pub(super) fn f_filepos_to_bufferpos(i: &mut Interp, a: crate::lisp::Argv) -> Ev
 pub(super) fn f_set_buffer_multibyte(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fset_buffer_multibyte: forbidden on indirect buffers — their
     // multibyte flag belongs to the shared text's owner (base).
-    if let Some(b) = i.current_buffer_ref() {
-        if b.borrow().base_buffer.is_some() {
+    let Some(buffer) = i.current_buffer_ref() else {
+        return Err(i.error("No current buffer"));
+    };
+    let multibyte = i.q("enable-multibyte-characters");
+    let to_symbol = i.q("to");
+    let to_byte8 = i.sym_id(&a[0]) == Some(to_symbol);
+    let target = a[0].truthy();
+    let (id, text, old_mode, old_undo, was_modified, narrowed) = {
+        let state = buffer
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+        if state.base_buffer.is_some() {
             return Err(i.error_q::<str>(
                 "Cannot do `set-buffer-multibyte' on an indirect buffer",
                 &[],
             ));
         }
+        let old_mode = state
+            .locals
+            .get(&multibyte)
+            .unwrap_or(&i.obarray.symbol(multibyte).value)
+            .truthy();
+        if old_mode == target {
+            return Ok(a[0].clone());
+        }
+        (
+            state.id,
+            state.text.clone(),
+            old_mode,
+            state.undo_list(),
+            state.is_modified(),
+            state.begv != 0 || state.zv != state.size(),
+        )
+    };
+    if narrowed {
+        // GNU disables ordinary undo recording before checking BEGV/ZV.
+        // Keep that observable error-path state when conversion is refused.
+        buffer
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?
+            .set_undo_list(Value::t());
+        return Err(i.error("Changing multibyteness in a narrowed buffer"));
     }
-    // GNU Fset_buffer_multibyte flips the current buffer's
-    // `enable-multibyte-characters' local and returns the flag.
-    let sym = i.q("enable-multibyte-characters");
-    i.set_symbol(sym, a[0].clone())?;
-    if let Some(buffer) = i.current_buffer_ref() {
-        buffer.borrow().text.set_multibyte(a[0].truthy());
+
+    let Some((positions, byte8_changes)) = text.set_multibyte_with_mode(target, to_byte8) else {
+        return Ok(a[0].clone());
+    };
+    let target_value = Value::from_bool(target);
+    let apply = i.q("apply");
+    let set_buffer_multibyte = i.q("set-buffer-multibyte");
+    {
+        let mut state = buffer
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?;
+        state.remap_text_positions(&positions);
+        state.locals.insert(multibyte, target_value.clone());
+        if byte8_changes != 0 {
+            // GNU's byte8 expansion/collapse edits one encoded byte per
+            // character. Ordinary Unicode mode switches keep the byte
+            // sequence (and modification ticks) unchanged.
+            state.note_modified(true);
+            let tick = state
+                .text
+                .mod_tick
+                .get()
+                .wrapping_add(byte8_changes as u64);
+            state.text.mod_tick.set(tick);
+            state.text.chars_mod_tick.set(tick);
+        }
+        if !was_modified {
+            state.restore_modified(false);
+        }
+        if matches!(&old_undo, Value::Sym(s) if *s == sym::T) {
+            state.set_undo_list(Value::t());
+        } else {
+            let old_mode = Value::from_bool(old_mode);
+            let undo = Value::list(vec![
+                Value::Sym(apply),
+                Value::Sym(set_buffer_multibyte),
+                old_mode,
+            ]);
+            state.set_undo_list(Value::cons(undo, old_undo));
+        }
     }
+    text.each_sibling(id, |sibling| {
+        sibling.remap_text_positions(&positions);
+        sibling.locals.insert(multibyte, target_value.clone());
+    });
+    text.notify_multibyte_reset();
     Ok(a[0].clone())
 }
 

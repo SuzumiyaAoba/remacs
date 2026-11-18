@@ -18,6 +18,8 @@ use crate::buffer::textprops::TextProperties;
 use crate::lisp::value::*;
 use crate::lisp::{Interp, LexFrame};
 
+const MAX_RETAINED_GRAPH_BYTES: usize = 256 * 1024 * 1024;
+
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 enum Identity {
     Heap(usize),
@@ -33,10 +35,11 @@ enum Held {
 }
 
 struct Node {
-    held: Held,
+    held: Option<Held>,
     owners: usize,
     incoming: usize,
-    strong: Vec<usize>,
+    strong_start: usize,
+    strong_len: usize,
     root: bool,
     marked: bool,
 }
@@ -61,7 +64,9 @@ struct Entry {
 struct Graph {
     ids: FxHashMap<Identity, usize>,
     nodes: Vec<Node>,
+    edges: Vec<usize>,
     entries: Vec<Entry>,
+    next_node: usize,
 }
 
 impl Graph {
@@ -69,24 +74,75 @@ impl Graph {
         Self {
             ids: FxHashMap::default(),
             nodes: Vec::new(),
+            edges: Vec::new(),
             entries: Vec::new(),
+            next_node: 0,
         }
+    }
+
+    fn reset(&mut self) {
+        self.ids.clear();
+        self.edges.clear();
+        self.entries.clear();
+        for node in self.nodes.iter_mut().take(self.next_node) {
+            node.held = None;
+            node.owners = 0;
+            node.incoming = 0;
+            node.strong_start = 0;
+            node.strong_len = 0;
+            node.root = false;
+            node.marked = false;
+        }
+        self.next_node = 0;
+        // Reuse ordinary collection scratch, but do not pin an unusually
+        // large one-time graph in a long-lived interpreter thread.
+        if self.retained_bytes() > MAX_RETAINED_GRAPH_BYTES {
+            *self = Self::new();
+        }
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.nodes
+            .capacity()
+            .saturating_mul(std::mem::size_of::<Node>())
+            .saturating_add(
+                self.edges
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<usize>()),
+            )
+            .saturating_add(
+                self.entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Entry>()),
+            )
+            .saturating_add(
+                self.ids
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(Identity, usize)>() + 1),
+            )
     }
 
     fn insert(&mut self, identity: Identity, held: Held, owners: usize) -> usize {
         if let Some(&id) = self.ids.get(&identity) {
             return id;
         }
-        let id = self.nodes.len();
-        self.ids.insert(identity, id);
-        self.nodes.push(Node {
-            held,
+        let id = self.next_node;
+        self.next_node += 1;
+        let node = Node {
+            held: Some(held),
             owners,
             incoming: 0,
-            strong: Vec::new(),
+            strong_start: 0,
+            strong_len: 0,
             root: false,
             marked: false,
-        });
+        };
+        if id == self.nodes.len() {
+            self.nodes.push(node);
+        } else {
+            self.nodes[id] = node;
+        }
+        self.ids.insert(identity, id);
         id
     }
 
@@ -132,7 +188,8 @@ impl Graph {
     fn link(&mut self, owner: usize, child: usize, strong: bool) {
         self.nodes[child].incoming += 1;
         if strong {
-            self.nodes[owner].strong.push(child);
+            self.edges.push(child);
+            self.nodes[owner].strong_len += 1;
         }
     }
 
@@ -156,23 +213,48 @@ impl Graph {
     }
 
     fn seed(&mut self) {
-        let objects: Vec<Object> =
-            OBJECTS.with(|objects| objects.borrow().entries.values().cloned().collect());
-        for object in objects {
-            macro_rules! seed { ($($kind:ident => $value:ident),*) => { match object {
-                $(Object::$kind(weak) => {
-                    let owners = weak.strong_count();
-                    if let Some(value) = weak.upgrade() {
-                        let id = Rc::as_ptr(&value) as usize;
-                        self.insert(Identity::Heap(id), Held::Value(Value::$value(value)), owners);
-                    }
-                },)*
-            } }; }
-            seed!(Cons=>Cons, Float=>Float, BigInt=>BigInt, String=>Str, Vector=>Vec,
-                  Hash=>Hash, Lambda=>Lambda, Buffer=>Buffer, Marker=>Marker,
-                  Window=>Window, Frame=>Frame, Process=>Process, Thread=>Thread,
-                  Mutex=>Mutex, CondVar=>CondVar, Finalizer=>Finalizer);
-        }
+        OBJECTS.with(|objects| {
+            let objects = objects.borrow();
+            for object in objects.entries.values() {
+                macro_rules! seed {
+                    ($($kind:ident($weak:ident $(, $extra:tt)*) => $value:ident),* $(,)?) => {
+                        match object {
+                            $(
+                                Object::$kind($weak $(, $extra)*) => {
+                                    let owners = $weak.strong_count();
+                                    if let Some(value) = $weak.upgrade() {
+                                        let id = Rc::as_ptr(&value) as usize;
+                                        self.insert(
+                                            Identity::Heap(id),
+                                            Held::Value(Value::$value(value)),
+                                            owners,
+                                        );
+                                    }
+                                },
+                            )*
+                        }
+                    };
+                }
+                seed!(
+                    Cons(weak) => Cons,
+                    Float(weak) => Float,
+                    BigInt(weak) => BigInt,
+                    String(weak, _) => Str,
+                    Vector(weak) => Vec,
+                    Hash(weak) => Hash,
+                    Lambda(weak) => Lambda,
+                    Buffer(weak) => Buffer,
+                    Marker(weak) => Marker,
+                    Window(weak) => Window,
+                    Frame(weak) => Frame,
+                    Process(weak) => Process,
+                    Thread(weak) => Thread,
+                    Mutex(weak) => Mutex,
+                    CondVar(weak) => CondVar,
+                    Finalizer(weak) => Finalizer,
+                );
+            }
+        });
     }
 
     fn roots(&mut self, i: &Interp) {
@@ -190,8 +272,12 @@ impl Graph {
         self.root(&i.read_expression_history);
         self.root(&i.thread_last_error);
         self.root(&i.unread_switch_frame);
-        for value in i.native_lisp_literals.values() { self.root(value); }
-        for &symbol in i.fixed_symbols.values() { self.root(&Value::Sym(symbol)); }
+        for value in i.native_lisp_literals.values() {
+            self.root(value);
+        }
+        for &symbol in i.fixed_symbols.values() {
+            self.root(&Value::Sym(symbol));
+        }
         for value in i
             .catch_tags
             .iter()
@@ -214,7 +300,11 @@ impl Graph {
             self.root(a);
             self.root(b);
         }
-        for (a, b) in i.pending_overlay_hooks.iter().chain(i.terminal_params.iter()) {
+        for (a, b) in i
+            .pending_overlay_hooks
+            .iter()
+            .chain(i.terminal_params.iter())
+        {
             self.root(a);
             self.root(b);
         }
@@ -272,6 +362,8 @@ impl Graph {
     }
 
     fn trace(&mut self, owner: usize, held: Held, i: &Interp) {
+        self.nodes[owner].strong_start = self.edges.len();
+        self.nodes[owner].strong_len = 0;
         macro_rules! borrow {
             ($value:expr) => {{
                 match $value.try_borrow_mut() {
@@ -384,6 +476,7 @@ impl Graph {
                         }
                     }
                     for value in [
+                        &function.body_value,
                         &function.interactive,
                         &function.arglist,
                         &function.doc_value,
@@ -510,7 +603,9 @@ impl Graph {
                 continue;
             }
             self.nodes[id].marked = true;
-            queue.extend(self.nodes[id].strong.iter().copied());
+            let start = self.nodes[id].strong_start;
+            let end = start + self.nodes[id].strong_len;
+            queue.extend(self.edges[start..end].iter().copied());
         }
     }
 
@@ -522,6 +617,7 @@ impl Graph {
         let roots: Vec<_> = self
             .nodes
             .iter()
+            .take(self.next_node)
             .enumerate()
             .filter_map(|(id, node)| (node.root || node.owners > node.incoming).then_some(id))
             .collect();
@@ -558,7 +654,7 @@ impl Graph {
             {
                 continue;
             }
-            let Held::Value(Value::Hash(table)) = &self.nodes[entry.table].held else {
+            let Some(Held::Value(Value::Hash(table))) = &self.nodes[entry.table].held else {
                 continue;
             };
             if let Ok(mut table) = table.try_borrow_mut() {
@@ -585,23 +681,131 @@ impl Graph {
     }
 }
 
-pub(super) fn sweep(i: &mut Interp) {
-    let mut graph = Graph::new();
-    graph.seed();
-    graph.roots(i);
-    let mut cursor = 0;
-    while cursor < graph.nodes.len() {
-        let held = graph.nodes[cursor].held.clone();
-        graph.trace(cursor, held, i);
-        cursor += 1;
+thread_local! {
+    /// Weak-table collection visits the same interpreter object graph many
+    /// times during source reads. Reuse scratch capacities, while dropping
+    /// all temporary Lisp roots after each pass.
+    static SCRATCH_GRAPH: RefCell<Graph> = RefCell::new(Graph::new());
+}
+
+struct ResetGraphOnDrop<'a>(&'a mut Graph);
+
+impl Drop for ResetGraphOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.reset();
     }
-    graph.finish();
-    graph.release_dead_side_tables(i);
+}
+
+pub(super) fn sweep(i: &mut Interp) {
+    SCRATCH_GRAPH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        scratch.reset();
+        let mut graph = ResetGraphOnDrop(&mut scratch);
+        let graph = &mut graph.0;
+        graph.seed();
+        graph.roots(i);
+        let mut cursor = 0;
+        while cursor < graph.next_node {
+            let held = graph.nodes[cursor]
+                .held
+                .as_ref()
+                .expect("active GC graph node has a held value")
+                .clone();
+            graph.trace(cursor, held, i);
+            cursor += 1;
+        }
+        graph.finish();
+        graph.release_dead_side_tables(i);
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_reset_releases_held_values_and_reuses_storage() {
+        let mut graph = Graph::new();
+        let first = Value::cons(Value::Int(1), Value::Nil);
+        let Value::Cons(cell) = &first else {
+            unreachable!();
+        };
+        let weak = Rc::downgrade(cell);
+        let id = graph.insert(
+            Identity::Heap(Rc::as_ptr(cell) as usize),
+            Held::Value(first.clone()),
+            Rc::strong_count(cell),
+        );
+        assert_eq!(id, 0);
+        graph.edges.extend([id, id]);
+        graph.nodes[id].strong_len = 2;
+        let node_capacity = graph.nodes.capacity();
+        let edge_capacity = graph.edges.capacity();
+        let id_capacity = graph.ids.capacity();
+
+        graph.reset();
+        assert_eq!(graph.nodes.len(), 1);
+        assert!(graph.nodes[id].held.is_none());
+        assert_eq!(weak.strong_count(), 1);
+        assert_eq!(graph.edges.len(), 0);
+        assert_eq!(graph.nodes.capacity(), node_capacity);
+        assert_eq!(graph.edges.capacity(), edge_capacity);
+        assert_eq!(graph.ids.capacity(), id_capacity);
+        drop(first);
+        assert_eq!(weak.strong_count(), 0);
+
+        let second = Value::cons(Value::Int(2), Value::Nil);
+        let Value::Cons(cell) = &second else {
+            unreachable!();
+        };
+        assert_eq!(
+            graph.insert(
+                Identity::Heap(Rc::as_ptr(cell) as usize),
+                Held::Value(second.clone()),
+                Rc::strong_count(cell),
+            ),
+            0
+        );
+        assert_eq!(graph.nodes.len(), 1);
+        graph.reset();
+    }
+
+    #[test]
+    fn sweep_reuses_scratch_storage_between_collections() {
+        std::thread::Builder::new()
+            .stack_size(128 << 20)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                sweep(&mut interp);
+                let first = SCRATCH_GRAPH.with(|scratch| {
+                    let graph = scratch.borrow();
+                    (
+                        graph.nodes.len(),
+                        graph.nodes.capacity(),
+                        graph.edges.capacity(),
+                        graph.ids.capacity(),
+                        graph.entries.capacity(),
+                    )
+                });
+                assert!(first.0 > 0);
+
+                sweep(&mut interp);
+                let second = SCRATCH_GRAPH.with(|scratch| {
+                    let graph = scratch.borrow();
+                    (
+                        graph.nodes.len(),
+                        graph.nodes.capacity(),
+                        graph.edges.capacity(),
+                        graph.ids.capacity(),
+                        graph.entries.capacity(),
+                    )
+                });
+                assert_eq!(second, first);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn collection_preserves_a_borrowed_table_until_its_borrow_ends() {

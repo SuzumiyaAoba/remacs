@@ -2,19 +2,36 @@
 //! lifecycle operations and scoped snapshots live in the parent state module.
 
 use crate::lisp::eval::{
-    LexEnv, MatchData, MinibufInput, OutputSink, SpecialRecordKind, bindings::SpecBind, threads,
+    LexEnv, MatchData, MinibufInput, OutputSink, SitForOptions, SpecialRecordKind,
+    bindings::SpecBind, threads,
 };
 use crate::lisp::{
     error::Flow,
     obarray::Obarray,
-    value::{Argv, Lambda, SymId, Value},
+    text::EmacsText,
+    value::{Argv, CompiledMacroCache, Cons, Lambda, SymId, Value},
 };
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::{
     cell::RefCell,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::{Arc, atomic::AtomicUsize},
 };
+
+#[derive(Clone)]
+pub(crate) enum SpecialMacroIdentity {
+    Lambda(Weak<Lambda>),
+    MacroCell {
+        cell: Weak<RefCell<Cons>>,
+        function: Weak<Lambda>,
+    },
+}
+
+#[derive(Clone)]
+pub(crate) struct SpecialMacroSnapshot {
+    pub(crate) identity: SpecialMacroIdentity,
+    pub(crate) printed: EmacsText,
+}
 
 /// The interpreter: all global Lisp state. Lives on the eval thread.
 pub struct Interp {
@@ -173,10 +190,10 @@ pub struct Interp {
     pub loads_in_progress: Vec<super::super::super::text::EmacsText>,
     pub(crate) load_stream: Option<Rc<RefCell<crate::lisp::load::LoadStream>>>,
     pub(crate) load_stream_symbol: Option<SymId>,
-    /// Number of currently-active dumped definitions.  GNU byte-compiles
-    /// its dump, so macros called there need not remain visible at -Q;
-    /// remacs stashes those cells and resolves hidden macros only while
-    /// a dumped lambda is running.
+    /// Number of active compiled-equivalent frames, including ancestors.
+    /// Per-form behavior uses `current_body_compiled` or
+    /// `current_lambda_dumped` so source `eval' and interpreted callbacks
+    /// do not inherit a compiled caller's semantics.
     pub dumped_call_depth: usize,
     /// Number of active macro expanders, used to distinguish compiler
     /// requirements from runtime library dependencies.
@@ -186,6 +203,12 @@ pub struct Interp {
     pub current_lambda_dumped: bool,
     /// Byte-compiled bodies have control flow, but no source special-form frames.
     pub(crate) current_body_compiled: bool,
+    /// Expansion cache owned by the currently executing compiled-equivalent
+    /// lambda. Cleared/restored with that function's call context.
+    pub(crate) current_compiled_macro_cache: Option<CompiledMacroCache>,
+    /// Stable location path through the source body, argument spines, and
+    /// progns, so two occurrences of one shared cons get separate entries.
+    pub(crate) current_compiled_macro_path: Vec<u128>,
     /// Provenance of forms being inspected by macroexpand, independent
     /// of the dumped implementation of the macroexpansion machinery.
     pub compiled_macro_expansion: bool,
@@ -218,32 +241,17 @@ pub struct Interp {
     /// runtime (which would corrupt expansions — e.g. advice on `car'
     /// turning the binder list into ((ad x) ...)).
     pub expand_unadvised_depth: usize,
-    /// Macro expansion cache: call-site cons pointer -> (generation,
-    /// fn cell, expansion, pin).  GNU re-expands macro forms on every
-    /// interpreted evaluation, which is fine when the code is actually
-    /// byte-compiled; remacs interprets the dumped libraries, so a
-    /// `cl-typep'/`pcase' inside a hot function (eieio-core's
-    /// `eieio-oref-default') re-expanded per call makes `defclass'
-    /// take seconds.  The pin holds the call-site cons alive so its
-    /// `Rc' pointer stays unique.  Entries validate on the current
-    /// `macro_gen' plus `eq' identity of the resolved fn cell.
-    pub macro_cache: HashMap<usize, (u64, Value, Value, Value)>,
+    /// Transient macro expansions during boot/compiled-library loading.
+    /// Compiled-equivalent function bodies keep their callsite cache on the
+    /// owning Lambda instead, where GC and cache churn cannot invalidate it.
+    pub macro_cache: HashMap<(usize, Vec<u128>), (u64, Value, Value, Value)>,
     /// Generation counter bumped by `fset'/`put_prop'/`setplist'/
     /// `fmakunbound' — any global change that could alter expansion
     /// output (expanders consult symbol properties like
     /// `pcase-defmacro', `cl-deftype-satisfies', compiler macros).
-    /// Cheap coarse invalidation: entries only re-expand once per
-    /// generation.
+    /// Used to invalidate transient macro expansions when definitions or
+    /// properties change.
     pub macro_gen: u64,
-    /// Memoized `macroexpand_all' results keyed by input-cons identity.
-    /// `pcase' duplicates subforms into its expansion, so eager
-    /// `macroexpand-all' on a large file re-expands shared structure
-    /// exponentially; caching each cons's expansion collapses that.
-    /// Cleared when `macro_gen' bumps (any definition/property change).
-    /// Each entry stores the input form so its `Rc' keeps the cons —
-    /// and its address — alive, preventing a recycled cons pointer
-    /// from matching a stale entry.
-    pub macroexpand_all_cache: std::cell::RefCell<(u64, HashMap<usize, (Value, Value)>)>,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
@@ -278,18 +286,14 @@ pub struct Interp {
     >,
     /// Frontend wait hook for `sit-for'. It redisplays while waiting and
     /// queues any input it observes for the command loop to handle later.
-    pub(crate) sit_for_waiter: Option<
-        Rc<dyn Fn(&mut Interp, std::time::Duration) -> Result<bool, Flow>>,
-    >,
+    /// Options select whether this wait runs Lisp timers or redisplays.
+    pub(crate) sit_for_waiter:
+        Option<Rc<dyn Fn(&mut Interp, std::time::Duration, SitForOptions) -> Result<bool, Flow>>>,
     /// Input read while a Lisp primitive is waiting, but not consumed by it.
-    pub(crate) pending_frontend_input: std::collections::VecDeque<
-        crate::frontend::InputEvent,
-    >,
+    pub(crate) pending_frontend_input: std::collections::VecDeque<crate::frontend::InputEvent>,
     /// Nonblocking frontend poll used by `input-pending-p'. Any returned
     /// input is queued in `pending_frontend_input' for the command loop.
-    pub(crate) frontend_input_pending_reader: Option<
-        Rc<dyn Fn(&mut Interp) -> Result<bool, Flow>>,
-    >,
+    pub(crate) frontend_input_pending_reader: Option<Rc<dyn Fn(&mut Interp) -> Result<bool, Flow>>>,
     /// Frontend hook to discard queued input for `discard-input'.
     pub(crate) frontend_input_discarder: Option<Rc<dyn Fn(&mut Interp) -> Result<(), Flow>>>,
     /// Host clipboard bridge, installed by a GUI front-end.
@@ -315,7 +319,8 @@ pub struct Interp {
     /// Host external drag bridge, installed by a GUI front-end.
     pub(crate) drag_backend: Option<Rc<dyn crate::frontend::DragBackend>>,
     /// Host application hide/show bridge, installed by a GUI front-end.
-    pub(crate) application_visibility_backend: Option<Rc<dyn crate::frontend::ApplicationVisibilityBackend>>,
+    pub(crate) application_visibility_backend:
+        Option<Rc<dyn crate::frontend::ApplicationVisibilityBackend>>,
     /// Host AppleScript bridge, installed by the macOS GUI front-end.
     pub(crate) apple_script_backend: Option<Rc<dyn crate::frontend::AppleScriptBackend>>,
     /// Native macOS Services bridge, installed by the macOS GUI front-end.
@@ -386,9 +391,8 @@ pub struct Interp {
     /// Memoized `char-charset' winners for the default order
     /// (invalidated when the order or any charset definition changes).
     pub char_charset_cache: std::cell::RefCell<HashMap<i64, String>>,
-    /// Interned id of `variable-alias' — caches `Symbol::var_alias'
-    /// updates in `put_prop'/`f_put'/`f_setplist' so `symbol_value'
-    /// skips the intern lookup and the plist walk.
+    /// Interned ID of the ordinary plist property `variable-alias'. This is
+    /// kept separate from `Symbol::var_alias`, GNU's C-level indirection.
     pub var_alias_prop: SymId,
     /// D-Bus bus connections and registered fds — GNU's
     /// `xd_registered_buses' / `xd_registered_fds' from `src/dbusbind.c'.
@@ -450,7 +454,8 @@ pub struct Interp {
     /// True while a command is running and `read-event` keys should be
     /// appended to `this-command-keys`.
     pub(crate) command_key_capture_active: bool,
-    /// char-code property name → per-char entries (`put-char-code-property`).
+    /// Legacy per-character fallback cache retained in portable images.
+    /// New property reads and writes use `char-code-property-table`.
     pub char_code_props: Vec<(String, Vec<(i64, Value)>)>,
     /// char-code property name → char-table backing store.
     pub char_code_prop_tables: Vec<(String, Value)>,
@@ -502,8 +507,9 @@ pub struct Interp {
     /// `(car x)' never touches `symbol-function', so advising such a
     /// primitive can't recurse into the advice machinery itself —
     /// interpreted remacs library code (which stands in for GNU's
-    /// .elc bodies) calls these via the same direct dispatch when
-    /// `dumped_call_depth' is nonzero.
+    /// .elc bodies) calls these via the same direct dispatch when the
+    /// immediate body is compiled. A compiled ancestor can invoke
+    /// interpreted source code that must consult the live function cell.
     pub byte_op_subrs: Option<HashMap<SymId, &'static crate::lisp::value::Subr>>,
     /// Name-keyed mirror for dedicated byte-code opcodes.  These calls
     /// are tied to the canonical primitive even if Lisp uninterns its
@@ -553,6 +559,11 @@ pub struct Interp {
     /// to a different lambda.
     pub compiled_fn_names:
         std::cell::RefCell<Vec<(std::rc::Weak<Lambda>, crate::lisp::text::EmacsText)>>,
+    /// Baseline cells for core macro names that the evaluator implements
+    /// directly. Weak identities make the common booted path cheap; the
+    /// printed form handles portable-image reallocation without persisting
+    /// Rust pointers.
+    pub(crate) special_macro_snapshots: HashMap<SymId, SpecialMacroSnapshot>,
     /// Debug: the raw form whose head symbol call is in progress.
     pub cur_head_form: Value,
     /// `lisp_stack' snapshot taken when the last signal was raised —

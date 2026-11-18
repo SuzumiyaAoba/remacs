@@ -4,9 +4,22 @@ use super::{Interp, state::MinibufferCaller};
 use crate::lisp::{
     error::{EvalResult, Flow},
     obarray::sym,
-    value::Value,
+    value::{SymId, Value},
 };
 use std::rc::Rc;
+
+fn specbind_in_scope(
+    interp: &mut Interp,
+    mark: usize,
+    symbol: SymId,
+    value: Value,
+) -> Result<(), Flow> {
+    if let Err(error) = interp.specbind(symbol, value) {
+        interp.unbind_to(mark)?;
+        return Err(error);
+    }
+    Ok(())
+}
 
 impl Interp {
     /// Read minibuffer input via the front-end hook. `single` reads one
@@ -132,16 +145,19 @@ impl Interp {
             let mark = self.specbind_depth();
             // specbind minibuffer-default ← DEFALT, inhibit-read-only ← nil.
             let mdef = self.q("minibuffer-default");
-            let _ = self.specbind(mdef, args.defalt.clone());
+            specbind_in_scope(self, mark, mdef, args.defalt.clone())?;
             let iro = self.q("inhibit-read-only");
-            let _ = self.specbind(iro, Value::Nil);
+            specbind_in_scope(self, mark, iro, Value::Nil)?;
             // specbind minibuffer-completing-file-name ← current value;
             // a `lambda' on entry (t from an outer read) normalizes to nil.
             let cf = self.q("minibuffer-completing-file-name");
             let cfv = self.symbol_value(cf);
-            let _ = self.specbind(cf, cfv.clone());
-            if matches!(cfv, Value::Sym(s) if self.symbol_name(s) == "lambda") {
-                let _ = self.set_symbol(cf, Value::Nil);
+            specbind_in_scope(self, mark, cf, cfv.clone())?;
+            if matches!(cfv, Value::Sym(s) if s == sym::LAMBDA) {
+                if let Err(error) = self.set_symbol(cf, Value::Nil) {
+                    self.unbind_to(mark)?;
+                    return Err(error);
+                }
             }
 
             // GNU creates the depth-N minibuffer before bumping the level.
@@ -159,32 +175,46 @@ impl Interp {
 
             // minibuf_save_list vars (per-level dynamic state).
             let mhp = self.q("minibuffer-history-position");
-            let _ = self.specbind(mhp, Value::Int(histpos));
             let mhv = self.q("minibuffer-history-variable");
-            let _ = self.specbind(mhv, histvar.clone());
             let hform = self
                 .intern_soft("minibuffer-help-form")
                 .map(|id| self.symbol_value(id))
                 .unwrap_or(Value::Nil);
             let hf = self.q("help-form");
-            let _ = self.specbind(hf, hform);
             let cpa = self.q("current-prefix-arg");
             let cpav = self.symbol_value(cpa);
-            let _ = self.specbind(cpa, cpav);
-
-            // Non-nil completing-file-name becomes `lambda' for this read
-            // ("t here, nil for nested reads").
-            if self.symbol_value(cf).truthy() {
-                let lam = Value::Sym(self.q("lambda"));
-                let _ = self.set_symbol(cf, lam);
-            }
-            // GNU: an unbound history variable is set to nil on entry.
-            if let Value::Sym(hsid) = &histvar {
-                if matches!(self.obarray.symbol(*hsid).value, Value::Sym(s) if s == sym::UNBOUND)
-                    && !self.obarray.symbol(*hsid).constant
-                {
-                    let _ = self.set_symbol(*hsid, Value::Nil);
+            // The C reader restores these per-level Lisp variables from
+            // minibuf_save_list in read_minibuf_unwind, before calling
+            // minibuffer-inactive-mode. The earlier minibuffer-default,
+            // inhibit-read-only, and completing-file-name bindings remain
+            // active until the outer unbind_to after that cleanup.
+            let per_level_mark = self.specbind_depth();
+            let bindings = (|| {
+                self.specbind(mhp, Value::Int(histpos))?;
+                self.specbind(mhv, histvar.clone())?;
+                self.specbind(hf, hform)?;
+                self.specbind(cpa, cpav)?;
+                // Non-nil completing-file-name becomes `lambda' for this
+                // read; a `lambda' on entry was normalized above.
+                if self.symbol_value(cf).truthy() {
+                    let lam = Value::Sym(self.q("lambda"));
+                    self.set_symbol(cf, lam)?;
                 }
+                // GNU initializes an unbound history variable before the
+                // read, and a watcher error aborts the minibuffer entry.
+                if let Value::Sym(hsid) = &histvar {
+                    if matches!(self.obarray.symbol(*hsid).value, Value::Sym(s) if s == sym::UNBOUND)
+                        && !self.obarray.symbol(*hsid).constant
+                    {
+                        self.set_symbol(*hsid, Value::Nil)?;
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(error) = bindings {
+                self.minibuf_level -= 1;
+                self.unbind_to(mark)?;
+                return Err(error);
             }
 
             self.minibuf_prompts.push(prompt.to_string());
@@ -241,10 +271,12 @@ impl Interp {
                 let m2 = self.specbind_depth();
                 let iro = self.q("inhibit-read-only");
                 let imh = self.q("inhibit-modification-hooks");
-                let _ = self.specbind(iro, Value::t());
-                let _ = self.specbind(imh, Value::t());
-                let r = self.minibuf_install(prompt, &args.initial, mb_id);
-                let _ = self.unbind_to(m2);
+                let r = (|| {
+                    self.specbind(iro, Value::t())?;
+                    self.specbind(imh, Value::t())?;
+                    self.minibuf_install(prompt, &args.initial, mb_id)
+                })();
+                self.unbind_to(m2)?;
                 r
             });
 
@@ -352,20 +384,31 @@ impl Interp {
                 crate::lisp::builtins::evalfn::safe_call_hook(self, "minibuffer-exit-hook");
             self.minibuf_level -= 1;
             self.minibuf_prompts.pop();
-            let _ = self.unbind_to(mark);
+            let per_level_unbind_r = self.unbind_to(per_level_mark);
             // GNU calls `minibuffer-inactive-mode' in the expired
-            // minibuffer after restoring the per-level vars.
-            if self.buffer_live(mb_id) {
+            // minibuffer after restoring the per-level vars, while the
+            // outer minibuffer bindings are still active.
+            let inactive_mode_r = if self.buffer_live(mb_id) {
                 self.set_current_buffer(mb_id);
                 let im = self.q("minibuffer-inactive-mode");
                 if self.fbound_p(im) {
-                    let _ = self.apply(&Value::Sym(im), vec![]);
+                    self.apply(&Value::Sym(im), vec![])
+                } else {
+                    Ok(Value::Nil)
                 }
-            }
+            } else {
+                Ok(Value::Nil)
+            };
             // The mini window shows the next-less-nested (null) minibuffer.
             let idle = self.get_minibuffer(0);
             self.set_minibuf_window_buffer(idle);
             caller.restore(self);
+            // Match read_minibuf's outer unbind_to: it runs after both
+            // recorded cleanup functions, so its error has final precedence.
+            let unbind_r = self.unbind_to(mark);
+            unbind_r?;
+            inactive_mode_r?;
+            per_level_unbind_r?;
             if let Err(f) = hook_r {
                 return Err(f);
             }
@@ -398,10 +441,10 @@ impl Interp {
                 if han && histstring.is_some() {
                     let ah = self.q("add-to-history");
                     if self.fbound_p(ah) {
-                        let _ = self.apply(
+                        self.apply(
                             &Value::Sym(ah),
                             vec![histvar.clone(), Value::string(histstring.unwrap())],
-                        );
+                        )?;
                     }
                 }
             }
@@ -459,17 +502,17 @@ impl Interp {
                     ("rear-nonsticky", Value::t()),
                     ("field", Value::t()),
                 ] {
-                    let ptp = self.q("put-text-property");
                     let key_sym = self.intern(key);
-                    let _ = self.apply(
-                        &Value::Sym(ptp),
+                    crate::buffer::primitives::f_put_text_property(
+                        self,
                         vec![
                             Value::Int(1),
                             Value::Int(pend as i128 + 1),
                             Value::Sym(key_sym),
                             val,
-                        ],
-                    );
+                        ]
+                        .into(),
+                    )?;
                 }
                 // minibuffer-prompt-properties plist: `face' is appended
                 // via add-face-text-property, others via put-text-property.
@@ -477,9 +520,14 @@ impl Interp {
                     .intern_soft("minibuffer-prompt-properties")
                     .map(|id| self.symbol_value(id))
                     .unwrap_or(Value::Nil);
+                let face_property = self.intern_soft("face");
                 if let Value::Cons(_) = &mpp {
                     let mut list = mpp.clone();
-                    while let Value::Cons(c) = list {
+                    let mut seen = rustc_hash::FxHashSet::default();
+                    while let Value::Cons(c) = list.clone() {
+                        if !seen.insert(Rc::as_ptr(&c) as usize) {
+                            return Err(self.signal_data(sym::CIRCULAR_LIST, vec![list.clone()]));
+                        }
                         let (key, rest) = {
                             let cc = c.borrow();
                             (cc.car.clone(), cc.cdr.clone())
@@ -491,22 +539,19 @@ impl Interp {
                             }
                             _ => (Value::Nil, Value::Nil),
                         };
-                        let is_face =
-                            matches!(&key, Value::Sym(s) if self.symbol_name(*s) == "face");
-                        let f = if is_face {
-                            self.q("add-face-text-property")
-                        } else {
-                            self.q("put-text-property")
-                        };
-                        let mut call = vec![Value::Int(1), Value::Int(pend as i128 + 1)];
+                        let is_face = matches!(&key, Value::Sym(s) if Some(*s) == face_property);
                         if is_face {
-                            call.push(val);
-                            call.push(Value::t());
+                            crate::buffer::primitives::f_add_face_text_property(
+                                self,
+                                vec![Value::Int(1), Value::Int(pend as i128 + 1), val, Value::t()]
+                                    .into(),
+                            )?;
                         } else {
-                            call.push(key);
-                            call.push(val);
+                            crate::buffer::primitives::f_put_text_property(
+                                self,
+                                vec![Value::Int(1), Value::Int(pend as i128 + 1), key, val].into(),
+                            )?;
                         }
-                        let _ = self.apply(&Value::Sym(f), call);
                         list = rest;
                     }
                 }
@@ -726,5 +771,403 @@ impl Default for MinibufArgs {
             initial: Value::Nil,
             keymap: Value::Nil,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minibuffer_prompt_property_errors_propagate_after_unwind() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str("(setq minibuffer-prompt-properties '(5 t))")
+                    .unwrap();
+
+                let input_called = Rc::new(std::cell::Cell::new(false));
+                let input_called_by_reader = input_called.clone();
+                interp.minibuf_reader = Some(Rc::new(move |_, _, _| {
+                    input_called_by_reader.set(true);
+                    Ok(MinibufInput::Text("answer".into()))
+                }));
+
+                let mark = interp.specbind_depth();
+                let buffer = interp.current_buffer;
+                let level = interp.minibuf_level;
+                let result = interp.minibuf_read("Prompt: ", MinibufArgs::default());
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal))
+                        if signal.is_symbol(sym::WRONG_TYPE_ARGUMENT)
+                ));
+                assert!(!input_called.get());
+                assert_eq!(interp.specbind_depth(), mark);
+                assert_eq!(interp.minibuf_level, level);
+                assert_eq!(interp.current_buffer, buffer);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn minibuffer_inactive_mode_errors_propagate_after_unwind() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun minibuffer-inactive-mode ()\
+                           (signal 'file-error '(\"inactive mode\")))",
+                    )
+                    .unwrap();
+                interp.minibuf_reader =
+                    Some(Rc::new(|_, _, _| Ok(MinibufInput::Text("answer".into()))));
+
+                let mark = interp.specbind_depth();
+                let buffer = interp.current_buffer;
+                let result = interp.minibuf_read("Prompt: ", MinibufArgs::default());
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                assert_eq!(interp.specbind_depth(), mark);
+                assert_eq!(interp.minibuf_level, 0);
+                assert_eq!(interp.current_buffer, buffer);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn minibuffer_inactive_mode_runs_between_per_level_and_outer_unbinding() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(setq minibuffer-default \"outer\" minibuffer-history-position 77 history-add-new-input nil)",
+                    )
+                    .unwrap();
+                interp
+                    .eval_str(
+                        "(defvar qa-minibuf-inactive-observed nil)\
+                         (defun minibuffer-inactive-mode ()\
+                           (setq qa-minibuf-inactive-observed\
+                                 (list minibuffer-default minibuffer-history-position)))",
+                    )
+                    .unwrap();
+                interp.minibuf_reader = Some(Rc::new(|_, _, _| {
+                    Ok(MinibufInput::Text("answer".into()))
+                }));
+
+                let result = interp.minibuf_read(
+                    "Prompt: ",
+                    MinibufArgs {
+                        defalt: Value::string("inner"),
+                        ..MinibufArgs::default()
+                    },
+                );
+                let result = match result {
+                    Ok(result) => result,
+                    Err(Flow::Signal(signal)) => panic!(
+                        "minibuffer read signaled {}",
+                        interp.prin1_to_string(&signal.condition)
+                    ),
+                    Err(flow) => panic!("minibuffer read returned {flow:?}"),
+                };
+                assert_eq!(result.as_str(), "answer");
+                let observed_id = interp.q("qa-minibuf-inactive-observed");
+                let observed = interp.symbol_value(observed_id);
+                assert_eq!(interp.prin1_to_string(&observed), "(\"inner\" 77)");
+                let default_id = interp.q("minibuffer-default");
+                let default_value = interp.symbol_value(default_id);
+                assert_eq!(
+                    interp.prin1_to_string(&default_value),
+                    "\"outer\""
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn later_minibuffer_cleanup_error_replaces_exit_hook_throw() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-minibuf-exit-throw ()\
+                           (throw 'qa-minibuf-exit-tag 'exit-hook))\
+                         (setq minibuffer-exit-hook '(qa-minibuf-exit-throw))\
+                         (defun minibuffer-inactive-mode ()\
+                           (signal 'file-error '(\"inactive cleanup\")))",
+                    )
+                    .unwrap();
+                interp.minibuf_reader =
+                    Some(Rc::new(|_, _, _| Ok(MinibufInput::Text("answer".into()))));
+
+                let mark = interp.specbind_depth();
+                let buffer = interp.current_buffer;
+                let result = interp.minibuf_read("Prompt: ", MinibufArgs::default());
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                assert_eq!(interp.specbind_depth(), mark);
+                assert_eq!(interp.minibuf_level, 0);
+                assert_eq!(interp.current_buffer, buffer);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn minibuffer_history_add_errors_propagate_after_unwind() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar qa-minibuffer-history nil)\
+                         (setq history-add-new-input t)\
+                         (defun qa-minibuffer-history-watcher\
+                                (_symbol _value operation _where)\
+                           (when (eq operation 'set)\
+                             (signal 'file-error '(\"history watcher\"))))\
+                         (add-variable-watcher 'qa-minibuffer-history\
+                                               #'qa-minibuffer-history-watcher)",
+                    )
+                    .unwrap();
+                interp.minibuf_reader =
+                    Some(Rc::new(|_, _, _| Ok(MinibufInput::Text("answer".into()))));
+
+                let mark = interp.specbind_depth();
+                let buffer = interp.current_buffer;
+                let history = interp.q("qa-minibuffer-history");
+                let result = interp.minibuf_read(
+                    "Prompt: ",
+                    MinibufArgs {
+                        hist: Value::Sym(history),
+                        ..MinibufArgs::default()
+                    },
+                );
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                assert_eq!(interp.specbind_depth(), mark);
+                assert_eq!(interp.minibuf_level, 0);
+                assert_eq!(interp.current_buffer, buffer);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn minibuf_read_unwinds_a_failed_initial_specbind() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar minibuf-test-watcher-target nil)\
+                         (defvar minibuf-test-watcher-fail-on nil)\
+                         (defun minibuf-test-watcher (symbol _value operation _where)\
+                           (if (and (eq symbol minibuf-test-watcher-target)\
+                                    (eq operation minibuf-test-watcher-fail-on))\
+                               (signal (if (eq operation 'let) 'file-error 'arith-error)\
+                                       '(\"watcher\"))\
+                             nil))\
+                         (add-variable-watcher 'minibuffer-default #'minibuf-test-watcher)\
+                         (add-variable-watcher 'minibuffer-history-position #'minibuf-test-watcher)\
+                         (add-variable-watcher 'inhibit-modification-hooks #'minibuf-test-watcher)",
+                    )
+                    .unwrap();
+
+                let input_called = Rc::new(std::cell::Cell::new(false));
+                let input_called_by_reader = input_called.clone();
+                interp.minibuf_reader = Some(Rc::new(move |_, _, _| {
+                    input_called_by_reader.set(true);
+                    Ok(MinibufInput::Text("answer".into()))
+                }));
+
+                let read = |interp: &mut Interp, target: &str, operation: &str| {
+                    interp
+                        .eval_str(&format!(
+                            "(setq minibuf-test-watcher-target '{target} \
+                                  minibuf-test-watcher-fail-on '{operation})"
+                        ))
+                        .unwrap();
+                    input_called.set(false);
+                    let mark = interp.specbind_depth();
+                    let level = interp.minibuf_level;
+                    let buffer = interp.current_buffer;
+                    let result = interp.minibuf_read("Prompt: ", MinibufArgs::default());
+                    (
+                        result,
+                        input_called.get(),
+                        mark,
+                        level,
+                        buffer,
+                        interp.specbind_depth(),
+                        interp.minibuf_level,
+                        interp.current_buffer,
+                    )
+                };
+
+                // Initial bindings fail before minibuffer entry.
+                let (result, called, mark, level, buffer, depth_after, level_after, buffer_after) =
+                    read(&mut interp, "minibuffer-default", "let");
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                assert!(!called);
+                assert_eq!(depth_after, mark);
+                assert_eq!(level_after, level);
+                assert_eq!(buffer_after, buffer);
+
+                // Per-level minibuffer bindings fail after the level is raised.
+                let (result, called, mark, level, buffer, depth_after, level_after, buffer_after) =
+                    read(&mut interp, "minibuffer-history-position", "let");
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                assert!(!called);
+                assert_eq!(depth_after, mark);
+                assert_eq!(level_after, level);
+                assert_eq!(buffer_after, buffer);
+
+                // Temporary prompt-install bindings unwind when their watcher fails.
+                let (result, called, mark, level, buffer, depth_after, level_after, buffer_after) =
+                    read(&mut interp, "inhibit-modification-hooks", "let");
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                assert!(!called);
+                assert_eq!(depth_after, mark);
+                assert_eq!(level_after, level);
+                assert_eq!(buffer_after, buffer);
+
+                // A cleanup watcher error replaces the successful read result.
+                let (result, called, mark, level, buffer, depth_after, level_after, buffer_after) =
+                    read(&mut interp, "minibuffer-default", "unlet");
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ARITH_ERROR)
+                ));
+                assert!(called);
+                assert_eq!(depth_after, mark);
+                assert_eq!(level_after, level);
+                assert_eq!(buffer_after, buffer);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn minibuffer_prompt_property_cycle_signals_and_unwinds() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let properties = Value::list(vec![
+                    Value::Sym(interp.intern("face")),
+                    Value::Sym(interp.intern("bold")),
+                ]);
+                let Value::Cons(first) = &properties else {
+                    unreachable!()
+                };
+                let Value::Cons(second) = first.borrow().cdr.clone() else {
+                    unreachable!()
+                };
+                second.borrow_mut().cdr = properties.clone();
+                let property = interp.intern("minibuffer-prompt-properties");
+                interp.set_symbol(property, properties).unwrap();
+
+                let reader_called = Rc::new(std::cell::Cell::new(false));
+                let reader_called_from_hook = reader_called.clone();
+                interp.minibuf_reader = Some(Rc::new(move |_, _, _| {
+                    reader_called_from_hook.set(true);
+                    Ok(MinibufInput::Text("answer".into()))
+                }));
+                let specbind_mark = interp.specbind_depth();
+                let current_buffer = interp.current_buffer;
+                let minibuf_level = interp.minibuf_level;
+                let result = interp.minibuf_read("Prompt: ", MinibufArgs::default());
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+                ));
+                assert!(!reader_called.get());
+                assert_eq!(interp.specbind_depth(), specbind_mark);
+                assert_eq!(interp.current_buffer, current_buffer);
+                assert_eq!(interp.minibuf_level, minibuf_level);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn uninterned_face_named_prompt_property_stays_a_regular_property() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let face = interp.make_symbol("face");
+                let value = Value::Sym(interp.intern("bold"));
+                let properties = Value::list(vec![Value::Sym(face), value.clone()]);
+                let property = interp.intern("minibuffer-prompt-properties");
+                interp.set_symbol(property, properties).unwrap();
+                interp.minibuf_reader =
+                    Some(Rc::new(|_, _, _| Ok(MinibufInput::Text("answer".into()))));
+
+                interp
+                    .minibuf_read("Prompt: ", MinibufArgs::default())
+                    .unwrap();
+                let minibuffer = interp.get_minibuffer(1);
+                let buffer = Value::Buffer(
+                    interp
+                        .buffers
+                        .get(minibuffer)
+                        .expect("minibuffer remains live")
+                        .clone(),
+                );
+                let fake_face = crate::buffer::primitives::f_get_text_property(
+                    &mut interp,
+                    vec![Value::Int(1), Value::Sym(face), buffer.clone()].into(),
+                )
+                .unwrap();
+                let canonical_face_id = interp.intern("face");
+                let canonical_face = crate::buffer::primitives::f_get_text_property(
+                    &mut interp,
+                    vec![Value::Int(1), Value::Sym(canonical_face_id), buffer].into(),
+                )
+                .unwrap();
+                assert!(crate::lisp::builtins::eq_values(&fake_face, &value));
+                assert!(canonical_face.is_nil());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

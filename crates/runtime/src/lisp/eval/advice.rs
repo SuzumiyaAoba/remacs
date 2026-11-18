@@ -89,29 +89,49 @@ impl Interp {
         Ok(next)
     }
 
-    /// Strip advice trampolines off F, returning the innermost
-    /// (pre-advice) function — keeping a `(macro . F)' wrapper if F
-    /// itself was macro-wrapped.  Follows `advice_links' entries via
-    /// `Lambda.advice_link' and nadvice oclosure layers via their
-    /// `nf' env binding.
+    /// Strip advice trampolines off F, preserving each `(macro . F)'
+    /// wrapper around the innermost pre-advice function. Follows
+    /// `advice_links' entries via `Lambda.advice_link' and nadvice
+    /// oclosure layers via their `nf' env binding.
     pub(crate) fn unadvised_base(&self, f: &Value) -> Value {
         let mut v = f.clone();
-        let mut was_macro_cons = false;
+        let mut macro_wrapper_count = 0;
+        let mut seen_functions = std::collections::HashSet::new();
         loop {
             match &v {
                 Value::Cons(c) => {
                     let (car, cdr) = {
-                        let b = c.borrow();
+                        let Ok(b) = c.try_borrow() else {
+                            // A caller that cannot inspect the borrowed cell
+                            // must keep the original function object. Its
+                            // checked dispatch path can then report the Lisp
+                            // error instead of panicking here.
+                            return f.clone();
+                        };
                         (b.car.clone(), b.cdr.clone())
                     };
                     if self.sym_is(&car, sym::MACRO) {
-                        was_macro_cons = true;
+                        // Malformed macro function cells can be circular.
+                        // Stop unwrapping at the repeated cell and preserve
+                        // the original object so normal function dispatch
+                        // reports `invalid-function' instead of looping.
+                        if !seen_functions.insert((0, Rc::as_ptr(c) as usize)) {
+                            return f.clone();
+                        }
+                        macro_wrapper_count += 1;
                         v = cdr;
                         continue;
                     }
                     break;
                 }
                 Value::Lambda(l) => {
+                    // Advice trampolines can be built from mutable
+                    // interpreted closure environments. Keep malformed
+                    // self-referential `cdr' chains finite as well as the
+                    // macro-cons wrapper chains above.
+                    if !seen_functions.insert((1, Rc::as_ptr(l) as usize)) {
+                        return f.clone();
+                    }
                     if let Some(idx) = l.advice_link {
                         if let Some((_, _, next, _)) = self.advice_links.get(idx) {
                             v = next.clone();
@@ -132,11 +152,10 @@ impl Interp {
                 _ => break,
             }
         }
-        if was_macro_cons {
-            Value::cons(Value::Sym(sym::MACRO), v)
-        } else {
-            v
+        for _ in 0..macro_wrapper_count {
+            v = Value::cons(Value::Sym(sym::MACRO), v);
         }
+        v
     }
 
     /// If L is a nadvice `advice' oclosure layer (type tag `advice'
@@ -200,5 +219,61 @@ impl Interp {
             cur = next;
         }
         cur
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lisp::{Interp, Value, obarray::sym};
+    use std::{rc::Rc, thread};
+
+    #[test]
+    fn unadvised_base_terminates_on_a_self_referential_advice_closure() {
+        thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let setup = interp
+                    .eval_str(
+                        "(let* ((how (cons 'how :around))\
+                                (cdr (cons 'cdr nil))\
+                                (env (list how cdr))\
+                                (layer (make-interpreted-closure nil '(nil) env 'advice)))\
+                           (setcdr cdr layer)\
+                           (list layer env))",
+                    )
+                    .unwrap();
+                let values = setup.list_to_vec().unwrap();
+                let layer = values[0].clone();
+                let env = values[1].clone();
+                let function = Value::cons(Value::Sym(sym::MACRO), layer);
+                interp.compiled_macro_expansion = true;
+
+                let base = interp.unadvised_base(&function);
+
+                assert!(matches!(
+                    (&base, &function),
+                    (Value::Cons(base), Value::Cons(original)) if Rc::ptr_eq(base, original)
+                ));
+                assert!(
+                    interp
+                        .macro_expand_call(&function, &Value::Nil)
+                        .unwrap()
+                        .is_nil()
+                );
+                assert_eq!(interp.macroexp_call_depth, 0);
+                assert_eq!(interp.expand_unadvised_depth, 0);
+
+                // The lexical environment shares its binding cells with the
+                // closure; break the deliberately-created Rc cycle.
+                let bindings = env.list_to_vec().unwrap();
+                let Value::Cons(cdr_binding) = &bindings[1] else {
+                    panic!("closure environment is missing the cdr binding");
+                };
+                cdr_binding.borrow_mut().cdr = Value::Nil;
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

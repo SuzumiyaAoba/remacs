@@ -9,19 +9,19 @@
 //! sentinels on status transitions.
 
 use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
+use num_traits::ToPrimitive;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
-use num_traits::ToPrimitive;
 
 pub(crate) mod address;
 mod child;
 mod coding;
 pub(crate) mod environment;
-mod wait;
 #[cfg(target_os = "macos")]
 mod macos;
+mod wait;
 
 use super::builtins::evalfn::timer_check;
 use super::builtins::{S, arg};
@@ -30,6 +30,12 @@ use super::eval::plist_get;
 use super::obarray::sym;
 use super::value::{Marker, MarkerRef, ProcessRef, Subr, SymId, Value};
 use super::{EvalResult, Interp};
+
+// Paused output from a one-sided PTY may need to be drained so the child can
+// finish, while still preserving it for delivery if the child remains live.
+// Bound the temporary queue so a paused filter cannot accumulate unlimited
+// subprocess output.
+const MAX_PAUSED_PTY_OUTPUT: usize = 64 * 1024;
 
 /// OS-level I/O behind a process object.
 pub enum ProcIo {
@@ -44,6 +50,9 @@ pub enum ProcIo {
         stderr: Option<std::process::ChildStderr>,
         /// Unsent input, shared with reentrant sends from filters/timers.
         pending_input: VecDeque<u8>,
+        /// PTY output drained while only stdout is a PTY and its filter is
+        /// paused. Replayed if the filter resumes before the child exits.
+        paused_output: VecDeque<u8>,
     },
     /// An Emacs-internal pipe. `read_fd` is polled for data a child
     /// writes into `child_wfd` (used as a `:stderr` destination);
@@ -58,6 +67,8 @@ pub enum ProcIo {
     Net(std::net::TcpStream),
     /// A nonblocking TCP connect, completed only by the process event loop.
     Connecting(TcpConnect),
+    /// A nonblocking Unix-domain stream connect, completed by the same loop.
+    LocalConnecting(LocalConnect),
     /// A message-oriented socket. Never use stream read/write semantics here.
     Datagram(DatagramIo),
     /// A listening server socket.
@@ -73,12 +84,25 @@ pub enum ProcIo {
     None,
 }
 
+/// A TLS record send remains in-flight across GNUTLS_E_AGAIN; GnuTLS requires
+/// retries to use the same input pointer and length until it accepts bytes.
+struct PendingTlsWrite {
+    bytes: Vec<u8>,
+    offset: usize,
+}
 /// Keep ownership of an in-flight socket, including the untried addresses.
 /// Dropping this state cancels the attempt without waiting for the network.
 pub struct TcpConnect {
     socket: Option<std::net::TcpStream>,
     remote: std::net::SocketAddr,
     remaining: VecDeque<std::net::SocketAddr>,
+}
+
+/// In-flight Unix-domain connection. Keep the caller's remote spelling for
+/// `process-contact' while the socket completes asynchronously.
+pub struct LocalConnect {
+    socket: Option<std::os::unix::net::UnixStream>,
+    remote: EmacsText,
 }
 
 impl std::os::fd::AsRawFd for TcpConnect {
@@ -172,6 +196,77 @@ fn nonblocking_tcp_connect(addr: std::net::SocketAddr) -> std::io::Result<std::n
     Ok(socket)
 }
 
+/// Start a Unix-domain stream connect without waiting for the peer backlog.
+fn nonblocking_unix_connect(
+    path: &std::path::Path,
+) -> std::io::Result<std::os::unix::net::UnixStream> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let bytes = path.as_os_str().as_bytes();
+    if bytes.contains(&0) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Unix socket path contains NUL",
+        ));
+    }
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if bytes.len() >= address.sun_path.len() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Unix socket path too long",
+        ));
+    }
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    let flags = unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFD) };
+    if flags < 0
+        || unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    socket.set_nonblocking(true)?;
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            bytes.as_ptr(),
+            address.sun_path.as_mut_ptr().cast::<u8>(),
+            bytes.len(),
+        );
+    }
+    let length = std::mem::offset_of!(libc::sockaddr_un, sun_path) + bytes.len() + 1;
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))]
+    {
+        address.sun_len = length as u8;
+    }
+    let result = unsafe {
+        libc::connect(
+            socket.as_raw_fd(),
+            (&address as *const libc::sockaddr_un).cast(),
+            length as libc::socklen_t,
+        )
+    };
+    if result < 0 {
+        let error = std::io::Error::last_os_error();
+        if !matches!(
+            error.raw_os_error(),
+            Some(libc::EINPROGRESS | libc::EINTR | libc::EALREADY | libc::EAGAIN)
+        ) {
+            return Err(error);
+        }
+    }
+    Ok(socket)
+}
+
 impl TcpConnect {
     fn start(mut remaining: VecDeque<std::net::SocketAddr>) -> std::io::Result<Self> {
         let mut error = std::io::Error::from_raw_os_error(libc::EADDRNOTAVAIL);
@@ -227,6 +322,49 @@ impl TcpConnect {
                 // the next event-loop turn instead of spinning on readiness.
                 *self = Self::start(std::mem::take(&mut self.remaining))?;
                 Ok(None)
+            }
+        }
+    }
+}
+
+impl LocalConnect {
+    fn start(path: &std::path::Path, remote: EmacsText) -> std::io::Result<Self> {
+        Ok(Self {
+            socket: Some(nonblocking_unix_connect(path)?),
+            remote,
+        })
+    }
+
+    /// SO_ERROR is only final after the nonblocking socket becomes writable.
+    fn poll(&mut self) -> std::io::Result<Option<std::os::unix::net::UnixStream>> {
+        use std::os::fd::AsRawFd;
+        let socket = self.socket.as_ref().expect("connecting local socket");
+        let mut fd = libc::pollfd {
+            fd: socket.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut fd, 1, 0) };
+        if ready == 0 {
+            return Ok(None);
+        }
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            return if error.kind() == std::io::ErrorKind::Interrupted {
+                Ok(None)
+            } else {
+                Err(error)
+            };
+        }
+        let result = socket.take_error().and_then(|error| match error {
+            Some(error) => Err(error),
+            None => socket.peer_addr().map(|_| ()),
+        });
+        match result {
+            Ok(()) => Ok(self.socket.take()),
+            Err(error) => {
+                self.socket.take();
+                Err(error)
             }
         }
     }
@@ -360,9 +498,15 @@ impl DatagramIo {
     fn send(&self, bytes: &[u8], remote: &Option<DatagramAddress>) -> std::io::Result<usize> {
         match (&self.socket, remote) {
             (DatagramSocket::Inet(s), Some(DatagramAddress::Inet(addr))) => s.send_to(bytes, addr),
-            (DatagramSocket::Local(s), Some(DatagramAddress::Local(path))) => {
-                s.send_to(bytes, path.to_os_string().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot encode socket path"))?)
-            }
+            (DatagramSocket::Local(s), Some(DatagramAddress::Local(path))) => s.send_to(
+                bytes,
+                path.to_os_string().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Cannot encode socket path",
+                    )
+                })?,
+            ),
             _ => Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
         }
     }
@@ -499,10 +643,13 @@ impl Drop for ProcIo {
     fn drop(&mut self) {
         match self {
             ProcIo::Child {
-                child, input_fd, output_fd, tty_fd, ..
+                child,
+                input_fd,
+                output_fd,
+                tty_fd,
+                ..
             } => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_child_group_and_reap(child);
                 input_fd.take();
                 output_fd.take();
                 tty_fd.take();
@@ -526,6 +673,23 @@ impl Drop for ProcIo {
             _ => {}
         }
     }
+}
+
+/// Kill and reap an owned subprocess. Real children are process-group
+/// leaders, so this also prevents shell descendants from outliving the
+/// process object that owned them.
+fn kill_child_group_and_reap(child: &mut std::process::Child) {
+    match child.try_wait() {
+        Ok(Some(_)) => {}
+        Ok(None) | Err(_) => {
+            let pid = child.id() as libc::pid_t;
+            if pid > 0 {
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+            }
+            let _ = child.kill();
+        }
+    }
+    let _ = child.wait();
 }
 
 /// A live (or finished) process object.
@@ -564,6 +728,10 @@ pub struct Proc {
     /// Non-PTY output redirects to a null sink after process-send-eof,
     /// while the input stream and externally visible status stay live.
     write_eof: bool,
+    /// Unsent bytes on nonblocking TCP/Unix streams. Reentrant sends append
+    /// behind the active write and are drained by its event-pump loop.
+    pending_output: VecDeque<u8>,
+    pending_tls_output: Option<PendingTlsWrite>,
     /// Where stderr goes: nil (discard), t (main output), buffer, or process.
     pub stderr_dest: Value,
     pub inherit_coding: bool,
@@ -782,8 +950,15 @@ fn encode_process_input(
     Ok(bytes)
 }
 
-fn insert_coded_into_buffer(i: &mut Interp, buffer: usize, position: Option<usize>, value: &Value) {
-    let Value::Str(source) = value else { return };
+fn insert_coded_into_buffer(
+    i: &mut Interp,
+    buffer: usize,
+    position: Option<usize>,
+    value: &Value,
+) -> Result<(), Flow> {
+    let Value::Str(source) = value else {
+        return Ok(());
+    };
     let multi = buffer_multibyte(i, buffer);
     let unibyte = i.is_unibyte_str(source);
     let text: EmacsText = source
@@ -799,14 +974,25 @@ fn insert_coded_into_buffer(i: &mut Interp, buffer: usize, position: Option<usiz
             }
         })
         .collect();
-    let _ = crate::buffer::primitives::chg_with_buffer(i, buffer, |i| {
-        let at = position
-            .unwrap_or_else(|| cur_text_len(i))
-            .min(cur_text_len(i));
-        crate::buffer::primitives::chg_insert(i, at, &text)?;
-        crate::buffer::primitives::copy_str_props(i, source, at);
-        Ok(Value::Nil)
-    });
+    crate::buffer::primitives::chg_with_buffer(i, buffer, |i| {
+        // GNU's read_process_output_before_insert temporarily clears the
+        // buffer's C read-only slot; process output is inserted even when
+        // users have made the destination buffer read-only.
+        let read_only = i.q("buffer-read-only");
+        let old_read_only = i.symbol_value(read_only);
+        i.store_internal_value(read_only, Value::Nil);
+        let result = (|| {
+            let at = position
+                .unwrap_or_else(|| cur_text_len(i))
+                .min(cur_text_len(i));
+            crate::buffer::primitives::chg_insert(i, at, &text)?;
+            crate::buffer::primitives::copy_str_props(i, source, at);
+            Ok(Value::Nil)
+        })();
+        i.store_internal_value(read_only, old_read_only);
+        result
+    })?;
+    Ok(())
 }
 
 /// Decode-process-output hook point: raw bytes → string.
@@ -876,20 +1062,18 @@ fn call_process_callback(
     if catch_errors {
         // C internal_condition_case's Qerror tag catches all conditions,
         // including quit; it is broader than Lisp (condition-case ... (error)).
-        i.case_handlers.push(super::error::CaseHandler::single(Value::t()));
+        i.case_handlers
+            .push(super::error::CaseHandler::single(Value::t()));
     }
     let result = i.apply(function, arguments);
     let result = match result {
-        Err(Flow::Quit) if catch_errors => {
-            Err(Flow::signal(Value::Sym(i.q("quit")), Value::Nil))
-        }
+        Err(Flow::Quit) if catch_errors => Err(Flow::signal(Value::Sym(i.q("quit")), Value::Nil)),
         other => other,
     };
     let result = i.offer_flow(result);
     i.case_handlers.truncate(depth);
     match result {
-        Err(Flow::Signal(signal)) if catch_errors && signal.claims_frame(depth) =>
-        {
+        Err(Flow::Signal(signal)) if catch_errors && signal.claims_frame(depth) => {
             i.finish_quit_unwind();
             super::builtins::evalfn::command_error(i, signal.condition, context)?;
             let inhibit = i.q("inhibit-quit");
@@ -926,9 +1110,7 @@ fn deliver_output(
 }
 
 fn finish_output(i: &mut Interp, pref: &ProcessRef, stderr: bool) -> Result<(), Flow> {
-    with_process_callback_context(i, |i| {
-        deliver_output_inner(i, pref, &[], stderr, true)
-    })
+    with_process_callback_context(i, |i| deliver_output_inner(i, pref, &[], stderr, true))
 }
 
 fn deliver_output_inner(
@@ -952,7 +1134,7 @@ fn deliver_output_inner(
                     deliver_output_inner(i, &t, out, false, finish)?;
                 } else if let Some(bid) = i.buffer_id_of(v) {
                     let value = decode_process_output(i, pref, out, true, finish, Some(bid))?;
-                    insert_coded_into_buffer(i, bid, None, &value);
+                    insert_coded_into_buffer(i, bid, None, &value)?;
                 }
             }
         }
@@ -994,14 +1176,13 @@ fn deliver_decoded(i: &mut Interp, pref: &ProcessRef, value: Value) -> Result<()
                     .unwrap_or(0)
             });
         let n = text.chars().count();
-        insert_coded_into_buffer(i, bid, Some(pos), &value);
+        insert_coded_into_buffer(i, bid, Some(pos), &value)?;
         if let Some(m) = &mark {
             m.borrow_mut().position = pos + n;
         }
     }
     Ok(())
 }
-
 
 fn cur_text_len(i: &mut Interp) -> usize {
     crate::buffer::primitives::cur(i).borrow().text_len()
@@ -1147,7 +1328,10 @@ fn poll_proc_once(
             return Ok(PollOutput::default());
         }
     }
-    if matches!(pref.borrow().io, ProcIo::Connecting(_)) {
+    if matches!(
+        pref.borrow().io,
+        ProcIo::Connecting(_) | ProcIo::LocalConnecting(_)
+    ) {
         return poll_connect(i, pref).map(PollOutput::from);
     }
     let input_paused = {
@@ -1212,12 +1396,18 @@ fn poll_proc_once(
                     tty_fd,
                     stderr,
                     pending_input,
+                    paused_output,
+                    pty_input,
+                    pty_output,
                     ..
                 } => {
                     // Observe exit before draining. If the child exits just
                     // after an EAGAIN read, leave it for the next poll so
                     // closing the channel cannot discard its final bytes.
                     let exited = child.try_wait();
+                    if !input_paused && !paused_output.is_empty() {
+                        events.push(Ev::Out(paused_output.drain(..).collect(), false));
+                    }
                     let mut buf = [0u8; 8192];
                     let mut read_stderr = |buf: &mut [u8]| -> Option<Vec<u8>> {
                         let stream = stderr.as_mut()?;
@@ -1225,7 +1415,7 @@ fn poll_proc_once(
                             match stream.read(buf) {
                                 Ok(n) if n > 0 => return Some(buf[..n].to_vec()),
                                 Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                                    continue
+                                    continue;
                                 }
                                 _ => return None,
                             }
@@ -1240,7 +1430,34 @@ fn poll_proc_once(
                             events.push(Ev::Out(bytes, true));
                         }
                     }
-                    if events.is_empty() && !input_paused {
+                    // GNU can reap a child whose stdout alone uses a PTY
+                    // while its filter is paused. Drain into a bounded
+                    // private queue so the child can finish; replay only if
+                    // it remains live when the filter is resumed.
+                    let paused_pty_output = input_paused && !*pty_input && *pty_output;
+                    if paused_pty_output {
+                        let available = MAX_PAUSED_PTY_OUTPUT.saturating_sub(paused_output.len());
+                        if available > 0 {
+                            let n = loop {
+                                let n = unsafe {
+                                    libc::read(
+                                        output_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+                                        buf.as_mut_ptr() as *mut _,
+                                        buf.len().min(available),
+                                    )
+                                };
+                                if n >= 0
+                                    || std::io::Error::last_os_error().kind()
+                                        != std::io::ErrorKind::Interrupted
+                                {
+                                    break n;
+                                }
+                            };
+                            if n > 0 {
+                                paused_output.extend(buf[..n as usize].iter().copied());
+                            }
+                        }
+                    } else if events.is_empty() && !input_paused {
                         let n = loop {
                             let n = unsafe {
                                 libc::read(
@@ -1276,6 +1493,7 @@ fn poll_proc_once(
                             tty_fd.take();
                             stderr.take();
                             *pending_input = VecDeque::new();
+                            paused_output.clear();
                             if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&st) {
                                 p.status = "signal";
                                 p.exit_status = sig;
@@ -1324,6 +1542,8 @@ fn poll_proc_once(
                                 if p.status != "closed" {
                                     p.status = "closed";
                                     p.exit_status = 0;
+                                    p.pending_output.clear();
+                                    p.pending_tls_output = None;
                                     events.push(Ev::Exit("closed", 0));
                                 }
                                 break;
@@ -1357,6 +1577,8 @@ fn poll_proc_once(
                                 if p.status != "closed" {
                                     p.status = "closed";
                                     p.exit_status = 0;
+                                    p.pending_output.clear();
+                                    p.pending_tls_output = None;
                                     events.push(Ev::Exit("closed", 0));
                                 }
                                 break;
@@ -1397,7 +1619,9 @@ fn poll_proc_once(
                     }
                 }
                 ProcIo::Datagram(_) => unreachable!("datagrams have a message-oriented poll path"),
-                ProcIo::Connecting(_) => unreachable!("connects have a readiness poll path"),
+                ProcIo::Connecting(_) | ProcIo::LocalConnecting(_) => {
+                    unreachable!("connects have a readiness poll path")
+                }
                 ProcIo::None => {}
             }
         }
@@ -1446,9 +1670,14 @@ fn poll_proc_once(
                 // The accepted process gets its own buffer in GNU (nil
                 // by default — data doesn't land in the server's).
                 let buffer = None;
-                let contact = accepted_contact(i, pref,
-                    Value::string(accepted_host(addr.ip())), Some(Value::Int(addr.port() as i128)),
-                    socket_addr_value(addr), stream.local_addr().ok().map(socket_addr_value))?;
+                let contact = accepted_contact(
+                    i,
+                    pref,
+                    Value::string(accepted_host(addr.ip())),
+                    Some(Value::Int(addr.port() as i128)),
+                    socket_addr_value(addr),
+                    stream.local_addr().ok().map(socket_addr_value),
+                )?;
 
                 // GNU's accepted process inherits the listener's
                 // filter, sentinel and plist (server-process-filter
@@ -1487,6 +1716,8 @@ fn poll_proc_once(
                         coding,
                         codecs: Default::default(),
                         write_eof: false,
+                        pending_output: VecDeque::new(),
+                        pending_tls_output: None,
                         stderr_dest: Value::Nil,
                         inherit_coding,
                         connection_type: Value::Nil,
@@ -1555,6 +1786,8 @@ fn poll_proc_once(
                         coding,
                         codecs: Default::default(),
                         write_eof: false,
+                        pending_output: VecDeque::new(),
+                        pending_tls_output: None,
                         stderr_dest: Value::Nil,
                         inherit_coding,
                         connection_type: Value::Nil,
@@ -1584,23 +1817,40 @@ fn poll_proc_once(
 /// Publish the new state and release the borrow before invoking Lisp: an open
 /// sentinel can send, wait recursively, replace the filter, or delete p.
 fn poll_connect(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
+    enum Connected {
+        Tcp(std::net::TcpStream),
+        Local(std::os::unix::net::UnixStream, EmacsText),
+    }
     let result = {
         let mut p = pref.borrow_mut();
-        let ProcIo::Connecting(connect) = &mut p.io else {
-            return Ok(false);
-        };
-        connect.poll()
+        match &mut p.io {
+            ProcIo::Connecting(connect) => connect.poll().map(|socket| socket.map(Connected::Tcp)),
+            ProcIo::LocalConnecting(connect) => connect.poll().map(|socket| {
+                socket.map(|socket| Connected::Local(socket, connect.remote.clone()))
+            }),
+            _ => return Ok(false),
+        }
     };
     match result {
         Ok(None) => {}
-        Ok(Some(socket)) => {
-            let local = socket.local_addr().ok().map(socket_addr_value);
-            let remote = socket.peer_addr().ok().map(socket_addr_value);
+        Ok(Some(connected)) => {
+            let (io, local, remote) = match connected {
+                Connected::Tcp(socket) => {
+                    let local = socket.local_addr().ok().map(socket_addr_value);
+                    let remote = socket.peer_addr().ok().map(socket_addr_value);
+                    (ProcIo::Net(socket), local, remote)
+                }
+                Connected::Local(socket, remote_path) => {
+                    let local = unix_local_addr(i, socket.as_raw_fd());
+                    let remote = unix_address_value(i, &remote_path.to_external_bytes());
+                    (ProcIo::LocalNet(socket), local, Some(remote))
+                }
+            };
             let local_kw = i.q(":local");
             let remote_kw = i.q(":remote");
             {
                 let mut p = pref.borrow_mut();
-                p.io = ProcIo::Net(socket);
+                p.io = io;
                 if p.status == "stop" {
                     p.pending_status = Some("open");
                 } else {
@@ -1681,8 +1931,7 @@ fn poll_datagram(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 did = true;
                 deliver_output(i, pref, bytes[..n].to_vec(), false)?;
             }
-            Ok(0) if pref.borrow().codecs.output.has_pending() =>
-            {
+            Ok(0) if pref.borrow().codecs.output.has_pending() => {
                 // GNU first flushes an incomplete character as raw bytes. That
                 // read produced output; a later empty datagram closes it.
                 did = true;
@@ -1729,14 +1978,23 @@ fn poll_all_except(i: &mut Interp, except: Option<&ProcessRef>) -> Result<bool, 
 // ---------- constructors ----------
 
 /// Use the first available suffix, considering every registered process.
-fn unique_process_name<T: crate::lisp::text::TextSource + ?Sized>(i: &Interp, requested: &T) -> crate::lisp::text::EmacsText {
+fn unique_process_name<T: crate::lisp::text::TextSource + ?Sized>(
+    i: &Interp,
+    requested: &T,
+) -> crate::lisp::text::EmacsText {
     requested.with_text(|requested| {
-        let used = |name: &crate::lisp::text::EmacsStr| i.processes.iter().any(|p| &*p.borrow().name == name);
-        if !used(requested) { return requested.to_string(); }
+        let used = |name: &crate::lisp::text::EmacsStr| {
+            i.processes.iter().any(|p| &*p.borrow().name == name)
+        };
+        if !used(requested) {
+            return requested.to_string();
+        }
         for suffix in 1usize.. {
             let mut candidate = requested.to_string();
             candidate.push_str(format!("<{suffix}>"));
-            if !used(&candidate) { return candidate; }
+            if !used(&candidate) {
+                return candidate;
+            }
         }
         unreachable!()
     })
@@ -1795,6 +2053,8 @@ fn base_proc(name: crate::lisp::text::EmacsText, kind: &'static str, io: ProcIo)
         coding: ("utf-8-unix".into(), "utf-8-unix".into()),
         codecs: Default::default(),
         write_eof: false,
+        pending_output: VecDeque::new(),
+        pending_tls_output: None,
         stderr_dest: Value::Nil,
         inherit_coding: false,
         connection_type: Value::Nil,
@@ -1878,8 +2138,6 @@ fn finish_setup(
         crate::lisp::Value::Process,
     ))
 }
-
-
 
 /// GNU is_pty_from_symbol: nil inherits the dynamic default on either side.
 fn child_pty_mode(i: &mut Interp, mode: &Value) -> Result<bool, Flow> {
@@ -1989,14 +2247,16 @@ fn f_make_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let split_stderr = stderr_dest.truthy();
     let stderr_coding = if split_stderr && !matches!(stderr_dest, Value::Process(_)) {
         coding::constructor(i, &Value::Nil, true)?.0
-    } else { String::new() };
+    } else {
+        String::new()
+    };
     // Resolve against Lisp exec-path before installing the child's PATH.
     let directory = crate::editor::process_directory(i)?;
     let resolved = crate::editor::dif_resolve_program(i, &cmd[0], &directory, true)?;
     let mut child_command = std::process::Command::new(crate::editor::native_path(i, &resolved)?);
     child_command.current_dir(crate::editor::native_path(i, &directory)?);
     child_command.args(command_arguments(&cmd[1..]).map_err(|error| i.error(error.to_string()))?);
-    environment::apply(i, &mut child_command);
+    environment::apply(i, &mut child_command)?;
     // Transfer an explicitly supplied pipe's writer to the child, as GNU
     // does. Other :stderr destinations are drained through a separate pipe.
     let stderr_pipe = if let Value::Process(sp) = &stderr_dest {
@@ -2106,7 +2366,10 @@ fn f_make_pipe_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 pub(crate) fn validate_hostname(i: &Interp, value: &Value) -> Result<(), Flow> {
     if let Value::Str(text) = value {
         if super::builtins::strfn::string_multibyte_p(i, value) && !text.borrow().is_ascii() {
-            return Err(i.error_q_text("Non-ASCII hostname %s detected, please use `puny-encode-domain'", &[text.borrow().clone()]));
+            return Err(i.error_q_text(
+                "Non-ASCII hostname %s detected, please use `puny-encode-domain'",
+                &[text.borrow().clone()],
+            ));
         }
     }
     Ok(())
@@ -2121,13 +2384,26 @@ fn service_port(i: &mut Interp, v: &Value) -> Result<u16, Flow> {
                 return Ok(n);
             }
             const SERVICES: &[(&str, u16)] = &[
-                ("http", 80), ("https", 443), ("ftp", 21), ("ssh", 22),
-                ("telnet", 23), ("smtp", 25), ("domain", 53), ("imap", 143),
-                ("imaps", 993), ("pop3", 110), ("pop3s", 995),
+                ("http", 80),
+                ("https", 443),
+                ("ftp", 21),
+                ("ssh", 22),
+                ("telnet", 23),
+                ("smtp", 25),
+                ("domain", 53),
+                ("imap", 143),
+                ("imaps", 993),
+                ("pop3", 110),
+                ("pop3s", 995),
             ];
-            let port = SERVICES.iter().find(|(name, _)| t == *name).map(|(_, port)| *port)
+            let port = SERVICES
+                .iter()
+                .find(|(name, _)| t == *name)
+                .map(|(_, port)| *port)
                 .ok_or_else(|| {
-                    let mut message = EmacsText::from("Unknown service: "); message.append(&t); i.error(message)
+                    let mut message = EmacsText::from("Unknown service: ");
+                    message.append(&t);
+                    i.error(message)
                 })?;
             Ok(port)
         }
@@ -2176,7 +2452,11 @@ fn datagram_error(i: &mut Interp, operation: &str, error: std::io::Error) -> Flo
     )
 }
 
-fn make_datagram_process(i: &mut Interp, name: crate::lisp::text::EmacsText, args: &Value) -> EvalResult {
+fn make_datagram_process(
+    i: &mut Interp,
+    name: crate::lisp::text::EmacsText,
+    args: &Value,
+) -> EvalResult {
     let server = kw(i, args, ":server").truthy();
     if server && kw(i, args, ":nowait").truthy() {
         return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
@@ -2185,10 +2465,27 @@ fn make_datagram_process(i: &mut Interp, name: crate::lisp::text::EmacsText, arg
     let address = if explicit.truthy() {
         DatagramAddress::from_value(&explicit).ok_or_else(|| i.error("Malformed address"))?
     } else {
-        let family = kw(i, args, ":family");
-        let family = match &family {
+        let family_value = kw(i, args, ":family");
+        let local_family = i.q("local");
+        let unix_family = i.q("unix");
+        let ipv4_family = i.q("ipv4");
+        let ipv6_family = i.q("ipv6");
+        let mut unsupported_numeric_family = None;
+        let family = match &family_value {
             Value::Nil => None,
-            Value::Sym(s) => Some(i.symbol_name(*s)),
+            Value::Sym(s) if *s == local_family => Some("local".to_owned()),
+            Value::Sym(s) if *s == unix_family => Some("unix".to_owned()),
+            Value::Sym(s) if *s == ipv4_family => Some("ipv4".to_owned()),
+            Value::Sym(s) if *s == ipv6_family => Some("ipv6".to_owned()),
+            Value::Int(n) if *n == libc::AF_UNIX as i128 => Some("local".to_owned()),
+            Value::Int(n) if *n == libc::AF_UNSPEC as i128 => None,
+            Value::Int(n) if *n == libc::AF_INET as i128 => Some("ipv4".to_owned()),
+            Value::Int(n) if *n == libc::AF_INET6 as i128 => Some("ipv6".to_owned()),
+            Value::Int(n) if i32::try_from(*n).is_ok() => {
+                unsupported_numeric_family = Some(*n);
+                None
+            }
+            Value::Int(_) => return Err(i.error("Unknown address family")),
             _ => return Err(i.error("Unsupported address family")),
         };
         let service = kw(i, args, ":service");
@@ -2218,6 +2515,9 @@ fn make_datagram_process(i: &mut Interp, name: crate::lisp::text::EmacsText, arg
                 Value::Str(s) => s.borrow().clone(),
                 other => return Err(i.wrong_type_mut("stringp", &other)),
             };
+            if unsupported_numeric_family.is_some() {
+                return Err(i.error(format!("{host}/{port} ai_family not supported")));
+            }
             let address = address::resolve(&host, port)
                 .map_err(|e| datagram_error(i, "make network process failed", e))?
                 .find(|addr| match family.as_deref() {
@@ -2330,6 +2630,149 @@ fn make_datagram_process(i: &mut Interp, name: crate::lisp::text::EmacsText, arg
     Ok(Value::Process(pref))
 }
 
+fn network_server_bind_error(i: &mut Interp, error: std::io::Error) -> Flow {
+    let symbol = i.intern(if error.kind() == std::io::ErrorKind::PermissionDenied {
+        "permission-denied"
+    } else {
+        "file-error"
+    });
+    let message = error.to_string();
+    i.signal_data(
+        symbol,
+        vec![
+            Value::string("Cannot bind server socket"),
+            Value::string(message.split(" (os error").next().unwrap_or(&message)),
+        ],
+    )
+}
+
+/// Create a stream process from an explicit `:local' or `:remote'
+/// sockaddr. GNU bypasses host/service/family parsing for these values.
+fn make_stream_network_process_for_address(
+    i: &mut Interp,
+    name: EmacsText,
+    args: &Value,
+    server: bool,
+    address: DatagramAddress,
+) -> EvalResult {
+    let nowait = kw(i, args, ":nowait").truthy();
+    if server {
+        if nowait {
+            return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
+        }
+        let (io, local) = match address {
+            DatagramAddress::Inet(address) => {
+                let listener = std::net::TcpListener::bind(address)
+                    .map_err(|error| network_server_bind_error(i, error))?;
+                let _ = listener.set_nonblocking(true);
+                let local = listener
+                    .local_addr()
+                    .ok()
+                    .map(socket_addr_value)
+                    .unwrap_or_else(|| socket_addr_value(address));
+                (ProcIo::Listen(listener), local)
+            }
+            DatagramAddress::Local(path) => {
+                let native_path = crate::editor::native_path(i, &path)?;
+                let listener = std::os::unix::net::UnixListener::bind(&native_path)
+                    .map_err(|error| network_server_bind_error(i, error))?;
+                let _ = listener.set_nonblocking(true);
+                let local =
+                    unix_local_addr(i, listener.as_raw_fd()).unwrap_or_else(|| Value::string(path));
+                (ProcIo::LocalListen(listener, native_path), local)
+            }
+        };
+        let mut process = base_proc(name, "network", io);
+        process.status = "listen";
+        process.contact = super::eval::plist_put(args, i.q(":local"), local);
+        let process = finish_setup(i, process, args, false)?;
+        i.processes.push(process.clone());
+        return Ok(Value::Process(process));
+    }
+
+    let remote = address.value(i);
+    let connection = match &address {
+        DatagramAddress::Inet(address) => {
+            if nowait {
+                TcpConnect::start(VecDeque::from([*address])).map(ProcIo::Connecting)
+            } else {
+                std::net::TcpStream::connect(*address).and_then(|stream| {
+                    stream.set_nonblocking(true)?;
+                    Ok(ProcIo::Net(stream))
+                })
+            }
+        }
+        DatagramAddress::Local(path) => {
+            let native_path = crate::editor::native_path(i, path)?;
+            if nowait {
+                LocalConnect::start(&native_path, path.clone()).map(ProcIo::LocalConnecting)
+            } else {
+                std::os::unix::net::UnixStream::connect(native_path).and_then(|stream| {
+                    stream.set_nonblocking(true)?;
+                    Ok(ProcIo::LocalNet(stream))
+                })
+            }
+        }
+    };
+    let io = match connection {
+        Ok(io) => io,
+        Err(error) => {
+            let file_error = i.q("file-error");
+            let message = error.to_string();
+            if nowait {
+                let mut data = vec![
+                    Value::Sym(file_error),
+                    Value::string("make client process failed"),
+                    Value::string(message.split(" (os error").next().unwrap_or(&message)),
+                ];
+                data.extend(args.list_to_vec().unwrap_or_default());
+                let mut process = base_proc(name, "network", ProcIo::None);
+                process.status = "failed";
+                process.exit_status = error.raw_os_error().unwrap_or(libc::EIO);
+                process.connect_error = Value::list(data);
+                process.contact = args.clone();
+                process.reported = true;
+                let process = finish_setup(i, process, args, false)?;
+                i.processes.push(process.clone());
+                return Ok(Value::Process(process));
+            }
+            let mut data = vec![
+                Value::string("make client process failed"),
+                Value::string(message),
+            ];
+            data.extend(args.list_to_vec().unwrap_or_default());
+            return Err(i.signal_data(file_error, data));
+        }
+    };
+    let local = match &io {
+        ProcIo::Connecting(connect) => connect
+            .socket
+            .as_ref()
+            .and_then(|socket| socket.local_addr().ok())
+            .map(socket_addr_value)
+            .unwrap_or(Value::Nil),
+        ProcIo::LocalConnecting(connect) => connect
+            .socket
+            .as_ref()
+            .and_then(|socket| unix_local_addr(i, socket.as_raw_fd()))
+            .unwrap_or(Value::Nil),
+        ProcIo::Net(stream) => stream
+            .local_addr()
+            .ok()
+            .map(socket_addr_value)
+            .unwrap_or(Value::Nil),
+        ProcIo::LocalNet(stream) => unix_local_addr(i, stream.as_raw_fd()).unwrap_or(Value::Nil),
+        _ => unreachable!("explicit stream address creates a stream process"),
+    };
+    let mut process = base_proc(name, "network", io);
+    process.status = if nowait { "connect" } else { "open" };
+    process.contact = super::eval::plist_put(args, i.q(":remote"), remote);
+    process.contact = super::eval::plist_put(&process.contact, i.q(":local"), local);
+    let process = finish_setup(i, process, args, false)?;
+    i.processes.push(process.clone());
+    Ok(Value::Process(process))
+}
+
 /// One sendto is one message. A hypothetical short datagram write must never
 /// be retried as a second packet containing the suffix.
 fn send_whole_datagram(
@@ -2424,14 +2867,25 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     coding::constructor(i, &args, false)?;
     let type_v = kw(i, &args, ":type");
-    if matches!(&type_v, Value::Sym(id) if i.symbol_name(*id) == "datagram") {
+    let datagram_type = i.q("datagram");
+    if matches!(&type_v, Value::Sym(id) if *id == datagram_type) {
         return make_datagram_process(i, name, &args);
     }
     if type_v.truthy() {
         return Err(i.error("Unsupported connection type"));
     }
-    let service = kw(i, &args, ":service");
     let server = kw(i, &args, ":server").truthy();
+    let nowait = kw(i, &args, ":nowait").truthy();
+    if server && nowait {
+        return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
+    }
+    let explicit_address = kw(i, &args, if server { ":local" } else { ":remote" });
+    if explicit_address.truthy() {
+        let address = DatagramAddress::from_value(&explicit_address)
+            .ok_or_else(|| i.error("Malformed :address"))?;
+        return make_stream_network_process_for_address(i, name, &args, server, address);
+    }
+    let service = kw(i, &args, ":service");
     let host_v = kw(i, &args, ":host");
     let host = match &host_v {
         Value::Str(s) => s.borrow().clone(),
@@ -2440,7 +2894,8 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     // GNU's `process-contact' returns the creation plist with :service
     // resolved, plus :local (and :remote for clients) address vectors.
-    let contact_plist = |i: &mut Interp, port: u16, extra: Vec<Value>| -> Value {
+    let service_key = i.q(":service");
+    let contact_plist = |port: u16, extra: Vec<Value>| -> Value {
         let mut items: Vec<Value> = Vec::new();
         let mut skip = false;
         for v in args.list_to_vec().unwrap_or_default() {
@@ -2449,7 +2904,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 items.push(Value::Int(port as i128));
                 continue;
             }
-            if matches!(&v, Value::Sym(s) if i.symbol_name(*s) == ":service") {
+            if matches!(&v, Value::Sym(s) if *s == service_key) {
                 skip = true;
             }
             items.push(v);
@@ -2464,70 +2919,41 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     // `:family local' — Unix-domain sockets; :service is the socket path.
     let family_v = kw(i, &args, ":family");
-    let is_local = matches!(&family_v, Value::Sym(s) if {
-        let n = i.symbol_name(*s);
-        n == "local" || n == "unix"
-    });
+    let local_family = i.q("local");
+    let unix_family = i.q("unix");
+    let is_local = matches!(&family_v, Value::Sym(s) if *s == local_family || *s == unix_family)
+        || matches!(&family_v, Value::Int(family) if *family == libc::AF_UNIX as i128);
     if is_local {
         let path = match &service {
             Value::Str(s) => s.borrow().clone(),
             _ => return Err(i.wrong_type_mut("stringp", &service)),
         };
-        if server {
-            if kw(i, &args, ":nowait").truthy() {
-                return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
-            }
-            let listener = std::os::unix::net::UnixListener::bind(crate::editor::native_path(i, &path)?).map_err(|e| {
-                let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    "permission-denied"
-                } else {
-                    "file-error"
-                });
-                let msg = e.to_string();
-                let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
-                i.signal_data(
-                    sig,
-                    vec![
-                        Value::string("Cannot bind server socket"),
-                        Value::string(msg),
-                    ],
-                )
-            })?;
-            let _ = listener.set_nonblocking(true);
-            let local = unix_local_addr(i, listener.as_raw_fd()).unwrap_or(Value::Nil);
-            let mut p = base_proc(name, "network", ProcIo::LocalListen(listener, crate::editor::native_path(i, &path)?));
-            p.status = "listen";
-            p.contact = super::eval::plist_put(&args, i.q(":local"), local);
-            let pref = finish_setup(i, p, &args, false)?;
-            i.processes.push(pref.clone());
-            return Ok(Value::Process(pref));
-        }
-        let stream = match std::os::unix::net::UnixStream::connect(crate::editor::native_path(i, &path)?) {
-            Ok(s) => s,
-            Err(e) => {
-                // GNU: (file-error "make client process failed" <errno> <plist>)
-                let fe = i.q("file-error");
-                let mut data = vec![
-                    Value::string("make client process failed"),
-                    Value::string(e.to_string()),
-                ];
-                data.extend(args.list_to_vec().unwrap_or_default());
-                return Err(i.signal_data(fe, data));
-            }
-        };
-        let _ = stream.set_nonblocking(true);
-        let local = unix_local_addr(i, stream.as_raw_fd()).unwrap_or(Value::Nil);
-        // GNU reports the address passed to connect, preserving symlink
-        // spelling and remaining valid if the remote end immediately closes.
-        let remote = unix_address_value(i, &path.to_external_bytes());
-        let mut p = base_proc(name, "network", ProcIo::LocalNet(stream));
-        p.status = "open";
-        p.contact = super::eval::plist_put(&args, i.q(":local"), local);
-        p.contact = super::eval::plist_put(&p.contact, i.q(":remote"), remote);
-        let pref = finish_setup(i, p, &args, false)?;
-        i.processes.push(pref.clone());
-        return Ok(Value::Process(pref));
+        return make_stream_network_process_for_address(
+            i,
+            name,
+            &args,
+            server,
+            DatagramAddress::Local(path),
+        );
     }
+    let ipv4_family = i.q("ipv4");
+    let ipv6_family = i.q("ipv6");
+    let mut unsupported_numeric_family = None;
+    let family = match family_v {
+        Value::Nil => String::new(),
+        Value::Sym(s) if s == ipv4_family => "ipv4".to_owned(),
+        Value::Sym(s) if s == ipv6_family => "ipv6".to_owned(),
+        Value::Sym(_) => return Err(i.error("Unknown address family")),
+        Value::Int(n) if n == libc::AF_UNSPEC as i128 => String::new(),
+        Value::Int(n) if n == libc::AF_INET as i128 => "ipv4".to_owned(),
+        Value::Int(n) if n == libc::AF_INET6 as i128 => "ipv6".to_owned(),
+        Value::Int(n) if i32::try_from(n).is_ok() => {
+            unsupported_numeric_family = Some(n);
+            String::new()
+        }
+        Value::Int(_) => return Err(i.error("Unknown address family")),
+        _ => return Err(i.error("Unknown address family")),
+    };
     if server {
         if kw(i, &args, ":nowait").truthy() {
             return Err(i.error_q::<str>("`:server' is incompatible with `:nowait'", &[]));
@@ -2544,25 +2970,43 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // particular, :family ipv4 must not broaden a loopback bind to
         // every interface (issue #232).
         validate_hostname(i, &host_v)?;
-        let listener = address::resolve(&host, port).and_then(|addresses| std::net::TcpListener::bind(&addresses.collect::<Vec<_>>()[..])).map_err(|e| {
-            // GNU reports bind failures via the errno-derived condition:
-            // EACCES → permission-denied, others → file-error, with data
-            // ("Cannot bind server socket" <strerror>).
-            let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
-                "permission-denied"
-            } else {
-                "file-error"
-            });
-            let msg = e.to_string();
-            let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
-            i.signal_data(
-                sig,
-                vec![
-                    Value::string("Cannot bind server socket"),
-                    Value::string(msg),
-                ],
-            )
-        })?;
+        if unsupported_numeric_family.is_some() {
+            return Err(i.error(format!(
+                "{}/{} ai_family not supported",
+                host.to_unicode_lossy(),
+                port
+            )));
+        }
+        let listener = address::resolve(&host, port)
+            .and_then(|addresses| {
+                let addresses: Vec<_> = addresses
+                    .filter(|address| match family.as_str() {
+                        "ipv4" => address.is_ipv4(),
+                        "ipv6" => address.is_ipv6(),
+                        _ => true,
+                    })
+                    .collect();
+                std::net::TcpListener::bind(&addresses[..])
+            })
+            .map_err(|e| {
+                // GNU reports bind failures via the errno-derived condition:
+                // EACCES → permission-denied, others → file-error, with data
+                // ("Cannot bind server socket" <strerror>).
+                let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    "permission-denied"
+                } else {
+                    "file-error"
+                });
+                let msg = e.to_string();
+                let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
+                i.signal_data(
+                    sig,
+                    vec![
+                        Value::string("Cannot bind server socket"),
+                        Value::string(msg),
+                    ],
+                )
+            })?;
         let _ = listener.set_nonblocking(true);
         let local_address = listener.local_addr().ok();
         let local_port = local_address.map(|address| address.port()).unwrap_or(port);
@@ -2570,24 +3014,28 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         p.status = "listen";
         let local_kw = symv(i, ":local");
         let local_v = local_address.map(socket_addr_value).unwrap_or(Value::Nil);
-        p.contact = contact_plist(i, local_port, vec![local_kw, local_v]);
+        p.contact = contact_plist(local_port, vec![local_kw, local_v]);
         let pref = finish_setup(i, p, &args, false)?;
         i.processes.push(pref.clone());
         return Ok(Value::Process(pref));
     }
     let port = service_port(i, &service)?;
-    let nowait = kw(i, &args, ":nowait").truthy();
-    let family = match family_v {
-        Value::Sym(s) => i.symbol_name(s),
-        _ => String::new(),
-    };
     validate_hostname(i, &host_v)?;
+    if unsupported_numeric_family.is_some() {
+        return Err(i.error(format!(
+            "{}/{} ai_family not supported",
+            host.to_unicode_lossy(),
+            port
+        )));
+    }
     let connection = address::resolve(&host, port).and_then(|addresses| {
-        let addresses: Vec<_> = addresses.filter(|address| match family.as_str() {
-            "ipv4" => address.is_ipv4(),
-            "ipv6" => address.is_ipv6(),
-            _ => true,
-        }).collect();
+        let addresses: Vec<_> = addresses
+            .filter(|address| match family.as_str() {
+                "ipv4" => address.is_ipv4(),
+                "ipv6" => address.is_ipv6(),
+                _ => true,
+            })
+            .collect();
         if nowait {
             // Resolution follows the system resolver; every attempted
             // handshake remains nonblocking, including address fallback.
@@ -2643,8 +3091,16 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .unwrap_or(Value::Nil),
         ),
         ProcIo::Net(stream) => (
-            stream.peer_addr().ok().map(socket_addr_value).unwrap_or(Value::Nil),
-            stream.local_addr().ok().map(socket_addr_value).unwrap_or(Value::Nil),
+            stream
+                .peer_addr()
+                .ok()
+                .map(socket_addr_value)
+                .unwrap_or(Value::Nil),
+            stream
+                .local_addr()
+                .ok()
+                .map(socket_addr_value)
+                .unwrap_or(Value::Nil),
         ),
         _ => unreachable!("TCP client backend"),
     };
@@ -2654,7 +3110,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     p.status = if nowait { "connect" } else { "open" };
     let remote_kw = symv(i, ":remote");
     let local_kw = symv(i, ":local");
-    p.contact = contact_plist(i, port, vec![remote_kw, remote, local_kw, local]);
+    p.contact = contact_plist(port, vec![remote_kw, remote, local_kw, local]);
     let pref = finish_setup(i, p, &args, false)?;
     i.processes.push(pref.clone());
     Ok(Value::Process(pref))
@@ -2965,7 +3421,8 @@ fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         (pb.contact.clone(), pb.kind)
     };
     let key = arg(&a, 1);
-    if matches!(&key, Value::Sym(id) if *id == sym::T || i.symbol_name(*id) == ":remote") {
+    let remote_key = i.q(":remote");
+    if matches!(&key, Value::Sym(id) if *id == sym::T || *id == remote_key) {
         if let ProcIo::Datagram(io) = &p.borrow().io {
             c = super::eval::plist_put(&c, i.q(":remote"), io.remote_value(i));
         }
@@ -2991,7 +3448,7 @@ fn f_process_contact(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             _ => Ok(Value::Nil),
         },
-        Value::Sym(id) if i.symbol_name(*id) == "t" => Ok(c),
+        Value::Sym(id) if *id == sym::T => Ok(c),
         Value::Sym(id) => {
             let v = crate::lisp::eval::plist_get(&c, *id);
             Ok(v)
@@ -3110,7 +3567,9 @@ fn f_process_tty_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 ) && p.stderr_dest.is_nil()
             }
             _ => {
-                return Err(i.signal_data(sym::ERROR, vec![Value::string("Unknown stream"), stream]));
+                return Err(
+                    i.signal_data(sym::ERROR, vec![Value::string("Unknown stream"), stream])
+                );
             }
         }
     };
@@ -3338,7 +3797,8 @@ fn write_pending_input(
     if pending.is_empty() {
         return Ok(true);
     }
-    let bytes = pending.as_slices().0;
+    let (first, second) = pending.as_slices();
+    let bytes = if first.is_empty() { second } else { first };
     match write(bytes)? {
         0 => Err(std::io::ErrorKind::WriteZero.into()),
         n => {
@@ -3365,6 +3825,10 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
         }
     }
     loop {
+        // `process-send-string' may spend time encoding its Lisp string
+        // before reaching this nonblocking queue. Service due timers before
+        // each write attempt so a timer-set quit beats a child exit/EPIPE.
+        timer_check(i)?;
         i.maybe_quit()?;
         let result = {
             let mut pb = p.borrow_mut();
@@ -3412,15 +3876,116 @@ fn write_child_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult
     }
 }
 
+fn write_network_input(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
+    {
+        let mut pb = p.borrow_mut();
+        if pb.dead || !pb.alive() {
+            return Err(i.error("Process is not running"));
+        }
+        if bytes.is_empty() && pb.pending_output.is_empty() && pb.pending_tls_output.is_none() {
+            return Ok(Value::Nil);
+        }
+        pb.pending_output.extend(bytes);
+    }
+    loop {
+        timer_check(i)?;
+        i.maybe_quit()?;
+        let result = {
+            let mut pb = p.borrow_mut();
+            if pb.dead || !pb.alive() {
+                pb.pending_output.clear();
+                pb.pending_tls_output = None;
+                return Err(i.error("Process is not running"));
+            }
+            if pb.pending_output.is_empty() && pb.pending_tls_output.is_none() {
+                return Ok(Value::Nil);
+            }
+            let tls = matches!(pb.io, ProcIo::Net(_))
+                && (pb.pending_tls_output.is_some()
+                    || crate::lisp::builtins::gnutls::tls_ready(&pb));
+            if tls {
+                if pb.pending_tls_output.is_none() && !pb.pending_output.is_empty() {
+                    let (first, second) = pb.pending_output.as_slices();
+                    let chunk = if first.is_empty() { second } else { first };
+                    let count = chunk.len();
+                    let bytes = pb.pending_output.drain(..count).collect();
+                    pb.pending_tls_output = Some(PendingTlsWrite { bytes, offset: 0 });
+                }
+                let session = pb
+                    .gnutls
+                    .as_ref()
+                    .map_or(std::ptr::null_mut(), |state| state.session);
+                let sent = match pb.pending_tls_output.as_mut() {
+                    Some(pending) => {
+                        let remaining = &pending.bytes[pending.offset..];
+                        match crate::lisp::builtins::gnutls::record_write(session, remaining) {
+                            Ok(0) if !remaining.is_empty() => {
+                                Err(std::io::ErrorKind::WriteZero.into())
+                            }
+                            Ok(n) => {
+                                pending.offset += n;
+                                Ok(pending.offset == pending.bytes.len())
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
+                    None => Ok(true),
+                };
+                if matches!(sent, Ok(true)) {
+                    pb.pending_tls_output = None;
+                }
+                sent.map(|_| pb.pending_tls_output.is_none() && pb.pending_output.is_empty())
+            } else {
+                let Proc {
+                    io, pending_output, ..
+                } = &mut *pb;
+                match io {
+                    ProcIo::Net(stream) => {
+                        write_pending_input(pending_output, |rest| stream.write(rest))
+                    }
+                    ProcIo::LocalNet(stream) => {
+                        write_pending_input(pending_output, |rest| stream.write(rest))
+                    }
+                    _ => Err(std::io::ErrorKind::BrokenPipe.into()),
+                }
+            }
+        };
+        match result {
+            Ok(true) => return Ok(Value::Nil),
+            Ok(false) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                timer_check(i)?;
+                poll_all(i)?;
+                crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
+            }
+            Err(_) => {
+                let mut pb = p.borrow_mut();
+                pb.pending_output.clear();
+                pb.pending_tls_output = None;
+                return Err(i.error("Writing to process: broken pipe"));
+            }
+        }
+    }
+}
+
 fn prepare_process_write(i: &mut Interp, p: &ProcessRef) -> Result<(), Flow> {
     // GNU waits for connection completion while servicing the event loop.
     // Never hold a RefCell borrow across callbacks or fall back to a blocking
     // socket; a timer/sentinel can cancel this wait by deleting the process.
-    while matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
+    while matches!(
+        p.borrow().io,
+        ProcIo::Connecting(_) | ProcIo::LocalConnecting(_)
+    ) && !p.borrow().dead
+    {
         i.maybe_quit()?;
         timer_check(i)?;
         poll_all(i)?;
-        if matches!(p.borrow().io, ProcIo::Connecting(_)) && !p.borrow().dead {
+        if matches!(
+            p.borrow().io,
+            ProcIo::Connecting(_) | ProcIo::LocalConnecting(_)
+        ) && !p.borrow().dead
+        {
             crate::lisp::eval::threads::pause(i, std::time::Duration::from_millis(5))?;
         }
     }
@@ -3434,7 +3999,8 @@ fn prepare_process_write(i: &mut Interp, p: &ProcessRef) -> Result<(), Flow> {
         let mut message = EmacsText::from("Process ");
         message.append(&pb.name);
         message.push_str(" not running: failed with code ");
-        message.append(&code); message.push('\n');
+        message.append(&code);
+        message.push('\n');
         return Err(i.error(message));
     }
     if !pb.alive() {
@@ -3460,15 +4026,10 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
     if matches!(p.borrow().io, ProcIo::Child { .. }) {
         return write_child_input(i, p, bytes);
     }
-    let mut pb = p.borrow_mut();
-    // Route through the TLS record layer once gnutls-boot completed
-    // (GNU's emacs_gnutls_write).
-    if matches!(pb.io, ProcIo::Net(_)) && crate::lisp::builtins::gnutls::tls_ready(&pb) {
-        return match crate::lisp::builtins::gnutls::record_write(&pb, bytes) {
-            Ok(_) => Ok(Value::Nil),
-            Err(()) => Err(i.error("Writing to process: broken pipe")),
-        };
+    if matches!(p.borrow().io, ProcIo::Net(_) | ProcIo::LocalNet(_)) {
+        return write_network_input(i, p, bytes);
     }
+    let mut pb = p.borrow_mut();
     let r = match &mut pb.io {
         ProcIo::Child { .. } => unreachable!("child writes use the pending-input queue"),
         ProcIo::Pipe { sink_fd, .. } => {
@@ -3476,7 +4037,9 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
             if n < 0 { Err(()) } else { Ok(()) }
         }
         ProcIo::Datagram(_) => unreachable!("datagrams have a message-oriented write path"),
-        ProcIo::Connecting(_) => unreachable!("connecting writes wait for completion"),
+        ProcIo::Connecting(_) | ProcIo::LocalConnecting(_) => {
+            unreachable!("connecting writes wait for completion")
+        }
         ProcIo::Net(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::LocalNet(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::Serial(f) => f.write_all(bytes).map_err(|_| ()),
@@ -3563,6 +4126,9 @@ fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             p.borrow_mut().write_eof = true;
         }
     } else {
+        if matches!(p.borrow().io, ProcIo::Net(_) | ProcIo::LocalNet(_)) {
+            write_network_input(i, &p, &[])?;
+        }
         let mut pb = p.borrow_mut();
         match &mut pb.io {
             ProcIo::Pipe { sink_fd, .. } => unsafe {
@@ -3671,72 +4237,72 @@ fn abbr_to_signal(i: &Interp, id: SymId) -> Option<i32> {
 /// digits and not float syntax).
 fn string_to_number10<T: TextSource + ?Sized>(s: &T) -> Option<(Value, usize)> {
     s.with_text(|text| {
-    // Only the numeric prefix is consumed; extended characters terminate it.
-    let native = text.to_unicode_lossy();
-    let s = native.as_str();
-    let bytes = s.as_bytes();
-    let mut cp = 0;
-    let negative = bytes.first() == Some(&b'-');
-    if negative || bytes.first() == Some(&b'+') {
-        cp += 1;
-    }
-    let mut lead = false;
-    while cp < bytes.len() && bytes[cp].is_ascii_digit() {
-        lead = true;
-        cp += 1;
-    }
-    let after_digits = cp;
-    if cp < bytes.len() && bytes[cp] == b'.' {
-        cp += 1;
-    }
-    let mut trail = false;
-    let mut e_exp = false;
-    let mut value = 0.0f64;
-    while cp < bytes.len() && bytes[cp].is_ascii_digit() {
-        trail = true;
-        cp += 1;
-    }
-    if cp < bytes.len() && (bytes[cp] == b'e' || bytes[cp] == b'E') {
-        let ecp = cp;
-        cp += 1;
-        let eplus = cp < bytes.len() && bytes[cp] == b'+';
-        if cp < bytes.len() && (bytes[cp] == b'+' || bytes[cp] == b'-') {
+        // Only the numeric prefix is consumed; extended characters terminate it.
+        let native = text.to_unicode_lossy();
+        let s = native.as_str();
+        let bytes = s.as_bytes();
+        let mut cp = 0;
+        let negative = bytes.first() == Some(&b'-');
+        if negative || bytes.first() == Some(&b'+') {
             cp += 1;
         }
-        if cp < bytes.len() && bytes[cp].is_ascii_digit() {
-            e_exp = true;
-            while cp < bytes.len() && bytes[cp].is_ascii_digit() {
+        let mut lead = false;
+        while cp < bytes.len() && bytes[cp].is_ascii_digit() {
+            lead = true;
+            cp += 1;
+        }
+        let after_digits = cp;
+        if cp < bytes.len() && bytes[cp] == b'.' {
+            cp += 1;
+        }
+        let mut trail = false;
+        let mut e_exp = false;
+        let mut value = 0.0f64;
+        while cp < bytes.len() && bytes[cp].is_ascii_digit() {
+            trail = true;
+            cp += 1;
+        }
+        if cp < bytes.len() && (bytes[cp] == b'e' || bytes[cp] == b'E') {
+            let ecp = cp;
+            cp += 1;
+            let eplus = cp < bytes.len() && bytes[cp] == b'+';
+            if cp < bytes.len() && (bytes[cp] == b'+' || bytes[cp] == b'-') {
                 cp += 1;
             }
-        } else if eplus && s[cp..].starts_with("INF") {
-            e_exp = true;
-            cp += 3;
-            value = f64::INFINITY;
-        } else if eplus && s[cp..].starts_with("NaN") {
-            e_exp = true;
-            cp += 3;
-            value = f64::NAN;
-        } else {
-            cp = ecp;
+            if cp < bytes.len() && bytes[cp].is_ascii_digit() {
+                e_exp = true;
+                while cp < bytes.len() && bytes[cp].is_ascii_digit() {
+                    cp += 1;
+                }
+            } else if eplus && s[cp..].starts_with("INF") {
+                e_exp = true;
+                cp += 3;
+                value = f64::INFINITY;
+            } else if eplus && s[cp..].starts_with("NaN") {
+                e_exp = true;
+                cp += 3;
+                value = f64::NAN;
+            } else {
+                cp = ecp;
+            }
         }
-    }
-    let float_syntax = trail || (lead && e_exp);
-    if float_syntax {
-        let v = if value != 0.0 {
-            value
-        } else {
-            s[..cp].parse::<f64>().unwrap_or(0.0)
-        };
-        return Some((Value::float(if negative { -v } else { v }), cp));
-    }
-    if !lead {
-        return None;
-    }
-    let n: i128 = s[..after_digits]
-        .parse()
-        .unwrap_or(if negative { i128::MIN } else { i128::MAX });
-    Some((Value::Int(n), cp))
-
+        let float_syntax = trail || (lead && e_exp);
+        if float_syntax {
+            let v = if value != 0.0 {
+                value
+            } else {
+                s[..cp].parse::<f64>().unwrap_or(0.0)
+            };
+            return Some((Value::float(if negative { -v } else { v }), cp));
+        }
+        if !lead {
+            return None;
+        }
+        let n: i128 =
+            s[..after_digits]
+                .parse()
+                .unwrap_or(if negative { i128::MIN } else { i128::MAX });
+        Some((Value::Int(n), cp))
     })
 }
 
@@ -3882,14 +4448,13 @@ pub(crate) fn get_process(i: &mut Interp, v: &Value) -> Result<ProcessRef, Flow>
 
 /// GNU's `process_send_signal' (process.c): resolve PROCESS through
 /// `get_process', require a live real subprocess ("not a subprocess"
-/// before "not active"), then kill(2).  Only the signal counts —
-/// CURRENT-GROUP merely selects the pgrp in GNU; with `lambda' GNU
-/// may skip a shell-owned tty, which our pgrp-less spawn
-/// approximates.  Returns PROCESS (the argument, not the object).
+/// before "not active"), and signal its process group or the pty's
+/// foreground group. `lambda' skips a foreground group headed by the
+/// process itself. Returns PROCESS (the argument, not the object).
 fn process_send_signal(i: &mut Interp, a: &[Value], signo: i32) -> EvalResult {
     let proc_arg = a.first().cloned().unwrap_or(Value::Nil);
     let target = get_process(i, &proc_arg)?;
-    let pid = {
+    let (pid, pty_input, tty_fd) = {
         let pb = target.borrow();
         if !matches!(pb.io, ProcIo::Child { .. }) {
             let name = pb.name.clone();
@@ -3899,20 +4464,46 @@ fn process_send_signal(i: &mut Interp, a: &[Value], signo: i32) -> EvalResult {
             let name = pb.name.clone();
             return Err(i.error(format!("Process {name} is not active")));
         }
-        pb.pid
+        match &pb.io {
+            ProcIo::Child {
+                tty_fd, pty_input, ..
+            } => (
+                pb.pid,
+                *pty_input,
+                tty_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd),
+            ),
+            _ => unreachable!(),
+        }
     };
-    let lambda = match a.get(1) {
-        Some(Value::Sym(id)) => i.symbol_name(*id) == "lambda",
-        _ => false,
+    // GNU ignores CURRENT-GROUP for pipe input. Otherwise it signals the
+    // current foreground group; if the query fails, it assumes the process
+    // itself heads that group. The `lambda' sentinel skips only that case.
+    let current_group = if pty_input {
+        a.get(1).cloned().unwrap_or(Value::Nil)
+    } else {
+        Value::Nil
     };
-    if pid > 0 && !lambda {
+    let lambda = i.sym_id(&current_group) == Some(sym::LAMBDA);
+    let mut group = pid;
+    if !current_group.is_nil() {
+        if tty_fd >= 0 {
+            let foreground = unsafe { libc::tcgetpgrp(tty_fd) };
+            if foreground > 0 {
+                group = foreground;
+            }
+        }
+        if lambda && group == pid {
+            return Ok(proc_arg);
+        }
+    }
+    if pid > 0 && group > 0 {
         if signo == libc::SIGCONT {
             // GNU psets the status to `run' and notifies the sentinel.
             let mut pb = target.borrow_mut();
             pb.pending_status = None;
             pb.status = "run";
         }
-        unsafe { libc::kill(pid, signo) };
+        unsafe { libc::kill(-group, signo) };
     }
     Ok(proc_arg)
 }
@@ -4000,6 +4591,8 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             pb.pending_status = None;
         }
         pb.dead = true;
+        pb.pending_output.clear();
+        pb.pending_tls_output = None;
         // GNU preserves an already-reported final status: deleting an
         // exited process leaves `process-status' showing `exit'.
         let final_seen =
@@ -4015,10 +4608,10 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 ..
             } => {
                 *pending_input = VecDeque::new();
-                let _ = child.kill();
-                // Reap the child and release the pty — otherwise fds and
-                // zombies accumulate until openpty starts failing.
-                let _ = child.wait();
+                // GNU kills the subprocess's group. Reap the leader and
+                // release the pty — otherwise descendants, fds and zombies
+                // can outlive the process object or exhaust openpty.
+                kill_child_group_and_reap(child);
                 input_fd.take();
                 output_fd.take();
                 tty_fd.take();
@@ -4063,7 +4656,7 @@ fn f_delete_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 pb.status = "closed";
                 ("deleted", 0)
             }
-            ProcIo::Connecting(_) => {
+            ProcIo::Connecting(_) | ProcIo::LocalConnecting(_) => {
                 pb.io = ProcIo::None;
                 pb.status = "closed";
                 ("deleted", 0)
@@ -4160,7 +4753,7 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
     if let Some(bid) = buffer {
         let pos = mark.as_ref().map(|m| m.borrow().position);
         let n = text.chars().count();
-        insert_coded_into_buffer(i, bid, pos, &a[1]);
+        insert_coded_into_buffer(i, bid, pos, &a[1])?;
         if let (Some(m), Some(p0)) = (&mark, pos) {
             m.borrow_mut().position = p0 + n;
         }
@@ -4171,48 +4764,61 @@ fn f_internal_default_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> Ev
 // ---------- synchronous helpers ----------
 
 fn command_arguments(arguments: &[EmacsText]) -> std::io::Result<Vec<std::ffi::OsString>> {
-    arguments.iter().map(|text| text.to_os_string()
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Cannot encode process argument"))).collect()
+    arguments
+        .iter()
+        .map(|text| {
+            text.to_os_string().map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Cannot encode process argument",
+                )
+            })
+        })
+        .collect()
 }
 
-fn run_lines<T: TextSource + ?Sized>(i: &mut Interp, prog: &T, args: &[EmacsText], ignore_status: bool) -> EvalResult {
+fn run_lines<T: TextSource + ?Sized>(
+    i: &mut Interp,
+    prog: &T,
+    args: &[EmacsText],
+    ignore_status: bool,
+) -> EvalResult {
     prog.with_text(|prog| {
-    let directory = crate::editor::process_directory(i)?;
-    let resolved = crate::editor::dif_resolve_program(i, prog, &directory, false)?;
-    let mut command = std::process::Command::new(crate::editor::native_path(i, &resolved)?);
-    command.current_dir(crate::editor::native_path(i, &directory)?);
-    environment::apply(i, &mut command);
-    let out = command
-        .args(command_arguments(args).map_err(|error| i.error(error.to_string()))?)
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output();
-    match out {
-        Ok(o) => {
-            if !o.status.success() && !ignore_status {
-                return Err(i.error(format!(
-                    "{prog} exited with status {}",
-                    o.status.code().unwrap_or(-1)
-                )));
+        let directory = crate::editor::process_directory(i)?;
+        let resolved = crate::editor::dif_resolve_program(i, prog, &directory, false)?;
+        let mut command = std::process::Command::new(crate::editor::native_path(i, &resolved)?);
+        command.current_dir(crate::editor::native_path(i, &directory)?);
+        environment::apply(i, &mut command)?;
+        let out = command
+            .args(command_arguments(args).map_err(|error| i.error(error.to_string()))?)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        match out {
+            Ok(o) => {
+                if !o.status.success() && !ignore_status {
+                    return Err(i.error(format!(
+                        "{prog} exited with status {}",
+                        o.status.code().unwrap_or(-1)
+                    )));
+                }
+                let text = decode(&o.stdout);
+                let mut lines: Vec<&str> = text.split('\n').collect();
+                if matches!(lines.last(), Some(l) if l.is_empty()) {
+                    lines.pop();
+                }
+                Ok(Value::list(lines.into_iter().map(Value::string).collect()))
             }
-            let text = decode(&o.stdout);
-            let mut lines: Vec<&str> = text.split('\n').collect();
-            if matches!(lines.last(), Some(l) if l.is_empty()) {
-                lines.pop();
-            }
-            Ok(Value::list(lines.into_iter().map(Value::string).collect()))
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Err(i.signal_data(
+                sym::FILE_MISSING,
+                vec![
+                    Value::string("Searching for program"),
+                    Value::string("No such file or directory"),
+                    Value::string(prog),
+                ],
+            )),
+            Err(e) => Err(i.error(format!("{prog}: {e}"))),
         }
-        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Err(i.signal_data(
-            sym::FILE_MISSING,
-            vec![
-                Value::string("Searching for program"),
-                Value::string("No such file or directory"),
-                Value::string(prog),
-            ],
-        )),
-        Err(e) => Err(i.error(format!("{prog}: {e}"))),
-    }
-
     })
 }
 
@@ -4436,13 +5042,13 @@ unsafe fn sockaddr_to_value(sa: *const libc::sockaddr) -> Option<Value> {
 
 fn f_network_interface_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let full = a.get(0).is_some_and(Value::truthy);
+    let ipv4 = i.q("ipv4");
+    let ipv6 = i.q("ipv6");
     let family = match a.get(1) {
         None | Some(Value::Nil) => None,
-        Some(Value::Sym(symbol)) => match i.symbol_name(*symbol).as_str() {
-            "ipv4" => Some(libc::AF_INET as i32),
-            "ipv6" => Some(libc::AF_INET6 as i32),
-            _ => return Err(i.error("Unsupported address family")),
-        },
+        Some(Value::Sym(symbol)) if *symbol == ipv4 => Some(libc::AF_INET as i32),
+        Some(Value::Sym(symbol)) if *symbol == ipv6 => Some(libc::AF_INET6 as i32),
+        Some(Value::Sym(_)) => return Err(i.error("Unsupported address family")),
         Some(_) => return Err(i.error("Unsupported address family")),
     };
     let mut out = Vec::new();
@@ -5033,7 +5639,7 @@ pub(crate) fn install(i: &mut Interp) {
 
 #[cfg(test)]
 mod send_tests {
-    use super::{send_whole_datagram, write_pending_input};
+    use super::{Interp, ProcIo, base_proc, proc_write, send_whole_datagram, write_pending_input};
     use std::collections::VecDeque;
     use std::io::{Error, ErrorKind};
 
@@ -5159,6 +5765,83 @@ mod send_tests {
             assert_eq!(pending, original);
         }
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn nonblocking_local_stream_writes_retry_and_service_quit_timers() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let make_process = |name: &str, stream| {
+                    let mut proc = base_proc(
+                        crate::lisp::text::EmacsText::from(name),
+                        "network",
+                        ProcIo::LocalNet(stream),
+                    );
+                    proc.status = "open";
+                    std::rc::Rc::new(std::cell::RefCell::new(proc))
+                };
+
+                let (sender, mut receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+                sender.set_nonblocking(true).unwrap();
+                receiver.set_nonblocking(true).unwrap();
+                let proc = make_process("qa-local-backpressure", sender);
+                interp.processes.push(proc.clone());
+                let bytes = vec![b'x'; 2 * 1024 * 1024];
+                let received_len = bytes.len();
+                let reader = std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let mut received = Vec::with_capacity(received_len);
+                    let mut chunk = [0u8; 8192];
+                    while received.len() < received_len {
+                        match std::io::Read::read(&mut receiver, &mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => received.extend_from_slice(&chunk[..n]),
+                            Err(ref error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue;
+                            }
+                            Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            }
+                            Err(error) => panic!("local peer read failed: {error}"),
+                        }
+                    }
+                    received
+                });
+                proc_write(&mut interp, &proc, &bytes).expect("large stream send");
+                assert_eq!(reader.join().unwrap(), bytes);
+
+                let (sender, _receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+                sender.set_nonblocking(true).unwrap();
+                let proc = make_process("qa-local-quit-backpressure", sender);
+                interp.processes.push(proc.clone());
+                let inhibit_quit = interp.intern("inhibit-quit");
+                interp
+                    .specbind(inhibit_quit, crate::lisp::Value::Nil)
+                    .unwrap();
+                interp
+                    .eval_str(
+                        "(require 'timer) \
+                         (run-at-time 0.02 nil (lambda () (setq quit-flag t)))",
+                    )
+                    .unwrap();
+                let bytes = vec![b'y'; 16 * 1024 * 1024];
+                let result = proc_write(&mut interp, &proc, &bytes);
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::QUIT)
+                ));
+                assert!(
+                    !proc.borrow().pending_output.is_empty(),
+                    "a quit during backpressure retains the unwritten suffix"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -5169,15 +5852,25 @@ mod wide_process_argument_tests {
     fn native_child_receives_original_unicode_extended_and_raw_bytes() {
         let input = EmacsText::from_codes([0xf0080, 0xd800, 0x110000, 0x3fff80]).unwrap();
         let arguments = command_arguments(&[EmacsText::from("%s"), input.clone()]).unwrap();
-        let output = std::process::Command::new("/usr/bin/printf").args(arguments).output().unwrap();
+        let output = std::process::Command::new("/usr/bin/printf")
+            .args(arguments)
+            .output()
+            .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, input.to_external_bytes());
     }
     #[cfg(unix)]
     #[test]
     fn argument_boundaries_survive_spaces_and_non_ascii_text() {
-        let arguments = [EmacsText::from("[%s][%s]"), EmacsText::from("one two"), EmacsText::from("\u{f0100}")];
-        let output = std::process::Command::new("/usr/bin/printf").args(command_arguments(&arguments).unwrap()).output().unwrap();
+        let arguments = [
+            EmacsText::from("[%s][%s]"),
+            EmacsText::from("one two"),
+            EmacsText::from("\u{f0100}"),
+        ];
+        let output = std::process::Command::new("/usr/bin/printf")
+            .args(command_arguments(&arguments).unwrap())
+            .output()
+            .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, b"[one two][\xf3\xb0\x84\x80]");
     }
@@ -5188,27 +5881,310 @@ mod wide_local_datagram_tests {
     use super::*;
     #[test]
     fn local_datagrams_preserve_private_use_peer_paths() {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let directory = std::path::PathBuf::from("/tmp").join(format!("rm-dg-{}-{nonce:x}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::path::PathBuf::from("/tmp")
+            .join(format!("rm-dg-{}-{nonce:x}", std::process::id()));
         std::fs::create_dir(&directory).unwrap();
         struct Cleanup(std::path::PathBuf);
-        impl Drop for Cleanup { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let _cleanup = Cleanup(directory.clone());
-        let mut server_path = EmacsText::from_os_str(directory.as_os_str()); server_path.push_str("/\u{f0080}");
-        let mut client_path = EmacsText::from_os_str(directory.as_os_str()); client_path.push_str("/\u{f0100}");
+        let mut server_path = EmacsText::from_os_str(directory.as_os_str());
+        server_path.push_str("/\u{f0080}");
+        let mut client_path = EmacsText::from_os_str(directory.as_os_str());
+        client_path.push_str("/\u{f0100}");
         let make = |path: &EmacsText| {
             let native = std::path::PathBuf::from(path.to_os_string().unwrap());
             let socket = std::os::unix::net::UnixDatagram::bind(&native).unwrap();
-            socket.set_read_timeout(Some(std::time::Duration::from_secs(1))).unwrap();
-            DatagramIo { socket: DatagramSocket::Local(socket), remote: None,
-                address_size: std::mem::size_of::<libc::sockaddr_un>(), read_max: 1024,
-                bound_path: Some(native), pending: VecDeque::new() }
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+                .unwrap();
+            DatagramIo {
+                socket: DatagramSocket::Local(socket),
+                remote: None,
+                address_size: std::mem::size_of::<libc::sockaddr_un>(),
+                read_max: 1024,
+                bound_path: Some(native),
+                pending: VecDeque::new(),
+            }
         };
-        let server = make(&server_path); let client = make(&client_path);
-        assert_eq!(client.send(b"bytes", &Some(DatagramAddress::Local(server_path))).unwrap(), 5);
+        let server = make(&server_path);
+        let client = make(&client_path);
+        assert_eq!(
+            client
+                .send(b"bytes", &Some(DatagramAddress::Local(server_path)))
+                .unwrap(),
+            5
+        );
         let mut bytes = [0u8; 16];
         let (count, peer) = server.recv(&mut bytes).unwrap();
         assert_eq!(&bytes[..count], b"bytes");
-        match peer { DatagramAddress::Local(path) => assert_eq!(path, client_path), _ => panic!("unexpected family") }
+        match peer {
+            DatagramAddress::Local(path) => assert_eq!(path, client_path),
+            _ => panic!("unexpected family"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_stream_send_retries_backpressure_and_pumps_quit_timers() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let make_process = |name: &str, stream| {
+                    let mut proc = base_proc(
+                        crate::lisp::text::EmacsText::from(name),
+                        "network",
+                        ProcIo::LocalNet(stream),
+                    );
+                    proc.status = "open";
+                    std::rc::Rc::new(std::cell::RefCell::new(proc))
+                };
+
+                let (sender, mut receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+                sender.set_nonblocking(true).unwrap();
+                receiver.set_nonblocking(true).unwrap();
+                let proc = make_process("qa-local-backpressure", sender);
+                let bytes = vec![b'x'; 2 * 1024 * 1024];
+                let expected_len = bytes.len();
+                let reader = std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let mut received = Vec::with_capacity(expected_len);
+                    let mut chunk = [0u8; 8192];
+                    while received.len() < expected_len {
+                        match std::io::Read::read(&mut receiver, &mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => received.extend_from_slice(&chunk[..n]),
+                            Err(ref error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue;
+                            }
+                            Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            }
+                            Err(error) => panic!("local peer read failed: {error}"),
+                        }
+                    }
+                    received
+                });
+                proc_write(&mut interp, &proc, &bytes).expect("large stream send");
+                assert_eq!(reader.join().unwrap(), bytes);
+
+                let (sender, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+                sender.set_nonblocking(true).unwrap();
+                peer.set_nonblocking(true).unwrap();
+                let proc = make_process("qa-local-quit-backpressure", sender);
+                let process_symbol = interp.intern("qa-local-quit-backpressure-process");
+                interp
+                    .set_symbol(process_symbol, crate::lisp::Value::Process(proc.clone()))
+                    .unwrap();
+                interp
+                    .eval_str(
+                        "(require 'timer) \
+                         (run-at-time 0.02 nil (lambda () (setq quit-flag t)))",
+                    )
+                    .unwrap();
+                let bytes = vec![b'y'; 8 * 1024 * 1024];
+                let send_result = interp
+                    .eval_str(
+                        "(let ((inhibit-quit nil)) \
+                           (condition-case nil \
+                               (process-send-string qa-local-quit-backpressure-process \
+                                 (make-string (* 8 1024 1024) ?y)) \
+                             (quit 'quit)))",
+                    )
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&send_result), "quit");
+                assert!(
+                    !proc.borrow().pending_output.is_empty(),
+                    "a quit during backpressure retains the unwritten suffix"
+                );
+                let expected = vec![b'y'; 8 * 1024 * 1024];
+                let expected_len = expected.len();
+                let reader = std::thread::spawn(move || {
+                    let mut received = Vec::with_capacity(expected_len);
+                    let mut chunk = [0u8; 8192];
+                    loop {
+                        match std::io::Read::read(&mut peer, &mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => received.extend_from_slice(&chunk[..n]),
+                            Err(ref error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue;
+                            }
+                            Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            }
+                            Err(error) => panic!("local peer read failed: {error}"),
+                        }
+                    }
+                    received
+                });
+                interp
+                    .eval_str("(process-send-eof qa-local-quit-backpressure-process)")
+                    .unwrap();
+                assert_eq!(reader.join().unwrap(), expected);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod local_stream_connect_path_tests {
+    use super::nonblocking_unix_connect;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn nonblocking_connect_rejects_embedded_nul_in_path() {
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/tmp/remacs\0socket"));
+        let error = nonblocking_unix_connect(path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "Unix socket path contains NUL");
+    }
+}
+
+#[cfg(test)]
+mod process_buffer_insert_tests {
+    use super::*;
+
+    #[test]
+    fn default_process_filter_inserts_into_read_only_buffers_and_restores_flag() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let buffer = interp.create_buffer(" *qa-process-output*");
+                let original = interp.current_buffer;
+                interp.set_current_buffer(buffer);
+                let read_only = interp.q("buffer-read-only");
+                interp.set_symbol(read_only, Value::t()).unwrap();
+                interp.set_current_buffer(original);
+
+                let value = Value::string("process output");
+                insert_coded_into_buffer(&mut interp, buffer, None, &value).unwrap();
+
+                let buffer_ref = interp.buffers.get(buffer).unwrap();
+                let buffer_state = buffer_ref.borrow();
+                assert_eq!(buffer_state.text.text(), "process output");
+                assert!(
+                    buffer_state
+                        .locals
+                        .get(&read_only)
+                        .is_some_and(Value::truthy)
+                );
+                assert_eq!(interp.current_buffer, original);
+                drop(buffer_state);
+
+                let hook_buffer = interp.create_buffer(" *qa-process-output-hook*");
+                interp.set_current_buffer(hook_buffer);
+                let read_only = interp.q("buffer-read-only");
+                interp.set_symbol(read_only, Value::t()).unwrap();
+                interp
+                    .eval_str(
+                        "(defun qa-process-output-before-change (_beg _end)\
+                           (signal 'file-error '(\"process output hook\")))",
+                    )
+                    .unwrap();
+                let before_change = interp.q("before-change-functions");
+                let hook = Value::Sym(interp.q("qa-process-output-before-change"));
+                interp
+                    .set_symbol(before_change, Value::list(vec![hook]))
+                    .unwrap();
+                interp.set_current_buffer(original);
+
+                let result = insert_coded_into_buffer(
+                    &mut interp,
+                    hook_buffer,
+                    None,
+                    &Value::string("rejected"),
+                );
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+                let hook_buffer = interp.buffers.get(hook_buffer).unwrap();
+                let hook_buffer = hook_buffer.borrow();
+                assert!(hook_buffer.text.text().is_empty());
+                assert!(
+                    hook_buffer
+                        .locals
+                        .get(&read_only)
+                        .is_some_and(Value::truthy)
+                );
+                assert_eq!(interp.current_buffer, original);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod process_contact_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn an_uninterned_t_key_is_not_the_full_contact_sentinel() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let contact_key = interp.intern(":host");
+        let contact = Value::list(vec![Value::Sym(contact_key), Value::string("example")]);
+        let mut process = base_proc(
+            crate::lisp::text::EmacsText::from("qa-contact-key"),
+            "network",
+            ProcIo::None,
+        );
+        process.contact = contact;
+        let process = Rc::new(std::cell::RefCell::new(process));
+        let fake_t = Value::Sym(interp.make_symbol("t"));
+
+        let result = f_process_contact(
+            &mut interp,
+            vec![Value::Process(process.clone()), fake_t].into(),
+        )
+        .unwrap();
+        assert!(result.is_nil());
+    }
+
+    #[test]
+    fn an_uninterned_remote_key_does_not_refresh_contact_state() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let remote_key = interp.q(":remote");
+        let old_remote = Value::Sym(interp.intern("old-remote"));
+        let io = DatagramIo {
+            socket: DatagramSocket::Local(std::os::unix::net::UnixDatagram::unbound().unwrap()),
+            remote: None,
+            address_size: 16,
+            read_max: 1024,
+            bound_path: None,
+            pending: VecDeque::new(),
+        };
+        let mut process = base_proc(
+            crate::lisp::text::EmacsText::from("qa-contact-remote"),
+            "network",
+            ProcIo::Datagram(io),
+        );
+        process.contact = Value::list(vec![Value::Sym(remote_key), old_remote.clone()]);
+        let process = Rc::new(std::cell::RefCell::new(process));
+        let fake_remote = Value::Sym(interp.make_symbol(":remote"));
+
+        let result = f_process_contact(
+            &mut interp,
+            vec![Value::Process(process.clone()), fake_remote].into(),
+        )
+        .unwrap();
+        assert!(result.is_nil());
+        let actual = process.borrow().contact.clone();
+        let actual = crate::lisp::eval::plist_get_v(&actual, &Value::Sym(remote_key));
+        assert!(super::super::builtins::eq_values(&actual, &old_remote));
     }
 }

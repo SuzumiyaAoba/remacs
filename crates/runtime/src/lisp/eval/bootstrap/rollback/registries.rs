@@ -274,5 +274,7 @@ explicitly overridden.
     // rect.el's `rectangle-preview' defface must stay
     // unloaded too.
     let rectangle = interp.intern_soft("rectangle-preview");
-    interp.face_table.retain(|(face, _)| Some(*face) != rectangle);
+    interp
+        .face_table
+        .retain(|(face, _)| Some(*face) != rectangle);
 }

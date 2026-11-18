@@ -7,7 +7,7 @@ use crate::lisp::{
     value::{Lambda, Marker, Value},
 };
 pub use interpreter::Interp;
-use rustc_hash::FxHashMap as HashMap;
+pub(crate) use interpreter::{SpecialMacroIdentity, SpecialMacroSnapshot};
 use std::{cell::RefCell, rc::Rc};
 
 impl Interp {
@@ -80,7 +80,10 @@ impl Interp {
     }
 
     /// Install or remove the host color panel backend.
-    pub fn set_color_panel_backend(&mut self, backend: Option<Rc<dyn crate::frontend::ColorPanelBackend>>) {
+    pub fn set_color_panel_backend(
+        &mut self,
+        backend: Option<Rc<dyn crate::frontend::ColorPanelBackend>>,
+    ) {
         self.color_panel_backend = backend;
     }
 
@@ -151,6 +154,8 @@ impl Interp {
         self.macroexp_call_depth = 0;
         self.current_lambda_dumped = false;
         self.current_body_compiled = false;
+        self.current_compiled_macro_cache = None;
+        self.current_compiled_macro_path.clear();
         self.compiled_macro_expansion = false;
         self.reading_elc = false;
         self.boot_loading = false;
@@ -160,7 +165,6 @@ impl Interp {
         self.expand_unadvised_depth = 0;
         self.macro_cache.clear();
         self.macro_gen = self.macro_gen.wrapping_add(1);
-        *self.macroexpand_all_cache.borrow_mut() = (self.macro_gen, HashMap::default());
         self.overlay_handles.clear();
         self.overlay_cleanup_at = 0;
         self.frame_state_seen = None;
@@ -242,7 +246,7 @@ impl Interp {
     /// lambdas additionally hide compiler-only helpers during evaluation.
     pub(super) fn with_lambda_context<T>(
         &mut self,
-        lambda: &Lambda,
+        lambda: &Rc<Lambda>,
         evaluate: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let compiled = lambda.dumped_doc || lambda.compiled;
@@ -251,6 +255,11 @@ impl Interp {
         }
         let saved_lambda = std::mem::replace(&mut self.current_lambda_dumped, lambda.dumped_doc);
         let saved_compiled = self.current_body_compiled;
+        let saved_macro_cache = std::mem::replace(
+            &mut self.current_compiled_macro_cache,
+            compiled.then(|| lambda.compiled_macro_cache.clone()),
+        );
+        let saved_macro_path = std::mem::replace(&mut self.current_compiled_macro_path, Vec::new());
         let result = if lambda.dumped_doc {
             self.current_body_compiled = compiled;
             evaluate(self)
@@ -262,6 +271,8 @@ impl Interp {
         };
         self.current_lambda_dumped = saved_lambda;
         self.current_body_compiled = saved_compiled;
+        self.current_compiled_macro_cache = saved_macro_cache;
+        self.current_compiled_macro_path = saved_macro_path;
         if compiled {
             self.dumped_call_depth -= 1;
         }

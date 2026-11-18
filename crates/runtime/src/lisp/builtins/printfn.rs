@@ -201,24 +201,23 @@ fn f_prin1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     with_print_overrides(i, &arg(&args, 2), false, |i| {
         let stream = i.checked_output_stream(&output)?;
-        let s = i.print_to_string_cb(&args[0])?;
-        i.write_output_to(&s, &stream)?;
+        i.print_to_output_cb(&args[0], &stream, true)?;
         Ok(args[0].clone())
     })
 }
 
 fn f_princ(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let stream = i.checked_output_stream(&arg(&args, 1))?;
-    let s = i.princ_to_string_cb(&args[0])?;
-    i.write_output_to(&s, &stream)?;
+    i.print_to_output_cb(&args[0], &stream, false)?;
     Ok(args[0].clone())
 }
 
 fn f_print(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let stream = i.checked_output_stream(&arg(&args, 1))?;
-    let s = i.print_to_string_cb(&args[0])?;
     // GNU's print emits a newline before and after the object.
-    i.write_output_to(&format!("\n{}\n", s), &stream)?;
+    i.write_output_to("\n", &stream)?;
+    i.print_to_output_cb(&args[0], &stream, true)?;
+    i.write_output_to("\n", &stream)?;
     Ok(args[0].clone())
 }
 
@@ -227,7 +226,7 @@ fn f_terpri(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // shortcut, including when no newline would be emitted.
     let stream = i.checked_output_stream(&arg(&args, 0))?;
     let ensure = arg(&args, 1).truthy();
-    if ensure && i.output_at_bol(&stream) {
+    if ensure && i.output_at_bol_checked(&stream)? {
         return Ok(Value::Nil);
     }
     match &stream {
@@ -326,9 +325,15 @@ fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         .map(Value::Buffer)
         .unwrap_or(Value::Nil);
     let so = i.standard_output_sym;
-    i.specbind(so, buf_val)?;
+    let mark = i.specbind_depth();
+    if let Err(error) = i.specbind(so, buf_val) {
+        let unwind = i.unbind_to(mark);
+        let _ = i.buffers.kill(buf_id, |_| false);
+        unwind?;
+        return Err(error);
+    }
     let r = i.eval_progn(&body);
-    let _ = i.unbind(1);
+    let unwind = i.unbind_to(mark);
     let text = i
         .buffers
         .get(buf_id)
@@ -338,8 +343,46 @@ fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         })
         .unwrap_or_default();
     let _ = i.buffers.kill(buf_id, |_| false);
+    unwind?;
     match r {
         Ok(_) => Ok(Value::string(text)),
         Err(f) => Err(f),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_output_to_string_cleans_up_failed_standard_output_binding() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun output-string-watcher (_symbol _value operation _where)\
+                           (if (eq operation 'let) (signal 'file-error '(\"bind\")) nil))\
+                         (add-variable-watcher 'standard-output #'output-string-watcher)",
+                    )
+                    .unwrap();
+                let mark = interp.specbind_depth();
+                let output = interp.symbol_value(interp.standard_output_sym);
+                let result = f_with_output_to_string(&mut interp, vec![Value::Nil].into());
+                assert!(
+                    matches!(result, Err(crate::lisp::Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)),
+                    "unexpected with-output-to-string result: {result:?}"
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+                assert!(crate::lisp::builtins::eq_values(
+                    &interp.symbol_value(interp.standard_output_sym),
+                    &output
+                ));
+                assert!(interp.buffers.by_name(" *string-output*").is_none());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

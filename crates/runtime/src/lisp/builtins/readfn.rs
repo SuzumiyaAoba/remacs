@@ -86,9 +86,33 @@ pub(crate) fn read_parser_at_with_codes(
                 .and_then(|v| v.first().cloned())
             {
                 let message = message.borrow();
+                let message_text = message.to_unicode_lossy();
+                let named_character_error =
+                    chars
+                        .get(end)
+                        .is_some_and(|character| match message_text.as_str() {
+                            "Character name too long"
+                            | "Empty character name"
+                            | "Expected opening brace after \\N" => true,
+                            message if message.starts_with("Invalid character U+") => {
+                                character.code() >= 0x80
+                            }
+                            message if message.starts_with("\\N{") => *character == '}',
+                            _ => false,
+                        });
                 if (message.as_str() == ")"
                     && chars.get(end).is_some_and(|c| *c == ')' || *c == ']'))
                     || (message.as_str() == "." && chars.get(end).is_some_and(|c| *c == '.'))
+                    || ((message.as_str() == "#&" || message.as_str() == "#@")
+                        && chars
+                            .get(end)
+                            .is_some_and(|c| c.unicode().is_some_and(|c| c.is_ascii_digit()))
+                        && (message.as_str() == "#@"
+                            || end > 0
+                                && chars.get(end - 1).is_some_and(|c| {
+                                    c.unicode().is_some_and(|c| c.is_ascii_digit())
+                                })))
+                    || named_character_error
                     || (message.starts_with('#')
                         && message.chars().last() == chars.get(end).copied())
                     || (message.as_str() == "nonsensical self-reference"
@@ -122,7 +146,10 @@ pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bo
     let (buffer, marker) = match source {
         Value::Buffer(buffer) => (buffer.clone(), None),
         Value::Marker(marker) => {
-            let buffer = marker.borrow().buffer.and_then(|id| i.buffers.get(id));
+            let buffer = marker
+                .try_borrow()
+                .map(|marker| marker.buffer.and_then(|id| i.buffers.get(id)))
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed marker"))?;
             let Some(buffer) = buffer else {
                 return Err(i.signal_data(sym::END_OF_FILE, vec![]));
             };
@@ -130,9 +157,19 @@ pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bo
         }
         _ => unreachable!("buffer or marker stream"),
     };
-    let multibyte = buffer_source_multibyte(i, &buffer);
+    let multibyte = buffer_source_multibyte(i, &buffer)?;
     let (chars, position) = {
-        let buffer = buffer.borrow();
+        let buffer = buffer
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+        let position = if let Some(marker) = &marker {
+            marker
+                .try_borrow()
+                .map(|marker| marker.position)
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed marker"))?
+        } else {
+            buffer.point()
+        };
         (
             Rc::new(
                 buffer
@@ -141,10 +178,7 @@ pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bo
                     .chars()
                     .collect(),
             ),
-            marker
-                .as_ref()
-                .map(|m| m.borrow().position)
-                .unwrap_or_else(|| buffer.point()),
+            position,
         )
     };
     let base = if marker.is_some() {
@@ -161,10 +195,16 @@ pub(crate) fn read_buffer_stream(i: &mut Interp, source: &Value, positioning: bo
         multibyte,
     );
     if let Some(marker) = marker {
-        marker.borrow_mut().position = end;
+        marker
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot modify a mutably borrowed marker"))?
+            .position = end;
         finish_stream_read(i, result, None)
     } else {
-        buffer.borrow_mut().set_point(end);
+        buffer
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot modify a mutably borrowed buffer"))?
+            .set_point(end);
         finish_stream_read(i, result, Some(Value::Buffer(buffer)))
     }
 }
@@ -212,7 +252,10 @@ pub(crate) fn read_source(i: &mut Interp, source: Value, positioning: bool) -> E
     }
     match &source {
         Value::Str(s) => {
-            let src = s.borrow().clone();
+            let src = s
+                .try_borrow()
+                .map(|text| text.clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed string"))?;
             let multibyte = super::strfn::string_multibyte_p(i, &source);
             let (v, _) = i.read_from_string_kind(&src, 0, positioning.then_some(0), multibyte)?;
             Ok(v)
@@ -237,11 +280,14 @@ pub(crate) fn read_source(i: &mut Interp, source: Value, positioning: bool) -> E
 }
 
 fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let multibyte = super::strfn::string_multibyte_p(i, &args[0]);
     let src = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|text| text.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed string"))?,
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    let multibyte = super::strfn::string_multibyte_p(i, &args[0]);
     let chars: Vec<crate::lisp::value::EmacsChar> = src.chars().collect();
     let len = chars.len() as i128;
     // START/END are character positions; nil END (or omitted) is the
@@ -285,12 +331,82 @@ fn f_read_from_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 pub(crate) fn buffer_source_multibyte(
     i: &mut Interp,
     buffer: &crate::lisp::value::BufferRef,
-) -> bool {
+) -> Result<bool, Flow> {
     let variable = i.q("enable-multibyte-characters");
-    buffer
-        .borrow()
+    let buffer = buffer
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+    Ok(buffer
         .locals
         .get(&variable)
         .unwrap_or(&i.obarray.symbol(variable).value)
-        .truthy()
+        .truthy())
+}
+
+#[cfg(test)]
+mod borrowed_string_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+    use crate::lisp::value::Marker;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn interp() -> Interp {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        interp
+    }
+
+    fn is_lisp_error(result: Result<EvalResult, Box<dyn std::any::Any + Send>>) -> bool {
+        matches!(
+            result,
+            Ok(Err(Flow::Signal(ref signal))) if signal.is_symbol(sym::ERROR)
+        )
+    }
+
+    #[test]
+    fn string_reader_entry_points_reject_mutably_borrowed_strings_without_panicking() {
+        let mut interp = interp();
+        let source = Value::string("42");
+        let Value::Str(string) = &source else {
+            unreachable!();
+        };
+        let held_borrow = string.borrow_mut();
+        let read = catch_unwind(AssertUnwindSafe(|| {
+            read_source(&mut interp, source.clone(), false)
+        }));
+        let read_from_string = catch_unwind(AssertUnwindSafe(|| {
+            f_read_from_string(&mut interp, vec![source.clone()].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(read));
+        assert!(is_lisp_error(read_from_string));
+    }
+
+    #[test]
+    fn buffer_reader_rejects_mutably_borrowed_buffers_and_markers_without_panicking() {
+        let mut interp = interp();
+        let buffer_id = interp.create_buffer(" *read-borrow-test*");
+        let buffer = interp.buffers.get(buffer_id).unwrap().clone();
+        let held_buffer = buffer.borrow_mut();
+        let buffer_result = catch_unwind(AssertUnwindSafe(|| {
+            read_buffer_stream(&mut interp, &Value::Buffer(buffer.clone()), false)
+        }));
+        drop(held_buffer);
+
+        let marker = Rc::new(RefCell::new(Marker {
+            buffer: Some(buffer_id),
+            position: 0,
+            insertion_type: false,
+        }));
+        let held_marker = marker.borrow_mut();
+        let marker_result = catch_unwind(AssertUnwindSafe(|| {
+            read_buffer_stream(&mut interp, &Value::Marker(marker.clone()), false)
+        }));
+        drop(held_marker);
+
+        assert!(is_lisp_error(buffer_result));
+        assert!(is_lisp_error(marker_result));
+    }
 }

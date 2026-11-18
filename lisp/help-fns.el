@@ -104,7 +104,7 @@ current help buffer.")
           (unless (member file files)
             (setq help-definition-prefixes
                   (radix-tree-insert help-definition-prefixes prefix
-                                     (cons file files))))))))
+                                     (cons file files)))))))))
 
 (advice-add 'register-definition-prefixes :around
             #'help--register-definition-prefixes)
@@ -117,7 +117,7 @@ current help buffer.")
     (when path
       (condition-case nil
           (file-truename path)
-        (error (expand-file-name path)))))
+        (error (expand-file-name path))))))
 
 (defun help--loaded-p (file)
   "Try and figure out if FILE has already been loaded."

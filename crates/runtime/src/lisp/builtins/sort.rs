@@ -31,8 +31,9 @@ fn resolve_function(i: &mut Interp, function: &Value) -> Result<Value, Flow> {
         return Ok(function.clone());
     }
     let resolved = super::data::f_indirect_function(i, vec![function.clone()].into())?;
+    let autoload_symbol = i.intern_soft("autoload");
     let autoload = matches!(&resolved, Value::Cons(cell)
-        if matches!(&cell.borrow().car, Value::Sym(s) if i.symbol_name(*s) == "autoload"));
+        if matches!(&cell.borrow().car, Value::Sym(s) if Some(*s) == autoload_symbol));
     Ok(if resolved.is_nil() || autoload {
         function.clone()
     } else {
@@ -606,19 +607,28 @@ pub(super) fn tim_sort(
     key_function: &Value,
     reverse: bool,
 ) -> Result<(), Flow> {
-    let length = values.borrow().len();
+    drop(
+        values
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot sort a mutably borrowed vector"))?,
+    );
+    let length = values
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed vector"))?
+        .len();
     if length < 2 {
         return Ok(());
     }
-    let default =
-        predicate.is_nil() || matches!(predicate, Value::Sym(s) if i.symbol_name(*s) == "value<");
+    let value_lt = i.intern_soft("value<");
+    let identity = i.intern_soft("identity");
+    let default = predicate.is_nil() || matches!(predicate, Value::Sym(s) if Some(*s) == value_lt);
     let function = if default {
         Value::Nil
     } else {
         resolve_function(i, predicate)?
     };
-    let keyed = key_function.truthy()
-        && !matches!(key_function, Value::Sym(s) if i.symbol_name(*s) == "identity");
+    let keyed =
+        key_function.truthy() && !matches!(key_function, Value::Sym(s) if Some(*s) == identity);
     if reverse {
         values.borrow_mut().reverse();
     }

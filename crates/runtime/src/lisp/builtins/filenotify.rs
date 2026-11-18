@@ -195,7 +195,10 @@ fn register_watch_fd(kq: i32, fd: i32, fflags: u32) -> i32 {
 fn directory_listing(dir: &EmacsStr) -> Vec<DirEnt> {
     use std::os::unix::fs::MetadataExt;
     let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(match dir.to_os_string() { Ok(path) => path, Err(_) => return Vec::new() }) {
+    if let Ok(rd) = std::fs::read_dir(match dir.to_os_string() {
+        Ok(path) => path,
+        Err(_) => return Vec::new(),
+    }) {
         for e in rd.flatten() {
             let name = EmacsText::from_os_str(&e.file_name());
             if name == "." || name == ".." {
@@ -216,7 +219,10 @@ fn directory_listing(dir: &EmacsStr) -> Vec<DirEnt> {
 }
 
 fn is_dir(p: &EmacsStr) -> bool {
-    p.to_os_string().ok().and_then(|path| std::fs::metadata(path).ok()).is_some_and(|m| m.is_dir())
+    p.to_os_string()
+        .ok()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .is_some_and(|m| m.is_dir())
 }
 
 // ---------------------------------------------------------------------------
@@ -307,8 +313,11 @@ fn flag_sym(i: &mut crate::lisp::eval::Interp, name: &str) -> Value {
 /// `directory-file-name' equivalent (trim trailing /, keep all-/').
 fn directory_file_name<T: TextSource + ?Sized>(name: &T) -> EmacsText {
     name.with_text(|name| {
-        if name.chars().all(|c| c == '/') { name.to_string() }
-        else { name.trim_end_matches('/').to_string() }
+        if name.chars().all(|c| c == '/') {
+            name.to_string()
+        } else {
+            name.trim_end_matches('/').to_string()
+        }
     })
 }
 
@@ -380,8 +389,8 @@ fn f_kqueue_add_watch(i: &mut crate::lisp::eval::Interp, a: crate::lisp::Argv) -
     }
 
     // Open the file the way GNU does (O_EVTONLY|O_SYMLINK preferred).
-    let cpath =
-        std::ffi::CString::new(file.to_external_bytes()).map_err(|_| i.error("File name contains NUL"))?;
+    let cpath = std::ffi::CString::new(file.to_external_bytes())
+        .map_err(|_| i.error("File name contains NUL"))?;
     let mut oflags = libc::O_NONBLOCK | sys::O_EVTONLY;
     if sys::O_SYMLINK != 0 {
         oflags |= sys::O_SYMLINK;
@@ -777,16 +786,27 @@ mod wide_watch_path_tests {
         assert_eq!(directory_file_name("//"), "//");
         let mut text = EmacsText::from_codes([47, 0xf0080, 0x3fff80]).unwrap();
         text.push_str("//");
-        assert_eq!(directory_file_name(&text).codes().collect::<Vec<_>>(), [47, 0xf0080, 0x3fff80]);
+        assert_eq!(
+            directory_file_name(&text).codes().collect::<Vec<_>>(),
+            [47, 0xf0080, 0x3fff80]
+        );
     }
     #[cfg(unix)]
     #[test]
     fn watch_directory_snapshot_keeps_private_use_names() {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("remacs-wide-watch-{}-{nonce}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("remacs-wide-watch-{}-{nonce}", std::process::id()));
         std::fs::create_dir(&path).unwrap();
         struct Cleanup(std::path::PathBuf);
-        impl Drop for Cleanup { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let _cleanup = Cleanup(path.clone());
         let name = EmacsText::from_codes([0xf0080, 0xf0c80]).unwrap();
         std::fs::write(path.join(name.to_os_string().unwrap()), b"event").unwrap();

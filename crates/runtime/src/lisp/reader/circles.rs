@@ -84,70 +84,44 @@ pub(super) fn patch_in(
             }
             Ok(did_change)
         }
-        Value::Hash(hash) => {
-            let ptr = Rc::as_ptr(hash) as usize;
+        Value::Hash(_) => {
+            // GNU leaves hash-table data exactly as it was read. In
+            // particular, it does not replace self-references in either
+            // keys or values after the outer `#N=' definition is resolved.
+            // Rewriting either side can also invalidate the stored hash key.
+            Ok(false)
+        }
+        Value::Lambda(lambda) => {
+            let ptr = Rc::as_ptr(lambda) as usize;
             if !seen.insert(ptr) {
                 return Ok(changed.contains(&ptr));
             }
-            let entries: Vec<_> = {
-                let table = hash.borrow();
-                table
-                    .keys
-                    .iter()
-                    .filter_map(|(key, original)| {
-                        table
-                            .map
-                            .get(key)
-                            .map(|value| (key.clone(), original.clone(), value.clone()))
-                    })
-                    .collect()
+            // A `#[...]' reader result keeps its raw slots in this vector.
+            // In particular, interpreted closures share the body/env conses
+            // here with their execution fields, so patching those containers
+            // repairs references back to the function itself.
+            let Some(slot_vector) = &lambda.bc_items else {
+                return Ok(false);
             };
-            let mut patched = Vec::with_capacity(entries.len());
-            let mut keys_changed = false;
+            let mut items = slot_vector
+                .try_borrow()
+                .map(|items| items.clone())
+                .map_err(|_| interp.error("Cannot inspect a mutably borrowed byte-code object"))?;
             let mut did_change = false;
-            for (old_key, original, value) in entries {
-                let (original, key_changed) =
-                    patch_value(interp, original, placeholder, target, seen, changed)?;
-                let (value, value_changed) =
-                    patch_value(interp, value, placeholder, target, seen, changed)?;
-                keys_changed |= key_changed;
-                did_change |= key_changed || value_changed;
-                patched.push((old_key, original, value, key_changed));
-            }
-
-            if keys_changed {
-                // A key's object graph may have changed while replacing a
-                // reader placeholder. Rebuild the normalized keys as well
-                // as the visible key slots; otherwise `eq' lookups keep
-                // pointing at the temporary cons, and `equal' keys can
-                // retain a hash for their pre-patched contents.
-                let mut entries = Vec::with_capacity(patched.len());
-                for (old_key, original, value, key_changed) in patched {
-                    let key = if key_changed {
-                        crate::lisp::builtins::hashfn::table_key(interp, hash, &original)?
-                    } else {
-                        old_key
-                    };
-                    entries.push((key, original, value));
-                }
-                let mut table = hash.borrow_mut();
-                table.map.clear();
-                table.keys.clear();
-                table.collision_order.clear();
-                table.free_slots.clear();
-                table.positioned_keys = 0;
-                for (key, original, value) in entries {
-                    table.map.insert(key.clone(), value);
-                    table.put_key(key, original);
-                }
-            } else if did_change {
-                // A value-only fixup does not affect the key's hash.
-                let mut table = hash.borrow_mut();
-                for (key, _, value, _) in patched {
-                    table.map.insert(key, value);
+            for item in &mut items {
+                let (patched, item_changed) =
+                    patch_value(interp, item.clone(), placeholder, target, seen, changed)?;
+                if item_changed {
+                    *item = patched;
+                    did_change = true;
                 }
             }
             if did_change {
+                *slot_vector
+                    .try_borrow_mut()
+                    .map_err(|_| {
+                        interp.error("Cannot inspect a mutably borrowed byte-code object")
+                    })? = items;
                 changed.insert(ptr);
             }
             Ok(did_change)
@@ -177,20 +151,40 @@ mod tests {
     use crate::lisp::Interp;
 
     #[test]
-    fn hash_table_circle_fixups_preserve_keys_and_values() {
-        let mut interp = Interp::new();
-        for form in [
-            r##"(let ((read-circle t))
+    fn hash_table_circle_fixups_match_gnu_key_and_value_behavior() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                for form in [
+                    r##"(let ((read-circle t))
                   (let ((table (read "#1=#s(hash-table size 1 test eq data (self #1#))")))
-                    (eq table (gethash 'self table))))"##,
-            r##"(let ((read-circle t))
+                    (let ((value (gethash 'self table)))
+                      (and (consp value) (not (eq value table))
+                           (null (car value)) (null (cdr value))))))"##,
+                    r##"(let ((read-circle t))
                   (let ((table (read "#1=#s(hash-table size 1 test eq data (#1# #1#))")))
-                    (eq table (gethash table table))))"##,
-        ] {
-            assert!(
-                !interp.eval_str(form).unwrap().is_nil(),
-                "hash-table circular reference was not restored: {form}"
-            );
-        }
+                    (let ((key nil) (value nil))
+                      (maphash (lambda (k v) (setq key k value v)) table)
+                      (and (consp key) (eq key value) (consp value)
+                           (not (eq value table))
+                           (eq (gethash table table 'missing) 'missing)
+                           (eq (gethash key table) value)))))"##,
+                    r##"(let* ((vector (let ((read-circle t))
+                                      (read "#1=[#s(hash-table test eq data (self #1#))]")))
+                                (table (aref vector 0))
+                                (value (gethash 'self table)))
+                           (and (consp value) (not (eq value vector))
+                                (null (car value)) (null (cdr value))))"##,
+                ] {
+                    assert!(
+                        !interp.eval_str(form).unwrap().is_nil(),
+                        "hash-table circular reference was not restored: {form}"
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

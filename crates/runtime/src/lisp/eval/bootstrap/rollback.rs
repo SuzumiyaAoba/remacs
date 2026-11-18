@@ -165,17 +165,54 @@ fn restore_properties(interp: &mut Interp, plan: &RollbackPlan, pre_boot_syms: &
 
 fn prune_libraries(interp: &mut Interp, plan: &RollbackPlan) {
     let RollbackPlan { lh, hist_items, .. } = plan;
-    // Drop the rolled entries themselves from load-history.
+    let rolled_ids: HashSet<SymId> = ROLLED_LIBS.iter().map(|lib| interp.intern(lib)).collect();
+    let require_id = interp.q("require");
+    // The rolled entries themselves do not belong to GNU's dumped image.
+    // Kept files can also have `(require . FEATURE)' records produced while
+    // evaluating the bootstrap sources. A require of one of the rolled
+    // compiler helpers is only a bootstrap dependency there; keeping it
+    // would make `unload-feature' reject `cl-lib' because, for example,
+    // `icons.el' loaded it to define its macros. User loads occur after this
+    // normalization and keep their real runtime dependencies.
     let new_hist: Vec<Value> = hist_items
         .iter()
-        .filter(|entry| {
-            let file = match entry {
-                Value::Cons(c) => c.borrow().car.clone(),
-                _ => return true,
+        .filter_map(|entry| {
+            let Value::Cons(cell) = entry else {
+                return Some(entry.clone());
             };
-            !plan::is_rolled_file(&file)
+            let (file, raw_items) = {
+                let cell = cell.borrow();
+                (cell.car.clone(), cell.cdr.clone())
+            };
+            if plan::is_rolled_file(&file) {
+                return None;
+            }
+            let Ok(items) = raw_items.list_to_vec() else {
+                // Preserve malformed history as-is; cleanup must not erase
+                // records merely because bootstrap produced an odd tail.
+                return Some(entry.clone());
+            };
+            let kept_items: Vec<Value> = items
+                .iter()
+                .filter(|item| {
+                    let Value::Cons(pair) = item else {
+                        return true;
+                    };
+                    let pair = pair.borrow();
+                    !matches!(
+                        (&pair.car, &pair.cdr),
+                        (Value::Sym(kind), Value::Sym(feature))
+                            if *kind == require_id && rolled_ids.contains(feature)
+                    )
+                })
+                .cloned()
+                .collect();
+            if kept_items.len() == items.len() {
+                Some(entry.clone())
+            } else {
+                Some(Value::cons(file, Value::list(kept_items)))
+            }
         })
-        .cloned()
         .collect();
     let _ = interp.set_symbol(*lh, Value::list(new_hist));
     // Purge the rolled features from `interp.features' AND the
@@ -187,7 +224,6 @@ fn prune_libraries(interp: &mut Interp, plan: &RollbackPlan) {
     // `gv-expander' unregistered (boot-reeval of
     // `electric-indent-mode' broke this way).
     {
-        let rolled_ids: HashSet<SymId> = ROLLED_LIBS.iter().map(|l| interp.intern(l)).collect();
         interp.features.retain(|f| !rolled_ids.contains(f));
         let fid = interp.q("features");
         if let Value::Cons(_) = interp.symbol_value(fid) {

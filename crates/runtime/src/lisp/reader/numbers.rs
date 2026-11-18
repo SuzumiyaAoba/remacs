@@ -38,6 +38,20 @@ pub fn parse_number(tok: &str) -> Option<Value> {
     None
 }
 
+fn nan_payload(mantissa: &str) -> u64 {
+    const MASK: u64 = (1u64 << 51) - 1;
+    let unsigned = mantissa.strip_prefix(['+', '-']).unwrap_or(mantissa);
+    let integer = unsigned.split('.').next().unwrap_or("");
+    if integer.is_empty() {
+        // GNU's reader uses this reserved payload when a NaN mantissa has
+        // no digits before the decimal point (for example `.5e+NaN').
+        return MASK - 1;
+    }
+    integer.bytes().fold(0u64, |payload, digit| {
+        (payload * 10 + u64::from(digit - b'0')) & MASK
+    })
+}
+
 fn parse_float(tok: &str) -> Option<f64> {
     let bytes = tok.as_bytes();
     let mut i = 0usize;
@@ -83,8 +97,7 @@ fn parse_float(tok: &str) -> Option<f64> {
             if rest == "NaN" || rest == "INF" {
                 let neg = tok.starts_with('-');
                 return Some(if rest == "NaN" {
-                    let mantissa: f64 = tok[..i - 2].parse().unwrap_or(0.0);
-                    let payload = (mantissa.abs() as u64) & ((1u64 << 51) - 1);
+                    let payload = nan_payload(&tok[..i - 2]);
                     f64::from_bits(0x7ff8_0000_0000_0000 | (neg as u64) << 63 | payload)
                 } else if neg {
                     f64::NEG_INFINITY
@@ -135,6 +148,26 @@ mod tests {
         ));
         for token in ["", "+", ".", "1e", "12garbage", "0x10"] {
             assert!(parse_number(token).is_none(), "{token}");
+        }
+    }
+
+    #[test]
+    fn nan_literals_use_the_gnu_truncated_mantissa_payload() {
+        let cases = [
+            (".5e+NaN", (1u64 << 51) - 2),
+            ("-.5e+NaN", (1u64 << 51) - 2),
+            ("0.5e+NaN", 0),
+            ("4503599627370495e+NaN", (1u64 << 51) - 1),
+            (
+                "999999999999999999999999999999999999999999999999e+NaN",
+                281_474_976_710_655,
+            ),
+        ];
+        for (token, expected) in cases {
+            let Some(Value::Float(value)) = parse_number(token) else {
+                panic!("expected a float for {token}");
+            };
+            assert_eq!((*value).to_bits() & ((1u64 << 51) - 1), expected, "{token}");
         }
     }
 }

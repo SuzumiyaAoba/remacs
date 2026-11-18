@@ -766,7 +766,6 @@ may happen."
     (setq escaped (string-replace "\r" "\\d " escaped))
     (setq escaped (string-replace "\f" "\\c " escaped))
     (list (cons "font-family" (concat "\"" escaped "\"")))))
-
 (defun hfy-bgcol  (color) (list (cons "background"   (hfy-triplet color))))
 (defun hfy-color (color) (list (cons "color"        (hfy-triplet color))))
 (define-obsolete-function-alias 'hfy-colour #'hfy-color "27.1")

@@ -168,12 +168,21 @@ fn json_cond_chain(i: &mut Interp, id: u32) {
 
 // ---------- parser ----------
 
-fn parser_input(text: &crate::lisp::text::EmacsStr, byte_input: bool) -> (Vec<char>, Vec<crate::lisp::text::EmacsChar>) {
+fn parser_input(
+    text: &crate::lisp::text::EmacsStr,
+    byte_input: bool,
+) -> (Vec<char>, Vec<crate::lisp::text::EmacsChar>) {
     let original: Vec<_> = text.chars().collect();
-    let syntax = original.iter().map(|c| {
-        if byte_input { c.code() as u8 as char }
-        else { c.unicode().unwrap_or('\u{fffd}') }
-    }).collect();
+    let syntax = original
+        .iter()
+        .map(|c| {
+            if byte_input {
+                c.code() as u8 as char
+            } else {
+                c.unicode().unwrap_or('\u{fffd}')
+            }
+        })
+        .collect();
     (syntax, original)
 }
 
@@ -233,11 +242,7 @@ impl<'a> Parser<'a> {
         json_cond_chain(self.i, id);
         self.i.signal_data(
             id,
-            vec![
-                Value::Int(self.line as i128),
-                Value::Nil,
-                Value::Int(pos),
-            ],
+            vec![Value::Int(self.line as i128), Value::Nil, Value::Int(pos)],
         )
     }
 
@@ -751,24 +756,23 @@ fn check_json_string(i: &mut Interp, value: &Value) -> Result<(), Flow> {
 
 fn esc_into<T: crate::lisp::text::TextSource + ?Sized>(s: &T, out: &mut String) {
     s.with_text(|s| {
-    out.push('"');
-    for c in s.chars() {
-        // All call sites validate the original Lisp string first.
-        let c = c.unicode().expect("validated JSON Unicode string");
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
+        out.push('"');
+        for c in s.chars() {
+            // All call sites validate the original Lisp string first.
+            let c = c.unicode().expect("validated JSON Unicode string");
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\u{8}' => out.push_str("\\b"),
+                '\u{c}' => out.push_str("\\f"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
         }
-    }
-    out.push('"');
-
+        out.push('"');
     })
 }
 

@@ -102,17 +102,11 @@ impl LoadRequest<'_> {
     }
 
     fn eval_bound(&self, i: &mut Interp) -> EvalResult {
-        let Self {
-            file,
-            force_lex,
-            compiled,
-            ..
-        } = *self;
-        // On-disk source loads use GNU's load-with-code-conversion buffer.
-        // Boot/embedded libraries model dumped code, and compiled streams
-        // have their own direct reader, so neither acquires this buffer.
-        // --script's distinct current-buffer/shebang rules stay on its existing path.
-        let source = !force_lex && !i.boot_loading && !file.starts_with("builtin:") && !compiled;
+        let Self { file, compiled, .. } = *self;
+        // On-disk source loads and --script use a load buffer. Boot/embedded
+        // libraries model dumped code, and compiled streams have their own
+        // direct reader, so neither acquires this buffer.
+        let source = !i.boot_loading && !file.starts_with("builtin:") && !compiled;
         if source {
             let flags = i
                 .lisp_stack
@@ -202,7 +196,7 @@ impl LoadRequest<'_> {
         }
         unwind?;
         if result.is_ok() {
-            run_after_load(i, file);
+            run_after_load(i, file)?;
         }
         result
     }
@@ -266,7 +260,30 @@ impl LoadRequest<'_> {
         // calling the fallback hook. Keep the hook's actual value, not just t.
         let lex_id = i.q("lexical-binding");
         if let Some(buffer) = load_buffer {
-            if !buffer.borrow().locals.contains_key(&lex_id) {
+            if force_lex {
+                // `command-line--load-script' switches buffers and uses
+                // `setq-local' only inside its conversion callback, after
+                // symbol-shorthand processing.
+                let buffer_id = buffer.borrow().id;
+                i.set_current_buffer(buffer_id);
+                let make_local = Value::Sym(i.q("make-local-variable"));
+                i.apply(&make_local, vec![Value::Sym(lex_id)])?;
+                i.set_symbol(lex_id, Value::t())?;
+                {
+                    let mut buffer = buffer.borrow_mut();
+                    let begv = buffer.begv;
+                    let text = buffer.text.substring(begv, buffer.zv);
+                    buffer.set_point(begv);
+                    if text.starts_with("#!") {
+                        let line_end = text
+                            .chars()
+                            .position(|character| character == '\n')
+                            .map_or(text.chars().count(), |position| position + 1);
+                        buffer.delete_region(begv, begv + line_end);
+                        buffer.insert_at(begv, ";; -*- lexical-binding: t -*-\n");
+                    }
+                }
+            } else if !buffer.borrow().locals.contains_key(&lex_id) {
                 let (cookie, consumed) = {
                     let b = buffer.borrow();
                     lexical_cookie(&b.text.substring(b.begv, b.zv))
@@ -413,12 +430,16 @@ impl LoadRequest<'_> {
 /// `after-load-alist' string keys plus `after-load-functions' for the
 /// file just loaded.  Early boot loads skip it: nothing is registered
 /// yet and the defun doesn't exist yet.
-fn run_after_load(i: &mut Interp, file: &crate::lisp::text::EmacsStr) {
+fn run_after_load(
+    i: &mut Interp,
+    file: &crate::lisp::text::EmacsStr,
+) -> Result<(), crate::lisp::Flow> {
     if let Some(dale) = i.q_soft("do-after-load-evaluation") {
         if i.fbound_p(dale) {
-            let _ = i.apply(&Value::Sym(dale), vec![Value::string(file)]);
+            i.apply(&Value::Sym(dale), vec![Value::string(file)])?;
         }
     }
+    Ok(())
 }
 
 /// Source errors are offered before restoring this state. Unbinding happens
@@ -448,5 +469,44 @@ impl LoadCaller {
         let result = i.unbind_to(self.depth);
         i.load_stream = self.stream;
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn after_load_hook_errors_propagate_after_source_evaluation() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar qa-after-load-source-ran nil)\
+                         (setq after-load-functions\
+                               (list (lambda (_file)\
+                                       (signal 'file-error '(\"after load\")))))",
+                    )
+                    .unwrap();
+
+                let result = eval_src(
+                    &mut interp,
+                    "/tmp/qa-after-load-error.el",
+                    "(setq qa-after-load-source-ran t)",
+                    false,
+                );
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+                let ran = interp.q("qa-after-load-source-ran");
+                assert!(interp.symbol_value(ran).truthy());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

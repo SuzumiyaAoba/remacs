@@ -143,10 +143,7 @@ pub(super) fn f_accessible_keymaps(i: &mut Interp, args: crate::lisp::Argv) -> E
             .chars()
             .map(|c| Value::Int((c).code() as i128))
             .collect(),
-        Value::Cons(_) => match arg(&args, 1).list_to_vec() {
-            Ok(v) => v,
-            Err(_) => return Err(i.wrong_type_mut("sequencep", &args[1])),
-        },
+        Value::Cons(_) => crate::lisp::builtins::want_list(i, &args[1])?,
         // GNU Faccessible_keymaps validates PREFIX with CHECK_SEQUENCE:
         // a non-nil non-sequence signals wrong-type-argument.
         _ => return Err(i.wrong_type_mut("sequencep", &args[1])),
@@ -318,8 +315,9 @@ fn map_keymap_impl(i: &mut Interp, args: &[Value], own_only: bool) -> EvalResult
     } else {
         crate::editor::keymap_all_bindings(i, &v)
     };
+    let keymap_tag = i.intern_soft("keymap");
     for (k, def) in pairs {
-        if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
+        if matches!(&k, Value::Sym(s) if Some(*s) == keymap_tag) {
             continue;
         }
         let fnv = args[0].clone();
@@ -555,6 +553,9 @@ pub(super) fn f_make_composed_keymap(i: &mut Interp, a: crate::lisp::Argv) -> Ev
                 Err(crate::lisp::value::ListError::Dotted(tail)) => {
                     return Err(i.wrong_type_mut("listp", &tail));
                 }
+                Err(crate::lisp::value::ListError::Borrowed) => {
+                    return Err(i.error("Cannot traverse a mutably borrowed list"));
+                }
             },
         }
         Ok(Value::Nil)
@@ -619,7 +620,7 @@ fn menu_local_map(i: &mut Interp, name: &str) -> EvalResult {
     let mark = i.specbind_depth();
     let inhibit = i.q("inhibit-quit");
     if let Err(flow) = i.specbind(inhibit, Value::t()) {
-        let _ = i.unbind_to(mark);
+        i.unbind_to(mark)?;
         return Err(flow);
     }
     {

@@ -289,7 +289,11 @@ fn f_ns_font_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut fam: String = if family.is_empty() {
         "Monaco".to_string()
     } else {
-        family.chars().take(179).filter_map(|c| c.unicode()).collect()
+        family
+            .chars()
+            .take(179)
+            .filter_map(|c| c.unicode())
+            .collect()
     };
     // Uppercase the first char.
     fam = {
@@ -441,7 +445,12 @@ fn f_ns_block_system_sleep(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if a[1].is_nil() {
             opts |= NS_ACTIVITY_IDLE_DISPLAY_SLEEP_DISABLED;
         }
-        let reason = ns_str(o, &why.as_deref().map(|s| s.to_unicode_lossy()).unwrap_or_else(|| "Emacs".into()));
+        let reason = ns_str(
+            o,
+            &why.as_deref()
+                .map(|s| s.to_unicode_lossy())
+                .unwrap_or_else(|| "Emacs".into()),
+        );
         let act = (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
         // The activity object is autoreleased; keep it alive past the
         // pool pop so `endActivity:' can use it later.
@@ -550,8 +559,8 @@ fn ns_frame_geometry_value(i: &mut Interp, frame: &crate::editor::FrameRef) -> V
         .int()
         .unwrap_or(0)
         .max(0);
-    let tool_bar_height = tool_bar_lines
-        .saturating_mul(crate::editor::frame_char_height(i, frame) as i128);
+    let tool_bar_height =
+        tool_bar_lines.saturating_mul(crate::editor::frame_char_height(i, frame) as i128);
     let tool_bar_width = if tool_bar_height > 0 {
         outer_width
             .saturating_sub(internal_border.saturating_mul(2))
@@ -689,11 +698,9 @@ fn f_ns_frame_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn ns_window_system_in_use(i: &Interp) -> bool {
     cfg!(target_os = "macos")
-        && i.selected_frame
-            .as_ref()
-            .is_some_and(|frame| {
-                !frame.borrow().dead && crate::editor::frame_is_graphical(i, frame)
-            })
+        && i.selected_frame.as_ref().is_some_and(|frame| {
+            !frame.borrow().dead && crate::editor::frame_is_graphical(i, frame)
+        })
 }
 
 pub(super) fn f_ns_get_resource(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -873,8 +880,7 @@ fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     fn optional_string(i: &mut Interp, value: Option<&Value>) -> Result<Option<String>, Flow> {
         match value {
             None | Some(Value::Nil) => Ok(None),
-            Some(value) => super::want_string(i, value)
-                .map(|text| Some(text.to_unicode_lossy())),
+            Some(value) => super::want_string(i, value).map(|text| Some(text.to_unicode_lossy())),
         }
     }
 
@@ -960,9 +966,7 @@ fn selection_data_text(value: &Value) -> Option<String> {
 fn require_selection_backend(
     i: &mut Interp,
 ) -> Result<std::rc::Rc<dyn crate::frontend::ClipboardBackend>, Flow> {
-    i.clipboard_backend
-        .clone()
-        .ok_or_else(|| winsys(i))
+    i.clipboard_backend.clone().ok_or_else(|| winsys(i))
 }
 
 enum HostSelection {
@@ -985,7 +989,10 @@ impl HostSelection {
         }
     }
 
-    fn read(&self, backend: &dyn crate::frontend::ClipboardBackend) -> Result<Option<String>, String> {
+    fn read(
+        &self,
+        backend: &dyn crate::frontend::ClipboardBackend,
+    ) -> Result<Option<String>, String> {
         match self {
             Self::Clipboard => backend.read_text(),
             Self::Primary => backend.read_primary_text(),
@@ -1258,7 +1265,8 @@ fn decode_file_drag_path(path: &str) -> Result<String, String> {
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len()
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
             && let (Some(high), Some(low)) =
                 (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
         {

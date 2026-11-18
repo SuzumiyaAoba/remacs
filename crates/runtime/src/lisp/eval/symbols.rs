@@ -1,11 +1,12 @@
 //! Symbol identity, variable cells, aliases, properties, and watcher notifications.
 
-use super::{Interp, plist_get, plist_put};
+use super::{Interp, plist_get, plist_lookup, plist_put};
 use crate::lisp::{
     error::Flow,
     obarray::sym,
     value::{SymId, Value},
 };
+use num_traits::ToPrimitive;
 
 impl Interp {
     pub fn intern<T: crate::lisp::text::TextSource + ?Sized>(&mut self, name: &T) -> SymId {
@@ -54,7 +55,16 @@ impl Interp {
             .symbol(id)
             .name_string
             .as_ref()
-            .map(|text| text.borrow().clone())
+            .map(|text| {
+                text.try_borrow()
+                    .map(|text| (*text).clone())
+                    // Formatting is also used while reporting errors, where
+                    // there is no Lisp flow to propagate. If a host callback
+                    // reenters the interpreter while mutably borrowing a
+                    // symbol's shared name string, use the symbol's stable
+                    // original name instead of panicking in RefCell::borrow.
+                    .unwrap_or_else(|_| crate::lisp::text::EmacsText::from(self.symbol_name(id)))
+            })
             .unwrap_or_else(|| crate::lisp::text::EmacsText::from(self.symbol_name(id)))
     }
 
@@ -134,8 +144,8 @@ impl Interp {
             match self.obarray.symbol(cur).var_alias {
                 Some(next) => {
                     // GNU follows aliases without a depth limit. If a cycle
-                    // was assembled through the `variable-alias' property,
-                    // indirect-variable returns its original argument.
+                    // reaches this low-level lookup, indirect-variable
+                    // returns its original argument.
                     if !seen.insert(cur) {
                         return id;
                     }
@@ -160,7 +170,7 @@ impl Interp {
         if id == u32::MAX {
             return Value::Nil; // intern_soft miss — unbound is nil
         }
-        if self.quit_flag && self.symbol_name(id) == "quit-flag" {
+        if self.quit_flag && self.intern_soft("quit-flag") == Some(id) {
             return Value::t();
         }
         if let Some(b) = self.buffers.get(buffer) {
@@ -200,25 +210,9 @@ impl Interp {
     fn dumped_variable(&self, id: SymId) -> Option<Value> {
         let prop = self.q_soft("remacs--dump-var")?;
         // `nil' is a real stashed value (cl--labels-convert-cache's
-        // cache starts nil): test plist membership, not truthiness.
-        let mut cur = self.obarray.symbol(id).plist.clone();
-        while let Value::Cons(c) = cur {
-            let (car, next) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            if matches!(car, Value::Sym(s) if s == prop) {
-                return match &next {
-                    Value::Cons(c2) => Some(c2.borrow().car.clone()),
-                    _ => Some(Value::Nil),
-                };
-            }
-            cur = match next {
-                Value::Cons(c2) => c2.borrow().cdr.clone(),
-                _ => break,
-            };
-        }
-        None
+        // cache starts nil): test plist membership, not truthiness. The
+        // symbol plist is mutable Lisp data and may be circular.
+        plist_lookup(&self.obarray.symbol(id).plist, prop)
     }
 
     pub fn bound_p(&self, id: SymId) -> bool {
@@ -245,13 +239,27 @@ impl Interp {
     /// Set a variable the way `set`/`setq` does: local binding if the
     /// current buffer has one or the symbol is "automatically local".
     pub fn set_symbol(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
-        let result = self.set_symbol_position_inner(id, val);
+        let result = self.set_symbol_position_inner(id, val, true);
+        self.sync_symbol_position_view();
+        result
+    }
+
+    /// Store a variable in its active binding without firing variable
+    /// watchers. Use only for C paths whose GNU implementation directly
+    /// updates the variable cell, such as `reset_var_on_error'.
+    pub(crate) fn set_symbol_no_watchers(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+        let result = self.set_symbol_position_inner(id, val, false);
         self.sync_symbol_position_view();
         result
     }
 
     #[track_caller]
-    fn set_symbol_position_inner(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+    fn set_symbol_position_inner(
+        &mut self,
+        id: SymId,
+        val: Value,
+        notify_watchers: bool,
+    ) -> Result<(), Flow> {
         let id = self.var_alias_target(id);
         self.synchronize_quit_symbol(id);
         let constant = self.obarray.symbol(id).constant;
@@ -300,27 +308,48 @@ impl Interp {
         // GNU's set_internal fires variable watchers BEFORE the store:
         // a signalling watcher aborts the write entirely and observers
         // inside the watcher still see the old value.
-        self.fire_var_watchers(
-            id,
-            &val,
-            "set",
-            (local || default_shadow).then_some(self.current_buffer),
-        )?;
+        if notify_watchers {
+            self.fire_var_watchers(
+                id,
+                &val,
+                "set",
+                (local || default_shadow).then_some(self.current_buffer),
+            )?;
+        }
+        self.validate_c_integer_forwarding(id, &val)?;
         if default_shadow && forwarded && !always_local {
             // GNU's forwarded per-buffer path also writes the default
             // cell, notifying its watchers separately with WHERE=nil.
-            return self.set_symbol_default(id, val);
+            if notify_watchers {
+                return self.set_symbol_default(id, val);
+            }
+            self.obarray.symbol_mut(id).value = val.clone();
+            self.sync_undo_inhibit(id, &val);
+            return Ok(());
         }
         if local {
+            let file_name = if id == self.bfn_sym {
+                match &val {
+                    Value::Str(name) => Some(
+                        name.try_borrow()
+                            .map(|name| (*name).clone())
+                            .map_err(|_| {
+                                self.error(
+                                    "Cannot inspect a mutably borrowed buffer-file-name string",
+                                )
+                            })?,
+                    ),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if let Some(b) = self.buffers.get(self.current_buffer) {
                 if let Ok(mut bb) = b.try_borrow_mut() {
                     bb.locals.insert(id, val.clone());
                     if id == self.bfn_sym {
                         // Mirror the BVAR write into the buffer slot.
-                        bb.file_name = match &val {
-                            Value::Str(s) => Some(s.borrow().clone()),
-                            _ => None,
-                        };
+                        bb.file_name = file_name;
                     }
                 }
             }
@@ -341,13 +370,30 @@ impl Interp {
 
     /// Set the global (default) value regardless of buffer-local bindings.
     pub fn set_symbol_default(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
-        let result = self.set_symbol_default_position_inner(id, val);
+        let result = self.set_symbol_default_position_inner(id, val, true);
+        self.sync_symbol_position_view();
+        result
+    }
+
+    /// Store a global/default value without variable watchers. Use only for
+    /// C paths that directly update their forwarded Lisp cell.
+    pub(crate) fn set_symbol_default_no_watchers(
+        &mut self,
+        id: SymId,
+        val: Value,
+    ) -> Result<(), Flow> {
+        let result = self.set_symbol_default_position_inner(id, val, false);
         self.sync_symbol_position_view();
         result
     }
 
     #[track_caller]
-    fn set_symbol_default_position_inner(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+    fn set_symbol_default_position_inner(
+        &mut self,
+        id: SymId,
+        val: Value,
+        notify_watchers: bool,
+    ) -> Result<(), Flow> {
         // GNU `Fset_default' walks the variable-alias chain first:
         // `(set-default 'alias v)' writes BASE's default cell, leaving
         // the alias's own cell a legacy remnant readers ignore.
@@ -366,9 +412,90 @@ impl Interp {
         }
         // GNU's set_internal fires variable watchers BEFORE the store:
         // a signalling watcher leaves the default cell untouched.
-        self.fire_var_watchers(id, &val, "set", None)?;
+        if notify_watchers {
+            self.fire_var_watchers(id, &val, "set", None)?;
+        }
+        self.validate_c_integer_forwarding(id, &val)?;
         self.obarray.symbol_mut(id).value = val.clone();
         self.sync_undo_inhibit(id, &val);
+        Ok(())
+    }
+
+    /// These forwarded globals are stored as signed `EMACS_INT` values in
+    /// GNU. Validate their Lisp cells before storing them, so bignums outside
+    /// that range signal overflow after the usual variable-watcher callback.
+    pub(crate) fn validate_c_integer_forwarding(
+        &mut self,
+        id: SymId,
+        value: &Value,
+    ) -> Result<(), Flow> {
+        let name = self.symbol_name(id);
+        // C forwarding belongs to the canonical interned variable, not to
+        // an uninterned symbol that merely shares its printed name.
+        if self.intern_soft(&name) != Some(id) {
+            return Ok(());
+        }
+        if ![
+            "auto-save-interval",
+            "baud-rate",
+            "command-line-max-length",
+            "cons-cells-consed",
+            "display-line-numbers-major-tick",
+            "display-line-numbers-minor-tick",
+            "double-click-fuzz",
+            "executing-kbd-macro-index",
+            "extra-keyboard-modifiers",
+            "face-near-same-color-threshold",
+            "floats-consed",
+            "gc-cons-threshold",
+            "gcs-done",
+            "gnutls-log-level",
+            "hscroll-margin",
+            "integer-width",
+            "internal-when-entered-debugger",
+            "intervals-consed",
+            "large-hscroll-threshold",
+            "line-number-display-limit-width",
+            "lisp-eval-depth-reserve",
+            "long-line-optimizations-bol-search-limit",
+            "long-line-optimizations-region-size",
+            "max-lisp-eval-depth",
+            "max-redisplay-ticks",
+            "next-screen-context-lines",
+            "num-input-keys",
+            "num-nonmacro-input-events",
+            "overline-margin",
+            "process-error-pause-time",
+            "profiler-log-size",
+            "profiler-max-stack-depth",
+            "pure-bytes-used",
+            "read-process-output-max",
+            "scroll-margin",
+            "scroll-conservatively",
+            "scroll-step",
+            "string-chars-consed",
+            "strings-consed",
+            "symbols-consed",
+            "tab-bar-button-relief",
+            "tool-bar-max-label-size",
+            "tool-bar-button-relief",
+            "undo-limit",
+            "undo-strong-limit",
+            "underline-minimum-offset",
+            "vector-cells-consed",
+        ]
+        .iter()
+        .any(|candidate| name == *candidate)
+        {
+            return Ok(());
+        }
+        let Some(integer) = value.as_bigint() else {
+            return Err(self.wrong_type_mut("integerp", value));
+        };
+        if integer.to_isize().is_none() {
+            let overflow = self.q("overflow-error");
+            return Err(self.signal_data(overflow, vec![value.clone()]));
+        }
         Ok(())
     }
 
@@ -389,12 +516,6 @@ impl Interp {
             return; // see get_prop: intern_soft miss sentinel
         }
         self.macro_gen += 1;
-        if prop == self.var_alias_prop {
-            self.obarray.symbol_mut(id).var_alias = match val {
-                Value::Sym(s) => Some(s),
-                _ => None,
-            };
-        }
         let plist = self.obarray.symbol(id).plist.clone();
         let new_plist = plist_put(&plist, prop, val);
         self.obarray.symbol_mut(id).plist = new_plist;
@@ -436,5 +557,77 @@ impl Interp {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dumped_variable_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    fn circular_plist(items: Vec<Value>) -> Value {
+        let plist = Value::list(items);
+        let mut tail = plist.clone();
+        while let Value::Cons(cell) = tail {
+            let next = cell.borrow().cdr.clone();
+            if next.is_nil() {
+                cell.borrow_mut().cdr = plist.clone();
+                break;
+            }
+            tail = next;
+        }
+        plist
+    }
+
+    #[test]
+    fn dump_variable_lookup_handles_missing_and_present_circular_properties() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let dump_var = interp.intern("remacs--dump-var");
+        let unrelated = interp.intern("qa-unrelated-dump-property");
+
+        let missing = interp.intern("qa-missing-dump-property");
+        interp.obarray.symbol_mut(missing).value = Value::Sym(sym::UNBOUND);
+        interp.obarray.symbol_mut(missing).plist =
+            circular_plist(vec![Value::Sym(unrelated), Value::Int(1)]);
+        assert!(matches!(
+            interp.symbol_value(missing),
+            Value::Sym(symbol) if symbol == sym::UNBOUND
+        ));
+
+        let present = interp.intern("qa-present-dump-property");
+        interp.obarray.symbol_mut(present).value = Value::Sym(sym::UNBOUND);
+        interp.obarray.symbol_mut(present).plist = circular_plist(vec![
+            Value::Sym(dump_var),
+            Value::Int(42),
+            Value::Sym(unrelated),
+            Value::Int(1),
+        ]);
+        assert!(matches!(interp.symbol_value(present), Value::Int(42)));
+    }
+}
+
+#[cfg(test)]
+mod quit_flag_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn pending_quit_only_affects_the_interned_quit_flag() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let quit_flag = interp.intern("quit-flag");
+        let uninterned = interp.make_symbol("quit-flag");
+        interp.obarray.symbol_mut(uninterned).value = Value::Int(17);
+        interp.quit_flag = true;
+
+        assert!(matches!(interp.symbol_value(uninterned), Value::Int(17)));
+        interp.synchronize_quit_symbol(uninterned);
+        assert!(interp.quit_flag);
+        assert!(matches!(interp.symbol_value(quit_flag), Value::Sym(id) if id == sym::T));
+
+        interp.synchronize_quit_symbol(quit_flag);
+        assert!(!interp.quit_flag);
+        assert!(matches!(interp.symbol_value(quit_flag), Value::Sym(id) if id == sym::T));
     }
 }

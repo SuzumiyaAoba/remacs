@@ -71,23 +71,27 @@ fn executable_fingerprint() -> std::result::Result<[u8; 32], String> {
     Ok(hash)
 }
 
-fn io_error<T: super::text::TextSource + ?Sized>(i: &mut Interp, label: &str, path: &T, error: std::io::Error) -> Flow {
+fn io_error<T: super::text::TextSource + ?Sized>(
+    i: &mut Interp,
+    label: &str,
+    path: &T,
+    error: std::io::Error,
+) -> Flow {
     path.with_text(|path| {
-    let name = match error.kind() {
-        std::io::ErrorKind::NotFound => "file-missing",
-        std::io::ErrorKind::PermissionDenied => "permission-denied",
-        _ => "file-error",
-    };
-    let symbol = i.intern(name);
-    i.signal_data(
-        symbol,
-        vec![
-            Value::string(label),
-            Value::string(crate::editor::file_error_string(&error)),
-            Value::string(path),
-        ],
-    )
-
+        let name = match error.kind() {
+            std::io::ErrorKind::NotFound => "file-missing",
+            std::io::ErrorKind::PermissionDenied => "permission-denied",
+            _ => "file-error",
+        };
+        let symbol = i.intern(name);
+        i.signal_data(
+            symbol,
+            vec![
+                Value::string(label),
+                Value::string(crate::editor::file_error_string(&error)),
+                Value::string(path),
+            ],
+        )
     })
 }
 
@@ -109,7 +113,10 @@ pub(crate) fn save(i: &mut Interp, args: Argv) -> super::EvalResult {
     super::memory::collect_interp(i);
     let mark = i.specbind_depth();
     let processed = i.q("command-line-processed");
-    i.specbind(processed, Value::Nil)?;
+    if let Err(error) = i.specbind(processed, Value::Nil) {
+        i.unbind_to(mark)?;
+        return Err(error);
+    }
     let result = (|| {
         let Value::Str(name) = &args[0] else {
             return Err(i.wrong_type_mut("stringp", &args[0]));
@@ -180,10 +187,7 @@ pub(crate) fn stats(i: &mut Interp, _args: Argv) -> super::EvalResult {
     };
     Ok(Value::list(vec![
         Value::cons(Value::Sym(i.q("dumped-with-pdumper")), Value::t()),
-        Value::cons(
-            Value::Sym(i.q("load-time")),
-            Value::float(info.load_time),
-        ),
+        Value::cons(Value::Sym(i.q("load-time")), Value::float(info.load_time)),
         Value::cons(
             Value::Sym(i.q("dump-file-name")),
             Value::string(info.file_name),
@@ -291,7 +295,10 @@ pub fn load_with_arguments(
                 .map(|id| ((*name).to_owned(), i.obarray.symbol(id).value.clone()))
         })
         .collect();
-    let file_name = crate::editor::expand_file_name_str(&mut i, &super::text::EmacsText::from_os_str(path.as_os_str()));
+    let file_name = crate::editor::expand_file_name_str(
+        &mut i,
+        &super::text::EmacsText::from_os_str(path.as_os_str()),
+    );
     i.reset_dump_execution();
     archive.image.restore(&mut i).map_err(&fail)?;
     for (name, value) in fresh {
@@ -323,5 +330,41 @@ pub fn load_with_arguments(
             };
             Err(fail(format!("after-pdump-load-hook: {message}")))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dump_save_unwinds_failed_command_line_binding() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp.noninteractive = true;
+                interp
+                    .eval_str(
+                        "(defun dump-save-watcher (_symbol _value operation _where)\
+                           (if (eq operation 'let) (signal 'file-error '(\"bind\")) nil))\
+                         (add-variable-watcher 'command-line-processed #'dump-save-watcher)",
+                    )
+                    .unwrap();
+
+                let mark = interp.specbind_depth();
+                let result = save(
+                    &mut interp,
+                    vec![Value::string("/private/tmp/remacs-dump-bind-must-not-write")].into(),
+                );
+                assert!(
+                    matches!(result, Err(Flow::Signal(ref signal)) if signal.is_symbol(super::super::obarray::sym::FILE_ERROR)),
+                    "unexpected dump-save result: {result:?}"
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

@@ -40,7 +40,9 @@ impl Interp {
     pub fn function_p(&self, v: &Value) -> bool {
         match v {
             Value::Subr(_) | Value::Lambda(_) => true,
-            Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
+            Value::Cons(c) => c
+                .try_borrow()
+                .is_ok_and(|cell| self.sym_is(&cell.car, sym::LAMBDA)),
             Value::Sym(id) => {
                 // GNU resolves `defalias' chains: the alias's final
                 // target decides.
@@ -59,7 +61,9 @@ impl Interp {
                         .and_then(|x| crate::lisp::special::special_form(x))
                         .is_none(),
                     Value::Lambda(l) => !l.is_macro,
-                    Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
+                    Value::Cons(c) => c
+                        .try_borrow()
+                        .is_ok_and(|cell| self.sym_is(&cell.car, sym::LAMBDA)),
                     _ => false,
                 }
             }
@@ -129,23 +133,35 @@ impl Interp {
         }
     }
 
+    pub(super) fn is_macro_function_checked(&self, v: &Value) -> Result<bool, Flow> {
+        match v {
+            Value::Lambda(l) => Ok(l.is_macro),
+            Value::Cons(c) => {
+                let cell = c
+                    .try_borrow()
+                    .map_err(|_| self.error("Cannot inspect a mutably borrowed function cell"))?;
+                Ok(self.sym_is(&cell.car, sym::MACRO))
+            }
+            _ => Ok(false),
+        }
+    }
+
     /// Function cell for a form head. Voided macro cells stay void in
     /// user code; dumped bodies may use their hidden compiler macros.
-    pub(super) fn form_function(&mut self, id: SymId) -> Value {
+    pub(crate) fn form_function(&mut self, id: SymId) -> Value {
         self.resolve_function(id, FunctionPosition::Form)
     }
 
     pub(super) fn is_macro_function(&self, v: &Value) -> bool {
-        match v {
-            Value::Lambda(l) => l.is_macro,
-            Value::Cons(c) => self.sym_is(&c.borrow().car, sym::MACRO),
-            _ => false,
-        }
+        self.is_macro_function_checked(v).unwrap_or(false)
     }
 
     pub fn fbound_p(&self, id: SymId) -> bool {
-        // Emacs: special forms are fbound too.
-        if crate::lisp::special::special_form(id).is_some() {
+        // Bootstrap may evaluate core special forms before their Lisp
+        // function cells (notably defun/defmacro) are installed. Once boot
+        // completes, fboundp follows the actual function cell, including
+        // user unbinding or redefining a special-form name.
+        if self.boot_loading && crate::lisp::special::special_form(id).is_some() {
             return true;
         }
         // GNU fboundp: a nil or unbound cell is void.  (defalias 'x nil)
@@ -292,6 +308,9 @@ impl Interp {
             Err(crate::lisp::value::ListError::Circular(tail)) => {
                 let error = self.q("circular-list");
                 return Err(self.signal_data(error, vec![tail]));
+            }
+            Err(crate::lisp::value::ListError::Borrowed) => {
+                return Err(self.error("Cannot traverse a mutably borrowed list"));
             }
         };
         for position in (0..fields.len()).step_by(2) {

@@ -21,10 +21,13 @@ pub(crate) fn bool_vec_of(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> 
         return Err(i.wrong_type_mut("bool-vector-p", v));
     }
     if let Value::Record(r) = v {
-        let rr = r.borrow();
+        let rr = r
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed bool-vector"))?;
         if let Some(Value::Vec(b)) = rr.get(1) {
             return Ok(b
-                .borrow()
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect mutably borrowed bool-vector storage"))?
                 .iter()
                 .map(|x| matches!(x, Value::Int(n) if *n != 0))
                 .collect());

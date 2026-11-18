@@ -177,8 +177,10 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
 }
 
 fn is_category_table(i: &Interp, v: &Value) -> bool {
-    is_char_table(i, v)
-        && matches!(char_table_subtype_of(v), Value::Sym(s) if i.symbol_name(s) == "category-table")
+    let Some(category_table) = i.intern_soft("category-table") else {
+        return false;
+    };
+    is_char_table(i, v) && matches!(char_table_subtype_of(v), Value::Sym(s) if s == category_table)
 }
 
 fn want_category_table(i: &mut Interp, v: &Value) -> Result<Rc<RefCell<Vec<Value>>>, Flow> {

@@ -458,10 +458,13 @@ enum ZoneKind {
     Named(String),
 }
 
-pub(crate) const MAX_FIXED_ZONE_OFFSET: i128 = i64::MAX as i128;
+// GNU `decode_time_zone' accepts offsets strictly between -7 and +7 days.
+// At either boundary it treats integer ZONE as an invalid offset and falls
+// back to UTC; cons-based zone specifications signal instead.
+pub(crate) const MAX_FIXED_ZONE_OFFSET: i128 = 7 * 24 * 60 * 60 - 1;
 
 pub(crate) fn valid_fixed_zone_offset(offset: i128) -> bool {
-    (i64::MIN as i128..=MAX_FIXED_ZONE_OFFSET).contains(&offset)
+    (-MAX_FIXED_ZONE_OFFSET..=MAX_FIXED_ZONE_OFFSET).contains(&offset)
 }
 
 pub(crate) fn invalid_time_zone(i: &mut Interp, zone: &Value) -> Flow {
@@ -1174,6 +1177,9 @@ pub(super) fn f_build_binding(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
                 let tail = match e {
                     crate::lisp::value::ListError::Dotted(t) => t,
                     crate::lisp::value::ListError::Circular(_) => Value::Nil,
+                    crate::lisp::value::ListError::Borrowed => {
+                        return Err(i.error("Cannot inspect a mutably borrowed list"));
+                    }
                 };
                 return Err(i.wrong_type_mut("listp", if tail.is_nil() { &a[0] } else { &tail }));
             }
@@ -1201,7 +1207,7 @@ pub(super) fn f_emacs_uptime(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                     Value::Sym(i.q("require")),
                     q(Value::Sym(i.q("time-date"))),
                 ]);
-                let _ = i.eval(&req);
+                i.eval(&req)?;
             }
             if i.fbound_p(fs) {
                 let q = |v: &Value| Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]);
@@ -1526,16 +1532,12 @@ pub(super) fn f_time_since(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 pub(super) fn f_time_to_days(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let secs = lisp_time_seconds(i, &a[0])?;
     let tm = interp_local_tm(i, secs);
-    // Use floor division for the pseudo-Gregorian year offsets so
-    // negative years count leap days before the year-zero boundary.
+    // Match GNU's signed C integer division for years before year 1;
+    // Rust's `div_euclid' differs by one at negative non-leap boundaries.
     let previous_year = tm.tm_year as i128 + 1899;
     Ok(Value::Int(
-        tm.tm_yday as i128
-            + 1
-            + 365 * previous_year
-            + previous_year.div_euclid(4)
-            - previous_year.div_euclid(100)
-            + previous_year.div_euclid(400),
+        tm.tm_yday as i128 + 1 + 365 * previous_year + previous_year / 4 - previous_year / 100
+            + previous_year / 400,
     ))
 }
 
@@ -1567,4 +1569,35 @@ pub(super) fn f_date_leap_year_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     Ok(Value::from_bool(
         y % 4 == 0 && (y % 100 != 0 || y % 400 == 0),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emacs_uptime_propagates_time_date_require_errors() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(fmakunbound 'format-seconds)\
+                         (fset 'require\
+                               (lambda (&rest _features)\
+                                 (signal 'file-error '(\"time-date load\"))))",
+                    )
+                    .unwrap();
+
+                let result = f_emacs_uptime(&mut interp, vec![Value::t()].into());
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

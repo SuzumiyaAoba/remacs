@@ -2,7 +2,13 @@
 
 use super::circles::patch_in;
 use super::{Reader, eof_err, plain_err, read_err, read_err_radix, read_err_sym};
-use crate::lisp::{Interp, error::Flow, obarray::sym, text::EmacsText, value::Value};
+use crate::lisp::{
+    Interp,
+    error::Flow,
+    obarray::sym,
+    text::EmacsText,
+    value::{SymId, Value},
+};
 use rustc_hash::FxHashSet as HashSet;
 use std::rc::Rc;
 
@@ -44,10 +50,22 @@ impl Reader<'_> {
                 // `#&N"..."' — bool vector literal: N bits packed
                 // LSB-first within each string byte.
                 self.pos += 2;
-                let mut n: u32 = 0;
+                let mut n: usize = 0;
                 while let Some(d) = self.peek()? {
                     if d.is_ascii_digit() {
-                        n = n * 10 + d.to_digit(10).unwrap();
+                        let digit = d.to_digit(10).unwrap() as usize;
+                        let Some(next) = n.checked_mul(10).and_then(|n| n.checked_add(digit))
+                        else {
+                            return Err(read_err(self.interp, "#&"));
+                        };
+                        // GNU limits bool-vector lengths to fixnums.  This
+                        // also leaves room for rounding the count to bytes.
+                        let max_length =
+                            (crate::lisp::value::FIXNUM_MAX as u128).min(isize::MAX as u128 - 7);
+                        if (next as u128) > max_length {
+                            return Err(read_err(self.interp, "#&"));
+                        }
+                        n = next;
                         self.pos += 1;
                     } else {
                         break;
@@ -79,13 +97,11 @@ impl Reader<'_> {
                 // Emacs 19 form where N counts the string's total bits
                 // minus the last byte: N == (SCHARS-1)*8.
                 let schars = bytes.len();
-                if !(schars == (n as usize + 7) / 8
-                    || (schars >= 1 && n as usize == (schars - 1) * 8))
-                {
+                if !(schars == (n + 7) / 8 || (schars >= 1 && n == (schars - 1) * 8)) {
                     return Err(read_err(self.interp, "#&..."));
                 }
-                let mut bits = Vec::with_capacity(n as usize);
-                for k in 0..n as usize {
+                let mut bits = Vec::with_capacity(n);
+                for k in 0..n {
                     let byte = bytes.get(k / 8).copied().unwrap_or(0);
                     bits.push(byte >> (k % 8) & 1 != 0);
                 }
@@ -101,12 +117,21 @@ impl Reader<'_> {
                 // `#@00' skips to EOF and yields nil.
                 self.pos += 2;
                 let mut n: usize = 0;
-                let mut digits = 0;
+                let mut digits: usize = 0;
                 while let Some(c) = self.peek()? {
                     if c.is_ascii_digit() {
-                        n = n * 10 + (c as usize - '0' as usize);
+                        let digit = c as usize - '0' as usize;
+                        let Some(next) = n.checked_mul(10).and_then(|n| n.checked_add(digit))
+                        else {
+                            return Err(read_err(self.interp, "#@"));
+                        };
+                        // GNU stores this count in ptrdiff_t, not size_t.
+                        if next > isize::MAX as usize {
+                            return Err(read_err(self.interp, "#@"));
+                        }
+                        n = next;
                         self.pos += 1;
-                        digits += 1;
+                        digits = digits.saturating_add(1);
                     } else {
                         break;
                     }
@@ -139,20 +164,22 @@ impl Reader<'_> {
                 match items.first() {
                     Some(Value::Str(s)) => {
                         let s = s.clone();
-                        let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
-                        let rest = &items[1..];
-                        if rest.len() % 3 != 0 {
-                            return Err(read_err_sym(self.interp, "#"));
-                        }
-                        for t in rest.chunks(3) {
-                            let (Value::Int(b0), Value::Int(e0)) = (&t[0], &t[1]) else {
-                                return Err(read_err_sym(self.interp, "#"));
-                            };
-                            let pl = t[2].list_to_vec().unwrap_or_default();
-                            ivs.push((*b0 as usize, *e0 as usize, pl));
-                        }
-                        if !ivs.is_empty() {
-                            self.interp.set_str_props(&s, ivs);
+                        let mut rest = &items[1..];
+                        while !rest.is_empty() {
+                            if rest.len() < 3 {
+                                return Err(read_err(self.interp, "Invalid string property list"));
+                            }
+                            crate::lisp::builtins::call_canonical_builtin(
+                                self.interp,
+                                "set-text-properties",
+                                vec![
+                                    rest[0].clone(),
+                                    rest[1].clone(),
+                                    rest[2].clone(),
+                                    Value::Str(s.clone()),
+                                ],
+                            )?;
+                            rest = &rest[3..];
                         }
                         Ok(Value::Str(s))
                     }
@@ -201,7 +228,10 @@ impl Reader<'_> {
                     let mut rec = Vec::with_capacity(items.len() + 1);
                     rec.push(Value::Sym(self.interp.q("sub-char-table")));
                     rec.extend(items);
-                    return Ok(Value::record(rec));
+                    return Ok(Value::record_with_kind(
+                        rec,
+                        crate::lisp::value::RecordKind::SubCharTable,
+                    ));
                 }
                 if items.len() < 68 {
                     return Err(read_err(self.interp, "Invalid size char-table"));
@@ -269,14 +299,14 @@ impl Reader<'_> {
                 // `#[... nil]' prints with a `nil' env (plain lambda);
                 // `#[... (t)]' is a top-level dynamic function.
                 let plain = env.is_nil();
-                Ok(crate::lisp::builtins::misc::make_interpreted_closure(
+                crate::lisp::builtins::misc::make_interpreted_closure(
                     self.interp,
                     &arglist,
                     &body,
                     &env,
                     plain,
                     Some(items),
-                ))
+                )
             }
             Some('s') => {
                 // `#s(...)' — record object; `#s(hash-table ...)' reads
@@ -292,7 +322,7 @@ impl Reader<'_> {
                     return Err(read_err_sym(self.interp, "#s"));
                 }
                 if let Value::Sym(t) = &items[0] {
-                    if self.interp.symbol_name(*t) == "hash-table" {
+                    if self.interp.intern_soft("hash-table") == Some(*t) {
                         if let Some(h) = read_hash_literal(self.interp, &items[1..])? {
                             return Ok(h);
                         }
@@ -512,23 +542,42 @@ impl Reader<'_> {
 fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, Flow> {
     use crate::lisp::builtins::hashfn::table_key;
     use crate::lisp::value::{HashTest, LispHash};
+    let test_key = i.intern_soft("test");
+    let data_key = i.intern_soft("data");
+    let size_key = i.intern_soft("size");
+    let weakness_key = i.intern_soft("weakness");
+    let rehash_size_key = i.intern_soft("rehash-size");
+    let rehash_threshold_key = i.intern_soft("rehash-threshold");
+    let purecopy_key = i.intern_soft("purecopy");
+    let key_weakness_key = i.intern_soft("key");
+    let value_weakness_key = i.intern_soft("value");
+    let key_and_value_key = i.intern_soft("key-and-value");
+    let key_or_value_key = i.intern_soft("key-or-value");
+    let eq_test = i.intern_soft("eq");
+    let eql_test = i.intern_soft("eql");
+    let equal_test = i.intern_soft("equal");
     // GNU's printed custom tables use the first occurrence of each plist
     // field, ignore size/unknown fields, and size storage from the data.
     // Built-in literal metadata uses the existing path below.
-    let property = |name: &str| {
+    let property = |key: Option<SymId>| {
+        let Some(key) = key else {
+            return Value::Nil;
+        };
         fields
             .chunks(2)
-            .find(|pair| matches!(&pair[0], Value::Sym(id) if i.symbol_name(*id) == name))
+            .find(|pair| matches!(&pair[0], Value::Sym(id) if *id == key))
             .and_then(|pair| pair.get(1))
             .cloned()
             .unwrap_or(Value::Nil)
     };
-    let test_arg = property("test");
+    let test_arg = property(test_key);
     if let Value::Sym(id) = &test_arg
-        && !matches!(i.symbol_name(*id).as_str(), "eq" | "eql" | "equal" | "nil")
+        && Some(*id) != eq_test
+        && Some(*id) != eql_test
+        && Some(*id) != equal_test
     {
-        let data = property("data");
-        let weakness = property("weakness");
+        let data = property(data_key);
+        let weakness = property(weakness_key);
         if !matches!(data, Value::Nil | Value::Cons(_)) {
             return Err(i.error("Hash table data is not a list"));
         }
@@ -560,54 +609,83 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, 
         return Ok(Some(table));
     }
     let mut test = HashTest::Eql;
+    let mut test_seen = false;
     let mut data: Option<Vec<Value>> = None;
     let mut weakness: Option<Value> = None;
+    let mut weakness_seen = false;
     let mut k = 0;
     while k + 1 < fields.len() {
-        let Value::Sym(name_id) = &fields[k] else {
-            return Ok(None);
+        let name_id = match &fields[k] {
+            Value::Sym(name_id) => *name_id,
+            _ => {
+                k += 2;
+                continue;
+            }
         };
-        let name = i.symbol_name(*name_id).to_string();
         let val = &fields[k + 1];
-        match name.as_str() {
-            "test" => {
-                let Value::Sym(tid) = val else {
-                    return Ok(None);
+        if Some(name_id) == test_key {
+            if !test_seen {
+                test_seen = true;
+                let Some(tid) = i.sym_id(val) else {
+                    return Err(i.wrong_type_mut("symbolp", val));
                 };
-                test = match i.symbol_name(*tid).as_str() {
-                    "eq" => HashTest::Eq,
-                    "eql" => HashTest::Eql,
-                    "equal" => HashTest::Equal,
-                    _ => return Ok(None),
+                test = if Some(tid) == eq_test {
+                    HashTest::Eq
+                } else if Some(tid) == eql_test || tid == sym::NIL {
+                    HashTest::Eql
+                } else if Some(tid) == equal_test {
+                    HashTest::Equal
+                } else {
+                    return Ok(None);
                 };
             }
-            "data" => {
-                data = val.list_to_vec().ok();
-                if data.is_none() && !val.is_nil() {
-                    return Ok(None);
+        } else if Some(name_id) == data_key {
+            if data.is_none() {
+                let pairs = match val {
+                    Value::Nil => Vec::new(),
+                    Value::Cons(_) => crate::lisp::builtins::want_list(i, val)?,
+                    _ => return Err(i.error("Hash table data is not a list")),
+                };
+                if pairs.len() % 2 != 0 {
+                    return Err(i.error("Hash table data length is odd"));
                 }
+                data = Some(pairs);
             }
+        } else if Some(name_id) == size_key {
             // GNU ignores the legacy hint in printed tables.
-            "size" => {}
-            "weakness" => {
-                if matches!(val, Value::Sym(_) | Value::Nil) {
-                    weakness = if val.is_nil() {
-                        None
-                    } else {
-                        Some(val.clone())
-                    };
+        } else if Some(name_id) == weakness_key {
+            if !weakness_seen {
+                weakness_seen = true;
+                let id = i.sym_id(val);
+                if val.is_nil() {
+                    weakness = None;
+                } else if id == Some(sym::T) || id == key_and_value_key {
+                    weakness = Some(Value::Sym(i.q("key-and-value")));
+                } else if id == key_weakness_key
+                    || id == value_weakness_key
+                    || id == key_or_value_key
+                {
+                    weakness = Some(val.clone());
+                } else {
+                    return Err(i.signal_data(
+                        sym::ERROR,
+                        vec![Value::string("Invalid hash table weakness"), val.clone()],
+                    ));
                 }
             }
-            // rehash-size/rehash-threshold/purecopy are accepted and
-            // ignored like `make-hash-table'.
-            "rehash-size" | "rehash-threshold" | "purecopy" => {}
-            _ => return Ok(None),
+        } else if Some(name_id) == rehash_size_key
+            || Some(name_id) == rehash_threshold_key
+            || Some(name_id) == purecopy_key
+        {
+            // GNU accepts and ignores these hints in printed tables.
+        } else {
+            // Unknown plist keys do not affect the table's reader syntax.
         }
         k += 2;
     }
-    if k != fields.len() {
-        return Ok(None);
-    }
+    // GNU's hash-table reader consumes complete property/value pairs and
+    // ignores an unpaired trailing field. A partial unknown field must not
+    // turn an otherwise valid hash-table literal into a plain record.
     let mut h = LispHash::new(test);
     // Literal data reserves one slot per pair before equivalent keys
     // coalesce, unlike lazy default construction via make-hash-table.

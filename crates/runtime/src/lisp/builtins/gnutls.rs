@@ -433,73 +433,290 @@ fn gnutls_make_error(i: &mut Interp, err: i32) -> Value {
     }
 }
 
-/// GNU `extract_data_from_object', restricted to the forms the crypto
-/// primitives actually see: `(OBJECT [START] [END] [CODING] [NOERROR])'
-/// where OBJECT is a string or buffer.  Returns the byte payload.
+/// GNU `extract_data_from_object': only the five fixed fields are read,
+/// including when the specification has a circular tail.
 fn extract_data(i: &mut Interp, spec: &Value) -> Result<Vec<u8>, Flow> {
-    let mut parts: Vec<Value> = Vec::new();
+    let mut parts = Vec::new();
     let mut cur = spec.clone();
-    // GNU reads only the five fixed fields, including on a cyclic tail.
     for _ in 0..5 {
-        match cur {
-            Value::Cons(c) => {
-                let (car, cdr) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                parts.push(car);
-                cur = cdr;
-            }
-            _ => break,
-        }
+        let Value::Cons(cell) = cur else { break };
+        let (car, cdr) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        parts.push(car);
+        cur = cdr;
     }
-    let obj = match parts.first() {
-        Some(o) => o.clone(),
-        None => return Err(i.wrong_type_mut("consp", spec)),
+    let Some(obj) = parts.first().cloned() else {
+        return Err(i.wrong_type_mut("consp", spec));
     };
-    // TODO: Apply CODING/NOERROR and GNU safe-coding callbacks for buffer inputs.
-    let (text, unibyte, buffer_bounds) = match &obj {
-        Value::Str(text) => (text.borrow().clone(), i.is_unibyte_str(text), None),
+    let coding = parts.get(3).cloned().unwrap_or(Value::Nil);
+    let noerror = parts.get(4).cloned().unwrap_or(Value::Nil);
+    match &obj {
+        Value::Str(string) => {
+            let unibyte = i.is_unibyte_str(string);
+            let coding = if coding.is_nil() {
+                if unibyte {
+                    Value::Sym(i.q("raw-text"))
+                } else {
+                    preferred_crypto_coding(i)
+                }
+            } else {
+                coding
+            };
+            let coding = checked_crypto_coding(i, coding, &noerror)?;
+            let bytes = if unibyte {
+                crypto_text_bytes(&string.borrow(), true)
+            } else {
+                encode_crypto_text(i, Value::Str(string.clone()), &coding)?
+            };
+            let minimum = 0;
+            let maximum = bytes.len() as i128;
+            let start = crypto_position(i, &parts, 1, minimum, false)?;
+            let end = crypto_position(i, &parts, 2, maximum, false)?;
+            let range = crypto_range(start, end, minimum, maximum, false).map_err(
+                |(start, end)| {
+                    i.signal_data(
+                        crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
+                        vec![obj.clone(), Value::Int(start), Value::Int(end)],
+                    )
+                },
+            )?;
+            Ok(bytes[range].to_vec())
+        }
         Value::Buffer(buffer) => {
-            let buffer = buffer.borrow();
-            let text = buffer.text.text();
-            let multibyte = i.q_soft("enable-multibyte-characters");
-            let unibyte = multibyte.and_then(|symbol| buffer.locals.get(&symbol)).is_some_and(Value::is_nil);
-            let bounds = (buffer.begv as i128 + 1, buffer.zv.min(text.len()) as i128 + 1);
-            (text, unibyte, Some(bounds))
+            let buffer_id = buffer.borrow().id;
+            let old_buffer = i.current_buffer;
+            i.set_current_buffer(buffer_id);
+            let result = extract_buffer_data(
+                i,
+                buffer,
+                &obj,
+                &parts,
+                &coding,
+                &noerror,
+            );
+            i.set_current_buffer(old_buffer);
+            result
         }
         _ => {
-            let tail = match &obj { Value::Cons(_) => obj.clone(), other => Value::cons(other.clone(), Value::Nil) };
-            return Err(i.signal(crate::lisp::obarray::sym::ERROR, Value::cons(Value::string("Invalid object argument"), tail)));
+            let tail = match &obj {
+                Value::Cons(_) => obj.clone(),
+                other => Value::cons(other.clone(), Value::Nil),
+            };
+            Err(i.signal(
+                crate::lisp::obarray::sym::ERROR,
+                Value::cons(Value::string("Invalid object argument"), tail),
+            ))
         }
-    };
-    let (minimum, maximum) = buffer_bounds.unwrap_or((0, text.len() as i128));
-    let mut position = |index: usize, default| -> Result<i128, Flow> {
-        match parts.get(index) {
-            None | Some(Value::Nil) => Ok(default),
-            Some(value) if buffer_bounds.is_some() => super::want_int_or_mark(i, value),
-            Some(value) => Ok(want_int(i, value)?.max(0)),
-        }
-    };
-    let start = position(1, minimum)?;
-    let end = position(2, maximum)?;
-    let range = crypto_range(start, end, minimum, maximum, buffer_bounds.is_some())
-        .map_err(|(start, end)| i.signal_data(crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
-            vec![obj.clone(), Value::Int(start), Value::Int(end)]))?;
-    let selected = &text[range];
-    Ok(crypto_text_bytes(selected, unibyte))
+    }
 }
 
-fn crypto_range(mut start: i128, mut end: i128, minimum: i128, maximum: i128, buffer: bool) -> Result<std::ops::Range<usize>, (i128, i128)> {
-    if buffer && start > end { std::mem::swap(&mut start, &mut end); }
-    if start < minimum || end > maximum || start > end { return Err((start, end)); }
+fn extract_buffer_data(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    object: &Value,
+    parts: &[Value],
+    requested_coding: &Value,
+    noerror: &Value,
+) -> Result<Vec<u8>, Flow> {
+    let (minimum, maximum, unibyte) = {
+        let buffer = buffer.borrow();
+        let multibyte = i.q("enable-multibyte-characters");
+        (
+            buffer.begv as i128 + 1,
+            buffer.zv.min(buffer.text.text().len()) as i128 + 1,
+            i.symbol_value_in_buffer(multibyte, buffer.id).is_nil(),
+        )
+    };
+    let start = crypto_position(i, parts, 1, minimum, true)?;
+    let end = crypto_position(i, parts, 2, maximum, true)?;
+    // GNU accepts reversed buffer bounds and normalizes them before the
+    // safe-coding callback as well as before extracting the selected text.
+    let (start, end) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
+    let range = crypto_range(start, end, minimum, maximum, true).map_err(|(start, end)| {
+        i.signal_data(
+            crate::lisp::obarray::sym::ARGS_OUT_OF_RANGE,
+            vec![object.clone(), Value::Int(start), Value::Int(end)],
+        )
+    })?;
+    let coding = buffer_crypto_coding(i, buffer, start, end, unibyte, requested_coding, noerror)?;
+    // The safe-coding callback may switch buffers. C extracts from the
+    // original BUFFER, so restore it before copying the selected text.
+    if i.current_buffer != buffer.borrow().id {
+        i.set_current_buffer(buffer.borrow().id);
+    }
+    let selected = buffer.borrow().text.substring(range.start, range.end);
+    let source = Value::string_with_kind(selected, !unibyte);
+    if let Value::Str(string) = &source {
+        if unibyte {
+            i.mark_unibyte(string);
+        } else {
+            i.mark_multibyte(string);
+        }
+    }
+    if unibyte {
+        let Value::Str(string) = &source else { unreachable!() };
+        Ok(crypto_text_bytes(&string.borrow(), true))
+    } else {
+        encode_crypto_text(i, source, &coding)
+    }
+}
+
+fn crypto_position(
+    i: &mut Interp,
+    parts: &[Value],
+    index: usize,
+    default: i128,
+    buffer: bool,
+) -> Result<i128, Flow> {
+    match parts.get(index) {
+        None | Some(Value::Nil) => Ok(default),
+        Some(value) if buffer => super::want_int_or_mark(i, value),
+        Some(value) => Ok(want_int(i, value)?.max(0)),
+    }
+}
+
+fn preferred_crypto_coding(i: &mut Interp) -> Value {
+    let priorities = i.q("remacs-coding-system-priorities");
+    match i.symbol_value(priorities) {
+        Value::Cons(cell) => cell.borrow().car.clone(),
+        _ => Value::Sym(i.q("utf-8")),
+    }
+}
+
+fn checked_crypto_coding(
+    i: &mut Interp,
+    coding: Value,
+    noerror: &Value,
+) -> Result<Value, Flow> {
+    if coding.is_nil() || super::misc::coding_known(i, &coding).is_some() {
+        return Ok(coding);
+    }
+    if noerror.truthy() {
+        return Ok(Value::Sym(i.q("raw-text")));
+    }
+    let error = i.q("coding-system-error");
+    Err(i.signal_data(
+        error,
+        vec![coding],
+    ))
+}
+
+fn encode_crypto_text(i: &mut Interp, text: Value, coding: &Value) -> Result<Vec<u8>, Flow> {
+    let encoded = crate::lisp::builtins::misc::encode_process_text(
+        i,
+        vec![text, coding.clone()].into(),
+        None,
+        false,
+    )?;
+    let Value::Str(encoded) = encoded else {
+        return Err(i.wrong_type_mut("stringp", &encoded));
+    };
+    Ok(crypto_text_bytes(&encoded.borrow(), true))
+}
+
+fn buffer_crypto_coding(
+    i: &mut Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    start: i128,
+    end: i128,
+    unibyte: bool,
+    requested: &Value,
+    noerror: &Value,
+) -> Result<Value, Flow> {
+    let mut coding = requested.clone();
+    if coding.is_nil() {
+        let coding_for_write_symbol = i.q("coding-system-for-write");
+        let coding_for_write = i.symbol_value(coding_for_write_symbol);
+        coding = coding_for_write;
+        if coding.is_nil() {
+            let file_coding = i.q("buffer-file-coding-system");
+            let (buffer_id, local_coding) = {
+                let buffer = buffer.borrow();
+                (
+                    buffer.id,
+                    buffer.locals.contains_key(&file_coding),
+                )
+            };
+            let buffer_coding = i.symbol_value_in_buffer(file_coding, buffer_id);
+            let force_raw_text = (buffer_coding.is_nil() || !local_coding) && unibyte;
+            coding = if buffer_coding.is_nil() || !local_coding {
+                Value::Nil
+            } else {
+                buffer_coding.clone()
+            };
+
+            let filename = i.symbol_value_in_buffer(i.bfn_sym, buffer_id);
+            if coding.is_nil() && !filename.is_nil() {
+                let operation = Value::Sym(i.q("write-region"));
+                let finder = Value::Sym(i.q("find-operation-coding-system"));
+                let result = i.apply(
+                    &finder,
+                    vec![
+                        operation,
+                        Value::Int(start),
+                        Value::Int(end),
+                        filename,
+                    ],
+                )?;
+                if let Value::Cons(pair) = result {
+                    coding = pair.borrow().cdr.clone();
+                }
+            }
+            if coding.is_nil() && !buffer_coding.is_nil() {
+                coding = buffer_coding;
+            }
+
+            if !force_raw_text {
+                let safe_variable = i.q("select-safe-coding-system-function");
+                let safe_function = i.symbol_value(safe_variable);
+                if i.sym_id(&safe_function)
+                    .is_some_and(|function| i.fbound_p(function))
+                {
+                    coding = i.apply(
+                        &safe_function,
+                        vec![Value::Int(start), Value::Int(end), coding, Value::Nil],
+                    )?;
+                }
+            }
+            if force_raw_text {
+                coding = Value::Sym(i.q("raw-text"));
+            }
+        }
+    }
+    checked_crypto_coding(i, coding, noerror)
+}
+
+fn crypto_range(
+    mut start: i128,
+    mut end: i128,
+    minimum: i128,
+    maximum: i128,
+    buffer: bool,
+) -> Result<std::ops::Range<usize>, (i128, i128)> {
+    if buffer && start > end {
+        std::mem::swap(&mut start, &mut end);
+    }
+    if start < minimum || end > maximum || start > end {
+        return Err((start, end));
+    }
     let offset = i128::from(buffer);
     Ok((start - offset) as usize..(end - offset) as usize)
 }
 
 fn crypto_text_bytes(text: &crate::lisp::text::EmacsStr, unibyte: bool) -> Vec<u8> {
-    if unibyte { text.chars().map(|c| c.byte8().unwrap_or(c.code() as u8)).collect() }
-    else { text.to_external_bytes() }
+    if unibyte {
+        text.chars()
+            .map(|c| c.byte8().unwrap_or(c.code() as u8))
+            .collect()
+    } else {
+        text.to_external_bytes()
+    }
 }
 
 fn specify(obj: &Value) -> Value {
@@ -802,7 +1019,7 @@ fn iv_auto_size(i: &mut Interp, iv: &Value) -> Result<Option<usize>, Flow> {
         let cell = cell.borrow();
         (cell.car.clone(), cell.cdr.clone())
     };
-    if !matches!(head, Value::Sym(id) if i.symbol_name(id) == "iv-auto") {
+    if !matches!(head, Value::Sym(id) if i.intern_soft("iv-auto") == Some(id)) {
         return Ok(None);
     }
     let length = match tail {
@@ -810,9 +1027,7 @@ fn iv_auto_size(i: &mut Interp, iv: &Value) -> Result<Option<usize>, Flow> {
         _ => Value::Nil,
     };
     match &length {
-        Value::Int(n)
-            if (0..=crate::lisp::value::FIXNUM_MAX).contains(n) =>
-        {
+        Value::Int(n) if (0..=crate::lisp::value::FIXNUM_MAX).contains(n) => {
             Ok(usize::try_from(*n).ok())
         }
         _ => Err(i.error("Without a length, `iv-auto' can't be used; see Elisp manual")),
@@ -864,7 +1079,13 @@ fn gnutls_symmetric(i: &mut Interp, encrypting: bool, a: crate::lisp::Argv) -> E
             return Err(i.error("GnuTLS random number generation is unavailable"));
         };
         let mut bytes = vec![0; length];
-        let ret = unsafe { rnd(1 /* GNUTLS_RND_RANDOM */, bytes.as_mut_ptr(), bytes.len()) };
+        let ret = unsafe {
+            rnd(
+                1, /* GNUTLS_RND_RANDOM */
+                bytes.as_mut_ptr(),
+                bytes.len(),
+            )
+        };
         if ret < GNUTLS_E_SUCCESS {
             return Err(i.error(&format!(
                 "GnuTLS random IV generation failed: {}",
@@ -1700,7 +1921,10 @@ fn f_format_certificate(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             )));
         }
         // GNU uses strlen() on the PEM string — import as PEM only.
-        let bytes = match &a[0] { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => unreachable!() };
+        let bytes = match &a[0] {
+            Value::Str(text) => super::strfn::gnu_sbytes(i, text),
+            _ => unreachable!(),
+        };
         let d = Datum {
             data: bytes.as_ptr() as *mut u8,
             size: bytes.len() as u32,
@@ -1780,8 +2004,12 @@ fn boot_error(i: &mut Interp, msg: &str) -> Flow {
 }
 
 fn is_ip_literal<T: TextSource + ?Sized>(host: &T) -> bool {
-    host.with_text(|host| host.chars().map(EmacsChar::unicode).collect::<Option<String>>()
-        .is_some_and(|host| host.parse::<std::net::IpAddr>().is_ok()))
+    host.with_text(|host| {
+        host.chars()
+            .map(EmacsChar::unicode)
+            .collect::<Option<String>>()
+            .is_some_and(|host| host.parse::<std::net::IpAddr>().is_ok())
+    })
 }
 
 fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1814,17 +2042,32 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let crlfiles = pl(":crlfiles");
     let loglevel = pl(":loglevel");
     let prime_bits = pl(":min-prime-bits");
+    let verify_flags = pl(":verify-flags");
     let _pass = pl(":pass");
     let _flags = pl(":flags");
+    drop(pl);
 
     let hostname_s = match &hostname {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|hostname| (*hostname).clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed GnuTLS hostname"))?,
         _ => {
             return Err(boot_error(
                 i,
                 "gnutls-boot: invalid :hostname parameter (not a string)",
             ));
         }
+    };
+    let hostname_bytes = match &hostname {
+        Value::Str(text) => super::strfn::try_gnu_sbytes(i, text)?,
+        _ => unreachable!(),
+    };
+    // Validate and copy priority bytes before allocating GnuTLS state so a
+    // host-side borrow conflict cannot leave a partially initialized session.
+    let priority_bytes = match &priority_string {
+        Value::Str(text) => super::strfn::try_gnu_sbytes(i, text)?,
+        _ => EmacsText::from("NORMAL").to_external_bytes(),
     };
 
     if let Value::Int(l) = &loglevel {
@@ -1858,7 +2101,6 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         if ret < 0 {
             return Err(i.error(&format!("memory exhausted: {}", strerror(g, ret))));
         }
-        let verify_flags = pl(":verify-flags");
         let vf = match &verify_flags {
             Value::Int(n) => *n as u32,
             _ => GNUTLS_VERIFY_ALLOW_X509_V1_CA_CRT,
@@ -1908,7 +2150,8 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             match &file {
                 Value::Str(s) => {
                     let path = crate::editor::expand_file_name_str(i, &s.borrow());
-                    let cpath = std::ffi::CString::new(path.to_external_bytes()).unwrap_or_default();
+                    let cpath =
+                        std::ffi::CString::new(path.to_external_bytes()).unwrap_or_default();
                     let Some(f) = g.cert_set_x509_trust_file else {
                         continue;
                     };
@@ -1936,7 +2179,8 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             match &file {
                 Value::Str(s) => {
                     let path = crate::editor::expand_file_name_str(i, &s.borrow());
-                    let cpath = std::ffi::CString::new(path.to_external_bytes()).unwrap_or_default();
+                    let cpath =
+                        std::ffi::CString::new(path.to_external_bytes()).unwrap_or_default();
                     let Some(f) = g.cert_set_x509_crl_file else {
                         continue;
                     };
@@ -1966,13 +2210,13 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             let certfile = car_safe(&cdr_safe(&elem));
             match (&keyfile, &certfile) {
                 (Value::Str(k), Value::Str(cf)) => {
-                    let kp =
-                        std::ffi::CString::new(crate::editor::expand_file_name_str(i, &k.borrow()).to_external_bytes())
-                            .unwrap_or_default();
-                    let cp = std::ffi::CString::new(crate::editor::expand_file_name_str(
-                        i,
-                        &cf.borrow(),
-                    ).to_external_bytes())
+                    let kp = std::ffi::CString::new(
+                        crate::editor::expand_file_name_str(i, &k.borrow()).to_external_bytes(),
+                    )
+                    .unwrap_or_default();
+                    let cp = std::ffi::CString::new(
+                        crate::editor::expand_file_name_str(i, &cf.borrow()).to_external_bytes(),
+                    )
                     .unwrap_or_default();
                     let Some(f) = g.cert_set_x509_key_file else {
                         continue;
@@ -2023,11 +2267,6 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 
     // Priority string.
-    let prio = match &priority_string {
-        Value::Str(s) => s.borrow().clone(),
-        _ => EmacsText::from("NORMAL"),
-    };
-    let priority_bytes = match &priority_string { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => prio.to_external_bytes() };
     let cprio = std::ffi::CString::new(priority_bytes).unwrap_or_default();
     let Some(pset) = g.priority_set_direct else {
         return Err(boot_error(i, "GnuTLS priority API unavailable"));
@@ -2067,7 +2306,6 @@ fn f_boot(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
 
     // SNI.
-    let hostname_bytes = match &hostname { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => unreachable!() };
     if !is_ip_literal(&hostname_s) {
         if let Some(sni) = g.server_name_set {
             let ret = unsafe {
@@ -2184,7 +2422,10 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
         ));
     }
     let hostname_s = match &hostname {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|hostname| (*hostname).clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed GnuTLS hostname"))?,
         _ => {
             return Err(boot_error(
                 i,
@@ -2192,7 +2433,10 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
             ));
         }
     };
-    let host_bytes = match &hostname { Value::Str(text) => super::strfn::gnu_sbytes(i, text), _ => unreachable!() };
+    let host_bytes = match &hostname {
+        Value::Str(text) => super::strfn::try_gnu_sbytes(i, text)?,
+        _ => unreachable!(),
+    };
     let mut member = |sym: &str| -> bool {
         let id = intern(i, sym);
         let mut cur = verify_error.clone();
@@ -2375,37 +2619,34 @@ pub(crate) fn record_read(pb: &crate::lisp::process::Proc, buf: &mut [u8]) -> is
     0
 }
 
-/// GNU `emacs_gnutls_write'.
-pub(crate) fn record_write(pb: &crate::lisp::process::Proc, buf: &[u8]) -> Result<usize, ()> {
-    if pb.gnutls_initstage != STAGE_READY {
-        return Err(());
+/// One nonblocking GNU `emacs_gnutls_write' attempt. Preserve E_AGAIN so the
+/// process write queue can pump timers/output and retry the same suffix.
+pub(crate) fn record_write(
+    session: *mut core::ffi::c_void,
+    buf: &[u8],
+) -> Result<usize, std::io::Error> {
+    if session.is_null() {
+        return Err(std::io::ErrorKind::BrokenPipe.into());
     }
-    let Some(st) = pb.gnutls.as_ref() else {
-        return Err(());
-    };
     let Some(g) = gnutls() else {
-        return Err(());
+        return Err(std::io::ErrorKind::BrokenPipe.into());
     };
     let Some(send) = g.record_send else {
-        return Err(());
+        return Err(std::io::ErrorKind::BrokenPipe.into());
     };
-    let mut written = 0usize;
-    let mut rest = buf;
-    while !rest.is_empty() {
-        let mut ret;
-        loop {
-            ret = unsafe { send(st.session, rest.as_ptr(), rest.len()) };
-            if ret != GNUTLS_E_INTERRUPTED as isize {
-                break;
-            }
+    loop {
+        let ret = unsafe { send(session, buf.as_ptr(), buf.len()) };
+        if ret == GNUTLS_E_INTERRUPTED as isize {
+            continue;
         }
-        if ret < 0 {
-            break;
+        if ret >= 0 {
+            return Ok(ret as usize);
         }
-        rest = &rest[ret as usize..];
-        written += ret as usize;
+        if ret == GNUTLS_E_AGAIN as isize {
+            return Err(std::io::ErrorKind::WouldBlock.into());
+        }
+        return Err(std::io::ErrorKind::BrokenPipe.into());
     }
-    Ok(written)
 }
 
 /// Whether the process has a live TLS session (READY).
@@ -2580,13 +2821,37 @@ pub(crate) fn install(i: &mut Interp) {
 #[cfg(test)]
 mod wide_crypto_input_tests {
     use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn iv_auto_marker_requires_the_interned_symbol() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let canonical = interp.intern("iv-auto");
+        let uninterned = interp.make_symbol("iv-auto");
+        let canonical_spec = Value::list(vec![Value::Sym(canonical), Value::Int(12)]);
+        let uninterned_spec = Value::list(vec![Value::Sym(uninterned), Value::Int(12)]);
+
+        assert!(matches!(
+            iv_auto_size(&mut interp, &canonical_spec),
+            Ok(Some(12))
+        ));
+        assert!(matches!(
+            iv_auto_size(&mut interp, &uninterned_spec),
+            Ok(None)
+        ));
+    }
+
     #[test]
     fn unibyte_buffer_data_stays_raw_while_multibyte_text_uses_utf8() {
         let text = EmacsText::from_codes([128, 255, 65]).unwrap();
         assert_eq!(crypto_text_bytes(&text, true), [128, 255, 65]);
         assert_eq!(crypto_text_bytes(&text, false), [194, 128, 195, 191, 65]);
         let extended = EmacsText::from_codes([0xf0080, 0x3fff80, 0x110000]).unwrap();
-        assert_eq!(crypto_text_bytes(&extended, false), [243, 176, 130, 128, 128, 244, 144, 128, 128]);
+        assert_eq!(
+            crypto_text_bytes(&extended, false),
+            [243, 176, 130, 128, 128, 244, 144, 128, 128]
+        );
     }
     #[test]
     fn buffer_positions_and_reversed_regions_use_emacs_coordinates() {

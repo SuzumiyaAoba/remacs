@@ -873,7 +873,7 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
 
 pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
     let name = match v {
-        Value::Sym(s) => i.symbol_name(*s).to_string(),
+        Value::Sym(s) if !i.obarray.symbol(*s).uninterned => i.symbol_name(*s).to_string(),
         _ => return None,
     };
     // Registered subsidiaries remain valid even if a parent alias is
@@ -1525,7 +1525,9 @@ pub(super) fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
                 (pb.car.clone(), pb.cdr.clone())
             };
             if eq_values(&pk, &key) {
-                pair.borrow_mut().cdr = crate::lisp::eval::plist_put_v(&pl, &a[1], a[2].clone());
+                let new_plist =
+                    crate::lisp::eval::plist_put_v_checked(i, &pl, &a[1], a[2].clone())?;
+                pair.borrow_mut().cdr = new_plist;
                 return Ok(a[2].clone());
             }
         }
@@ -2112,7 +2114,7 @@ pub(super) fn f_set_keyboard_coding_system(i: &mut Interp, a: crate::lisp::Argv)
     let set = i.apply(&Value::Sym(f), vec![cs_val, Value::Sym(unix_id)])?;
     i.keyboard_coding = set.clone();
     let var = i.q("keyboard-coding-system");
-    let _ = i.set_symbol_default(var, set.clone());
+    i.set_symbol_default(var, set.clone())?;
     Ok(set)
 }
 
@@ -3930,7 +3932,7 @@ pub(super) fn code_convert_region(
     let deactivate = i.q("deactivate-mark");
     let saved = i.symbol_value(deactivate);
     let result = code_convert_region_inner(i, a, encode);
-    let _ = i.set_symbol(deactivate, saved);
+    i.set_symbol_no_watchers(deactivate, saved)?;
     result
 }
 
@@ -4134,5 +4136,99 @@ mod wide_file_utf8_tests {
             decoded.chars().map(|c| c.code()).collect::<Vec<_>>(),
             vec![65, 0x3fffe3, 0x3fff81]
         );
+    }
+}
+
+#[cfg(test)]
+mod keyboard_coding_watcher_tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_coding_system_propagates_default_watcher_errors() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-keyboard-coding-watcher\
+                                (_symbol _value operation _where)\
+                           (when (eq operation 'set)\
+                             (signal 'file-error '(\"keyboard coding watcher\"))))\
+                         (add-variable-watcher 'keyboard-coding-system\
+                                               #'qa-keyboard-coding-watcher)",
+                    )
+                    .unwrap();
+
+                let variable = interp.q("keyboard-coding-system");
+                let before = interp.obarray.symbol(variable).value.clone();
+                let coding = Value::Sym(interp.q("utf-8"));
+                let change_eol = Value::Sym(interp.q("coding-system-change-eol-conversion"));
+                let unix = Value::Sym(interp.q("unix"));
+                let expected = interp
+                    .apply(&change_eol, vec![coding.clone(), unix])
+                    .unwrap();
+                let result = f_set_keyboard_coding_system(&mut interp, vec![coding].into());
+
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+                assert_eq!(
+                    interp.prin1_to_string(&interp.obarray.symbol(variable).value),
+                    interp.prin1_to_string(&before)
+                );
+                assert_eq!(
+                    interp.prin1_to_string(&interp.keyboard_coding),
+                    interp.prin1_to_string(&expected)
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod coding_system_plist_cycle_tests {
+    use super::*;
+
+    #[test]
+    fn coding_system_put_propagates_circular_plist_errors() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let coding = interp.intern("utf-8");
+                let property = interp.intern("qa-coding-cycle-property");
+                let existing = interp.intern("qa-coding-cycle-existing");
+                let key = Value::cons(Value::Sym(existing), Value::Nil);
+                let value = Value::cons(Value::Int(1), key.clone());
+                if let Value::Cons(cell) = &key {
+                    cell.borrow_mut().cdr = value;
+                }
+                let table = interp.q("remacs-coding-system-plists");
+                interp
+                    .set_symbol_no_watchers(
+                        table,
+                        Value::cons(Value::cons(Value::Sym(coding), key), Value::Nil),
+                    )
+                    .unwrap();
+                let old_table = interp.symbol_value(table);
+
+                let result = f_coding_system_put(
+                    &mut interp,
+                    vec![Value::Sym(coding), Value::Sym(property), Value::Int(42)].into(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+                ));
+                assert!(eq_values(&interp.symbol_value(table), &old_table));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

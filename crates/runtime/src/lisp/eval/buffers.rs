@@ -55,6 +55,9 @@ impl Interp {
             };
             buffer.borrow_mut().locals.insert(symbol, value);
         }
+        // Buffer creation copies the default C slot; keep the shared text's
+        // representation in sync when the default is unibyte.
+        buffer.borrow().text.set_multibyte(multi.truthy());
     }
 
     pub fn create_buffer<T: crate::lisp::text::TextSource + ?Sized>(&mut self, name: &T) -> usize {
@@ -288,5 +291,25 @@ impl Interp {
             .get(id)
             .map(|b| b.borrow().live)
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod buffer_initialization_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn new_buffer_text_mode_matches_the_default_multibyte_slot() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let multibyte = interp.intern("enable-multibyte-characters");
+        interp.obarray.symbol_mut(multibyte).value = Value::Nil;
+
+        let id = interp.create_buffer("qa-unibyte-default-buffer");
+        let buffer = interp.buffers.get(id).expect("created buffer");
+        let buffer = buffer.borrow();
+        assert!(buffer.locals.get(&multibyte).is_some_and(Value::is_nil));
+        assert!(!buffer.text.is_multibyte());
     }
 }

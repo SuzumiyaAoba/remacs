@@ -24,14 +24,23 @@ impl InternKey {
         })
     }
 
-    pub(crate) fn from_text_kind<T: super::text::TextSource + ?Sized>(text: &T, multibyte: bool) -> Self {
+    pub(crate) fn from_text_kind<T: super::text::TextSource + ?Sized>(
+        text: &T,
+        multibyte: bool,
+    ) -> Self {
         text.with_text(|text| {
             let mut bytes = Vec::with_capacity(text.len());
             for c in text.chars() {
-                if multibyte { c.encode_internal(&mut bytes); }
-                else { bytes.push(c.byte8().unwrap_or(c.code() as u8)); }
+                if multibyte {
+                    c.encode_internal(&mut bytes);
+                } else {
+                    bytes.push(c.byte8().unwrap_or(c.code() as u8));
+                }
             }
-            Self { bytes, characters: text.len() }
+            Self {
+                bytes,
+                characters: text.len(),
+            }
         })
     }
 }
@@ -72,9 +81,9 @@ pub struct Symbol {
     pub variable_documentation: Option<super::text::EmacsText>,
     /// Uninterned symbols (make-symbol/gensym) print with a `#:' prefix.
     pub uninterned: bool,
-    /// Cached `variable-alias' property target (set by
-    /// `defvaralias'/`put'/`setplist' through `Interp::put_prop').
-    /// Avoids a plist walk on every variable reference.
+    /// GNU's C-level variable indirection (`SYMBOL_VARALIAS`). It is
+    /// independent of the user-visible symbol plist; only `defvaralias' and
+    /// `internal-delete-indirect-variable' change it.
     pub var_alias: Option<SymId>,
 }
 
@@ -302,54 +311,65 @@ impl Obarray {
     /// Intern `name`, creating the symbol if necessary.
     pub fn intern(&mut self, name: &str) -> SymId {
         if name.is_ascii() {
-            if let Some(&symbol) = self.ascii.get(name) { return symbol; }
+            if let Some(&symbol) = self.ascii.get(name) {
+                return symbol;
+            }
         }
         self.intern_with_key(name, InternKey::from_text(name))
     }
 
-    pub(crate) fn intern_with_key<T: super::text::TextSource + ?Sized>(&mut self, name: &T, key: InternKey) -> SymId {
+    pub(crate) fn intern_with_key<T: super::text::TextSource + ?Sized>(
+        &mut self,
+        name: &T,
+        key: InternKey,
+    ) -> SymId {
         if let Some(id) = self.lookup_key(&key) {
             return id;
         }
         self.intern_new_with_key(name, key)
     }
 
-    pub(crate) fn intern_new_with_key<T: super::text::TextSource + ?Sized>(&mut self, name: &T, key: InternKey) -> SymId {
+    pub(crate) fn intern_new_with_key<T: super::text::TextSource + ?Sized>(
+        &mut self,
+        name: &T,
+        key: InternKey,
+    ) -> SymId {
         name.with_text(|name| {
-        let id = self.symbols.len() as SymId;
-        self.map.entry(key.clone()).or_default().push(id);
-        self.refresh_ascii(&key);
-        let old_capacity = self.symbols.capacity();
-        self.symbols.push(Symbol {
-            name: format!("{name}"),
-            name_string: (!name.is_ascii()).then(|| Value::string_ref(name)),
-            internment_key: Some(key),
-            value: Value::Sym(sym::UNBOUND),
-            function: Value::Sym(sym::UNBOUND),
-            plist: Value::Nil,
-            special: false,
-            constant: name.starts_with(':'),
-            make_local_if_set: false,
-            always_local: false,
-            builtin_variable: false,
-            forwarded_variable: false,
-            variable_documentation: None,
-            uninterned: false,
-            var_alias: None,
-        });
-        super::memory::symbol_allocated();
-        super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
-        if name.starts_with(':') {
-            self.symbols[id as usize].value = Value::Sym(id);
-        }
-        id
-
+            let id = self.symbols.len() as SymId;
+            self.map.entry(key.clone()).or_default().push(id);
+            self.refresh_ascii(&key);
+            let old_capacity = self.symbols.capacity();
+            self.symbols.push(Symbol {
+                name: format!("{name}"),
+                name_string: (!name.is_ascii()).then(|| Value::string_ref(name)),
+                internment_key: Some(key),
+                value: Value::Sym(sym::UNBOUND),
+                function: Value::Sym(sym::UNBOUND),
+                plist: Value::Nil,
+                special: false,
+                constant: name.starts_with(':'),
+                make_local_if_set: false,
+                always_local: false,
+                builtin_variable: false,
+                forwarded_variable: false,
+                variable_documentation: None,
+                uninterned: false,
+                var_alias: None,
+            });
+            super::memory::symbol_allocated();
+            super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
+            if name.starts_with(':') {
+                self.symbols[id as usize].value = Value::Sym(id);
+            }
+            id
         })
     }
 
     /// Look up a symbol without interning.
     pub fn intern_soft(&self, name: &str) -> Option<SymId> {
-        if name.is_ascii() { return self.ascii.get(name).copied(); }
+        if name.is_ascii() {
+            return self.ascii.get(name).copied();
+        }
         self.lookup_key(&InternKey::from_text(name))
     }
 
@@ -375,30 +395,29 @@ impl Obarray {
     /// Fresh uninterned symbol (for `make-symbol`/`gensym`).
     pub fn make_symbol<T: super::text::TextSource + ?Sized>(&mut self, name: &T) -> SymId {
         name.with_text(|name| {
-        self.gensym_counter += 1;
-        let id = self.symbols.len() as SymId;
-        let old_capacity = self.symbols.capacity();
-        self.symbols.push(Symbol {
-            name: format!("{name}"),
-            name_string: (!name.is_ascii()).then(|| Value::string_ref(name)),
-            internment_key: None,
-            value: Value::Sym(sym::UNBOUND),
-            function: Value::Sym(sym::UNBOUND),
-            plist: Value::Nil,
-            special: false,
-            constant: false,
-            make_local_if_set: false,
-            always_local: false,
-            builtin_variable: false,
-            forwarded_variable: false,
-            variable_documentation: None,
-            uninterned: true,
-            var_alias: None,
-        });
-        super::memory::symbol_allocated();
-        super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
-        id
-
+            self.gensym_counter += 1;
+            let id = self.symbols.len() as SymId;
+            let old_capacity = self.symbols.capacity();
+            self.symbols.push(Symbol {
+                name: format!("{name}"),
+                name_string: (!name.is_ascii()).then(|| Value::string_ref(name)),
+                internment_key: None,
+                value: Value::Sym(sym::UNBOUND),
+                function: Value::Sym(sym::UNBOUND),
+                plist: Value::Nil,
+                special: false,
+                constant: false,
+                make_local_if_set: false,
+                always_local: false,
+                builtin_variable: false,
+                forwarded_variable: false,
+                variable_documentation: None,
+                uninterned: true,
+                var_alias: None,
+            });
+            super::memory::symbol_allocated();
+            super::memory::symbol_capacity(old_capacity, self.symbols.capacity());
+            id
         })
     }
 
@@ -432,13 +451,17 @@ impl Obarray {
             .iter()
             .filter(|(_, ids)| {
                 let name = &self.symbols[*ids.last().unwrap() as usize].name;
-                name.len() > 1 && name.starts_with('g') && name[1..].chars().all(|c| c.is_ascii_digit())
+                name.len() > 1
+                    && name.starts_with('g')
+                    && name[1..].chars().all(|c| c.is_ascii_digit())
             })
             .map(|(key, _)| key.clone())
             .collect();
         for name in stray {
             if let Some(ids) = self.map.remove(&name) {
-                for id in ids { self.symbols[id as usize].uninterned = true; }
+                for id in ids {
+                    self.symbols[id as usize].uninterned = true;
+                }
             }
             self.refresh_ascii(&name);
         }
@@ -454,11 +477,19 @@ impl Obarray {
     }
 
     pub(crate) fn unintern_symbol(&mut self, id: SymId) -> bool {
-        let Some(key) = self.symbols[id as usize].internment_key.clone() else { return false; };
-        let Some(ids) = self.map.get_mut(&key) else { return false; };
-        let Some(position) = ids.iter().position(|&member| member == id) else { return false; };
+        let Some(key) = self.symbols[id as usize].internment_key.clone() else {
+            return false;
+        };
+        let Some(ids) = self.map.get_mut(&key) else {
+            return false;
+        };
+        let Some(position) = ids.iter().position(|&member| member == id) else {
+            return false;
+        };
         ids.remove(position);
-        if ids.is_empty() { self.map.remove(&key); }
+        if ids.is_empty() {
+            self.map.remove(&key);
+        }
         self.refresh_ascii(&key);
         self.symbols[id as usize].uninterned = true;
         true
@@ -488,7 +519,9 @@ impl Obarray {
     }
 
     pub(crate) fn is_initial_symbol(&self, id: SymId) -> bool {
-        self.symbols[id as usize].internment_key.as_ref()
+        self.symbols[id as usize]
+            .internment_key
+            .as_ref()
             .is_some_and(|key| self.key_candidates(key).contains(&id))
     }
 
@@ -515,7 +548,9 @@ impl Obarray {
                 .symbols
                 .get(*id as usize)
                 .ok_or("Invalid dumped interned symbol")?;
-            let key = symbol.internment_key.clone()
+            let key = symbol
+                .internment_key
+                .clone()
                 .unwrap_or_else(|| InternKey::from_text(&symbol.name));
             if symbol.uninterned || map.get(&key).is_some_and(|ids| ids.contains(id)) {
                 return Err("Invalid dumped symbol membership".into());
@@ -529,11 +564,18 @@ impl Obarray {
             }
         }
         self.map = map;
-        self.ascii = self.map.iter().filter_map(|(key, symbols)| {
-            (key.characters == key.bytes.len() && key.bytes.is_ascii()).then(|| (
-                String::from_utf8(key.bytes.clone()).unwrap(), *symbols.last().unwrap(),
-            ))
-        }).collect();
+        self.ascii = self
+            .map
+            .iter()
+            .filter_map(|(key, symbols)| {
+                (key.characters == key.bytes.len() && key.bytes.is_ascii()).then(|| {
+                    (
+                        String::from_utf8(key.bytes.clone()).unwrap(),
+                        *symbols.last().unwrap(),
+                    )
+                })
+            })
+            .collect();
         self.gensym_counter = self.gensym_counter.max(counters.0);
         self.gensym_n = counters.1;
         Ok(())

@@ -105,38 +105,129 @@ pub(crate) static SUBRS: &[Subr] = &[
 fn key_identity(value: &Value) -> usize {
     match value {
         Value::Cons(value) => Rc::as_ptr(value) as usize,
+        Value::Str(value) => Rc::as_ptr(value) as usize,
         Value::Vec(value) | Value::Record(value) => Rc::as_ptr(value) as usize,
         Value::Lambda(value) => Rc::as_ptr(value) as usize,
+        Value::Marker(value) => Rc::as_ptr(value) as usize,
         _ => unreachable!("a positioned key has a heap root"),
     }
 }
 
+fn list_spine_borrow_conflict(mut tail: Value) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        let Value::Cons(cell) = tail else {
+            return false;
+        };
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            return false;
+        }
+        let Ok(contents) = cell.try_borrow() else {
+            return true;
+        };
+        tail = contents.cdr.clone();
+    }
+}
+
+/// Whether reading the slots used by `equal_key' would conflict with a
+/// live Rust mutable borrow. This is checked before the normalizer's fast
+/// raw `borrow' accesses so table operations can signal instead of panic.
+fn equal_key_borrow_conflict(value: &Value) -> bool {
+    match value {
+        Value::Cons(cell) => cell.try_borrow().is_err(),
+        Value::Str(string) => string.try_borrow().is_err(),
+        Value::Vec(vector) => vector.try_borrow().is_err(),
+        Value::Record(record) => record.try_borrow().is_err(),
+        Value::Marker(marker) => marker.try_borrow().is_err(),
+        Value::Lambda(lambda) => {
+            if let Some(items) = &lambda.bc_items {
+                return items.try_borrow().is_err();
+            }
+            let environment_conflict = lambda.env_value.is_none()
+                && lambda
+                    .env
+                    .as_ref()
+                    .is_some_and(|frame| frame.raw.try_borrow().is_err());
+            let interactive_conflict = lambda.interactive.as_ref().is_some_and(|form| match form {
+                Value::Cons(cell) => cell
+                    .try_borrow()
+                    .map(|form| list_spine_borrow_conflict(form.cdr.clone()))
+                    .unwrap_or(true),
+                _ => false,
+            });
+            environment_conflict || interactive_conflict
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKey {
+    hash_key_for_inner(interp, v, test).unwrap_or_else(|_| match test {
+        HashTest::Eq | HashTest::Eql => HashKey::Ptr(key_identity(v)),
+        HashTest::Equal => HashKey::EqualFallback(0, key_identity(v)),
+    })
+}
+
+pub(crate) fn hash_key_for_checked(
+    interp: &Interp,
+    v: &Value,
+    test: HashTest,
+) -> Result<HashKey, Flow> {
+    hash_key_for_inner(interp, v, test)
+}
+
+fn hash_key_for_inner(interp: &Interp, v: &Value, test: HashTest) -> Result<HashKey, Flow> {
     let _scope = interp.symbol_position_scope();
-    let mut positioned = super::misc::raw_symbol_position(v).is_some();
+    let mut positioned = false;
+    // `eq_key' still recognizes symbol positions through their record
+    // wrapper. Check that wrapper before raw position inspection.
+    if !matches!(test, HashTest::Equal)
+        && matches!(v, Value::Record(_))
+        && equal_key_borrow_conflict(v)
+    {
+        return Err(interp.error("Cannot hash a mutably borrowed Lisp object"));
+    }
+    let mut borrow_conflict = false;
     let normalized = match test {
-        HashTest::Eq => eq_key(v),
-        HashTest::Eql => eql_key(v),
+        HashTest::Eq => {
+            positioned = super::misc::raw_symbol_position(v).is_some();
+            eq_key(v)
+        }
+        HashTest::Eql => {
+            positioned = super::misc::raw_symbol_position(v).is_some();
+            eql_key(v)
+        }
         HashTest::Equal => {
             let mut ancestors = std::collections::HashSet::new();
-            equal_key(interp, v, &mut ancestors, &mut 4096, 0, &mut positioned).unwrap_or_else(
-                || {
-                    HashKey::EqualFallback(
-                        super::strfn::equal_hash_code(interp, v),
-                        key_identity(v),
-                    )
-                },
-            )
+            let normalized = equal_key(
+                interp,
+                v,
+                &mut ancestors,
+                &mut 4096,
+                0,
+                &mut positioned,
+                &mut borrow_conflict,
+            );
+            if borrow_conflict {
+                return Err(interp.error("Cannot hash a mutably borrowed Lisp object"));
+            }
+            match normalized {
+                Some(normalized) => normalized,
+                None => HashKey::EqualFallback(
+                    super::strfn::equal_hash_code(interp, v)?,
+                    key_identity(v),
+                ),
+            }
         }
     };
-    if positioned {
+    Ok(if positioned {
         HashKey::Positioned(
-            super::strfn::builtin_hash_code(interp, v, test),
+            super::strfn::builtin_hash_code(interp, v, test)?,
             key_identity(v),
         )
     } else {
         normalized
-    }
+    })
 }
 
 fn eq_key(v: &Value) -> HashKey {
@@ -196,7 +287,12 @@ fn equal_key(
     budget: &mut usize,
     depth: usize,
     positioned: &mut bool,
+    borrow_conflict: &mut bool,
 ) -> Option<HashKey> {
+    if equal_key_borrow_conflict(v) {
+        *borrow_conflict = true;
+        return None;
+    }
     // Normalization is only a fast path, never proof that cyclic keys
     // differ. Bound both recursion and repeated expansion of shared DAGs.
     // A fallback hashes a bounded unfolding and collision-checks `equal'.
@@ -223,6 +319,20 @@ fn equal_key(
     // Overlay contents live outside the handle vector and may be cyclic.
     // Use the existing bounded sxhash bucket + equal collision comparison.
     if interp.is_overlay(v) {
+        if let Some(overlay) = interp.overlay_state(v) {
+            let _ = equal_key(
+                interp,
+                &overlay.plist,
+                ancestors,
+                budget,
+                depth + 1,
+                positioned,
+                borrow_conflict,
+            );
+            if *borrow_conflict {
+                return None;
+            }
+        }
         return None;
     }
     if super::data::is_obarray(interp, v) {
@@ -256,6 +366,7 @@ fn equal_key(
                     budget,
                     depth + 1,
                     positioned,
+                    borrow_conflict,
                 )?),
                 Box::new(equal_key(
                     interp,
@@ -264,13 +375,24 @@ fn equal_key(
                     budget,
                     depth + 1,
                     positioned,
+                    borrow_conflict,
                 )?),
             )
         }
         Value::Vec(vec) => HashKey::Vec(
             vec.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
+                .map(|x| {
+                    equal_key(
+                        interp,
+                        x,
+                        ancestors,
+                        budget,
+                        depth + 1,
+                        positioned,
+                        borrow_conflict,
+                    )
+                })
                 .collect::<Option<Vec<_>>>()?,
         ),
         // `equal' compares records elementwise — hash contents too,
@@ -285,11 +407,22 @@ fn equal_key(
                 Some(crate::lisp::value::RecordKind::Obarray) => 6,
                 Some(crate::lisp::value::RecordKind::FontSpec) => 7,
                 Some(crate::lisp::value::RecordKind::SymbolWithPos) => 8,
+                Some(crate::lisp::value::RecordKind::SubCharTable) => 9,
                 None => 1,
             },
             r.borrow()
                 .iter()
-                .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
+                .map(|x| {
+                    equal_key(
+                        interp,
+                        x,
+                        ancestors,
+                        budget,
+                        depth + 1,
+                        positioned,
+                        borrow_conflict,
+                    )
+                })
                 .collect::<Option<Vec<_>>>()?,
         ),
         Value::Lambda(l) => {
@@ -299,48 +432,47 @@ fn equal_key(
                     items
                         .borrow()
                         .iter()
-                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
+                        .map(|x| {
+                            equal_key(
+                                interp,
+                                x,
+                                ancestors,
+                                budget,
+                                depth + 1,
+                                positioned,
+                                borrow_conflict,
+                            )
+                        })
                         .collect::<Option<Vec<_>>>()?,
                 );
                 HashKey::Tagged(2, keys)
             } else {
-                // Interpreted lambdas are `equal' by structure — cover
-                // the same fields `equal_values' compares.
-                let mut keys = vec![
-                    HashKey::Int(l.is_macro as i128),
-                    HashKey::Int(l.env.is_none() as i128),
-                ];
-                keys.extend(l.required.iter().map(|s| HashKey::Sym(*s)));
-                keys.extend(l.rest.iter().map(|s| HashKey::Sym(*s)));
+                // Interpreted lambdas use the same vector-like slots as
+                // `equal_values'. In particular, include captured values,
+                // docstrings, and interactive specs rather than only the
+                // presence of a lexical environment.
+                let mut keys = vec![HashKey::Int(l.is_macro as i128)];
+                let slots = match super::misc::lambda_slot_values_checked(l) {
+                    Ok(slots) => slots,
+                    Err(_) => {
+                        *borrow_conflict = true;
+                        return None;
+                    }
+                };
                 keys.extend(
-                    l.optional
+                    slots
                         .iter()
-                        .map(|p| {
-                            Some(HashKey::Vec(vec![
-                                HashKey::Sym(p.sym),
-                                match &p.supplied {
-                                    Some(s) => HashKey::Sym(*s),
-                                    None => HashKey::Nil,
-                                },
-                                match &p.default {
-                                    Some(d) => equal_key(
-                                        interp,
-                                        d,
-                                        ancestors,
-                                        budget,
-                                        depth + 1,
-                                        positioned,
-                                    )?,
-                                    None => HashKey::Nil,
-                                },
-                            ]))
+                        .map(|slot| {
+                            equal_key(
+                                interp,
+                                slot,
+                                ancestors,
+                                budget,
+                                depth + 1,
+                                positioned,
+                                borrow_conflict,
+                            )
                         })
-                        .collect::<Option<Vec<_>>>()?,
-                );
-                keys.extend(
-                    l.body
-                        .iter()
-                        .map(|x| equal_key(interp, x, ancestors, budget, depth + 1, positioned))
                         .collect::<Option<Vec<_>>>()?,
                 );
                 HashKey::Tagged(3, keys)
@@ -352,6 +484,154 @@ fn equal_key(
         ancestors.remove(&p);
     }
     Some(out)
+}
+
+fn ensure_equal_key_borrowable(interp: &Interp, value: &Value) -> Result<(), Flow> {
+    let mut pending = vec![value.clone()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(value) = pending.pop() {
+        let identity = match &value {
+            Value::Cons(cell) => Some(Rc::as_ptr(cell) as usize),
+            Value::Str(string) => Some(Rc::as_ptr(string) as usize),
+            Value::Vec(vector) | Value::Record(vector) => Some(Rc::as_ptr(vector) as usize),
+            Value::Hash(hash) => Some(Rc::as_ptr(hash) as usize),
+            Value::Lambda(function) => Some(Rc::as_ptr(function) as usize),
+            Value::Buffer(buffer) => Some(Rc::as_ptr(buffer) as usize),
+            Value::Marker(marker) => Some(Rc::as_ptr(marker) as usize),
+            Value::Window(window) => Some(Rc::as_ptr(window) as usize),
+            Value::Frame(frame) => Some(Rc::as_ptr(frame) as usize),
+            Value::Process(process) => Some(Rc::as_ptr(process) as usize),
+            Value::Thread(thread) => Some(Rc::as_ptr(thread) as usize),
+            Value::Mutex(mutex) => Some(Rc::as_ptr(mutex) as usize),
+            Value::CondVar(condition) => Some(Rc::as_ptr(condition) as usize),
+            Value::Finalizer(finalizer) => Some(Rc::as_ptr(finalizer) as usize),
+            _ => None,
+        };
+        if identity.is_some_and(|identity| !seen.insert(identity)) {
+            continue;
+        }
+
+        match value {
+            Value::Cons(cell) => {
+                let (car, cdr) = cell
+                    .try_borrow()
+                    .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                pending.push(car);
+                pending.push(cdr);
+            }
+            Value::Str(string) => {
+                let _contents = string
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                for (_, _, plist) in interp.str_props(&string) {
+                    pending.extend(plist.iter().cloned());
+                }
+            }
+            Value::Vec(vector) | Value::Record(vector) => {
+                let items = vector
+                    .try_borrow()
+                    .map(|items| items.clone())
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                pending.extend(items);
+            }
+            Value::Hash(hash) => {
+                let (keys, values) = {
+                    let table = hash
+                        .try_borrow()
+                        .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                    (
+                        table
+                            .keys
+                            .iter()
+                            .map(|(_, original)| original.clone())
+                            .collect::<Vec<_>>(),
+                        table.map.values().cloned().collect::<Vec<_>>(),
+                    )
+                };
+                pending.extend(keys);
+                pending.extend(values);
+            }
+            Value::Lambda(function) => {
+                if let Some(items) = &function.bc_items {
+                    let items = items
+                        .try_borrow()
+                        .map(|items| items.clone())
+                        .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                    pending.extend(items);
+                } else {
+                    pending.extend(function.arglist.iter().cloned());
+                    pending.extend(function.body.iter().cloned());
+                    pending.extend(function.body_value.iter().cloned());
+                    pending.extend(function.doc_value.iter().cloned());
+                    pending.extend(function.interactive.iter().cloned());
+                    for optional in &function.optional {
+                        pending.extend(optional.default.iter().cloned());
+                    }
+                    if let Some(environment) = &function.env_value {
+                        pending.push(environment.clone());
+                    }
+                }
+                if let Some(environment) = &function.env {
+                    let raw = environment
+                        .raw
+                        .try_borrow()
+                        .map(|raw| raw.clone())
+                        .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                    pending.push(raw);
+                }
+            }
+            Value::Marker(marker) => {
+                let _marker = marker
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Buffer(buffer) => {
+                let _buffer = buffer
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Window(window) => {
+                let _window = window
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Frame(frame) => {
+                let _frame = frame
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Process(process) => {
+                let _process = process
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Thread(thread) => {
+                let _thread = thread
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Mutex(mutex) => {
+                let _mutex = mutex
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::CondVar(condition) => {
+                let _condition = condition
+                    .try_borrow()
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+            }
+            Value::Finalizer(finalizer) => {
+                let function = finalizer
+                    .try_borrow()
+                    .map(|function| function.clone())
+                    .map_err(|_| interp.error("Cannot hash a mutably borrowed Lisp object"))?;
+                pending.push(function);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -397,23 +677,26 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
         }
     }
     // GNU validates the collected :test value: non-symbols signal
-    // `symbolp'; unknown symbol names consult `define-hash-table-test'
+    // `symbolp'; unknown symbols consult `define-hash-table-test'
     // (the `hash-table-test' property) and otherwise signal
     // "Invalid hash table test".
     let (test, test_name, user_test) = {
-        let tname = match &test_arg {
-            Value::Nil => String::new(),
+        let test_id = match &test_arg {
+            Value::Nil => None,
             v => match i.sym_id(v) {
-                Some(id) => i.symbol_name(id).to_string(),
+                Some(id) => Some(id),
                 None => return Err(i.wrong_type_mut("symbolp", v)),
             },
         };
-        match tname.as_str() {
-            "" | "eql" => (HashTest::Eql, Value::Nil, None),
-            "eq" => (HashTest::Eq, Value::Nil, None),
-            "equal" => (HashTest::Equal, Value::Nil, None),
-            _ => {
-                let id = i.sym_id(&test_arg).unwrap();
+        let eql_test = i.intern_soft("eql");
+        let eq_test = i.intern_soft("eq");
+        let equal_test = i.intern_soft("equal");
+        match test_id {
+            None => (HashTest::Eql, Value::Nil, None),
+            Some(id) if Some(id) == eql_test => (HashTest::Eql, Value::Nil, None),
+            Some(id) if Some(id) == eq_test => (HashTest::Eq, Value::Nil, None),
+            Some(id) if Some(id) == equal_test => (HashTest::Equal, Value::Nil, None),
+            Some(id) => {
                 let prop = i.q("hash-table-test");
                 let definition = i.get_prop(id, prop);
                 if let Value::Cons(first) = &definition
@@ -447,20 +730,27 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
     let weakness: Option<Value> = match &weakness_arg {
         Value::Nil => None,
         v => {
-            let w = i.sym_id(v).map(|id| i.symbol_name(id).to_string());
-            match w.as_deref() {
-                // GNU: `t' is a synonym for `key-and-value'.
-                Some("t") | Some("key-and-value") => Some(Value::Sym(i.q("key-and-value"))),
-                Some("key") | Some("value") | Some("key-or-value") => {
-                    Some(Value::Sym(i.sym_id(v).unwrap()))
-                }
+            let Some(id) = i.sym_id(v) else {
+                return Err(i.signal_data(
+                    sym::ERROR,
+                    vec![Value::string("Invalid hash table weakness"), v.clone()],
+                ));
+            };
+            let key = i.intern_soft("key");
+            let value = i.intern_soft("value");
+            let key_and_value = i.intern_soft("key-and-value");
+            let key_or_value = i.intern_soft("key-or-value");
+            // GNU: `t' is a synonym for `key-and-value'.
+            if id == sym::T || Some(id) == key_and_value {
+                Some(Value::Sym(i.q("key-and-value")))
+            } else if Some(id) == key || Some(id) == value || Some(id) == key_or_value {
+                Some(Value::Sym(id))
+            } else {
                 // GNU: (error "Invalid hash table weakness" VAL)
-                _ => {
-                    return Err(i.signal_data(
-                        sym::ERROR,
-                        vec![Value::string("Invalid hash table weakness"), v.clone()],
-                    ));
-                }
+                return Err(i.signal_data(
+                    sym::ERROR,
+                    vec![Value::string("Invalid hash table weakness"), v.clone()],
+                ));
             }
         }
     };
@@ -526,9 +816,9 @@ fn table_key_inner(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, 
         (table.test, table.user_test.clone())
     };
     let Some((compare, hash_function)) = user_test else {
-        let normalized = hash_key_for(i, key, test);
+        let normalized = hash_key_for_checked(i, key, test)?;
         if matches!(normalized, HashKey::Positioned(..)) || h.borrow().positioned_keys != 0 {
-            let hash = super::strfn::builtin_hash_code(i, key, test);
+            let hash = super::strfn::builtin_hash_code(i, key, test)?;
             let capacity = h.borrow().size;
             let bucket = hash_bucket(hash, capacity);
             let candidates: Vec<(HashKey, Value)> = {
@@ -544,7 +834,7 @@ fn table_key_inner(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, 
             for (stored_key, original) in candidates {
                 let stored_hash = match &stored_key {
                     HashKey::Positioned(hash, _) | HashKey::EqualFallback(hash, _) => *hash,
-                    _ => super::strfn::builtin_hash_code(i, &original, test),
+                    _ => super::strfn::builtin_hash_code(i, &original, test)?,
                 };
                 if hash_bucket(stored_hash, capacity) != bucket {
                     continue;
@@ -595,8 +885,13 @@ fn table_key_inner(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, 
         }
         return Ok(normalized);
     };
+    // User-provided hash/comparison functions may read arbitrary parts of
+    // KEY through Lisp primitives. Validate the reachable equal structure
+    // before entering those callbacks so a Rust RefCell borrow cannot panic
+    // inside user code.
+    ensure_equal_key_borrowable(i, key)?;
     let hash_result = user_call(i, h, &hash_function, vec![key.clone()])?;
-    let hash = super::strfn::user_hash_code(i, &hash_result);
+    let hash = super::strfn::user_hash_code(i, &hash_result)?;
     let candidates: Vec<(HashKey, Value)> = {
         let table = h.borrow();
         table
@@ -616,8 +911,10 @@ fn table_key_inner(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, 
             unreachable!()
         };
         if super::eq_values(key, &original)
-            || (*stored_hash == hash
-                && user_call(i, h, &compare, vec![key.clone(), original])?.truthy())
+            || (*stored_hash == hash && {
+                ensure_equal_key_borrowable(i, &original)?;
+                user_call(i, h, &compare, vec![key.clone(), original])?.truthy()
+            })
         {
             return Ok(stored_key);
         }
@@ -631,18 +928,25 @@ fn table_key_inner(i: &mut Interp, h: &HashRef, key: &Value) -> Result<HashKey, 
     Ok(HashKey::Custom(hash, slot))
 }
 
+/// Look up a hash entry without using a Lisp default value as a sentinel.
+/// `Some(nil)` is a present nil entry; `None` means the key is absent.
+pub(crate) fn gethash_entry(
+    i: &mut Interp,
+    key: &Value,
+    table: &Value,
+) -> Result<Option<Value>, Flow> {
+    let Value::Hash(hash) = table else {
+        return Err(i.wrong_type_mut("hash-table-p", table));
+    };
+    let key = table_key(i, hash, key)?;
+    hash.try_borrow()
+        .map(|table| table.map.get(&key).cloned())
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed hash table"))
+}
+
 pub(crate) fn f_gethash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    match &args[1] {
-        Value::Hash(h) => {
-            let key = table_key(i, h, &args[0])?;
-            Ok(h.borrow()
-                .map
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| arg(&args, 2)))
-        }
-        other => Err(i.wrong_type_mut("hash-table-p", other)),
-    }
+    let value = gethash_entry(i, &args[0], &args[1])?;
+    Ok(value.unwrap_or_else(|| arg(&args, 2)))
 }
 
 pub(crate) fn f_puthash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -660,7 +964,7 @@ pub(crate) fn f_puthash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
 }
 
-fn f_remhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+pub(crate) fn f_remhash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[1] {
         Value::Hash(h) => {
             check_mutable(i, h)?;
@@ -835,5 +1139,210 @@ fn f_hash_table_histogram(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult
             )]))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
+}
+
+#[cfg(test)]
+mod checked_equal_key_tests {
+    use super::*;
+
+    #[test]
+    fn equal_hash_lookup_and_insertion_reject_borrowed_key_strings() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let table = Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Equal))));
+                let key = Value::string("key");
+                let Value::Str(key_string) = &key else {
+                    unreachable!();
+                };
+                let held_borrow = key_string.borrow_mut();
+
+                let insert_result = f_puthash(
+                    &mut interp,
+                    vec![key.clone(), Value::Int(7), table.clone()].into(),
+                );
+                let lookup_result = f_gethash(&mut interp, vec![key.clone(), table.clone()].into());
+
+                drop(held_borrow);
+                assert!(matches!(
+                    insert_result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                assert!(matches!(
+                    lookup_result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                let Value::Hash(hash) = &table else {
+                    unreachable!();
+                };
+                assert_eq!(hash.borrow().map.len(), 0);
+                assert!(matches!(
+                    f_puthash(
+                        &mut interp,
+                        vec![key.clone(), Value::Int(7), table.clone()].into()
+                    ),
+                    Ok(Value::Int(7))
+                ));
+                assert!(matches!(
+                    f_gethash(&mut interp, vec![key, table].into()),
+                    Ok(Value::Int(7))
+                ));
+
+                let nested_table =
+                    Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Equal))));
+                let nested_string = Value::string("nested");
+                let nested_key = Value::cons(nested_string.clone(), Value::Nil);
+                let Value::Str(nested_cell) = &nested_string else {
+                    unreachable!();
+                };
+                let nested_borrow = nested_cell.borrow_mut();
+                let nested_result = f_puthash(
+                    &mut interp,
+                    vec![nested_key, Value::Int(8), nested_table.clone()].into(),
+                );
+                drop(nested_borrow);
+                assert!(matches!(
+                    nested_result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                let Value::Hash(hash) = &nested_table else {
+                    unreachable!();
+                };
+                assert_eq!(hash.borrow().map.len(), 0);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn custom_hash_callbacks_are_not_run_with_borrowed_key_strings() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar qa-borrow-hash-calls 0)\
+                         (defun qa-borrow-hash-function (key)\
+                           (setq qa-borrow-hash-calls (1+ qa-borrow-hash-calls))\
+                           (sxhash-equal key))\
+                         (define-hash-table-test 'qa-borrow-hash-test\
+                                                 #'equal #'qa-borrow-hash-function)",
+                    )
+                    .unwrap();
+                let table = interp
+                    .eval_str("(make-hash-table :test 'qa-borrow-hash-test)")
+                    .unwrap();
+                let key = Value::string("custom-key");
+                let Value::Str(cell) = &key else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = f_puthash(
+                    &mut interp,
+                    vec![key.clone(), Value::Int(9), table.clone()].into(),
+                );
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                let calls_symbol = interp.q("qa-borrow-hash-calls");
+                assert!(matches!(interp.symbol_value(calls_symbol), Value::Int(0)));
+                let Value::Hash(hash) = &table else {
+                    unreachable!();
+                };
+                assert_eq!(hash.borrow().map.len(), 0);
+
+                assert!(matches!(
+                    f_puthash(&mut interp, vec![key, Value::Int(9), table.clone()].into()),
+                    Ok(Value::Int(9))
+                ));
+                assert!(matches!(interp.symbol_value(calls_symbol), Value::Int(1)));
+
+                let nested_string = Value::string("nested");
+                let nested_key = Value::cons(nested_string.clone(), Value::Nil);
+                let Value::Str(nested_cell) = &nested_string else {
+                    unreachable!();
+                };
+                let nested_borrow = nested_cell.borrow_mut();
+                let nested_result = f_puthash(
+                    &mut interp,
+                    vec![nested_key, Value::Int(10), table.clone()].into(),
+                );
+                drop(nested_borrow);
+                assert!(matches!(
+                    nested_result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                assert!(matches!(interp.symbol_value(calls_symbol), Value::Int(1)));
+                let Value::Hash(hash) = &table else {
+                    unreachable!();
+                };
+                assert_eq!(hash.borrow().map.len(), 1);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn custom_hash_callbacks_check_borrowed_values_past_normalizer_depth() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defvar qa-borrow-deep-hash-calls 0)\
+                         (defun qa-borrow-deep-hash-function (key)\
+                           (setq qa-borrow-deep-hash-calls\
+                                 (1+ qa-borrow-deep-hash-calls))\
+                           (if (consp key)\
+                               (length (car (last key)))\
+                             (sxhash-equal key)))\
+                         (define-hash-table-test 'qa-borrow-deep-hash-test\
+                                                 #'equal #'qa-borrow-deep-hash-function)",
+                    )
+                    .unwrap();
+                let table = interp
+                    .eval_str("(make-hash-table :test 'qa-borrow-deep-hash-test)")
+                    .unwrap();
+                let borrowed_string = Value::string("last");
+                let Value::Str(cell) = &borrowed_string else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+                let mut items = vec![Value::Nil; 5000];
+                items[4999] = borrowed_string.clone();
+                let key = Value::list(items);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    f_puthash(&mut interp, vec![key, Value::Int(11), table.clone()].into())
+                }));
+
+                drop(held_borrow);
+                assert!(
+                    result.is_ok(),
+                    "custom hash callback panicked on a borrowed nested value"
+                );
+                assert!(matches!(
+                    result.unwrap(),
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                let calls = interp.q("qa-borrow-deep-hash-calls");
+                assert!(matches!(interp.symbol_value(calls), Value::Int(0)));
+                let Value::Hash(hash) = &table else {
+                    unreachable!();
+                };
+                assert_eq!(hash.borrow().map.len(), 0);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

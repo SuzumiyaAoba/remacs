@@ -1,12 +1,14 @@
 //! List-manipulation subrs: car, cdr, cons, nth, append, member, etc.
 
-use super::{S, arg, call_canonical_builtin as primitive, eq_values, equal_values, want_cons, want_int, want_list};
+use super::{
+    S, arg, call_canonical_builtin as primitive, eq_values, equal_values, want_cons, want_int,
+    want_list,
+};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
 use num_traits::{ToPrimitive, Zero};
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -302,14 +304,20 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 fn f_car(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
-        Value::Cons(c) => Ok(c.borrow().car.clone()),
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.car.clone())
+            .map_err(|_| i.error("Cannot read a mutably borrowed cons cell")),
         Value::Nil => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("listp", other)),
     }
 }
 fn f_cdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
-        Value::Cons(c) => Ok(c.borrow().cdr.clone()),
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.cdr.clone())
+            .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell")),
         Value::Nil => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("listp", other)),
     }
@@ -320,15 +328,21 @@ fn f_car_or_marker_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Cons(_) | Value::Marker(_)
     )))
 }
-fn f_car_safe(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+fn f_car_safe(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(match &args[0] {
-        Value::Cons(c) => c.borrow().car.clone(),
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.car.clone())
+            .map_err(|_| i.error("Cannot read a mutably borrowed cons cell"))?,
         _ => Value::Nil,
     })
 }
-fn f_cdr_safe(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+fn f_cdr_safe(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(match &args[0] {
-        Value::Cons(c) => c.borrow().cdr.clone(),
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.cdr.clone())
+            .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?,
         _ => Value::Nil,
     })
 }
@@ -360,13 +374,36 @@ fn f_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             let v = want_list(i, &args[0])?;
             Ok(Value::Int(v.len() as i128))
         }
-        Value::Str(s) => Ok(Value::Int(s.borrow().chars().count() as i128)),
-        Value::Vec(v) => Ok(Value::Int(v.borrow().len() as i128)),
+        Value::Str(s) => Ok(Value::Int(
+            s.try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed string"))?
+                .chars()
+                .count() as i128,
+        )),
+        Value::Vec(v) => Ok(Value::Int(
+            v.try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed vector"))?
+                .len() as i128,
+        )),
         other if crate::lisp::builtins::misc::is_bool_vector(i, other) => {
             // Bool-vectors are sequences of bit length.
             if let Value::Record(r) = other {
-                if let Some(Value::Vec(b)) = r.borrow().get(1) {
-                    return Ok(Value::Int(b.borrow().len() as i128));
+                let bits = r
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed bool-vector"))?
+                    .get(1)
+                    .and_then(|value| match value {
+                        Value::Vec(bits) => Some(bits.clone()),
+                        _ => None,
+                    });
+                if let Some(bits) = bits {
+                    return Ok(Value::Int(
+                        bits.try_borrow()
+                            .map_err(|_| {
+                                i.error("Cannot inspect mutably borrowed bool-vector storage")
+                            })?
+                            .len() as i128,
+                    ));
                 }
             }
             Ok(Value::Int(0))
@@ -380,18 +417,147 @@ fn f_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Err(i.wrong_type_mut("sequencep", &args[0]))
         }
         // Records (incl. EIEIO instances) report their slot count.
-        Value::Record(r) => Ok(Value::Int(r.borrow().len() as i128)),
+        Value::Record(r) => Ok(Value::Int(
+            r.try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed record"))?
+                .len() as i128,
+        )),
         // Function objects (closures and `#[...]' byte-code literals)
         // answer `length' with their element count like GNU —
         // `#[...]' uses the literal's count, others the synthesized
         // [args body env] prefix.
         Value::Lambda(l) => Ok(Value::Int(
-            crate::lisp::builtins::misc::lambda_slot_values(l).len() as i128,
+            crate::lisp::builtins::misc::lambda_slot_values_checked(l)
+                .map_err(|error| error.into_flow(i))?
+                .len() as i128,
         )),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
-fn f_safe_length(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+
+#[cfg(test)]
+mod length_borrow_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    fn interp() -> Interp {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        interp
+    }
+
+    fn is_lisp_error(result: Result<EvalResult, Box<dyn std::any::Any + Send>>) -> bool {
+        matches!(
+            result,
+            Ok(Err(Flow::Signal(ref signal))) if signal.is_symbol(sym::ERROR)
+        )
+    }
+
+    #[test]
+    fn length_rejects_a_mutably_borrowed_string_without_panicking() {
+        let mut interp = interp();
+        let value = Value::string("length");
+        let Value::Str(string) = &value else {
+            unreachable!();
+        };
+        let held_borrow = string.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_length(&mut interp, vec![value.clone()].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn length_rejects_a_mutably_borrowed_vector_without_panicking() {
+        let mut interp = interp();
+        let value = Value::vector(vec![Value::Int(1)]);
+        let Value::Vec(vector) = &value else {
+            unreachable!();
+        };
+        let held_borrow = vector.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_length(&mut interp, vec![value.clone()].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn length_rejects_a_mutably_borrowed_record_without_panicking() {
+        let mut interp = interp();
+        let value = Value::record(vec![Value::Int(1)]);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let held_borrow = record.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_length(&mut interp, vec![value.clone()].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn length_rejects_a_mutably_borrowed_bool_vector_without_panicking() {
+        let mut interp = interp();
+        let value = crate::lisp::builtins::misc::make_bool_vector(&mut interp, vec![true]);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let held_borrow = record.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_length(&mut interp, vec![value.clone()].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn length_rejects_mutably_borrowed_bool_vector_storage_without_panicking() {
+        let mut interp = interp();
+        let value = crate::lisp::builtins::misc::make_bool_vector(&mut interp, vec![true]);
+        let Value::Record(record) = &value else {
+            unreachable!();
+        };
+        let bits = match record.borrow().get(1) {
+            Some(Value::Vec(bits)) => bits.clone(),
+            _ => unreachable!(),
+        };
+        let held_borrow = bits.borrow_mut();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            f_length(&mut interp, vec![value.clone()].into())
+        }));
+        drop(held_borrow);
+
+        assert!(is_lisp_error(result));
+    }
+
+    #[test]
+    fn length_keeps_counts_for_unborrowed_string_vector_record_and_bool_vector() {
+        let mut interp = interp();
+        let bool_vector =
+            crate::lisp::builtins::misc::make_bool_vector(&mut interp, vec![true, false, true]);
+        for (value, expected) in [
+            (Value::string("three"), 5),
+            (Value::vector(vec![Value::Nil; 2]), 2),
+            (Value::record(vec![Value::Nil; 4]), 4),
+            (bool_vector, 3),
+        ] {
+            assert!(matches!(
+                f_length(&mut interp, vec![value].into()),
+                Ok(Value::Int(actual)) if actual == expected
+            ));
+        }
+    }
+}
+
+fn f_safe_length(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU safe_length: Brent's teleporting tortoise-hare walk —
     // FOR_EACH_TAIL_SAFE with li = { tortoise=LIST, max=2, n=0, q=2 }.
     // The count reaches the detection cons inclusive; on a cycle it
@@ -407,7 +573,10 @@ fn f_safe_length(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         len += 1; // the loop body counts each cons first, then steps
         // step: tail = cdr(tail)
         tail = match &tail {
-            Value::Cons(c) => c.borrow().cdr.clone(),
+            Value::Cons(c) => c
+                .try_borrow()
+                .map(|cell| cell.cdr.clone())
+                .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?,
             other => other.clone(),
         };
         q = q.wrapping_sub(1);
@@ -432,11 +601,14 @@ fn f_safe_length(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     Ok(Value::Int(len))
 }
-fn f_proper_list_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+fn f_proper_list_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &args[0] {
         Value::Nil => Ok(Value::Int(0)),
         Value::Cons(_) => match args[0].list_to_vec() {
             Ok(v) => Ok(Value::Int(v.len() as i128)),
+            Err(crate::lisp::value::ListError::Borrowed) => {
+                Err(i.error("Cannot inspect a mutably borrowed list"))
+            }
             Err(_) => Ok(Value::Nil),
         },
         _ => Ok(Value::Nil),
@@ -469,7 +641,11 @@ pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value
     for _ in 0..n {
         match cur {
             Value::Cons(c) => {
-                let next = c.borrow().cdr.clone();
+                let next = c
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?
+                    .cdr
+                    .clone();
                 cur = next;
             }
             Value::Nil => return Ok(Value::Nil),
@@ -557,7 +733,11 @@ fn f_butlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Follow GNU subr.el's operations without projecting N to a machine
     // integer: comparisons accept numbers/markers, but take requires the
     // subtraction result to be an integer (including arbitrary bignums).
-    let n = args.get(1).filter(|n| !n.is_nil()).cloned().unwrap_or(Value::Int(1));
+    let n = args
+        .get(1)
+        .filter(|n| !n.is_nil())
+        .cloned()
+        .unwrap_or(Value::Int(1));
     if primitive(i, "<=", vec![n.clone(), Value::Int(0)])?.truthy() {
         return Ok(args[0].clone());
     }
@@ -570,7 +750,11 @@ fn f_nbutlast(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // length/arithmetic/setcdr operations are inlined; the native nthcdr
     // call observes its installed trampoline.
     let length = primitive(i, "length", vec![args[0].clone()])?;
-    let n = args.get(1).filter(|n| !n.is_nil()).cloned().unwrap_or(Value::Int(1));
+    let n = args
+        .get(1)
+        .filter(|n| !n.is_nil())
+        .cloned()
+        .unwrap_or(Value::Int(1));
     if !primitive(i, "<", vec![n.clone(), length.clone()])?.truthy() {
         return Ok(Value::Nil);
     }
@@ -602,7 +786,10 @@ pub(crate) fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             // GNU also accepts closure slots here despite sequencep
             // being nil for function objects.
-            Value::Lambda(function) => out.extend(super::misc::lambda_slot_values(function)),
+            Value::Lambda(function) => out.extend(
+                super::misc::lambda_slot_values_checked(function)
+                    .map_err(|error| error.into_flow(i))?,
+            ),
             _ => out.extend(super::seq::seq_to_vec(i, a)?),
         }
     }
@@ -616,7 +803,9 @@ pub(crate) fn f_append(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 pub(crate) fn f_nconc(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    if args.is_empty() { return Ok(Value::Nil); }
+    if args.is_empty() {
+        return Ok(Value::Nil);
+    }
     let mut result = Value::Nil;
     let mut last_cons: Option<crate::lisp::value::ConsRef> = None;
     for (index, a) in args.iter().enumerate() {
@@ -681,11 +870,22 @@ pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Str(s) => {
             // GNU uses unibyte storage when SCHARS == SBYTES, even for
             // explicitly multibyte ASCII/empty input. Properties are omitted.
-            let multibyte = super::strfn::string_multibyte_p(i, &args[0]) && !s.borrow().is_ascii();
-            if s.borrow().is_empty() && !super::strfn::string_multibyte_p(i, &args[0]) {
+            let source = s
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed string"))?
+                .clone();
+            let explicitly_multibyte = super::strfn::string_multibyte_p(i, &args[0]);
+            let multibyte = explicitly_multibyte && !source.is_ascii();
+            if source.is_empty() && !explicitly_multibyte {
                 return Ok(args[0].clone());
             }
-            let result = Value::string_with_kind(s.borrow().chars().rev().collect::<crate::lisp::text::EmacsText>(), multibyte);
+            let result = Value::string_with_kind(
+                source
+                    .chars()
+                    .rev()
+                    .collect::<crate::lisp::text::EmacsText>(),
+                multibyte,
+            );
             if let Value::Str(output) = &result {
                 if multibyte {
                     i.mark_multibyte(output);
@@ -696,10 +896,13 @@ pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             return Ok(result);
         }
         Value::Vec(v) => {
-            if v.borrow().is_empty() {
+            let values = v
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed vector"))?;
+            if values.is_empty() {
                 return Ok(i.zero_vector.clone());
             }
-            return Ok(Value::vector(v.borrow().iter().rev().cloned().collect()));
+            return Ok(Value::vector(values.iter().rev().cloned().collect()));
         }
         Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {
             let mut bits = crate::lisp::builtins::misc::bool_vec_of(i, &args[0])?;
@@ -718,12 +921,16 @@ pub(crate) fn f_reverse(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_setcar(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let c = want_cons(i, &args[0])?;
-    c.borrow_mut().car = args[1].clone();
+    c.try_borrow_mut()
+        .map_err(|_| i.error("Cannot modify a mutably borrowed cons cell"))?
+        .car = args[1].clone();
     Ok(args[1].clone())
 }
 fn f_setcdr(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let c = want_cons(i, &args[0])?;
-    c.borrow_mut().cdr = args[1].clone();
+    c.try_borrow_mut()
+        .map_err(|_| i.error("Cannot modify a mutably borrowed cons cell"))?
+        .cdr = args[1].clone();
     Ok(args[1].clone())
 }
 
@@ -806,21 +1013,23 @@ fn member_impl(
     list: &Value,
     cmp: fn(&Interp, &Value, &Value) -> Result<bool, Flow>,
 ) -> EvalResult {
-    // Raw-pointer spine walk (see `cdr_ptr'): `cmp' is a pure
-    // predicate — `eq'/`eql'/`equal' never run Lisp — so the walk can
-    // read cdrs without a borrow/clone per cell.  `cur' still yields
-    // the tail `Value' to return by cloning only on a hit.
-    let mut cur = list as *const Value;
+    let mut cur = list.clone();
     let mut cycle = ListCycle::new(list);
     loop {
-        match unsafe { &*cur } {
+        match &cur {
             Value::Cons(c) => {
-                let cell = RefCell::as_ptr(c);
-                if cmp(i, elt, unsafe { &(*cell).car })? {
-                    return Ok(unsafe { &*cur }.clone());
+                // Clone each cell's fields before comparing so a caller that
+                // already holds a RefCell borrow cannot make this traversal
+                // alias that borrow through a raw pointer.
+                let (car, cdr) = c
+                    .try_borrow()
+                    .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                    .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?;
+                if cmp(i, elt, &car)? {
+                    return Ok(cur);
                 }
-                cur = unsafe { &(*cell).cdr };
-                cycle.step(i, unsafe { &*cur })?;
+                cur = cdr;
+                cycle.step(i, &cur)?;
             }
             Value::Nil => return Ok(Value::Nil),
             // GNU reports the whole list argument, not the atom tail.
@@ -841,6 +1050,40 @@ fn f_memql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     member_impl(i, &args[0], &args[1], |ii, a, b| {
         Ok(super::eql_values_with_interp(ii, a, b))
     })
+}
+
+#[cfg(test)]
+mod member_borrow_tests {
+    use super::*;
+
+    #[test]
+    fn member_rejects_a_cons_borrowed_by_its_rust_caller() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let list = Value::list(vec![Value::Int(1), Value::Int(2)]);
+                let Value::Cons(cell) = &list else {
+                    unreachable!();
+                };
+                let held_borrow = cell.borrow_mut();
+
+                let result = f_member(&mut interp, vec![Value::Int(1), list.clone()].into());
+
+                drop(held_borrow);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                assert!(matches!(
+                    f_member(&mut interp, vec![Value::Int(1), list.clone()].into()),
+                    Ok(Value::Cons(_))
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 fn member_if_impl(i: &mut Interp, pred: &Value, list: &Value, want: bool) -> EvalResult {
@@ -877,23 +1120,32 @@ fn assoc_impl(
     cmp: fn(&Interp, &Value, &Value) -> Result<bool, Flow>,
     cdr_cmp: bool,
 ) -> EvalResult {
-    // Raw-pointer spine walk like `member_impl'.
-    let mut cur = list as *const Value;
+    let mut cur = list.clone();
     let mut cycle = ListCycle::new(list);
     loop {
-        match unsafe { &*cur } {
-            Value::Cons(c) => {
-                let cell = RefCell::as_ptr(c);
-                if let Value::Cons(ec) = unsafe { &(*cell).car } {
-                    let eb = ec.borrow();
-                    let probe = if cdr_cmp { &eb.cdr } else { &eb.car };
-                    if cmp(i, key, probe)? {
-                        drop(eb);
-                        return Ok(unsafe { &*cell }.car.clone());
+        match &cur {
+            Value::Cons(cell) => {
+                let (entry, cdr) = cell
+                    .try_borrow()
+                    .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                    .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?;
+                if let Value::Cons(entry_cell) = &entry {
+                    let probe = entry_cell
+                        .try_borrow()
+                        .map(|entry| {
+                            if cdr_cmp {
+                                entry.cdr.clone()
+                            } else {
+                                entry.car.clone()
+                            }
+                        })
+                        .map_err(|_| i.error("Cannot read a mutably borrowed cons cell"))?;
+                    if cmp(i, key, &probe)? {
+                        return Ok(entry);
                     }
                 }
-                cur = unsafe { &(*cell).cdr };
-                cycle.step(i, unsafe { &*cur })?;
+                cur = cdr;
+                cycle.step(i, &cur)?;
             }
             Value::Nil => return Ok(Value::Nil),
             // GNU assoc/assq report the whole LIST argument, not the
@@ -911,6 +1163,51 @@ pub(crate) fn f_assq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         |i, a, b| Ok(super::eq_values_with_interp(i, a, b)),
         false,
     )
+}
+
+#[cfg(test)]
+mod assoc_borrow_tests {
+    use super::*;
+
+    #[test]
+    fn assoc_rejects_borrowed_outer_and_entry_cells() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let key = Value::Sym(interp.intern("qa-assoc-borrow-key"));
+                let entry = Value::cons(key.clone(), Value::Int(1));
+                let list = Value::cons(entry.clone(), Value::Nil);
+                let Value::Cons(outer_cell) = &list else {
+                    unreachable!();
+                };
+                let outer_borrow = outer_cell.borrow_mut();
+                let outer_result = f_assq(&mut interp, vec![key.clone(), list.clone()].into());
+                drop(outer_borrow);
+                assert!(matches!(
+                    outer_result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+
+                let Value::Cons(entry_cell) = &entry else {
+                    unreachable!();
+                };
+                let entry_borrow = entry_cell.borrow_mut();
+                let entry_result = f_assq(&mut interp, vec![key.clone(), list.clone()].into());
+                drop(entry_borrow);
+                assert!(matches!(
+                    entry_result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
+                ));
+                assert!(matches!(
+                    f_assq(&mut interp, vec![key, list].into()),
+                    Ok(Value::Cons(_))
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 fn delete_all_by(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1240,7 +1537,9 @@ fn f_copy_tree(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             return Ok(tail);
         }
         let elements = match v {
-            Value::Vec(values) if vecp.truthy() && !i.is_overlay(v) => Some(values.borrow().clone()),
+            Value::Vec(values) if vecp.truthy() && !i.is_overlay(v) => {
+                Some(values.borrow().clone())
+            }
             Value::Record(values) if vecp.truthy() && super::misc::is_record(i, v) => {
                 Some(values.borrow().clone())
             }
@@ -1336,7 +1635,11 @@ struct PlistCycleDetector {
 }
 impl PlistCycleDetector {
     fn new(plist: &Value) -> Self {
-        Self { tortoise: plist.clone(), power: 1, steps: 0 }
+        Self {
+            tortoise: plist.clone(),
+            power: 1,
+            steps: 0,
+        }
     }
 
     fn advance(&mut self, tail: &Value) -> bool {
@@ -1367,12 +1670,16 @@ fn plist_scan(
             Value::Nil => return Ok(None),
             Value::Cons(c) => {
                 let (k, rest) = {
-                    let b = c.borrow();
+                    let b = c
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?;
                     (b.car.clone(), b.cdr.clone())
                 };
                 let v = match &rest {
                     Value::Cons(c2) => {
-                        let b = c2.borrow();
+                        let b = c2.try_borrow().map_err(|_| {
+                            i.error("Cannot inspect a mutably borrowed property list")
+                        })?;
                         (b.car.clone(), b.cdr.clone())
                     }
                     _ => {
@@ -1404,8 +1711,8 @@ fn plist_scan(
     }
 }
 
-pub(crate) fn err_circular(i: &mut Interp) -> Flow {
-    i.signal_data(sym::CIRCULAR_LIST, vec![Value::Nil])
+pub(crate) fn err_circular(i: &mut Interp, list: &Value) -> Flow {
+    i.signal_data(sym::CIRCULAR_LIST, vec![list.clone()])
 }
 
 fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1420,7 +1727,9 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 Value::Nil => return Ok(Value::Nil),
                 Value::Cons(c) => {
                     let k = {
-                        let b = c.borrow();
+                        let b = c
+                            .try_borrow()
+                            .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?;
                         if !matches!(&b.cdr, Value::Cons(_)) {
                             return Ok(Value::Nil);
                         }
@@ -1429,15 +1738,31 @@ fn f_plist_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     // GNU funcalls PREDICATE on the raw values —
                     // `invalid-function' on e.g. 5, not a quoted form.
                     let m = i.apply(&pred, vec![k.clone(), args[1].clone()])?;
-                    let rest = c.borrow().cdr.clone();
+                    let rest = c
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+                        .cdr
+                        .clone();
                     if m.truthy() {
                         return Ok(match rest {
-                            Value::Cons(value_cell) => value_cell.borrow().car.clone(),
+                            Value::Cons(value_cell) => value_cell
+                                .try_borrow()
+                                .map_err(|_| {
+                                    i.error("Cannot inspect a mutably borrowed property list")
+                                })?
+                                .car
+                                .clone(),
                             _ => Value::Nil,
                         });
                     }
                     cur = match rest {
-                        Value::Cons(value_cell) => value_cell.borrow().cdr.clone(),
+                        Value::Cons(value_cell) => value_cell
+                            .try_borrow()
+                            .map_err(|_| {
+                                i.error("Cannot inspect a mutably borrowed property list")
+                            })?
+                            .cdr
+                            .clone(),
                         _ => Value::Nil,
                     };
                     if cycle.advance(i, &cur)? {
@@ -1481,7 +1806,11 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Value::Nil => return Ok(Value::Nil),
             _ => return Err(i.wrong_type_mut("plistp", &whole)),
         };
-        let k = key_cell.borrow().car.clone();
+        let k = key_cell
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+            .car
+            .clone();
         let matches = if pred.is_nil() {
             eq_values(&k, &args[1])
         } else {
@@ -1490,11 +1819,18 @@ fn f_plist_member(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         if matches {
             return Ok(cur);
         }
-        let rest = key_cell.borrow().cdr.clone();
+        let rest = key_cell
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+            .cdr
+            .clone();
         // Advance past the value cell when it exists; GNU stops the
         // scan when the cdr is not a cons.
         cur = if let Value::Cons(c2) = &rest {
-            c2.borrow().cdr.clone()
+            c2.try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+                .cdr
+                .clone()
         } else {
             rest
         };
@@ -1542,9 +1878,15 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                 let new_pair =
                     Value::cons(args[1].clone(), Value::cons(args[2].clone(), Value::Nil));
                 if let Some(Value::Cons(pc)) = &last_pair_cell {
-                    let value_cell = pc.borrow().cdr.clone();
+                    let value_cell = pc
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+                        .cdr
+                        .clone();
                     if let Value::Cons(vc) = &value_cell {
-                        vc.borrow_mut().cdr = new_pair;
+                        vc.try_borrow_mut()
+                            .map_err(|_| i.error("Cannot modify a mutably borrowed property list"))?
+                            .cdr = new_pair;
                         return Ok(args[0].clone());
                     }
                 }
@@ -1556,7 +1898,9 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
             }
             Value::Cons(c) => {
                 let k = {
-                    let cell = c.borrow();
+                    let cell = c
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?;
                     if !matches!(&cell.cdr, Value::Cons(_)) {
                         return Err(i.wrong_type_mut("plistp", &whole));
                     }
@@ -1570,10 +1914,16 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                 };
                 // Predicate code may replace this key's value cell or
                 // the rest of the plist. Follow its current cdr.
-                let rest = c.borrow().cdr.clone();
+                let rest = c
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+                    .cdr
+                    .clone();
                 if matches {
                     if let Value::Cons(cell) = &rest {
-                        cell.borrow_mut().car = args[2].clone();
+                        cell.try_borrow_mut()
+                            .map_err(|_| i.error("Cannot modify a mutably borrowed property list"))?
+                            .car = args[2].clone();
                         return Ok(args[0].clone());
                     }
                     return Err(i.wrong_type_mut("plistp", &whole));
@@ -1582,7 +1932,11 @@ fn plist_put(i: &mut Interp, args: crate::lisp::Argv, lax: bool) -> EvalResult {
                 match &rest {
                     Value::Cons(c2) => {
                         last_pair_cell = Some(cur.clone());
-                        cur = c2.borrow().cdr.clone();
+                        cur = c2
+                            .try_borrow()
+                            .map_err(|_| i.error("Cannot inspect a mutably borrowed property list"))?
+                            .cdr
+                            .clone();
                     }
                     _ => return Err(i.wrong_type_mut("plistp", &whole)),
                 }
@@ -1714,6 +2068,7 @@ fn f_apply_partially(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         optional: Vec::new(),
         rest: Some(r_sym),
         body: Vec::new(),
+        body_value: None,
         env: None,
         // GNU returns the compiled-function tail "\n\n(fn &rest ARGS2)"
         // — the (documentation) string, not a real docstring.
@@ -1735,6 +2090,7 @@ fn f_apply_partially(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         ])),
         bc_closure: false,
         bc_prog: std::cell::RefCell::new(None),
+        compiled_macro_cache: crate::lisp::value::CompiledMacroCache::default(),
         doc_value: None,
         env_value: None,
     };
@@ -1777,10 +2133,19 @@ fn f_assoc_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     // GNU converts unibyte input and upcases characters
                     // through the buffer's case table, without expansions.
                     // This internal call must not observe fset of compare-strings.
-                    let result = primitive(i, "compare-strings", vec![
-                        candidate, Value::Int(0), Value::Nil, key.clone(), Value::Int(0), Value::Nil,
-                        Value::from_bool(fold),
-                    ])?;
+                    let result = primitive(
+                        i,
+                        "compare-strings",
+                        vec![
+                            candidate,
+                            Value::Int(0),
+                            Value::Nil,
+                            key.clone(),
+                            Value::Int(0),
+                            Value::Nil,
+                            Value::from_bool(fold),
+                        ],
+                    )?;
                     if eq_values(&result, &Value::t()) {
                         return Ok(elem);
                     }
@@ -1872,7 +2237,8 @@ fn f_remq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let found = member_impl(i, elt, &list, |ii, a, b| {
         Ok(super::eq_values_with_interp(ii, a, b))
-    })?.truthy();
+    })?
+    .truthy();
     if found {
         // copy-sequence + delq (delq splices the copy in place).
         let items = copy_list_items(i, &list)?;

@@ -74,7 +74,10 @@ pub(crate) fn restore(i: &mut Interp) -> EvalResult {
     let manifest = manifest();
     let history = i.q("load-history");
     let old = i.symbol_value(history).list_to_vec().unwrap_or_default();
-    let prelude = concat!(env!("REMACS_SOURCE_ROOT"), "/crates/runtime/src/lisp/prelude.el");
+    let prelude = concat!(
+        env!("REMACS_SOURCE_ROOT"),
+        "/crates/runtime/src/lisp/prelude.el"
+    );
     let mut external = Vec::new();
     let mut private = Vec::new();
     for entry in old {

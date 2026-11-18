@@ -417,11 +417,13 @@ fn f_mod_fn(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // rem_euclid followed by subtracting |Y| loses precision for two
     // negative operands and produces infinity - infinity for Y=-inf.
     let r = x % y;
-    Ok(Value::float(if (r < 0.0 && y > 0.0) || (r > 0.0 && y < 0.0) {
-        r + y
-    } else {
-        r
-    }))
+    Ok(Value::float(
+        if (r < 0.0 && y > 0.0) || (r > 0.0 && y < 0.0) {
+            r + y
+        } else {
+            r
+        },
+    ))
 }
 fn f_1plus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let n = number(i, &args[0])?;
@@ -888,10 +890,7 @@ fn f_lsh(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let count = integer(i, &args[1], "integerp", false)?;
     if !args[0].fixnump() && n.is_negative() && count.is_negative() {
         let condition = i.q("args-out-of-range");
-        return Err(i.signal_data(
-            condition,
-            vec![args[0].clone(), args[1].clone()],
-        ));
+        return Err(i.signal_data(condition, vec![args[0].clone(), args[1].clone()]));
     }
     if args[0].fixnump() && count.is_negative() {
         if count <= BigInt::from(-62) {
@@ -1045,7 +1044,7 @@ fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(Value::Str(s)) => {
             let mut seed = 0u32;
-            for (index, byte) in super::strfn::gnu_sbytes(i, s).iter().enumerate() {
+            for (index, byte) in super::strfn::try_gnu_sbytes(i, s)?.iter().enumerate() {
                 seed ^= u32::from(*byte) << ((index % 4) * 8);
             }
             GEN.with(|g| *g.borrow_mut() = Rand3::seeded(seed));
@@ -1081,7 +1080,9 @@ fn f_random(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_eql(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(super::eql_values_with_interp(i, &args[0], &args[1])))
+    Ok(Value::from_bool(super::eql_values_with_interp(
+        i, &args[0], &args[1],
+    )))
 }
 
 // Decompose with libm rather than log2/powi: rounded logarithms cross

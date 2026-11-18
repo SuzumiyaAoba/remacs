@@ -16,7 +16,7 @@ pub(super) fn f_send_string_to_terminal(i: &mut Interp, args: crate::lisp::Argv)
     let Value::Str(text) = &args[0] else {
         return Err(i.wrong_type_mut("stringp", &args[0]));
     };
-    crate::stdio::write(&crate::lisp::builtins::strfn::gnu_sbytes(i, text));
+    crate::stdio::write(&crate::lisp::builtins::strfn::try_gnu_sbytes(i, text)?);
     crate::stdio::flush();
     Ok(Value::Nil)
 }
@@ -523,11 +523,8 @@ pub(super) fn f_current_bidi_paragraph_direction(
         },
     };
     let buffer_id = buffer.borrow().id;
-    let configured_direction = crate::frontend::buffer_setting(
-        i,
-        "bidi-paragraph-direction",
-        buffer_id,
-    );
+    let configured_direction =
+        crate::frontend::buffer_setting(i, "bidi-paragraph-direction", buffer_id);
     if !configured_direction.is_nil() {
         return Ok(configured_direction);
     }
@@ -551,8 +548,8 @@ pub(super) fn f_current_bidi_paragraph_direction(
             }
             if !line_is_blank(previous) {
                 point_line = previous;
-            } else if let Some(next) = (point_line.saturating_add(1)..=last_line)
-                .find(|line| !line_is_blank(*line))
+            } else if let Some(next) =
+                (point_line.saturating_add(1)..=last_line).find(|line| !line_is_blank(*line))
             {
                 point_line = next;
             }

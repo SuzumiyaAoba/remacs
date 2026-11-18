@@ -11,8 +11,8 @@
 //! without new `Value' variants.  Rust objects live in `TsState'
 //! (an `Interp' field), addressed by the integer ids in the records.
 
-use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tree_sitter::{InputEdit, Language, Node, Parser, Point, Range, Tree, TreeCursor, ffi};
@@ -20,8 +20,8 @@ use tree_sitter_language::LanguageFn;
 
 use super::{S, arg, want_fixnum, want_int, want_string, want_sym};
 use crate::lisp::error::{EvalResult, Flow};
-use crate::lisp::text::{EmacsText, EmacsStr};
 use crate::lisp::obarray::sym;
+use crate::lisp::text::{EmacsStr, EmacsText};
 use crate::lisp::value::{BufferRef, SymId, Value};
 
 /// GNU `TREESIT_RECURSION_LIMIT'.
@@ -417,7 +417,8 @@ fn push_suffix_candidates(base: &EmacsStr, suffixes: &[EmacsText], out: &mut Vec
             versioned.push_str(suffix);
             out.push(versioned);
         }
-        for version in tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION..=tree_sitter::LANGUAGE_VERSION {
+        for version in tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION..=tree_sitter::LANGUAGE_VERSION
+        {
             let mut versioned = candidate.clone();
             versioned.push_str(format!(".{version}.0"));
             out.push(versioned);
@@ -524,7 +525,10 @@ fn load_language(i: &mut Interp, lang: SymId) -> Result<&'static LoadedLang, (Sy
             let native = match cand.to_os_string() {
                 Ok(path) => path,
                 Err(error) => {
-                    errors.push(format!("{cand}: unrepresentable filename character {:#x}", error.0));
+                    errors.push(format!(
+                        "{cand}: unrepresentable filename character {:#x}",
+                        error.0
+                    ));
                     continue;
                 }
             };
@@ -652,30 +656,49 @@ fn point_at_byte(text: &[u8], byte: usize) -> Point {
     let prefix = &text[..byte];
     Point {
         row: prefix.iter().filter(|byte| **byte == b'\n').count(),
-        column: prefix.iter().rposition(|byte| *byte == b'\n')
+        column: prefix
+            .iter()
+            .rposition(|byte| *byte == b'\n')
             .map_or(byte, |newline| byte - newline - 1),
     }
 }
 
 /// Keep edit boundaries on logical characters and TSPoint columns on bytes.
-fn input_edit(old: &(impl crate::lisp::text::TextSource + ?Sized), new: &(impl crate::lisp::text::TextSource + ?Sized)) -> Option<InputEdit> {
-    old.with_text(|old| new.with_text(|new| {
-        if old == new { return None; }
-        let prefix = old.chars().zip(new.chars()).take_while(|(a,b)| a == b).count();
-        let suffix = old[prefix..].chars().rev().zip(new[prefix..].chars().rev())
-            .take_while(|(a,b)| a == b).count();
-        let start = parser_bytes(&old[..prefix]).len();
-        let old_end = parser_bytes(&old[..old.len()-suffix]).len();
-        let new_end = parser_bytes(&new[..new.len()-suffix]).len();
-        let old_bytes = parser_bytes(old);
-        let new_bytes = parser_bytes(new);
-        Some(InputEdit {
-            start_byte: start, old_end_byte: old_end, new_end_byte: new_end,
-            start_position: point_at_byte(&old_bytes, start),
-            old_end_position: point_at_byte(&old_bytes, old_end),
-            new_end_position: point_at_byte(&new_bytes, new_end),
+fn input_edit(
+    old: &(impl crate::lisp::text::TextSource + ?Sized),
+    new: &(impl crate::lisp::text::TextSource + ?Sized),
+) -> Option<InputEdit> {
+    old.with_text(|old| {
+        new.with_text(|new| {
+            if old == new {
+                return None;
+            }
+            let prefix = old
+                .chars()
+                .zip(new.chars())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let suffix = old[prefix..]
+                .chars()
+                .rev()
+                .zip(new[prefix..].chars().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let start = parser_bytes(&old[..prefix]).len();
+            let old_end = parser_bytes(&old[..old.len() - suffix]).len();
+            let new_end = parser_bytes(&new[..new.len() - suffix]).len();
+            let old_bytes = parser_bytes(old);
+            let new_bytes = parser_bytes(new);
+            Some(InputEdit {
+                start_byte: start,
+                old_end_byte: old_end,
+                new_end_byte: new_end,
+                start_position: point_at_byte(&old_bytes, start),
+                old_end_position: point_at_byte(&old_bytes, old_end),
+                new_end_position: point_at_byte(&new_bytes, new_end),
+            })
         })
-    }))
+    })
 }
 
 #[derive(Default)]
@@ -707,13 +730,16 @@ impl PendingTree {
             }
         }
         let edit = InputEdit {
-            start_byte, old_end_byte: end_byte,
+            start_byte,
+            old_end_byte: end_byte,
             new_end_byte: start_byte + replacement.len(),
             start_position,
             old_end_position: point_at_byte(&old, end_byte),
             new_end_position,
         };
-        if let Some(tree) = &mut self.tree { tree.edit(&edit); }
+        if let Some(tree) = &mut self.tree {
+            tree.edit(&edit);
+        }
         let mut updated = self.text[..start].to_owned();
         updated.push_str(text);
         updated.push_str(&self.text[end..]);
@@ -762,7 +788,8 @@ impl PendingTree {
                 let lo = start.max(self.begv);
                 let hi = end.min(self.zv);
                 if lo < hi {
-                    let visible: crate::lisp::text::EmacsText = text.chars().skip(lo - start).take(hi - lo).collect();
+                    let visible: crate::lisp::text::EmacsText =
+                        text.chars().skip(lo - start).take(hi - lo).collect();
                     self.replace(lo - self.begv, hi - self.begv, &visible);
                 }
             }
@@ -814,11 +841,16 @@ mod edit_tests {
     fn extended_character_edits_keep_original_byte_widths() {
         use crate::lisp::text::EmacsChar;
         let old: EmacsText = [0xf0080, 0xd800, 0x1a0000, 0x3fff80, 10, 65]
-            .into_iter().map(|code| EmacsChar::new(code).unwrap()).collect();
+            .into_iter()
+            .map(|code| EmacsChar::new(code).unwrap())
+            .collect();
         let mut new = old[..5].to_owned();
         new.push('B');
         let edit = input_edit(&old, &new).unwrap();
-        assert_eq!((edit.start_byte, edit.old_end_byte, edit.new_end_byte), (14, 15, 15));
+        assert_eq!(
+            (edit.start_byte, edit.old_end_byte, edit.new_end_byte),
+            (14, 15, 15)
+        );
         assert_eq!(edit.start_position, Point::new(1, 0));
         assert_eq!(parser_bytes(&old).len(), 15);
         assert_eq!(parser_bytes(&old[..1]), vec![0xf3, 0xb0, 0x82, 0x80]);
@@ -1737,7 +1769,10 @@ fn query_string_escape(s: &EmacsStr) -> EmacsText {
             10 => out.push_str("\\n"),
             13 => out.push_str("\\r"),
             9 => out.push_str("\\t"),
-            34 | 92 => { out.push('\\'); out.push(c); }
+            34 | 92 => {
+                out.push('\\');
+                out.push(c);
+            }
             _ => out.push(c),
         }
     }
@@ -1757,23 +1792,31 @@ fn query_group(parts: &[EmacsText], opening: char, closing: char) -> EmacsText {
     result
 }
 
-
-#[cfg(test)] mod query_text_tests {
- use super::*;
- use crate::lisp::text::EmacsChar;
- #[test] fn escaping_retains_extended_character_codes() {
-  let source: EmacsText = [0,10,13,9,34,92,0xf0080,0xd800,0x1a0000,0x3fff80]
-   .into_iter().map(|code| EmacsChar::new(code).unwrap()).collect();
-  let escaped = query_string_escape(&source);
-  let mut expected = EmacsText::from("\"\\0\\n\\r\\t\\\"\\\\");
-  expected.push_str(&source[6..]); expected.push('"');
-  assert_eq!(escaped, expected);
- }
- #[test] fn groups_keep_non_unicode_values_without_display_escapes() {
-  let wide = EmacsChar::new(0x1a0000).unwrap().to_string();
-  let grouped = query_group(&[EmacsText::from("node"),wide], '(', ')');
-  assert_eq!(grouped.chars().map(|c|c.code()).collect::<Vec<_>>(), vec![40,110,111,100,101,32,0x1a0000,41]);
- }
+#[cfg(test)]
+mod query_text_tests {
+    use super::*;
+    use crate::lisp::text::EmacsChar;
+    #[test]
+    fn escaping_retains_extended_character_codes() {
+        let source: EmacsText = [0, 10, 13, 9, 34, 92, 0xf0080, 0xd800, 0x1a0000, 0x3fff80]
+            .into_iter()
+            .map(|code| EmacsChar::new(code).unwrap())
+            .collect();
+        let escaped = query_string_escape(&source);
+        let mut expected = EmacsText::from("\"\\0\\n\\r\\t\\\"\\\\");
+        expected.push_str(&source[6..]);
+        expected.push('"');
+        assert_eq!(escaped, expected);
+    }
+    #[test]
+    fn groups_keep_non_unicode_values_without_display_escapes() {
+        let wide = EmacsChar::new(0x1a0000).unwrap().to_string();
+        let grouped = query_group(&[EmacsText::from("node"), wide], '(', ')');
+        assert_eq!(
+            grouped.chars().map(|c| c.code()).collect::<Vec<_>>(),
+            vec![40, 110, 111, 100, 101, 32, 0x1a0000, 41]
+        );
+    }
 }
 
 fn pattern_expand(i: &mut Interp, pat: &Value) -> Value {
@@ -1836,7 +1879,11 @@ fn f_pattern_expand(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_query_expand(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let items: Vec<Value> = match &a[0] {
         Value::Nil => Vec::new(),
-        Value::Str(s) => s.borrow().chars().map(|c| Value::Int((c).code() as i128)).collect(),
+        Value::Str(s) => s
+            .borrow()
+            .chars()
+            .map(|c| Value::Int((c).code() as i128))
+            .collect(),
         Value::Vec(v) => v.borrow().clone(),
         Value::Cons(_) => a[0]
             .list_to_vec()
@@ -1890,7 +1937,10 @@ fn query_error_data(src: &EmacsStr, offset: usize, etype: ffi::TSQueryError) -> 
     let (mut line_start, mut row, mut found) = (0usize, 0usize, None);
     for line in src.split('\n') {
         let end = line_start + parser_bytes(line).len() + 1;
-        if end > offset { found = Some(line); break; }
+        if end > offset {
+            found = Some(line);
+            break;
+        }
         line_start = end;
         row += 1;
     }
@@ -1900,7 +1950,11 @@ fn query_error_data(src: &EmacsStr, offset: usize, etype: ffi::TSQueryError) -> 
         Some(line) => message.push_str(line),
         None => message.push_str("EOF"),
     }
-    vec![Value::string(message), Value::Int(etype as i128), Value::Int(offset as i128)]
+    vec![
+        Value::string(message),
+        Value::Int(etype as i128),
+        Value::Int(offset as i128),
+    ]
 }
 
 /// Source text of a query value (string stays, sexp expands).
@@ -3161,7 +3215,9 @@ fn f_linecol_at(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .ok_or_else(|| i.error("Selecting deleted buffer"))?;
     let b = buf.borrow();
     let pos = check_position(i, &a[0], &b)?;
-    let prefix = b.text.substring(0, (pos as usize).saturating_sub(1).min(b.text.len()));
+    let prefix = b
+        .text
+        .substring(0, (pos as usize).saturating_sub(1).min(b.text.len()));
     let bytes = parser_bytes(&prefix);
     let mut line = 0i128;
     let mut col = 0i128;

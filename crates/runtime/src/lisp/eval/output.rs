@@ -22,8 +22,12 @@ impl Interp {
     /// line?  Buffers/markers peek at the preceding character; the real
     /// output sink uses `out_last_char` (GNU's print_position).
     pub fn output_at_bol(&mut self, stream: &Value) -> bool {
+        self.output_at_bol_checked(stream).unwrap_or(false)
+    }
+
+    pub(crate) fn output_at_bol_checked(&mut self, stream: &Value) -> Result<bool, Flow> {
         if self.capture_output {
-            return self.output_buffer.ends_with('\n');
+            return Ok(self.output_buffer.ends_with('\n'));
         }
         let dest = match stream {
             Value::Nil => self.symbol_value(self.standard_output_sym),
@@ -31,25 +35,31 @@ impl Interp {
         };
         match dest {
             Value::Buffer(b) => {
-                let bb = b.borrow();
+                let bb = b
+                    .try_borrow()
+                    .map_err(|_| self.error("Cannot inspect a mutably borrowed output buffer"))?;
                 let p = bb.point();
-                p <= bb.begv || bb.text.char_at(p - 1) == '\n'
+                Ok(p <= bb.begv || bb.text.char_at(p - 1) == '\n')
             }
             Value::Marker(m) => {
-                let mm = m.borrow();
+                let mm = m
+                    .try_borrow()
+                    .map_err(|_| self.error("Cannot inspect a mutably borrowed output marker"))?;
                 match mm.buffer.and_then(|id| self.buffers.get(id)) {
                     Some(b) => {
-                        let bb = b.borrow();
-                        mm.position <= bb.begv || bb.text.char_at(mm.position - 1) == '\n'
+                        let bb = b.try_borrow().map_err(|_| {
+                            self.error("Cannot inspect a mutably borrowed output buffer")
+                        })?;
+                        Ok(mm.position <= bb.begv || bb.text.char_at(mm.position - 1) == '\n')
                     }
-                    None => false,
+                    None => Ok(false),
                 }
             }
             // Function streams carry no position state — GNU treats
             // them as never at BOL.
-            Value::Lambda(_) | Value::Subr(_) => false,
-            Value::Sym(sid) if sid != sym::T => false,
-            _ => self.out_last_char.is_some_and(|c| c == '\n'),
+            Value::Lambda(_) | Value::Subr(_) => Ok(false),
+            Value::Sym(sid) if sid != sym::T => Ok(false),
+            _ => Ok(self.out_last_char.is_some_and(|c| c == '\n')),
         }
     }
 
@@ -74,16 +84,23 @@ impl Interp {
             v => v.clone(),
         };
         match &dest {
-            Value::Buffer(b) if !b.borrow().live => {
-                return Err(self.error("Selecting deleted buffer"));
+            Value::Buffer(buffer) => {
+                let live = buffer
+                    .try_borrow()
+                    .map(|buffer| buffer.live)
+                    .map_err(|_| self.error("Cannot inspect a mutably borrowed output buffer"))?;
+                if !live {
+                    return Err(self.error("Selecting deleted buffer"));
+                }
             }
-            Value::Marker(m)
-                if m.borrow()
-                    .buffer
-                    .and_then(|id| self.buffers.get(id))
-                    .is_none() =>
-            {
-                return Err(self.error("Marker does not point anywhere"));
+            Value::Marker(marker) => {
+                let buffer = marker
+                    .try_borrow()
+                    .map(|marker| marker.buffer)
+                    .map_err(|_| self.error("Cannot inspect a mutably borrowed output marker"))?;
+                if buffer.and_then(|id| self.buffers.get(id)).is_none() {
+                    return Err(self.error("Marker does not point anywhere"));
+                }
             }
             _ => {}
         }
@@ -101,11 +118,22 @@ impl Interp {
     ) -> Result<(), Flow> {
         s.with_output(|s| {
         let dest = self.checked_output_stream(stream)?;
-        self.out_last_char = s.last_character().or(self.out_last_char);
         if self.capture_output {
             self.output_buffer.push_str(&Self::sink_text(s));
             return Ok(());
         }
+        let lambda = self.intern_soft("lambda");
+        let closure = self.intern_soft("closure");
+        let cons_function = match &dest {
+            Value::Cons(cell) => {
+                let head = cell
+                    .try_borrow()
+                    .map(|cell| cell.car.clone())
+                    .map_err(|_| self.error("Cannot inspect a mutably borrowed output function"))?;
+                matches!(head, Value::Sym(id) if Some(id) == lambda || Some(id) == closure)
+            }
+            _ => false,
+        };
         match &dest {
             Value::Buffer(b) => {
                 let bb = b.borrow();
@@ -159,12 +187,7 @@ impl Interp {
                     self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
             }
-            Value::Cons(c)
-                if {
-                    let cb = c.borrow();
-                    matches!(&cb.car, Value::Sym(s) if *s == self.q("lambda") || *s == self.q("closure"))
-                } =>
-            {
+            Value::Cons(_) if cons_function => {
                 for ch in s.tokens() {
                     self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
@@ -186,7 +209,7 @@ impl Interp {
                     Some(OutputSink::Function(f)) => {
                         let f = f.clone();
                         let arg = Value::string(Self::sink_text(s).as_ref());
-                        let _ = self.apply(&f, vec![arg]);
+                        self.apply(&f, vec![arg])?;
                     }
                     Some(OutputSink::Stdout) => {
                         crate::stdio::write(&s.stdout_bytes());
@@ -194,6 +217,9 @@ impl Interp {
                     }
                     None => self.echo_message.push_str(&Self::sink_text(s)),
                 }
+                // Only the real output destination owns GNU's print
+                // position state. Function streams have no BOL state.
+                self.out_last_char = s.last_character().or(self.out_last_char);
             }
             _ => {
                 // Non-nil/t, non-buffer/marker/function values are
@@ -377,5 +403,38 @@ impl Interp {
         if cut > 0 {
             crate::buffer::primitives::delete_preserving_undo(self, &mut bb, 0, cut, false);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_output_sink_propagates_callback_errors() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-output-sink-error (_text)\
+                           (signal 'file-error '(\"output sink\")))",
+                    )
+                    .unwrap();
+                let function_symbol = interp.q("qa-output-sink-error");
+                let function = interp.symbol_function(function_symbol);
+                interp.output = Some(OutputSink::Function(function));
+
+                let result = interp.eval_str("(princ \"printed\")");
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

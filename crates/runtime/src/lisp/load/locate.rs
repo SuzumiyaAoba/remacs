@@ -7,14 +7,19 @@ pub(crate) fn unicode_name<T: crate::lisp::text::TextSource + ?Sized>(name: &T) 
     name.with_text(|text| text.chars().map(|character| character.unicode()).collect())
 }
 
-pub(crate) fn filename_text(i: &Interp, value: &Value) -> Option<crate::lisp::text::EmacsText> {
+pub(crate) fn filename_text(
+    i: &Interp,
+    value: &Value,
+) -> Result<Option<crate::lisp::text::EmacsText>, crate::lisp::error::Flow> {
     let Value::Str(name) = value else {
-        return None;
+        return Ok(None);
     };
     let unibyte = i.is_unibyte_str(name);
-    Some(
-        name.borrow()
-            .chars()
+    let text = name
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed filename string"))?;
+    Ok(Some(
+        text.chars()
             .map(|character| {
                 if unibyte && (128..=255).contains(&character.code()) {
                     crate::lisp::text::EmacsChar::new(0x3fff00 + character.code()).unwrap()
@@ -23,7 +28,7 @@ pub(crate) fn filename_text(i: &Interp, value: &Value) -> Option<crate::lisp::te
                 }
             })
             .collect(),
-    )
+    ))
 }
 
 /// Candidate paths GNU's `openp' would try for NAME in DIR.
@@ -117,7 +122,7 @@ pub(crate) fn locate_full<N: crate::lisp::text::TextSource + ?Sized>(
     name: &N,
     nosuffix: bool,
     mustsuffix: bool,
-) -> Option<Found> {
+) -> Result<Option<Found>, crate::lisp::error::Flow> {
     let name = name.with_text(|text| text.to_owned());
     // GNU's `openp' consults `load-prefer-newer' per directory: the
     // newest of the candidates inside a dir wins before the next dir.
@@ -127,7 +132,7 @@ pub(crate) fn locate_full<N: crate::lisp::text::TextSource + ?Sized>(
             .truthy();
     // GNU's `openp' on "" stats "" and misses (ENOENT) — never a hit.
     if name.is_empty() {
-        return None;
+        return Ok(None);
     }
     // GNU's `openp' expand-file-name's `~/`/`~user/` names up front —
     // an existing `~' directory must surface as Found::Dir so `load'
@@ -139,7 +144,9 @@ pub(crate) fn locate_full<N: crate::lisp::text::TextSource + ?Sized>(
     } else {
         name.to_owned()
     };
-    let native_name = name.to_os_string().ok()?;
+    let Ok(native_name) = name.to_os_string() else {
+        return Ok(None);
+    };
     let p = Path::new(&native_name);
     let source_suffixes =
         if nosuffix || name.ends_with(".el") || name.ends_with(".elc") || name.ends_with(".eln") {
@@ -152,23 +159,23 @@ pub(crate) fn locate_full<N: crate::lisp::text::TextSource + ?Sized>(
             candidates(Path::new(""), &name, nosuffix, mustsuffix),
             prefer_newer,
         ) {
-            return Some(hit);
+            return Ok(Some(hit));
         }
         if p.is_absolute() {
-            return None;
+            return Ok(None);
         }
         // Relative name with a directory part ("language/burmese",
         // "quail/arabic").  GNU resolves it against load-path entries
         // (`leim' + "quail/arabic" → leim/quail/arabic.el); try the
         // same against every search dir.
-        for dir in search_dirs(i) {
+        for dir in search_dirs(i)? {
             if let Some(hit) =
                 pick_existing(candidates(&dir, &name, nosuffix, mustsuffix), prefer_newer)
             {
-                return Some(hit);
+                return Ok(Some(hit));
             }
             if let Ok(Some(path)) = locate_cache_source(i, &dir, &name, &source_suffixes) {
-                return Some(Found::File(path));
+                return Ok(Some(Found::File(path)));
             }
         }
         // Our bundled tree is flat under lisp/, with colliding
@@ -182,41 +189,41 @@ pub(crate) fn locate_full<N: crate::lisp::text::TextSource + ?Sized>(
                 if let Some(hit) =
                     pick_existing(candidates(&dir, n, nosuffix, mustsuffix), prefer_newer)
                 {
-                    return Some(hit);
+                    return Ok(Some(hit));
                 }
             }
         }
-        return None;
+        return Ok(None);
     }
     // Search load-path (a list of strings).
-    for dir in search_dirs(i) {
+    for dir in search_dirs(i)? {
         if let Some(hit) =
             pick_existing(candidates(&dir, &name, nosuffix, mustsuffix), prefer_newer)
         {
-            return Some(hit);
+            return Ok(Some(hit));
         }
         if let Ok(Some(path)) = locate_cache_source(i, &dir, &name, &source_suffixes) {
-            return Some(Found::File(path));
+            return Ok(Some(Found::File(path)));
         }
     }
-    None
+    Ok(None)
 }
 
 /// `load-path' dirs followed by the bundled lisp/ dirs.
-pub(super) fn search_dirs(i: &mut Interp) -> Vec<PathBuf> {
+pub(super) fn search_dirs(i: &mut Interp) -> Result<Vec<PathBuf>, crate::lisp::error::Flow> {
     let lp_id = i.q("load-path");
     let lp = i.symbol_value(lp_id);
-    let mut v: Vec<PathBuf> = lp
-        .list_to_vec()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|d| match d {
-            Value::Str(_) => filename_text(i, d)?.to_os_string().ok().map(PathBuf::from),
-            _ => None,
-        })
-        .collect();
+    let mut v = Vec::new();
+    for directory in lp.list_to_vec().unwrap_or_default() {
+        if matches!(directory, Value::Str(_))
+            && let Some(path) = filename_text(i, &directory)?
+            && let Ok(path) = path.to_os_string()
+        {
+            v.push(PathBuf::from(path));
+        }
+    }
     v.extend(builtin_dirs().into_iter().map(PathBuf::from));
-    v
+    Ok(v)
 }
 
 /// Directories searched for bundled libraries after `load-path'

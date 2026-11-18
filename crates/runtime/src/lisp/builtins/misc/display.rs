@@ -323,6 +323,8 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
     // (window-bump-use-time WINDOW) when ALIST has `bump-use-time'.
     {
         let alist = arg(&a, 3);
+        let bump_key = i.intern_soft("bump-use-time");
+        let dedicated_key = i.intern_soft("dedicated");
         // NOTE: collect the interesting ALIST entries eagerly so the
         // closure borrow of `i' doesn't fight the mutable intern below.
         let bump = {
@@ -330,8 +332,7 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
             items.iter().any(|e| {
                 if let Value::Cons(c) = e {
                     let cb = c.borrow();
-                    matches!(&cb.car, Value::Sym(s) if i.symbol_name(*s) == "bump-use-time")
-                        && cb.cdr.truthy()
+                    matches!(&cb.car, Value::Sym(s) if Some(*s) == bump_key) && cb.cdr.truthy()
                 } else {
                     false
                 }
@@ -342,7 +343,7 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
             items.iter().find_map(|e| {
                 if let Value::Cons(c) = e {
                     let cb = c.borrow();
-                    if matches!(&cb.car, Value::Sym(s) if i.symbol_name(*s) == "dedicated") {
+                    if matches!(&cb.car, Value::Sym(s) if Some(*s) == dedicated_key) {
                         return Some(cb.cdr.clone());
                     }
                 }
@@ -356,14 +357,18 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
         // Dedicated policy: skip if already dedicated, or TYPE is `reuse'
         // on a non-side window; else ALIST's `dedicated' wins, else
         // `display-buffer-mark-dedicated'.
-        let ty_name = i.sym_id(&arg(&a, 2)).map(|s| i.symbol_name(s));
+        let ty = i.sym_id(&arg(&a, 2));
+        let reuse_type = i.intern_soft("reuse");
+        let window_type = i.intern_soft("window");
+        let frame_type = i.intern_soft("frame");
+        let tab_type = i.intern_soft("tab");
         let win_side = {
             let side_sym = i.q("window-side");
             let wb = w.borrow();
             crate::lisp::eval::plist_get(&wb.params, side_sym).truthy()
         };
         let dedicated = w.borrow().dedicated.truthy();
-        if dedicated || (ty_name.as_deref() == Some("reuse") && !win_side) {
+        if dedicated || (ty == reuse_type && !win_side) {
             // leave alone
         } else if let Some(v) = dedicated_entry {
             w.borrow_mut().dedicated = v;
@@ -376,10 +381,7 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
             w.borrow_mut().dedicated = flag;
         }
         // (memq type '(window frame tab)) → (set-window-prev-buffers w nil)
-        if matches!(
-            ty_name.as_deref(),
-            Some("window") | Some("frame") | Some("tab")
-        ) {
+        if ty == window_type || ty == frame_type || ty == tab_type {
             w.borrow_mut().prev_buffers = Value::Nil;
         }
     }
@@ -438,10 +440,7 @@ pub(super) fn f_ns_display_screens(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     Ok(Value::Int(1))
 }
 
-pub(super) fn f_ns_display_backing_store(
-    i: &mut Interp,
-    a: crate::lisp::Argv,
-) -> EvalResult {
+pub(super) fn f_ns_display_backing_store(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _frame = ns_display_frame(i, &a)?;
     Ok(Value::Sym(i.q("buffered")))
 }
@@ -458,22 +457,19 @@ pub(super) fn f_ns_display_visual_class(i: &mut Interp, a: crate::lisp::Argv) ->
 
 pub(super) fn f_ns_display_grayscale_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _frame = ns_display_frame(i, &a)?;
-    let bits_per_pixel =
-        crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
+    let bits_per_pixel = crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
     Ok(Value::from_bool(bits_per_pixel > 1))
 }
 
 pub(super) fn f_ns_display_planes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _frame = ns_display_frame(i, &a)?;
-    let bits_per_pixel =
-        crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
+    let bits_per_pixel = crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
     Ok(Value::Int(bits_per_pixel as i128))
 }
 
 pub(super) fn f_ns_display_color_cells(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let _frame = ns_display_frame(i, &a)?;
-    let bits_per_pixel =
-        crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
+    let bits_per_pixel = crate::lisp::builtins::nsgui::ns_display_bits_per_pixel().unwrap_or(32);
     Ok(Value::Int(1_i128 << bits_per_pixel.min(24)))
 }
 
@@ -518,9 +514,9 @@ fn f_ns_display_mm_size(i: &mut Interp, a: crate::lisp::Argv, component: usize) 
 pub(super) fn f_xw_display_color_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let display = a.first().cloned().unwrap_or(Value::Nil);
     let frame = decode_display(i, &display)?;
-    Ok(Value::from_bool(
-        crate::editor::frame_is_graphical(i, &frame),
-    ))
+    Ok(Value::from_bool(crate::editor::frame_is_graphical(
+        i, &frame,
+    )))
 }
 
 /// `scroll-bar-scale' — first arg is a cons (LISTP check), returns 0
@@ -884,12 +880,11 @@ pub(crate) fn window_is_size_fixed(
     ignore: &Value,
 ) -> Result<bool, Flow> {
     let function = Value::Sym(i.q("window-size-fixed-p"));
-    Ok(i
-        .apply(
-            &function,
-            vec![window.clone(), Value::from_bool(horizontal), ignore.clone()],
-        )?
-        .truthy())
+    Ok(i.apply(
+        &function,
+        vec![window.clone(), Value::from_bool(horizontal), ignore.clone()],
+    )?
+    .truthy())
 }
 
 /// `window-sizable' — GNU: normalize WINDOW (plain "N is not a valid
@@ -918,7 +913,8 @@ pub(super) fn f_window_sizable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     } else {
         let greater_than_zero = {
             let greater = Value::Sym(i.q(">"));
-            i.apply(&greater, vec![delta.clone(), Value::Int(0)])?.truthy()
+            i.apply(&greater, vec![delta.clone(), Value::Int(0)])?
+                .truthy()
         };
         if !greater_than_zero {
             return Ok(Value::Int(0));
@@ -1022,10 +1018,7 @@ pub(super) fn f_selected_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalRe
 
 /// Return the window selected before the active minibuffer window, if any,
 /// matching GNU `Fminibuffer_selected_window'.
-pub(super) fn f_minibuffer_selected_window(
-    i: &mut Interp,
-    _a: crate::lisp::Argv,
-) -> EvalResult {
+pub(super) fn f_minibuffer_selected_window(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     if i.minibuf_level <= 0 || !i.selected_window_is_minibuffer() {
         return Ok(Value::Nil);
     }
@@ -1035,10 +1028,7 @@ pub(super) fn f_minibuffer_selected_window(
     }
 }
 
-pub(super) fn f_line_number_display_width(
-    i: &mut Interp,
-    a: crate::lisp::Argv,
-) -> EvalResult {
+pub(super) fn f_line_number_display_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let Some(window) = sel_window(i) else {
         return Ok(Value::Int(0));
     };
@@ -1059,7 +1049,8 @@ pub(super) fn f_line_number_display_width(
         * crate::editor::winxtra::window_pixel_scale_x(i, &window))
     .round();
 
-    if matches!(arg(&a, 0), Value::Sym(symbol) if i.symbol_name(symbol) == "columns") {
+    let columns_symbol = i.q("columns");
+    if matches!(arg(&a, 0), Value::Sym(symbol) if symbol == columns_symbol) {
         Ok(Value::float(pixel_width / character_width as f64))
     } else if arg(&a, 0).truthy() {
         Ok(Value::Int(pixel_width as i128))
@@ -1205,7 +1196,7 @@ pub(super) fn f_window_in_direction(i: &mut Interp, a: crate::lisp::Argv) -> Eva
     let mut cands: Vec<WindowRef> = frame.borrow().windows.clone();
     if let Some(mini) = frame.borrow().minibuffer.clone() {
         let include = match &minibuf {
-            Value::Sym(s) if i.symbol_name(*s) == "t" => true,
+            Value::Sym(s) if *s == sym::T => true,
             Value::Nil => i.minibuf_level > 0,
             _ => false,
         };
@@ -1594,12 +1585,16 @@ pub(super) fn f_frame_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 
 pub(super) fn f_frame_width_val(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
-    Ok(Value::Int(crate::editor::frame_pixel_width(i, &frame) as i128))
+    Ok(Value::Int(
+        crate::editor::frame_pixel_width(i, &frame) as i128
+    ))
 }
 
 pub(super) fn f_frame_height_val(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
-    Ok(Value::Int(crate::editor::frame_pixel_height(i, &frame) as i128))
+    Ok(Value::Int(
+        crate::editor::frame_pixel_height(i, &frame) as i128
+    ))
 }
 
 /// GNU's outer dimension helpers compute from `frame-edges' and signal a
@@ -1612,11 +1607,7 @@ pub(super) fn f_frame_outer_height(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     f_frame_outer_dimension(i, a, true)
 }
 
-fn f_frame_outer_dimension(
-    i: &mut Interp,
-    a: crate::lisp::Argv,
-    vertical: bool,
-) -> EvalResult {
+fn f_frame_outer_dimension(i: &mut Interp, a: crate::lisp::Argv, vertical: bool) -> EvalResult {
     let frame = crate::editor::frame_live_plain(i, &arg(&a, 0))?;
     if crate::editor::frame_is_nextstep(i, &frame) {
         let frame_edges = i.q("frame-edges");

@@ -10,15 +10,21 @@ unsafe extern "C" {
 }
 
 pub fn write(bytes: &[u8]) {
-    unsafe { libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), C_STDOUT); }
+    unsafe {
+        libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), C_STDOUT);
+    }
 }
 
 pub fn write_stderr(bytes: &[u8]) {
-    unsafe { libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), C_STDERR); }
+    unsafe {
+        libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), C_STDERR);
+    }
 }
 
 pub fn flush() {
-    unsafe { libc::fflush(C_STDOUT); }
+    unsafe {
+        libc::fflush(C_STDOUT);
+    }
 }
 
 pub(crate) fn read_byte() -> Option<u8> {

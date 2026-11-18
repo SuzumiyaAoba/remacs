@@ -2,6 +2,7 @@
 
 use super::{S, arg, eq_values, equal_values, want_sym};
 use crate::lisp::error::{EvalResult, Flow};
+use crate::lisp::eval::cons_parts;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Lambda, Subr, Value};
 use crate::lisp::{Interp, SymId};
@@ -379,7 +380,9 @@ pub(crate) static SUBRS: &[Subr] = &[
 ];
 
 fn f_eq(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(super::eq_values_with_interp(i, &args[0], &args[1])))
+    Ok(Value::from_bool(super::eq_values_with_interp(
+        i, &args[0], &args[1],
+    )))
 }
 
 fn f_null(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -407,7 +410,12 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool,
     Ok(match (a, b) {
         _ if numberp(a) => numberp(b) && num_eq(a, b),
         (Value::Str(x), Value::Str(y)) => {
-            let (xs, ys) = (x.borrow(), y.borrow());
+            let xs = x
+                .try_borrow()
+                .map_err(|_| i.error("Cannot compare a mutably borrowed string"))?;
+            let ys = y
+                .try_borrow()
+                .map_err(|_| i.error("Cannot compare a mutably borrowed string"))?;
             let xc: Vec<crate::lisp::value::EmacsChar> = xs.chars().collect();
             let yc: Vec<crate::lisp::value::EmacsChar> = ys.chars().collect();
             xc.len() == yc.len()
@@ -429,11 +437,15 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool,
                 match (&ax, &bx) {
                     (Value::Cons(ac), Value::Cons(bc)) => {
                         let (acar, acdr) = {
-                            let ab = ac.borrow();
+                            let ab = ac
+                                .try_borrow()
+                                .map_err(|_| i.error("Cannot compare a mutably borrowed cons cell"))?;
                             (ab.car.clone(), ab.cdr.clone())
                         };
                         let (bcar, bcdr) = {
-                            let bb = bc.borrow();
+                            let bb = bc
+                                .try_borrow()
+                                .map_err(|_| i.error("Cannot compare a mutably borrowed cons cell"))?;
                             (bb.car.clone(), bb.cdr.clone())
                         };
                         if !equalp_values(i, down, &acar, &bcar)? {
@@ -447,13 +459,21 @@ fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> Result<bool,
             }
         }
         (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => {
-            let xv = x.borrow();
-            let yv = y.borrow();
+            let xv = x
+                .try_borrow()
+                .map(|items| items.clone())
+                .map_err(|_| i.error("Cannot compare a mutably borrowed vector-like object"))?;
+            let yv = y
+                .try_borrow()
+                .map(|items| items.clone())
+                .map_err(|_| i.error("Cannot compare a mutably borrowed vector-like object"))?;
             if xv.len() != yv.len() {
                 return Ok(false);
             }
-            for (a, b) in xv.iter().zip(yv.iter()) {
-                if !equalp_values(i, down, a, b)? {
+            // cl-extra.el's `cl-equalp' walks vectors from the final slot
+            // down; an early mismatch must short-circuit before earlier slots.
+            for index in (0..xv.len()).rev() {
+                if !equalp_values(i, down, &xv[index], &yv[index])? {
                     return Ok(false);
                 }
             }
@@ -503,7 +523,9 @@ fn f_stringp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
 }
 fn f_vectorp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Vec(_)) && !i.is_overlay(&args[0])))
+    Ok(Value::from_bool(
+        matches!(&args[0], Value::Vec(_)) && !i.is_overlay(&args[0]),
+    ))
 }
 fn f_hash_table_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Hash(_))))
@@ -513,8 +535,8 @@ fn f_functionp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 /// GNU `FUNCTIONP': callable objects — subrs that aren't special
-/// forms, non-macros lambdas, `(lambda …)' forms, and symbols whose
-/// (possibly aliased) function cell resolves to one of those.
+/// forms, non-macros lambdas, `(lambda …)' forms, normal autoloads, and
+/// symbols whose (possibly aliased) function cell resolves to one of those.
 pub(crate) fn functionp_val(i: &mut Interp, arg: &Value) -> bool {
     functionp_checked(i, arg).unwrap_or(false)
 }
@@ -532,22 +554,54 @@ pub(crate) fn functionp_checked(i: &mut Interp, arg: &Value) -> Result<bool, Flo
             value = f_indirect_function(i, vec![arg.clone()].into())?;
         }
     }
-    Ok(match &value {
-        Value::Subr(s) => !matches!(s.arity, crate::lisp::Arity::Unevalled),
-        Value::Lambda(l) => !l.is_macro,
+    match &value {
+        Value::Subr(s) => Ok(!matches!(s.arity, crate::lisp::Arity::Unevalled)),
+        Value::Lambda(l) => Ok(!l.is_macro),
         Value::Cons(c) => {
-            let head = c.borrow().car.clone();
+            let head = c
+                .try_borrow()
+                .map(|cell| cell.car.clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed function cell"))?;
             if i.sym_is(&head, sym::LAMBDA) {
-                true
-            } else if symbol && i.sym_id(&head).is_some_and(|id| Some(id) == i.q_soft("autoload")) {
-                let tail = super::listfn::nthcdr_of(&value, 4);
-                !matches!(tail, Value::Cons(t) if t.borrow().car.truthy())
+                Ok(true)
+            } else if symbol
+                && i.q_soft("autoload").is_some_and(|id| i.sym_id(&head) == Some(id))
+            {
+                let mut tail = value.clone();
+                for _ in 0..4 {
+                    match tail.clone() {
+                        Value::Cons(cell) => {
+                            tail = cell
+                                .try_borrow()
+                                .map(|cell| cell.cdr.clone())
+                                .map_err(|_| {
+                                    i.error("Cannot inspect a mutably borrowed autoload object")
+                                })?;
+                        }
+                        _ => {
+                            tail = Value::Nil;
+                            break;
+                        }
+                    }
+                }
+                match tail {
+                    Value::Cons(tail) => Ok(tail
+                        .try_borrow()
+                        .map(|cell| cell.car.is_nil())
+                        .map_err(|_| {
+                            i.error("Cannot inspect a mutably borrowed autoload object")
+                        })?),
+                    // GNU accepts short/dotted autoload cells with no TYPE;
+                    // TYPE=nil is a function, while non-nil types are macros
+                    // or keymaps and are not functions.
+                    _ => Ok(true),
+                }
             } else {
-                false
+                Ok(false)
             }
         }
-        _ => false,
-    })
+        _ => Ok(false),
+    }
 }
 fn f_subrp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: strict type check — (subrp 'car) is nil.  GNU 31.1
@@ -589,12 +643,15 @@ fn f_macrop(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     match &fun {
         Value::Lambda(l) => return Ok(Value::from_bool(l.is_macro)),
         Value::Cons(c) => {
-            let b = c.borrow();
-            if i.sym_is(&b.car, sym::MACRO) {
+            let (head, _) = c
+                .try_borrow()
+                .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed function cell"))?;
+            if i.sym_is(&head, sym::MACRO) {
                 return Ok(Value::t());
             }
             let auto_id = i.q("autoload");
-            if i.sym_is(&b.car, auto_id) {
+            if i.sym_is(&head, auto_id) {
                 // GNU subr.el `macrop': `(memq (nth 4 def) '(macro t))'
                 // — the return value is the memq tail, so TYPE `macro'
                 // answers (macro t), TYPE `t' answers (t), and other
@@ -705,7 +762,11 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Record(r) => {
             // `symbols-with-pos-enabled' objects are `symbol'.
             if crate::lisp::builtins::misc::raw_symbol_position(&args[0]).is_some() {
-                let name = if i.positioned_symbols_enabled() { "symbol" } else { "symbol-with-pos" };
+                let name = if i.positioned_symbols_enabled() {
+                    "symbol"
+                } else {
+                    "symbol-with-pos"
+                };
                 return Ok(Value::Sym(i.q(name)));
             }
             // GNU reports an obarray as `obarray', not its tag-record
@@ -713,20 +774,26 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if is_obarray(i, &args[0]) {
                 return Ok(Value::Sym(i.q("obarray")));
             }
-            let rr = r.borrow();
-            match rr.first() {
+            let rr = r
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed record"))?;
+            if let Some(first) = rr.first() {
                 // GNU (`Fcl_type_of'): when slot 0 is itself a record
                 // with size > 1 it is a class object and the reported
                 // type is that object's name field (slot 1).
-                Some(Value::Record(t)) if t.borrow().len() > 1 => {
-                    return Ok(t.borrow()[1].clone());
+                if let Value::Record(type_record) = first {
+                    let type_slots = type_record
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed record type"))?;
+                    if type_slots.len() > 1 {
+                        return Ok(type_slots[1].clone());
+                    }
                 }
                 // Otherwise GNU returns the record's type field
                 // (slot 0) VERBATIM — a symbol for structs/EIEIO but
                 // any object (e.g. `record' of a string) is reported
                 // as-is, never folded to `record'.
-                Some(first) => return Ok(first.clone()),
-                None => {}
+                return Ok(first.clone());
             }
             "record"
         }
@@ -738,7 +805,10 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             // `subr'; raw `#[...]' literals stay `byte-code-function'.
             if l.compiled {
                 "subr"
-            } else if l.is_bytecode() {
+            } else if l
+                .try_is_bytecode()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?
+            {
                 "byte-code-function"
             } else {
                 "interpreted-function"
@@ -905,9 +975,9 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU eval.c Fdefvaralias ordering: CHECK_SYMBOL both, constant /
     // forwarded / localized alias rejection, cyclic chain check on the
-    // BASE's indirection chain, bound-alias value propagation to an
-    // unbound BASE, let-bound-alias rejection, then install + mark
-    // both special + (possibly nil) docstring store.
+    // BASE's C-level indirection chain, bound-alias value propagation to an
+    // unbound BASE, let-bound-alias rejection, then install + mark both
+    // special + (possibly nil) docstring store.
     let newv = want_sym(i, &args[0])?;
     let base = want_sym(i, &args[1])?;
     if i.obarray.symbol(newv).constant {
@@ -925,10 +995,9 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if !seen.insert(cur) {
                 break;
             }
-            let alias_prop = i.q("variable-alias");
-            match i.get_prop(cur, alias_prop) {
-                Value::Sym(next) => cur = next,
-                _ => break,
+            match i.obarray.symbol(cur).var_alias {
+                Some(next) => cur = next,
+                None => break,
             }
         }
     }
@@ -939,10 +1008,26 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if i.obarray.symbol(newv).builtin_variable
         || i.obarray.symbol(newv).always_local
         || i.obarray.symbol(newv).make_local_if_set
-        || i.buffers.list().iter().any(|bid| {
-            i.buffers.get(*bid).is_some_and(|b| b.borrow().locals.contains_key(&newv))
-        })
     {
+        let name = i.symbol_name(newv).to_string();
+        return Err(i.error(&format!(
+            "Don’t know how to make a buffer-local variable an alias: {}",
+            name
+        )));
+    }
+    let mut has_buffer_local_value = false;
+    for buffer_id in i.buffers.list() {
+        if let Some(buffer) = i.buffers.get(buffer_id) {
+            let state = buffer
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+            if state.locals.contains_key(&newv) {
+                has_buffer_local_value = true;
+                break;
+            }
+        }
+    }
+    if has_buffer_local_value {
         let name = i.symbol_name(newv).to_string();
         return Err(i.error(&format!(
             "Don’t know how to make a buffer-local variable an alias: {}",
@@ -967,8 +1052,7 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // the proposed base as NEWVAL, and can abort the aliasing.
     let watched = i.var_alias_target(newv);
     i.fire_var_watchers(watched, &args[1], "defvaralias", None)?;
-    let prop = i.q("variable-alias");
-    i.put_prop(newv, prop, args[1].clone());
+    i.obarray.symbol_mut(newv).var_alias = Some(base);
     i.obarray.symbol_mut(newv).special = true;
     i.obarray.symbol_mut(base).special = true;
     i.obarray.symbol_mut(newv).constant = i.obarray.symbol(base).constant;
@@ -989,6 +1073,10 @@ fn f_indirect_variable(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(i.sym(i.var_alias_target(id)))
 }
 
+fn makunbound_watch_matches(name: &str, watch: Result<String, std::env::VarError>) -> bool {
+    watch.is_ok_and(|watch| watch.split(',').any(|entry| entry == name))
+}
+
 fn f_makunbound(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let id = i.var_alias_target(id);
@@ -998,11 +1086,7 @@ fn f_makunbound(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     if i.dbg_flags & 0x4000 != 0 {
         let name = i.symbol_name(id);
-        if std::env::var("WATCH_MAKUNBOUND")
-            .unwrap()
-            .split(',')
-            .any(|w| w == name)
-        {
+        if makunbound_watch_matches(&name, std::env::var("WATCH_MAKUNBOUND")) {
             eprintln!(
                 "[makunbound] {}\n{}",
                 name,
@@ -1054,7 +1138,10 @@ fn f_buffer_local_toplevel_value(i: &mut Interp, args: crate::lisp::Argv) -> Eva
     // CHECK_BUFFER(BUFFER) on the optional arg — nil = current buffer.
     let buf_id = match args.get(1) {
         None | Some(Value::Nil) => i.current_buffer,
-        Some(Value::Buffer(b)) => b.borrow().id,
+        Some(Value::Buffer(b)) => b
+            .try_borrow()
+            .map(|buffer| buffer.id)
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?,
         Some(other) => return Err(i.wrong_type_mut("bufferp", other)),
     };
     let id = want_sym(i, &args[0])?;
@@ -1073,10 +1160,13 @@ fn f_set_buffer_local_toplevel_value(i: &mut Interp, args: crate::lisp::Argv) ->
     let buf_id = match args.get(2) {
         None | Some(Value::Nil) => i.current_buffer,
         Some(Value::Buffer(b)) => {
-            if !b.borrow().live {
+            let buffer = b
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+            if !buffer.live {
                 return Err(i.error("Selecting deleted buffer"));
             }
-            b.borrow().id
+            buffer.id
         }
         Some(v @ Value::Str(_)) => match i.buffer_id_of(v) {
             Some(id) => id,
@@ -1106,6 +1196,15 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // evaluated arguments — same cell-shape semantics as `defvar'
     // (eval.c `defvar' with eval=false).
     let id = want_sym(i, &args[0])?;
+    let docstring = match args.get(2) {
+        Some(Value::Str(string)) => Some(
+            string
+                .try_borrow()
+                .map(|text| (*text).clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed variable docstring"))?,
+        ),
+        _ => None,
+    };
     i.obarray.symbol_mut(id).special = true;
     // GNU `defvar': install INIT only when the DEFAULT binding is void.
     // `bound_p' sees the live cell (a let binding counts), so when bound
@@ -1118,10 +1217,10 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             i.set_specbind_outermost_old(id, v.clone());
         }
     }
-    if let Some(Value::Str(s)) = args.get(2) {
+    if let Some(docstring) = docstring {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        i.put_prop(id, vd, Value::string(s.borrow().clone()));
+        i.put_prop(id, vd, Value::string(docstring));
     }
     Ok(args[0].clone())
 }
@@ -1130,12 +1229,21 @@ fn f_defconst_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (defconst-1 SYM INITVALUE &optional DOCSTRING): defconst with
     // evaluated arguments — always sets the default.
     let id = want_sym(i, &args[0])?;
+    let docstring = match args.get(2) {
+        Some(Value::Str(string)) => Some(
+            string
+                .try_borrow()
+                .map(|text| (*text).clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed variable docstring"))?,
+        ),
+        _ => None,
+    };
     i.obarray.symbol_mut(id).special = true;
     i.set_symbol_default(id, args[1].clone())?;
-    if let Some(Value::Str(s)) = args.get(2) {
+    if let Some(docstring) = docstring {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        i.put_prop(id, vd, Value::string(s.borrow().clone()));
+        i.put_prop(id, vd, Value::string(docstring));
     }
     let rlv = i.q("risky-local-variable");
     i.put_prop(id, rlv, Value::t());
@@ -1173,18 +1281,42 @@ fn f_define_uninitialized_variable(i: &mut Interp, args: crate::lisp::Argv) -> E
 }
 
 fn f_delete_indirect_variable(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // We don't create indirect variable bindings, so this always fails.
-    let _ = want_sym(i, &args[0])?;
-    // GNU signals (error "Cannot undeclare..." VARIABLE): the datum
-    // carries the offending symbol.
-    let sym = i.q("error");
-    Err(i.signal_data(
-        sym,
-        vec![
-            Value::string("Cannot undeclare a variable that is not an alias"),
-            args[0].clone(),
-        ],
-    ))
+    let symbol = want_sym(i, &args[0])?;
+    if i.obarray.symbol(symbol).var_alias.is_none() {
+        // GNU signals (error "Cannot undeclare..." VARIABLE): the datum
+        // carries the offending symbol.
+        let error = i.q("error");
+        return Err(i.signal_data(
+            error,
+            vec![
+                Value::string("Cannot undeclare a variable that is not an alias"),
+                args[0].clone(),
+            ],
+        ));
+    }
+
+    let plist = i.obarray.symbol(symbol).plist.clone();
+    // GNU detaches the alias before clearing its documentation. Preserve the
+    // current value in the now ordinary symbol first: if clearing the plist
+    // signals, the alias remains detached and retains the value it exposed.
+    let current_value = i.symbol_value(symbol);
+    i.obarray.symbol_mut(symbol).var_alias = None;
+    i.obarray.symbol_mut(symbol).value = current_value;
+
+    let variable_documentation = i.q("variable-documentation");
+    let plist = crate::lisp::eval::plist_put_v_checked(
+        i,
+        &plist,
+        &Value::Sym(variable_documentation),
+        Value::Nil,
+    )?;
+    i.macro_gen += 1;
+
+    // `variable-alias' in a Lisp plist is independent user property data;
+    // only the C-level indirection is removed here.
+    i.obarray.symbol_mut(symbol).plist = plist;
+    i.set_symbol(symbol, Value::Sym(sym::UNBOUND))?;
+    Ok(args[0].clone())
 }
 
 fn f_obarray_buckets(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1194,7 +1326,7 @@ fn f_obarray_buckets(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let ob = Some(check_obarray(i, &args[0])?);
     if let Some(o) = &ob {
         if !is_default_obarray(i, o) {
-            return Ok(Value::list(vec![Value::list(obarray_syms(i, o))]));
+            return Ok(Value::list(vec![Value::list(obarray_syms(i, o)?)]));
         }
     }
     let names: Vec<Value> = i
@@ -1260,124 +1392,187 @@ fn f_fmakunbound(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 pub(crate) fn f_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     // GNU accepts any propname (eq-compared), not only symbols.
-    Ok(crate::lisp::eval::plist_get_v(
-        &i.obarray.symbol(id).plist,
-        &args[1],
-    ))
+    let plist = i.obarray.symbol(id).plist.clone();
+    crate::lisp::eval::plist_get_v_checked(i, &plist, &args[1])
 }
 fn f_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    i.macro_gen += 1;
     let plist = i.obarray.symbol(id).plist.clone();
-    let new_plist = crate::lisp::eval::plist_put_v(&plist, &args[1], args[2].clone());
+    let new_plist = crate::lisp::eval::plist_put_v_checked(i, &plist, &args[1], args[2].clone())?;
+    i.macro_gen += 1;
     i.obarray.symbol_mut(id).plist = new_plist;
-    if matches!(&args[1], Value::Sym(s) if *s == i.var_alias_prop) {
-        i.obarray.symbol_mut(id).var_alias = match &args[2] {
-            Value::Sym(s) => Some(*s),
-            _ => None,
-        };
-    }
     Ok(args[2].clone())
 }
 fn f_setplist(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     i.macro_gen += 1;
     i.obarray.symbol_mut(id).plist = args[1].clone();
-    i.obarray.symbol_mut(id).var_alias =
-        match crate::lisp::eval::plist_get(&args[1], i.var_alias_prop) {
-            Value::Sym(s) => Some(s),
-            _ => None,
-        };
     Ok(args[1].clone())
 }
-pub(crate) fn string_intern_key(i: &Interp, string: &crate::lisp::value::StrRef) -> crate::lisp::obarray::InternKey {
-    crate::lisp::obarray::InternKey {
-        bytes: super::strfn::gnu_sbytes(i, string),
-        characters: string.borrow().chars().count(),
-    }
+pub(crate) fn string_intern_key(
+    i: &Interp,
+    string: &crate::lisp::value::StrRef,
+) -> Result<crate::lisp::obarray::InternKey, Flow> {
+    let bytes = super::strfn::try_gnu_sbytes(i, string)?;
+    let characters = string
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed symbol name"))?
+        .chars()
+        .count();
+    Ok(crate::lisp::obarray::InternKey { bytes, characters })
 }
 
-fn symbol_name_key(i: &Interp, symbol: crate::lisp::value::SymId) -> crate::lisp::obarray::InternKey {
+fn symbol_name_key(
+    i: &Interp,
+    symbol: crate::lisp::value::SymId,
+) -> Result<crate::lisp::obarray::InternKey, Flow> {
     let cell = i.obarray.symbol(symbol);
     match &cell.name_string {
         Some(string) => string_intern_key(i, string),
-        None => cell.internment_key.clone()
-            .unwrap_or_else(|| crate::lisp::obarray::InternKey::from_text(&cell.name)),
+        None => Ok(cell
+            .internment_key
+            .clone()
+            .unwrap_or_else(|| crate::lisp::obarray::InternKey::from_text(&cell.name))),
     }
 }
 
 pub(crate) fn lookup_in_obarray(
-    i: &Interp, obarray: &Option<Value>, key: &crate::lisp::obarray::InternKey,
-) -> Option<crate::lisp::value::SymId> {
+    i: &Interp,
+    obarray: &Option<Value>,
+    key: &crate::lisp::obarray::InternKey,
+) -> Result<Option<crate::lisp::value::SymId>, Flow> {
     if let Some(table) = obarray {
         if !is_default_obarray(i, table) {
-            return obarray_syms(i, table).into_iter().find_map(|value| {
-                let symbol = i.sym_id(&value)?;
-                (symbol_name_key(i, symbol) == *key).then_some(symbol)
-            });
+            for value in obarray_syms(i, table)? {
+                let Some(symbol) = i.sym_id(&value) else {
+                    continue;
+                };
+                if symbol_name_key(i, symbol)? == *key {
+                    return Ok(Some(symbol));
+                }
+            }
+            return Ok(None);
         }
     }
-    i.obarray.key_candidates(key).iter().rev().copied()
-        .find(|&symbol| symbol_name_key(i, symbol) == *key)
+    for symbol in i.obarray.key_candidates(key).iter().rev().copied() {
+        if symbol_name_key(i, symbol)? == *key {
+            return Ok(Some(symbol));
+        }
+    }
+    Ok(None)
 }
 
 /// The intern_driver operation, after name transformation and obarray checks.
 /// It bypasses the public intern cell, just as lread.c does.
-pub(crate) fn intern_in_obarray(i: &mut Interp, name: &crate::lisp::value::StrRef, obarray: &Option<Value>) -> crate::lisp::value::SymId {
-    let key = string_intern_key(i, name);
-    if let Some(symbol) = lookup_in_obarray(i, obarray, &key) { return symbol; }
-    let text = name.borrow().clone();
-    let custom = obarray.as_ref().filter(|table| !is_default_obarray(i, table));
-    let symbol = if custom.is_some() { i.make_symbol(&text) }
-                 else { i.obarray.intern_new_with_key(&text, key) };
+pub(crate) fn intern_in_obarray(
+    i: &mut Interp,
+    name: &crate::lisp::value::StrRef,
+    obarray: &Option<Value>,
+) -> Result<crate::lisp::value::SymId, Flow> {
+    let key = string_intern_key(i, name)?;
+    if let Some(symbol) = lookup_in_obarray(i, obarray, &key)? {
+        return Ok(symbol);
+    }
+    let text = name
+        .try_borrow()
+        .map(|name| (*name).clone())
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed symbol name"))?;
+    let custom = obarray
+        .as_ref()
+        .filter(|table| !is_default_obarray(i, table));
+    let symbol = if custom.is_some() {
+        i.make_symbol(&text)
+    } else {
+        i.obarray.intern_new_with_key(&text, key)
+    };
     i.obarray.symbol_mut(symbol).name_string = Some(name.clone());
-    if let Some(table) = custom { obarray_push(i, table, &i.sym(symbol)); }
-    symbol
+    if let Some(table) = custom {
+        obarray_push(i, table, &i.sym(symbol));
+    }
+    Ok(symbol)
 }
 
 /// oblookup_considering_shorthand: byte-prefix matching, first valid pair,
 /// permissive dotted/invalid entries and GNU's bounded-space safe traversal.
 pub(crate) fn expand_symbol_shorthand(
-    i: &mut Interp, name: &crate::lisp::value::StrRef, multibyte: bool,
-) -> Option<crate::lisp::value::StrRef> {
-    let variable = i.q_soft("read-symbol-shorthands")?;
+    i: &mut Interp,
+    name: &crate::lisp::value::StrRef,
+    multibyte: bool,
+) -> Result<Option<crate::lisp::value::StrRef>, Flow> {
+    let Some(variable) = i.q_soft("read-symbol-shorthands") else {
+        return Ok(None);
+    };
     let mut tail = i.symbol_value(variable);
-    if !matches!(tail, Value::Cons(_)) { return None; }
-    let bytes = super::strfn::gnu_sbytes(i, name);
+    if !matches!(tail, Value::Cons(_)) {
+        return Ok(None);
+    }
+    let bytes = super::strfn::try_gnu_sbytes(i, name)?;
     let mut tortoise = tail.clone();
     let mut span = 2usize;
     let mut blocks = 0isize;
     let mut steps = 2u16;
     while let Value::Cons(cell) = tail {
-        let (pair, next) = { let cell = cell.borrow(); (cell.car.clone(), cell.cdr.clone()) };
+        let (pair, next) = {
+            let cell = cell
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed read-symbol-shorthands list"))?;
+            (cell.car.clone(), cell.cdr.clone())
+        };
         if let Value::Cons(pair) = pair {
-            let pair = pair.borrow();
+            let pair = pair
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed symbol shorthand"))?;
             if let (Value::Str(short), Value::Str(long)) = (&pair.car, &pair.cdr) {
-                let prefix = super::strfn::gnu_sbytes(i, short);
+                let prefix = super::strfn::try_gnu_sbytes(i, short)?;
                 if bytes.starts_with(&prefix) {
-                    let mut expanded = super::strfn::gnu_sbytes(i, long);
+                    let mut expanded = super::strfn::try_gnu_sbytes(i, long)?;
                     expanded.extend_from_slice(&bytes[prefix.len()..]);
-                    let characters = name.borrow().chars().count() as isize
-                        - short.borrow().chars().count() as isize
-                        + long.borrow().chars().count() as isize;
-                    let text = if multibyte { crate::lisp::value::emacs_string_bytes(&expanded) }
-                               else {
-                                   // make_specified_string's unibyte path uses
-                                   // the calculated character count as its byte length.
-                                   expanded.into_iter().take(characters.max(0) as usize)
-                                       .map(char::from).collect()
-                               };
+                    let name_characters = name
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed symbol name"))?
+                        .chars()
+                        .count() as isize;
+                    let short_characters = short
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed symbol shorthand"))?
+                        .chars()
+                        .count() as isize;
+                    let long_characters = long
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed symbol shorthand"))?
+                        .chars()
+                        .count() as isize;
+                    let characters = name_characters - short_characters + long_characters;
+                    let text = if multibyte {
+                        crate::lisp::value::emacs_string_bytes(&expanded)
+                    } else {
+                        // make_specified_string's unibyte path uses
+                        // the calculated character count as its byte length.
+                        expanded
+                            .into_iter()
+                            .take(characters.max(0) as usize)
+                            .map(char::from)
+                            .collect()
+                    };
                     let string = Value::string_ref_with_kind(text, multibyte);
-                    if multibyte { i.mark_multibyte(&string); } else { i.mark_unibyte(&string); }
-                    return Some(string);
+                    if multibyte {
+                        i.mark_multibyte(&string);
+                    } else {
+                        i.mark_unibyte(&string);
+                    }
+                    return Ok(Some(string));
                 }
             }
         }
         tail = next;
         steps = steps.wrapping_sub(1);
-        let check = if steps != 0 { true } else {
+        let check = if steps != 0 {
+            true
+        } else {
             blocks -= 1;
-            if blocks > 0 { true } else {
+            if blocks > 0 {
+                true
+            } else {
                 span = span.saturating_mul(2);
                 steps = span as u16;
                 blocks = (span >> 16) as isize;
@@ -1385,31 +1580,40 @@ pub(crate) fn expand_symbol_shorthand(
                 false
             }
         };
-        if check && eq_values(&tail, &tortoise) { break; }
+        if check && eq_values(&tail, &tortoise) {
+            break;
+        }
     }
-    None
+    Ok(None)
 }
 
 pub(crate) fn f_intern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let obarray = resolve_obarray(i, args.get(1))?;
-    let Value::Str(name) = &args[0] else { return Err(i.wrong_type_mut("stringp", &args[0])); };
-    let name = expand_symbol_shorthand(i, name, true).unwrap_or_else(|| name.clone());
-    let symbol = intern_in_obarray(i, &name, &obarray);
+    let Value::Str(name) = &args[0] else {
+        return Err(i.wrong_type_mut("stringp", &args[0]));
+    };
+    let name = expand_symbol_shorthand(i, name, true)?.unwrap_or_else(|| name.clone());
+    let symbol = intern_in_obarray(i, &name, &obarray)?;
     Ok(i.sym(symbol))
 }
 
 fn f_intern_soft(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let obarray = resolve_obarray(i, args.get(1))?;
     if let Some(symbol) = i.sym_id(&args[0]) {
-        let key = symbol_name_key(i, symbol);
-        return Ok(if lookup_in_obarray(i, &obarray, &key) == Some(symbol) {
+        let key = symbol_name_key(i, symbol)?;
+        return Ok(if lookup_in_obarray(i, &obarray, &key)? == Some(symbol) {
             args[0].clone()
-        } else { Value::Nil });
+        } else {
+            Value::Nil
+        });
     }
-    let Value::Str(name) = &args[0] else { return Err(i.wrong_type_mut("stringp", &args[0])); };
-    let name = expand_symbol_shorthand(i, name, true).unwrap_or_else(|| name.clone());
-    Ok(lookup_in_obarray(i, &obarray, &string_intern_key(i, &name))
-        .map(|symbol| i.sym(symbol)).unwrap_or(Value::Nil))
+    let Value::Str(name) = &args[0] else {
+        return Err(i.wrong_type_mut("stringp", &args[0]));
+    };
+    let name = expand_symbol_shorthand(i, name, true)?.unwrap_or_else(|| name.clone());
+    Ok(lookup_in_obarray(i, &obarray, &string_intern_key(i, &name)?)?
+        .map(|symbol| i.sym(symbol))
+        .unwrap_or(Value::Nil))
 }
 
 fn f_unintern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -1417,22 +1621,29 @@ fn f_unintern(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let symbol = match i.sym_id(&args[0]) {
         Some(symbol) => Some(symbol),
         None => {
-            let Value::Str(name) = &args[0] else { return Err(i.wrong_type_mut("stringp", &args[0])); };
-            let name = expand_symbol_shorthand(i, name, true).unwrap_or_else(|| name.clone());
-            lookup_in_obarray(i, &obarray, &string_intern_key(i, &name))
+            let Value::Str(name) = &args[0] else {
+                return Err(i.wrong_type_mut("stringp", &args[0]));
+            };
+            let name = expand_symbol_shorthand(i, name, true)?.unwrap_or_else(|| name.clone());
+            lookup_in_obarray(i, &obarray, &string_intern_key(i, &name)?)?
         }
     };
-    let Some(symbol) = symbol else { return Ok(Value::Nil); };
+    let Some(symbol) = symbol else {
+        return Ok(Value::Nil);
+    };
     if let Some(table) = &obarray {
         if !is_default_obarray(i, table) {
-            return Ok(Value::from_bool(obarray_remove(i, table, &i.sym(symbol))));
+            return Ok(Value::from_bool(obarray_remove(i, table, &i.sym(symbol))?));
         }
     }
     Ok(Value::from_bool(i.obarray.unintern_symbol(symbol)))
 }
 fn f_make_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|name| (*name).clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed make-symbol name"))?,
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
     let id = i.make_symbol(&name);
@@ -1444,12 +1655,15 @@ fn f_make_symbol(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// Obarrays are record-backed here, but their identity is tracked
 /// separately so an ordinary record tagged `obarray` stays a record.
 fn obarray_tag(i: &Interp) -> Value {
-    i.default_obarray.as_ref().and_then(|table| table.borrow().first().cloned())
+    i.default_obarray
+        .as_ref()
+        .and_then(|table| table.borrow().first().cloned())
         .unwrap_or_else(|| Value::Sym(i.q_soft("obarray").unwrap_or(0)))
 }
 
 pub(crate) fn is_obarray(_i: &Interp, v: &Value) -> bool {
-    matches!(v, Value::Record(_)) && v.record_kind() == Some(crate::lisp::value::RecordKind::Obarray)
+    matches!(v, Value::Record(_))
+        && v.record_kind() == Some(crate::lisp::value::RecordKind::Obarray)
 }
 
 /// The value of the `obarray' variable denotes the default symbol
@@ -1465,19 +1679,22 @@ pub(crate) fn is_default_obarray(i: &Interp, v: &Value) -> bool {
 /// The symbols interned in a custom (Record-based) obarray.  The vec
 /// is kept in GNU `map_obarray' order: bucket index ascending, and
 /// within a bucket most-recently-interned first (head insertion).
-pub(crate) fn obarray_syms(i: &Interp, ob: &Value) -> Vec<Value> {
-    let _ = i;
+pub(crate) fn obarray_syms(i: &Interp, ob: &Value) -> Result<Vec<Value>, Flow> {
     if let Value::Record(r) = ob {
-        if let Some(Value::Vec(v)) = r.borrow().get(1) {
-            return v
-                .borrow()
+        let slots = r
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed obarray record"))?;
+        if let Some(Value::Vec(v)) = slots.get(1) {
+            return Ok(v
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed obarray symbol vector"))?
                 .iter()
                 .filter(|x| matches!(x, Value::Sym(_)))
                 .cloned()
-                .collect();
+                .collect());
         }
     }
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// GNU `obarray_index': hash_char_array + knuth_hash reduction.
@@ -1489,12 +1706,18 @@ fn gnu_obarray_hash(name: &[u8], bits: u32) -> u32 {
         let mut p = 0usize;
         while p + 8 <= name.len() {
             let c = u64::from_ne_bytes(name[p..p + 8].try_into().unwrap());
-            hash = hash.wrapping_shl(4).wrapping_add(hash >> 60).wrapping_add(c);
+            hash = hash
+                .wrapping_shl(4)
+                .wrapping_add(hash >> 60)
+                .wrapping_add(c);
             p += step;
         }
         // Tail: always hash the last 8 bytes (may overlap).
         let c = u64::from_ne_bytes(name[name.len() - 8..].try_into().unwrap());
-        hash = hash.wrapping_shl(4).wrapping_add(hash >> 60).wrapping_add(c);
+        hash = hash
+            .wrapping_shl(4)
+            .wrapping_add(hash >> 60)
+            .wrapping_add(c);
     } else {
         let mut tail: u64 = 0;
         let mut p = 0usize;
@@ -1511,7 +1734,10 @@ fn gnu_obarray_hash(name: &[u8], bits: u32) -> u32 {
         if p < name.len() {
             tail = (tail << 8) + name[p] as u64;
         }
-        hash = hash.wrapping_shl(4).wrapping_add(hash >> 60).wrapping_add(tail);
+        hash = hash
+            .wrapping_shl(4)
+            .wrapping_add(hash >> 60)
+            .wrapping_add(tail);
     }
     let h32 = (hash ^ (hash >> 32)) as u32;
     (((h32.wrapping_mul(2654435769)) as u64) >> (32 - bits)) as u32
@@ -1607,10 +1833,15 @@ fn obarray_push(i: &Interp, ob: &Value, sym: &Value) {
     }
 }
 
-fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
+fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> Result<bool, Flow> {
     if let Value::Record(r) = ob {
-        if let Some(Value::Vec(v)) = r.borrow().get(1) {
-            let mut v = v.borrow_mut();
+        let slots = r
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed obarray record"))?;
+        if let Some(Value::Vec(v)) = slots.get(1) {
+            let mut v = v
+                .try_borrow_mut()
+                .map_err(|_| i.error("Cannot update a mutably borrowed obarray symbol vector"))?;
             // Strings select by name; symbols (including positioned
             // symbols) must be the actual member, not a same-name twin.
             if let Some(pos) = v.iter().position(|candidate| match (sym, candidate) {
@@ -1619,11 +1850,11 @@ fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
                 _ => false,
             }) {
                 v.remove(pos);
-                return true;
+                return Ok(true);
             }
         }
     }
-    false
+    Ok(false)
 }
 
 /// Check an optional OBARRAY argument and resolve it to the effective
@@ -1653,19 +1884,29 @@ fn check_obarray(i: &mut Interp, value: &Value) -> Result<Value, Flow> {
             // obarray iff slot 0 is 0 (fresh obarray object is stored
             // there) or an obarray already — the remaining slots are
             // IGNORED entirely (no per-slot bucket validation).
-            let v0 = vec.borrow().first().cloned();
+            let v0 = vec
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed obarray vector"))?
+                .first()
+                .cloned();
             if let Some(v0) = v0 {
                 if is_obarray(i, &v0) {
                     return Ok(v0);
                 }
                 if matches!(v0, Value::Int(0)) {
-                    let rec = Value::record_with_kind(vec![
-                        obarray_tag(i),
-                        Value::Vec(Value::allocate_vector_ref(Vec::new())),
-                        // GNU uses make_obarray(0): one bucket.
-                        Value::Int(0),
-                    ], crate::lisp::value::RecordKind::Obarray);
-                    vec.borrow_mut()[0] = rec.clone();
+                    let rec = Value::record_with_kind(
+                        vec![
+                            obarray_tag(i),
+                            Value::Vec(Value::allocate_vector_ref(Vec::new())),
+                            // GNU uses make_obarray(0): one bucket.
+                            Value::Int(0),
+                        ],
+                        crate::lisp::value::RecordKind::Obarray,
+                    );
+                    let mut entries = vec
+                        .try_borrow_mut()
+                        .map_err(|_| i.error("Cannot promote a mutably borrowed obarray vector"))?;
+                    entries[0] = rec.clone();
                     return Ok(rec);
                 }
             }
@@ -1681,7 +1922,7 @@ fn f_mapatoms(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let ob = resolve_obarray(i, args.get(1))?;
     if let Some(ob) = &ob {
         if !is_default_obarray(i, ob) {
-            for sym in obarray_syms(i, ob) {
+            for sym in obarray_syms(i, ob)? {
                 i.apply(&fun, vec![sym])?;
             }
             return Ok(Value::Nil);
@@ -1697,6 +1938,7 @@ pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> Ev
     let mut cur = crate::lisp::builtins::misc::unpos(i, &args[0]);
     let mut seen: std::collections::HashSet<crate::lisp::value::SymId> =
         std::collections::HashSet::new();
+    let mut until_quit = 1024usize;
     loop {
         match cur {
             Value::Sym(id) => {
@@ -1717,6 +1959,11 @@ pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> Ev
                     }
                     Value::Sym(next) => cur = i.sym(next),
                     other => return Ok(other),
+                }
+                until_quit -= 1;
+                if until_quit == 0 {
+                    i.maybe_quit()?;
+                    until_quit = 1024;
                 }
             }
             other => return Ok(other),
@@ -1744,7 +1991,11 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
         return f_interactive_form(i, vec![f].into());
     }
     let autoload = i.q("autoload");
-    if matches!(&f, Value::Cons(c) if i.sym_is(&c.borrow().car, autoload)) {
+    let is_autoload = match &f {
+        Value::Cons(c) => i.sym_is(&cons_parts(i, c)?.0, autoload),
+        _ => false,
+    };
+    if is_autoload {
         // GNU passes CMD as FUNNAME; a bare autoload cons is not a symbol.
         if !matches!(args[0], Value::Sym(_)) {
             return Err(i.wrong_type_mut("symbolp", &args[0]));
@@ -1764,9 +2015,16 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
         }
         _ => match f.as_lambda() {
             Some(l) => {
-                let raw = l.interactive.clone().or_else(|| bc_interactive_form(i, &l));
+                // For byte-code/reader function objects, slot 5 is the
+                // authoritative interactive spec. Reader circle fixups can
+                // replace a raw slot after the cached Lambda field is built.
+                let raw = if l.bc_items.is_some() {
+                    bc_interactive_form(i, l)?
+                } else {
+                    l.interactive.clone()
+                };
                 match raw {
-                    Some(spec) => Ok(normalize_interactive_spec(i, spec)),
+                    Some(spec) => normalize_interactive_spec(i, spec),
                     // GNU data.c: OClosure-typed functions fall through to
                     // `calln(oclosure-interactive-form, fun)' when the
                     // generic exists.
@@ -1779,11 +2037,16 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
                         // default method returns nil).
                         let is_oclosure = match &f {
                             Value::Lambda(l) => {
-                                l.bc_items
-                                    .as_ref()
-                                    .and_then(|it| it.borrow().get(4).cloned())
-                                    .map(|v| matches!(v, Value::Sym(_)))
-                                    .unwrap_or(false)
+                                let tag = match &l.bc_items {
+                                    Some(items) => items
+                                        .try_borrow()
+                                        .map(|items| items.get(4).cloned())
+                                        .map_err(|_| {
+                                            i.error("Cannot inspect a mutably borrowed byte-code object")
+                                        })?,
+                                    None => None,
+                                };
+                                tag.map(|v| matches!(v, Value::Sym(_))).unwrap_or(false)
                                     // Interpreted oclosures store the type
                                     // symbol in the doc slot too (eval.c
                                     // `make-interpreted-closure' layout).
@@ -1809,7 +2072,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
             // /`(macro . (lambda ...))' form: docstring and `declare'
             // /`interactive-declare' elements are skipped and the first
             // remaining form is returned when it is `(interactive ...)'.
-            None => Ok(interactive_form_list(i, &f)),
+            None => interactive_form_list(i, &f),
         },
     }
 }
@@ -1817,20 +2080,33 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
 /// The `(interactive SPEC)' form of a `#[argdesc str consts depth
 /// doc ispec]' byte-code object — GNU stores the interactive spec as
 /// element 5 (Ffetch_bytecode / `interactive-form' read it from there).
-pub(crate) fn bc_interactive_form(i: &mut Interp, l: &Rc<Lambda>) -> Option<Value> {
-    let items = l.bc_items.as_ref()?.borrow();
+pub(crate) fn bc_interactive_form(
+    i: &mut Interp,
+    l: &Rc<Lambda>,
+) -> Result<Option<Value>, Flow> {
+    let Some(items) = &l.bc_items else {
+        return Ok(None);
+    };
+    let items = items
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
     // GNU Fcommandp: `PVSIZE (fun) > CLOSURE_INTERACTIVE' — the mere
     // PRESENCE of slot 5 (even holding nil) makes the object a
     // command; `interactive-form' then reports `(interactive nil)'.
     // A 5-slot `#[args str consts depth doc]' has no spec at all.
-    let spec = items.get(5)?;
+    let Some(spec) = items.get(5) else {
+        return Ok(None);
+    };
     // A VECTOR in slot 5 is the command-modes form — the spec is its
     // first element (data.c Finteractive_form).
     let spec = match spec {
-        Value::Vec(v) => v.borrow().first().cloned().unwrap_or(Value::Nil),
+        Value::Vec(v) => v
+            .try_borrow()
+            .map(|values| values.first().cloned().unwrap_or(Value::Nil))
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed interactive spec vector"))?,
         s => s.clone(),
     };
-    Some(Value::list(vec![Value::Sym(i.q("interactive")), spec]))
+    Ok(Some(Value::list(vec![Value::Sym(i.q("interactive")), spec])))
 }
 /// GNU `documentation-function-or-1' semantics for `(macro . FUN)':
 /// unwrap the macro cell so doc/subr lookups see the inner function.
@@ -1844,70 +2120,84 @@ pub(crate) fn macro_inner(i: &mut Interp, f: Value) -> Value {
 
 /// GNU `interactive-form' result for an `(interactive ...)' element:
 /// a bare `(interactive)' reads back as `(interactive nil)'.
-fn normalize_interactive_spec(i: &mut Interp, v: Value) -> Value {
+fn normalize_interactive_spec(i: &mut Interp, v: Value) -> EvalResult {
     let interactive = i.q("interactive");
-    match &v {
-        Value::Cons(c)
-            if i.sym_id(&c.borrow().car) == Some(interactive) && c.borrow().cdr.is_nil() =>
-        {
-            Value::list(vec![Value::Sym(interactive), Value::Nil])
+    if let Value::Cons(cell) = &v {
+        let (head, tail) = cons_parts(i, cell)?;
+        if i.sym_id(&head) == Some(interactive) && tail.is_nil() {
+            return Ok(Value::list(vec![Value::Sym(interactive), Value::Nil]));
         }
-        _ => v,
     }
+    Ok(v)
 }
 
 /// `interactive-form' over a cons-shaped function (unevaluated
 /// lambda/closure/macro data), as in GNU's Finteractive_form.
-fn interactive_form_list(i: &mut Interp, f: &Value) -> Value {
-    let Value::Cons(_) = f else { return Value::Nil };
-    let mut items: Vec<Value> = f.list_to_vec().unwrap_or_default();
+fn interactive_form_list(i: &mut Interp, f: &Value) -> EvalResult {
+    let mut function = f.clone();
     // `(macro . FUN)' — step inside the macro wrapper.
-    if items
-        .first()
-        .and_then(|h| i.sym_id(h))
-        .map(|s| i.symbol_name(s) == "macro")
-        .unwrap_or(false)
-    {
-        if let Some(d) = items.get(1) {
-            items = d.list_to_vec().unwrap_or_default();
+    if let Value::Cons(cell) = &function {
+        let (head, tail) = cons_parts(i, cell)?;
+        if i.sym_id(&head) == Some(sym::MACRO) {
+            function = tail;
         }
     }
-    let head = items
-        .first()
-        .and_then(|h| i.sym_id(h))
-        .map(|s| i.symbol_name(s));
-    let body_at = match head.as_deref() {
-        Some("lambda") => 2,
-        Some("closure") => 3,
-        _ => return Value::Nil,
+    let Value::Cons(head_cell) = &function else {
+        return Ok(Value::Nil);
     };
+    let (head, mut body) = cons_parts(i, head_cell)?;
+    let body_at = match i.sym_id(&head) {
+        Some(sym::LAMBDA) => 2,
+        Some(id) if i.intern_soft("closure") == Some(id) => 3,
+        _ => return Ok(Value::Nil),
+    };
+    // Only step through the fixed header before scanning body forms. GNU
+    // returns an interactive declaration as soon as it sees one, even if a
+    // later dotted or circular tail makes the entire function form invalid.
+    for _ in 1..body_at {
+        let Value::Cons(cell) = body else {
+            return Ok(Value::Nil);
+        };
+        body = cons_parts(i, &cell)?.1;
+    }
     let interactive = i.q("interactive");
     let declare = i.q("declare");
     let ideclare = i.q("interactive-declare");
-    for el in &items[body_at.min(items.len())..] {
+    let mut seen = std::collections::HashSet::new();
+    while let Value::Cons(cell) = body.clone() {
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            return Ok(Value::Nil);
+        }
+        let (el, next) = cons_parts(i, &cell)?;
+        body = next;
         if matches!(el, Value::Str(_)) {
             continue;
         }
-        let head_id = match el {
-            Value::Cons(c) => i.sym_id(&c.borrow().car),
+        let head_id = match &el {
+            Value::Cons(c) => i.sym_id(&cons_parts(i, c)?.0),
             _ => None,
         };
         if head_id == Some(interactive) {
             // Unevaluated lambda/closure data reads back verbatim —
             // GNU returns the raw `(interactive)' (no nil padding).
-            return el.clone();
+            return Ok(el);
         }
         if head_id == Some(declare) || head_id == Some(ideclare) {
             continue;
         }
         break;
     }
-    Value::Nil
+    Ok(Value::Nil)
 }
 fn f_variable_binding_locus(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     if let Some(b) = i.buffers.get(i.current_buffer) {
-        if b.borrow().locals.contains_key(&id) {
+        let has_local_value = b
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?
+            .locals
+            .contains_key(&id);
+        if has_local_value {
             let buf = i.buffers.get(i.current_buffer).unwrap().clone();
             return Ok(Value::Buffer(buf));
         }
@@ -1947,9 +2237,13 @@ fn f_function_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             }
             // A (lambda ...) / (closure ...) form is a function too.
             Value::Cons(c) => {
-                let head = c.borrow().car.clone();
+                let head = c
+                    .try_borrow()
+                    .map(|cell| cell.car.clone())
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed function form"))?;
+                let closure = i.intern_soft("closure");
                 match i.sym_id(&head) {
-                    Some(s) if matches!(i.symbol_name(s).as_str(), "lambda" | "closure") => {
+                    Some(s) if s == sym::LAMBDA || Some(s) == closure => {
                         return Ok(args[2].clone());
                     }
                     _ => {
@@ -2006,11 +2300,14 @@ fn f_obarray_make(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         }
         Some(v) => return Err(i.wrong_type_mut("wholenump", v)),
     };
-    Ok(Value::record_with_kind(vec![
-        obarray_tag(i),
-        Value::Vec(Value::allocate_vector_ref(Vec::new())),
-        Value::Int(bits as i128),
-    ], crate::lisp::value::RecordKind::Obarray))
+    Ok(Value::record_with_kind(
+        vec![
+            obarray_tag(i),
+            Value::Vec(Value::allocate_vector_ref(Vec::new())),
+            Value::Int(bits as i128),
+        ],
+        crate::lisp::value::RecordKind::Obarray,
+    ))
 }
 fn f_obarrayp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(is_obarray(i, &args[0])))
@@ -2029,8 +2326,17 @@ fn f_obarray_clear(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     }
     if let Value::Record(r) = &ob {
-        if let Some(Value::Vec(v)) = r.borrow().get(1) {
-            v.borrow_mut().clear();
+        {
+            let slots = r
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed obarray record"))?;
+            if let Some(Value::Vec(v)) = slots.get(1) {
+                v.try_borrow_mut()
+                    .map_err(|_| {
+                        i.error("Cannot clear a mutably borrowed obarray symbol vector")
+                    })?
+                    .clear();
+            }
         }
         // GNU resets to the default size (8 buckets).
         set_obarray_bits(&ob, 3);
@@ -2045,4 +2351,99 @@ fn f_obarray_clear(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// `fset' instead.)
 fn normalize_fn_def(_i: &mut Interp, def: Value) -> Value {
     def
+}
+
+#[cfg(test)]
+mod plist_cycle_tests {
+    use super::*;
+    use crate::lisp::{error::Flow, obarray::Obarray, sym};
+
+    #[test]
+    fn put_signals_circular_list_for_a_missing_property() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let owner = interp.intern("plist-put-cycle-owner");
+        let existing = interp.intern("plist-put-cycle-existing");
+        let requested = interp.intern("plist-put-cycle-requested");
+        let key = Value::cons(Value::Sym(existing), Value::Nil);
+        let value = Value::cons(Value::Int(1), key.clone());
+        if let Value::Cons(cell) = &key {
+            cell.borrow_mut().cdr = value;
+        }
+        interp.obarray.symbol_mut(owner).plist = key;
+        let old_plist = interp.obarray.symbol(owner).plist.clone();
+        let old_macro_gen = interp.macro_gen;
+
+        let result = f_put(
+            &mut interp,
+            vec![Value::Sym(owner), Value::Sym(requested), Value::Int(42)].into(),
+        );
+        assert!(matches!(
+            result,
+            Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+        ));
+        assert_eq!(interp.macro_gen, old_macro_gen);
+        assert!(crate::lisp::builtins::eq_values(
+            &interp.obarray.symbol(owner).plist,
+            &old_plist
+        ));
+    }
+
+    #[test]
+    fn put_still_appends_to_a_proper_symbol_plist() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let owner = interp.intern("plist-put-owner");
+        let existing = interp.intern("plist-put-existing");
+        let new_property = interp.intern("plist-put-new");
+        interp.obarray.symbol_mut(owner).plist =
+            Value::list(vec![Value::Sym(existing), Value::Int(1)]);
+
+        let result = f_put(
+            &mut interp,
+            vec![Value::Sym(owner), Value::Sym(new_property), Value::Int(42)].into(),
+        )
+        .unwrap();
+        assert!(matches!(result, Value::Int(42)));
+        assert!(matches!(
+            crate::lisp::eval::plist_get_v(
+                &interp.obarray.symbol(owner).plist,
+                &Value::Sym(new_property),
+            ),
+            Value::Int(42)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod makunbound_watch_tests {
+    use super::makunbound_watch_matches;
+
+    #[test]
+    fn missing_or_invalid_watch_values_do_not_panic_or_match() {
+        assert!(!makunbound_watch_matches(
+            "sample-variable",
+            Err(std::env::VarError::NotPresent)
+        ));
+        assert!(makunbound_watch_matches(
+            "sample-variable",
+            Ok("other-variable,sample-variable".to_string())
+        ));
+        assert!(!makunbound_watch_matches(
+            "sample-variable-extra",
+            Ok("sample-variable".to_string())
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_watch_value_is_ignored() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = std::ffi::OsString::from_vec(vec![0xff]);
+        assert!(!makunbound_watch_matches(
+            "sample-variable",
+            Err(std::env::VarError::NotUnicode(invalid))
+        ));
+    }
 }

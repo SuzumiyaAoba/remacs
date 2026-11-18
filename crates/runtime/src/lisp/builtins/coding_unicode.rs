@@ -158,8 +158,12 @@ pub(super) fn normalize_eol(text: &EmacsStr, fixed: Option<usize>) -> (EmacsText
             if chars.get(at + 1).is_some_and(|c| *c == '\n') {
                 seen[1] = true;
                 at += 1;
-            } else { seen[2] = true; }
-        } else if chars[at] == '\n' { seen[0] = true; }
+            } else {
+                seen[2] = true;
+            }
+        } else if chars[at] == '\n' {
+            seen[0] = true;
+        }
         at += 1;
     }
     let eol = fixed.or_else(|| match seen.iter().filter(|s| **s).count() {
@@ -170,7 +174,9 @@ pub(super) fn normalize_eol(text: &EmacsStr, fixed: Option<usize>) -> (EmacsText
     let mut out = EmacsText::new();
     at = 0;
     while at < chars.len() {
-        if eol == Some(1) && chars[at..].starts_with(&[EmacsChar::from('\r'), EmacsChar::from('\n')]) {
+        if eol == Some(1)
+            && chars[at..].starts_with(&[EmacsChar::from('\r'), EmacsChar::from('\n')])
+        {
             out.push('\n');
             at += 2;
         } else {
@@ -192,14 +198,21 @@ mod wide_character_tests {
     #[test]
     fn utf16_retains_private_use_and_lone_surrogate_codes() {
         let text = decode_utf16("utf-16be", &[0xdb, 0x80, 0xdc, 0x80, 0xdc, 0x00, -0x3fff80]);
-        assert_eq!(text.codes().collect::<Vec<_>>(), [0xf0080, 0xdc00, 0x3fff80]);
+        assert_eq!(
+            text.codes().collect::<Vec<_>>(),
+            [0xf0080, 0xdc00, 0x3fff80]
+        );
     }
 
     #[test]
     fn eol_conversion_changes_only_line_endings() {
-        let source = EmacsText::from_codes([0xf0080, 13, 10, 0x3fff80, 13, 10, 0xd800, 0x110000]).unwrap();
+        let source =
+            EmacsText::from_codes([0xf0080, 13, 10, 0x3fff80, 13, 10, 0xd800, 0x110000]).unwrap();
         let (normalized, eol) = normalize_eol(&source, None);
         assert_eq!(eol, Some(1));
-        assert_eq!(normalized.codes().collect::<Vec<_>>(), [0xf0080, 10, 0x3fff80, 10, 0xd800, 0x110000]);
+        assert_eq!(
+            normalized.codes().collect::<Vec<_>>(),
+            [0xf0080, 10, 0x3fff80, 10, 0xd800, 0x110000]
+        );
     }
 }

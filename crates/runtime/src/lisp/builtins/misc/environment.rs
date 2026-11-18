@@ -1,34 +1,107 @@
 //! Process environment and operating-system user/group identity.
 
 use crate::lisp::builtins::{arg, want_string};
-use crate::lisp::{Interp, error::EvalResult, value::Value};
+use crate::lisp::{Interp, error::EvalResult, text::EmacsText, value::Value};
+use rustc_hash::FxHashSet;
+use std::rc::Rc;
 
 // ---------- environment / user ----------
 
 pub(super) fn f_setenv(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let name = want_string(i, &args[0])?;
-    let val = match args.get(1) {
+    let mut variable = args[0].clone();
+    let mut name = want_string(i, &variable)?;
+    let mut value = match args.get(1) {
         Some(Value::Nil) | None => None,
-        Some(v) => Some(want_string(i, v)?),
+        Some(value) => {
+            want_string(i, value)?;
+            Some(value.clone())
+        }
     };
+    let locale_coding_system = i.q("locale-coding-system");
+    let locale = if i.bound_p(locale_coding_system) {
+        i.symbol_value(locale_coding_system)
+    } else {
+        Value::Nil
+    };
+    if !locale.is_nil() && string_is_multibyte(i, &variable) {
+        let concat = Value::Sym(i.q("concat"));
+        let combined = i.apply(
+            &concat,
+            vec![variable.clone(), value.clone().unwrap_or(Value::Nil)],
+        )?;
+        let find_codings = Value::Sym(i.q("find-coding-systems-string"));
+        let codings = i.apply(&find_codings, vec![combined])?;
+        let codings = match codings.list_to_vec() {
+            Ok(codings) => codings,
+            Err(_) => return Err(i.wrong_type_mut("listp", &codings)),
+        };
+        let base_function = Value::Sym(i.q("coding-system-base"));
+        let base = i.apply(&base_function, vec![locale.clone()])?;
+        let undecided = Value::Sym(i.q("undecided"));
+        if !codings
+            .first()
+            .is_some_and(|coding| crate::lisp::builtins::eq_values(coding, &undecided))
+            && !codings
+                .iter()
+                .any(|coding| crate::lisp::builtins::eq_values(coding, &base))
+        {
+            let value_text = match &value {
+                Some(value) => want_string(i, value)?,
+                None => EmacsText::new(),
+            };
+            return Err(i.error_q(
+                "Can't encode `%s=%s' with `locale-coding-system'",
+                &[&name, &value_text],
+            ));
+        }
+    }
+    // GNU validates the original assignment against locale-coding-system
+    // before substituting references from process-environment.
+    if args.get(2).is_some_and(|value| value.truthy()) && value.is_some() {
+        let substitute = Value::Sym(i.q("substitute-env-vars"));
+        let original = value.as_ref().unwrap().clone();
+        let substituted = i.apply(&substitute, vec![original])?;
+        want_string(i, &substituted)?;
+        value = Some(substituted);
+    }
+    if !locale.is_nil() && string_is_multibyte(i, &variable) {
+        variable = super::coding::f_encode_coding_string(i, vec![variable, locale.clone()].into())?;
+        name = want_string(i, &variable)?;
+    }
+    if !locale.is_nil()
+        && value
+            .as_ref()
+            .is_some_and(|value| string_is_multibyte(i, value))
+    {
+        let original = value.unwrap();
+        value = Some(super::coding::f_encode_coding_string(
+            i,
+            vec![original, locale.clone()].into(),
+        )?);
+    }
+    if name.contains('=') {
+        return Err(i.error_q("Environment variable name `%s' contains `='", &[&name]));
+    }
+    if name == "TZ" {
+        let set_time_zone = Value::Sym(i.q("set-time-zone-rule"));
+        i.apply(&set_time_zone, vec![value.clone().unwrap_or(Value::Nil)])?;
+    }
     // GNU `setenv' only modifies `process-environment', not the OS
     // environment.
     let pe = i.q("process-environment");
-    let cur = i.symbol_value(pe);
-    let mut items = cur.list_to_vec().unwrap_or_default();
-    let prefix = format!("{}=", name);
-    items.retain(|v| match v {
-        Value::Str(s) => !s.borrow().starts_with(&prefix),
-        _ => true,
-    });
-    if let Some(v) = &val {
-        items.insert(0, Value::string(format!("{}={}", name, v)));
-    }
-    let _ = i.set_symbol(pe, Value::list(items));
-    Ok(match val {
-        Some(v) => Value::string(v),
-        None => Value::Nil,
-    })
+    let environment = i.symbol_value(pe);
+    let environment = f_setenv_internal(
+        i,
+        vec![
+            environment,
+            variable,
+            value.clone().unwrap_or(Value::Nil),
+            Value::t(),
+        ]
+        .into(),
+    )?;
+    i.set_symbol(pe, environment)?;
+    Ok(value.unwrap_or(Value::Nil))
 }
 
 /// GNU `setenv-internal': (ENV VARIABLE VALUE KEEP-EMPTY) — set
@@ -37,26 +110,97 @@ pub(super) fn f_setenv(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// "VAR=VALUE" is prepended.  Returns the new list head.
 pub(super) fn f_setenv_internal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let env = arg(&args, 0);
-    let var = want_string(i, &args[1])?;
-    let val = want_string(i, &args[2])?;
-    let new_entry = format!("{}={}", var, val);
+    let variable = args[1].clone();
+    let var = want_string(i, &variable)?;
+    let var_multibyte = string_is_multibyte(i, &variable);
+    let value_object = args[2].clone();
+    let val = match &args[2] {
+        Value::Nil => None,
+        value => Some(want_string(i, value)?),
+    };
+    let value_multibyte = string_is_multibyte(i, &value_object);
+    let keep_empty = args[3].truthy();
+    let prefix = format!("{}=", var);
     let mut cur = env.clone();
-    while let Value::Cons(c) = &cur {
-        let cc = c.clone();
-        let hit = match &cc.borrow().car {
-            Value::Str(s) => {
-                let s = s.borrow();
-                *s == var || s.starts_with(&format!("{}=", var))
-            }
-            _ => false,
+    let mut previous = None;
+    let mut seen = FxHashSet::default();
+    loop {
+        if cur.is_nil() {
+            break;
+        }
+        let Value::Cons(cell) = &cur else {
+            return Err(i.wrong_type_mut("listp", &cur));
+        };
+        if !seen.insert(Rc::as_ptr(cell) as usize) {
+            return Err(i.signal_data(crate::lisp::obarray::sym::CIRCULAR_LIST, vec![cur.clone()]));
+        }
+        let (entry, next) = {
+            let cell = cell.borrow();
+            (cell.car.clone(), cell.cdr.clone())
+        };
+        let Value::Str(entry_string) = &entry else {
+            break;
+        };
+        let hit = {
+            let entry_string = entry_string.borrow();
+            *entry_string == var || entry_string.starts_with(&prefix)
         };
         if hit {
-            cc.borrow_mut().car = Value::string(new_entry);
+            match &val {
+                Some(value) => {
+                    cell.borrow_mut().car =
+                        environment_entry(i, &var, var_multibyte, value, value_multibyte);
+                }
+                None if keep_empty => {
+                    cell.borrow_mut().car = variable.clone();
+                }
+                None => {
+                    if let Some(Value::Cons(previous)) = previous {
+                        previous.borrow_mut().cdr = next.clone();
+                    } else {
+                        return Ok(next);
+                    }
+                }
+            }
             return Ok(env);
         }
-        cur = cc.borrow().cdr.clone();
+        previous = Some(Value::Cons(cell.clone()));
+        cur = next;
     }
-    Ok(Value::cons(Value::string(new_entry), env))
+    match val {
+        Some(value) => Ok(Value::cons(
+            environment_entry(i, &var, var_multibyte, &value, value_multibyte),
+            env,
+        )),
+        None if keep_empty => Ok(Value::cons(variable, env)),
+        None => Ok(env),
+    }
+}
+
+fn string_is_multibyte(i: &Interp, value: &Value) -> bool {
+    matches!(value, Value::Str(string) if !i.is_unibyte_str(string))
+}
+
+fn environment_entry(
+    i: &mut Interp,
+    variable: &EmacsText,
+    variable_multibyte: bool,
+    value: &EmacsText,
+    value_multibyte: bool,
+) -> Value {
+    let multibyte = variable_multibyte || value_multibyte;
+    let mut entry = variable.clone();
+    entry.push('=');
+    entry.push_str(value);
+    let entry = Value::string_with_kind(entry, multibyte);
+    if let Value::Str(string) = &entry {
+        if multibyte {
+            i.mark_multibyte(string);
+        } else {
+            i.mark_unibyte(string);
+        }
+    }
+    entry
 }
 
 pub(super) fn f_user_login_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -520,5 +664,41 @@ pub(super) fn f_locale_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
                 .collect(),
         )),
         _ => Ok(Value::Nil),
+    }
+}
+
+#[cfg(test)]
+mod circular_environment_tests {
+    use super::*;
+    use crate::lisp::{error::Flow, obarray::sym};
+
+    #[test]
+    fn setenv_internal_rejects_an_unmatched_circular_environment() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let environment = Value::cons(Value::string("QA_OTHER=first"), Value::Nil);
+                if let Value::Cons(cell) = &environment {
+                    cell.borrow_mut().cdr = environment.clone();
+                }
+                let result = f_setenv_internal(
+                    &mut interp,
+                    vec![
+                        environment,
+                        Value::string("QA_TARGET"),
+                        Value::string("value"),
+                        Value::Nil,
+                    ]
+                    .into(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

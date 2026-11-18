@@ -25,8 +25,13 @@ enum Data {
     Object(Vec<(Vec<u32>, Data)>),
 }
 fn decode_native_text(codes: &[u32]) -> Result<String> {
-    codes.iter().map(|code| char::from_u32(*code)
-        .ok_or_else(|| "Non-Unicode character in native dump metadata".to_owned())).collect()
+    codes
+        .iter()
+        .map(|code| {
+            char::from_u32(*code)
+                .ok_or_else(|| "Non-Unicode character in native dump metadata".to_owned())
+        })
+        .collect()
 }
 
 impl Data {
@@ -81,12 +86,20 @@ impl Runtime {
     }
     pub fn capture(i: &Interp, e: &mut Encoder<'_>) -> Result<Self> {
         let mut saved = Self(BTreeMap::new());
-        saved.put("fixed_symbols", i.fixed_symbols.iter()
-            .map(|(name, symbol)| Ok((name.clone(), e.symbol(*symbol)?)))
-            .collect::<Result<Vec<_>>>()?)?;
-        saved.put("native_lisp_literals", i.native_lisp_literals.iter()
-            .map(|(key, value)| Ok((key.clone(), e.value(value)?)))
-            .collect::<Result<Vec<_>>>()?)?;
+        saved.put(
+            "fixed_symbols",
+            i.fixed_symbols
+                .iter()
+                .map(|(name, symbol)| Ok((name.clone(), e.symbol(*symbol)?)))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        saved.put(
+            "native_lisp_literals",
+            i.native_lisp_literals
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), e.value(value)?)))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
         macro_rules! scalar { ($($field:ident),* $(,)?) => { $(saved.put(stringify!($field), &i.$field)?;)* }; }
         scalar!(
             max_lisp_eval_depth,
@@ -323,7 +336,8 @@ impl Runtime {
     pub fn restore(&self, i: &mut Interp, d: &mut Decoder<'_>) -> Result<()> {
         if self.0.contains_key("fixed_symbols") {
             let symbols: Vec<(String, Ref)> = self.get("fixed_symbols")?;
-            i.fixed_symbols = symbols.into_iter()
+            i.fixed_symbols = symbols
+                .into_iter()
                 .map(|(name, reference)| Ok((name, d.symbol(&reference)?)))
                 .collect::<Result<_>>()?;
         }
@@ -563,7 +577,8 @@ mod wide_metadata_tests {
         let codes = vec![0xf0080u32, 0x3fff80, 0xd800, 0x110000, 0x200000];
         let original = vec![(7u32, codes.clone())];
         let data = Data::encode(serde_json::to_value(&original).unwrap());
-        let restored: Vec<(u32, Vec<u32>)> = serde_json::from_value(data.decode().unwrap()).unwrap();
+        let restored: Vec<(u32, Vec<u32>)> =
+            serde_json::from_value(data.decode().unwrap()).unwrap();
         assert_eq!(restored, original);
         assert_eq!(encode_text(&decode_text(&codes)), codes);
     }
@@ -571,7 +586,11 @@ mod wide_metadata_tests {
     fn native_metadata_rejects_non_unicode_instead_of_inventing_proxies() {
         for code in [0xd800, 0x110000, 0x3fff80, 0x400000] {
             assert!(Data::Text(vec![code]).decode().is_err());
-            assert!(Data::Object(vec![(vec![code], Data::Null)]).decode().is_err());
+            assert!(
+                Data::Object(vec![(vec![code], Data::Null)])
+                    .decode()
+                    .is_err()
+            );
         }
     }
 }

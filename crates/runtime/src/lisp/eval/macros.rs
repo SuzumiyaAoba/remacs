@@ -6,6 +6,8 @@ use crate::lisp::{
     obarray::sym,
     value::{Arity, Value},
 };
+use rustc_hash::FxHashSet;
+use std::rc::Rc;
 
 impl Interp {
     /// Expand a macro call in eval position.  GNU `eval_sub' specbinds
@@ -24,10 +26,14 @@ impl Interp {
             Value::Nil
         };
         if let Err(e) = self.specbind(lb, lex_val) {
+            self.unbind_to(mark)?;
             return Err(e);
         }
-        let compiled =
-            self.current_lambda_dumped || self.loading_compiled_library || self.boot_loading;
+        let compiled = self.current_body_compiled
+            || self.current_lambda_dumped
+            || self.loading_compiled_library
+            || self.boot_loading
+            || self.loading_dumped;
         let saved_expansion = std::mem::replace(&mut self.compiled_macro_expansion, compiled);
         let r = self.macro_expand_call(mac, args);
         self.compiled_macro_expansion = saved_expansion;
@@ -50,10 +56,16 @@ impl Interp {
                     .collect::<crate::lisp::text::EmacsText>()
             );
         }
-        let argv = match args.list_to_vec() {
-            Ok(v) => v,
-            Err(_) => return Err(self.error("bad macro args")),
+        // Compiled callsites embed the expansion rather than an advised
+        // macro function cell. This also covers eager load expansion paths
+        // that invoke macro_expand_call without going through eval.rs.
+        let expanded_macro = if self.compiled_macro_expansion {
+            self.unadvised_base(mac)
+        } else {
+            mac.clone()
         };
+        let mac = &expanded_macro;
+        let argv = crate::lisp::builtins::want_list(self, args)?;
         self.macroexp_call_depth += 1;
         // GNU byte-compiles its bundled libraries, so macro expansion
         // of their call sites ran at byte-compile time — before any
@@ -65,7 +77,7 @@ impl Interp {
         // session (e.g. (advice-add 'car ...)) corrupts expansions
         // whose expanders call the advised name — `letrec''s
         // (mapcar #'car binders) producing ((ad done) ...) binders.
-        let unadvise = self.dumped_call_depth > 0 || self.loading_dumped;
+        let unadvise = self.compiled_macro_expansion;
         if unadvise {
             self.expand_unadvised_depth += 1;
         }
@@ -75,26 +87,23 @@ impl Interp {
                 .call_lambda(l, argv.into(), mac)
                 .map_err(|f| self.macroexp_wna(mac, f)),
             Value::Cons(_) => {
-                let (car, _) = {
-                    let c = match mac {
-                        Value::Cons(c) => c,
-                        _ => unreachable!(),
-                    };
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
+                let c = match mac {
+                    Value::Cons(c) => c,
+                    _ => unreachable!(),
                 };
-                if self.sym_is(&car, sym::MACRO) {
-                    let cdr = match mac {
-                        Value::Cons(c) => c.borrow().cdr.clone(),
-                        _ => unreachable!(),
-                    };
-                    if unadvise {
-                        self.expand_unadvised_depth -= 1;
+                match super::cons_parts(self, c) {
+                    Ok((car, cdr)) if self.sym_is(&car, sym::MACRO) => {
+                        // Unwrap exactly one `(macro . FUNCTION)' cell, then
+                        // funcall FUNCTION. If FUNCTION is itself a macro
+                        // cell, GNU reports `invalid-function' for that
+                        // object; recursively expanding it loops forever
+                        // when the cell is circular.
+                        self.apply(&cdr, argv)
+                            .map_err(|f| self.macroexp_wna(&cdr, f))
                     }
-                    self.macroexp_call_depth -= 1;
-                    return self.macro_expand_call(&cdr, args);
+                    Ok(_) => self.apply(mac, argv).map_err(|f| self.macroexp_wna(mac, f)),
+                    Err(error) => Err(error),
                 }
-                self.apply(mac, argv).map_err(|f| self.macroexp_wna(mac, f))
             }
             _ => self.apply(mac, argv).map_err(|f| self.macroexp_wna(mac, f)),
         };
@@ -116,34 +125,51 @@ impl Interp {
             if signal.is_symbol(sym::WRONG_NUMBER_OF_ARGUMENTS) {
                 if let Some((min, max)) = match mac {
                     Value::Subr(s) => match s.arity {
-                        Arity::Range { min, max } => Some((min, max)),
-                        Arity::Many { min } => Some((min, min)),
+                        Arity::Range { min, max } => Some((min as i128, max as i128)),
+                        Arity::Many { min } => Some((min as i128, min as i128)),
                         Arity::Unevalled => None,
                     },
-                    // `#[ARGDESC ...]' byte-code expander (`.elc' twin):
-                    // GNU exec_byte_code reports `(MIN . NONREST)' —
-                    // `when' → ((1 . 1) 0) from argdesc 385.  List-argdesc
-                    // twins (`#[(exp &rest cases) ...]') and interpreted
-                    // lambdas get the same `(MIN . NONREST)' shape.
+                    // `#[ARGDESC ...]' compiled macro expander (`.elc'
+                    // twin): GNU exec_byte_code reports `(MIN . NONREST)' —
+                    // `when' → ((1 . 1) 0) from argdesc 385. Compiled
+                    // list-argdesc twins use the same shape.
+                    // Ordinary user macro functions report themselves as the
+                    // WNA datum, including interpreted closures and
+                    // `make-byte-code' products. Only compiled-equivalent
+                    // expanders on GNU's nativecomp surface report their
+                    // packed arity descriptor.
+                    Value::Lambda(l) if !l.compiled => None,
                     Value::Lambda(l) => match &l.bc_items {
-                        Some(items) => {
-                            let items = items.borrow();
-                            match items.first() {
+                        Some(items) => match items.try_borrow() {
+                            Ok(items) => match items.first() {
                                 Some(argdesc @ (Value::Int(_) | Value::Cons(_) | Value::Nil)) => {
-                                    let (req, _max, rest, _) =
+                                    let parsed =
                                         crate::lisp::bytecode::parse_argdesc(self, argdesc);
-                                    Some((req as u16, if rest { 1 } else { _max as u16 }))
+                                    Some((
+                                        parsed.req as i128,
+                                        if parsed.has_rest {
+                                            1
+                                        } else {
+                                            parsed.max as i128
+                                        },
+                                    ))
                                 }
                                 _ => None,
-                            }
-                        }
+                            },
+                            Err(_) => None,
+                        },
                         None => {
                             let al = l.arglist.clone().unwrap_or(Value::Nil);
                             crate::lisp::builtins::misc::raw_arglist_arity(self, &al).map(|a| {
                                 match a {
-                                    Arity::Range { min, max } => (min, max),
-                                    Arity::Many { min } => (min, 1),
-                                    Arity::Unevalled => (0, 1),
+                                    crate::lisp::builtins::misc::FunctionArity::Range {
+                                        min,
+                                        max,
+                                    } => (min as i128, max as i128),
+                                    crate::lisp::builtins::misc::FunctionArity::Many { min } => {
+                                        (min as i128, 1)
+                                    }
+                                    crate::lisp::builtins::misc::FunctionArity::Unevalled => (0, 1),
                                 }
                             })
                         }
@@ -158,10 +184,7 @@ impl Interp {
                         .unwrap_or(Value::Int(0));
                     return self.signal_data(
                         sym::WRONG_NUMBER_OF_ARGUMENTS,
-                        vec![
-                            Value::cons(Value::Int(min as i128), Value::Int(max as i128)),
-                            n,
-                        ],
+                        vec![Value::cons(Value::Int(min), Value::Int(max)), n],
                     );
                 }
             }
@@ -179,6 +202,7 @@ impl Interp {
     /// `macroexpand-all', it does not consult the dynamically bound
     /// `macroexpand-all-environment' variable.
     pub fn macroexpand_env(&mut self, form: &Value, env: &Value) -> EvalResult {
+        self.maybe_quit()?;
         let mut cur = form.clone();
         let mut iters = 0;
         loop {
@@ -194,10 +218,7 @@ impl Interp {
             }
             let next = match &cur {
                 Value::Cons(c) => {
-                    let (car, cdr) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    let (car, cdr) = super::cons_parts(self, c)?;
                     // GNU `macroexpand-1' (eval.c): a `(lambda ...)'
                     // form is a function expression whose expansion is
                     // `(function (lambda ...))'.  Since that result is a
@@ -219,18 +240,21 @@ impl Interp {
                             let mut env_hit = false;
                             let mut env_def = Value::Nil;
                             let mut tail = env.clone();
+                            let mut env_seen = FxHashSet::default();
+                            let mut until_quit = 1024usize;
                             loop {
-                                match tail {
+                                match tail.clone() {
+                                    Value::Nil => break,
                                     Value::Cons(cc) => {
-                                        let (a, d) = {
-                                            let b = cc.borrow();
-                                            (b.car.clone(), b.cdr.clone())
-                                        };
+                                        if !env_seen.insert(Rc::as_ptr(&cc) as usize) {
+                                            return Err(self.signal_data(
+                                                sym::CIRCULAR_LIST,
+                                                vec![tail.clone()],
+                                            ));
+                                        }
+                                        let (a, d) = super::cons_parts(self, &cc)?;
                                         if let Value::Cons(e) = &a {
-                                            let (ek, ev) = {
-                                                let b = e.borrow();
-                                                (b.car.clone(), b.cdr.clone())
-                                            };
+                                            let (ek, ev) = super::cons_parts(self, e)?;
                                             // Enabled sympos keys unwrap to
                                             // their bare symbol id (GNU's
                                             // `assq' via `macroexpand-1'
@@ -248,8 +272,16 @@ impl Interp {
                                             }
                                         }
                                         tail = d;
+                                        until_quit -= 1;
+                                        if until_quit == 0 {
+                                            self.maybe_quit()?;
+                                            until_quit = 1024;
+                                        }
                                     }
-                                    _ => break,
+                                    // Match GNU's `assq': report an improper
+                                    // alist using the original environment,
+                                    // but only if lookup reaches its bad tail.
+                                    _ => return Err(self.wrong_type_mut("listp", env)),
                                 }
                             }
                             if env_hit {
@@ -285,13 +317,19 @@ impl Interp {
                             // (TYPE non-nil); others stop expansion.
                             let auto_id = self.q("autoload");
                             let is_auto = match &f {
-                                Value::Cons(cc) => self.sym_is(&cc.borrow().car, auto_id),
+                                Value::Cons(cc) => {
+                                    let car = super::cons_parts(self, cc)?.0;
+                                    self.sym_is(&car, auto_id)
+                                }
                                 _ => false,
                             };
                             if is_auto {
                                 f = crate::lisp::builtins::evalfn::autoload_do_load(self, f, true)?;
                                 let still_auto = match &f {
-                                    Value::Cons(cc) => self.sym_is(&cc.borrow().car, auto_id),
+                                    Value::Cons(cc) => {
+                                        let car = super::cons_parts(self, cc)?.0;
+                                        self.sym_is(&car, auto_id)
+                                    }
                                     _ => false,
                                 };
                                 if still_auto {
@@ -301,13 +339,21 @@ impl Interp {
                             let is_mac = match &f {
                                 Value::Lambda(l) => l.is_macro,
                                 Value::Cons(cc) => {
-                                    let b = cc.borrow();
-                                    self.sym_is(&b.car, sym::MACRO)
+                                    let car = super::cons_parts(self, cc)?.0;
+                                    self.sym_is(&car, sym::MACRO)
                                 }
                                 _ => false,
                             };
                             if is_mac {
-                                self.macro_expand_call(&f, &cdr)?
+                                let expanded = self.macro_expand_call(&f, &cdr)?;
+                                // GNU stops when an expander returns the
+                                // identical form object. Besides terminating
+                                // self-returning macros, this preserves the
+                                // identity caches used by Lisp macroexpanders.
+                                if crate::lisp::builtins::eq_values(&expanded, &cur) {
+                                    return Ok(cur);
+                                }
+                                expanded
                             } else {
                                 return Ok(cur);
                             }
@@ -319,5 +365,212 @@ impl Interp {
             };
             cur = next;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::{obarray::Obarray, value::Lambda};
+    use std::{cell::RefCell, rc::Rc, thread};
+
+    #[test]
+    fn macroexpand_environment_cycle_signals_circular_list() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.intern("qa-macroexpand-unrelated-key");
+        let form_head = interp.intern("qa-macroexpand-unrelated-form");
+        let env = Value::cons(Value::cons(Value::Sym(key), Value::Nil), Value::Nil);
+        if let Value::Cons(cell) = &env {
+            cell.borrow_mut().cdr = env.clone();
+        }
+
+        let form = Value::list(vec![Value::Sym(form_head)]);
+        let result = interp.macroexpand_env(&form, &env);
+        assert!(matches!(
+            result,
+            Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+        ));
+    }
+
+    #[test]
+    fn macro_expand_call_restores_depth_when_macro_cell_is_borrowed() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let mac = Value::cons(Value::Sym(sym::MACRO), Value::Nil);
+        let Value::Cons(cell) = &mac else {
+            unreachable!();
+        };
+        let borrow = cell.borrow_mut();
+
+        assert!(interp.macro_expand_call(&mac, &Value::Nil).is_err());
+
+        drop(borrow);
+        assert_eq!(interp.macroexp_call_depth, 0);
+    }
+
+    #[test]
+    fn compiled_macro_expand_call_reports_borrowed_macro_cell_without_panicking() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        interp.compiled_macro_expansion = true;
+        let mac = Value::cons(Value::Sym(sym::MACRO), Value::Nil);
+        let Value::Cons(cell) = &mac else {
+            unreachable!();
+        };
+        let borrow = cell.borrow_mut();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            interp.macro_expand_call(&mac, &Value::Nil)
+        }));
+
+        drop(borrow);
+        let result = result.expect("compiled macro expansion must not panic");
+        assert!(result.is_err());
+        assert_eq!(interp.macroexp_call_depth, 0);
+        assert_eq!(interp.expand_unadvised_depth, 0);
+    }
+
+    #[test]
+    fn cyclic_macro_function_cells_signal_invalid_function() {
+        thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                // A vacant interpreter has no `error-conditions' registry,
+                // so signaling from `apply' would recursively signal
+                // `Invalid error symbol'. Use a booted interpreter here.
+                let mut interp = Interp::new();
+                for compiled in [false, true] {
+                    interp.compiled_macro_expansion = compiled;
+
+                    let first = Value::cons(Value::Sym(sym::MACRO), Value::Nil);
+                    let second = Value::cons(Value::Sym(sym::MACRO), first.clone());
+                    let Value::Cons(first_cell) = &first else {
+                        unreachable!();
+                    };
+                    first_cell.borrow_mut().cdr = second.clone();
+
+                    let result = interp.macro_expand_call(&first, &Value::Nil);
+
+                    // Break the deliberately cyclic Rc graph before dropping it.
+                    if let Value::Cons(second_cell) = &second {
+                        second_cell.borrow_mut().cdr = Value::Nil;
+                    }
+                    assert!(matches!(
+                        result,
+                        Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::INVALID_FUNCTION)
+                    ));
+                    assert_eq!(interp.macroexp_call_depth, 0);
+                    assert_eq!(interp.expand_unadvised_depth, 0);
+
+                    let expander =
+                        Value::list(vec![Value::Sym(sym::LAMBDA), Value::Nil, Value::Nil]);
+                    let inner = Value::cons(Value::Sym(sym::MACRO), expander);
+                    let outer = Value::cons(Value::Sym(sym::MACRO), inner);
+                    let nested = interp.macro_expand_call(&outer, &Value::Nil);
+                    assert!(matches!(
+                        nested,
+                        Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::INVALID_FUNCTION)
+                    ));
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn macroexpand_env_reports_a_mutably_borrowed_form_without_panicking() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let head = interp.intern("qa-macroexpand-borrowed-form");
+        let form = Value::list(vec![Value::Sym(head)]);
+        let Value::Cons(cell) = &form else {
+            unreachable!();
+        };
+        let borrowed = cell.borrow_mut();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            interp.macroexpand_env(&form, &Value::Nil)
+        }));
+        drop(borrowed);
+        let result = result.expect("macroexpand_env must not panic");
+        assert!(matches!(result, Err(Flow::Signal(_))));
+    }
+
+    #[test]
+    fn macroexpand_env_reports_a_mutably_borrowed_environment_without_panicking() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.intern("qa-macroexpand-borrowed-env-key");
+        let head = interp.intern("qa-macroexpand-borrowed-env-form");
+        let form = Value::list(vec![Value::Sym(head)]);
+        let env = Value::cons(Value::cons(Value::Sym(key), Value::Nil), Value::Nil);
+        let Value::Cons(cell) = &env else {
+            unreachable!();
+        };
+        let borrowed = cell.borrow_mut();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            interp.macroexpand_env(&form, &env)
+        }));
+        drop(borrowed);
+        let result = result.expect("macroexpand_env must not panic");
+        assert!(matches!(result, Err(Flow::Signal(_))));
+    }
+
+    #[test]
+    fn compiled_list_argdesc_macro_wna_does_not_truncate_large_arities() {
+        thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::vacant();
+                interp.obarray = Obarray::new();
+                let arity = 65_536usize;
+                let arglist = Value::list(vec![Value::Sym(sym::T); arity]);
+                let items = Value::vector_ref(vec![
+                    arglist.clone(),
+                    Value::string(""),
+                    Value::Vec(Value::vector_ref(Vec::new())),
+                    Value::Int(0),
+                ]);
+                let function = Value::Lambda(Rc::new(Lambda {
+                    is_macro: true,
+                    required: Vec::new(),
+                    optional: Vec::new(),
+                    rest: None,
+                    body: Vec::new(),
+                    body_value: None,
+                    env: None,
+                    doc: None,
+                    interactive: None,
+                    name: None,
+                    bad_arglist: false,
+                    arglist: Some(arglist),
+                    plain: false,
+                    dumped_doc: false,
+                    advice_link: None,
+                    compiled: true,
+                    bc_items: Some(items),
+                    bc_closure: false,
+                    bc_prog: RefCell::new(None),
+                    compiled_macro_cache: crate::lisp::value::CompiledMacroCache::default(),
+                    doc_value: None,
+                    env_value: None,
+                }));
+                let original = interp.wrong_number_of_args(&function, 0);
+                let Flow::Signal(signal) = interp.macroexp_wna(&function, original) else {
+                    panic!("expected wrong-number-of-arguments")
+                };
+                let error_data = signal.data().list_to_vec().unwrap();
+                let Value::Cons(arity_data) = &error_data[0] else {
+                    panic!("expected arity descriptor")
+                };
+                let arity_data = arity_data.borrow();
+                assert_eq!(arity_data.car.int(), Some(arity as i128));
+                assert_eq!(arity_data.cdr.int(), Some(arity as i128));
+                assert_eq!(error_data[1].int(), Some(0));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

@@ -8,6 +8,7 @@ pub(super) enum SpecPart {
     Reserved,
     Writable,
     Ignored,
+    SelectEventWindow,
     ShiftSelection,
     Argument { code: EmacsChar, prompt: EmacsText },
 }
@@ -30,7 +31,8 @@ impl SpecReader {
             match code.unicode().unwrap_or('\u{fffd}') {
                 '+' => return Some(SpecPart::Reserved),
                 '*' => return Some(SpecPart::Writable),
-                '-' | '@' => return Some(SpecPart::Ignored),
+                '-' => return Some(SpecPart::Ignored),
+                '@' => return Some(SpecPart::SelectEventWindow),
                 '^' => return Some(SpecPart::ShiftSelection),
                 _ => {}
             }

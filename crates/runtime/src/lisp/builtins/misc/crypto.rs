@@ -55,11 +55,7 @@ fn secure_hash_bytes(i: &mut Interp, args: &[Value]) -> Result<Vec<u8>, Flow> {
         Value::Buffer(b) => {
             let (begv, zv, text) = {
                 let buffer = b.borrow();
-                (
-                    buffer.begv,
-                    buffer.zv,
-                    buffer.text.text().to_owned(),
-                )
+                (buffer.begv, buffer.zv, buffer.text.text().to_owned())
             };
             let start_arg = args.get(2).cloned().unwrap_or(Value::Nil);
             let end_arg = args.get(3).cloned().unwrap_or(Value::Nil);
@@ -79,10 +75,7 @@ fn secure_hash_bytes(i: &mut Interp, args: &[Value]) -> Result<Vec<u8>, Flow> {
                 std::mem::swap(&mut start, &mut end);
             }
             if start < begv as i128 + 1 || end > zv as i128 + 1 {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![start_arg, end_arg],
-                ));
+                return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![start_arg, end_arg]));
             }
             let start = (start - 1) as usize;
             let end = (end - 1) as usize;

@@ -2,11 +2,12 @@
 //! featurep, run-hooks, etc.
 
 use super::{S, arg, want_list, want_sym};
-use crate::lisp::Interp;
 use crate::lisp::SymId;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Marker, Subr, Value};
+use crate::lisp::{Interp, eval::SitForOptions};
+use rustc_hash::FxHashSet;
 use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -421,13 +422,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("emacs-version", 0, 0, f_emacs_version, "Version string."),
     S!("emacs-build-time", 0, 0, f_emacs_build_time, "Build time."),
     S!("set-message-functions", 1, 1, f_set_message_functions, ""),
-    S!(
-        "internal-make-interpreted-closure-function",
-        3,
-        3,
-        f_internal_make_closure,
-        "Make a lexical closure."
-    ),
     S!("internal--set-subr-doc", 0, 0, f_noop, ""),
     S!(
         "macroexp-parse-body",
@@ -488,7 +482,7 @@ pub(crate) static SUBRS: &[Subr] = &[
 /// `error-type' is its car (nil stays nil, non-lists signal `listp').
 fn f_error_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     match &a[0] {
-        Value::Cons(c) => Ok(c.borrow().car.clone()),
+        Value::Cons(c) => Ok(crate::lisp::eval::cons_parts(i, c)?.0),
         Value::Nil => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("listp", other)),
     }
@@ -556,6 +550,14 @@ fn f_apply(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     i.apply(&fun, argv)
 }
 
+fn filename_text_arg(
+    i: &mut Interp,
+    value: &Value,
+) -> Result<crate::lisp::text::EmacsText, Flow> {
+    crate::lisp::load::filename_text(i, value)?
+        .ok_or_else(|| i.wrong_type_mut("stringp", value))
+}
+
 fn f_funcall(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if args.is_empty() {
         let s = Value::Sym(i.q("funcall"));
@@ -591,7 +593,13 @@ fn f_macroexpand(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU inspects ENVIRONMENT only for a list with a symbol head.
     // Atoms and non-symbol-headed lists return unchanged (#293).
     let env = args.get(1).cloned().unwrap_or(Value::Nil);
-    if matches!(&args[0], Value::Cons(c) if i.sym_id(&c.borrow().car).is_some()) {
+    let symbol_head = match &args[0] {
+        Value::Cons(c) => i
+            .sym_id(&crate::lisp::eval::cons_parts(i, c)?.0)
+            .is_some(),
+        _ => false,
+    };
+    if symbol_head {
         match &env {
             Value::Nil | Value::Cons(_) => {}
             other => return Err(i.wrong_type_mut("listp", other)),
@@ -613,10 +621,7 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let form = &args[0];
     match form {
         Value::Cons(c) => {
-            let (car, cdr) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
+            let (car, cdr) = crate::lisp::eval::cons_parts(i, c)?;
             // GNU `macroexpand-1' (eval.c): a `(lambda ...)' form in
             // expansion position is a function expression, so its
             // expansion is `(function (lambda ...))'.
@@ -629,18 +634,20 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             if args.len() > 1 {
                 let env = &args[1];
                 let mut tail = env.clone();
+                let mut env_seen = FxHashSet::default();
                 loop {
-                    match tail {
+                    match tail.clone() {
+                        Value::Nil => break,
                         Value::Cons(cc) => {
-                            let (a, d) = {
-                                let b = cc.borrow();
-                                (b.car.clone(), b.cdr.clone())
-                            };
+                            if !env_seen.insert(Rc::as_ptr(&cc) as usize) {
+                                return Err(i.signal_data(
+                                    sym::CIRCULAR_LIST,
+                                    vec![tail.clone()],
+                                ));
+                            }
+                            let (a, d) = crate::lisp::eval::cons_parts(i, &cc)?;
                             if let Value::Cons(e) = &a {
-                                let (ek, ev) = {
-                                    let b = e.borrow();
-                                    (b.car.clone(), b.cdr.clone())
-                                };
+                                let (ek, ev) = crate::lisp::eval::cons_parts(i, e)?;
                                 // Sympos env keys unwrap to their bare
                                 // symbol id (GNU's `assq' matches `eq').
                                 if let (Some(eid), Some(id)) = (i.sym_id(&ek), i.sym_id(&car)) {
@@ -655,7 +662,10 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                             }
                             tail = d;
                         }
-                        _ => break,
+                        // Like GNU's `assq', report the original environment
+                        // if lookup reaches an improper tail. Keep this lazy:
+                        // an earlier match does not inspect the remaining list.
+                        _ => return Err(i.wrong_type_mut("listp", env)),
                     }
                 }
             }
@@ -663,16 +673,38 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 // GNU macroexp.el: `autoload-do-load' resolves an
                 // autoload cell (macro-only); then aliases to macros
                 // re-expanda, and `(macro . FN)' cells call FN.
-                let def = i.symbol_function(id);
+                let compiled_input = i.compiled_macro_expansion || i.boot_loading;
+                let def = if compiled_input {
+                    i.form_function(id)
+                } else {
+                    i.symbol_function(id)
+                };
                 let def = autoload_do_load(i, def, true)?;
+                let def = if compiled_input {
+                    i.unadvised_base(&def)
+                } else {
+                    def
+                };
                 // (and (symbolp def) (macrop def)) → (cons def cdr):
                 // let the outer macroexpand re-enter on the alias.
                 if let Value::Sym(did) = def {
                     if did != sym::UNBOUND {
-                        let f = i.symbol_function(did);
+                        let f = if compiled_input {
+                            i.form_function(did)
+                        } else {
+                            i.symbol_function(did)
+                        };
+                        let f = if compiled_input {
+                            i.unadvised_base(&f)
+                        } else {
+                            f
+                        };
                         let is_mac = match &f {
                             Value::Lambda(l) => l.is_macro,
-                            Value::Cons(cc) => i.sym_is(&cc.borrow().car, sym::MACRO),
+                            Value::Cons(cc) => {
+                                let car = crate::lisp::eval::cons_parts(i, cc)?.0;
+                                i.sym_is(&car, sym::MACRO)
+                            }
                             _ => false,
                         };
                         if is_mac {
@@ -682,10 +714,13 @@ fn f_macroexpand_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     return Ok(form.clone());
                 }
                 match &def {
-                    Value::Cons(cc) if i.sym_is(&cc.borrow().car, sym::MACRO) => {
-                        let fn_ = cc.borrow().cdr.clone();
-                        let argv = cdr.list_to_vec().unwrap_or_default();
-                        return i.apply(&fn_, argv);
+                    Value::Cons(cc) => {
+                        let (car, fn_) = crate::lisp::eval::cons_parts(i, cc)?;
+                        if i.sym_is(&car, sym::MACRO) {
+                            let argv = want_list(i, &cdr)?;
+                            return i.apply(&fn_, argv);
+                        }
+                        return Ok(form.clone());
                     }
                     Value::Lambda(l) if l.is_macro => {
                         return i.macro_expand_call(&def, &cdr);
@@ -743,26 +778,23 @@ fn macroexpand_all_entry(
 
 /// Whether FORM is a `(declare ...)' spec — a data position consumed
 /// by `defun'/`lambda' declaration handling, not expanded.
-fn is_declare_form(i: &Interp, form: &Value) -> bool {
+fn is_declare_form(i: &Interp, form: &Value) -> Result<bool, Flow> {
     if let Value::Cons(c) = form {
-        let b = c.borrow();
-        if let Some(id) = i.sym_id(&b.car) {
-            return i.symbol_name(id) == "declare";
+        let car = crate::lisp::eval::cons_parts(i, c)?.0;
+        if let Some(id) = i.sym_id(&car) {
+            return Ok(i.intern_soft("declare") == Some(id));
         }
     }
-    false
+    Ok(false)
 }
 
 /// GNU `macroexp--expand-all' applies the head symbol's
 /// `compiler-macro' property as (apply HANDLER FORM (cdr FORM)),
 /// following `symbol-function' aliases like `cl-compiler-macroexpand'.
-fn compiler_macro_handler(i: &mut Interp, form: &Value) -> Option<Value> {
+fn compiler_macro_handler(i: &mut Interp, form: &Value) -> Result<Option<Value>, Flow> {
     let car = match form {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            b.car.clone()
-        }
-        _ => return None,
+        Value::Cons(c) => crate::lisp::eval::cons_parts(i, c)?.0,
+        _ => return Ok(None),
     };
     // GNU handles these data/special-form positions before considering
     // a compiler-macro property on an ordinary call.
@@ -782,29 +814,26 @@ fn compiler_macro_handler(i: &mut Interp, form: &Value) -> Option<Value> {
                 | sym::CONDITION_CASE
         )
     }) {
-        return None;
+        return Ok(None);
     }
     let mut func = crate::lisp::builtins::misc::unpos(i, &car);
     let cmacro = i.q("compiler-macro");
-    let mut guard = 0;
+    let mut seen = FxHashSet::default();
     while let Value::Sym(id) = func {
+        if !seen.insert(id) {
+            break;
+        }
         let h = i.get_prop(id, cmacro);
         if !h.is_nil() {
-            return Some(h);
+            return Ok(Some(h));
         }
         let sf = i.symbol_function(id);
         match sf {
-            Value::Sym(next) => {
-                guard += 1;
-                if guard > 200 {
-                    break;
-                }
-                func = Value::Sym(next);
-            }
+            Value::Sym(next) if next != sym::UNBOUND => func = Value::Sym(next),
             _ => break,
         }
     }
-    None
+    Ok(None)
 }
 
 /// None means the handler returned FORM unchanged; Some(nil) is a valid
@@ -827,7 +856,7 @@ fn expand_compiler_macro(
             return Ok(None);
         }
         let rest = match form {
-            Value::Cons(c) => c.borrow().cdr.clone(),
+            Value::Cons(c) => crate::lisp::eval::cons_parts(i, c)?.1,
             _ => return Ok(None),
         };
         let mut argv = vec![form.clone()];
@@ -843,39 +872,39 @@ fn expand_compiler_macro(
 
 /// Whether V can be a `setq' target symbol — a symbol other than
 /// t/nil or a keyword (GNU `macroexp--expand-all' fast-path check).
+fn is_keyword_id(i: &Interp, sid: SymId) -> bool {
+    !i.obarray.symbol(sid).uninterned && i.symbol_name(sid).starts_with(':')
+}
+
 fn plain_setq_var(i: &Interp, v: &Value) -> bool {
     // `symbols-with-pos-enabled' objects are settable symbols: GNU's
     // `(symbolp var)' accepts them, so unwrap via `sym_id'.
     match i.sym_id(v) {
-        Some(sid) if sid != sym::NIL && sid != sym::T => !i.symbol_name(sid).starts_with(':'),
+        Some(sid) if sid != sym::NIL && sid != sym::T => !is_keyword_id(i, sid),
         _ => false,
     }
 }
 
 /// Whether symbol ID's function cell holds a macro — `macrop' on the
 /// symbol, following its cell (including macro-autoload cells).
-fn sym_macrop(i: &mut Interp, id: SymId) -> bool {
+fn sym_macrop(i: &mut Interp, id: SymId) -> Result<bool, Flow> {
     match i.symbol_function(id) {
-        Value::Lambda(l) => l.is_macro,
+        Value::Lambda(l) => Ok(l.is_macro),
         Value::Cons(c) => {
-            let (car, form) = {
-                let b = c.borrow();
-                (b.car.clone(), Value::Cons(c.clone()))
-            };
+            let (car, _) = crate::lisp::eval::cons_parts(i, &c)?;
             if i.sym_is(&car, sym::MACRO) {
-                return true;
+                return Ok(true);
             }
             let auto_id = i.q("autoload");
             if i.sym_is(&car, auto_id) {
-                return form
-                    .list_to_vec()
-                    .ok()
+                let form = Value::Cons(c);
+                return Ok(macroexpand_list_to_vec(i, &form)?
                     .and_then(|v| v.get(4).map(|x| x.truthy()))
-                    .unwrap_or(false);
+                    .unwrap_or(false));
             }
-            false
+            Ok(false)
         }
-        _ => false,
+        _ => Ok(false),
     }
 }
 
@@ -883,22 +912,20 @@ fn sym_macrop(i: &mut Interp, id: SymId) -> bool {
 /// terms — `special-variable-p', a `macroexp--dynvars' member, or a
 /// `byte-compile-bound-variables' member.  Such a formal cannot be
 /// alpha-converted to a `let' binding (GNU's dynboundarg punt).
-fn macroexp_dynbound_p(i: &mut Interp, var: SymId) -> bool {
+fn macroexp_dynbound_p(i: &mut Interp, var: SymId) -> Result<bool, Flow> {
     if i.obarray.symbol(var).special {
-        return true;
+        return Ok(true);
     }
     for name in ["macroexp--dynvars", "byte-compile-bound-variables"] {
         let vid = i.intern(name);
         let v = i.symbol_value(vid);
-        if let Value::Cons(_) = &v {
-            if let Ok(items) = v.list_to_vec() {
-                if items.iter().any(|x| i.sym_is(x, var)) {
-                    return true;
-                }
+        if let Some(items) = macroexpand_list_to_vec(i, &v)? {
+            if items.iter().any(|x| i.sym_is(x, var)) {
+                return Ok(true);
             }
         }
     }
-    false
+    Ok(false)
 }
 
 /// GNU `macroexp--unfold-lambda': `(funcall #'(lambda (X...) BODY...)
@@ -913,33 +940,31 @@ fn unfold_funcall_lambda(
     lam: &Value,
     actuals: &[Value],
 ) -> Result<Option<Value>, Flow> {
-    let litems = match lam.list_to_vec() {
-        Ok(v) if v.len() >= 2 => v,
-        _ => return Ok(None),
+    let Some(litems) = macroexpand_list_to_vec(i, lam)? else {
+        return Ok(None);
     };
-    let formals = match litems[1].list_to_vec() {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
+    if litems.len() < 2 {
+        return Ok(None);
+    }
+    let Some(formals) = macroexpand_list_to_vec(i, &litems[1])? else {
+        return Ok(None);
     };
     // `macroexp-parse-body': skip leading docstring/declare/interactive.
     let mut body_start = 2;
     while body_start < litems.len() {
-        match &litems[body_start] {
-            Value::Str(_) => body_start += 1,
-            v if is_declare_form(i, v) => body_start += 1,
-            Value::Cons(c) => {
-                let is_ia = {
-                    let b = c.borrow();
-                    i.sym_is(&b.car, sym::INTERACTIVE)
-                };
-                if is_ia {
-                    body_start += 1;
-                } else {
-                    break;
-                }
-            }
-            _ => break,
+        let form = &litems[body_start];
+        if matches!(form, Value::Str(_)) || is_declare_form(i, form)? {
+            body_start += 1;
+            continue;
         }
+        if let Value::Cons(c) = form {
+            let car = crate::lisp::eval::cons_parts(i, c)?.0;
+            if i.sym_is(&car, sym::INTERACTIVE) {
+                body_start += 1;
+                continue;
+            }
+        }
+        break;
     }
     let mut bindings: Vec<Value> = Vec::with_capacity(formals.len());
     let mut rest: &[Value] = actuals;
@@ -969,7 +994,7 @@ fn unfold_funcall_lambda(
         if i.symbol_name(sid).starts_with('&') {
             return Ok(None);
         }
-        if macroexp_dynbound_p(i, sid) {
+        if macroexp_dynbound_p(i, sid)? {
             return Ok(None);
         }
         if restp {
@@ -1016,40 +1041,47 @@ fn unfold_funcall_lambda(
 
 /// Recursively expand macros throughout a form.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
-    // Memoize on the input cons's identity: `pcase' and other big
-    // macros duplicate shared subforms across their expansion, so
-    // recursing on each copy re-expands the same cons exponentially.
-    // Entries validate against `macro_gen' so definition/property
-    // changes re-expand once.  Expansion depends on
-    // `macroexpand-all-environment'.  Eager load expansion must visit
-    // each occurrence even when source forms share conses: user macros
-    // and compiler macros may have observable expansion-time effects.
-    let env_nil = i.macroexp_call_depth == 0 && {
-        let env_id = i.q("macroexpand-all-environment");
-        i.symbol_value(env_id).is_nil()
-    };
-    let cons_key = match form {
-        Value::Cons(c) if env_nil => Some(std::rc::Rc::as_ptr(c) as usize),
-        _ => None,
-    };
-    if let Some(k) = cons_key {
-        let mut cache = i.macroexpand_all_cache.borrow_mut();
-        if cache.0 != i.macro_gen {
-            cache.0 = i.macro_gen;
-            cache.1.clear();
-        }
-        if let Some(hit) = cache.1.get(&k) {
-            return Ok(hit.1.clone());
+    // Expansion is observable: two occurrences can share the same cons,
+    // but GNU still invokes their macro/compiler-macro expanders twice.
+    // Reuse by cons identity skips those effects and yields the wrong form.
+    macroexpand_all_inner(i, form)
+}
+
+/// Recursive `macroexpand-all' walks count against the Lisp depth limit.
+/// The outer entry is already counted by eval/funcall; its Rust recursion
+/// must add the frames GNU's recursive Lisp helpers would have consumed.
+fn macroexpand_all_recur(i: &mut Interp, form: &Value) -> EvalResult {
+    i.with_lisp_eval_depth(false, |i| macroexpand_all_inner(i, form))
+}
+
+/// Convert a proper list without panicking if a Rust caller holds a
+/// mutable borrow of one of its cons cells. Malformed/circular lists retain
+/// the callers' existing fallback behavior; borrow conflicts become Lisp
+/// errors through `cons_parts`.
+fn macroexpand_list_to_vec(i: &mut Interp, list: &Value) -> Result<Option<Vec<Value>>, Flow> {
+    let mut items = Vec::new();
+    let mut cur = list.clone();
+    let mut seen = FxHashSet::default();
+    let mut until_quit = 4096usize;
+    loop {
+        match cur {
+            Value::Nil => return Ok(Some(items)),
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return Ok(None);
+                }
+                let (car, cdr) = crate::lisp::eval::cons_parts(i, &cell)?;
+                items.push(car);
+                cur = cdr;
+                until_quit -= 1;
+                if until_quit == 0 {
+                    i.maybe_quit()?;
+                    until_quit = 4096;
+                }
+            }
+            _ => return Ok(None),
         }
     }
-    let out = macroexpand_all_inner(i, form)?;
-    if let Some(k) = cons_key {
-        i.macroexpand_all_cache
-            .borrow_mut()
-            .1
-            .insert(k, (form.clone(), out.clone()));
-    }
-    Ok(out)
 }
 
 /// Look up SYM_ID in ENV's `(:cl-symbol-macros . BINDINGS)' entry.
@@ -1057,98 +1089,85 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
 /// `cl--sm-macroexpand-1' alpha-renaming also pushes `(VAR . NVAR)'
 /// dotted pairs — both shapes handled by taking `car' when the value
 /// is a cons.
-fn sm_lookup(i: &mut Interp, env: &Value, sym_id: SymId) -> Option<Value> {
+fn sm_lookup(i: &mut Interp, env: &Value, sym_id: SymId) -> Result<Option<Value>, Flow> {
     let kw = i.q(":cl-symbol-macros");
     let mut tail = env.clone();
+    let mut env_cycle = crate::lisp::builtins::listfn::ListCycle::new(env);
     loop {
         match tail {
             Value::Cons(c) => {
-                let (a, d) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let (a, d) = crate::lisp::eval::cons_parts(i, &c)?;
                 if let Value::Cons(e) = &a {
-                    let (ek, ev) = {
-                        let b = e.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    let (ek, ev) = crate::lisp::eval::cons_parts(i, e)?;
                     if i.sym_id(&ek) == Some(kw) {
                         // Found the :cl-symbol-macros entry; scan bindings.
                         let mut bt = ev;
+                        let mut binding_cycle = crate::lisp::builtins::listfn::ListCycle::new(&bt);
                         loop {
                             match bt {
                                 Value::Cons(bc) => {
-                                    let (ba, bd) = {
-                                        let b = bc.borrow();
-                                        (b.car.clone(), b.cdr.clone())
-                                    };
+                                    let (ba, bd) = crate::lisp::eval::cons_parts(i, &bc)?;
                                     if let Value::Cons(binding) = &ba {
-                                        let (bs, bv) = {
-                                            let b = binding.borrow();
-                                            (b.car.clone(), b.cdr.clone())
-                                        };
+                                        let (bs, bv) =
+                                            crate::lisp::eval::cons_parts(i, binding)?;
                                         if i.sym_id(&bs) == Some(sym_id) {
-                                            return Some(match bv {
-                                                Value::Cons(vc) => vc.borrow().car.clone(),
+                                            return Ok(Some(match bv {
+                                                Value::Cons(vc) => {
+                                                    crate::lisp::eval::cons_parts(i, &vc)?.0
+                                                }
                                                 other => other,
-                                            });
+                                            }));
                                         }
                                     }
                                     bt = bd;
+                                    binding_cycle.step(i, &bt)?;
                                 }
                                 _ => break,
                             }
                         }
-                        return None;
+                        return Ok(None);
                     }
                 }
                 tail = d;
+                env_cycle.step(i, &tail)?;
             }
-            _ => break,
+            _ => return Ok(None),
         }
     }
-    None
 }
 
 /// Remove BINDINGS whose car is any of `shadowed` from the env's
 /// `:cl-symbol-macros' entry; used for let/lambda/condition-case
 /// binder shadowing (GNU `cl--sm-macroexpand-1' alpha-renames;
 /// removing the entry is equivalent for the shadowed scope).
-fn sm_filter_env(i: &mut Interp, env: &Value, shadowed: &[SymId]) -> Value {
+fn sm_filter_env(i: &mut Interp, env: &Value, shadowed: &[SymId]) -> Result<Value, Flow> {
     if shadowed.is_empty() {
-        return env.clone();
+        return Ok(env.clone());
     }
     let kw = i.q(":cl-symbol-macros");
     let mut out = Value::Nil;
     let mut tail_cell: Option<Value> = None;
     let mut cur = env.clone();
+    let mut env_cycle = crate::lisp::builtins::listfn::ListCycle::new(env);
     loop {
         match cur {
             Value::Cons(c) => {
-                let (a, d) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let (a, d) = crate::lisp::eval::cons_parts(i, &c)?;
                 let mut keep = a.clone();
                 if let Value::Cons(e) = &a {
-                    let (ek, ev) = {
-                        let b = e.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    let (ek, ev) = crate::lisp::eval::cons_parts(i, e)?;
                     if i.sym_id(&ek) == Some(kw) {
                         // Rebuild binding list without shadowed names.
                         let mut newbinds = Vec::new();
                         let mut bt = ev;
+                        let mut binding_cycle = crate::lisp::builtins::listfn::ListCycle::new(&bt);
                         loop {
                             match bt {
                                 Value::Cons(bc) => {
-                                    let (ba, bd) = {
-                                        let b = bc.borrow();
-                                        (b.car.clone(), b.cdr.clone())
-                                    };
+                                    let (ba, bd) = crate::lisp::eval::cons_parts(i, &bc)?;
                                     let keep_b = match &ba {
                                         Value::Cons(binding) => {
-                                            let bs = binding.borrow().car.clone();
+                                            let bs = crate::lisp::eval::cons_parts(i, binding)?.0;
                                             i.sym_id(&bs)
                                                 .map(|sid| !shadowed.contains(&sid))
                                                 .unwrap_or(true)
@@ -1159,6 +1178,7 @@ fn sm_filter_env(i: &mut Interp, env: &Value, shadowed: &[SymId]) -> Value {
                                         newbinds.push(ba);
                                     }
                                     bt = bd;
+                                    binding_cycle.step(i, &bt)?;
                                 }
                                 _ => break,
                             }
@@ -1174,6 +1194,7 @@ fn sm_filter_env(i: &mut Interp, env: &Value, shadowed: &[SymId]) -> Value {
                 }
                 tail_cell = Some(cell);
                 cur = d;
+                env_cycle.step(i, &cur)?;
             }
             other => {
                 if let Some(Value::Cons(prev)) = &tail_cell {
@@ -1185,40 +1206,37 @@ fn sm_filter_env(i: &mut Interp, env: &Value, shadowed: &[SymId]) -> Value {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// True when ENV carries a `:cl-symbol-macros' binding list.
-fn sm_active(i: &mut Interp, env: &Value) -> bool {
+fn sm_active(i: &mut Interp, env: &Value) -> Result<bool, Flow> {
     let kw = i.q(":cl-symbol-macros");
     let mut tail = env.clone();
+    let mut cycle = crate::lisp::builtins::listfn::ListCycle::new(env);
     while let Value::Cons(c) = tail {
-        let (a, d) = {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
+        let (a, d) = crate::lisp::eval::cons_parts(i, &c)?;
         if let Value::Cons(e) = &a {
-            if i.sym_id(&e.borrow().car) == Some(kw) {
-                return true;
+            if i.sym_id(&crate::lisp::eval::cons_parts(i, e)?.0) == Some(kw) {
+                return Ok(true);
             }
         }
         tail = d;
+        cycle.step(i, &tail)?;
     }
-    false
+    Ok(false)
 }
 
 /// Symbol ids bound by a `let'/`let*' varlist or a `lambda' arglist —
 /// the names that shadow symbol macros inside the body.
-fn binder_syms(i: &mut Interp, vars: &Value) -> Vec<SymId> {
+fn binder_syms(i: &mut Interp, vars: &Value) -> Result<Vec<SymId>, Flow> {
     let mut out = Vec::new();
     let mut cur = vars.clone();
+    let mut cycle = crate::lisp::builtins::listfn::ListCycle::new(vars);
     while let Value::Cons(c) = cur {
-        let (a, d) = {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
+        let (a, d) = crate::lisp::eval::cons_parts(i, &c)?;
         let v = match &a {
-            Value::Cons(bc) => bc.borrow().car.clone(),
+            Value::Cons(bc) => crate::lisp::eval::cons_parts(i, bc)?.0,
             other => other.clone(),
         };
         if let Some(id) = i.sym_id(&v) {
@@ -1228,8 +1246,9 @@ fn binder_syms(i: &mut Interp, vars: &Value) -> Vec<SymId> {
             }
         }
         cur = d;
+        cycle.step(i, &cur)?;
     }
-    out
+    Ok(out)
 }
 
 /// Expand FORM with `macroexpand-all-environment' rebound to a
@@ -1245,13 +1264,17 @@ fn expand_body_filtered(
     form: &Value,
 ) -> EvalResult {
     if sm && !shadowed.is_empty() {
-        let e2 = sm_filter_env(i, env, shadowed);
-        i.specbind(env_id, e2)?;
-        let r = macroexpand_all(i, form);
-        i.unbind(1)?;
+        let e2 = sm_filter_env(i, env, shadowed)?;
+        let mark = i.specbind_depth();
+        if let Err(error) = i.specbind(env_id, e2) {
+            i.unbind_to(mark)?;
+            return Err(error);
+        }
+        let r = macroexpand_all_recur(i, form);
+        i.unbind_to(mark)?;
         r
     } else {
-        macroexpand_all(i, form)
+        macroexpand_all_recur(i, form)
     }
 }
 
@@ -1280,31 +1303,45 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
         Value::Subr(_) => i.macroexpand_env(form, &env)?,
         _ => i.apply(&Value::Sym(mac_sym), vec![form.clone(), env.clone()])?,
     };
-    let sm = sm_active(i, &env);
+    let sm = sm_active(i, &env)?;
     // GNU `cl--sm-macroexpand-1': a symbol bound by `cl-symbol-macrolet'
     // substitutes to its expansion form.
     if sm {
         if let Some(sid) = i.sym_id(&expanded) {
-            if let Some(subst) = sm_lookup(i, &env, sid) {
-                return macroexpand_all(i, &subst);
+            if let Some(subst) = sm_lookup(i, &env, sid)? {
+                // A symbol macro may be bound to itself. GNU leaves that
+                // identity unchanged instead of recursively expanding it.
+                if crate::lisp::builtins::eq_values(&subst, &expanded) {
+                    return Ok(expanded);
+                }
+                return macroexpand_all_recur(i, &subst);
             }
         }
     }
     // `macroexpand'/`macroexpand-1'.
-    let compiler_macro = compiler_macro_handler(i, &expanded);
+    let compiler_macro = compiler_macro_handler(i, &expanded)?;
     if let Some(handler) = &compiler_macro {
         if let Some(newf) = expand_compiler_macro(i, handler, &expanded)? {
-            return macroexpand_all(i, &newf);
+            return macroexpand_all_recur(i, &newf);
         }
     }
     let mark = i.specbind_depth();
+    let closure_id = i.intern_soft("closure");
     let scoped = match &expanded {
-        Value::Cons(c) => i.sym_id(&c.borrow().car).is_some_and(|id| {
-            matches!(
-                id,
-                sym::LET | sym::LET_STAR | sym::LAMBDA | sym::FUNCTION | sym::DEFUN | sym::DEFMACRO
-            ) || i.symbol_name(id) == "closure"
-        }),
+        Value::Cons(c) => {
+            let car = crate::lisp::eval::cons_parts(i, c)?.0;
+            i.sym_id(&car).is_some_and(|id| {
+                matches!(
+                    id,
+                    sym::LET
+                        | sym::LET_STAR
+                        | sym::LAMBDA
+                        | sym::FUNCTION
+                        | sym::DEFUN
+                        | sym::DEFMACRO
+                ) || Some(id) == closure_id
+            })
+        }
         _ => false,
     };
     if scoped {
@@ -1314,7 +1351,10 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
         } else {
             Value::Nil
         };
-        i.specbind(id, old)?;
+        if let Err(error) = i.specbind(id, old) {
+            i.unbind_to(mark)?;
+            return Err(error);
+        }
     }
     let result = macroexpand_all_expanded(i, expanded, env_id, env, sm, compiler_macro);
     i.unbind_to(mark)?;
@@ -1331,10 +1371,7 @@ fn macroexpand_all_expanded(
 ) -> EvalResult {
     match &expanded {
         Value::Cons(c) => {
-            let (car, cdr) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
+            let (car, cdr) = crate::lisp::eval::cons_parts(i, c)?;
             // Don't descend into quote.
             if i.sym_is(&car, sym::QUOTE) {
                 return Ok(expanded);
@@ -1344,9 +1381,8 @@ fn macroexpand_all_expanded(
             // `list_to_vec' — `want_list' builds a `listp' signal that
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
-            let items = match expanded.list_to_vec() {
-                Ok(v) => v,
-                Err(_) => return Ok(expanded),
+            let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
+                return Ok(expanded);
             };
             let _ = cdr;
             // Special forms whose non-code positions must not be
@@ -1363,10 +1399,10 @@ fn macroexpand_all_expanded(
                     // are data positions like `lambda''s arglist.
                     _ if id == closure_id && items.len() >= 3 => {
                         let mut out = items[..3].to_vec();
-                        let bound = binder_syms(i, &items[2]);
+                        let bound = binder_syms(i, &items[2])?;
                         let mut body = items[3..].iter();
                         for it in &mut body {
-                            if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                            if matches!(it, Value::Str(_)) || is_declare_form(i, it)? {
                                 out.push(it.clone());
                             } else {
                                 out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
@@ -1392,7 +1428,7 @@ fn macroexpand_all_expanded(
                         i.set_symbol(dynvars, Value::cons(items[1].clone(), old))?;
                         let mut out = items[..2].to_vec();
                         for item in &items[2..] {
-                            out.push(macroexpand_all(i, item)?);
+                            out.push(macroexpand_all_recur(i, item)?);
                         }
                         return Ok(Value::list(out));
                     }
@@ -1403,10 +1439,10 @@ fn macroexpand_all_expanded(
                         // not code, and must not be descended into
                         // (an `ftype' spec holds a `(function TYPE)'
                         // form that is not a function quote).
-                        let bound = binder_syms(i, &items[2]);
+                        let bound = binder_syms(i, &items[2])?;
                         let mut body = items[3..].iter();
                         for it in &mut body {
-                            if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                            if matches!(it, Value::Str(_)) || is_declare_form(i, it)? {
                                 out.push(it.clone());
                             } else {
                                 out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
@@ -1422,7 +1458,7 @@ fn macroexpand_all_expanded(
                         let mut out = items[..2].to_vec();
                         // A bare lambda's declarations are stray macro
                         // forms, unlike defun/defmacro metadata above.
-                        let bound = binder_syms(i, &items[1]);
+                        let bound = binder_syms(i, &items[1])?;
                         let mut body = items[2..].iter();
                         for it in &mut body {
                             if matches!(it, Value::Str(_)) {
@@ -1444,10 +1480,9 @@ fn macroexpand_all_expanded(
                         // spec inside `declare') and passes through
                         // verbatim, extra elements included.
                         if let Value::Cons(lc) = &items[1] {
-                            let is_lam = {
-                                let b = lc.borrow();
-                                i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, closure_id)
-                            };
+                            let (head, _) = crate::lisp::eval::cons_parts(i, lc)?;
+                            let is_lam =
+                                i.sym_is(&head, sym::LAMBDA) || i.sym_is(&head, closure_id);
                             if is_lam {
                                 // Expand the lambda's elements the way
                                 // `macroexp--all-forms' does (arglist is
@@ -1455,22 +1490,21 @@ fn macroexpand_all_expanded(
                                 // recur through `macroexpand_all' on the
                                 // whole `(lambda ...)' — `macroexpand-1'
                                 // would just re-wrap it in `function'.
-                                let is_clo = {
-                                    let b = lc.borrow();
-                                    i.sym_is(&b.car, closure_id)
-                                };
+                                let is_clo = i.sym_is(&head, closure_id);
                                 let head = if is_clo { 3 } else { 2 };
-                                let litems = match want_list(i, &items[1]) {
-                                    Ok(v) if v.len() >= head => v,
-                                    _ => return Ok(expanded),
+                                let Some(litems) = macroexpand_list_to_vec(i, &items[1])? else {
+                                    return Ok(expanded);
                                 };
+                                if litems.len() < head {
+                                    return Ok(expanded);
+                                }
                                 let mut lout = litems[..head].to_vec();
-                                let bound = binder_syms(i, &litems[head - 1]);
+                                let bound = binder_syms(i, &litems[head - 1])?;
                                 let mut lbody = litems[head..].iter();
                                 for it in &mut lbody {
-                                    if matches!(it, Value::Str(_))
-                                        || (is_clo && is_declare_form(i, it))
-                                    {
+                                    let declaration =
+                                        is_clo && is_declare_form(i, it)?;
+                                    if matches!(it, Value::Str(_)) || declaration {
                                         lout.push(it.clone());
                                     } else {
                                         lout.push(expand_body_filtered(
@@ -1495,10 +1529,10 @@ fn macroexpand_all_expanded(
                         // scope.  `let' inits see the outer env; `let*'
                         // inits see the env filtered by the bindings
                         // already walked; the body is filtered by all.
-                        let bound = binder_syms(i, &items[1]);
+                        let bound = binder_syms(i, &items[1])?;
                         let is_letstar = i.sym_is(&items[0], sym::LET_STAR)
                             || i.sym_is(&items[0], sym::AND_LET_STAR);
-                        let body_env = sm_filter_env(i, &env, &bound);
+                        let body_env = sm_filter_env(i, &env, &bound)?;
                         let mut out = vec![items[0].clone()];
                         match &items[1] {
                             Value::Cons(_) => {
@@ -1510,16 +1544,13 @@ fn macroexpand_all_expanded(
                                 loop {
                                     match cur {
                                         Value::Cons(c) => {
-                                            let (b, next) = {
-                                                let bb = c.borrow();
-                                                (bb.car.clone(), bb.cdr.clone())
-                                            };
+                                            let (b, next) = crate::lisp::eval::cons_parts(i, &c)?;
                                             // Env governing this binding's
                                             // init value.
                                             let init_env = if !sm {
                                                 None
                                             } else if is_letstar {
-                                                Some(sm_filter_env(i, &env, &seen))
+                                                Some(sm_filter_env(i, &env, &seen)?)
                                             } else {
                                                 // `let' inits expand in
                                                 // the OUTER env (parallel
@@ -1528,7 +1559,9 @@ fn macroexpand_all_expanded(
                                             };
                                             if is_letstar && sm {
                                                 let bv = match &b {
-                                                    Value::Cons(bc) => bc.borrow().car.clone(),
+                                                    Value::Cons(bc) => {
+                                                        crate::lisp::eval::cons_parts(i, bc)?.0
+                                                    }
                                                     other => other.clone(),
                                                 };
                                                 if let Some(sid) = i.sym_id(&bv) {
@@ -1538,23 +1571,32 @@ fn macroexpand_all_expanded(
                                                 }
                                             }
                                             let nb = {
-                                                let keep_head = matches!(
-                                                    &b,
-                                                    Value::Cons(bc)
-                                                        if i.sym_id(&bc.borrow().car).is_some()
-                                                );
+                                                let keep_head = match &b {
+                                                    Value::Cons(bc) => i
+                                                        .sym_id(
+                                                            &crate::lisp::eval::cons_parts(i, bc)?.0,
+                                                        )
+                                                        .is_some(),
+                                                    _ => false,
+                                                };
                                                 // For non-letstar plain-let,
                                                 // all bound names shadow.
                                                 let init_env = init_env.clone();
                                                 let expand_init =
                                                     |i: &mut Interp, p: &Value| -> EvalResult {
                                                         if let Some(e2) = &init_env {
-                                                            i.specbind(env_id, e2.clone())?;
-                                                            let r = macroexpand_all(i, p);
-                                                            i.unbind(1)?;
+                                                            let mark = i.specbind_depth();
+                                                            if let Err(error) =
+                                                                i.specbind(env_id, e2.clone())
+                                                            {
+                                                                i.unbind_to(mark)?;
+                                                                return Err(error);
+                                                            }
+                                                            let r = macroexpand_all_recur(i, p);
+                                                            i.unbind_to(mark)?;
                                                             r
                                                         } else {
-                                                            macroexpand_all(i, p)
+                                                            macroexpand_all_recur(i, p)
                                                         }
                                                     };
                                                 if keep_head {
@@ -1599,22 +1641,26 @@ fn macroexpand_all_expanded(
                         }
                         // Body under the fully filtered env.
                         if sm {
-                            i.specbind(env_id, body_env)?;
+                            let mark = i.specbind_depth();
+                            if let Err(error) = i.specbind(env_id, body_env) {
+                                i.unbind_to(mark)?;
+                                return Err(error);
+                            }
                             let mut body_out = Vec::new();
                             for it in &items[2..] {
-                                match macroexpand_all(i, it) {
+                                match macroexpand_all_recur(i, it) {
                                     Ok(e) => body_out.push(e),
                                     Err(e) => {
-                                        i.unbind(1)?;
+                                        i.unbind_to(mark)?;
                                         return Err(e);
                                     }
                                 }
                             }
-                            i.unbind(1)?;
+                            i.unbind_to(mark)?;
                             out.extend(body_out);
                         } else {
                             for it in &items[2..] {
-                                out.push(macroexpand_all(i, it)?);
+                                out.push(macroexpand_all_recur(i, it)?);
                             }
                         }
                         return Ok(Value::list(out));
@@ -1629,7 +1675,7 @@ fn macroexpand_all_expanded(
                             let mut any_sm = false;
                             for pair in args.chunks(2) {
                                 if let Some(vid) = i.sym_id(&pair[0]) {
-                                    if sm_lookup(i, &env, vid).is_some() {
+                                    if sm_lookup(i, &env, vid)?.is_some() {
                                         any_sm = true;
                                         break;
                                     }
@@ -1642,11 +1688,12 @@ fn macroexpand_all_expanded(
                                 let setf_sym = Value::Sym(i.q("setf"));
                                 let mut assigns = Vec::new();
                                 for pair in args.chunks(2) {
-                                    let place = i
-                                        .sym_id(&pair[0])
-                                        .and_then(|vid| sm_lookup(i, &env, vid))
-                                        .unwrap_or_else(|| pair[0].clone());
-                                    let expr = macroexpand_all(i, &pair[1])?;
+                                    let place = match i.sym_id(&pair[0]) {
+                                        Some(vid) => sm_lookup(i, &env, vid)?
+                                            .unwrap_or_else(|| pair[0].clone()),
+                                        None => pair[0].clone(),
+                                    };
+                                    let expr = macroexpand_all_recur(i, &pair[1])?;
                                     assigns.push(Value::list(vec![setf_sym.clone(), place, expr]));
                                 }
                                 let out = if assigns.len() == 1 {
@@ -1654,7 +1701,7 @@ fn macroexpand_all_expanded(
                                 } else {
                                     Value::cons(Value::Sym(sym::PROGN), Value::list(assigns))
                                 };
-                                return macroexpand_all(i, &out);
+                                return macroexpand_all_recur(i, &out);
                             }
                         }
                         // Fall through to the normal `setq' path when no
@@ -1662,13 +1709,13 @@ fn macroexpand_all_expanded(
                         let args = &items[1..];
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
-                            let expr = macroexpand_all(i, &args[1])?;
+                            let expr = macroexpand_all_recur(i, &args[1])?;
                             return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
                         }
                         let mut assigns = Vec::new();
                         for pair in args.chunks(2) {
                             let var = &pair[0];
-                            let expr = macroexpand_all(i, &pair[1])?;
+                            let expr = macroexpand_all_recur(i, &pair[1])?;
                             assigns.push(Value::list(vec![items[0].clone(), var.clone(), expr]));
                         }
                         return Ok(Value::cons(Value::Sym(sym::PROGN), Value::list(assigns)));
@@ -1681,7 +1728,7 @@ fn macroexpand_all_expanded(
                         let args = &items[1..];
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
-                            let expr = macroexpand_all(i, &args[1])?;
+                            let expr = macroexpand_all_recur(i, &args[1])?;
                             return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
                         }
                         if nargs % 2 == 1 {
@@ -1702,23 +1749,15 @@ fn macroexpand_all_expanded(
                         let mut assigns = Vec::new();
                         for pair in args.chunks(2) {
                             let var = &pair[0];
-                            let expr = macroexpand_all(i, &pair[1])?;
+                            let expr = macroexpand_all_recur(i, &pair[1])?;
                             let assignment = if plain_setq_var(i, var) {
                                 Value::list(vec![items[0].clone(), var.clone(), expr])
-                            } else if i
-                                .sym_id(var)
-                                .map(|sid| i.symbol_name(sid).starts_with(':'))
-                                .unwrap_or(false)
-                            {
+                            } else if i.sym_id(var).is_some_and(|sid| is_keyword_id(i, sid)) {
                                 // `(if (eq :k E) :k (signal 'setting-constant
                                 //                          (list ':k)))'
                                 Value::list(vec![
                                     Value::Sym(sym::IF),
-                                    Value::list(vec![
-                                        Value::Sym(i.q("eq")),
-                                        var.clone(),
-                                        expr,
-                                    ]),
+                                    Value::list(vec![Value::Sym(i.q("eq")), var.clone(), expr]),
                                     var.clone(),
                                     Value::list(vec![
                                         Value::Sym(i.q("signal")),
@@ -1774,19 +1813,17 @@ fn macroexpand_all_expanded(
                             // (bug#53227).
                             return Ok(expanded);
                         }
-                        let eexp = macroexpand_all(i, &items[1])?;
+                        let eexp = macroexpand_all_recur(i, &items[1])?;
                         let mut eargs = Vec::with_capacity(items.len() - 2);
                         for a in &items[2..] {
-                            eargs.push(macroexpand_all(i, a)?);
+                            eargs.push(macroexpand_all_recur(i, a)?);
                         }
                         let mut f: Option<Value> = None;
                         if let Value::Cons(c) = &eexp {
-                            let is_fn = {
-                                let b = c.borrow();
-                                i.sym_is(&b.car, sym::FUNCTION)
-                            };
+                            let is_fn =
+                                i.sym_is(&crate::lisp::eval::cons_parts(i, c)?.0, sym::FUNCTION);
                             if is_fn {
-                                if let Ok(v) = eexp.list_to_vec() {
+                                if let Some(v) = macroexpand_list_to_vec(i, &eexp)? {
                                     if v.len() == 2 {
                                         f = Some(v[1].clone());
                                     }
@@ -1799,18 +1836,18 @@ fn macroexpand_all_expanded(
                                     // `(funcall #'sym A...)' → `(sym A...)'
                                     // unless sym is a special form or macro.
                                     let is_sf = crate::lisp::special::special_form(fsid).is_some();
-                                    if !is_sf && !sym_macrop(i, fsid) {
+                                    if !is_sf && !sym_macrop(i, fsid)? {
                                         let mut call = vec![fv.clone()];
                                         call.extend(eargs);
-                                        return macroexpand_all(i, &Value::list(call));
+                                        return macroexpand_all_recur(i, &Value::list(call));
                                     }
                                 }
                                 None => {
                                     if let Value::Cons(lc) = &fv {
-                                        let is_lam = {
-                                            let b = lc.borrow();
-                                            i.sym_is(&b.car, sym::LAMBDA)
-                                        };
+                                        let is_lam = i.sym_is(
+                                            &crate::lisp::eval::cons_parts(i, lc)?.0,
+                                            sym::LAMBDA,
+                                        );
                                         if is_lam {
                                             if let Some(unfolded) =
                                                 unfold_funcall_lambda(i, &fv, &eargs)?
@@ -1870,10 +1907,11 @@ fn macroexpand_all_expanded(
                         let mut out = vec![items[0].clone()];
                         for clause in &items[1..] {
                             if let Value::Cons(_) = clause {
-                                let parts = clause.list_to_vec().unwrap_or_default();
+                                let parts =
+                                    macroexpand_list_to_vec(i, clause)?.unwrap_or_default();
                                 let mut nc = Vec::with_capacity(parts.len());
                                 for p in &parts {
-                                    nc.push(macroexpand_all(i, p)?);
+                                    nc.push(macroexpand_all_recur(i, p)?);
                                 }
                                 out.push(Value::list(nc));
                             } else {
@@ -1890,10 +1928,8 @@ fn macroexpand_all_expanded(
             // head verbatim (no `function' wrap) while its body and the
             // call arguments expand.
             if let Value::Cons(lc) = &items[0] {
-                let is_lam = {
-                    let b = lc.borrow();
-                    i.sym_is(&b.car, sym::LAMBDA)
-                };
+                let is_lam =
+                    i.sym_is(&crate::lisp::eval::cons_parts(i, lc)?.0, sym::LAMBDA);
                 if is_lam {
                     let litems = match want_list(i, &items[0]) {
                         Ok(v) if v.len() >= 2 => v,
@@ -1901,11 +1937,11 @@ fn macroexpand_all_expanded(
                     };
                     let mut fun_items = litems[..2].to_vec();
                     for it in &litems[2..] {
-                        fun_items.push(macroexpand_all(i, it)?);
+                        fun_items.push(macroexpand_all_recur(i, it)?);
                     }
                     let mut res = vec![Value::list(fun_items)];
                     for it in &items[1..] {
-                        res.push(macroexpand_all(i, it)?);
+                        res.push(macroexpand_all_recur(i, it)?);
                     }
                     return Ok(Value::list(res));
                 }
@@ -1922,7 +1958,7 @@ fn macroexpand_all_expanded(
             // parity — a bound `car' in `(car x)' stays `car').
             out.push(items[0].clone());
             for it in &items[1..] {
-                out.push(macroexpand_all(i, it)?);
+                out.push(macroexpand_all_recur(i, it)?);
             }
             let result = Value::list(out);
             if let Some(handler) = &compiler_macro {
@@ -1930,7 +1966,7 @@ fn macroexpand_all_expanded(
                     return Ok(expanded);
                 }
                 if let Some(newf) = expand_compiler_macro(i, handler, &result)? {
-                    return macroexpand_all(i, &newf);
+                    return macroexpand_all_recur(i, &newf);
                 }
             }
             Ok(result)
@@ -2002,8 +2038,9 @@ pub(crate) fn text_quoting_style(i: &Interp) -> QuoteStyle {
             let graves = super::misc::is_char_table(i, &dt)
                 && match super::misc::char_table_ref(i, &dt, 0x2018) {
                     Value::Vec(v) => {
-                        let v = v.borrow();
-                        v.len() == 1 && matches!(v[0], Value::Int(0x60))
+                        v.try_borrow().is_ok_and(|v| {
+                            v.len() == 1 && matches!(v[0], Value::Int(0x60))
+                        })
                     }
                     _ => false,
                 };
@@ -2013,8 +2050,8 @@ pub(crate) fn text_quoting_style(i: &Interp) -> QuoteStyle {
                 QuoteStyle::Curve
             }
         }
-        Value::Sym(s) if i.symbol_name(s) == "grave" => QuoteStyle::Grave,
-        Value::Sym(s) if i.symbol_name(s) == "straight" => QuoteStyle::Straight,
+        Value::Sym(s) if i.intern_soft("grave") == Some(s) => QuoteStyle::Grave,
+        Value::Sym(s) if i.intern_soft("straight") == Some(s) => QuoteStyle::Straight,
         _ => QuoteStyle::Curve,
     }
 }
@@ -2023,7 +2060,10 @@ pub(crate) fn text_quoting_style(i: &Interp) -> QuoteStyle {
 /// grave leaves `` `' `` and `'` verbatim, straight maps both to ASCII
 /// `'', curve turns them into U+2018/U+2019.  Only the format string
 /// is translated, never the substituted arguments.
-pub(crate) fn translate_message_quotes<T: crate::lisp::text::TextSource + ?Sized>(i: &Interp, fmt: &T) -> crate::lisp::text::EmacsText {
+pub(crate) fn translate_message_quotes<T: crate::lisp::text::TextSource + ?Sized>(
+    i: &Interp,
+    fmt: &T,
+) -> crate::lisp::text::EmacsText {
     use crate::lisp::text::{EmacsChar, EmacsText};
     fmt.with_text(|fmt| {
         let mut out = EmacsText::with_capacity(fmt.len());
@@ -2046,9 +2086,10 @@ pub(crate) fn f_throw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: Fthrow scans the catch chain; with no matching catch it
     // signals `no-catch' at the throw site (so condition-case can catch
     // it, but an outer matching catch would have won instead).
-    if !args[0].is_nil() && i.catch_tags
-        .iter()
-        .any(|t| crate::lisp::eq_values(t, &args[0]))
+    if !args[0].is_nil()
+        && i.catch_tags
+            .iter()
+            .any(|t| crate::lisp::eq_values(t, &args[0]))
     {
         i.begin_quit_unwind();
         Err(Flow::Throw(args[0].clone(), args[1].clone()))
@@ -2074,10 +2115,7 @@ fn f_ignore_errors_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_ignore_error_raw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let all = args.iter().next().cloned().unwrap_or(Value::Nil);
     let (cond, body) = match &all {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        }
+        Value::Cons(c) => crate::lisp::eval::cons_parts(i, c)?,
         _ => (Value::Nil, Value::Nil),
     };
     ignore_body_forms(i, &cond, &body)
@@ -2088,7 +2126,8 @@ fn ignore_body_forms(i: &mut Interp, cond: &Value, body: &Value) -> EvalResult {
     // run for signals this form will swallow (GNU suppresses them via
     // the no-debugger-entry rule).
     let case_depth = i.case_handlers.len();
-    i.case_handlers.push(crate::lisp::error::CaseHandler::single(cond.clone()));
+    i.case_handlers
+        .push(crate::lisp::error::CaseHandler::single(cond.clone()));
     let r = i.eval_progn(body);
     let r = i.offer_flow(r);
     i.case_handlers.pop();
@@ -2123,15 +2162,27 @@ fn f_with_demoted_errors(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 /// variable, so a `dlet' binding (the Gnus cycle-breaker) counts and a
 /// `delq' removal hides the feature.  `i.features' is boot bookkeeping
 /// only, never the authority here.
-fn feature_present(i: &mut Interp, id: SymId) -> bool {
+fn feature_present(i: &mut Interp, id: SymId) -> Result<bool, Flow> {
     let fid = i.q("features");
-    match i.symbol_value(fid) {
-        Value::Cons(_) | Value::Nil => i
-            .symbol_value(fid)
-            .list_to_vec()
-            .map(|items| items.iter().any(|v| i.sym_id(v) == Some(id)))
-            .unwrap_or(false),
-        _ => false,
+    let features = i.symbol_value(fid);
+    let mut cur = features.clone();
+    let mut cycle = crate::lisp::builtins::listfn::ListCycle::new(&features);
+    loop {
+        match cur {
+            Value::Nil => return Ok(false),
+            Value::Cons(cell) => {
+                let (candidate, next) = cell
+                    .try_borrow()
+                    .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                    .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?;
+                if super::eq_values_with_interp(i, &candidate, &Value::Sym(id)) {
+                    return Ok(true);
+                }
+                cur = next;
+                cycle.step(i, &cur)?;
+            }
+            _ => return Err(i.wrong_type_mut("listp", &features)),
+        }
     }
 }
 
@@ -2162,15 +2213,37 @@ fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     // GNU Ffeaturep: SUBFEATURE non-nil looks it up in the feature's
     // `subfeatures' plist entry instead of the features list.
+    let present = feature_present(i, id)?;
     let sub = arg(&args, 1);
     if !sub.is_nil() {
+        if !present {
+            return Ok(Value::Nil);
+        }
         let prop = i.q("subfeatures");
         let subs = i.get_prop(id, prop);
-        let items = subs.list_to_vec().unwrap_or_default();
-        let found = equal_position(i, &items, &sub)?.is_some();
-        return Ok(Value::from_bool(found));
+        // Search live, as GNU does: a match before an improper/circular tail
+        // returns immediately, while a full miss reports the bad list shape.
+        let mut cur = subs.clone();
+        let mut cycle = crate::lisp::builtins::listfn::ListCycle::new(&subs);
+        loop {
+            match cur {
+                Value::Nil => return Ok(Value::Nil),
+                Value::Cons(cell) => {
+                    let (candidate, next) = cell
+                        .try_borrow()
+                        .map(|cell| (cell.car.clone(), cell.cdr.clone()))
+                        .map_err(|_| i.error("Cannot traverse a mutably borrowed cons cell"))?;
+                    if super::equal_values(i, &candidate, &sub)? {
+                        return Ok(Value::t());
+                    }
+                    cur = next;
+                    cycle.step(i, &cur)?;
+                }
+                _ => return Err(i.wrong_type_mut("listp", &subs)),
+            }
+        }
     }
-    Ok(Value::from_bool(feature_present(i, id)))
+    Ok(Value::from_bool(present))
 }
 
 fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -2178,9 +2251,13 @@ fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU Fprovide: CHECK_LIST on SUBFEATURES, then record it on the
     // feature's `subfeatures' plist.
     let sub = arg(&args, 1);
-    if !sub.is_nil() && sub.list_to_vec().is_err() {
+    if !matches!(&sub, Value::Nil | Value::Cons(_)) {
         return Err(i.wrong_type_mut("listp", &sub));
     }
+    // GNU checks `features' before installing subfeatures or running
+    // symbol-keyed after-load forms. Keep the initial membership result so
+    // callbacks can observe and mutate the feature list in provide order.
+    let already_present = feature_present(i, id)?;
     if !sub.is_nil() {
         let prop = i.q("subfeatures");
         i.put_prop(id, prop, sub);
@@ -2193,38 +2270,59 @@ fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // the never-loaded file would have defined).
     let prov_mark = i.q("remacs--provided");
     i.put_prop(id, prov_mark, Value::t());
-    // Symbol-keyed `after-load-alist' entries run their delayed
-    // wrappers now (they defer to `after-load-functions' when a file
-    // load is in progress, per GNU's eval-after-load indirection).
-    let alist_sym = i.q("after-load-alist");
-    let entries = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
     let feat_v = i.sym(id);
-    for entry in entries {
-        let mut parts = entry.list_to_vec().unwrap_or_default();
-        if parts.is_empty() {
-            continue;
-        }
-        let key = parts.remove(0);
-        if super::eq_values(&key, &feat_v) {
-            for f in parts {
-                i.apply(&f, vec![])?;
-            }
-        }
-    }
-    // GNU records `(provide . FEATURE)' on `current-load-list' at
-    // provide time (catches nested provides too).
-    let provide_id = i.q("provide");
-    loadhist_attach(i, Value::cons(i.sym(provide_id), feat_v.clone()));
-    // `(push feature features)' on the current binding, deduped.
-    if !feature_present(i, id) {
+    if !already_present {
         let fid = i.q("features");
         let cur = i.symbol_value(fid);
         let mut items = cur.list_to_vec().unwrap_or_default();
         items.insert(0, feat_v.clone());
-        i.set_symbol(fid, Value::list(items))?;
+        // GNU Fprovide updates Vfeatures directly; this C-side registry
+        // update does not invoke Lisp variable watchers.
+        i.store_internal_value(fid, Value::list(items));
     }
     if !i.features.contains(&id) {
         i.features.insert(0, id);
+    }
+    // GNU records `(provide . FEATURE)' on `current-load-list' at
+    // provide time (catches nested provides too); this is visible to
+    // symbol-keyed after-load forms.
+    let provide_id = i.q("provide");
+    loadhist_attach(i, Value::cons(i.sym(provide_id), feat_v.clone()));
+
+    // Symbol-keyed `after-load-alist' entries run after feature and load
+    // history state is installed; they defer to `after-load-functions'
+    // when a file load is in progress.
+    let alist_sym = i.q("after-load-alist");
+    let alist = i.symbol_value(alist_sym);
+    let entries = match alist.list_to_vec() {
+        Ok(entries) => entries,
+        Err(crate::lisp::value::ListError::Circular(tail)) => {
+            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail]));
+        }
+        // GNU's `assoc' reports an improper alist with the whole argument.
+        Err(crate::lisp::value::ListError::Dotted(_)) => {
+            return Err(i.wrong_type_mut("listp", &alist));
+        }
+        Err(crate::lisp::value::ListError::Borrowed) => {
+            return Err(i.error("Cannot inspect a mutably borrowed after-load list"));
+        }
+    };
+    let funcall = crate::lisp::builtins::evalfn::SUBRS
+        .iter()
+        .find(|subr| subr.name == "funcall")
+        .map(|subr| Value::Subr(subr))
+        .ok_or_else(|| i.error("funcall subr not registered"))?;
+    for entry in entries {
+        let Value::Cons(cell) = entry else {
+            continue;
+        };
+        let (key, forms) = cell
+            .try_borrow()
+            .map(|entry| (entry.car.clone(), entry.cdr.clone()))
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed after-load entry"))?;
+        if super::eq_values_with_interp(i, &key, &feat_v) {
+            crate::lisp::builtins::seq::f_mapc(i, vec![funcall.clone(), forms].into())?;
+        }
     }
     Ok(args[0].clone())
 }
@@ -2262,12 +2360,12 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `require' is `(unless (memq feature features) (load ...))':
     // the check consults the Lisp `features' variable, so a dynamic
     // binding (the Gnus `dlet' cycle-breaker) counts as provided.
-    if feature_present(i, id) {
+    if feature_present(i, id)? {
         return Ok(args[0].clone());
     }
     // Try to load feature file from load-path.
     let name = match args.get(1) {
-        Some(value @ Value::Str(_)) => crate::lisp::load::filename_text(i, value).unwrap(),
+        Some(value @ Value::Str(_)) => filename_text_arg(i, value)?,
         _ => i.symbol_name_text(id),
     };
     let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
@@ -2279,7 +2377,7 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             // signals `error' with the RESOLVED file name ("Loading
             // file FILE failed to provide feature ‘FEATURE’"), and
             // NOERROR does not suppress it.
-            if !feature_present(i, id) {
+            if !feature_present(i, id)? {
                 return Err(i.signal_data(
                     sym::ERROR,
                     vec![Value::string(format!(
@@ -2330,11 +2428,11 @@ fn run_hook_functions(
     if value.is_nil() || matches!(&value, Value::Sym(s) if *s == sym::UNBOUND) {
         return Ok(Value::Nil);
     }
-    if !matches!(&value, Value::Cons(_)) || hook_lambda(i, &value) {
+    if !matches!(&value, Value::Cons(_)) || hook_lambda(i, &value)? {
         return callback(i, value);
     }
     while let Value::Cons(cell) = value {
-        let function = cell.borrow().car.clone();
+        let function = crate::lisp::eval::cons_parts(i, &cell)?.0;
         let result = if i.sym_is(&function, sym::T) {
             let base = i.var_alias_target(id);
             let mut defaults = i.obarray.symbol(base).value.clone();
@@ -2344,18 +2442,20 @@ fn run_hook_functions(
             let mut result = Value::Nil;
             if defaults.is_nil() {
                 // No global functions at this sentinel.
-            } else if !matches!(&defaults, Value::Cons(_)) || hook_lambda(i, &defaults) {
+            } else if !matches!(&defaults, Value::Cons(_)) || hook_lambda(i, &defaults)? {
                 result = callback(i, defaults)?;
             } else {
                 while let Value::Cons(global) = defaults {
-                    let function = global.borrow().car.clone();
+                    let function = crate::lisp::eval::cons_parts(i, &global)?.0;
                     if !i.sym_is(&function, sym::T) {
                         result = callback(i, function)?;
                         if result.truthy() {
                             break;
                         }
                     }
-                    defaults = global.borrow().cdr.clone();
+                    // Fetch the next cell after the callback: it may have
+                    // mutated the live default hook list.
+                    defaults = crate::lisp::eval::cons_parts(i, &global)?.1;
                 }
             }
             result
@@ -2365,13 +2465,18 @@ fn run_hook_functions(
         if result.truthy() {
             return Ok(result);
         }
-        value = cell.borrow().cdr.clone();
+        // Hooks can mutate their own list cells while running.
+        value = crate::lisp::eval::cons_parts(i, &cell)?.1;
     }
     Ok(Value::Nil)
 }
 
-fn hook_lambda(i: &Interp, value: &Value) -> bool {
-    matches!(value, Value::Cons(cell) if i.sym_is(&cell.borrow().car, sym::LAMBDA))
+fn hook_lambda(i: &Interp, value: &Value) -> Result<bool, Flow> {
+    let Value::Cons(cell) = value else {
+        return Ok(false);
+    };
+    let head = crate::lisp::eval::cons_parts(i, cell)?.0;
+    Ok(i.sym_is(&head, sym::LAMBDA))
 }
 
 fn want_hook_sym(i: &mut Interp, hook: &Value) -> Result<(), super::Flow> {
@@ -2460,10 +2565,7 @@ fn call_mod_hooks(i: &mut Interp, list: &Value, beg1: usize, end1: usize) -> Eva
         match cur {
             Value::Nil => return Ok(Value::Nil),
             Value::Cons(c) => {
-                let (f, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
+                let (f, next) = crate::lisp::eval::cons_parts(i, &c)?;
                 i.apply(&f, vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)])?;
                 cur = next;
             }
@@ -2475,27 +2577,35 @@ fn call_mod_hooks(i: &mut Interp, list: &Value, beg1: usize, end1: usize) -> Eva
 /// Whether the buffer's shared text ever gained an interval tree
 /// (GNU `buffer_intervals (buf) != NULL' — it persists after all
 /// properties are removed).
-fn buffer_has_intervals(i: &Interp) -> bool {
-    i.buffers
-        .get(i.current_buffer)
-        .map(|b| {
-            let bb = b.borrow();
-            bb.text.had_intervals.get() || !bb.text.props.borrow().is_empty()
-        })
-        .unwrap_or(false)
+fn buffer_has_intervals(i: &Interp) -> Result<bool, Flow> {
+    let Some(buffer) = i.buffers.get(i.current_buffer) else {
+        return Ok(false);
+    };
+    let buffer = buffer
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+    if buffer.text.had_intervals.get() {
+        return Ok(true);
+    }
+    buffer
+        .text
+        .props
+        .try_borrow()
+        .map(|properties| !properties.is_empty())
+        .map_err(|_| i.error("Cannot inspect mutably borrowed buffer text properties"))
 }
 
-fn buffer_has_overlays(i: &Interp) -> bool {
-    i.buffers
-        .get(i.current_buffer)
-        .map(|b| {
-            let bid = b.borrow().id;
-            b.borrow()
-                .overlays
-                .iter()
-                .any(|o| o.buffer == Some(bid))
-        })
-        .unwrap_or(false)
+fn buffer_has_overlays(i: &Interp) -> Result<bool, Flow> {
+    let Some(buffer) = i.buffers.get(i.current_buffer) else {
+        return Ok(false);
+    };
+    let buffer = buffer
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+    Ok(buffer
+        .overlays
+        .iter()
+        .any(|overlay| overlay.buffer == Some(buffer.id)))
 }
 
 /// Push VAL onto LIST unless the tail element is `eq' (GNU's
@@ -2630,20 +2740,20 @@ fn collect_overlay_hooks(i: &mut Interp, beg1: usize, end1: usize) {
 }
 
 /// Decode a `[overlay BID IDX]' handle without validating.
-fn overlay_handle_parts(i: &Interp, v: &Value) -> Option<(usize, usize)> {
+fn overlay_handle_parts(i: &Interp, v: &Value) -> Result<Option<(usize, usize)>, Flow> {
     if let Value::Vec(vec) = v {
-        let vv = vec.borrow();
+        let vv = vec
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed overlay handle"))?;
         if vv.len() == 3 {
-            if let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) =
-                (&vv[0], &vv[1], &vv[2])
-            {
+            if let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) = (&vv[0], &vv[1], &vv[2]) {
                 if Some(*tag) == i.q_soft("overlay") {
-                    return Some((*bid as usize, *idx as usize));
+                    return Ok(Some((*bid as usize, *idx as usize)));
                 }
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// GNU `call_overlay_mod_hooks' over the recorded pairs:
@@ -2659,14 +2769,21 @@ fn run_overlay_hooks(
 ) -> EvalResult {
     let pairs = i.pending_overlay_hooks.clone();
     for (list, handle) in pairs {
-        let attached = overlay_handle_parts(i, &handle)
-            .and_then(|(bid, idx)| {
-                i.buffers
-                    .get(bid)
-                    .and_then(|b| b.borrow().overlays.get(idx).map(|o| o.buffer))
-            })
-            .map(|b| b == Some(i.current_buffer))
-            .unwrap_or(false);
+        let attached = match overlay_handle_parts(i, &handle)? {
+            Some((bid, idx)) => match i.buffers.get(bid) {
+                Some(buffer) => {
+                    let buffer = buffer
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+                    buffer
+                        .overlays
+                        .get(idx)
+                        .is_some_and(|overlay| overlay.buffer == Some(i.current_buffer))
+                }
+                None => false,
+            },
+            None => false,
+        };
         if !attached {
             continue;
         }
@@ -2675,10 +2792,7 @@ fn run_overlay_hooks(
             match cur {
                 Value::Nil => break,
                 Value::Cons(c) => {
-                    let (f, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    let (f, next) = crate::lisp::eval::cons_parts(i, &c)?;
                     let mut argv = vec![
                         handle.clone(),
                         Value::from_bool(after),
@@ -2728,23 +2842,20 @@ fn report_interval_modification(i: &mut Interp, beg1: usize, end1: usize) -> Eva
 /// GNU's `combine_after_change_calls' gate: deferrable only when
 /// `before-change-functions' is nil or the `(t syntax-ppss-flush-cache)'
 /// local shape with a nil default, and the buffer has no overlays.
-fn combine_gate_ok(i: &mut Interp) -> bool {
+fn combine_gate_ok(i: &mut Interp) -> Result<bool, Flow> {
     let cacc = match i.q_soft("combine-after-change-calls") {
         Some(s) => i.symbol_value(s).truthy(),
-        None => return false,
+        None => return Ok(false),
     };
     if !cacc {
-        return false;
+        return Ok(false);
     }
     let bcf_id = i.q("before-change-functions");
     let bcf = i.symbol_value(bcf_id);
     let shape_ok = if bcf.is_nil() {
         true
     } else if let Value::Cons(c) = &bcf {
-        let (car, cdr) = {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
+        let (car, cdr) = crate::lisp::eval::cons_parts(i, c)?;
         let car_t = i.sym_is(&car, sym::T);
         let default_nil = match i.obarray.symbol(bcf_id).value {
             Value::Nil => true,
@@ -2754,8 +2865,8 @@ fn combine_gate_ok(i: &mut Interp) -> bool {
         let ppss = i.q("syntax-ppss-flush-cache");
         let tail_ok = match &cdr {
             Value::Cons(c2) => {
-                let b2 = c2.borrow();
-                i.sym_is(&b2.car, ppss) && b2.cdr.is_nil()
+                let (head, tail) = crate::lisp::eval::cons_parts(i, c2)?;
+                i.sym_is(&head, ppss) && tail.is_nil()
             }
             _ => false,
         };
@@ -2763,7 +2874,7 @@ fn combine_gate_ok(i: &mut Interp) -> bool {
     } else {
         false
     };
-    shape_ok && !buffer_has_overlays(i)
+    Ok(shape_ok && !buffer_has_overlays(i)?)
 }
 
 /// GNU `Fcombine_after_change_execute': merge the deferred changes of
@@ -2792,11 +2903,7 @@ pub(crate) fn combine_after_change_execute(i: &mut Interp) -> EvalResult {
     let bid = i.combine_after_change_buffer.unwrap();
     let old = i.current_buffer;
     i.set_current_buffer(bid);
-    let zv0 = i
-        .buffers
-        .get(bid)
-        .map(|b| b.borrow().zv)
-        .unwrap_or(0);
+    let zv0 = i.buffers.get(bid).map(|b| b.borrow().zv).unwrap_or(0);
     let (mut beg, mut end, mut change) = (zv0, zv0, 0i128);
     for (tb, te, tc) in &i.combine_after_change_list {
         beg = beg.min(*tb);
@@ -2815,23 +2922,23 @@ pub(crate) fn combine_after_change_execute(i: &mut Interp) -> EvalResult {
     r
 }
 
- /// GNU `signal_before_change': run `first-change-hook' (when the
- /// buffer was unmodified) then `before-change-functions' with the
- /// 1-based region about to change.  An error aborts the modification.
+/// GNU `signal_before_change': run `first-change-hook' (when the
+/// buffer was unmodified) then `before-change-functions' with the
+/// 1-based region about to change.  An error aborts the modification.
 /// Folded-in GNU `prepare_to_modify_buffer_1' pieces: the
 /// `barf-if-buffer-read-only' check, `verify_interval_modification'
 /// (text-property read-only, `modification-hooks' calls for
 /// deletions/replacements, insert-hook collection for insertions),
 /// and the overlay before-hooks — all under the GNU
 /// `specbind (inhibit-modification-hooks)' scope for the hook calls.
- pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
+pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
     // GNU `prepare_to_modify_buffer_1': barf-if-buffer-read-only
     // runs at the change start before any hook work, even under
     // `inhibit-modification-hooks'.
     crate::buffer::primitives::check_writable_at(i, beg1 - 1)?;
     // `verify_interval_modification' — only when the buffer has an
     // interval tree; resets the saved insert-hook lists either way.
-    if buffer_has_intervals(i) {
+    if buffer_has_intervals(i)? {
         i.pending_insert_behind.clear();
         i.pending_insert_front.clear();
         if beg1 == end1 {
@@ -2847,64 +2954,80 @@ pub(crate) fn combine_after_change_execute(i: &mut Interp) -> EvalResult {
             }
         }
     }
-     if mod_hooks_inhibited(i) {
-         return Ok(Value::Nil);
-     }
+    if mod_hooks_inhibited(i) {
+        return Ok(Value::Nil);
+    }
     let mark = i.specbind_depth();
     let imh = i.q("inhibit-modification-hooks");
-    let _ = i.specbind(imh, Value::t());
+    if let Err(error) = i.specbind(imh, Value::t()) {
+        i.unbind_to(mark)?;
+        return Err(error);
+    }
     let result = signal_before_change_inner(i, beg1, end1);
-    let _ = i.unbind_to(mark);
-    result
+    i.unbind_to(mark)?;
+    result?;
+    // GNU `prepare_to_modify_buffer_1' sets this after before-change hooks
+    // succeed and before the buffer is changed. Watcher errors abort edits.
+    let deactivate = i.q("deactivate-mark");
+    i.set_symbol(deactivate, Value::t())?;
+    Ok(Value::Nil)
 }
 
 fn signal_before_change_inner(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
-     let unmodified = !i
-         .buffers
-         .get(i.current_buffer)
-         .map(|b| b.borrow().is_modified())
-         .unwrap_or(false);
-     if unmodified {
-         call_hook(i, "first-change-hook")?;
-     }
-     let args = vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)];
-     let id = i.q("before-change-functions");
-     run_hook_functions(i, &Value::Sym(id), |i, f| {
+    let unmodified = !i
+        .buffers
+        .get(i.current_buffer)
+        .map(|b| b.borrow().is_modified())
+        .unwrap_or(false);
+    if unmodified {
+        call_hook(i, "first-change-hook")?;
+    }
+    let args = vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)];
+    let id = i.q("before-change-functions");
+    run_hook_functions(i, &Value::Sym(id), |i, f| {
         if let Err(fl) = i.apply(&f, args.clone()) {
             // GNU `reset_var_on_error': an erroring hook function
-            // clears `before-change-functions'.
-            let _ = i.set_symbol(id, Value::Nil);
+            // clears `before-change-functions' without notifying variable
+            // watchers; resetting is part of the failed hook's unwind.
+            reset_hook_variable_on_error(i, id)?;
             return Err(fl);
         }
         Ok(Value::Nil)
-     })?;
-    if buffer_has_overlays(i) {
+    })?;
+    if buffer_has_overlays(i)? {
         collect_overlay_hooks(i, beg1, end1);
         run_overlay_hooks(i, false, beg1, end1, &Value::Nil)?;
     }
-     Ok(Value::Nil)
- }
+    Ok(Value::Nil)
+}
 
- /// GNU `report_after_change': `after-change-functions' with
- /// (BEG END LEN); LEN is the char length of the replaced text.
+/// GNU's `reset_var_on_error' writes the active hook binding directly.
+/// It must not invoke variable watchers: a watcher error would abort the
+/// reset and leave the failing hook installed for the next modification.
+fn reset_hook_variable_on_error(i: &mut Interp, id: SymId) -> Result<(), Flow> {
+    i.set_symbol_no_watchers(id, Value::Nil)
+}
+
+/// GNU `report_after_change': `after-change-functions' with
+/// (BEG END LEN); LEN is the char length of the replaced text.
 /// Handles the `combine-after-change-calls' deferral, replays the
 /// recorded overlay hooks, and — for pure insertions — runs the
 /// `insert-behind'/`insert-in-front' text-property hooks collected by
 /// `signal_before_change', all inside the GNU
 /// `specbind (inhibit-modification-hooks)' scope.
- pub(crate) fn signal_after_change(
-     i: &mut Interp,
-     beg1: usize,
-     end1: usize,
+pub(crate) fn signal_after_change(
+    i: &mut Interp,
+    beg1: usize,
+    end1: usize,
     lendel: i128,
- ) -> EvalResult {
-     if mod_hooks_inhibited(i) {
-         return Ok(Value::Nil);
-     }
+) -> EvalResult {
+    if mod_hooks_inhibited(i) {
+        return Ok(Value::Nil);
+    }
     // GNU defers the whole after-report while
     // `combine-after-change-calls' is bound and the gate conditions
     // hold — the change just joins `combine_after_change_list'.
-    if combine_gate_ok(i) {
+    if combine_gate_ok(i)? {
         if !i.combine_after_change_list.is_empty()
             && i.combine_after_change_buffer != Some(i.current_buffer)
         {
@@ -2933,7 +3056,12 @@ fn signal_before_change_inner(i: &mut Interp, beg1: usize, end1: usize) -> EvalR
     }
     let mark = i.specbind_depth();
     let imh = i.q("inhibit-modification-hooks");
-    let _ = i.specbind(imh, Value::t());
+    if let Err(error) = i.specbind(imh, Value::t()) {
+        i.pending_insert_behind = saved_behind;
+        i.pending_insert_front = saved_front;
+        i.unbind_to(mark)?;
+        return Err(error);
+    }
     let args = vec![
         Value::Int(beg1 as i128),
         Value::Int(end1 as i128),
@@ -2943,7 +3071,7 @@ fn signal_before_change_inner(i: &mut Interp, beg1: usize, end1: usize) -> EvalR
     let mut result = run_hook_functions(i, &Value::Sym(id), |i, f| {
         if let Err(fl) = i.apply(&f, args.clone()) {
             // GNU `reset_var_on_error' clears the hook on error.
-            let _ = i.set_symbol(id, Value::Nil);
+            reset_hook_variable_on_error(i, id)?;
             return Err(fl);
         }
         Ok(Value::Nil)
@@ -2960,9 +3088,9 @@ fn signal_before_change_inner(i: &mut Interp, beg1: usize, end1: usize) -> EvalR
     if result.is_ok() && lendel == 0 {
         result = report_interval_modification(i, beg1, end1);
     }
-    let _ = i.unbind_to(mark);
+    i.unbind_to(mark)?;
     result
- }
+}
 
 /// GNU `run_hook_with_args' with no args: apply each function bound
 /// on the hook variable NAME (buffer-local `t' splicing included).
@@ -2979,7 +3107,8 @@ pub(crate) fn call_hook(i: &mut Interp, name: &str) -> EvalResult {
 pub(crate) fn command_error(i: &mut Interp, data: Value, context: &str) -> EvalResult {
     if let Value::Cons(condition) = &data {
         let quit = Value::Sym(i.q("quit"));
-        if i.signal_matches(&condition.borrow().car, &quit) {
+        let symbol = crate::lisp::eval::cons_parts(i, condition)?.0;
+        if i.signal_matches(&symbol, &quit) {
             i.signaling_function = Value::Nil;
         }
     }
@@ -3010,7 +3139,8 @@ pub(crate) fn safe_call_hook(i: &mut Interp, name: &str) -> EvalResult {
     let hook_id = i.intern(name);
     let result = run_hook_functions(i, &Value::Sym(hook_id), |i, f| {
         let case_depth = i.case_handlers.len();
-        i.case_handlers.push(crate::lisp::error::CaseHandler::single(Value::t()));
+        i.case_handlers
+            .push(crate::lisp::error::CaseHandler::single(Value::t()));
         let result = i.apply(&f, vec![]);
         let result = i.offer_flow(result);
         i.case_handlers.truncate(case_depth);
@@ -3042,57 +3172,66 @@ pub(crate) fn safe_call_hook(i: &mut Interp, name: &str) -> EvalResult {
 /// if present there, else from its global (default) value.  GNU uses
 /// identity here, removing every occurrence of the failing function.
 fn safe_remove_hook_fn(i: &mut Interp, hook_id: SymId, f: &Value) -> EvalResult {
-    let without_function = |mut value: Value| {
-        let mut found = false;
-        let mut functions = Vec::new();
-        while let Value::Cons(cell) = value {
-            let pair = cell.borrow();
-            if super::eq_values(&pair.car, f) {
-                found = true;
-            } else {
-                functions.push(pair.car.clone());
-            }
-            value = pair.cdr.clone();
-        }
-        found.then(|| Value::list(functions))
-    };
     // Fset notifies watchers even for a local binding. If a local `t'
     // supplied the failing function, Fset_default changes only its default.
-    if let Some(value) = without_function(i.symbol_value(hook_id)) {
+    if let Some(value) = hook_list_without_function(i, i.symbol_value(hook_id), f)? {
         i.set_symbol(hook_id, value)?;
     } else {
         let base = i.var_alias_target(hook_id);
-        if let Some(value) = without_function(i.obarray.symbol(base).value.clone()) {
+        if let Some(value) =
+            hook_list_without_function(i, i.obarray.symbol(base).value.clone(), f)?
+        {
             i.set_symbol_default(hook_id, value)?;
         }
     }
     Ok(Value::Nil)
 }
 
+fn hook_list_without_function(
+    i: &Interp,
+    mut value: Value,
+    function: &Value,
+) -> Result<Option<Value>, Flow> {
+    let mut found = false;
+    let mut functions = Vec::new();
+    while let Value::Cons(cell) = value {
+        let (car, cdr) = crate::lisp::eval::cons_parts(i, &cell)?;
+        if super::eq_values(&car, function) {
+            found = true;
+        } else {
+            functions.push(car);
+        }
+        value = cdr;
+    }
+    Ok(found.then(|| Value::list(functions)))
+}
+
 // `add-hook'/`remove-hook' mirror GNU 31.1's Lisp definitions in
 // subr.el, including depth bookkeeping via the `hook--depth-alist'
 // symbol property (an uninterned symbol whose value is an alist).
 
-fn hook_is_local(i: &Interp, id: SymId) -> bool {
-    i.obarray.symbol(id).always_local || {
-        i.buffers
-            .get(i.current_buffer)
-            .map(|b| b.borrow().locals.contains_key(&id))
-            .unwrap_or(false)
+fn hook_is_local(i: &Interp, id: SymId) -> Result<bool, Flow> {
+    if i.obarray.symbol(id).always_local {
+        return Ok(true);
+    }
+    match i.buffers.get(i.current_buffer) {
+        Some(buffer) => buffer
+            .try_borrow()
+            .map(|buffer| buffer.locals.contains_key(&id))
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer")),
+        None => Ok(false),
     }
 }
 
-fn hook_local_if_set(i: &Interp, id: SymId) -> bool {
+fn hook_local_if_set(i: &Interp, id: SymId) -> Result<bool, Flow> {
     let s = i.obarray.symbol(id);
     // GNU `local-variable-if-set-p' is per-buffer: `defvar' /
     // `permanent-local' globals count, but a `make-local-variable'
     // performed in another buffer does not.
-    s.make_local_if_set
-        || s.always_local
-        || i.buffers
-            .get(i.current_buffer)
-            .map(|b| b.borrow().locals.contains_key(&id))
-            .unwrap_or(false)
+    if s.make_local_if_set || s.always_local {
+        return Ok(true);
+    }
+    hook_is_local(i, id)
 }
 
 fn hook_boundp(i: &Interp, id: SymId) -> bool {
@@ -3107,28 +3246,31 @@ fn hook_default_boundp(i: &Interp, id: SymId) -> bool {
 /// with the default value) when absent.  GNU's `make-local-variable'
 /// does NOT mark the symbol auto-local: `local-variable-if-set-p' is
 /// nil in other buffers and `set' there stays global.
-fn hook_make_local(i: &mut Interp, id: SymId) {
+fn hook_make_local(i: &mut Interp, id: SymId) -> Result<(), Flow> {
     let seed = i.obarray.symbol(id).value.clone();
     if let Some(b) = i.buffers.get(i.current_buffer) {
-        if let Ok(mut bb) = b.try_borrow_mut() {
-            bb.locals.entry(id).or_insert(seed);
-        }
+        b.try_borrow_mut()
+            .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?
+            .locals
+            .entry(id)
+            .or_insert(seed);
     }
+    Ok(())
 }
 
 /// `(local-variable-p HOOK) and value lacks a `t' member' — GNU treats
 /// a global add/remove on such a hook as local (make-local-variable
 /// compatibility).
-fn hook_force_local(i: &mut Interp, id: SymId) -> bool {
-    if !hook_is_local(i, id) {
-        return false;
+fn hook_force_local(i: &mut Interp, id: SymId) -> Result<bool, Flow> {
+    if !hook_is_local(i, id)? {
+        return Ok(false);
     }
     let v = i.symbol_value(id);
-    match v.list_to_vec() {
-        Ok(list) => !list
+    match macroexpand_list_to_vec(i, &v)? {
+        Some(list) => Ok(!list
             .iter()
-            .any(|x| matches!(x, Value::Sym(s) if *s == sym::T)),
-        Err(_) => true,
+            .any(|x| matches!(x, Value::Sym(s) if *s == sym::T))),
+        None => Ok(true),
     }
 }
 
@@ -3139,55 +3281,55 @@ fn hook_depth_alist(
     hook_id: SymId,
     local: bool,
     create: bool,
-) -> Option<Vec<(Value, i128)>> {
+) -> Result<Option<Vec<(Value, i128)>>, Flow> {
     let prop_sym = i.q("hook--depth-alist");
     let prop = i.get_prop(hook_id, prop_sym);
     let dsym = match prop {
         Value::Sym(s) => s,
         _ => {
             if !create {
-                return None;
+                return Ok(None);
             }
             let s = i.obarray.make_symbol("depth-alist");
-            i.set_symbol_default(s, Value::Nil).ok()?;
+            i.set_symbol_default(s, Value::Nil)?;
             i.put_prop(hook_id, prop_sym, Value::Sym(s));
             s
         }
     };
     if local && create {
-        hook_make_local(i, dsym);
+        hook_make_local(i, dsym)?;
     }
     let v = if local {
         i.symbol_value(dsym)
     } else {
         i.obarray.symbol(dsym).value.clone()
     };
-    match v.list_to_vec() {
-        Ok(items) => Some(
-            items
-                .iter()
-                .filter_map(|x| match x {
-                    Value::Cons(c) => {
-                        let b = c.borrow();
-                        match b.cdr {
-                            Value::Int(n) => Some((b.car.clone(), n)),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                })
-                .collect(),
-        ),
-        Err(_) => Some(Vec::new()),
+    let Some(items) = macroexpand_list_to_vec(i, &v)? else {
+        return Ok(Some(Vec::new()));
+    };
+    let mut result = Vec::new();
+    for item in items {
+        if let Value::Cons(cell) = item {
+            let (function, depth) = crate::lisp::eval::cons_parts(i, &cell)?;
+            if let Value::Int(depth) = depth {
+                result.push((function, depth));
+            }
+        }
     }
+    Ok(Some(result))
 }
 
-fn hook_set_depth_alist(i: &mut Interp, hook_id: SymId, local: bool, alist: Vec<(Value, i128)>) {
+fn hook_set_depth_alist(
+    i: &mut Interp,
+    hook_id: SymId,
+    local: bool,
+    alist: Vec<(Value, i128)>,
+) -> Result<(), Flow> {
     let prop_sym = i.q("hook--depth-alist");
     let prop = i.get_prop(hook_id, prop_sym);
     let dsym = match prop {
         Value::Sym(s) => s,
-        _ => return,
+        _ => return Ok(()),
     };
     let items: Vec<Value> = alist
         .into_iter()
@@ -3196,15 +3338,17 @@ fn hook_set_depth_alist(i: &mut Interp, hook_id: SymId, local: bool, alist: Vec<
     let v = Value::list(items);
     if local {
         if let Some(b) = i.buffers.get(i.current_buffer) {
-            if let Ok(mut bb) = b.try_borrow_mut() {
-                if bb.locals.contains_key(&dsym) {
-                    bb.locals.insert(dsym, v);
-                    return;
-                }
+            let mut bb = b
+                .try_borrow_mut()
+                .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?;
+            if bb.locals.contains_key(&dsym) {
+                bb.locals.insert(dsym, v);
+                return Ok(());
             }
         }
     }
     i.obarray.symbol_mut(dsym).value = v;
+    Ok(())
 }
 
 fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -3233,11 +3377,11 @@ fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // Unless the var is automatically buffer-local, the binding
         // is created fresh holding (t) -- the global value is not
         // copied into the local list.
-        if !hook_local_if_set(i, vid) {
-            hook_make_local(i, vid);
+        if !hook_local_if_set(i, vid)? {
+            hook_make_local(i, vid)?;
             i.set_symbol(hook_id, Value::list(vec![Value::Sym(sym::T)]))?;
         }
-    } else if hook_force_local(i, vid) {
+    } else if hook_force_local(i, vid)? {
         local = true;
     }
     let mut hook_value = if local {
@@ -3256,11 +3400,11 @@ fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut list = hook_value.list_to_vec().unwrap_or_default();
     // The membership test uses `equal' (GNU `member').
     if equal_position(i, &list, &fun)?.is_none() {
-        let mut alist = hook_depth_alist(i, hook_id, local, depth != 0).unwrap_or_default();
+        let mut alist = hook_depth_alist(i, hook_id, local, depth != 0)?.unwrap_or_default();
         if depth != 0 {
             alist.retain(|(f, _)| !crate::lisp::eq_values(f, &fun));
             alist.push((fun.clone(), depth));
-            hook_set_depth_alist(i, hook_id, local, alist.clone());
+            hook_set_depth_alist(i, hook_id, local, alist.clone())?;
         }
         if depth > 0 {
             list.push(fun.clone());
@@ -3268,7 +3412,7 @@ fn f_add_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             list.insert(0, fun.clone());
         }
         // When a depth alist exists, stable-sort by recorded depth.
-        let depth_alist = hook_depth_alist(i, hook_id, local, false).unwrap_or_default();
+        let depth_alist = hook_depth_alist(i, hook_id, local, false)?.unwrap_or_default();
         if !depth_alist.is_empty() {
             let d_of = |f: &Value| -> i128 {
                 depth_alist
@@ -3318,10 +3462,10 @@ fn f_remove_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         i.set_symbol_default(hook_id, Value::Nil)?;
     }
     // Do nothing if LOCAL is t but this hook has no local binding.
-    if local && !hook_is_local(i, vid) {
+    if local && !hook_is_local(i, vid)? {
         return Ok(Value::Nil);
     }
-    if hook_force_local(i, vid) {
+    if hook_force_local(i, vid)? {
         local = true;
     }
     let hook_value = if local {
@@ -3360,11 +3504,11 @@ fn f_remove_hook(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     };
     if let Some(old) = &removed {
         // Drop the removed function's depth record.
-        if let Some(mut alist) = hook_depth_alist(i, hook_id, local, false) {
+        if let Some(mut alist) = hook_depth_alist(i, hook_id, local, false)? {
             let before = alist.len();
             alist.retain(|(f, _)| !crate::lisp::eq_values(f, &old));
             if alist.len() != before {
-                hook_set_depth_alist(i, hook_id, local, alist);
+                hook_set_depth_alist(i, hook_id, local, alist)?;
             }
         }
     }
@@ -3420,15 +3564,12 @@ fn f_eval_expression(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let vals = i.q("values");
     let cur = i.symbol_value(vals);
-    let _ = i.set_symbol(vals, Value::cons(v.clone(), cur));
+    i.set_symbol(vals, Value::cons(v.clone(), cur))?;
     Ok(v)
 }
 fn f_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (load FILE &optional NOERROR NOMESSAGE NOSUFFIX MUST-SUFFIX)
-    let name = match &args[0] {
-        Value::Str(_) => crate::lisp::load::filename_text(i, &args[0]).unwrap(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
+    let name = filename_text_arg(i, &args[0])?;
     let noerror = arg(&args, 1).truthy();
     let nomessage = arg(&args, 2).truthy();
     let nosuffix = arg(&args, 3).truthy();
@@ -3469,14 +3610,11 @@ fn f_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 fn f_load_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU's `load-file': (load (expand-file-name FILE) nil nil t) —
     // NOSUFFIX, so the literal name is opened (or fails).
-    let name = match &args[0] {
-        Value::Str(_) => crate::lisp::load::filename_text(i, &args[0]).unwrap(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
+    let name = filename_text_arg(i, &args[0])?;
     let efn = i.q("expand-file-name");
     let expanded = i.apply(&Value::Sym(efn), vec![args[0].clone()])?;
     let name = match &expanded {
-        Value::Str(_) => crate::lisp::load::filename_text(i, &expanded).unwrap(),
+        Value::Str(_) => filename_text_arg(i, &expanded)?,
         _ => name,
     };
     let outcome = crate::lisp::load::load_library_opts(i, &name, true, false, true)?;
@@ -3508,10 +3646,7 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU subr.el: `locate-file' over PATH (default `load-path') with
     // suffixes (get-load-suffixes) ∪ load-file-rep-suffixes when
     // NOSUFFIX is nil, else just load-file-rep-suffixes.
-    let name = match &args[0] {
-        Value::Str(_) => crate::lisp::load::filename_text(i, &args[0]).unwrap(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
+    let name = filename_text_arg(i, &args[0])?;
     let nosuffix = arg(&args, 1).truthy();
     let path = arg(&args, 2);
     let interactive = arg(&args, 3).truthy();
@@ -3527,7 +3662,7 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         file = match file {
             Some(path) => Some(crate::lisp::load::located_source(i, &name, path)?),
             None => {
-                let suffixes = locate_library_suffixes(i, nosuffix);
+                let suffixes = locate_library_suffixes(i, nosuffix)?;
                 crate::lisp::load::locate_bundled_source(i, &name, &suffixes)?
             }
         };
@@ -3539,10 +3674,10 @@ fn f_locate_library(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             None => format!("No library {name} in search path"),
         };
         let msg_sym = i.q("message");
-        let _ = i.apply(
+        i.apply(
             &Value::Sym(msg_sym),
             vec![Value::string("%s"), Value::string(msg)],
-        );
+        )?;
     }
     Ok(match file {
         Some(f) => Value::string(f),
@@ -3562,7 +3697,7 @@ fn locate_library_in(
     // GNU `locate-file' iterates PATH as a list; a non-list PATH
     // contributes no directories (returns nil, no error).
     let dirs = path.list_to_vec().unwrap_or_default();
-    let suffixes = locate_library_suffixes(i, nosuffix);
+    let suffixes = locate_library_suffixes(i, nosuffix)?;
     if crate::editor::native_path(i, name)?.is_absolute() || name.starts_with('~') {
         // GNU `locate-file': absolute names only get suffix variants.
         let name = crate::editor::expand_file_name_str(i, name);
@@ -3577,7 +3712,10 @@ fn locate_library_in(
     }
     for dir_v in &dirs {
         let directory = match dir_v {
-            Value::Str(_) => crate::editor::expand_file_name_str(i, &crate::lisp::load::filename_text(i, dir_v).unwrap()),
+            Value::Str(_) => {
+                let directory = filename_text_arg(i, dir_v)?;
+                crate::editor::expand_file_name_str(i, &directory)
+            }
             Value::Nil => crate::editor::expand_file_name_str(i, ""),
             _ => continue,
         };
@@ -3595,7 +3733,10 @@ fn locate_library_in(
             }
         }
         if let Some(path) = crate::lisp::load::locate_cache_source(
-            i, &crate::editor::native_path(i, &directory)?, name, &suffixes,
+            i,
+            &crate::editor::native_path(i, &directory)?,
+            name,
+            &suffixes,
         )? {
             return Ok(Some(path));
         }
@@ -3605,27 +3746,29 @@ fn locate_library_in(
 
 /// Suffix list GNU's `locate-library' feeds to `locate-file':
 /// `get-load-suffixes' (NOSUFFIX drops it) then `load-file-rep-suffixes'.
-fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Vec<String> {
-    let str_list = |i: &mut Interp, var: &str| -> Vec<String> {
+fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Result<Vec<String>, Flow> {
+    let str_list = |i: &mut Interp, var: &str| -> Result<Vec<String>, Flow> {
         let id = i.intern(var);
-        i.symbol_value(id)
-            .list_to_vec()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|v| match v {
-                Value::Str(s) => Some(s.borrow().to_unicode_lossy()),
-                _ => None,
-            })
-            .collect()
+        let values = i.symbol_value(id).list_to_vec().unwrap_or_default();
+        let mut strings = Vec::new();
+        for value in values {
+            if let Value::Str(string) = value {
+                let string = string
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed load suffix"))?;
+                strings.push(string.to_unicode_lossy());
+            }
+        }
+        Ok(strings)
     };
     let mut sufs: Vec<String> = Vec::new();
     if !nosuffix {
         // get-load-suffixes: load-suffixes with rep-suffixes attached
         // to the .elc/.el entries, then `load-file-rep-suffixes' (the
         // "" entry gives the bare-name try).
-        for s in str_list(i, "load-suffixes") {
+        for s in str_list(i, "load-suffixes")? {
             if s.ends_with(".elc") || s.ends_with(".el") {
-                for rep in str_list(i, "load-file-rep-suffixes") {
+                for rep in str_list(i, "load-file-rep-suffixes")? {
                     sufs.push(format!("{s}{rep}"));
                 }
             } else {
@@ -3633,11 +3776,11 @@ fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Vec<String> {
             }
         }
     }
-    sufs.extend(str_list(i, "load-file-rep-suffixes"));
+    sufs.extend(str_list(i, "load-file-rep-suffixes")?);
     if sufs.is_empty() {
         sufs.push(String::new());
     }
-    sufs
+    Ok(sufs)
 }
 
 fn f_autoload(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -3651,7 +3794,13 @@ fn f_autoload(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     let existing = i.symbol_function(fid);
     let auto_id = i.q("autoload");
-    let replaceable = matches!(&existing, Value::Cons(c) if i.sym_is(&c.borrow().car,auto_id));
+    let replaceable = match &existing {
+        Value::Cons(cell) => {
+            let head = crate::lisp::eval::cons_parts(i, cell)?.0;
+            i.sym_is(&head, auto_id)
+        }
+        _ => false,
+    };
     if i.fbound_p(fid) && !replaceable {
         // GNU replaces existing autoload cells, while a real definition
         // (including an alias) is a no-op returning nil.
@@ -3675,17 +3824,16 @@ fn f_autoloadp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let mut v = &args[0];
     let cdr;
     if let Value::Cons(c) = v {
-        let b = c.borrow();
-        if i.sym_is(&b.car, macro_id) {
-            cdr = b.cdr.clone();
-            drop(b);
+        let (car, tail) = crate::lisp::eval::cons_parts(i, c)?;
+        if i.sym_is(&car, macro_id) {
+            cdr = tail;
             v = &cdr;
         }
     }
     match v {
         Value::Cons(c) => {
-            let b = c.borrow();
-            Ok(Value::from_bool(i.sym_is(&b.car, auto_id)))
+            let head = crate::lisp::eval::cons_parts(i, c)?.0;
+            Ok(Value::from_bool(i.sym_is(&head, auto_id)))
         }
         _ => Ok(Value::Nil),
     }
@@ -3705,7 +3853,10 @@ fn f_autoload_do_load(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) -> EvalResult {
     let auto_id = i.q("autoload");
     let is_auto = match &fundef {
-        Value::Cons(c) => i.sym_is(&c.borrow().car, auto_id),
+        Value::Cons(c) => {
+            let head = crate::lisp::eval::cons_parts(i, c)?.0;
+            i.sym_is(&head, auto_id)
+        }
         _ => false,
     };
     if !is_auto {
@@ -3721,7 +3872,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     }
     let file = super::listfn::f_nth(i, vec![Value::Int(1), fundef.clone()].into())?;
     let name = match &file {
-        Value::Str(_) => crate::lisp::load::filename_text(i, &file).unwrap(),
+        Value::Str(_) => filename_text_arg(i, &file)?,
         _ => return Err(i.wrong_type_mut("stringp", &file)),
     };
     // Find the symbol whose function cell is this autoload object.
@@ -3773,7 +3924,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // embedded libraries and disk `found' paths otherwise, so resolve
     // the target to the same key space (`load_key' normalizes
     // bundled-dir hits to their `builtin:<stem>').
-    let resolved_key = match crate::lisp::load::locate_full(i, &name, false, false) {
+    let resolved_key = match crate::lisp::load::locate_full(i, &name, false, false)? {
         Some(crate::lisp::load::Found::File(p)) => crate::lisp::load::load_key(&p),
         Some(crate::lisp::load::Found::Dir(_)) => crate::lisp::text::EmacsText::new(),
         None => {
@@ -3815,7 +3966,10 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                 for (f, a) in i.lisp_stack.iter().rev().take(30).rev() {
                     eprintln!(
                         "  {} {}",
-                        i.princ_to_string(f).chars().take(80).collect::<crate::lisp::text::EmacsText>(),
+                        i.princ_to_string(f)
+                            .chars()
+                            .take(80)
+                            .collect::<crate::lisp::text::EmacsText>(),
                         i.princ_to_string(&Value::list(a.as_slice().to_vec()))
                             .chars()
                             .take(120)
@@ -3847,7 +4001,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // file.  The dump-time stash holds the definition GNU's .elc
     // would have installed; resolve through it directly.
     let feat = i.intern(&stem(&name));
-    if feature_present(i, feat) {
+    if feature_present(i, feat)? {
         if let Some(id) = owner {
             let pk = i.q("remacs--dump-fn");
             let hidden = i.get_prop(id, pk);
@@ -3890,7 +4044,10 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
             let newdef = i.symbol_function(id);
             // Emacs signals error if loading didn't redefine the autoload.
             let still_auto = match &newdef {
-                Value::Cons(c) => i.sym_is(&c.borrow().car, auto_id),
+                Value::Cons(c) => {
+                    let head = crate::lisp::eval::cons_parts(i, c)?.0;
+                    i.sym_is(&head, auto_id)
+                }
                 _ => false,
             };
             if still_auto {
@@ -3955,7 +4112,10 @@ fn f_access_file(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (access-file FILENAME ERROR-FORMAT) — signal `file-missing' with
     // (ERROR-FORMAT ERRNO-STRING FILENAME) when FILENAME can't be read.
     let name = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|text| text.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed filename string"))?,
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let expanded = crate::editor::expand_file_name_str(i, &name);
@@ -3999,9 +4159,15 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // unresolvable → plain error "No such buffer".
     let buf_id = match args.get(0) {
         Some(v) if !v.is_nil() => match v {
-            Value::Buffer(b) => b.borrow().id,
+            Value::Buffer(b) => b
+                .try_borrow()
+                .map(|buffer| buffer.id)
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?,
             Value::Str(s) => {
-                let name = s.borrow().clone();
+                let name = s
+                    .try_borrow()
+                    .map(|name| name.clone())
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer name"))?;
                 match i.buffers.by_name(&name) {
                     Some(id) => id,
                     None => return Err(i.error("No such buffer")),
@@ -4014,19 +4180,29 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let Some(buffer) = i.buffers.get(buf_id) else {
         return Err(i.error("No such buffer"));
     };
+    let (default_filename, begv) = {
+        let buffer_state = buffer
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+        (
+            buffer_state
+                .file_name
+                .as_ref()
+                .map(Value::string)
+                .unwrap_or(Value::Nil),
+            buffer_state.begv,
+        )
+    };
     let filename = match arg(&args, 2) {
-        Value::Nil => buffer
-            .borrow()
-            .file_name
-            .as_ref()
-            .map(Value::string)
-            .unwrap_or(Value::Nil),
+        Value::Nil => default_filename,
         filename @ Value::Str(_) => filename,
         other => return Err(i.wrong_type_mut("stringp", &other)),
     };
     let saved = i.save_excursion_state(false);
-    let begv = buffer.borrow().begv;
-    buffer.borrow_mut().set_point(begv);
+    buffer
+        .try_borrow_mut()
+        .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?
+        .set_point(begv);
     let r = eval_buffer_source(
         i,
         &buffer,
@@ -4043,9 +4219,12 @@ fn f_eval_buffer(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let buffer = i.buffers.get(i.current_buffer).unwrap();
+    let Some(buffer) = i.buffers.get(i.current_buffer) else {
+        return Err(i.error("No current buffer"));
+    };
     let filename = buffer
-        .borrow()
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?
         .file_name
         .as_ref()
         .map(Value::string)
@@ -4063,6 +4242,28 @@ fn f_eval_region(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     )
 }
 
+fn read_buffer_state<T>(
+    i: &Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    read: impl FnOnce(&crate::buffer::Buffer) -> T,
+) -> Result<T, Flow> {
+    let buffer = buffer
+        .try_borrow()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
+    Ok(read(&buffer))
+}
+
+fn update_buffer_state<T>(
+    i: &Interp,
+    buffer: &crate::lisp::value::BufferRef,
+    update: impl FnOnce(&mut crate::buffer::Buffer) -> T,
+) -> Result<T, Flow> {
+    let mut buffer = buffer
+        .try_borrow_mut()
+        .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?;
+    Ok(update(&mut buffer))
+}
+
 /// Read the live buffer, as in GNU lread.c's readevalloop.  In particular,
 /// START is a goto-char position, not a substring bound: it is clipped to
 /// the accessible range.  A nil START reads at point and ignores END.
@@ -4077,8 +4278,13 @@ fn eval_buffer_source(
     read_lexical_cookie: bool,
     filename: Value,
 ) -> EvalResult {
-    let filename = if let Value::Str(text) = &filename {
-        let text = text.borrow().clone();
+    let mut compiled_filename = false;
+    let filename = if let Value::Str(source_name) = &filename {
+        let text = source_name
+            .try_borrow()
+            .map(|text| text.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed source filename"))?;
+        compiled_filename = text.ends_with(".elc");
         if crate::editor::native_path(i, &text)?.is_absolute() || text.starts_with('~') {
             Value::string(crate::editor::expand_file_name_str(i, &text))
         } else {
@@ -4113,7 +4319,9 @@ fn eval_buffer_source(
                 let begv = buffer.borrow().begv;
                 buffer.borrow_mut().set_point(begv + consumed);
                 let value = crate::lisp::load::lexical_binding_value(
-                    i, cookie, Some(Value::Buffer(buffer.clone())),
+                    i,
+                    cookie,
+                    Some(Value::Buffer(buffer.clone())),
                 )?;
                 i.specbind(lexical, value)?;
             }
@@ -4129,14 +4337,13 @@ fn eval_buffer_source(
         i.specbind(current, Value::list(vec![filename.clone()]))?;
         let input = i.q("standard-input");
         i.specbind(input, Value::Buffer(buffer.clone()))?;
-        if matches!(&filename, Value::Str(name) if name.borrow().ends_with(".elc")) {
+        if compiled_filename {
             let variable = i.q("read-symbol-shorthands");
             i.specbind(variable, Value::Nil)?;
         }
         let mut source_version = None;
         let mut source_tick = None;
         let mut chars = Rc::new(Vec::new());
-        let source_multibyte = super::readfn::buffer_source_multibyte(i, &buffer);
         loop {
             if !buffer.borrow().live {
                 return Err(i.error("Reading from killed buffer"));
@@ -4239,7 +4446,9 @@ fn eval_buffer_source(
                 // reader, so whitespace-only input never calls READ-FUNCTION.
                 loop {
                     while pos < chars.len()
-                        && chars[pos].unicode().is_some_and(|c| matches!(c, ' ' | '\t' | '\n' | '\x0c' | '\r' | '\u{a0}'))
+                        && chars[pos].unicode().is_some_and(|c| {
+                            matches!(c, ' ' | '\t' | '\n' | '\x0c' | '\r' | '\u{a0}')
+                        })
                     {
                         pos += 1;
                     }
@@ -4270,8 +4479,19 @@ fn eval_buffer_source(
                     _ => false,
                 };
                 let form = if builtin_read {
-                    let (result, position) =
-                        super::readfn::read_parser_at(i, chars.clone(), pos, None, true, source_multibyte);
+                    // A preceding form may call `set-buffer-multibyte'.
+                    // GNU's read-from-buffer observes the live buffer mode
+                    // for every object, not the mode at eval-buffer entry.
+                    let source_multibyte =
+                        super::readfn::buffer_source_multibyte(i, &buffer)?;
+                    let (result, position) = super::readfn::read_parser_at(
+                        i,
+                        chars.clone(),
+                        pos,
+                        None,
+                        true,
+                        source_multibyte,
+                    );
                     buffer.borrow_mut().set_point(begv + position);
                     match result {
                         Ok(Some(form)) => form,
@@ -4485,12 +4705,26 @@ pub(crate) fn f_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // else goes through Fformat_message, whose errors propagate.
     match &args[0] {
         Value::Nil => return Ok(Value::Nil),
-        Value::Str(s) if s.borrow().is_empty() => return Ok(args[0].clone()),
         _ => {}
+    }
+    if let Value::Str(s) = &args[0] {
+        let empty = s
+            .try_borrow()
+            .map(|text| text.is_empty())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed message string"))?;
+        if empty {
+            return Ok(args[0].clone());
+        }
     }
     let v = super::strfn::f_format_message(i, args)?;
     let (msg, properties) = match &v {
-        Value::Str(s) => (s.borrow().clone(), i.str_props(s).to_vec()),
+        Value::Str(s) => {
+            let message = s
+                .try_borrow()
+                .map(|text| text.clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed message string"))?;
+            (message, i.str_props(s).to_vec())
+        }
         other => (i.princ_to_string(other), Vec::new()),
     };
 
@@ -4507,13 +4741,16 @@ pub(crate) fn f_message(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             .q_soft("set-message-function")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol));
-        if let Some(handler) = handler.filter(|value| {
-            crate::lisp::builtins::data::functionp_val(i, value)
-        }) {
+        if let Some(handler) =
+            handler.filter(|value| crate::lisp::builtins::data::functionp_val(i, value))
+        {
             match i.apply(&handler, vec![v.clone()])? {
                 Value::Nil => {}
                 Value::Str(s) => {
-                    display_message = s.borrow().clone();
+                    display_message = s
+                        .try_borrow()
+                        .map(|text| text.clone())
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed message string"))?;
                     display_properties = i.str_props(&s).to_vec();
                 }
                 _ => display = false,
@@ -4588,7 +4825,9 @@ pub(crate) fn timer_check(i: &mut Interp) -> Result<bool, Flow> {
         //         integral-multiple]
         let when = match &timer {
             Value::Vec(v) => {
-                let v = v.borrow();
+                let v = v
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed timer"))?;
                 if v.len() < 9 || v[0].truthy() || v[5].is_nil() {
                     None
                 } else {
@@ -4612,7 +4851,13 @@ pub(crate) fn timer_check(i: &mut Interp) -> Result<bool, Flow> {
             // GNU marks the timer triggered when queueing its
             // timer-event, before `timer-event-handler' runs.
             if let Value::Vec(v) = &timer {
-                v.borrow_mut()[0] = Value::t();
+                let mut v = v
+                    .try_borrow_mut()
+                    .map_err(|_| i.error("Cannot update a mutably borrowed timer"))?;
+                let Some(triggered) = v.first_mut() else {
+                    return Err(i.error("Invalid timer vector"));
+                };
+                *triggered = Value::t();
             }
             i.apply(&Value::Sym(handler), vec![timer])?;
             did_work = true;
@@ -4632,7 +4877,7 @@ pub(crate) fn next_timer_delay(i: &mut Interp) -> Option<f64> {
         .filter_map(|timer| {
             let when = match timer {
                 Value::Vec(value) => {
-                    let value = value.borrow();
+                    let value = value.try_borrow().ok()?;
                     if value.len() < 9 || value[0].truthy() || value[5].is_nil() {
                         return None;
                     }
@@ -4654,8 +4899,21 @@ pub(crate) fn next_timer_delay(i: &mut Interp) -> Option<f64> {
 /// Sleep for SECS seconds, firing due timers during the wait like
 /// GNU's `wait_reading_process_output'.
 pub(crate) fn thread_wait_events(i: &mut Interp) -> Result<bool, Flow> {
+    thread_wait_events_with_timer_policy(i, true)
+}
+
+/// Pump frontend/process events without firing Lisp timers. GNU does not run
+/// a due timer for a zero-duration `sit-for', but its frontend still needs a
+/// nonblocking input poll and redisplay.
+pub(crate) fn thread_wait_events_without_timers(i: &mut Interp) -> Result<bool, Flow> {
+    thread_wait_events_with_timer_policy(i, false)
+}
+
+fn thread_wait_events_with_timer_policy(i: &mut Interp, check_timers: bool) -> Result<bool, Flow> {
     let mut did_work = crate::lisp::eval::threads::drain_main_events(i)?;
-    did_work |= timer_check(i)?;
+    if check_timers {
+        did_work |= timer_check(i)?;
+    }
     did_work |= crate::lisp::process::poll_all(i)?;
     did_work |= crate::lisp::builtins::filenotify::drain(i)?;
     did_work |= crate::lisp::builtins::dbus::drain(i)?;
@@ -4717,13 +4975,23 @@ fn f_sit_for(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Some(other) => return Err(i.wrong_type_mut("numberp", other)),
         None => 0.0,
     };
+    if i.sit_for_waiter.is_some() && crate::editor::check_input_pending(i, false)? {
+        return Ok(Value::Nil);
+    }
     if let Some(waiter) = i.sit_for_waiter.clone() {
         let duration = if secs.is_finite() && secs > 0.0 {
             std::time::Duration::from_secs_f64(secs.min(3600.0))
         } else {
             std::time::Duration::ZERO
         };
-        let input_pending = waiter(i, duration)?;
+        let input_pending = waiter(
+            i,
+            duration,
+            SitForOptions {
+                process_timers: secs > 0.0,
+                redisplay: !arg(&args, 1).truthy(),
+            },
+        )?;
         return Ok(Value::from_bool(!input_pending));
     }
     // Batch has no interactive frontend to poll, so it waits the full time
@@ -4736,7 +5004,10 @@ fn f_current_time(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     // GNU `make_lisp_time': `current-time-list' nil renders as
     // (TICKS . HZ) with nanosecond ticks.
     if !super::misc::current_time_list(i) {
-        return Ok(Value::cons(Value::Int(us * 1000), Value::Int(1_000_000_000)));
+        return Ok(Value::cons(
+            Value::Int(us * 1000),
+            Value::Int(1_000_000_000),
+        ));
     }
     Ok(super::misc::us_to_lisp_time(us))
 }
@@ -4805,7 +5076,10 @@ fn f_current_time_zone(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             (tm.tm_gmtoff, tm_zone_name(&tm))
         }
         Some(Value::Str(z)) => {
-            let z = z.borrow().clone();
+            let z = z
+                .try_borrow()
+                .map(|zone| zone.clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed time-zone string"))?;
             if z == "UTC" || z == "t" {
                 (0, "UTC".to_string())
             } else {
@@ -4894,7 +5168,10 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
     };
     let fmt = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
+        Value::Str(s) => s
+            .try_borrow()
+            .map(|format| format.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed time-format string"))?,
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let secs = i64::try_from(t.div_euclid(1_000_000_000_000))
@@ -4935,7 +5212,10 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             ZoneLabel::Libc,
         ),
         Some(Value::Str(z)) => {
-            let z = z.borrow().clone();
+            let z = z
+                .try_borrow()
+                .map(|zone| zone.clone())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed time-zone string"))?;
             if z == "UTC" || z == "t" {
                 let mut tm = super::misc::gmt_tm(secs);
                 tm.tm_gmtoff = 0;
@@ -4993,13 +5273,18 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     // `system-time-locale' overrides LC_TIME for this call, falling
     // back to "C" for names the C library rejects (like GNU).
-    let locale: Option<String> = i
+    let locale: Option<String> = match i
         .intern_soft("system-time-locale")
         .filter(|id| i.bound_p(*id))
-        .and_then(|id| match i.symbol_value(id) {
-            Value::Str(s) => Some(s.borrow().to_unicode_lossy()),
-            _ => None,
-        });
+        .map(|id| i.symbol_value(id))
+    {
+        Some(Value::Str(s)) => Some(
+            s.try_borrow()
+                .map(|locale| locale.to_unicode_lossy())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed system-time-locale"))?,
+        ),
+        _ => None,
+    };
     // Own the zone name before any locale/TZ operation can invalidate libc's
     // tm_zone. All GNU modifiers are rendered in Rust, independently of libc.
     let zone = match zlabel {
@@ -5060,10 +5345,15 @@ pub(crate) fn f_kill_emacs(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     if restart {
         use crate::lifecycle::RestartError;
         crate::lifecycle::validate_restart().map_err(|error| match error {
-            RestartError::NoArguments => i.error_q::<str>("No command line arguments known; unable to re-execute Emacs", &[]),
+            RestartError::NoArguments => i.error_q::<str>(
+                "No command line arguments known; unable to re-execute Emacs",
+                &[],
+            ),
             RestartError::UnknownExecutable => i.error_q::<str>("Unknown Emacs executable", &[]),
             RestartError::MissingExecutable(name) => i.error_q(
-                "Emacs executable \"%s\" can't be found", &[&name.to_string_lossy()]),
+                "Emacs executable \"%s\" can't be found",
+                &[&name.to_string_lossy()],
+            ),
         })?;
     }
     // GNU reports/removes failing batch hooks and continues with the rest.
@@ -5163,21 +5453,6 @@ fn f_set_message_functions(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     })?;
     Ok(msg)
 }
-fn f_internal_make_closure(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // (internal-make-interpreted-closure-function ARGS BODY ENV)
-    let params = &args[0];
-    let body_v = &args[1];
-    let env_v = &args[2];
-    let body = match body_v {
-        Value::Cons(_) => body_v.list_to_vec().unwrap_or_default(),
-        _ => vec![body_v.clone()],
-    };
-    let env = crate::lisp::eval::lexenv_from_value(env_v);
-    let mut lam = i.parse_lambda(params, &body, None)?;
-    lam.env = env;
-    Ok(Value::Lambda(std::rc::Rc::new(lam)).tracked())
-}
-
 fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let items = want_list(i, &args[0])?;
     // split leading (declare ...) forms and strings
@@ -5186,9 +5461,9 @@ fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     for (k, f) in items.iter().enumerate() {
         let is_decl = match f {
             Value::Cons(c) => {
-                let b = c.borrow();
                 let decl_id = i.q("declare");
-                i.sym_is(&b.car, decl_id)
+                let head = crate::lisp::eval::cons_parts(i, c)?.0;
+                i.sym_is(&head, decl_id)
             }
             Value::Str(_) => k < items.len() - 1,
             _ => false,
@@ -5206,24 +5481,35 @@ fn f_macroexp_parse_body(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     ))
 }
 
-fn f_byte_code_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+fn f_byte_code_function_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // `#[...]' byte-code literals (string code slot) answer t;
     // interpreted closures (cons code slot), lambdas AND native subrs
     // answer nil (GNU's nativecomp build: subrp ≠ byte-code-function-p).
-    Ok(Value::from_bool(
-        matches!(&args[0], Value::Lambda(l) if l.is_bytecode()),
-    ))
+    let bytecode = match &args[0] {
+        Value::Lambda(lambda) => lambda
+            .try_is_bytecode()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?,
+        _ => false,
+    };
+    Ok(Value::from_bool(bytecode))
 }
-fn f_compiled_function_p(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    Ok(Value::from_bool(match &args[0] {
+fn f_compiled_function_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    let compiled = match &args[0] {
         Value::Subr(_) => true,
         // GNU nativecomp reports every dumped def as compiled; our
         // twins are `compiled' interpreted lambdas.  Macros don't
         // count (GNU's `compiled-function-p' is nil on them too —
         // `subrp' excludes them, but plain lambdas don't reach here).
-        Value::Lambda(l) => (l.compiled || l.is_bytecode()) && !l.is_macro,
+        Value::Lambda(lambda) => {
+            (lambda.compiled
+                || lambda
+                    .try_is_bytecode()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?)
+                && !lambda.is_macro
+        }
         _ => false,
-    }))
+    };
+    Ok(Value::from_bool(compiled))
 }
 fn f_interactive_p(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult {
     // Keep the GNU Lisp wrapper's distinct frame, including through aliases.
@@ -5256,31 +5542,36 @@ fn f_byte_code(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     crate::lisp::bytecode::exec_raw(i, &code, &args[1])
 }
 
-fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+fn f_make_byte_code(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU `make-byte-code': pack ARGLIST BYTE-CODE CONSTANTS DEPTH
     // (and optional doc/interactive slots) into a `#[...]' object.
     // The Lambda keeps the raw slots in `bc_items' so `aref'/`arrayp'
     // see GNU's element view and `bytecode::exec' can run it.
     let argdesc = args[0].clone();
-    // GNU's `validate_byte_code' (comp.c): BYTE-CODE must be unibyte,
-    // CONSTANTS a vector, DEPTH a non-negative fixnum — any violation
-    // signals `(error "Invalid byte-code object")'.  ARGLIST and the
-    // trailing docstring/interactive slots are unchecked (argdesc `5'
-    // produces the `#[5 ...]' object GNU also makes).
-    if !valid_byte_code_fields(&args[1], &args[2], &args[3])
-        || super::strfn::string_multibyte_p(_i, &args[1])
+    // GNU's `validate_byte_code' (comp.c): ARGLIST must be a fixnum
+    // descriptor or a list, BYTE-CODE must be unibyte, CONSTANTS a
+    // vector, and DEPTH a non-negative fixnum.  List contents and the
+    // trailing docstring/interactive slots are checked when used.
+    let valid_argdesc = argdesc.fixnump() || matches!(&argdesc, Value::Nil | Value::Cons(_));
+    if !valid_argdesc
+        || !valid_byte_code_fields(&args[1], &args[2], &args[3])
+        || super::strfn::string_multibyte_p(i, &args[1])
     {
-        return Err(_i.error("Invalid byte-code object"));
+        return Err(i.error("Invalid byte-code object"));
     }
-    let doc = args.get(4).and_then(|v| match v {
-        Value::Str(s) => Some(s.borrow().to_unicode_lossy()),
+    let doc = match args.get(4) {
+        Some(Value::Str(s)) => Some(
+            s.try_borrow()
+                .map(|text| text.to_unicode_lossy())
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code docstring"))?,
+        ),
         _ => None,
-    });
+    };
     let interactive = args.get(5).map(|spec| {
         // GNU's `interactive-form'/callint read byte-code slot 5 as the
         // bare spec inside an implicit `(interactive ...)'; every other
         // use of `Lambda.interactive' expects that wrapper.
-        Value::list(vec![Value::Sym(_i.q("interactive")), spec.clone()])
+        Value::list(vec![Value::Sym(i.q("interactive")), spec.clone()])
     });
     Ok(Value::Lambda(std::rc::Rc::new(crate::lisp::value::Lambda {
         is_macro: false,
@@ -5288,6 +5579,7 @@ fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         optional: Vec::new(),
         rest: None,
         body: Vec::new(),
+        body_value: None,
         env: None,
         doc: doc.map(Into::into),
         interactive,
@@ -5301,6 +5593,7 @@ fn f_make_byte_code(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         bc_items: Some(crate::lisp::Value::vector_ref(args.as_slice().to_vec())),
         bc_closure: false,
         bc_prog: std::cell::RefCell::new(None),
+        compiled_macro_cache: crate::lisp::value::CompiledMacroCache::default(),
         doc_value: None,
         env_value: None,
     }))
@@ -5333,9 +5626,14 @@ fn f_smae_save(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     let Some(b) = i.buffers.get(buf) else {
         return Ok(Value::cons(Value::Nil, Value::Nil));
     };
+    let marker = b
+        .try_borrow_mut()
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?
+        .mark_marker();
     let mark = {
-        let mark = b.borrow_mut().mark_marker();
-        let mark = mark.borrow();
+        let mark = marker
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed mark marker"))?;
         mark.buffer.map(|buffer| (buffer, mark.position))
     };
     let m = match mark {
@@ -5349,7 +5647,10 @@ fn f_smae_save(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
                 crate::lisp::Value::Marker,
             );
             if let Some(buffer) = i.buffers.get(buffer) {
-                buffer.borrow_mut().register_marker(&mk);
+                buffer
+                    .try_borrow_mut()
+                    .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?
+                    .register_marker(&mk);
             }
             Value::Marker(mk)
         }
@@ -5369,10 +5670,7 @@ fn f_smae_restore(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         return Err(i.wrong_type_mut("listp", saved));
     }
     let (saved_mark, saved_active) = match saved {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        }
+        Value::Cons(c) => crate::lisp::eval::cons_parts(i, c)?,
         _ => (Value::Nil, Value::Nil),
     };
     let buf = i.current_buffer;
@@ -5381,17 +5679,24 @@ fn f_smae_restore(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     // GNU: (omark (marker-position (mark-marker))) read before mutating.
     let (omark, markm) = {
-        let mut bb = b.borrow_mut();
+        let mut bb = b
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?;
         let m = bb.mark_marker();
         let pos = {
-            let mm = m.borrow();
+            let mm = m
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed mark marker"))?;
             mm.buffer.is_some().then(|| mm.position)
         };
         (pos, m)
     };
     let nmark = if saved_mark.is_nil() {
         // (set-marker (mark-marker) nil): detach the mark marker.
-        markm.borrow_mut().buffer = None;
+        markm
+            .try_borrow_mut()
+            .map_err(|_| i.error("Cannot update a mutably borrowed mark marker"))?
+            .buffer = None;
         None
     } else {
         let mm = match &saved_mark {
@@ -5401,16 +5706,34 @@ fn f_smae_restore(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // (setf nmark (marker-position saved-mark)) then
         // (set-marker (mark-marker) nmark): a detached saved marker
         // yields nil → the mark marker is detached too.
-        let np = mm.borrow().buffer.map(|_| mm.borrow().position);
+        let np = {
+            let marker = mm
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed saved marker"))?;
+            marker.buffer.map(|_| marker.position)
+        };
         match np {
             Some(p) => {
-                let len = b.borrow().text.len();
-                b.borrow_mut().set_mark(p.min(len));
+                let len = b
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed buffer"))?
+                    .text
+                    .len();
+                b.try_borrow_mut()
+                    .map_err(|_| i.error("Cannot update a mutably borrowed buffer"))?
+                    .set_mark(p.min(len));
             }
-            None => markm.borrow_mut().buffer = None,
+            None => {
+                markm
+                    .try_borrow_mut()
+                    .map_err(|_| i.error("Cannot update a mutably borrowed mark marker"))?
+                    .buffer = None;
+            }
         }
         // (set-marker saved-mark nil): saved marker is detached.
-        mm.borrow_mut().buffer = None;
+        mm.try_borrow_mut()
+            .map_err(|_| i.error("Cannot update a mutably borrowed saved marker"))?
+            .buffer = None;
         np
     };
     // Read activation after moving the mark, then assign through normal
@@ -5445,31 +5768,30 @@ const ADVICE_WHERES: &[&str] = &[
     ":after-while",
     ":filter-args",
     ":filter-return",
+    ":interactive-only",
 ];
 
 /// The `name' property of an advice PROPS alist.
-fn advice_name(i: &mut Interp, props: &Value) -> Value {
+fn advice_name(i: &mut Interp, props: &Value) -> Result<Value, Flow> {
     let name_kw = i.q("name");
     let mut cur = props.clone();
-    while let Value::Cons(c) = cur {
-        let (car, cdr) = {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
+    let mut seen = FxHashSet::default();
+    while let Value::Cons(c) = cur.clone() {
+        if !seen.insert(Rc::as_ptr(&c) as usize) {
+            return Err(crate::lisp::builtins::listfn::err_circular(i, &cur));
+        }
+        let (car, cdr) = crate::lisp::eval::cons_parts(i, &c)?;
         if let Value::Cons(e) = &car {
-            let (k, v) = {
-                let b = e.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
+            let (k, v) = crate::lisp::eval::cons_parts(i, e)?;
             if let Value::Sym(s) = k {
                 if s == name_kw {
-                    return v;
+                    return Ok(v);
                 }
             }
         }
         cur = cdr;
     }
-    Value::Nil
+    Ok(Value::Nil)
 }
 
 /// Match an advice entry against `advice-remove'/`advice-member-p''s
@@ -5493,7 +5815,7 @@ fn f_advice_add(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ))],
         ));
     }
-    let name = advice_name(i, &arg(&a, 3));
+    let name = advice_name(i, &arg(&a, 3))?;
     advice_push(i, sym, w, a[2].clone(), name)?;
     Ok(Value::Nil)
 }
@@ -5563,14 +5885,14 @@ fn advice_wrap(i: &mut Interp, cur: &Value) -> SymId {
 }
 
 /// If V is an advice-wrapper gensym, return (wrapper-key, orig-value).
-fn advice_unwrap(i: &mut Interp, v: &Value) -> Option<(SymId, Value)> {
+fn advice_unwrap(i: &mut Interp, v: &Value) -> Result<Option<(SymId, Value)>, Flow> {
     if let Value::Sym(k) = v {
         let orig_key = i.q("cl--advice--orig");
         if let Value::Cons(c) = i.get_prop(*k, orig_key) {
-            return Some((*k, c.borrow().car.clone()));
+            return Ok(Some((*k, crate::lisp::eval::cons_parts(i, &c)?.0)));
         }
     }
-    None
+    Ok(None)
 }
 
 fn f_advice_remove(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -5636,7 +5958,7 @@ fn f_add_function(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             ));
         }
     };
-    let name = advice_name(i, &arg(&a, 3));
+    let name = advice_name(i, &arg(&a, 3))?;
     advice_push(i, key, w, a[2].clone(), name)?;
     Ok(Value::Nil)
 }
@@ -5655,7 +5977,7 @@ fn f_remove_function(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some("var") | Some("default-value") | Some("local") => {
             let sym = want_sym(i, &p[1])?;
             let cur = i.symbol_value(sym);
-            match advice_unwrap(i, &cur) {
+            match advice_unwrap(i, &cur)? {
                 Some((k, orig)) => (Some(("var".to_string(), sym, orig, sym)), k),
                 None => return Ok(Value::Nil),
             }
@@ -5663,7 +5985,8 @@ fn f_remove_function(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some("get") => {
             let sym = want_sym(i, &p[1])?;
             let prop = want_sym(i, &p[2])?;
-            match advice_unwrap(i, &i.get_prop(sym, prop)) {
+            let current = i.get_prop(sym, prop);
+            match advice_unwrap(i, &current)? {
                 Some((k, orig)) => (Some(("get".to_string(), sym, orig, prop)), k),
                 None => return Ok(Value::Nil),
             }
@@ -5812,13 +6135,501 @@ fn f_advice_apply_link(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         ":filter-args" => {
             let r = i.apply(&f, vec![Value::list(args)])?;
-            let argv = r.list_to_vec().unwrap_or_else(|_| vec![r]);
+            // `nadvice.el' expands this as `(apply NEXT (funcall ADVICE
+            // ARGS))'.  A non-list or dotted result must therefore keep
+            // `apply''s listp error instead of becoming one argument.
+            let argv = want_list(i, &r)?;
             i.apply(&next, argv)
         }
         ":filter-return" => {
             let r = i.apply(&next, args)?;
             i.apply(&f, vec![r])
         }
+        ":interactive-only" => i.apply(&next, args),
         _ => Err(i.error("Invalid advice class")),
+    }
+}
+
+#[cfg(test)]
+mod modification_hook_binding_tests {
+    use super::*;
+
+    #[test]
+    fn change_hook_binding_errors_unwind_without_losing_pending_hooks() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun change-hook-binding-watcher (_symbol _value operation _where)\
+                           (if (eq operation 'let) (signal 'file-error '(\"bind\")) nil))\
+                         (add-variable-watcher 'inhibit-modification-hooks\
+                                               #'change-hook-binding-watcher)",
+                    )
+                    .unwrap();
+
+                let mark = interp.specbind_depth();
+                let before = signal_before_change(&mut interp, 1, 1);
+                assert!(
+                    matches!(before, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR))
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+
+                interp.pending_insert_behind = vec![Value::Int(11)];
+                interp.pending_insert_front = vec![Value::Int(22)];
+                let after = signal_after_change(&mut interp, 1, 1, 0);
+                assert!(
+                    matches!(after, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR))
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+                assert!(matches!(
+                    interp.pending_insert_behind.as_slice(),
+                    [Value::Int(11)]
+                ));
+                assert!(matches!(
+                    interp.pending_insert_front.as_slice(),
+                    [Value::Int(22)]
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod macroexpand_scope_binding_tests {
+    use super::*;
+
+    #[test]
+    fn macroexpand_all_unwinds_a_failed_dynvars_binding() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun macroexpand-scope-watcher (_symbol _value operation _where)\
+                           (if (eq operation 'let) (signal 'file-error '(\"bind\")) nil))\
+                         (add-variable-watcher 'macroexp--dynvars #'macroexpand-scope-watcher)",
+                    )
+                    .unwrap();
+                let (form, _) = interp.read_from_string("(let ((x 1)) x)", 0).unwrap();
+                let mark = interp.specbind_depth();
+                let result = macroexpand_all_inner(&mut interp, &form);
+                assert!(
+                    matches!(result, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)),
+                    "unexpected macroexpand_all result: {result:?}"
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn filtered_symbol_macro_scope_unwinds_a_failed_environment_binding() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let env = interp.q("macroexpand-all-environment");
+                let shadowed = interp.intern("macroexpand-filtered-env-variable");
+                let watcher = Value::Sym(interp.q("signal"));
+                interp.var_watchers.push((env, watcher));
+                let mark = interp.specbind_depth();
+                let result = expand_body_filtered(
+                    &mut interp,
+                    env,
+                    &Value::Nil,
+                    true,
+                    &[shadowed],
+                    &Value::Sym(shadowed),
+                );
+                assert!(
+                    matches!(result, Err(Flow::Signal(_))),
+                    "expected the variable watcher to signal, got {result:?}"
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn macroexpand_all_unwinds_failed_let_init_and_body_environment_bindings() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                for source in [
+                    "(let ((macroexpand-filtered-env-variable 1)) macroexpand-filtered-env-variable)",
+                    "(let nil macroexpand-filtered-env-variable)",
+                ] {
+                    let mut interp = Interp::new();
+                    let env_id = interp.q("macroexpand-all-environment");
+                    let keyword = interp.q(":cl-symbol-macros");
+                    let shadowed = interp.intern("macroexpand-filtered-env-variable");
+                    let env = Value::list(vec![Value::cons(
+                        Value::Sym(keyword),
+                        Value::list(vec![Value::cons(Value::Sym(shadowed), Value::Int(9))]),
+                    )]);
+                    let base = interp.specbind_depth();
+                    interp.specbind(env_id, env).unwrap();
+                    let env_depth = interp.specbind_depth();
+                    let watcher = Value::Sym(interp.q("signal"));
+                    interp.var_watchers.push((env_id, watcher));
+                    let (form, _) = interp.read_from_string(source, 0).unwrap();
+                    let result = macroexpand_all_inner(&mut interp, &form);
+                    assert!(
+                        matches!(result, Err(Flow::Signal(_))),
+                        "expected the variable watcher to signal for {source}, got {result:?}"
+                    );
+                    assert_eq!(
+                        interp.specbind_depth(),
+                        env_depth,
+                        "macroexpand-all leaked a nested binding for {source}"
+                    );
+                    interp.var_watchers.retain(|(id, _)| *id != env_id);
+                    interp.unbind_to(base).unwrap();
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod eval_expression_value_tests {
+    use super::*;
+
+    #[test]
+    fn eval_expression_propagates_a_values_watcher_error() {
+        let mut interp = Interp::new();
+        interp
+            .eval_str(
+                "(defun eval-expression-values-watcher (_symbol _value operation _where)\
+                   (if (eq operation 'set) (signal 'file-error '(\"values\")) nil))\
+                 (add-variable-watcher 'values #'eval-expression-values-watcher)",
+            )
+            .unwrap();
+        let result = f_eval_expression(&mut interp, vec![Value::Int(7), Value::Nil].into());
+        assert!(
+            matches!(result, Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)),
+            "unexpected eval-expression result: {result:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod locate_library_message_tests {
+    use super::*;
+
+    #[test]
+    fn interactive_locate_library_propagates_message_errors() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-locate-library-message (_format _argument)\
+                           (signal 'file-error '(\"locate-library message\")))\
+                         (fset 'message #'qa-locate-library-message)",
+                    )
+                    .unwrap();
+                let result = f_locate_library(
+                    &mut interp,
+                    vec![Value::string("simple"), Value::Nil, Value::Nil, Value::t()].into(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::FILE_ERROR)
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod advice_filter_args_tests {
+    use super::*;
+
+    #[test]
+    fn rust_advice_trampoline_requires_filter_args_to_return_a_proper_list() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-rust-advice-target (x) x)\
+                         (defun qa-rust-advice-non-list (_args) 7)\
+                         (defun qa-rust-advice-dotted (_args) '(1 . bad))",
+                    )
+                    .unwrap();
+                let target = interp.q("qa-rust-advice-target");
+                let how = interp.q(":filter-args");
+                let non_list = interp.q("qa-rust-advice-non-list");
+                let dotted = interp.q("qa-rust-advice-dotted");
+
+                f_advice_add(
+                    &mut interp,
+                    vec![Value::Sym(target), Value::Sym(how), Value::Sym(non_list)].into(),
+                )
+                .unwrap();
+                let result = interp.apply(&Value::Sym(target), vec![Value::Int(3)]);
+                let signal = match result {
+                    Err(Flow::Signal(signal)) => signal,
+                    other => panic!("non-list filter result did not signal: {other:?}"),
+                };
+                assert!(signal.is_symbol(sym::WRONG_TYPE_ARGUMENT));
+                assert_eq!(interp.prin1_to_string(&signal.data()), "(listp 7)");
+                f_advice_remove(
+                    &mut interp,
+                    vec![Value::Sym(target), Value::Sym(non_list)].into(),
+                )
+                .unwrap();
+
+                f_advice_add(
+                    &mut interp,
+                    vec![Value::Sym(target), Value::Sym(how), Value::Sym(dotted)].into(),
+                )
+                .unwrap();
+                let result = interp.apply(&Value::Sym(target), vec![Value::Int(3)]);
+                let signal = match result {
+                    Err(Flow::Signal(signal)) => signal,
+                    other => panic!("dotted filter result did not signal: {other:?}"),
+                };
+                assert!(signal.is_symbol(sym::WRONG_TYPE_ARGUMENT));
+                assert_eq!(interp.prin1_to_string(&signal.data()), "(listp bad)");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod advice_interactive_only_tests {
+    use super::*;
+
+    #[test]
+    fn rust_advice_trampoline_accepts_interactive_only_as_a_passthrough() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun qa-rust-interactive-target (x) x)\
+                         (defun qa-rust-interactive-advice (_x)\
+                           (signal 'file-error '(\"interactive advice ran\")))",
+                    )
+                    .unwrap();
+                let target = interp.q("qa-rust-interactive-target");
+                let how = interp.q(":interactive-only");
+                let advice = interp.q("qa-rust-interactive-advice");
+
+                f_advice_add(
+                    &mut interp,
+                    vec![Value::Sym(target), Value::Sym(how), Value::Sym(advice)].into(),
+                )
+                .unwrap();
+                let result = interp
+                    .apply(&Value::Sym(target), vec![Value::Int(3)])
+                    .unwrap();
+                assert_eq!(interp.prin1_to_string(&result), "3");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod circular_symbol_macro_environment_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    fn circular_spine(items: Vec<Value>) -> Value {
+        let spine = Value::list(items);
+        let mut tail = spine.clone();
+        while let Value::Cons(cell) = tail {
+            let next = cell.borrow().cdr.clone();
+            if next.is_nil() {
+                cell.borrow_mut().cdr = spine.clone();
+                break;
+            }
+            tail = next;
+        }
+        spine
+    }
+
+    fn is_circular<T>(result: &Result<T, Flow>) -> bool {
+        matches!(result, Err(Flow::Signal(signal)) if signal.is_symbol(sym::CIRCULAR_LIST))
+    }
+
+    #[test]
+    fn symbol_macro_environment_and_binding_walks_reject_cycles() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let target = interp.intern("qa-symbol-macro-target");
+        let other = interp.intern("qa-symbol-macro-other");
+        let unrelated_entry = Value::cons(Value::Sym(other), Value::Nil);
+        let env = circular_spine(vec![unrelated_entry]);
+
+        assert!(is_circular(&sm_active(&mut interp, &env)));
+        assert!(is_circular(&sm_lookup(&mut interp, &env, target)));
+        assert!(is_circular(&sm_filter_env(&mut interp, &env, &[target])));
+        assert!(is_circular(&binder_syms(&mut interp, &env)));
+
+        let keyword = interp.q(":cl-symbol-macros");
+        let binding = Value::cons(Value::Sym(other), Value::Sym(other));
+        let bindings = circular_spine(vec![binding]);
+        let entry = Value::cons(Value::Sym(keyword), bindings);
+        let env = Value::list(vec![entry]);
+        assert!(is_circular(&sm_lookup(&mut interp, &env, target)));
+        assert!(is_circular(&sm_filter_env(&mut interp, &env, &[target])));
+    }
+
+    #[test]
+    fn symbol_macro_binding_lists_reject_cycles() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let target = interp.intern("qa-symbol-macro-target");
+        let other = interp.intern("qa-symbol-macro-other");
+        let keyword = interp.q(":cl-symbol-macros");
+        let binding = Value::cons(Value::Sym(other), Value::Sym(other));
+        let bindings = circular_spine(vec![binding]);
+        let entry = Value::cons(Value::Sym(keyword), bindings);
+        let env = Value::list(vec![entry]);
+
+        assert!(is_circular(&sm_lookup(&mut interp, &env, target)));
+        assert!(is_circular(&sm_filter_env(&mut interp, &env, &[target])));
+    }
+}
+
+#[cfg(test)]
+mod provide_order_tests {
+    use super::*;
+
+    #[test]
+    fn provide_publishes_features_and_load_history_before_after_load_forms() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let visible = interp
+                    .eval_str(
+                        r##"(progn
+                              (setq features nil
+                                    current-load-list '("/tmp/qa-provide-order.el")
+                                    load-in-progress nil
+                                    after-load-alist nil)
+                              (eval-after-load 'qa-provide-order-visible
+                                '(setq qa-provide-order-observed
+                                       (list (featurep 'qa-provide-order-visible)
+                                             current-load-list)))
+                              (provide 'qa-provide-order-visible)
+                              (list qa-provide-order-observed
+                                    (featurep 'qa-provide-order-visible)))"##,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    interp.prin1_to_string(&visible),
+                    "((t ((provide . qa-provide-order-visible) \"/tmp/qa-provide-order.el\")) t)"
+                );
+
+                let removed = interp
+                    .eval_str(
+                        "(progn\
+                           (setq features nil load-in-progress nil after-load-alist nil)\
+                           (eval-after-load 'qa-provide-order-removes\
+                             '(setq features (delq 'qa-provide-order-removes features)))\
+                           (provide 'qa-provide-order-removes)\
+                           (featurep 'qa-provide-order-removes))",
+                    )
+                    .unwrap();
+                assert!(removed.is_nil());
+
+                let invalid = match interp.eval_str(
+                        r##"(progn
+                              (condition-case err
+                                  (progn
+                                    (setq current-load-list '("/tmp/qa-provide-invalid.el")
+                                          load-in-progress nil
+                                          after-load-alist nil
+                                          qa-provide-invalid-ran nil)
+                                    (eval-after-load 'qa-provide-invalid
+                                      '(setq qa-provide-invalid-ran t))
+                                    (setq features 'atom)
+                                    (provide 'qa-provide-invalid '(sub)))
+                                (error
+                                 (list (car err) (cdr err)
+                                       (get 'qa-provide-invalid 'subfeatures)
+                                       qa-provide-invalid-ran
+                                       current-load-list))))"##,
+                    ) {
+                    Ok(value) => value,
+                    Err(Flow::Signal(signal)) => panic!(
+                        "unexpected provide signal: {} {}",
+                        interp.prin1_to_string(&signal.symbol()),
+                        interp.prin1_to_string(&signal.data())
+                    ),
+                    Err(flow) => panic!("unexpected provide flow: {flow:?}"),
+                };
+                assert_eq!(
+                    interp.prin1_to_string(&invalid),
+                    "(wrong-type-argument (listp atom) nil nil (\"/tmp/qa-provide-invalid.el\"))"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod macroexpand_list_poll_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[test]
+    fn macroexpand_list_conversion_observes_host_quit_requests() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let mut list = Value::Nil;
+                for _ in 0..2_000_000 {
+                    list = Value::cons(Value::Nil, list);
+                }
+                let request = Arc::new(crate::frontend::QuitRequest::default());
+                interp.set_quit_request(Some(request.clone()));
+
+                let input_request = request.clone();
+                let input = std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(20));
+                    input_request.request();
+                });
+                let result = macroexpand_list_to_vec(&mut interp, &list);
+                input.join().unwrap();
+
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::QUIT)
+                ));
+                assert!(request.discard_queued_key());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

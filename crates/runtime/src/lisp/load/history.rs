@@ -76,11 +76,16 @@ pub(crate) fn build_history(i: &mut Interp, filename: Value, entire: bool) -> Ev
 /// `symbol-file' and the find-func family can locate prelude-defined
 /// symbols.  GNU records every dumped library in `load-history' the same
 /// way; FILE names the on-disk copy of the prelude source.
-pub(crate) fn record_prelude_load_history(i: &mut Interp, file: &str, src: &str) {
+pub(crate) fn record_prelude_load_history(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+) -> Result<(), crate::lisp::Flow> {
     let cll = i.q("current-load-list");
     let mark = i.specbind_depth();
-    if i.specbind(cll, Value::Nil).is_err() {
-        return;
+    if let Err(error) = i.specbind(cll, Value::Nil) {
+        i.unbind_to(mark)?;
+        return Err(error);
     }
     let chars: Rc<Vec<crate::lisp::text::EmacsChar>> =
         Rc::new(src.chars().map(Into::into).collect());
@@ -111,7 +116,8 @@ pub(crate) fn record_prelude_load_history(i: &mut Interp, file: &str, src: &str)
         v => v,
     };
     i.obarray.symbol_mut(lh).value = Value::cons(entry, cur);
-    let _ = i.unbind_to(mark);
+    i.unbind_to(mark)?;
+    Ok(())
 }
 
 /// Record one top-level prelude form, splicing `progn' children the way
@@ -123,6 +129,38 @@ pub(super) fn record_form_tree(i: &mut Interp, form: &Value) {
         }
     } else {
         record_load_entry(i, form);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prelude_history_unwinds_a_failed_load_list_binding() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(defun prelude-history-watcher (_symbol _value operation _where)\
+                           (if (eq operation 'let) (signal 'file-error '(\"bind\")) nil))\
+                         (add-variable-watcher 'current-load-list #'prelude-history-watcher)",
+                    )
+                    .unwrap();
+                let mark = interp.specbind_depth();
+                let result =
+                    record_prelude_load_history(&mut interp, "prelude.el", "(defun sample () t)");
+                assert!(
+                    matches!(result, Err(crate::lisp::Flow::Signal(ref signal)) if signal.is_symbol(crate::lisp::sym::FILE_ERROR)),
+                    "unexpected prelude history result: {result:?}"
+                );
+                assert_eq!(interp.specbind_depth(), mark);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
 

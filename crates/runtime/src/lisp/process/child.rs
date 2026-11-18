@@ -3,6 +3,7 @@ use super::ProcIo;
 use std::collections::VecDeque;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 fn cloexec(fd: &OwnedFd) -> io::Result<()> {
@@ -136,6 +137,32 @@ pub(super) fn spawn(
         .stdin(child_input)
         .stdout(Stdio::from(child_output))
         .stderr(child_error);
+    if pty_input || pty_output {
+        // GNU's child_setup makes the child a session leader and gives its
+        // pty slave to that session.  This makes the child group the pty's
+        // initial foreground group, which process-send-signal queries.
+        let tty_fd = if pty_input { 0 } else { 1 };
+        // SAFETY: the child setup performs only async-signal-safe syscalls;
+        // the selected stdio descriptor is the open pty slave.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setsid() < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::ioctl(tty_fd, libc::TIOCSCTTY as libc::c_ulong, 0) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::tcsetpgrp(tty_fd, libc::getpgrp()) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    } else {
+        // GNU starts pipe subprocesses in their own process group, so
+        // process-send-signal can address the group without signaling Emacs.
+        command.process_group(0);
+    }
     let mut child = command.spawn()?;
     // Command owns the child-side pipe descriptors and must not keep a
     // writer alive after spawn, or EOF could never reach the reader.
@@ -158,6 +185,7 @@ pub(super) fn spawn(
             pty_output,
             stderr,
             pending_input: VecDeque::new(),
+            paused_output: VecDeque::new(),
         },
         tty_name,
     ))

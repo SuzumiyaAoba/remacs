@@ -284,19 +284,25 @@ fn str_of(v: &Value) -> Option<EmacsText> {
 
 /// D-Bus message strings use GNU SSDATA/SBYTES, not filename encoding.
 /// https://github.com/emacs-mirror/emacs/blob/master/src/dbusbind.c
-fn lisp_string_cstr(i: &Interp, string: &crate::lisp::value::StrRef) -> std::ffi::CString {
-    std::ffi::CString::new(super::strfn::gnu_sbytes(i, string)).unwrap_or_default()
+fn lisp_string_cstr(
+    i: &Interp,
+    string: &crate::lisp::value::StrRef,
+) -> Result<std::ffi::CString, Flow> {
+    Ok(std::ffi::CString::new(super::strfn::try_gnu_sbytes(i, string)?)
+        .unwrap_or_default())
 }
-fn lisp_cstr(i: &Interp, value: &Value) -> std::ffi::CString {
+fn lisp_cstr(i: &Interp, value: &Value) -> Result<std::ffi::CString, Flow> {
     match value {
         Value::Str(string) => lisp_string_cstr(i, string),
-        _ => std::ffi::CString::new("").unwrap(),
+        _ => Ok(std::ffi::CString::new("").unwrap()),
     }
 }
 
 fn cstr<T: TextSource + ?Sized>(text: &T) -> std::ffi::CString {
-    text.with_text(|text| std::ffi::CString::new(text.to_external_bytes())
-        .unwrap_or_else(|_| std::ffi::CString::new("").unwrap()))
+    text.with_text(|text| {
+        std::ffi::CString::new(text.to_external_bytes())
+            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap())
+    })
 }
 
 fn call_lisp(i: &mut Interp, f: &str, args: Vec<Value>) -> EvalResult {
@@ -513,7 +519,7 @@ fn check_cons(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 fn validate_path(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     check_string(i, v)?;
     if let Some(d) = dbus() {
-        let cs = lisp_cstr(i, v);
+        let cs = lisp_cstr(i, v)?;
         let mut err = DBusError {
             name: std::ptr::null(),
             message: std::ptr::null(),
@@ -538,7 +544,7 @@ fn validate_bus_name(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     }
     check_string(i, v)?;
     if let Some(d) = dbus() {
-        let cs = lisp_cstr(i, v);
+        let cs = lisp_cstr(i, v)?;
         let mut err = DBusError {
             name: std::ptr::null(),
             message: std::ptr::null(),
@@ -563,7 +569,7 @@ fn validate_interface_member(i: &mut Interp, v: &Value, iface: bool) -> Result<(
     }
     check_string(i, v)?;
     if let Some(d) = dbus() {
-        let cs = lisp_cstr(i, v);
+        let cs = lisp_cstr(i, v)?;
         let mut err = DBusError {
             name: std::ptr::null(),
             message: std::ptr::null(),
@@ -930,7 +936,7 @@ fn xd_append_arg(
                     } else {
                         check_string(i, object)?;
                     }
-                    let cs = lisp_cstr(i, object);
+                    let cs = lisp_cstr(i, object)?;
                     let p = cs.as_ptr();
                     if (d.dbus_message_iter_append_basic)(
                         iter,
@@ -968,12 +974,22 @@ fn xd_append_arg(
                     let first = car_safe(&object);
                     if object_to_dbus_type(i, &first) == DBUS_TYPE_SIGNATURE {
                         let val = next_value(i, &object);
-                        if matches!(&val, Value::Cons(c)
-                            if matches!(c.borrow().car, Value::Str(_))
-                                && c.borrow().cdr.is_nil()
-                                && match &c.borrow().car { Value::Str(text) => super::strfn::gnu_sbytes(i, text).len(), _ => 0 }
-                                    < DBUS_MAXIMUM_SIGNATURE_LENGTH)
-                        {
+                        let signature_only = match &val {
+                            Value::Cons(cell) => {
+                                let pair = cell.try_borrow().map_err(|_| {
+                                    i.error("Cannot inspect a mutably borrowed D-Bus signature")
+                                })?;
+                                match (&pair.car, &pair.cdr) {
+                                    (Value::Str(text), Value::Nil) => Some(
+                                        super::strfn::try_gnu_sbytes(i, text)?.len()
+                                            < DBUS_MAXIMUM_SIGNATURE_LENGTH,
+                                    ),
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        };
+                        if signature_only == Some(true) {
                             sig = str_of(&car_safe(&val)).unwrap_or_default();
                             object = Value::Nil;
                         }
@@ -1094,7 +1110,11 @@ fn xd_retrieve_arg(i: &mut Interp, dtype: i32, iter: *mut DBusMessageIter) -> Va
             DBUS_TYPE_STRING | DBUS_TYPE_OBJECT_PATH | DBUS_TYPE_SIGNATURE => {
                 let mut val: *mut c_char = std::ptr::null_mut();
                 (d.dbus_message_iter_get_basic)(iter, &mut val as *mut *mut c_char as *mut c_void);
-                let bytes = if val.is_null() { &[][..] } else { std::ffi::CStr::from_ptr(val).to_bytes() };
+                let bytes = if val.is_null() {
+                    &[][..]
+                } else {
+                    std::ffi::CStr::from_ptr(val).to_bytes()
+                };
                 let text = i.auto_string_value(bytes);
                 Value::list(vec![sym, text])
             }
@@ -1151,9 +1171,12 @@ fn connection_refs(conn: *mut c_void) -> i32 {
 fn validate_bus_address(i: &mut Interp, bus: &mut Value) -> Result<(), Flow> {
     let session_addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
     if let Value::Str(s) = bus {
-        let addr = s.borrow().clone();
+        let addr = s
+            .try_borrow()
+            .map(|addr| (*addr).clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed D-Bus address"))?;
         if let Some(d) = dbus() {
-            let cs = lisp_string_cstr(i, s);
+            let cs = lisp_string_cstr(i, s)?;
             unsafe {
                 let mut err = DBusError {
                     name: std::ptr::null(),
@@ -1174,7 +1197,10 @@ fn validate_bus_address(i: &mut Interp, bus: &mut Value) -> Result<(), Flow> {
                 (d.dbus_error_free)(&mut err);
             }
         }
-        if session_addr.as_ref().is_some_and(|session| addr == *session) {
+        if session_addr
+            .as_ref()
+            .is_some_and(|session| addr == *session)
+        {
             *bus = symv(i, ":session");
         }
         return Ok(());
@@ -1276,7 +1302,7 @@ fn f_init_bus(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         };
         (d.dbus_error_init)(&mut err);
         let c = if let Value::Str(s) = &bus {
-            let cs = lisp_string_cstr(i, s);
+            let cs = lisp_string_cstr(i, s)?;
             if private.is_nil() {
                 (d.dbus_connection_open)(cs.as_ptr(), &mut err)
             } else {
@@ -1468,7 +1494,7 @@ fn f_message_internal_2(
 ) -> EvalResult {
     unsafe {
         if matches!(service, Value::Str(_)) && mtype != DBUS_MESSAGE_TYPE_INVALID {
-            let cs = lisp_cstr(i, service);
+            let cs = lisp_cstr(i, service)?;
             if mtype != DBUS_MESSAGE_TYPE_SIGNAL {
                 if (d.dbus_message_set_destination)(dmsg, cs.as_ptr()) == 0 {
                     return Err(dbus_error_val(i, "Unable to set the destination", service));
@@ -1505,9 +1531,9 @@ fn f_message_internal_2(
         }
 
         if mtype == DBUS_MESSAGE_TYPE_METHOD_CALL || mtype == DBUS_MESSAGE_TYPE_SIGNAL {
-            let cp = lisp_cstr(i, path);
-            let ci = lisp_cstr(i, interface);
-            let cm = lisp_cstr(i, member);
+            let cp = lisp_cstr(i, path)?;
+            let ci = lisp_cstr(i, interface)?;
+            let cm = lisp_cstr(i, member)?;
             if (d.dbus_message_set_path)(dmsg, cp.as_ptr()) == 0
                 || (d.dbus_message_set_interface)(dmsg, ci.as_ptr()) == 0
                 || (d.dbus_message_set_member)(dmsg, cm.as_ptr()) == 0
@@ -1519,7 +1545,7 @@ fn f_message_internal_2(
                 return Err(dbus_error(i, "Unable to create a return message"));
             }
             if mtype == DBUS_MESSAGE_TYPE_ERROR {
-                let ce = lisp_cstr(i, error_name);
+                let ce = lisp_cstr(i, error_name)?;
                 if (d.dbus_message_set_error_name)(dmsg, ce.as_ptr()) == 0 {
                     return Err(dbus_error(i, "Unable to create an error message"));
                 }
@@ -1704,7 +1730,9 @@ fn store_event(
     let event = Value::cons(symv(i, "dbus-event"), Value::list(ev));
     // GNU's read_char sets last-input-event before command-execute.
     let lie = intern(i, "last-input-event");
-    let _ = i.set_symbol(lie, event.clone());
+    // This is a C-side input-state update, like record_keyboard_event;
+    // GNU does not invoke Lisp variable watchers for it.
+    i.store_internal_value(lie, event.clone());
     super::filenotify::dispatch_special_event(i, &event).map(|_| ())
 }
 
@@ -2081,6 +2109,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dbus_event_updates_last_input_event_without_variable_watchers() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut i = Interp::new();
+                i.eval_str(
+                    "(defvar qa-dbus-event-watcher-operations nil)\
+                     (defun qa-dbus-event-watcher\
+                            (_symbol _value operation _where)\
+                       (push operation qa-dbus-event-watcher-operations))\
+                     (add-variable-watcher 'last-input-event\
+                                           #'qa-dbus-event-watcher)",
+                )
+                .unwrap();
+                let last_input_event = i.q("last-input-event");
+                let special_event_map = i.q("special-event-map");
+                let watcher_operations = i.q("qa-dbus-event-watcher-operations");
+                i.store_internal_value(special_event_map, Value::Nil);
+
+                let handler = Value::Sym(i.q("qa-dbus-event-handler"));
+                let result = store_event(&mut i, &handler, &Value::Nil, vec![Value::Int(7)]);
+                assert!(result.is_ok());
+                assert_eq!(
+                    i.prin1_to_string(&i.symbol_value(last_input_event)),
+                    "(dbus-event 7 qa-dbus-event-handler)"
+                );
+                assert!(i.symbol_value(watcher_operations).is_nil());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
     fn bignum_integer_arguments_use_checked_dbus_ranges() {
         std::thread::Builder::new()
             .stack_size(128 * 1024 * 1024)
@@ -2109,8 +2171,7 @@ mod tests {
                 // Untagged bignums are not guessed to be a 32-bit D-Bus type.
                 assert_eq!(object_to_dbus_type(&mut i, &maximum), DBUS_TYPE_INVALID);
                 let too_large = Value::from_bigint(num_bigint::BigInt::from(1) << 130usize);
-                let Err(Flow::Signal(signal)) =
-                    extract_unsigned(&mut i, &too_large, u64::MAX)
+                let Err(Flow::Signal(signal)) = extract_unsigned(&mut i, &too_large, u64::MAX)
                 else {
                     panic!("large unsigned integer must signal a range error");
                 };
@@ -2137,7 +2198,13 @@ mod wide_dbus_boundary_tests {
     #[test]
     fn c_string_boundary_preserves_unicode_and_byte8_octets() {
         let text = EmacsText::from_codes([0xf0080, 0xf0c80, 0x3fff80]).unwrap();
-        assert_eq!(cstr(&text).to_bytes(), [0xf3, 0xb0, 0x82, 0x80, 0xf3, 0xb0, 0xb2, 0x80, 0x80]);
-        assert_eq!(cstr("/org/example/Endpoint").to_bytes(), b"/org/example/Endpoint");
+        assert_eq!(
+            cstr(&text).to_bytes(),
+            [0xf3, 0xb0, 0x82, 0x80, 0xf3, 0xb0, 0xb2, 0x80, 0x80]
+        );
+        assert_eq!(
+            cstr("/org/example/Endpoint").to_bytes(),
+            b"/org/example/Endpoint"
+        );
     }
 }

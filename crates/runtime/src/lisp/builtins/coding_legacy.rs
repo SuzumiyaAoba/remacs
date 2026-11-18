@@ -1,7 +1,7 @@
 //! Metadata-driven external charset codecs. Charset maps are shared with
 //! encode-char/decode-char, so runtime-defined and composite charsets work too.
-use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use super::{charset, misc};
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::lisp::{
     Interp,
     value::{Value, lisp_char, lisp_char_code, mule_seq_char},
@@ -168,7 +168,12 @@ fn encode_with(i: &Interp, sets: &[CharsetSpec], sjis: bool, c: u32) -> Option<V
     }
     None
 }
-pub(crate) fn encode(i: &mut Interp, coding: &Value, text: &EmacsStr, _finish: bool) -> Option<Vec<u8>> {
+pub(crate) fn encode(
+    i: &mut Interp,
+    coding: &Value,
+    text: &EmacsStr,
+    _finish: bool,
+) -> Option<Vec<u8>> {
     let (n, k, p) = attrs(i, coding)?;
     if n == "utf-8-emacs" {
         return Some(
@@ -267,7 +272,13 @@ pub(super) fn decode_with_native(
             bytes
                 .iter()
                 .enumerate()
-                .map(|(at, b)| native.get(at).copied().flatten().unwrap_or(EmacsChar::from(*b as char)))
+                .map(|(at, b)| {
+                    native
+                        .get(at)
+                        .copied()
+                        .flatten()
+                        .unwrap_or(EmacsChar::from(*b as char))
+                })
                 .collect(),
             vec![],
         ));

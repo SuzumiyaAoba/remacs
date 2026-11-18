@@ -565,11 +565,7 @@ Please see the documentation of `json-object-type' and `json-key-type'."
         (if (= (json-peek) ?,)
             (progn
               (json-advance)
-              (json-skip-whitespace)
-              (when (= (json-peek) ?\})
-                ;;Remacs: JSON requires a member after each comma.
-                (signal 'json-object-format
-                        (list "object member after comma" ?\}))))
+              (json-skip-whitespace))
           (signal 'json-object-format (list "," (json-peek))))))
     ;; Skip over the '}'.
     (json-advance)
@@ -676,11 +672,7 @@ simple lists become JSON arrays."
         (if (= (json-peek) ?,)
             (progn
               (json-advance)
-              (json-skip-whitespace)
-              (when (= (json-peek) ?\])
-                ;;Remacs: JSON requires a value after each comma.
-                (signal 'json-array-format
-                        (list "array element after comma" ?\]))))
+              (json-skip-whitespace))
           (signal 'json-array-format (list "," (json-peek))))))
     ;; Skip over the ']'.
     (json-advance)
@@ -761,11 +753,7 @@ you will get the following structure returned:
   (with-temp-buffer
     (insert string)
     (goto-char (point-min))
-    (prog1 (json-read)
-      (json-skip-whitespace)
-      (unless (eobp)
-        ;;Remacs: this whole-string API must reject trailing JSON data.
-        (signal 'json-error (list "Trailing data" (point)))))))
+    (json-read)))
 
 (defun json-read-file (file)
   "Read the first JSON object contained in FILE and return it."
@@ -777,22 +765,12 @@ you will get the following structure returned:
 
 ;;;; Encoder
 
-(defun json--finite-float-p (number)
-  "Return non-nil if NUMBER is a finite floating-point number."
-  (let ((significand (car (frexp number))))
-    (and (not (isnan significand))
-         (< (abs significand) 1.0))))
-
 (defun json--print (object)
   "Like `json-encode', but insert or print the JSON at point."
   (cond ((json--print-keyword object))
         ((listp object)         (json--print-list object))
         ((json--print-stringlike object))
-        ((numberp object)
-         (when (and (floatp object)
-                    (not (json--finite-float-p object)))
-           (signal 'json-error (list "Non-finite number" object)))
-         (prin1 object))
+        ((numberp object) (prin1 object))
         ((arrayp object)        (json--print-array object))
         ((hash-table-p object)  (json--print-unordered-map object))
         ((signal 'json-error (list object)))))

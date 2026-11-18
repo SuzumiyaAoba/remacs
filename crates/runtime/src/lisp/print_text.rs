@@ -1,5 +1,6 @@
 //! Transient printer output. Instructions are never encoded as Unicode characters.
 use super::text::{EmacsChar, EmacsText, TextSource};
+use super::value::HashKey;
 use std::{fmt, ops::Range};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -9,6 +10,18 @@ pub enum OutputToken {
     WrittenByte(u8),
     RawByte(u8),
 }
+
+/// A print-number-table transition whose output prefix ends after this token.
+/// Function output streams can fail while consuming the prefix; in that case
+/// GNU leaves the corresponding negative table entry unchanged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PrintNumberEvent {
+    pub after_token: usize,
+    pub identity: usize,
+    pub number: usize,
+    pub entry_key: Option<HashKey>,
+}
+
 impl OutputToken {
     pub fn function_code(self) -> i128 {
         match self {
@@ -28,6 +41,7 @@ impl OutputToken {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PrintText {
     tokens: Vec<OutputToken>,
+    number_events: Vec<PrintNumberEvent>,
 }
 impl PrintText {
     pub fn new() -> Self {
@@ -41,6 +55,38 @@ impl PrintText {
     }
     pub fn tokens(&self) -> impl Iterator<Item = OutputToken> + '_ {
         self.tokens.iter().copied()
+    }
+    pub(crate) fn push_token(&mut self, token: OutputToken) {
+        self.tokens.push(token);
+    }
+    pub(crate) fn push_number_event(
+        &mut self,
+        identity: usize,
+        number: usize,
+        entry_key: Option<HashKey>,
+    ) {
+        self.number_events.push(PrintNumberEvent {
+            after_token: self.len(),
+            identity,
+            number,
+            entry_key,
+        });
+    }
+    pub(crate) fn number_events(&self) -> &[PrintNumberEvent] {
+        &self.number_events
+    }
+    pub(crate) fn previously_numbered(&self, key: &HashKey) -> Option<usize> {
+        self.number_events
+            .iter()
+            .rev()
+            .find(|event| event.entry_key.as_ref() == Some(key))
+            .map(|event| event.number)
+    }
+    pub(crate) fn slice_tokens(&self, range: Range<usize>) -> Self {
+        Self {
+            tokens: self.tokens[range].to_vec(),
+            number_events: Vec::new(),
+        }
     }
     pub fn push(&mut self, c: impl Into<EmacsChar>) {
         self.tokens.push(OutputToken::Character(c.into()));
@@ -58,12 +104,50 @@ impl PrintText {
         text.with_text(|text| self.tokens.extend(text.chars().map(OutputToken::Character)));
     }
     pub fn append(&mut self, other: &Self) {
+        let offset = self.len();
         self.tokens.extend_from_slice(&other.tokens);
+        self.number_events
+            .extend(other.number_events.iter().cloned().map(|mut event| {
+                event.after_token += offset;
+                event
+            }));
+    }
+    /// Emulate GNU print.c's shared output buffer when `print' recurs from
+    /// `print-unreadable-function': nested output replaces the buffer, then
+    /// the saved prefix is copied back without restoring the nested cursor.
+    pub(crate) fn restore_recursive_print(&mut self, nested: &Self, saved: &Self) {
+        self.tokens.clone_from(&nested.tokens);
+        let copied = self.tokens.len().min(saved.tokens.len());
+        self.tokens[..copied].copy_from_slice(&saved.tokens[..copied]);
+        self.number_events = saved
+            .number_events
+            .iter()
+            .filter(|event| event.after_token <= copied)
+            .cloned()
+            .collect();
     }
     pub fn replace_range<T: TextSource + ?Sized>(&mut self, range: Range<usize>, replacement: &T) {
         replacement.with_text(|text| {
+            let start = range.start;
+            let end = range.end;
+            let old_len = end - start;
+            let new_len = text.chars().count();
             self.tokens
                 .splice(range, text.chars().map(OutputToken::Character));
+            self.number_events.retain_mut(|event| {
+                if event.after_token <= start {
+                    true
+                } else if event.after_token >= end {
+                    event.after_token = if new_len >= old_len {
+                        event.after_token + (new_len - old_len)
+                    } else {
+                        event.after_token - (old_len - new_len)
+                    };
+                    true
+                } else {
+                    false
+                }
+            });
         });
     }
     pub fn to_text(&self, multibyte: bool) -> EmacsText {

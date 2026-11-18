@@ -49,9 +49,7 @@ pub(super) fn f_face_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(frame) = frame.filter(|frame| crate::editor::frame_is_graphical(i, frame)) {
         let font = i.intern_soft("font");
         let font = font
-            .map(|font| {
-                crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(font))
-            })
+            .map(|font| crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(font)))
             .filter(|font| !font.is_nil());
         return Ok(font.unwrap_or_else(|| Value::string("Menlo")));
     }
@@ -93,11 +91,7 @@ pub(super) fn f_invert_face(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 /// `window-font-width' / `window-font-height' — use the window's
 /// default frame font metrics (the GPUI font is shared by all windows).
-fn window_font_metric(
-    i: &mut Interp,
-    a: crate::lisp::Argv,
-    horizontal: bool,
-) -> EvalResult {
+fn window_font_metric(i: &mut Interp, a: crate::lisp::Argv, horizontal: bool) -> EvalResult {
     let window = match arg(&a, 0) {
         Value::Nil => crate::editor::sel_window(i),
         Value::Window(window) => Some(window),
@@ -374,7 +368,9 @@ pub(super) fn f_font_family_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     let families = backend
         .list_families(frame_id)
         .map_err(|error| i.error(error))?;
-    Ok(Value::list(families.into_iter().map(Value::string).collect()))
+    Ok(Value::list(
+        families.into_iter().map(Value::string).collect(),
+    ))
 }
 
 pub(super) fn f_font_info(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -808,7 +804,7 @@ fn font_name_family_and_height(name: &str, families: &[String]) -> (String, Opti
 /// `set-frame-font' — apply the selected font family to the default face.
 pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frames = arg(&a, 2);
-    let all_frames = matches!(&frames, Value::Sym(symbol) if i.symbol_name(*symbol) == "t");
+    let all_frames = matches!(&frames, Value::Sym(symbol) if *symbol == sym::T);
     let mut target_frames = Vec::new();
     match &frames {
         Value::Nil => {
@@ -817,7 +813,12 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             }
         }
         Value::Sym(_) if all_frames => {
-            target_frames.extend(i.frames.iter().filter(|frame| !frame.borrow().dead).cloned());
+            target_frames.extend(
+                i.frames
+                    .iter()
+                    .filter(|frame| !frame.borrow().dead)
+                    .cloned(),
+            );
         }
         Value::Cons(_) => {
             let values = frames

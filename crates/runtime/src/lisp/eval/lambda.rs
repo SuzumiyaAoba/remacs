@@ -1,12 +1,53 @@
 //! Lambda construction, argument binding, and interpreted/byte-code dispatch.
 
-use super::{Interp, lexenv_as_value, lexenv_extend, lexframe_bind};
+use super::{Interp, lexenv_as_value_checked, lexenv_extend_checked, lexframe_bind_checked};
 use crate::lisp::{
     error::{EvalResult, Flow},
     obarray::sym,
     value::{Argv, Lambda, SymId, Value},
 };
+use rustc_hash::FxHashSet;
 use std::rc::Rc;
+
+// FNV-1a fingerprints of the exact bytecode bodies emitted by GNU Emacs
+// 31.1's unidata-gen.elc. Include code length in each signature.
+const UNIDATA_DESCRIPTION_CODE: (usize, u64) = (5, 0x1b80_e259_5834_af96);
+const UNIDATA_EXTRA_SLOT_CODE: (usize, u64) = (30, 0x2465_fa11_5ca6_0a4e);
+const UNIDATA_PROPERTY_CODE: [(usize, u64); 2] = [
+    (452, 0x291e_9ef9_d149_7e33),
+    (337, 0xf2c7_c08e_52a4_45a1),
+];
+
+fn unidata_gen_literal(items: &[Value]) -> bool {
+    let Some(Value::Cons(location)) = items.get(4) else {
+        return false;
+    };
+    let Ok(location) = location.try_borrow() else {
+        return false;
+    };
+    let (Value::Str(filename), Value::Int(_)) = (&location.car, &location.cdr) else {
+        return false;
+    };
+    filename
+        .try_borrow()
+        .ok()
+        .map(|filename| {
+            filename
+                .to_unicode_lossy()
+                .rsplit(['/', '\\'])
+                .next()
+                == Some("unidata-gen.elc")
+        })
+        .unwrap_or(false)
+}
+
+fn unidata_code_signature(i: &mut Interp, items: &[Value]) -> Option<(usize, u64)> {
+    let bytes = crate::lisp::bytecode::code_bytes(i, items.get(1)?).ok()?;
+    let fingerprint = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    Some((bytes.len(), fingerprint))
+}
 
 impl Interp {
     /// Record the bound name for a compiled lambda that doesn't carry
@@ -62,7 +103,22 @@ impl Interp {
         if !matches!(&l.arglist, Some(Value::Int(_))) {
             return None;
         }
-        let items = l.bc_items.as_ref()?.borrow();
+        let items = match l.bc_items.as_ref()?.try_borrow() {
+            Ok(items) => items.clone(),
+            Err(_) => {
+                return Some(Err(
+                    self.error("Cannot inspect a mutably borrowed byte-code object"),
+                ));
+            }
+        };
+        // The argdesc and constants alone are not unique to these data
+        // functions. Verify the generated-file marker and bytecode body so a
+        // user-created #[...] function with an alist constant still runs in
+        // the ordinary VM (including after its code has been mutated).
+        if !unidata_gen_literal(&items) {
+            return None;
+        }
+        let code_signature = unidata_code_signature(self, &items)?;
         // Only the uni-*.el literals: argdesc 257 (1 arg) or 771 (3
         // args).  A generic guard — without it any `#[...]' closure
         // whose consts happen to look like an alist (e.g.
@@ -77,7 +133,14 @@ impl Interp {
             return None;
         }
         let consts = match items.get(2) {
-            Some(Value::Vec(v)) => v.borrow().clone(),
+            Some(Value::Vec(v)) => match v.try_borrow() {
+                Ok(consts) => consts.clone(),
+                Err(_) => {
+                    return Some(Err(
+                        self.error("Cannot inspect a mutably borrowed byte-code constants vector"),
+                    ));
+                }
+            },
             _ => return None,
         };
         let cts = self.q("char-table-extra-slot");
@@ -87,7 +150,8 @@ impl Interp {
             if !crate::lisp::builtins::misc::is_char_table(self, tbl) {
                 return None;
             }
-            if consts.len() == 3
+            if code_signature == UNIDATA_EXTRA_SLOT_CODE
+                && consts.len() == 3
                 && matches!(consts[0], Value::Int(0))
                 && matches!(&consts[1], Value::Sym(s) if *s == cts)
                 && matches!(consts[2], Value::Int(1))
@@ -105,7 +169,15 @@ impl Interp {
                 let cur =
                     crate::lisp::builtins::misc::char_table_ref(self, tbl, (*n).max(0) as usize);
                 if let Value::Str(s) = &cur {
-                    if s.borrow().chars().next().is_some_and(|c| c == '\0') {
+                    let marker = match s.try_borrow() {
+                        Ok(contents) => contents.chars().next().is_some_and(|c| c == '\0'),
+                        Err(_) => {
+                            return Some(Err(
+                                self.error("Cannot inspect a mutably borrowed unidata string"),
+                            ));
+                        }
+                    };
+                    if marker {
                         let _ = crate::lisp::builtins::charset::uniprop_lookup(
                             self,
                             tbl,
@@ -120,9 +192,10 @@ impl Interp {
             // `unidata-get-decomposition'/`unidata-get-name' & kin:
             // decode RAW through the table's slot-1 machinery (keyed on
             // the property name in slot 0).
-            if consts
-                .iter()
-                .any(|c| matches!(c, Value::Sym(s) if *s == cts))
+            if UNIDATA_PROPERTY_CODE.contains(&code_signature)
+                && consts
+                    .iter()
+                    .any(|c| matches!(c, Value::Sym(s) if *s == cts))
             {
                 return Some(Ok(crate::lisp::builtins::charset::uniprop_lookup(
                     self,
@@ -133,7 +206,10 @@ impl Interp {
             }
             return None;
         }
-        if argv.len() == 1 && argdesc_n == 257 {
+        if argv.len() == 1
+            && argdesc_n == 257
+            && code_signature == UNIDATA_DESCRIPTION_CODE
+        {
             if consts.is_empty() {
                 return None;
             }
@@ -146,8 +222,41 @@ impl Interp {
             if matches!(alist, Value::Cons(_) | Value::Vec(_)) {
                 let v = argv[0].clone();
                 let elems: Vec<Value> = match alist {
-                    Value::Cons(_) => alist.list_to_vec().unwrap_or_default(),
-                    Value::Vec(vv) => vv.borrow().clone(),
+                    Value::Cons(_) => {
+                        let mut elems = Vec::new();
+                        let mut cursor = alist.clone();
+                        let mut seen = FxHashSet::default();
+                        loop {
+                            match cursor {
+                                Value::Nil => break,
+                                Value::Cons(cell) => {
+                                    if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                                        return None;
+                                    }
+                                    let (car, cdr) = match cell.try_borrow() {
+                                        Ok(cell) => (cell.car.clone(), cell.cdr.clone()),
+                                        Err(_) => {
+                                            return Some(Err(self.error(
+                                                "Cannot inspect a mutably borrowed unidata alist",
+                                            )));
+                                        }
+                                    };
+                                    elems.push(car);
+                                    cursor = cdr;
+                                }
+                                _ => return None,
+                            }
+                        }
+                        elems
+                    }
+                    Value::Vec(vv) => match vv.try_borrow() {
+                        Ok(elems) => elems.clone(),
+                        Err(_) => {
+                            return Some(Err(self.error(
+                                "Cannot inspect a mutably borrowed unidata vector",
+                            )));
+                        }
+                    },
                     _ => Vec::new(),
                 };
                 // Require a unidata-style alist: every element a cons
@@ -158,17 +267,27 @@ impl Interp {
                 // whose consts[0] happens to be a list, e.g. the
                 // `oclosure--lambda' mapcar helper with consts[0] =
                 // ((progn nil))) must fall through to the real VM.
-                let is_unidata_alist = elems.iter().all(
-                    |e| matches!(e, Value::Cons(p) if matches!(&p.borrow().cdr, Value::Str(_))),
-                );
-                if !is_unidata_alist {
-                    return None;
-                }
-                for e in elems {
-                    if let Value::Cons(p) = &e {
-                        if crate::lisp::builtins::eq_values(&p.borrow().car, &v) {
-                            return Some(Ok(p.borrow().cdr.clone()));
+                let mut pairs = Vec::with_capacity(elems.len());
+                for element in elems {
+                    let Value::Cons(pair) = element else {
+                        return None;
+                    };
+                    let (key, value) = match pair.try_borrow() {
+                        Ok(pair) => (pair.car.clone(), pair.cdr.clone()),
+                        Err(_) => {
+                            return Some(Err(self.error(
+                                "Cannot inspect a mutably borrowed unidata alist entry",
+                            )));
                         }
+                    };
+                    if !matches!(&value, Value::Str(_)) {
+                        return None;
+                    }
+                    pairs.push((key, value));
+                }
+                for (key, value) in pairs {
+                    if crate::lisp::builtins::eq_values(&key, &v) {
+                        return Some(Ok(value));
                     }
                 }
                 return Some(Ok(Value::Nil));
@@ -190,24 +309,31 @@ impl Interp {
     }
 
     fn call_lambda_form_inner(&mut self, fun: &Value, argv: Argv) -> EvalResult {
-        let cdr = match fun {
-            Value::Cons(c) => c.borrow().cdr.clone(),
+        let lambda_tail = match fun {
+            Value::Cons(c) => super::cons_cdr(self, c)?,
             _ => unreachable!(),
         };
-        let arglist = match &cdr {
-            Value::Cons(c) => c.borrow().car.clone(),
+        let arglist_cell = match &lambda_tail {
+            Value::Cons(cell) => Rc::clone(cell),
             _ => {
                 return Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]));
             }
         };
-        let body = match &cdr {
-            Value::Cons(c) => c.borrow().cdr.clone(),
-            _ => Value::Nil,
-        };
+        let arglist = super::cons_car(self, &arglist_cell)?;
         // Raw lambda forms are dynamically bound; eval_progn preserves
         // GNU's treatment of dotted/atom bodies and mutations during eval.
         self.with_lambda_bindings(None, |i| {
             i.bind_lambda_walk(&arglist, &argv, fun, |i, s, v| i.specbind(s, v))?;
+            // GNU fetches XCDR(XCDR(FUN)) after parameter binding. A
+            // variable watcher can replace the raw lambda's body while its
+            // parameters are being bound, so use the live function spine.
+            let body = match fun {
+                Value::Cons(cell) => match super::cons_cdr(i, cell)? {
+                    Value::Cons(tail) => super::cons_cdr(i, &tail)?,
+                    _ => Value::Nil,
+                },
+                _ => Value::Nil,
+            };
             i.eval_progn(&body)
         })
     }
@@ -240,17 +366,31 @@ impl Interp {
         let rest_kw = sym::REST;
         let mut syms = arglist.clone();
         let mut arg_i = 0usize;
+        let mut until_quit = 4096usize;
         let mut optional = false;
         let mut rest = false;
         let mut previous_rest = false;
+        let mut seen_states = FxHashSet::default();
         loop {
-            let (elt, next) = match &syms {
-                Value::Cons(c) => {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                }
+            let current_cell = match &syms {
+                Value::Cons(cell) => Rc::clone(cell),
                 _ => break,
             };
+            // A circular argument list with optional parameters can
+            // otherwise bind nil forever. Include the binding state in the
+            // key: ordinary required-argument cycles still reach GNU's
+            // arity error as supplied arguments run out.
+            let state = (
+                Rc::as_ptr(&current_cell) as usize,
+                arg_i,
+                optional,
+                rest,
+                previous_rest,
+            );
+            if !seen_states.insert(state) {
+                return Err(inv(self));
+            }
+            let (elt, _) = super::cons_parts(self, &current_cell)?;
             let s = match self.sym_id(&elt) {
                 Some(s) => s,
                 None => return Err(inv(self)),
@@ -269,7 +409,16 @@ impl Interp {
             } else {
                 let arg = if rest {
                     // GNU `Flist (nargs - i, &arg_vector[i])'.
-                    let v = Value::list(argv[arg_i..].to_vec());
+                    let mut v = Value::Nil;
+                    let mut until_quit = 4096usize;
+                    for value in argv[arg_i..].iter().rev() {
+                        v = Value::cons(value.clone(), v);
+                        until_quit -= 1;
+                        if until_quit == 0 {
+                            self.maybe_quit()?;
+                            until_quit = 4096;
+                        }
+                    }
                     arg_i = argv.len();
                     v
                 } else if arg_i < argv.len() {
@@ -284,7 +433,16 @@ impl Interp {
                 bind(self, s, arg)?;
                 previous_rest = false;
             }
-            syms = next;
+            // `specbind' can run variable watchers. GNU reads the current
+            // cell's cdr after binding its parameter, so a watcher that
+            // mutates the raw lambda arglist changes which parameter is
+            // visited next.
+            syms = super::cons_cdr(self, &current_cell)?;
+            until_quit -= 1;
+            if until_quit == 0 {
+                self.maybe_quit()?;
+                until_quit = 4096;
+            }
         }
         if !syms.is_nil() || previous_rest {
             return Err(inv(self));
@@ -295,90 +453,115 @@ impl Interp {
         Ok(())
     }
 
-    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Argv, _shown: &Value) -> EvalResult {
-        if let Some(items) = &l.bc_items {
+    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Argv, shown: &Value) -> EvalResult {
+        let items = match &l.bc_items {
+            Some(items) => {
+                Some(items.try_borrow().map(|items| items.clone()).map_err(|_| {
+                    self.error("Cannot inspect a mutably borrowed byte-code object")
+                })?)
+            }
+            None => None,
+        };
+        let is_bytecode = items
+            .as_ref()
+            .is_some_and(|items| crate::lisp::bytecode::is_byte_code(items));
+        if let Some(items) = &items {
             if let Some(r) = self.unidata_bc_dispatch(l, &argv) {
                 return r;
             }
             // `#[ARGDESC ...]' shape → the byte-code interpreter (also
             // reached by `#[...]' literals read from `.elc' files).
-            // GNU exec_byte_code reports `(MIN . NONREST)' in wna data
-            // — byte-code twins keep `who' nil so exec emits the argdesc
-            // pair; only compiled *non-bytecode* twins (native-subr
-            // stand-ins) report the shown function like GNU's
-            // `#<subr>' wna datum.
-            if crate::lisp::bytecode::is_byte_code(&items.borrow()) {
-                // Named compiled twins are GNU nativecomp's subrs —
-                // report `shown' (the lambda object from funcall, the
-                // calling symbol from eval) as the wna datum.  Only
-                // nameless `#[...]' literals keep `None' so exec emits
-                // the `(MIN . NONREST)' pair.
-                // Datum rule (nativecomp): a *named* twin reports the
-                // `#<subr NAME>' object (funcall) / called symbol
-                // (eval path already emitted); an anonymous `#[...]'
-                // byte-code literal (macro expanders included) reports
-                // its `(MIN . NONREST)' argdesc pair.  `who' carries
-                // the *resolved* object so funcall shows `#<subr>'.
-                let named = self.lambda_name(l).is_some() || (l.compiled && !l.is_bytecode());
+            // GNU's packed integer argdescs report the descriptor, while
+            // list-argdesc user byte-code functions report the function
+            // object even when anonymous.
+            if is_bytecode {
+                // During macro expansion, compiled-equivalent expanders
+                // retain the packed descriptor; direct nativecomp calls use
+                // the function object expected by the subr surface.
+                let named = self.lambda_name(l).is_some() || (l.compiled && !is_bytecode);
                 let funv = Value::Lambda(l.clone());
-                let who = if named && self.macroexp_call_depth == 0 {
+                let argdesc = items.first().cloned();
+                let list_argdesc = matches!(&argdesc, Some(Value::Nil | Value::Cons(_)));
+                let parsed = argdesc
+                    .as_ref()
+                    .map(|argdesc| crate::lisp::bytecode::parse_argdesc(self, argdesc));
+                let malformed_argdesc = parsed
+                    .as_ref()
+                    .is_some_and(|parsed| parsed.invalid_at.is_some() || parsed.req == usize::MAX);
+                let who = if !l.compiled && list_argdesc {
                     Some(&funv)
+                } else if !l.compiled {
+                    None
+                } else if self.macroexp_call_depth == 0 && (named || malformed_argdesc) {
+                    if named { Some(&funv) } else { Some(shown) }
                 } else {
                     None
                 };
                 return crate::lisp::bytecode::exec(self, l, argv, who, named);
             }
         }
-        // GNU's wna datum is `(MIN . NONREST)' for byte-code calls
-        // (exec_byte_code) and the function object for `funcall_lambda'.
-        // Under nativecomp, named dumped functions are native subrs:
-        // their wna datum is the `#<subr NAME>' object (funcall) or the
-        // calling symbol (eval) — so a *named* compiled twin takes that
-        // arm regardless of its bytecode twin's argdesc; the
-        // `(MIN . NONREST)' pair is only for anonymous `#[...]' literals.
-        // GNU's wna datum is `(MIN . NONREST)' for byte-code calls
-        // (exec_byte_code) and the function object for `funcall_lambda'.
-        // Under nativecomp, named dumped functions are native subrs:
-        // `funcall' shows the `#<subr NAME>' object — our compiled
-        // Lambda prints that way (see print.rs) — while the eval path
-        // already reported the calling symbol in check_argdesc.
-        // The `(MIN . NONREST)' pair stays for anonymous `#[...]'
-        // literals only.
-        let fun = if self.lambda_name(l).is_some() || (l.compiled && !l.is_bytecode()) {
+        // GNU's non-byte-code `funcall_lambda' path reports the function
+        // object. Named bundled nativecomp closures use their subr-shaped
+        // function object; byte-code objects are handled above.
+        let fun = if self.lambda_name(l).is_some() || (l.compiled && !is_bytecode) {
             Value::Lambda(l.clone())
         } else {
-            match &l.bc_items {
-                Some(items) if l.is_bytecode() => match items.borrow().first() {
+            match &items {
+                Some(items) if is_bytecode => match items.first() {
                     Some(Value::Int(desc)) => {
-                        let (req, max, _rest, _) =
-                            crate::lisp::bytecode::parse_argdesc(self, &Value::Int(*desc));
-                        Value::cons(Value::Int(req as i128), Value::Int(max as i128))
+                        let parsed = crate::lisp::bytecode::parse_argdesc(self, &Value::Int(*desc));
+                        Value::cons(
+                            Value::Int(parsed.req as i128),
+                            Value::Int(parsed.max as i128),
+                        )
                     }
                     _ => Value::Lambda(l.clone()),
                 },
                 _ => Value::Lambda(l.clone()),
             }
         };
-        let arglist = l.arglist.clone().unwrap_or(Value::Nil);
+        // Interpreted `#[...]' closures retain their raw slots as the
+        // authoritative function object. Reader circle fixups can replace
+        // a top-level slot while the parsed Lambda fields remain stale.
+        let interpreted_items = items
+            .as_ref()
+            .filter(|items| items.len() >= 3 && !is_bytecode);
+        let arglist = interpreted_items
+            .and_then(|items| items.first().cloned())
+            .or_else(|| items.as_ref().and_then(|items| items.first().cloned()))
+            .or_else(|| l.arglist.clone())
+            .unwrap_or(Value::Nil);
+        let body_value = interpreted_items
+            .and_then(|items| items.get(1).cloned())
+            .or_else(|| l.body_value.clone());
+        let env = interpreted_items
+            .map(|items| crate::lisp::eval::lexenv_from_value(&items[2]))
+            .unwrap_or_else(|| l.env.clone());
 
-        if l.env.is_some() {
+        if env.is_some() {
             // Lexical closure: GNU's `funcall_lambda' pushes EVERY
             // `(param . arg)' pair onto the closure env — `defvar'd
             // specials, scoped-declared names, even nil/t — since
             // `internal-interpreter-environment' is not consulted here.
-            let frame = lexenv_extend(&l.env);
+            let frame = lexenv_extend_checked(&env).map_err(|error| error.into_flow(self))?;
             self.with_lambda_bindings(Some(frame.clone()), |i| {
                 i.bind_lambda_walk(&arglist, &argv, &fun, |_i, s, v| {
-                    lexframe_bind(&frame, s, v);
+                    lexframe_bind_checked(&frame, s, v).map_err(|error| error.into_flow(_i))?;
                     Ok(())
                 })?;
-                i.eval_body(&l.body)
+                match &body_value {
+                    Some(body) => i.eval_progn(body),
+                    None => i.eval_body(&l.body),
+                }
             })
         } else {
             // Dynamic functions cannot see the caller's lexical variables.
             self.with_lambda_bindings(None, |i| {
                 i.bind_lambda_walk(&arglist, &argv, &fun, |i, s, v| i.specbind(s, v))?;
-                i.eval_body(&l.body)
+                match &body_value {
+                    Some(body) => i.eval_progn(body),
+                    None => i.eval_body(&l.body),
+                }
             })
         }
     }
@@ -402,45 +585,41 @@ impl Interp {
     pub fn function_from_lambda(&mut self, cdr: &Value) -> EvalResult {
         let (args, mut body) = match cdr {
             Value::Nil => (Value::Nil, Value::Nil),
-            Value::Cons(cell) => {
-                let cell = cell.borrow();
-                (cell.car.clone(), cell.cdr.clone())
-            }
+            Value::Cons(cell) => super::cons_parts(self, cell)?,
             other => return Err(self.wrong_type_mut("listp", other)),
         };
         let mut docstring = Value::Nil;
         let mut iform = Value::Nil;
         if let Value::Cons(cell) = &body {
-            let (first, rest) = {
-                let cell = cell.borrow();
-                (cell.car.clone(), cell.cdr.clone())
-            };
+            let (first, rest) = super::cons_parts(self, cell)?;
             if matches!(first, Value::Str(_)) && !rest.is_nil() {
                 docstring = first;
                 body = rest;
             } else if let Value::Cons(form) = first {
-                let (head, tail) = {
-                    let form = form.borrow();
-                    (form.car.clone(), form.cdr.clone())
-                };
-                if matches!(head, Value::Sym(sym) if self.symbol_name(sym) == ":documentation") {
-                    let expression = match tail {
-                        Value::Cons(cell) => cell.borrow().car.clone(),
-                        Value::Nil => Value::Nil,
+                let (head, tail) = super::cons_parts(self, &form)?;
+                if matches!(head, Value::Sym(sym) if self.intern_soft(":documentation") == Some(sym))
+                {
+                    let (expression, site) = match tail {
+                        Value::Cons(cell) => (
+                            super::cons_car(self, &cell)?,
+                            (Rc::as_ptr(&cell) as usize as u128) << 1,
+                        ),
+                        Value::Nil => (Value::Nil, 0),
                         other => return Err(self.wrong_type_mut("listp", &other)),
                     };
-                    docstring = self.eval(&expression)?;
+                    docstring = self.eval_at_compiled_site(&expression, site)?;
                     body = rest;
                 }
             }
         }
         if let Value::Cons(cell) = &body {
-            let (first, rest) = {
-                let cell = cell.borrow();
-                (cell.car.clone(), cell.cdr.clone())
+            let (first, rest) = super::cons_parts(self, cell)?;
+            let is_interactive = if let Value::Cons(form) = &first {
+                self.sym_is(&super::cons_car(self, form)?, sym::INTERACTIVE)
+            } else {
+                false
             };
-            if matches!(&first, Value::Cons(form) if self.sym_is(&form.borrow().car, sym::INTERACTIVE))
-            {
+            if is_interactive {
                 iform = first;
                 body = rest;
             }
@@ -460,19 +639,21 @@ impl Interp {
         }
         let constructor_id = self.q("internal-make-interpreted-closure-function");
         let constructor = self.symbol_value(constructor_id);
-        let env = lexenv_as_value(&self.lexenv);
+        let env = lexenv_as_value_checked(&self.lexenv).map_err(|error| error.into_flow(self))?;
         let arguments = vec![args, body, env.clone(), docstring, iform];
         let mut value = if !env.is_nil() && constructor.truthy() {
             self.apply(&constructor, arguments)?
         } else {
             crate::lisp::builtins::misc::f_make_interpreted_closure(self, arguments.into())?
         };
-        // Keep the port's nativecomp metadata on new closures made by
-        // dumped library code, including constructors reached via cconv.
-        // Never rewrite a shared object returned by a custom constructor.
+        // Keep the port's nativecomp metadata on closures created by a
+        // compiled body or during bootstrap, including constructors reached
+        // via cconv. A compiled ancestor can run source `eval', so use the
+        // immediate body's provenance rather than its call depth. Never
+        // rewrite a shared object returned by a custom constructor.
         if let Value::Lambda(lambda) = &mut value {
             crate::lisp::memory::update_unique_lambda(lambda, |lambda| {
-                lambda.compiled |= self.loading_dumped || self.dumped_call_depth > 0;
+                lambda.compiled |= self.loading_dumped || self.current_body_compiled;
                 lambda.dumped_doc |= self.loading_dumped;
                 lambda.plain = self.explicit_eval_depth > 0;
             });
@@ -496,6 +677,8 @@ impl Interp {
         // GNU's `previous_rest').
         let mut rest_seen = false;
         let mut mode = 0u8; // 0 = required, 1 = optional, 2 = post-&rest
+        let mut seen_params = FxHashSet::default();
+        let mut until_quit = 1024usize;
         // GNU's `funcall_lambda' only knows `&optional'/`&rest' — every
         // other `&'-prefixed name (`&body', `&key', `&whole', ...) is an
         // ordinary parameter symbol.  A second keyword, `&optional'
@@ -509,10 +692,15 @@ impl Interp {
             match cur.clone() {
                 Value::Nil => break,
                 Value::Cons(c) => {
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
+                    // The raw arglist remains attached to the Lambda and
+                    // the call walker decides whether a cyclic shape is
+                    // callable. Stop parsing after one pass so closure
+                    // construction cannot loop on user-mutated lists.
+                    if !seen_params.insert(Rc::as_ptr(&c) as usize) {
+                        bad_arglist = true;
+                        break;
+                    }
+                    let (car, next) = super::cons_parts(self, &c)?;
                     match self.sym_id(&car) {
                         Some(s) if s == sym::OPTIONAL => {
                             // GNU: `&optional' after `&rest' or a
@@ -571,10 +759,17 @@ impl Interp {
                                                 });
                                                 bad_arglist = true;
                                             } else {
-                                                return Err(self.error("bad &optional parameter"));
+                                                // GNU validates each raw
+                                                // parameter when the
+                                                // function is called. Keep
+                                                // construction successful;
+                                                // bind_lambda_walk will
+                                                // signal invalid-function
+                                                // with the closure object.
+                                                bad_arglist = true;
                                             }
                                         } else {
-                                            return Err(self.error("bad &optional parameter"));
+                                            bad_arglist = true;
                                         }
                                     }
                                 }
@@ -603,6 +798,11 @@ impl Interp {
                         },
                     }
                     cur = next;
+                    until_quit -= 1;
+                    if until_quit == 0 {
+                        self.maybe_quit()?;
+                        until_quit = 1024;
+                    }
                 }
                 // A dotted tail: GNU's `funcall_lambda' rejects ANY
                 // non-nil tail at call time (`!NILP (syms_left)' →
@@ -645,7 +845,11 @@ impl Interp {
         let mut start = 0;
         if let Some(Value::Str(s)) = body.first() {
             if body.len() > 1 {
-                doc = Some(s.borrow().clone());
+                doc = Some(
+                    s.try_borrow()
+                        .map(|text| (*text).clone())
+                        .map_err(|_| self.error("Cannot inspect a mutably borrowed lambda docstring"))?,
+                );
                 doc_value = Some(body.first().unwrap().clone());
                 start = 1;
             }
@@ -655,21 +859,26 @@ impl Interp {
             // construction and consumed (eval.c).  The result is the
             // closure's docstring slot — any value (oclosure.el stores
             // its type symbol there).
-            let is_doc_decl = {
-                let b = c.borrow();
-                matches!(&b.car, Value::Sym(s)
-                    if self.symbol_name(*s) == ":documentation")
-            };
-            if is_doc_decl {
-                let b = c.borrow();
-                let form = match &b.cdr {
-                    Value::Cons(args) => args.borrow().car.clone(),
-                    _ => Value::Nil,
+            let (head, tail) = super::cons_parts(self, c)?;
+            if matches!(&head, Value::Sym(s)
+                if self.intern_soft(":documentation") == Some(*s))
+            {
+                let (form, site) = match tail {
+                    Value::Cons(args) => (
+                        super::cons_car(self, &args)?,
+                        (Rc::as_ptr(&args) as usize as u128) << 1,
+                    ),
+                    _ => (Value::Nil, 0),
                 };
-                drop(b);
-                let v = self.eval(&form)?;
+                let v = self.eval_at_compiled_site(&form, site)?;
                 if let Value::Str(s) = &v {
-                    doc = Some(s.borrow().clone());
+                    doc = Some(
+                        s.try_borrow()
+                            .map(|text| (*text).clone())
+                            .map_err(|_| {
+                                self.error("Cannot inspect a mutably borrowed lambda docstring")
+                            })?,
+                    );
                 }
                 doc_value = Some(v);
                 start = 1;
@@ -677,8 +886,8 @@ impl Interp {
         }
         for (i, f) in body.iter().enumerate().skip(start) {
             if let Value::Cons(c) = f {
-                let b = c.borrow();
-                if self.sym_is(&b.car, sym::INTERACTIVE) {
+                let (head, _) = super::cons_parts(self, c)?;
+                if self.sym_is(&head, sym::INTERACTIVE) {
                     interactive = Some(f.clone());
                     start = i + 1;
                     break;
@@ -688,7 +897,7 @@ impl Interp {
                 // A bare `lambda' has no declaration handling (GNU
                 // `Ffunction' keeps them in the body).
                 if name.is_some()
-                    && self.sym_is(&b.car, self.q_soft("declare").unwrap_or(SymId::MAX))
+                    && self.sym_is(&head, self.q_soft("declare").unwrap_or(SymId::MAX))
                 {
                     start = i + 1;
                     continue;
@@ -703,7 +912,8 @@ impl Interp {
             optional,
             rest,
             body: body[start..].to_vec(),
-            env: self.lambda_env(),
+            body_value: None,
+            env: self.lambda_env_checked()?,
             doc,
             interactive,
             name: name.map(|s| self.symbol_name_text(s)),
@@ -711,11 +921,12 @@ impl Interp {
             arglist: Some(params.clone()),
             plain: self.explicit_eval_depth > 0,
             dumped_doc: self.loading_dumped,
-            compiled: self.loading_dumped || self.dumped_call_depth > 0,
+            compiled: self.loading_dumped || self.current_body_compiled,
             advice_link: None,
             bc_items: None,
             bc_closure: false,
             bc_prog: std::cell::RefCell::new(None),
+            compiled_macro_cache: crate::lisp::value::CompiledMacroCache::default(),
             doc_value,
             env_value: None,
         })
@@ -728,5 +939,69 @@ impl Value {
             Value::Lambda(l) => Some(l),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod circular_arglist_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn circular_optional_lambda_arglist_signals_and_unwinds() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let variable = interp.intern("qa-circular-lambda-variable");
+                let arglist = Value::list(vec![
+                    Value::Sym(variable),
+                    Value::Sym(sym::OPTIONAL),
+                    Value::Sym(interp.intern("qa-circular-lambda-optional")),
+                ]);
+                let third = match &arglist {
+                    Value::Cons(first) => match &first.borrow().cdr {
+                        Value::Cons(second) => second.borrow().cdr.clone(),
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                };
+                if let Value::Cons(cell) = &third {
+                    cell.borrow_mut().cdr = third.clone();
+                } else {
+                    unreachable!();
+                }
+                let function = Value::cons(
+                    Value::Sym(sym::LAMBDA),
+                    Value::cons(arglist, Value::list(vec![Value::Sym(sym::T)])),
+                );
+                let depth = interp.specbind_depth();
+                let result = interp.apply(&function, vec![Value::Int(1)]);
+                assert!(matches!(
+                    result,
+                    Err(Flow::Signal(ref signal))
+                        if signal.is_symbol(sym::INVALID_FUNCTION)
+                ));
+                assert_eq!(interp.specbind_depth(), depth);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn parsing_a_required_parameter_cycle_stops_after_one_pass() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let variable = interp.intern("qa-circular-required-variable");
+        let params = Value::cons(Value::Sym(variable), Value::Nil);
+        if let Value::Cons(cell) = &params {
+            cell.borrow_mut().cdr = params.clone();
+        }
+        let lambda = interp
+            .parse_lambda(&params, &[Value::Sym(sym::T)], None)
+            .unwrap();
+        assert!(lambda.bad_arglist);
+        assert_eq!(lambda.required, vec![variable]);
     }
 }

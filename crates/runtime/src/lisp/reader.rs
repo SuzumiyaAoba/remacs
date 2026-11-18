@@ -51,6 +51,9 @@ pub struct Reader<'a> {
     /// GNU source_t::multibyte controls newly read symbol-name storage.
     /// Literal strings choose their own kind from the characters read.
     pub source_multibyte: bool,
+    /// Poll the asynchronous quit source while scanning a large token or
+    /// skipping a long layout/comment run.
+    until_quit: usize,
 }
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
@@ -112,6 +115,7 @@ impl<'a> Reader<'a> {
             annotate_pos: None,
             from_buffer: false,
             source_multibyte: true,
+            until_quit: 4096,
         }
     }
 
@@ -165,6 +169,11 @@ impl<'a> Reader<'a> {
     }
 
     fn peek_at(&mut self, n: usize) -> Result<Option<char>, Flow> {
+        self.until_quit -= 1;
+        if self.until_quit == 0 {
+            self.interp.maybe_quit()?;
+            self.until_quit = 4096;
+        }
         let index = self.pos + n;
         self.fill_to(index)?;
         Ok(self.chars.get(index).map(|c| {
@@ -274,6 +283,7 @@ impl<'a> Reader<'a> {
     /// `invalid_syntax_lisp' appends (LINE COLUMN) to the error data —
     /// computed at the reader position where the error surfaced.
     pub fn read(&mut self) -> Result<Option<Value>, Flow> {
+        self.interp.maybe_quit()?;
         let mut r = self.read_inner();
         if r.is_ok() {
             self.unread_from(self.pos)?;
@@ -354,7 +364,14 @@ impl<'a> Reader<'a> {
                         self.pos += 1;
                         sym::COMMA_AT
                     }
-                    _ => sym::COMMA,
+                    _ => {
+                        // GNU reads one character to distinguish `,@', then
+                        // unreads it when this is an ordinary `,'. Function
+                        // streams can observe this call even though the
+                        // expression result is unchanged.
+                        self.unread_from(self.pos)?;
+                        sym::COMMA
+                    }
                 };
                 if self.skip_layout()? {
                     return Err(eof_err(self.interp));
@@ -424,6 +441,10 @@ impl<'a> Reader<'a> {
             // A `.' directly before the close paren is the symbol `\.'
             // (Emacs reads `(a .)' as (a \.), `[a .]' as [a \.]).
             if c == '.' && self.peek_at(1)? == Some(close) {
+                // GNU's function-stream reader returns the delimiter from
+                // this lookahead, then the symbol reader returns it again
+                // before the enclosing list consumes it.
+                self.unread_from(self.pos + 1)?;
                 items.push(self.read_atom()?);
                 continue;
             }
@@ -466,13 +487,15 @@ impl<'a> Reader<'a> {
 
     /// True if positioned at a `.` dotting token.  GNU reads a `.`
     /// directly before `)' or `]' as the symbol `\.', and a `.'
-    /// followed by any other delimiter (whitespace, quotes, openers) as
-    /// the dotted-tail token.
+    /// followed by any other delimiter (whitespace, quotes, openers, or
+    /// a `#' expression prefix) as the dotted-tail token.
     fn at_dot_token(&mut self) -> Result<bool, Flow> {
         debug_assert_eq!(self.peek()?, Some('.'));
         let result = match self.peek_at(1)? {
             None => true,
-            Some(c) => Self::is_layout(c) || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';'),
+            Some(c) => {
+                Self::is_layout(c) || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';' | '#')
+            }
         };
         self.unread_from(self.pos + 1)?;
         Ok(result)
@@ -492,6 +515,9 @@ impl<'a> Reader<'a> {
             // `.' directly before `]' reads as the symbol `\.'
             // (Emacs: `[a .]' → [a \.]).
             if self.peek()? == Some('.') && self.peek_at(1)? == Some(close) {
+                // As in `read_list', function streams see this lookahead
+                // returned before the symbol reader returns the delimiter.
+                self.unread_from(self.pos + 1)?;
                 items.push(self.read_atom()?);
                 continue;
             }
@@ -539,7 +565,7 @@ impl<'a> Reader<'a> {
                     escaped = true;
                     continue;
                 }
-                break;
+                return Err(eof_err(self.interp));
             }
             tok.push(self.original_at(self.pos));
             self.pos += 1;
@@ -621,7 +647,7 @@ impl<'a> Reader<'a> {
             if !uninterned && !token.is_empty() && !expanding {
                 let key = super::obarray::InternKey::from_text_kind(token, self.source_multibyte);
                 if let Some(symbol) =
-                    super::builtins::data::lookup_in_obarray(self.interp, &obarray, &key)
+                    super::builtins::data::lookup_in_obarray(self.interp, &obarray, &key)?
                 {
                     return Ok(symbol);
                 }
@@ -658,15 +684,16 @@ impl<'a> Reader<'a> {
                     &string,
                     self.source_multibyte,
                 )
+                ?
                 .unwrap_or(string)
             } else {
                 string
             };
-            Ok(super::builtins::data::intern_in_obarray(
+            super::builtins::data::intern_in_obarray(
                 self.interp,
                 &string,
                 &obarray,
-            ))
+            )
         })
     }
 }
@@ -676,4 +703,17 @@ impl<'a> Reader<'a> {
 enum ReadSource {
     Characters,
     Function { function: Value, eof: bool },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dotted_tail_can_start_with_hash_dispatch() {
+        let mut interp = Interp::vacant();
+        let mut reader = Reader::new(&mut interp, ".#'function");
+        assert!(reader.at_dot_token().unwrap());
+        assert_eq!(reader.position(), 0);
+    }
 }

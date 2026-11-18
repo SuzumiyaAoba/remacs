@@ -9,11 +9,72 @@ use crate::lisp::{
     value::{Value, VecRef},
 };
 
+fn process_environment_entry(
+    interp: &mut Interp,
+    name: &std::ffi::OsStr,
+    value: &std::ffi::OsStr,
+) -> Value {
+    #[cfg(unix)]
+    fn raw_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
+        use std::os::unix::ffi::OsStrExt;
+        value.as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    fn raw_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
+        value.to_string_lossy().as_bytes().to_vec()
+    }
+
+    let mut entry = raw_bytes(name);
+    entry.push(b'=');
+    entry.extend_from_slice(&raw_bytes(value));
+    interp.auto_string_value(&entry)
+}
+
+#[cfg(all(test, unix))]
+mod process_environment_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn process_environment_entries_preserve_unibyte_and_utf8_kinds() {
+        let mut interp = Interp::vacant();
+        let name = std::ffi::OsStr::from_bytes(b"WATCH_MAKUNBOUND");
+
+        let Value::Str(unibyte) =
+            process_environment_entry(&mut interp, name, std::ffi::OsStr::from_bytes(b"\xff"))
+        else {
+            panic!("environment entry must be a string");
+        };
+        assert!(interp.is_unibyte_str(&unibyte));
+        assert_eq!(
+            unibyte.borrow().to_internal_bytes(false).unwrap(),
+            b"WATCH_MAKUNBOUND=\xff"
+        );
+
+        let Value::Str(multibyte) =
+            process_environment_entry(&mut interp, name, std::ffi::OsStr::from_bytes(b"\xc3\xa9"))
+        else {
+            panic!("environment entry must be a string");
+        };
+        assert!(interp.is_multibyte_str(&multibyte));
+        assert_eq!(
+            multibyte.borrow().to_internal_bytes(true).unwrap(),
+            b"WATCH_MAKUNBOUND=\xc3\xa9"
+        );
+    }
+}
+
 impl Interp {
     pub(super) fn collect_variable_defaults(
         &mut self,
         default_obarray_rec: &VecRef,
     ) -> Vec<(&'static str, Value)> {
+        // Environment variables are byte strings on Unix. `vars()` panics
+        // on a single non-UTF-8 name or value, while GNU keeps such entries
+        // as unibyte strings in `process-environment`.
+        let process_environment = std::env::vars_os()
+            .map(|(name, value)| process_environment_entry(self, &name, &value))
+            .collect::<Vec<_>>();
         vec![
             ("emacs-major-version", Value::Int(31)),
             ("emacs-minor-version", Value::Int(1)),
@@ -171,9 +232,11 @@ impl Interp {
                             p.is_dir()
                         })
                         .filter_map(|d| {
-                            std::fs::canonicalize(d)
-                                .ok()
-                                .map(|p| Value::string(crate::lisp::text::EmacsText::from_os_str(p.as_os_str())))
+                            std::fs::canonicalize(d).ok().map(|p| {
+                                Value::string(crate::lisp::text::EmacsText::from_os_str(
+                                    p.as_os_str(),
+                                ))
+                            })
                         })
                         .collect(),
                 ),
@@ -277,14 +340,7 @@ impl Interp {
                         .collect(),
                 ),
             ),
-            (
-                "process-environment",
-                Value::list(
-                    std::env::vars()
-                        .map(|(k, v)| Value::string(format!("{k}={v}")))
-                        .collect(),
-                ),
-            ),
+            ("process-environment", Value::list(process_environment)),
             // Command-loop state variables (set per command interactively).
             ("last-command", Value::Nil),
             ("this-command", Value::Nil),
@@ -626,6 +682,10 @@ impl Interp {
             ("post-gc-hook", Value::Nil),
             ("gc-message-percentage", Value::Nil),
             ("user-emacs-directory", Value::string("~/.emacs.d/")),
+            (
+                "comp-native-version-dir",
+                Value::string(crate::lisp::builtins::comp::NATIVE_COMP_VERSION_DIR),
+            ),
             ("native-comp-driver-options", Value::Nil),
             (
                 "module-file-suffix",

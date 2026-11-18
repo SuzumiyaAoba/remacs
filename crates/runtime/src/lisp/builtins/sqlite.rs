@@ -14,7 +14,7 @@ use std::rc::{Rc, Weak};
 
 use rusqlite::{Connection, OpenFlags, ffi};
 
-use super::{S, arg, want_string};
+use super::{S, arg, want_list, want_string};
 use crate::lisp::error::Flow;
 use crate::lisp::value::{Subr, Value, eight_bit_byte};
 use crate::lisp::{EvalResult, Interp};
@@ -47,66 +47,69 @@ impl Statement {
         SqlError::new(&self.conn, code, prepare)
     }
 
-    fn prepare<T: crate::lisp::text::TextSource + ?Sized>(conn: Rc<Connection>, sql: &T, vals: &[SVal]) -> Result<Self, SqlError> {
+    fn prepare<T: crate::lisp::text::TextSource + ?Sized>(
+        conn: Rc<Connection>,
+        sql: &T,
+        vals: &[SVal],
+    ) -> Result<Self, SqlError> {
         sql.with_text(|sql| {
-        let sql = sql.to_external_bytes();
-        let len =
-            i32::try_from(sql.len()).map_err(|_| SqlError::new(&conn, ffi::SQLITE_TOOBIG, true))?;
-        let mut set = Self {
-            conn,
-            stmt: std::ptr::null_mut(),
-        };
-        // SAFETY: the connection and SQL bytes are live; len bounds SQLite's
-        // read and stmt is a valid out pointer. Like rusqlite and GNU, accept
-        // embedded NULs (SQLite stops there). This does not step the statement.
-        let code = unsafe {
-            ffi::sqlite3_prepare_v2(
-                set.conn.handle(),
-                sql.as_ptr().cast(),
-                len,
-                &mut set.stmt,
-                std::ptr::null_mut(),
-            )
-        };
-        if code != ffi::SQLITE_OK {
-            return Err(set.error(code, true));
-        }
-        // Bind in order, including excess values: SQLite supplies the native
-        // RANGE message, or its unchanged connection message for a null stmt.
-        // Omitted slots already have SQLite's NULL default.
-        for (k, value) in vals.iter().enumerate() {
-            let index = (k + 1) as i32;
-            // SAFETY: SQLite validates the parameter index. SQLITE_TRANSIENT copies
-            // strings/blobs before returning, so Lisp mutations cannot alter
-            // the saved parameters and no Rust slice outlives this call.
+            let sql = sql.to_external_bytes();
+            let len = i32::try_from(sql.len())
+                .map_err(|_| SqlError::new(&conn, ffi::SQLITE_TOOBIG, true))?;
+            let mut set = Self {
+                conn,
+                stmt: std::ptr::null_mut(),
+            };
+            // SAFETY: the connection and SQL bytes are live; len bounds SQLite's
+            // read and stmt is a valid out pointer. Like rusqlite and GNU, accept
+            // embedded NULs (SQLite stops there). This does not step the statement.
             let code = unsafe {
-                match value {
-                    SVal::N => ffi::sqlite3_bind_null(set.stmt, index),
-                    SVal::I(n) => ffi::sqlite3_bind_int64(set.stmt, index, *n),
-                    SVal::F(f) => ffi::sqlite3_bind_double(set.stmt, index, *f),
-                    SVal::T(bytes) => ffi::sqlite3_bind_text64(
-                        set.stmt,
-                        index,
-                        bytes.as_ptr().cast(),
-                        bytes.len() as u64,
-                        ffi::SQLITE_TRANSIENT(),
-                        ffi::SQLITE_UTF8 as u8,
-                    ),
-                    SVal::B(bytes) => ffi::sqlite3_bind_blob64(
-                        set.stmt,
-                        index,
-                        bytes.as_ptr().cast(),
-                        bytes.len() as u64,
-                        ffi::SQLITE_TRANSIENT(),
-                    ),
-                }
+                ffi::sqlite3_prepare_v2(
+                    set.conn.handle(),
+                    sql.as_ptr().cast(),
+                    len,
+                    &mut set.stmt,
+                    std::ptr::null_mut(),
+                )
             };
             if code != ffi::SQLITE_OK {
-                return Err(set.error(code, false));
+                return Err(set.error(code, true));
             }
-        }
-        Ok(set)
-
+            // Bind in order, including excess values: SQLite supplies the native
+            // RANGE message, or its unchanged connection message for a null stmt.
+            // Omitted slots already have SQLite's NULL default.
+            for (k, value) in vals.iter().enumerate() {
+                let index = (k + 1) as i32;
+                // SAFETY: SQLite validates the parameter index. SQLITE_TRANSIENT copies
+                // strings/blobs before returning, so Lisp mutations cannot alter
+                // the saved parameters and no Rust slice outlives this call.
+                let code = unsafe {
+                    match value {
+                        SVal::N => ffi::sqlite3_bind_null(set.stmt, index),
+                        SVal::I(n) => ffi::sqlite3_bind_int64(set.stmt, index, *n),
+                        SVal::F(f) => ffi::sqlite3_bind_double(set.stmt, index, *f),
+                        SVal::T(bytes) => ffi::sqlite3_bind_text64(
+                            set.stmt,
+                            index,
+                            bytes.as_ptr().cast(),
+                            bytes.len() as u64,
+                            ffi::SQLITE_TRANSIENT(),
+                            ffi::SQLITE_UTF8 as u8,
+                        ),
+                        SVal::B(bytes) => ffi::sqlite3_bind_blob64(
+                            set.stmt,
+                            index,
+                            bytes.as_ptr().cast(),
+                            bytes.len() as u64,
+                            ffi::SQLITE_TRANSIENT(),
+                        ),
+                    }
+                };
+                if code != ffi::SQLITE_OK {
+                    return Err(set.error(code, false));
+                }
+            }
+            Ok(set)
         })
     }
 
@@ -220,7 +223,9 @@ impl SqlError {
             Self {
                 code: code & 0xff,
                 extended_code: ffi::sqlite3_extended_errcode(conn.handle()),
-                message: CStr::from_ptr(ffi::sqlite3_errmsg(conn.handle())).to_bytes().to_vec(),
+                message: CStr::from_ptr(ffi::sqlite3_errmsg(conn.handle()))
+                    .to_bytes()
+                    .to_vec(),
                 prepare,
             }
         }
@@ -395,10 +400,7 @@ fn bind_args(i: &mut Interp, v: &Value) -> Result<Vec<SVal>, Flow> {
     let items = match v {
         Value::Nil => return Ok(vec![]),
         Value::Vec(vec) => vec.borrow().clone(),
-        _ => match v.list_to_vec() {
-            Ok(items) => items,
-            Err(_) => return Err(i.wrong_type_mut("listp", v)),
-        },
+        _ => want_list(i, v)?,
     };
     items.iter().map(|x| bind_val(i, x)).collect()
 }
@@ -551,18 +553,32 @@ fn execute_sql_bytes(connection: &Connection, sql: &crate::lisp::text::EmacsStr)
     let mut bytes = sql.to_external_bytes();
     bytes.push(0);
     // The connection and NUL-terminated bytes live for the complete call.
-    let code = unsafe { ffi::sqlite3_exec(connection.handle(), bytes.as_ptr().cast(), None, std::ptr::null_mut(), std::ptr::null_mut()) };
+    let code = unsafe {
+        ffi::sqlite3_exec(
+            connection.handle(),
+            bytes.as_ptr().cast(),
+            None,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
     code == ffi::SQLITE_OK
 }
 
-fn exec_quiet<T: crate::lisp::text::TextSource + ?Sized>(i: &mut Interp, id: u64, sql: &T) -> EvalResult {
-    sql.with_text(|sql| DBS.with(|d| {
-        let mut databases = d.borrow_mut();
-        match databases.get_mut(&id).and_then(|entry| entry.conn.as_mut()) {
-            Some(connection) => Ok(Value::from_bool(execute_sql_bytes(connection, sql))),
-            None => Err(sqlite_err(i, vec![Value::string("Database closed")].into())),
-        }
-    }))
+fn exec_quiet<T: crate::lisp::text::TextSource + ?Sized>(
+    i: &mut Interp,
+    id: u64,
+    sql: &T,
+) -> EvalResult {
+    sql.with_text(|sql| {
+        DBS.with(|d| {
+            let mut databases = d.borrow_mut();
+            match databases.get_mut(&id).and_then(|entry| entry.conn.as_mut()) {
+                Some(connection) => Ok(Value::from_bool(execute_sql_bytes(connection, sql))),
+                None => Err(sqlite_err(i, vec![Value::string("Database closed")].into())),
+            }
+        })
+    })
 }
 
 fn f_sqlite_select(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -570,8 +586,10 @@ fn f_sqlite_select(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sql = want_string(i, &a[1])?;
     let vals = bind_args(i, &arg(&a, 2))?;
     let rtype = arg(&a, 3);
-    let is_set = matches!(&rtype, Value::Sym(s) if i.symbol_name(*s) == "set");
-    let is_full = matches!(&rtype, Value::Sym(s) if i.symbol_name(*s) == "full");
+    let set_type = i.intern_soft("set");
+    let full_type = i.intern_soft("full");
+    let is_set = matches!(&rtype, Value::Sym(s) if Some(*s) == set_type);
+    let is_full = matches!(&rtype, Value::Sym(s) if Some(*s) == full_type);
     let conn = connection(i, id)?;
     let mut statement = Statement::prepare(conn, &sql, &vals).map_err(|e| sql_err(i, e, false))?;
     if is_set {
@@ -707,7 +725,9 @@ fn f_sqlite_load_extension(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let base = base.strip_prefix("libsqlite3_mod_").unwrap_or(base);
     let allowed = ALLOWLIST.iter().any(|name| {
         base.strip_prefix(name).is_some_and(|ext| {
-            [".so", ".dylib", ".dll"].iter().any(|suffix| ext.eq_ignore_ascii_case(*suffix))
+            [".so", ".dylib", ".dll"]
+                .iter()
+                .any(|suffix| ext.eq_ignore_ascii_case(*suffix))
         })
     });
     if !allowed {
@@ -876,19 +896,34 @@ mod wide_sqlite_bytes_tests {
         let connection = Rc::new(Connection::open_in_memory().unwrap());
         let name = EmacsText::from_codes([0xf0080, 0xd800, 0x110000, 0x3fff80]).unwrap();
         let bytes = name.to_external_bytes();
-        let mut sql = EmacsText::from("select ? as \""); sql.append(&name); sql.push('"');
-        let mut statement = Statement::prepare(connection, &sql, &[SVal::T(bytes.clone())]).unwrap_or_else(|_| panic!("prepare failed"));
-        assert_eq!(statement.columns().unwrap_or_else(|_| panic!("columns failed")), [bytes.clone()]);
-        let row = statement.next().unwrap_or_else(|_| panic!("step failed")).unwrap();
+        let mut sql = EmacsText::from("select ? as \"");
+        sql.append(&name);
+        sql.push('"');
+        let mut statement = Statement::prepare(connection, &sql, &[SVal::T(bytes.clone())])
+            .unwrap_or_else(|_| panic!("prepare failed"));
+        assert_eq!(
+            statement
+                .columns()
+                .unwrap_or_else(|_| panic!("columns failed")),
+            [bytes.clone()]
+        );
+        let row = statement
+            .next()
+            .unwrap_or_else(|_| panic!("step failed"))
+            .unwrap();
         assert!(matches!(&row[0], SVal::T(actual) if *actual == bytes));
     }
     #[test]
     fn batch_sql_retains_non_unicode_identifiers() {
         let connection = Rc::new(Connection::open_in_memory().unwrap());
         let name = EmacsText::from_codes([0xf0100, 0x110000]).unwrap();
-        let mut sql = EmacsText::from("create table \""); sql.append(&name); sql.push_str("\" (value)");
+        let mut sql = EmacsText::from("create table \"");
+        sql.append(&name);
+        sql.push_str("\" (value)");
         assert!(execute_sql_bytes(&connection, &sql));
-        let mut select = EmacsText::from("select value from \""); select.append(&name); select.push('"');
+        let mut select = EmacsText::from("select value from \"");
+        select.append(&name);
+        select.push('"');
         assert!(Statement::prepare(connection, &select, &[]).is_ok());
     }
 }
