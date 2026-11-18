@@ -672,8 +672,8 @@ INFO is a plist holding contextual information.  See
 		          (org-md--link-destination path)
 		          (org-md--escape-link-title caption)))))
      ((string= type "coderef")
-      (format (org-export-get-coderef-format path desc)
-	      (org-export-resolve-coderef path info)))
+      (format (org-export-get-coderef-format raw-path desc)
+	      (org-export-resolve-coderef raw-path info)))
      ((string= type "radio")
       (let ((destination (org-export-resolve-radio-link link info)))
 	(if (not destination) desc
