@@ -1572,6 +1572,11 @@ INFO is a plist holding contextual information."
       (let ((type (org-element-type element)))
 	(memq (if (eq type 'link) 'image type) above)))))
 
+(defun org-latex--valid-user-label-p (label)
+  "Return non-nil if LABEL contains only LaTeX label key characters."
+  (and (stringp label)
+       (string-match-p "\\`[[:alnum:]_.:-]+\\'" label)))
+
 (defun org-latex--label (datum info &optional force full)
   "Return an appropriate label for DATUM.
 DATUM is an element or a `target' type object.  INFO is the
@@ -1592,7 +1597,9 @@ Eventually, if FULL is non-nil, wrap label within \"\\label{}\"."
 	 (label
 	  (and (or user-label force)
 	       (if (and user-label (plist-get info :latex-prefer-user-labels))
-		   user-label
+		   (if (org-latex--valid-user-label-p user-label)
+		       user-label
+		     (error "Invalid LaTeX label: %S" user-label))
 		 (concat (pcase type
 			   (`headline "sec:")
 			   (`table "tab:")
