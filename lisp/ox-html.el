@@ -2365,9 +2365,14 @@ INFO is a plist used as a communication channel."
 ID is the anchor id.  ATTRIBUTES is the anchor attributes, as a string.
 DESC is the anchor text.  INFO is the info plist."
   (let* ((name (and (plist-get info :html-allow-name-attribute-in-anchors) id))
-	 (attributes (concat (and id (format " id=\"%s\"" id))
-			     (and name (format " name=\"%s\"" name))
-			     attributes)))
+	 (attributes (concat
+		      (and id (format " %s"
+				      (org-html--make-attribute-string
+				       (list :id id))))
+		      (and name (format " %s"
+					(org-html--make-attribute-string
+					 (list :name name))))
+		      attributes)))
     (format "<a%s>%s</a>" attributes (or desc ""))))
 
 ;;;; Todo
@@ -2603,9 +2608,10 @@ INFO is a plist used as a communication channel."
 		info))
 	 (tags (and (eq (plist-get info :with-tags) t)
 		    (org-export-get-tags headline info))))
-    (format "<a href=\"#%s\">%s</a>"
+    (format "<a %s>%s</a>"
 	    ;; Label.
-	    (org-html--reference headline info)
+	    (org-html--make-attribute-string
+	     (list :href (concat "#" (org-html--reference headline info))))
 	    ;; Body.
 	    (concat
 	     (and (not (org-export-low-level-p headline info))
@@ -2875,7 +2881,10 @@ holding contextual information."
 	   (id (org-html--reference headline info))
 	   (formatted-text
 	    (if (plist-get info :html-self-link-headlines)
-		(format "<a href=\"#%s\">%s</a>" id full-text)
+		(format "<a %s>%s</a>"
+			(org-html--make-attribute-string
+			 (list :href (concat "#" id)))
+			full-text)
 	      full-text)))
       (if (org-export-low-level-p headline info)
           ;; This is a deep sub-tree: export it as a list item.
@@ -2896,15 +2905,16 @@ holding contextual information."
 	      (headline-class
 	       (org-element-property :HTML_HEADLINE_CLASS headline))
               (first-content (car (org-element-contents headline))))
-          (format "<%s id=\"%s\" class=\"%s\">%s%s</%s>\n"
+          (format "<%s %s class=\"%s\">%s%s</%s>\n"
                   (org-html--container headline info)
-                  (format "outline-container-%s" id)
+                  (org-html--make-attribute-string
+                   (list :id (format "outline-container-%s" id)))
                   (concat (format "outline-%d" level)
                           (and extra-class " ")
                           extra-class)
-                  (format "\n<h%d id=\"%s\"%s>%s</h%d>\n"
+                  (format "\n<h%d %s%s>%s</h%d>\n"
                           level
-                          id
+                          (org-html--make-attribute-string (list :id id))
 			  (if (not headline-class) ""
 			    (format " class=\"%s\"" headline-class))
                           (concat
@@ -3693,13 +3703,15 @@ holding contextual information."
 	      (and (org-export-numbered-headline-p parent info)
 		   (mapconcat
 		    #'number-to-string
-		    (org-export-get-headline-number parent info) "-"))))
+		    (org-export-get-headline-number parent info) "-")))
+	     (reference (or (org-element-property :CUSTOM_ID parent)
+			    section-number
+			    (org-export-get-reference parent info))))
         ;; Build return value.
-	(format "<div class=\"outline-text-%d\" id=\"text-%s\">\n%s</div>\n"
+	(format "<div class=\"outline-text-%d\" %s>\n%s</div>\n"
 		class-num
-		(or (org-element-property :CUSTOM_ID parent)
-		    section-number
-		    (org-export-get-reference parent info))
+		(org-html--make-attribute-string
+		 (list :id (concat "text-" reference)))
 		(or contents ""))))))
 
 ;;;; Radio Target
