@@ -1684,28 +1684,28 @@ probably because we were called from there."
   (bookmark-maybe-historicize-string bookmark-name)
   (bookmark-maybe-load-default-file)
   (let ((will-go (bookmark-get-bookmark bookmark-name 'noerror)))
-    (setq bookmark-alist (delq will-go bookmark-alist))
-    (bookmark--remove-fringe-mark will-go t)
-    ;; `bookmark-current-bookmark' is buffer-local.  Clear references in
-    ;; every buffer only when its final record has been deleted.
-    (when (and will-go
-               (not (bookmark-get-bookmark bookmark-name 'noerror)))
-      (when (equal (default-value 'bookmark-current-bookmark) bookmark-name)
-        (setq-default bookmark-current-bookmark nil))
-      (dolist (buffer (buffer-list))
-        (with-current-buffer buffer
-          (when (and (local-variable-p 'bookmark-current-bookmark)
-                     (equal bookmark-current-bookmark bookmark-name))
-            (setq-local bookmark-current-bookmark nil)))))
-    ;; Also clear another stale name in the current buffer, if there is one.
-    (or (bookmark-get-bookmark bookmark-current-bookmark 'noerror)
-        (setq bookmark-current-bookmark nil)))
-  (unless batch
-    (bookmark-bmenu-surreptitiously-rebuild-list))
-  (setq bookmark-alist-modification-count
-        (1+ bookmark-alist-modification-count))
-  (when (bookmark-time-to-save-p)
-    (bookmark-save)))
+    (when will-go
+      (setq bookmark-alist (delq will-go bookmark-alist))
+      (bookmark--remove-fringe-mark will-go t)
+      ;; `bookmark-current-bookmark' is buffer-local.  Clear references in
+      ;; every buffer only when its final record has been deleted.
+      (when (not (bookmark-get-bookmark bookmark-name 'noerror))
+        (when (equal (default-value 'bookmark-current-bookmark) bookmark-name)
+          (setq-default bookmark-current-bookmark nil))
+        (dolist (buffer (buffer-list))
+          (with-current-buffer buffer
+            (when (and (local-variable-p 'bookmark-current-bookmark)
+                       (equal bookmark-current-bookmark bookmark-name))
+              (setq-local bookmark-current-bookmark nil)))))
+      ;; Also clear another stale name in the current buffer, if there is one.
+      (or (bookmark-get-bookmark bookmark-current-bookmark 'noerror)
+          (setq bookmark-current-bookmark nil))
+      (unless batch
+        (bookmark-bmenu-surreptitiously-rebuild-list))
+      (setq bookmark-alist-modification-count
+            (1+ bookmark-alist-modification-count))
+      (when (bookmark-time-to-save-p)
+        (bookmark-save))))
 
 
 ;;;###autoload
