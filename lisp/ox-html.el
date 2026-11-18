@@ -1743,7 +1743,8 @@ attribute with a nil value will be omitted from the result."
       (cond ((null item) (pop output))
             ((symbolp item) (push (substring (symbol-name item) 1) output))
             (t (let ((key (car output))
-                     (value (org-html--encode-attribute-value item)))
+                     (value (replace-regexp-in-string
+                             "\"" "&quot;" (org-html-encode-plain-text item))))
                  (setcar output (format "%s=\"%s\"" key value))))))))
 
 (defun org-html--reference (datum info &optional named-only)
@@ -2747,8 +2748,9 @@ of listings as a string, or nil if it is empty."
 			  (concat (format initial-fmt (cl-incf count))
 				  " "
 				  title)
-			(format "<a href=\"#%s\">%s %s</a>"
-				label
+			(format "<a %s>%s %s</a>"
+				(org-html--make-attribute-string
+				 (list :href (concat "#" label)))
 				(format initial-fmt (cl-incf count))
 				title))
 		      "</li>")))
@@ -2785,8 +2787,9 @@ of tables as a string, or nil if it is empty."
 			  (concat (format initial-fmt (cl-incf count))
 				  " "
 				  title)
-			(format "<a href=\"#%s\">%s %s</a>"
-				label
+			(format "<a %s>%s %s</a>"
+				(org-html--make-attribute-string
+				 (list :href (concat "#" label)))
 				(format initial-fmt (cl-incf count))
 				title))
 		      "</li>")))
