@@ -2880,6 +2880,15 @@ CONTENTS is nil.  INFO is a plist holding contextual information."
 (defun org-latex-image-link-filter (data _backend info)
   (org-export-insert-image-links data info org-latex-inline-image-rules))
 
+(defun org-latex--safe-file-name (path)
+  "Return PATH encoded for use as a TeX file name.
+Reject characters that can change the surrounding TeX input before
+`\\detokenize' can neutralize the file name."
+  (when (or (string-match-p "[{}%\n\r\"]" path)
+            (string-match-p "\\^\\^" path))
+    (error "Unsafe character in LaTeX image file name: %S" path))
+  (format "\\detokenize{%s}" path))
+
 (defun org-latex--inline-image (link info)
   "Return LaTeX code for an inline image.
 LINK is the link pointing to the inline image.  INFO is a plist
@@ -2888,6 +2897,7 @@ used as a communication channel."
 	 (path (let ((raw-path (org-element-property :path link)))
 		 (if (not (file-name-absolute-p raw-path)) raw-path
 		   (expand-file-name raw-path))))
+	 (tex-path (org-latex--safe-file-name path))
 	 (filetype (file-name-extension path))
 	 (caption (org-latex--caption/label-string parent info))
 	 (caption-above-p (org-latex--caption-above-p link info))
@@ -2963,7 +2973,7 @@ used as a communication channel."
 	;; - if width or height are present, use \resizebox to change
 	;;   the image size.
 	(progn
-	  (setq image-code (format "\\input{%s}" path))
+	  (setq image-code (format "\\input{%s}" tex-path))
 	  (when (org-string-nw-p options)
 	    (setq image-code
 		  (format "\\begin{tikzpicture}[%s]\n%s\n\\end{tikzpicture}"
@@ -2997,12 +3007,7 @@ used as a communication channel."
 			  ((string-prefix-p "," options)
 			   (format "[%s]" (substring options 1)))
 			  (t (format "[%s]" options)))
-                    ;; While \includegraphics is fine with unicode in the path,
-                    ;; \includesvg is prone to producing errors.
-                    (if (and (string-match-p "[^[:ascii:]]" path)
-                             (equal filetype "svg"))
-                        (concat "\\detokenize{" path "}")
-                      path)))
+                    tex-path))
       (when (equal filetype "svg")
 	(setq image-code (replace-regexp-in-string "^\\\\includegraphics"
 						   "\\includesvg"
