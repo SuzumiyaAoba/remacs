@@ -292,13 +292,14 @@ contents according to the specified element."
 		  (concat prefix (make-string (max 1 (- 4 (length prefix)))
 					      ?\s)))))
 	     (title
-	      (format "[%s](#%s)"
+	      (format "[%s](%s)"
 		      (org-export-data-with-backend
 		       (org-export-get-alt-title headline info)
 		       (org-export-toc-entry-backend 'md)
 		       info)
-		      (or (org-element-property :CUSTOM_ID headline)
-			  (org-export-get-reference headline info))))
+		      (org-md--link-destination
+		       (concat "#" (or (org-element-property :CUSTOM_ID headline)
+				      (org-export-get-reference headline info))))))
 	     (tags (and (plist-get info :with-tags)
 			(not (eq 'not-in-toc (plist-get info :with-tags)))
 			(org-make-tag-string
@@ -445,8 +446,9 @@ a communication channel."
 	(let ((anchor
 	       (and (org-md--headline-referred-p headline info)
 		    (format "<a id=\"%s\"></a>"
-			    (or (org-element-property :CUSTOM_ID headline)
-				(org-export-get-reference headline info))))))
+			    (org-html--encode-attribute-value
+			     (or (org-element-property :CUSTOM_ID headline)
+				 (org-export-get-reference headline info)))))))
 	  (concat (org-md--headline-title style level heading anchor tags)
 		  contents)))))))
 
