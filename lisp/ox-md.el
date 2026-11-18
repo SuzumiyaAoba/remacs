@@ -552,6 +552,21 @@ channel."
 
 ;;;; Link
 
+(defun org-md--link-destination (destination)
+  "Return DESTINATION as a safe CommonMark angle-bracket destination."
+  (concat
+   "<"
+   (mapconcat
+    (lambda (character)
+      (if (or (memq character '(?\\ ?< ?> ?\s ?\t ?\n ?\r))
+              (< character 32)
+              (= character 127))
+          (format "%%%02X" character)
+        (char-to-string character)))
+    (string-to-list destination)
+    "")
+   ">"))
+
 (defun org-md-link (link desc info)
   "Transcode LINK object into Markdown format.
 DESC is the description part of the link, or the empty string.
@@ -580,12 +595,13 @@ INFO is a plist holding contextual information.  See
 			   (org-export-resolve-id-link link info))))
 	(pcase (org-element-type destination)
 	  (`plain-text			; External file.
-	   (let ((path (funcall link-org-files-as-md-maybe destination)))
-	     (if (not desc) (format "<%s>" path)
+	   (let ((path (org-md--link-destination
+		      (funcall link-org-files-as-md-maybe destination))))
+	     (if (not desc) path
 	       (format "[%s](%s)" desc path))))
 	  (`headline
 	   (format
-	    "[%s](#%s)"
+	    "[%s](%s)"
 	    ;; Description.
 	    (cond ((org-string-nw-p desc))
 		  ((org-export-numbered-headline-p destination info)
@@ -595,8 +611,9 @@ INFO is a plist holding contextual information.  See
 		  (t (org-export-data (org-element-property :title destination)
 				      info)))
 	    ;; Reference.
-	    (or (org-element-property :CUSTOM_ID destination)
-		(org-export-get-reference destination info))))
+	    (org-md--link-destination
+	     (concat "#" (or (org-element-property :CUSTOM_ID destination)
+			    (org-export-get-reference destination info)))))
 	  (_
 	   (let ((description
 		  (or (org-string-nw-p desc)
@@ -606,9 +623,10 @@ INFO is a plist holding contextual information.  See
 			 ((atom number) (number-to-string number))
 			 (t (mapconcat #'number-to-string number ".")))))))
 	     (when description
-	       (format "[%s](#%s)"
+	       (format "[%s](%s)"
 		       description
-		       (org-export-get-reference destination info))))))))
+		       (org-md--link-destination
+			(concat "#" (org-export-get-reference destination info)))))))))
      ((org-export-inline-image-p link org-html-inline-image-rules)
       (let ((path (cond ((not (string-equal type "file"))
 			 (concat type ":" raw-path))
@@ -619,8 +637,10 @@ INFO is a plist holding contextual information.  See
 		       (org-element-parent-element link))
 		      info)))
 	(format "![img](%s)"
-		(if (not (org-string-nw-p caption)) path
-		  (format "%s \"%s\"" path caption)))))
+		(if (not (org-string-nw-p caption))
+		    (org-md--link-destination path)
+		  (format "%s \"%s\""
+		          (org-md--link-destination path) caption)))))
      ((string= type "coderef")
       (format (org-export-get-coderef-format path desc)
 	      (org-export-resolve-coderef path info)))
@@ -630,8 +650,9 @@ INFO is a plist holding contextual information.  See
 	  (format "<a href=\"#%s\">%s</a>"
 		  (org-export-get-reference destination info)
 		  desc))))
-     (t (if (not desc) (format "<%s>" path)
-	  (format "[%s](%s)" desc path))))))
+     (t (let ((destination (org-md--link-destination path)))
+	  (if (not desc) destination
+	    (format "[%s](%s)" desc destination)))))))
 
 
 ;;;; Node Property
