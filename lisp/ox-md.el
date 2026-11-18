@@ -751,6 +751,10 @@ contextual information."
   ;; Handle special strings, if required.
   (when (plist-get info :with-special-strings)
     (setq text (org-html-convert-special-strings text)))
+  ;; CommonMark treats tags in prose as raw HTML.  Encode their delimiters
+  ;; here; explicit HTML export blocks are handled separately.
+  (setq text (replace-regexp-in-string "<" "&lt;" text t t))
+  (setq text (replace-regexp-in-string ">" "&gt;" text t t))
   ;; Handle break preservation, if required.
   (when (plist-get info :preserve-breaks)
     (setq text (replace-regexp-in-string "[ \t]*\n" "  \n" text)))
