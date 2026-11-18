@@ -54,6 +54,11 @@ lists.  The first assoc list is keyed by the server name.  The cdr of
 this is an assoc list based on the \"directory\" specified by the URL we
 are looking up.")
 
+(defun url-auth--auth-source-port (url)
+  "Return URL's non-default numeric port, or its scheme as a service."
+  (or (url-port-if-non-default url)
+      (url-type url)))
+
 (defun url-basic-auth--directory-prefix-p (directory file)
   "Return non-nil if DIRECTORY is an ancestor directory of FILE."
   (let ((directory-length (length directory))
@@ -93,8 +98,8 @@ instead of the filename inheritance method."
 		   (url-generic-parse-url url)
 		 url))
 	 (server (url-host href))
-	 (type (url-type href))
 	 (port (url-port href))
+	 (auth-source-port (url-auth--auth-source-port href))
 	 (file (car (url-path-and-query href)))
 	 (user (url-user href))
 	 (pass (url-password href))
@@ -114,12 +119,12 @@ instead of the filename inheritance method."
       (setq retval (base64-encode-string (format "%s:%s" user pass) t)))
      ((and prompt (not byserv))
       (setq user (or
-		  (url-do-auth-source-search server type :user)
+		  (url-do-auth-source-search server auth-source-port :user)
                   (and (url-interactive-p)
 		       (read-string (url-auth-user-prompt href realm)
 			            (or user (user-real-login-name)))))
 	    pass (or
-		  (url-do-auth-source-search server type :secret user)
+		  (url-do-auth-source-search server auth-source-port :secret user)
                   (and (url-interactive-p)
 		       (read-passwd "Password: " nil (or pass "")))))
       (when user
@@ -140,12 +145,12 @@ instead of the filename inheritance method."
       (if (or (and (not retval) prompt) overwrite)
 	  (progn
 	    (setq user (or
-			(url-do-auth-source-search server type :user)
+			(url-do-auth-source-search server auth-source-port :user)
                         (and (url-interactive-p)
 			     (read-string (url-auth-user-prompt href realm)
 				          (user-real-login-name))))
 		  pass (or
-			(url-do-auth-source-search server type :secret user)
+			(url-do-auth-source-search server auth-source-port :secret user)
 			(and (url-interactive-p)
 			     (read-passwd "Password: "))))
 	    (when user
@@ -274,10 +279,10 @@ the HTTP quoted-string grammar."
   "Find credentials for URL object from the Emacs auth-source.
 Return value is a plist that has `:user' and `:secret' properties
 if credentials were found.  Otherwise nil."
-  (let ((server (url-digest-auth-server-id url))
-        (type (url-type url)))
-    (list :user (url-do-auth-source-search server type :user)
-          :secret (url-do-auth-source-search server type :secret))))
+  (let ((server (url-host url))
+        (port (url-auth--auth-source-port url)))
+    (list :user (url-do-auth-source-search server port :user)
+          :secret (url-do-auth-source-search server port :secret))))
 
 (defun url-digest-prompt-creds (url realm &optional creds)
   "Prompt credentials for URL and REALM, defaulting to CREDS.
@@ -514,8 +519,8 @@ challenge such as nonce and opaque."
   "A list of the registered authorization schemes and various and sundry
 information associated with them.")
 
-(defun url-do-auth-source-search (server type parameter &optional user)
-  (let* ((auth-info (auth-source-search :max 1 :host server :port type :user user))
+(defun url-do-auth-source-search (server port parameter &optional user)
+  (let* ((auth-info (auth-source-search :max 1 :host server :port port :user user))
          (auth-info (nth 0 auth-info))
          (token (plist-get auth-info parameter))
          (token (if (functionp token) (funcall token) token)))
