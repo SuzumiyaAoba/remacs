@@ -1773,7 +1773,9 @@ arguments CAPTION and LABEL are given, use them for caption and
     (format (if html5-fancy "\n<figure%s>\n%s%s\n</figure>"
 	      "\n<div%s class=\"figure\">\n%s%s\n</div>")
 	    ;; ID.
-	    (if (org-string-nw-p label) (format " id=\"%s\"" label) "")
+	    (if (org-string-nw-p label)
+		(concat " " (org-html--make-attribute-string (list :id label)))
+	      "")
 	    ;; Contents.
 	    (if html5-fancy contents (format "<p>%s</p>" contents))
 	    ;; Caption.
