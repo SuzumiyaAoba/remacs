@@ -135,8 +135,8 @@ pub(super) fn with_window<T>(
         i.set_current_buffer(caller);
     }
     i.match_data = matches;
-    let result = result?;
     unwind?;
+    let result = result?;
     Ok(result)
 }
 
@@ -199,8 +199,8 @@ fn evaluate_with_quit(i: &mut Interp, form: &Value, inhibit_quit: bool) -> Resul
         }
     })();
     let unwind = i.unbind_to(mark);
-    let result = result?;
     unwind?;
+    let result = result?;
     Ok(result)
 }
 

@@ -195,7 +195,10 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
         return Ok(false);
     }
     let mark = i.specbind_depth();
-    i.specbind(inhibit, Value::t())?;
+    if let Err(error) = i.specbind(inhibit, Value::t()) {
+        i.unbind_to(mark)?;
+        return Err(error);
+    }
     let mut changed = false;
     let result = (|| {
         for frame in i.frames.clone() {
@@ -245,9 +248,7 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                         data.buffer,
                         data.old_buffer.clone(),
                         buffer_change,
-                        buffer_change
-                            || data.change_size != Some(size)
-                            || frame_pixel_size_changed,
+                        buffer_change || data.change_size != Some(size) || frame_pixel_size_changed,
                         (selection || frame_selected)
                             && (old_selected == Some(data.id) || selected == data.id),
                         data.change_start.is_some_and(|start| start != data.start),
@@ -255,7 +256,8 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
                 };
                 buffers |= buffer_change;
                 sizes |= size_change;
-                changed |= buffer_change || size_change || selection_change || scroll_change || flag;
+                changed |=
+                    buffer_change || size_change || selection_change || scroll_change || flag;
                 if scroll_change {
                     winxtra::f_run_window_scroll_functions(
                         i,
@@ -310,7 +312,7 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
     if changed {
         record(i);
     }
-    let _ = i.unbind_to(mark);
+    i.unbind_to(mark)?;
     result.map(|()| changed)
 }
 

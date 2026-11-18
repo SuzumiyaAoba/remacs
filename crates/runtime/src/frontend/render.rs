@@ -3701,8 +3701,7 @@ fn mode_line_identification_map(i: &Interp, buffer_id: usize, map: &Value) -> bo
 fn help_echo_text(i: &Interp, value: Value) -> Option<(String, bool)> {
     match value {
         Value::Str(text) => {
-            let inhibit_substitution =
-                help_echo_inhibit_substitution(i, &Value::Str(text.clone()));
+            let inhibit_substitution = help_echo_inhibit_substitution(i, &Value::Str(text.clone()));
             let text = text.borrow().to_unicode_lossy();
             Some((text, inhibit_substitution))
         }
@@ -5055,8 +5054,8 @@ struct RenderedRow {
     images: Vec<RenderedImage>,
     object_hits: Vec<GridInputObjectHit>,
     compositions: Vec<RenderedComposition>,
-    pixel_width: bool,
     fringes: Vec<RenderedFringe>,
+    pixel_width: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -5764,12 +5763,12 @@ fn place_text_row(
     left: usize,
     text: &str,
     cell_attrs: &[CellStyle],
-    allow_pixel_overflow: bool,
     char_attrs: &[CellStyle],
+    allow_pixel_overflow: bool,
 ) {
     let mut column = 0usize;
-    let row_right = left.saturating_add(cell_attrs.len()).min(screen.len());
     let mut last_lead = None;
+    let row_right = left.saturating_add(cell_attrs.len()).min(screen.len());
     for (index, ch) in text.chars().enumerate() {
         let char_width = display_char_width(ch);
         let style = char_attrs.get(index).copied().unwrap_or_default();
@@ -6093,8 +6092,8 @@ fn formatted_row_mouse_column(
 
 fn place_formatted_window_row(
     i: &Interp,
-    window_faces: Option<&WindowFaces>,
     faces: &mut FaceCtx,
+    window_faces: Option<&WindowFaces>,
     screen: &mut [Vec<ScreenCell>],
     row: usize,
     left: usize,
@@ -6509,8 +6508,8 @@ fn render_text_row<F, V, D, B>(
     mut display_at: D,
     mut boundary_strings_at: B,
     include_end_boundary: bool,
-    pixel_width: bool,
     graphical: bool,
+    pixel_width: bool,
 ) -> RenderedRow
 where
     F: FnMut(usize) -> CellStyle,
@@ -6880,8 +6879,8 @@ where
         images,
         object_hits,
         compositions,
-        pixel_width,
         fringes,
+        pixel_width,
     }
 }
 
@@ -6906,8 +6905,8 @@ fn render_display_prefix(
         |_| Some(replacement.clone()),
         |_| Vec::new(),
         false,
-        false,
         graphical,
+        false,
     )
 }
 
@@ -9563,6 +9562,51 @@ pub(super) fn toolbar_grid_image(
     })
 }
 
+pub(crate) fn display_image_pixel_height(
+    i: &Interp,
+    value: &Value,
+    buffer_id: usize,
+    default_font_height: u16,
+    position: usize,
+) -> Option<usize> {
+    if let Some((condition, spec)) = display_when_spec(i, value) {
+        let applies = display_condition_result(i, buffer_id, position, &condition).unwrap_or_else(|| {
+            match &condition {
+                Value::Nil => false,
+                Value::Sym(symbol) => i.symbol_name(*symbol) == "t",
+                Value::Cons(_) => false,
+                _ => true,
+            }
+        });
+        if !applies {
+            return None;
+        }
+        return display_image_pixel_height(i, &spec, buffer_id, default_font_height, position);
+    }
+    let (slice, image_desc) = image_slice_spec(i, value)
+        .map(|(slice, image_desc)| (Some(slice), image_desc))
+        .unwrap_or_else(|| (None, value.clone()));
+    let DisplayReplacement::Image {
+        width,
+        height,
+        intrinsic_width,
+        intrinsic_height,
+        slice,
+        ..
+    } = image_display_replacement(
+        i,
+        &image_desc,
+        buffer_id,
+        default_font_height,
+        None,
+        slice,
+    )?
+    else {
+        return None;
+    };
+    image_visible_dimensions(width, height, intrinsic_width, intrinsic_height, slice).1
+}
+
 fn display_spec_number(i: &Interp, value: &Value, depth: usize) -> Option<f64> {
     if depth >= 8 {
         return None;
@@ -11725,6 +11769,7 @@ fn render_grid_internal(
     let max_image_size = image_size_limit(i);
     let frame = frame_override.cloned().or_else(|| i.selected_frame.clone());
     let frame_id = frame.as_ref().map(|frame| frame.borrow().id);
+    let frame_font_metrics = frame_id.and_then(|frame_id| i.frame_font_metrics.get(&frame_id));
     let frame_resize_pixelwise = i
         .q_soft("frame-resize-pixelwise")
         .is_some_and(|symbol| i.symbol_value(symbol).truthy());
@@ -11769,7 +11814,6 @@ fn render_grid_internal(
     let mut tab_lines = Vec::new();
     let mut window_text_areas = Vec::new();
     let mut window_row_heights = Vec::new();
-    let frame_font_metrics = frame_id.and_then(|frame_id| i.frame_font_metrics.get(&frame_id));
     let mut vscrolls = Vec::new();
     let mut mode_rows = Vec::new();
     let mut cursor_pos: Option<(usize, usize)> = None;
@@ -12426,6 +12470,8 @@ fn render_grid_internal(
                     buffer.zv
                 };
                 display_row_distance_from_start(
+                    i,
+                    w,
                     &buffer.text,
                     visual_begv,
                     visual_zv,
@@ -12470,8 +12516,6 @@ fn render_grid_internal(
             })
             .unwrap_or((usize::MAX, usize::MAX, usize::MAX, usize::MAX));
         let requested_top_rows = usize::from(tab_line_enabled) + usize::from(header_line_enabled);
-                    i,
-                    w,
         let top_rows = requested_top_rows.min(window_height.saturating_sub(usize::from(mode_line_enabled)));
         let text_rows = window_height
             .saturating_sub(top_rows + usize::from(mode_line_enabled));
@@ -12589,6 +12633,8 @@ fn render_grid_internal(
                     .saturating_add(2)
                     .max(1);
                 let point_row = display_row_distance_from_start(
+                    i,
+                    w,
                     &bb.text,
                     bb.begv,
                     bb.zv,
@@ -12633,14 +12679,15 @@ fn render_grid_internal(
                             text_rows,
                             margin,
                             scroll_conservatively,
-                    i,
-                    w,
                             scroll_step,
                             aggressive,
                         )
                     });
                     target_row.map_or(start, |rows_before| {
                         display_row_start_before_point(
+                            i,
+                            buf_id,
+                            w,
                             &bb.text,
                             bb.begv,
                             bb.zv,
@@ -12685,9 +12732,6 @@ fn render_grid_internal(
                     'lines: for line_number in new_start_line..=pt_line {
                         let line_pos = bb.text.line_start(line_number).max(bb.begv);
                         if line_pos > bb.zv {
-                            i,
-                            buf_id,
-                            w,
                             break;
                         }
                         let line_end = bb.text.line_end(line_pos).min(bb.zv);
@@ -12828,6 +12872,23 @@ fn render_grid_internal(
                 && bar_width > 0
                 && text_rows > 0
             {
+                let (total_display_rows, top_display_row) = i
+                    .buffers
+                    .get(buf_id)
+                    .map(|buffer| {
+                        let buffer = buffer.borrow();
+                        vertical_scrollbar_metrics(
+                            i,
+                            buf_id,
+                            w,
+                            &buffer.text,
+                            buffer.begv,
+                            buffer.zv,
+                            start,
+                            content_width,
+                        )
+                    })
+                    .unwrap_or((total_lines, 0));
                 let track_height = text_rows.saturating_mul(frame_char_height);
                 if let Some((thumb_start, thumb_size)) = scroll_thumb(
                     track_height,
@@ -12848,6 +12909,7 @@ fn render_grid_internal(
                         window_id,
                         buffer_id: buf_id,
                         orientation: GridScrollBarOrientation::Vertical,
+                        text_width: content_width,
                         style: scroll_bar_style,
                         left: bar_left,
                         top: content_top.saturating_mul(frame_char_height),
@@ -12872,23 +12934,6 @@ fn render_grid_internal(
             if let (Some(side), Some(bar_height)) = (horizontal_scroll_side, scroll_height)
                 && minibuffer_horizontal_scroll_bar_enabled
                 && bar_height > 0
-                let (total_display_rows, top_display_row) = i
-                    .buffers
-                    .get(buf_id)
-                    .map(|buffer| {
-                        let buffer = buffer.borrow();
-                        vertical_scrollbar_metrics(
-                            i,
-                            buf_id,
-                            w,
-                            &buffer.text,
-                            buffer.begv,
-                            buffer.zv,
-                            start,
-                            content_width,
-                        )
-                    })
-                    .unwrap_or((total_lines, 0));
                 && content_width > 0
                 && text_rows > 0
                 && !wrap_lines
@@ -12909,7 +12954,6 @@ fn render_grid_internal(
                 let track_width = content_width.saturating_mul(frame_char_width);
                 if let Some((thumb_start, thumb_size)) = scroll_thumb(
                     track_width,
-                        text_width: content_width,
                     max_columns,
                     content_width,
                     hscroll,
@@ -12927,6 +12971,7 @@ fn render_grid_internal(
                         window_id,
                         buffer_id: buf_id,
                         orientation: GridScrollBarOrientation::Horizontal,
+                        text_width: content_width,
                         style: scroll_bar_style,
                         left: content_left.saturating_mul(frame_char_width),
                         top,
@@ -12971,7 +13016,6 @@ fn render_grid_internal(
         if selected_window {
             default_row_height = frame_char_height.saturating_add(default_line_spacing);
         }
-                        text_width: content_width,
         if let Some(position) = mouse_position
             && position.buffer_id == buf_id
             && position.area.is_none()
@@ -13286,50 +13330,6 @@ fn render_grid_internal(
                     ctl_arrow,
                     word_wrap,
                     word_wrap_by_category,
-                )
-            } else {
-                (vec![0..line_len], false)
-            };
-            let max_rows = body_height
-                .min(content_bottom)
-                .saturating_sub(screen_row);
-            let mut plans = Vec::new();
-            for mut range in ranges {
-                if range.end < start_offset || (range.end == start_offset && range.end < line_len) {
-                    continue;
-                }
-                if plans.len() == max_rows {
-                    break;
-                }
-                range.start = range.start.max(start_offset);
-                plans.extend(display_row_plans(
-                    i,
-                    wf.as_ref(),
-                    &line,
-                    buf_id,
-                    line_pos,
-                    range,
-                    line_len,
-                    max_rows - plans.len(),
-                    content_width,
-                    line_prefix_width,
-                    wrap_prefix_width,
-                    tab_width,
-                    frame_char_width,
-                    ctl_arrow,
-                    wrap_lines,
-                ));
-            }
-            if selective_ellipsis
-                && let Some(plan) = plans
-                    .iter_mut()
-                    .rev()
-                    .find(|plan| plan.include_end_boundary)
-            {
-                plan.boundaries
-                    .entry(line_len)
-                    .or_default()
-                    .push(DisplayText::plain("…".to_owned()));
                     metrics,
                     |index| {
                         let style = wf.as_ref().map_or(default_style, |faces| {
@@ -13377,6 +13377,50 @@ fn render_grid_internal(
                         word_wrap_by_category,
                     ),
                     false,
+                )
+            } else {
+                (vec![0..line_len], false)
+            };
+            let max_rows = body_height
+                .min(content_bottom)
+                .saturating_sub(screen_row);
+            let mut plans = Vec::new();
+            for mut range in ranges {
+                if range.end < start_offset || (range.end == start_offset && range.end < line_len) {
+                    continue;
+                }
+                if plans.len() == max_rows {
+                    break;
+                }
+                range.start = range.start.max(start_offset);
+                plans.extend(display_row_plans(
+                    i,
+                    wf.as_ref(),
+                    &line,
+                    buf_id,
+                    line_pos,
+                    range,
+                    line_len,
+                    max_rows - plans.len(),
+                    content_width,
+                    line_prefix_width,
+                    wrap_prefix_width,
+                    tab_width,
+                    frame_char_width,
+                    ctl_arrow,
+                    wrap_lines,
+                ));
+            }
+            if selective_ellipsis
+                && let Some(plan) = plans
+                    .iter_mut()
+                    .rev()
+                    .find(|plan| plan.include_end_boundary)
+            {
+                plan.boundaries
+                    .entry(line_len)
+                    .or_default()
+                    .push(DisplayText::plain("…".to_owned()));
             }
             for plan in plans {
                 let range = &plan.range;
@@ -13503,6 +13547,8 @@ fn render_grid_internal(
                         i.buffers.get(buf_id).map_or(0, |buffer| {
                             let buffer = buffer.borrow();
                             display_row_distance_from_start(
+                                i,
+                                w,
                                 &buffer.text,
                                 buffer.begv,
                                 buffer.zv,
@@ -13547,8 +13593,6 @@ fn render_grid_internal(
                         } else if line_numbers_relative {
                             if point_line_number + 1 == line_number {
                                 if line_numbers_current_absolute {
-                                i,
-                                w,
                                     absolute
                                 } else {
                                     0
@@ -13577,6 +13621,7 @@ fn render_grid_internal(
                         &prefix,
                         &prefix_cells,
                         &prefix_chars,
+                        false,
                     );
                 }
                 let mut rendered = render_text_row(
@@ -13621,7 +13666,6 @@ fn render_grid_internal(
                     |index| {
                         plan.replacements.get(&(segment_start + index)).cloned()
                             .or_else(|| wf.as_ref()
-                        false,
                                 .and_then(|wf| display_replacement_at(wf, segment_pos + index)))
                             .or_else(|| {
                                 let wf = wf.as_ref()?;
@@ -13666,6 +13710,7 @@ fn render_grid_internal(
                     },
                     plan.include_end_boundary,
                     graphical,
+                    pixel_width_line,
                 );
                 if prefix_width > 0 {
                     if continuation_row {
@@ -13710,7 +13755,6 @@ fn render_grid_internal(
                 }
                 if let Some(row_height) = row_heights.get_mut(y) {
                     for image in &rendered.images {
-                    pixel_width_line,
                         if let Some(image_height) = image.visible_dimensions().1 {
                             *row_height = (*row_height).max(image_height);
                         }
@@ -14370,6 +14414,7 @@ fn render_grid_internal(
             let _ = place_formatted_window_row(
                 i,
                 &mut fctx,
+                wf.as_ref(),
                 &mut screen_rows,
                 auxiliary_row,
                 window_left,
@@ -14402,6 +14447,7 @@ fn render_grid_internal(
             let _ = place_formatted_window_row(
                 i,
                 &mut fctx,
+                wf.as_ref(),
                 &mut screen_rows,
                 auxiliary_row,
                 window_left,
@@ -14414,7 +14460,6 @@ fn render_grid_internal(
                 formatted_row_mouse_column(
                     mouse_position,
                     window_id,
-                wf.as_ref(),
                     buf_id,
                     auxiliary_row,
                     MouseArea::HeaderLine,
@@ -14446,8 +14491,8 @@ fn render_grid_internal(
             let buffer_name_range = place_formatted_window_row(
                 i,
                 &mut fctx,
-                &mut screen_rows,
                 wf.as_ref(),
+                &mut screen_rows,
                 my,
                 window_left,
                 window_width,
@@ -14491,7 +14536,6 @@ fn render_grid_internal(
         if divider.width == 0 || divider.thickness == 0 || divider.row_boundary == 0 {
             continue;
         }
-                wf.as_ref(),
         divider_rows
             .entry(divider.row_boundary)
             .and_modify(|thickness| *thickness = (*thickness).max(divider.thickness))
@@ -14538,6 +14582,7 @@ fn render_grid_internal(
             window_id,
             buffer_id,
             orientation: GridScrollBarOrientation::Horizontal,
+            text_width: width,
             style: scroll_bar_style,
             left: 0,
             top: mini_top
@@ -14582,7 +14627,6 @@ fn render_grid_internal(
             position.x,
             (mini_top.saturating_mul(frame_char_height) as i128).saturating_add(position.y),
         ));
-            text_width: width,
     }
     if mini_visible_rows > 0 {
         let wf =
@@ -14641,6 +14685,7 @@ fn render_grid_internal(
                         .get(range.end)
                         .is_some_and(|character| character.unicode() == Some('\n')),
                 graphical,
+                false,
             );
             pending_compositions.extend(rendered.compositions.iter().filter_map(
                 |composition| {
@@ -14685,7 +14730,6 @@ fn render_grid_internal(
                 };
                 snapshot.add_hit_test_row(
                     i,
-                false,
                     y,
                     buffer_id,
                     buffer_start,

@@ -533,8 +533,8 @@ fn prepare_tool_bars(i: &mut Interp) -> Result<Vec<(usize, Vec<PreparedToolBarIt
                 .specbind(updating, Value::Frame(frame.clone()))
                 .and_then(|_| tool_bar_items(i, &frame));
             let unwind = i.unbind_to(mark);
-            let items = result?;
             unwind?;
+            let items = result?;
             Ok(items)
         })?;
         tool_bars.push((frame.borrow().id, items));

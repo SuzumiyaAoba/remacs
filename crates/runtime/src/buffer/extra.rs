@@ -1,12 +1,12 @@
 //! Extra buffer subrs: region commands, text-property scans, fields,
 //! indentation helpers, and encoding on regions.
 
-use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::buffer::primitives::{check_writable, cur, err_sym, pos_idx};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
+use crate::lisp::text::{EmacsChar, EmacsStr, EmacsText};
 use crate::lisp::value::{Subr, Value};
 use unicode_bidi::{BidiInfo, Level};
 
@@ -515,117 +515,116 @@ pub(crate) fn find_file_name_handler<T: crate::lisp::text::TextSource + ?Sized>(
     operation: Value,
 ) -> Option<Value> {
     file.with_text(|file| {
-    let fid = i.q("file-name-handler-alist");
-    let alist = i.symbol_value(fid);
-    let ops_id = i.q("operations");
-    let mut cur = alist;
-    // GNU fileio.c Ffind_file_name_handler:
-    // - every matching (REGEXP . HANDLER) is scanned; the match with
-    //   the largest start position wins (`match_pos > pos', ties keep
-    //   the earlier entry).
-    // - a handler symbol carrying an `operations' property serves only
-    //   the listed operations.
-    // - `inhibit-file-name-handlers' applies ONLY when OPERATION
-    //   equals the `inhibit-file-name-operation' variable's value —
-    //   `tramp-run-real-handler' binds it to the inner operation, so
-    //   handlers suppress themselves for that call — while ordinary
-    //   operations ignore it (GNU-verified on 31.1).
-    let ifno = i.q("inhibit-file-name-operation");
-    let inhibit_target = i.symbol_value(ifno);
-    let inhibited: Option<Value> = if crate::lisp::builtins::eq_values(&operation, &inhibit_target)
-    {
-        let iid = i.q("inhibit-file-name-handlers");
-        Some(i.symbol_value(iid))
-    } else {
-        None
-    };
-    let syn = crate::editor::re_syntax(i);
-    let cat = crate::editor::re_category(i);
-    let chars: Vec<crate::lisp::text::EmacsChar> = file.chars().collect();
-    let mut best: Option<Value> = None;
-    let mut best_pos: isize = -1;
-    loop {
-        match cur {
-            Value::Cons(c) => {
-                let (cell, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                cur = next;
-                if let Value::Cons(pair) = &cell {
-                    let (re, handler) = {
-                        let b = pair.borrow();
+        let fid = i.q("file-name-handler-alist");
+        let alist = i.symbol_value(fid);
+        let ops_id = i.q("operations");
+        let mut cur = alist;
+        // GNU fileio.c Ffind_file_name_handler:
+        // - every matching (REGEXP . HANDLER) is scanned; the match with
+        //   the largest start position wins (`match_pos > pos', ties keep
+        //   the earlier entry).
+        // - a handler symbol carrying an `operations' property serves only
+        //   the listed operations.
+        // - `inhibit-file-name-handlers' applies ONLY when OPERATION
+        //   equals the `inhibit-file-name-operation' variable's value —
+        //   `tramp-run-real-handler' binds it to the inner operation, so
+        //   handlers suppress themselves for that call — while ordinary
+        //   operations ignore it (GNU-verified on 31.1).
+        let ifno = i.q("inhibit-file-name-operation");
+        let inhibit_target = i.symbol_value(ifno);
+        let inhibited: Option<Value> =
+            if crate::lisp::builtins::eq_values(&operation, &inhibit_target) {
+                let iid = i.q("inhibit-file-name-handlers");
+                Some(i.symbol_value(iid))
+            } else {
+                None
+            };
+        let syn = crate::editor::re_syntax(i);
+        let cat = crate::editor::re_category(i);
+        let chars: Vec<crate::lisp::text::EmacsChar> = file.chars().collect();
+        let mut best: Option<Value> = None;
+        let mut best_pos: isize = -1;
+        loop {
+            match cur {
+                Value::Cons(c) => {
+                    let (cell, next) = {
+                        let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
-                    if let Value::Str(pat) = &re {
-                        let pat = pat.borrow().clone();
-                        let match_start = crate::lisp::regexp::compile_case(&pat, false)
-                            .ok()
-                            .and_then(|re| {
-                                crate::lisp::regexp::search_full(
-                                    &re,
-                                    &chars,
-                                    0,
-                                    &syn,
-                                    &cat,
-                                    crate::lisp::regexp::NO_POINT,
-                                    false,
-                                )
-                            })
-                            .and_then(|regs| regs.first().copied().flatten());
-                        let Some(ms) = match_start else { continue };
-                        // Non-nil `operations' property: only the listed
-                        // operations are served.
-                        if let Value::Sym(hs) = &handler {
-                            let ops = i.get_prop(*hs, ops_id);
-                            if !ops.is_nil() {
-                                let mut listed = false;
-                                let mut oc = ops;
-                                while let Value::Cons(cc) = oc {
+                    cur = next;
+                    if let Value::Cons(pair) = &cell {
+                        let (re, handler) = {
+                            let b = pair.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Str(pat) = &re {
+                            let pat = pat.borrow().clone();
+                            let match_start = crate::lisp::regexp::compile_case(&pat, false)
+                                .ok()
+                                .and_then(|re| {
+                                    crate::lisp::regexp::search_full(
+                                        &re,
+                                        &chars,
+                                        0,
+                                        &syn,
+                                        &cat,
+                                        crate::lisp::regexp::NO_POINT,
+                                        false,
+                                    )
+                                })
+                                .and_then(|regs| regs.first().copied().flatten());
+                            let Some(ms) = match_start else { continue };
+                            // Non-nil `operations' property: only the listed
+                            // operations are served.
+                            if let Value::Sym(hs) = &handler {
+                                let ops = i.get_prop(*hs, ops_id);
+                                if !ops.is_nil() {
+                                    let mut listed = false;
+                                    let mut oc = ops;
+                                    while let Value::Cons(cc) = oc {
+                                        let (h, n) = {
+                                            let b = cc.borrow();
+                                            (b.car.clone(), b.cdr.clone())
+                                        };
+                                        if crate::lisp::builtins::eq_values(&h, &operation) {
+                                            listed = true;
+                                            break;
+                                        }
+                                        oc = n;
+                                    }
+                                    if !listed {
+                                        continue;
+                                    }
+                                }
+                            }
+                            if let Some(inh) = &inhibited {
+                                let mut ic = inh.clone();
+                                let mut skip = false;
+                                while let Value::Cons(cc) = ic {
                                     let (h, n) = {
                                         let b = cc.borrow();
                                         (b.car.clone(), b.cdr.clone())
                                     };
-                                    if crate::lisp::builtins::eq_values(&h, &operation) {
-                                        listed = true;
+                                    if crate::lisp::builtins::eq_values(&h, &handler) {
+                                        skip = true;
                                         break;
                                     }
-                                    oc = n;
+                                    ic = n;
                                 }
-                                if !listed {
+                                if skip {
                                     continue;
                                 }
                             }
-                        }
-                        if let Some(inh) = &inhibited {
-                            let mut ic = inh.clone();
-                            let mut skip = false;
-                            while let Value::Cons(cc) = ic {
-                                let (h, n) = {
-                                    let b = cc.borrow();
-                                    (b.car.clone(), b.cdr.clone())
-                                };
-                                if crate::lisp::builtins::eq_values(&h, &handler) {
-                                    skip = true;
-                                    break;
-                                }
-                                ic = n;
+                            if ms as isize > best_pos {
+                                best_pos = ms as isize;
+                                best = Some(handler);
                             }
-                            if skip {
-                                continue;
-                            }
-                        }
-                        if ms as isize > best_pos {
-                            best_pos = ms as isize;
-                            best = Some(handler);
                         }
                     }
                 }
+                _ => return best,
             }
-            _ => return best,
         }
-    }
-
     })
 }
 
@@ -2311,9 +2310,10 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
             let old: EmacsText = str_chars[gs.min(str_chars.len())..ge.min(str_chars.len())]
                 .iter()
                 .collect();
-            rep_piece = crate::buffer::primitives::match_case(i, &old, &rep_piece);
+            rep_piece = crate::buffer::primitives::match_case(i, &old, &rep_piece)?;
         }
-        let mut piece: crate::lisp::text::EmacsText = str_chars[..gs.min(str_chars.len())].iter().collect();
+        let mut piece: crate::lisp::text::EmacsText =
+            str_chars[..gs.min(str_chars.len())].iter().collect();
         piece.push_str(&rep_piece);
         piece.extend(str_chars[ge.min(str_chars.len())..].iter());
         pieces.push(piece);
@@ -2430,7 +2430,8 @@ fn f_subst_char_in_region(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     {
         return Err(i.error_q::<str>(
             "Characters in `subst-char-in-region' have different byte-lengths",
-            &[]));
+            &[],
+        ));
     }
     let first = (s..e).find(|pos| b.borrow().text.char_at(*pos) == fc);
     let Some(first) = first else {
@@ -3594,13 +3595,8 @@ fn visual_vertical_motion(
     let mut line_start = buffer.text.line_start(line_number).max(buffer.begv);
     let mut line_end = buffer.text.line_end(line_start).min(buffer.zv);
     let mut line = buffer.text.substring(line_start, line_end);
-    let mut ranges = crate::frontend::visual_line_ranges_for_window(
-        i,
-        buffer.id,
-        window,
-        &line,
-        line_start,
-    )?;
+    let mut ranges =
+        crate::frontend::visual_line_ranges_for_window(i, buffer.id, window, &line, line_start)?;
     if ranges.is_empty() {
         return None;
     }
@@ -3619,13 +3615,8 @@ fn visual_vertical_motion(
                     || (point_offset == range.end && range.end == line.chars().count()))
         })
         .unwrap_or_else(|| ranges.len().saturating_sub(1));
-    let current_column = vertical_motion_column(
-        &line,
-        &ranges[row],
-        point_offset,
-        tab_width,
-        ctl_arrow,
-    );
+    let current_column =
+        vertical_motion_column(&line, &ranges[row], point_offset, tab_width, ctl_arrow);
     let goal_column = if lines == 0 {
         explicit_column.unwrap_or(0.0)
     } else {
@@ -3648,11 +3639,7 @@ fn visual_vertical_motion(
                 line_end = buffer.text.line_end(line_start).min(buffer.zv);
                 line = buffer.text.substring(line_start, line_end);
                 ranges = crate::frontend::visual_line_ranges_for_window(
-                    i,
-                    buffer.id,
-                    window,
-                    &line,
-                    line_start,
+                    i, buffer.id, window, &line, line_start,
                 )?;
                 if ranges.is_empty() {
                     break;
@@ -3668,18 +3655,11 @@ fn visual_vertical_motion(
                 break;
             }
             let previous_position = line_start.saturating_sub(1);
-            line_start = buffer
-                .text
-                .line_start(previous_position)
-                .max(buffer.begv);
+            line_start = buffer.text.line_start(previous_position).max(buffer.begv);
             line_end = buffer.text.line_end(line_start).min(buffer.zv);
             line = buffer.text.substring(line_start, line_end);
             ranges = crate::frontend::visual_line_ranges_for_window(
-                i,
-                buffer.id,
-                window,
-                &line,
-                line_start,
+                i, buffer.id, window, &line, line_start,
             )?;
             if ranges.is_empty() {
                 break;
@@ -3840,7 +3820,7 @@ fn f_line_pixel_height(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 fn f_backward_prefix_chars(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     // GNU: skip back over unquoted `''-class chars and `p'-flagged chars.
     let upto = cur(i).borrow().point() + 1;
-    let syn = crate::editor::Syn::current(i, upto);
+    let syn = crate::editor::Syn::current(i, upto)?;
     let b = cur(i);
     let p = {
         let bb = b.borrow();

@@ -86,7 +86,11 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
                 region_text(i, &bounds)?
             } else {
                 let buffer = buffer.borrow();
-                (buffer.begv, buffer.zv, crate::lisp::text::EmacsText::default())
+                (
+                    buffer.begv,
+                    buffer.zv,
+                    crate::lisp::text::EmacsText::default(),
+                )
             };
             f_buffer_substring(
                 i,
@@ -182,15 +186,15 @@ pub(super) fn replace_region_contents(i: &mut Interp, args: &[Value]) -> EvalRes
     target.borrow_mut().undo_boundary();
     let hooks = !mod_hooks_inhibited(i);
     let depth = i.specbind_depth();
-    if hooks {
-        super::primitives::check_writable(i)?;
-        super::primitives::barf_if_file_locked(i)?;
-        super::primitives::text_ro_range(i, start, end)?;
-        signal_before_change(i, start + 1, end + 1)?;
-        let inhibit = i.q("inhibit-modification-hooks");
-        i.specbind(inhibit, Value::t())?;
-    }
     let result = (|| {
+        if hooks {
+            super::primitives::check_writable(i)?;
+            super::primitives::barf_if_file_locked(i)?;
+            super::primitives::text_ro_range(i, start, end)?;
+            signal_before_change(i, start + 1, end + 1)?;
+            let inhibit = i.q("inhibit-modification-hooks");
+            i.specbind(inhibit, Value::t())?;
+        }
         let (mut x, mut y) = (old.len(), new.len());
         loop {
             if (x > 0 && diff.deleted[x - 1]) || (y > 0 && diff.inserted[y - 1]) {
@@ -494,13 +498,70 @@ mod wide_diff_tests {
 
     #[test]
     fn distinct_private_use_and_extended_codes_are_not_equal() {
-        let old: Vec<_> = [0xf0080, 0xd800, 0x1a0000, 65].into_iter()
-            .map(|code| EmacsChar::new(code).unwrap()).collect();
-        let new: Vec<_> = [0x3fff80, 0xd800, 0x1a0000, 66].into_iter()
-            .map(|code| EmacsChar::new(code).unwrap()).collect();
+        let old: Vec<_> = [0xf0080, 0xd800, 0x1a0000, 65]
+            .into_iter()
+            .map(|code| EmacsChar::new(code).unwrap())
+            .collect();
+        let new: Vec<_> = [0x3fff80, 0xd800, 0x1a0000, 66]
+            .into_iter()
+            .map(|code| EmacsChar::new(code).unwrap())
+            .collect();
         let mut diff = Diff::new(&old, &new, 100, None);
         assert!(diff.compare());
         assert_eq!(diff.deleted, vec![true, false, false, true]);
         assert_eq!(diff.inserted, vec![true, false, false, true]);
+    }
+}
+
+#[cfg(test)]
+mod specbind_error_tests {
+    use super::*;
+
+    #[test]
+    fn replace_region_contents_unwinds_failed_diff_scope_binding() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let target = interp.current_buffer;
+                interp.eval_str("(insert \"old\")").unwrap();
+
+                let source = interp.create_buffer(" *replace-region-source*");
+                let original = interp.current_buffer;
+                interp.set_current_buffer(source);
+                interp.eval_str("(insert \"new\")").unwrap();
+                interp.set_current_buffer(original);
+
+                interp
+                    .eval_str(
+                        "(defvar qa-replace-inhibit-let-count 0)\
+                         (defun qa-replace-inhibit-watcher\
+                                (_symbol _value operation _where)\
+                           (when (and (eq operation 'let)\
+                                      (= (setq qa-replace-inhibit-let-count\
+                                               (1+ qa-replace-inhibit-let-count))\
+                                         2))\
+                             (signal 'file-error '(\"replace binding\"))))\
+                         (add-variable-watcher 'inhibit-modification-hooks\
+                                               #'qa-replace-inhibit-watcher)",
+                    )
+                    .unwrap();
+
+                let depth = interp.specbind_depth();
+                let source = Value::Buffer(interp.buffers.get(source).unwrap());
+                let result =
+                    replace_region_contents(&mut interp, &[Value::Int(1), Value::Int(4), source]);
+                assert!(matches!(
+                    result,
+                    Err(crate::lisp::Flow::Signal(ref signal))
+                        if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+                ));
+                assert_eq!(interp.specbind_depth(), depth);
+                let target = interp.buffers.get(target).unwrap();
+                assert_eq!(target.borrow().text.text(), "old");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

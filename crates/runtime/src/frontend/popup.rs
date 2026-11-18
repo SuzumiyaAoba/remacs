@@ -108,7 +108,7 @@ fn protected_menu_eval(
     let mark = i.specbind_depth();
     let inhibit = i.q("inhibit-redisplay");
     if let Err(flow) = i.specbind(inhibit, Value::t()) {
-        let _ = i.unbind_to(mark);
+        i.unbind_to(mark)?;
         return Err(flow);
     }
     let depth = i.case_handlers.len();

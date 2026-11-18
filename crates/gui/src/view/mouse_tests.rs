@@ -47,11 +47,17 @@ fn mouse_drag_events_keep_current_modifiers() {
     let events: Vec<_> = rx.try_iter().collect();
     assert!(events.iter().any(|event| matches!(
         event,
-        GuiEvent::MouseMove { modifiers: CHAR_SHIFT, .. }
+        GuiEvent::MouseMove {
+            modifiers: CHAR_SHIFT,
+            ..
+        }
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        GuiEvent::MouseDragMove { modifiers: CHAR_SHIFT, .. }
+        GuiEvent::MouseDragMove {
+            modifiers: CHAR_SHIFT,
+            ..
+        }
     )));
 }
 
@@ -96,28 +102,24 @@ fn input_geometry_uses_default_and_per_run_font_metrics() {
                 super::input::shape_grid_row(&base, 0, window, &base.rows[0]).x_for_index(4),
             );
             let tall_width = f32::from(
-                super::input::shape_grid_row(
-                    &tall_default,
-                    0,
-                    window,
-                    &tall_default.rows[0],
-                )
-                .x_for_index(4),
+                super::input::shape_grid_row(&tall_default, 0, window, &tall_default.rows[0])
+                    .x_for_index(4),
             );
             let run_width = f32::from(
-                super::input::shape_grid_row(
-                    &expanded_run,
-                    0,
-                    window,
-                    &expanded_run.rows[0],
-                )
-                .x_for_index(4),
+                super::input::shape_grid_row(&expanded_run, 0, window, &expanded_run.rows[0])
+                    .x_for_index(4),
             );
             (base_width, tall_width, run_width)
         })
         .unwrap();
-    assert!(widths.1 > widths.0 * 1.5, "default face height affects shaping: {widths:?}");
-    assert!(widths.2 > widths.0 * 1.5, "run face metrics affect shaping: {widths:?}");
+    assert!(
+        widths.1 > widths.0 * 1.5,
+        "default face height affects shaping: {widths:?}"
+    );
+    assert!(
+        widths.2 > widths.0 * 1.5,
+        "run face metrics affect shaping: {widths:?}"
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -137,16 +139,14 @@ fn zwj_family_emoji_keeps_following_text_at_grid_column() {
           (erase-buffer) (insert "👨‍👩‍👧‍👦X"))"#,
     )
     .unwrap();
-    assert_eq!(
-        i.eval_str("(string-width \"👨‍👩‍👧‍👦\")")
-            .unwrap()
-            .int(),
-        Some(8)
-    );
+    assert_eq!(i.eval_str("(string-width \"👨‍👩‍👧‍👦\")").unwrap().int(), Some(8));
     let frame = i.selected_frame.as_ref().unwrap().clone();
     reflow_frame_windows(&frame, 40, 12);
     let grid = render_grid_with_input_cached(&i, 40, 12, None);
-    assert!(grid.rows[0].contains('\u{200d}'), "grid row lost the ZWJ joiners");
+    assert!(
+        grid.rows[0].contains('\u{200d}'),
+        "grid row lost the ZWJ joiners"
+    );
 
     let mut app = gpui::TestAppContext::single_with_native_text_system();
     let (tx, _rx) = mpsc::channel();
@@ -209,9 +209,7 @@ fn display_image_dimensions_occupy_grid_columns_and_row_height() {
     assert_eq!(grid.images[0].column, 0);
     assert_eq!(grid.images[0].width, Some(200));
     assert_eq!(grid.images[0].height, Some(100));
-    let x_column = grid.rows[0]
-        .chars()
-        .position(|character| character == 'X');
+    let x_column = grid.rows[0].chars().position(|character| character == 'X');
     assert_eq!(x_column, Some(25));
     assert!(grid.row_heights[0] >= 100);
     assert!(grid.row_heights[1] < grid.row_heights[0]);
@@ -340,7 +338,10 @@ fn trackpad_touch_end_reaches_the_lisp_keymap() {
     }
     let touch_end_symbol = i.intern("qa-touch-end");
     let touch_end = i.symbol_value(touch_end_symbol);
-    assert_eq!(i.prin1_to_string(&touch_end).to_unicode_lossy(), "touch-end");
+    assert_eq!(
+        i.prin1_to_string(&touch_end).to_unicode_lossy(),
+        "touch-end"
+    );
 }
 
 #[test]
@@ -557,7 +558,10 @@ fn mode_line_middle_clicks_send_mode_line_mouse_events() {
     let frame = interp.selected_frame.as_ref().unwrap();
     reflow_frame_windows(frame, 40, 12);
     let grid = render_grid_with_input_cached(&interp, 40, 12, None);
-    let mode_line = *grid.mode_lines.first().expect("mode line should be rendered");
+    let mode_line = *grid
+        .mode_lines
+        .first()
+        .expect("mode line should be rendered");
     assert!(mode_line.width > 0);
 
     let mut app = gpui::TestAppContext::single();

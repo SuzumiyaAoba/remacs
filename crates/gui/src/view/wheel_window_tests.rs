@@ -119,11 +119,7 @@ fn check_nonselected_wheel(stacked: bool, shared: bool, mode_line: bool) {
         .try_iter()
         .filter(|event| matches!(event, GuiEvent::Scroll { .. }))
         .collect();
-    assert_eq!(
-        events.len(),
-        1,
-        "wheel event must reach the pointer target"
-    );
+    assert_eq!(events.len(), 1, "wheel event must reach the pointer target");
     let (bridge_tx, bridge_rx) = mpsc::channel();
     bridge_tx.send(GuiEvent::Resize(80, 16)).unwrap();
     for event in events {
@@ -227,7 +223,6 @@ fn wheel_follows_nonselected_stacked_buffer() {
 fn wheel_follows_nonselected_shared_buffer() {
     check_nonselected_wheel(false, true, false);
 }
-
 
 #[test]
 fn wheel_follows_nonselected_mode_line() {

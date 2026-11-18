@@ -2552,9 +2552,8 @@ fn register_system_sleep_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
     let workspace: id = unsafe { msg_send![class!(NSWorkspace), sharedWorkspace] };
     let notification_center: id = unsafe { msg_send![workspace, notificationCenter] };
 
-    let will_sleep_name = unsafe {
-        NSString::alloc(nil).init_str("NSWorkspaceWillSleepNotification")
-    };
+    let will_sleep_name =
+        unsafe { NSString::alloc(nil).init_str("NSWorkspaceWillSleepNotification") };
     let will_sleep_tx = event_tx.clone();
     let will_sleep = block::ConcreteBlock::new(move |_notification: id| {
         let _ = will_sleep_tx.send(GuiEvent::SystemSleep { sleeping: true });
@@ -2565,9 +2564,7 @@ fn register_system_sleep_listener(event_tx: std::sync::mpsc::Sender<GuiEvent>) {
             object:nil queue:nil usingBlock:will_sleep]
     };
 
-    let did_wake_name = unsafe {
-        NSString::alloc(nil).init_str("NSWorkspaceDidWakeNotification")
-    };
+    let did_wake_name = unsafe { NSString::alloc(nil).init_str("NSWorkspaceDidWakeNotification") };
     let did_wake = block::ConcreteBlock::new(move |_notification: id| {
         let _ = event_tx.send(GuiEvent::SystemSleep { sleeping: false });
     })

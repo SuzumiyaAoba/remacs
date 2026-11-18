@@ -568,9 +568,9 @@ where
             continue;
         }
         let next_character = characters.get(index + 1).map(|(_, character)| *character);
-        if next_character.is_some_and(|next| {
-            next == '\u{200d}' || gui_display_char_width(next) == 0
-        }) {
+        if next_character
+            .is_some_and(|next| next == '\u{200d}' || gui_display_char_width(next) == 0)
+        {
             continue;
         }
 
@@ -2581,6 +2581,7 @@ impl Render for EditorView {
         };
         let mut grid = self.grid.clone();
         let block_cursor_glyphs = prepare_block_cursor_glyphs(&mut grid, default_background);
+        let canvas_grid = grid.clone();
         let images = grid.images.clone();
         let image_cursors = grid.cursors.clone();
         let image_blink_cursor = grid.blink_cursor;
@@ -2804,12 +2805,26 @@ impl Render for EditorView {
                     if let Some((bar, pointer_offset)) =
                         scroll_bar_hit(&left_mouse_down_grid, point)
                     {
+                        let modifiers = mouse_modifier_bits(
+                            &event.modifiers,
+                            modifier_mapping,
+                            left_mouse_down_modifiers.get(),
+                        );
+                        let start_position = scroll_bar_mouse_position(
+                            &bar,
+                            point,
+                            pointer_offset,
+                            window.scale_factor(),
+                        );
                         this.scroll_bar_drag = Some(ScrollBarDrag {
                             window_id: bar.window_id,
                             orientation: bar.orientation,
                             pointer_offset,
+                            start_position,
+                            click_count: event.click_count,
+                            modifiers,
+                            dragged: false,
                         });
-                        send_scroll_bar_event(&left_mouse_down_tx, &bar, point, pointer_offset);
                         window.prevent_default();
                         cx.stop_propagation();
                         return;
@@ -3468,6 +3483,7 @@ impl Render for EditorView {
             .child(
                 canvas(
                     move |_bounds, window, _cx| {
+                        let mut grid = canvas_grid.clone();
                         // One TextRun per contiguous same-style span so
                         // face attributes (colors, bold, underline, …)
                         // land on the cells that carry them.
@@ -3651,12 +3667,9 @@ impl Render for EditorView {
                                     &font_sizes,
                                     None,
                                 );
-                                align_zwj_glyph_positions(
-                                    line,
-                                    row,
-                                    cell_width,
-                                    |byte_index| grid_layout_index(&grid, y, byte_index),
-                                )
+                                align_zwj_glyph_positions(line, row, cell_width, |byte_index| {
+                                    grid_layout_index(&grid, y, byte_index)
+                                })
                             })
                             .collect();
                         *popup_hit_for_shape.borrow_mut() =
@@ -4979,7 +4992,10 @@ fn grid_cursor_blink_visible(grid: &Grid) -> bool {
     elapsed < 0.0 || completed || (elapsed / interval).floor() as u64 % 2 == 1
 }
 
-fn prepare_block_cursor_glyphs(grid: &mut Grid, default_background: u32) -> HashSet<(usize, usize)> {
+fn prepare_block_cursor_glyphs(
+    grid: &mut Grid,
+    default_background: u32,
+) -> HashSet<(usize, usize)> {
     let blink_visible = grid_cursor_blink_visible(grid);
     let cursors = grid.cursors.clone();
     let frame_background = CellColor(
@@ -4992,9 +5008,10 @@ fn prepare_block_cursor_glyphs(grid: &mut Grid, default_background: u32) -> Hash
         if cursor.shape != remacs_runtime::frontend::GridCursorShape::Block
             || cursor.thickness > 0
             || (cursor.selected && grid.blink_cursor && !blink_visible)
-            || grid.images.iter().any(|image| {
-                image.row == cursor.row && image.column == cursor.column
-            })
+            || grid
+                .images
+                .iter()
+                .any(|image| image.row == cursor.row && image.column == cursor.column)
             || grid.compositions.iter().any(|composition| {
                 composition.row == cursor.row && composition.byte_index == cursor.index
             })
@@ -5018,11 +5035,7 @@ fn prepare_block_cursor_glyphs(grid: &mut Grid, default_background: u32) -> Hash
         styles.resize(char_index.saturating_add(1), Default::default());
         let cursor_background = cursor.color.unwrap_or_else(|| {
             let color = gamma_correct_rgb(CURSOR, grid.gamma_exponent);
-            CellColor(
-                (color >> 16) as u8,
-                (color >> 8) as u8,
-                color as u8,
-            )
+            CellColor((color >> 16) as u8, (color >> 8) as u8, color as u8)
         });
         let style = &mut styles[char_index];
         style.fg = Some(frame_background);
@@ -6560,7 +6573,10 @@ mod overline_color_tests {
         assert!(foreground.overline);
         assert_eq!(foreground.overline_color, None);
         assert_eq!(overline_color(explicit, 0, 255, None), rgb(0xff0000).into());
-        assert_eq!(overline_color(foreground, 0, 255, None), rgb(0x0000ff).into());
+        assert_eq!(
+            overline_color(foreground, 0, 255, None),
+            rgb(0x0000ff).into()
+        );
     }
 }
 
@@ -6702,6 +6718,7 @@ mod scroll_bar_color_tests {
             thumb_start: 0,
             thumb_size: 20,
             max_offset: 80,
+            text_width: 80,
         }
     }
 
@@ -6718,7 +6735,6 @@ mod scroll_bar_color_tests {
     }
 
     #[::core::prelude::v1::test]
-            text_width: 80,
     fn inverse_alpha_and_corrected_colors_use_the_common_style_rules() {
         let bar = bar(CellStyle {
             fg: Some(CellColor(128, 64, 32)),
@@ -6874,6 +6890,7 @@ mod accessibility_frame_key_tests {
         resized.pixel_width += 100;
         assert_ne!(accessibility_frame_key(&resized), original_key);
     }
+
 }
 
 #[cfg(test)]

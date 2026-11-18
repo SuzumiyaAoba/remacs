@@ -1,12 +1,8 @@
-use super::interp_with_frame;
-use super::super::minibuf_loop;
 use super::super::super::{InputEvent, KeyIo, MousePosition, MouseWheelDirection};
+use super::super::minibuf_loop;
+use super::interp_with_frame;
 use crate::lisp::{Interp, Value, eval::MinibufInput, text::EmacsText};
-use std::{
-    collections::VecDeque,
-    io,
-    time::Duration,
-};
+use std::{collections::VecDeque, io, time::Duration};
 
 struct WheelFrontend {
     pending: VecDeque<InputEvent>,
@@ -81,9 +77,15 @@ fn single_event_reader_returns_wheel_events_with_position() {
         };
         let fields = event.list_to_vec().unwrap();
         assert_eq!(i.prin1_to_string(&fields[0]).to_unicode_lossy(), expected);
-        assert!(matches!(&fields[1], Value::Cons(_)), "event position is present");
+        assert!(
+            matches!(&fields[1], Value::Cons(_)),
+            "event position is present"
+        );
         assert!(matches!(&fields[3], Value::Int(1)));
-        assert!(matches!(&fields[4], Value::Cons(_)), "pixel delta is present");
+        assert!(
+            matches!(&fields[4], Value::Cons(_)),
+            "pixel delta is present"
+        );
     }
 }
 

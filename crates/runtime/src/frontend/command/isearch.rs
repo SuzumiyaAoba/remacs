@@ -194,8 +194,7 @@ fn isearch_search_pattern(
     } else {
         (query.to_owned(), regexp)
     };
-    if lax_whitespace
-        && let Some(lax_pattern) = isearch_lax_whitespace_pattern(i, &pattern, regexp)
+    if lax_whitespace && let Some(lax_pattern) = isearch_lax_whitespace_pattern(i, &pattern, regexp)
     {
         pattern = lax_pattern;
         regexp = true;
@@ -281,9 +280,7 @@ fn isearch_search(
             _ => None,
         };
         let Some(hit @ (_, beg, end, _)) = hit else {
-            if skipped_invisible
-                && let Some(buffer) = i.current_buffer_ref()
-            {
+            if skipped_invisible && let Some(buffer) = i.current_buffer_ref() {
                 buffer.borrow_mut().set_point(from);
             }
             return None;
@@ -293,7 +290,11 @@ fn isearch_search(
         }
         skipped_invisible = true;
         let next = if backward {
-            if beg == end { beg.saturating_sub(1) } else { beg }
+            if beg == end {
+                beg.saturating_sub(1)
+            } else {
+                beg
+            }
         } else if beg == end {
             end.saturating_add(1)
         } else {
@@ -364,8 +365,12 @@ fn isearch_lax_whitespace_pattern(i: &mut Interp, query: &str, regexp: bool) -> 
     for ch in query.chars() {
         if ch == ' ' {
             if !literal.is_empty() {
-                let quoted = i.apply(&regexp_quote, vec![Value::string(literal.clone())]).ok()?;
-                let Value::Str(quoted) = quoted else { return None; };
+                let quoted = i
+                    .apply(&regexp_quote, vec![Value::string(literal.clone())])
+                    .ok()?;
+                let Value::Str(quoted) = quoted else {
+                    return None;
+                };
                 pattern.push_str(&quoted.borrow().to_unicode_lossy());
                 literal.clear();
             }
@@ -376,7 +381,9 @@ fn isearch_lax_whitespace_pattern(i: &mut Interp, query: &str, regexp: bool) -> 
     }
     if !literal.is_empty() {
         let quoted = i.apply(&regexp_quote, vec![Value::string(literal)]).ok()?;
-        let Value::Str(quoted) = quoted else { return None; };
+        let Value::Str(quoted) = quoted else {
+            return None;
+        };
         pattern.push_str(&quoted.borrow().to_unicode_lossy());
     }
     Some(pattern)
@@ -468,8 +475,11 @@ fn prepare_isearch_yanked_text(
     let not_yanks = i
         .intern_soft("search-upper-case")
         .map(|symbol| i.symbol_value(symbol))
-        .is_some_and(|value| matches!(value, Value::Sym(symbol) if i.symbol_name(symbol) == "not-yanks"));
-    if case_fold.truthy() && not_yanks
+        .is_some_and(
+            |value| matches!(value, Value::Sym(symbol) if i.symbol_name(symbol) == "not-yanks"),
+        );
+    if case_fold.truthy()
+        && not_yanks
         && let Some(downcase) = i.intern_soft("downcase")
         && let Ok(downcased) = i.apply(&Value::Sym(downcase), vec![value.clone()])
     {
@@ -573,9 +583,7 @@ fn edit_isearch_query(
     query: &str,
     regexp: bool,
 ) -> Result<String, crate::lisp::error::Flow> {
-    let initial = i
-        .prin1_to_string(&Value::string(query))
-        .to_unicode_lossy();
+    let initial = i.prin1_to_string(&Value::string(query)).to_unicode_lossy();
     let history = if regexp {
         "regexp-search-ring"
     } else {
@@ -599,9 +607,7 @@ fn read_nonincremental_search(
     regexp: bool,
 ) -> Result<String, crate::lisp::error::Flow> {
     let prompt = if regexp { "RE search: " } else { "Search: " };
-    let prompt = i
-        .prin1_to_string(&Value::string(prompt))
-        .to_unicode_lossy();
+    let prompt = i.prin1_to_string(&Value::string(prompt)).to_unicode_lossy();
     let history = if regexp {
         "regexp-search-ring"
     } else {
@@ -617,13 +623,13 @@ fn read_nonincremental_search(
     }
 }
 
-fn read_isearch_character_by_name(
-    i: &mut Interp,
-) -> Result<String, crate::lisp::error::Flow> {
+fn read_isearch_character_by_name(i: &mut Interp) -> Result<String, crate::lisp::error::Flow> {
     let read_char = Value::Sym(i.intern("read-char-by-name"));
     let value = i.apply(
         &read_char,
-        vec![Value::string("Add character to search (Unicode name or hex): ")],
+        vec![Value::string(
+            "Add character to search (Unicode name or hex): ",
+        )],
     )?;
     let Some(character) = value
         .int()
@@ -843,8 +849,7 @@ impl Isearch {
 
     fn case_fold_for_search(&mut self, i: &mut Interp) -> bool {
         if matches!(&self.case_fold, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T)
-            && i
-                .intern_soft("search-upper-case")
+            && i.intern_soft("search-upper-case")
                 .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy())
             && let Some(no_upper_case) = i.intern_soft("isearch-no-upper-case-p")
             && let Ok(result) = i.apply(
@@ -878,7 +883,8 @@ impl Isearch {
             return false;
         };
         self.query = text.borrow().to_unicode_lossy();
-        if let Some(symbol) = i.intern_soft("isearch-last-case-fold-search")
+        if let Some(symbol) = i
+            .intern_soft("isearch-last-case-fold-search")
             .filter(|symbol| i.bound_p(*symbol))
         {
             self.case_fold = i.symbol_value(symbol);
@@ -892,7 +898,10 @@ impl Isearch {
         true
     }
 
-    fn complete_search_ring(&self, i: &mut Interp) -> Result<Option<String>, crate::lisp::error::Flow> {
+    fn complete_search_ring(
+        &self,
+        i: &mut Interp,
+    ) -> Result<Option<String>, crate::lisp::error::Flow> {
         let ring_symbol = i.intern(if self.regexp {
             "regexp-search-ring"
         } else {
@@ -902,21 +911,18 @@ impl Isearch {
         let completion_ignore_case = i.intern("completion-ignore-case");
         let try_completion = Value::Sym(i.intern("try-completion"));
         let depth = i.specbind_depth();
-        let result = i.specbind(completion_ignore_case, self.case_fold.clone()).and_then(|()| {
-            i.apply(
-                &try_completion,
-                vec![Value::string(self.query.clone()), ring],
-            )
-        });
-        let result = match (result, i.unbind_to(depth)) {
-            (Ok(result), Ok(())) => result,
-            (Err(flow), _) | (Ok(_), Err(flow)) => return Err(flow),
-        };
+        let result = i
+            .specbind(completion_ignore_case, self.case_fold.clone())
+            .and_then(|()| {
+                i.apply(
+                    &try_completion,
+                    vec![Value::string(self.query.clone()), ring],
+                )
+            });
+        let result = i.unbind_to(depth).and(result)?;
         match result {
             Value::Nil => Ok(None),
-            Value::Sym(symbol) if i.symbol_name(symbol) == "t" => {
-                Ok(Some(self.query.clone()))
-            }
+            Value::Sym(symbol) if i.symbol_name(symbol) == "t" => Ok(Some(self.query.clone())),
             Value::Str(text) => Ok(Some(text.borrow().to_unicode_lossy())),
             other => Err(i.wrong_type_mut("stringp", &other)),
         }
@@ -954,9 +960,9 @@ impl Isearch {
                 vec![Value::Sym(ring), value, max, Value::t()],
             )
         });
-        match (result, i.unbind_to(depth)) {
-            (Ok(_), Ok(())) => {}
-            (Err(flow), _) | (Ok(_), Err(flow)) => report_flow(i, flow),
+        match i.unbind_to(depth).and(result) {
+            Ok(_) => {}
+            Err(flow) => report_flow(i, flow),
         }
         let last_case_fold = i.intern("isearch-last-case-fold-search");
         if let Err(flow) = i.set_symbol(last_case_fold, self.case_fold.clone()) {
@@ -1092,9 +1098,7 @@ impl Isearch {
         if text.is_empty() {
             return;
         }
-        let failure_start = self
-            .fail_pos
-            .unwrap_or_else(|| self.query.chars().count());
+        let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
         self.save_history();
         self.query.push_str(text);
         self.search_updated_query(i, failure_start);
@@ -1344,9 +1348,7 @@ impl Isearch {
         if self.quote_next {
             self.quote_next = false;
             if let Some(ch) = isearch_quoted_character(key) {
-                let failure_start = self
-                    .fail_pos
-                    .unwrap_or_else(|| self.query.chars().count());
+                let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                 self.save_history();
                 self.query.push(ch);
                 self.search_updated_query(i, failure_start);
@@ -1365,22 +1367,18 @@ impl Isearch {
             };
             match isearch_yank_until_char(i, anchor, delimiter) {
                 Some(text) if !text.is_empty() => {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
-                    let text = prepare_isearch_yanked_text(
-                        i,
-                        &text,
-                        &self.case_fold,
-                        self.regexp,
-                    );
+                    let text = prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                     self.query.push_str(&text);
                     self.search_updated_query(i, failure_start);
                 }
                 None => {
                     let message = format!("`{delimiter}' not found");
-                    i.set_echo_message_with_properties(EmacsText::from(message.as_str()), Vec::new());
+                    i.set_echo_message_with_properties(
+                        EmacsText::from(message.as_str()),
+                        Vec::new(),
+                    );
                 }
                 _ => {}
             }
@@ -1480,16 +1478,11 @@ impl Isearch {
                     if let Some(text) = isearch_yank_line(i, anchor)
                         && !text.is_empty()
                     {
-                        let failure_start = self
-                            .fail_pos
-                            .unwrap_or_else(|| self.query.chars().count());
+                        let failure_start =
+                            self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                         self.save_history();
-                        let text = prepare_isearch_yanked_text(
-                            i,
-                            &text,
-                            &self.case_fold,
-                            self.regexp,
-                        );
+                        let text =
+                            prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                         self.query.push_str(&text);
                         self.search_updated_query(i, failure_start);
                     }
@@ -1574,8 +1567,7 @@ impl Isearch {
             // RET: accept; mark goes at the entry position.
             13 => {
                 if self.query.is_empty()
-                    && i
-                        .intern_soft("search-nonincremental-instead")
+                    && i.intern_soft("search-nonincremental-instead")
                         .map(|symbol| i.symbol_value(symbol).truthy())
                         .unwrap_or(true)
                 {
@@ -1607,9 +1599,8 @@ impl Isearch {
                 || c == (CHAR_META | CHAR_CTL | 's' as i128)
                 || c == (CHAR_META | CHAR_CTL | 'r' as i128) =>
             {
-                let key_back = c == 18
-                    || c == (CHAR_META | 18)
-                    || c == (CHAR_META | CHAR_CTL | 'r' as i128);
+                let key_back =
+                    c == 18 || c == (CHAR_META | 18) || c == (CHAR_META | CHAR_CTL | 'r' as i128);
                 let prefix_argument = self.prefix_argument.take().unwrap_or(1);
                 self.prefix_digits = false;
                 if prefix_argument == 0 {
@@ -1620,10 +1611,9 @@ impl Isearch {
                 } else {
                     key_back
                 };
-                let repeat_count = usize::try_from(
-                    prefix_argument.checked_abs().unwrap_or(i128::MAX),
-                )
-                .unwrap_or(usize::MAX);
+                let repeat_count =
+                    usize::try_from(prefix_argument.checked_abs().unwrap_or(i128::MAX))
+                        .unwrap_or(usize::MAX);
                 let same_direction = back == self.backward;
                 let repeat_on_direction_change = i
                     .intern_soft("isearch-repeat-on-direction-change")
@@ -1648,20 +1638,12 @@ impl Isearch {
                         } else {
                             point.saturating_add(1)
                         };
-                        self.repeat_searches(
-                            i,
-                            back,
-                            from,
-                            repeat_count - 1,
-                            0,
-                            case_fold_search,
-                        );
+                        self.repeat_searches(i, back, from, repeat_count - 1, 0, case_fold_search);
                     }
                     return IsearchAction::Continue;
                 }
-                let reused_previous = self.query.is_empty()
-                    && same_direction
-                    && self.use_previous_search(i);
+                let reused_previous =
+                    self.query.is_empty() && same_direction && self.use_previous_search(i);
                 if self.query.is_empty() {
                     return IsearchAction::Continue;
                 }
@@ -1736,18 +1718,14 @@ impl Isearch {
                 || c == (CHAR_CTL | 'j' as i128) =>
             {
                 if let Some(ch) = isearch_quoted_character(c) {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
                     self.query.push(ch);
                     self.search_updated_query(i, failure_start);
                 }
                 IsearchAction::Continue
             }
-            c if c == (CHAR_META | CHAR_CTL | 'w' as i128)
-                || c == (CHAR_META | 23) =>
-            {
+            c if c == (CHAR_META | CHAR_CTL | 'w' as i128) || c == (CHAR_META | 23) => {
                 let anchor = if self.backward {
                     self.spans.last().map(|span| span.1).unwrap_or(cur)
                 } else {
@@ -1756,30 +1734,19 @@ impl Isearch {
                 if let Some(text) = isearch_yank_symbol_or_char(i, anchor)
                     && !text.is_empty()
                 {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
-                    let text = prepare_isearch_yanked_text(
-                        i,
-                        &text,
-                        &self.case_fold,
-                        self.regexp,
-                    );
+                    let text = prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                     self.query.push_str(&text);
                     self.search_updated_query(i, failure_start);
                 }
                 IsearchAction::Continue
             }
-            c if c == (CHAR_META | CHAR_CTL | 'z' as i128)
-                || c == (CHAR_META | 26) =>
-            {
+            c if c == (CHAR_META | CHAR_CTL | 'z' as i128) || c == (CHAR_META | 26) => {
                 self.yank_until_char = true;
                 IsearchAction::Continue
             }
-            c if c == (CHAR_META | CHAR_CTL | 'y' as i128)
-                || c == (CHAR_META | 25) =>
-            {
+            c if c == (CHAR_META | CHAR_CTL | 'y' as i128) || c == (CHAR_META | 25) => {
                 let anchor = if self.backward {
                     self.spans.last().map(|span| span.1).unwrap_or(cur)
                 } else {
@@ -1788,16 +1755,9 @@ impl Isearch {
                 if let Some(text) = isearch_yank_char(i, anchor)
                     && !text.is_empty()
                 {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
-                    let text = prepare_isearch_yanked_text(
-                        i,
-                        &text,
-                        &self.case_fold,
-                        self.regexp,
-                    );
+                    let text = prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                     self.query.push_str(&text);
                     self.search_updated_query(i, failure_start);
                 }
@@ -1807,16 +1767,9 @@ impl Isearch {
                 if let Some(text) = isearch_current_kill(i, 0)
                     && !text.is_empty()
                 {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
-                    let text = prepare_isearch_yanked_text(
-                        i,
-                        &text,
-                        &self.case_fold,
-                        self.regexp,
-                    );
+                    let text = prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                     self.query.push_str(&text);
                     self.kill_yank_active = true;
                     self.search_updated_query(i, failure_start);
@@ -1831,31 +1784,20 @@ impl Isearch {
                 if let Some(text) = isearch_current_kill(i, if replace_yank { 1 } else { 0 })
                     && !text.is_empty()
                 {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
-                    let text = prepare_isearch_yanked_text(
-                        i,
-                        &text,
-                        &self.case_fold,
-                        self.regexp,
-                    );
+                    let text = prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                     self.query.push_str(&text);
                     self.kill_yank_active = true;
                     self.search_updated_query(i, failure_start);
                 }
                 IsearchAction::Continue
             }
-            c if c == (CHAR_META | CHAR_CTL | 'd' as i128)
-                || c == (CHAR_META | 4) =>
-            {
+            c if c == (CHAR_META | CHAR_CTL | 'd' as i128) || c == (CHAR_META | 4) => {
                 self.delete_query_char(i);
                 IsearchAction::Continue
             }
-            c if c == (CHAR_META | 9)
-                || c == (CHAR_META | CHAR_CTL | 'i' as i128) =>
-            {
+            c if c == (CHAR_META | 9) || c == (CHAR_META | CHAR_CTL | 'i' as i128) => {
                 self.save_history();
                 match self.complete_search_ring(i) {
                     Ok(Some(query)) => {
@@ -1876,9 +1818,7 @@ impl Isearch {
                 IsearchAction::Continue
             }
             c if c == (CHAR_META | '%' as i128) => IsearchAction::QueryReplace(false),
-            c if c == (CHAR_META | CHAR_CTL | '%' as i128) => {
-                IsearchAction::QueryReplace(true)
-            }
+            c if c == (CHAR_META | CHAR_CTL | '%' as i128) => IsearchAction::QueryReplace(true),
             c if c == (CHAR_META | 'p' as i128) || c == (CHAR_META | 'n' as i128) => {
                 let advance = c == (CHAR_META | 'n' as i128);
                 let ring_symbol = i.intern(if self.regexp {
@@ -1897,10 +1837,11 @@ impl Isearch {
                         "search-ring-yank-pointer"
                     });
                     let length = ring.len() as i128;
-                    let pointer = i
-                        .symbol_value(pointer_symbol)
-                        .int()
-                        .unwrap_or(if advance { 0 } else { -1 });
+                    let pointer = i.symbol_value(pointer_symbol).int().unwrap_or(if advance {
+                        0
+                    } else {
+                        -1
+                    });
                     let index = (pointer + if advance { -1 } else { 1 }).rem_euclid(length);
                     if let Value::Str(text) = ring[index as usize].clone() {
                         self.save_history();
@@ -1945,16 +1886,9 @@ impl Isearch {
                 if let Some(text) = isearch_yank_word_or_char(i, anchor)
                     && !text.is_empty()
                 {
-                    let failure_start = self
-                        .fail_pos
-                        .unwrap_or_else(|| self.query.chars().count());
+                    let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                     self.save_history();
-                    let text = prepare_isearch_yanked_text(
-                        i,
-                        &text,
-                        &self.case_fold,
-                        self.regexp,
-                    );
+                    let text = prepare_isearch_yanked_text(i, &text, &self.case_fold, self.regexp);
                     self.query.push_str(&text);
                     self.search_updated_query(i, failure_start);
                 }
@@ -1979,9 +1913,7 @@ impl Isearch {
                 && c < 0x110000
                 && c & (CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER) == 0 =>
             {
-                let failure_start = self
-                    .fail_pos
-                    .unwrap_or_else(|| self.query.chars().count());
+                let failure_start = self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                 let text = match isearch_input_method_text(i, c) {
                     Ok(Some(text)) => text,
                     Ok(None) => char::from_u32(c as u32)
@@ -2007,15 +1939,15 @@ impl Isearch {
                     .unwrap_or(Value::t());
                 if matches!(&option, Value::Sym(symbol) if i.symbol_name(*symbol) == "append") {
                     if let Some(ch) = isearch_quoted_character(other) {
-                        let failure_start = self
-                            .fail_pos
-                            .unwrap_or_else(|| self.query.chars().count());
+                        let failure_start =
+                            self.fail_pos.unwrap_or_else(|| self.query.chars().count());
                         self.save_history();
                         self.query.push(ch);
                         self.search_updated_query(i, failure_start);
                     }
                     IsearchAction::Continue
-                } else if matches!(&option, Value::Sym(symbol) if i.symbol_name(*symbol) == "edit") {
+                } else if matches!(&option, Value::Sym(symbol) if i.symbol_name(*symbol) == "edit")
+                {
                     self.save_history();
                     match edit_isearch_query(i, &self.query, self.regexp) {
                         Ok(query) => {
@@ -2109,7 +2041,7 @@ impl Isearch {
             && i.bound_p(symbol)
             && let Err(flow) = i.specbind(symbol, if quit { Value::t() } else { Value::Nil })
         {
-            let _ = i.unbind_to(mark);
+            let flow = i.unbind_to(mark).err().unwrap_or(flow);
             report_flow(i, flow);
             return;
         }
@@ -2238,15 +2170,14 @@ impl Isearch {
                 continue;
             }
             if let Err(flow) = i.specbind(symbol, value) {
-                let _ = i.unbind_to(mark);
-                return Err(flow);
+                return match i.unbind_to(mark) {
+                    Ok(()) => Err(flow),
+                    Err(cleanup) => Err(cleanup),
+                };
             }
         }
         let result = action(i);
-        match (result, i.unbind_to(mark)) {
-            (Ok(value), Ok(())) => Ok(value),
-            (Err(flow), _) | (Ok(_), Err(flow)) => Err(flow),
-        }
+        i.unbind_to(mark).and(result)
     }
 
     /// One `apply' of a Lisp helper; errors are ignored (highlighting
@@ -2591,11 +2522,8 @@ impl Isearch {
         } else {
             0.0
         };
-        let interval = isearch_delay_duration(isearch_delay_seconds(
-            i,
-            "lazy-highlight-interval",
-            0.0,
-        ));
+        let interval =
+            isearch_delay_duration(isearch_delay_seconds(i, "lazy-highlight-interval", 0.0));
         let delay = isearch_delay_duration(initial_delay);
         let now = std::time::Instant::now();
         self.lazy_scan = Some(LazyHighlightScan {
@@ -2730,9 +2658,9 @@ fn run_isearch_highlight(i: &mut Interp, pattern: String, case_fold: Value, line
         i.apply(&highlight, vec![Value::string(pattern), face])?;
         Ok(())
     })();
-    match (result, i.unbind_to(depth)) {
-        (Ok(()), Ok(())) => {}
-        (Err(flow), _) | (Ok(()), Err(flow)) => report_flow(i, flow),
+    match i.unbind_to(depth).and(result) {
+        Ok(()) => {}
+        Err(flow) => report_flow(i, flow),
     }
 }
 
@@ -2744,7 +2672,15 @@ pub(super) fn isearch_loop<T: KeyIo>(
 ) -> io::Result<()> {
     let mut st = Isearch::new(i, backward, regexp);
     let mode_symbol = i.intern("isearch-mode");
-    let _ = i.set_symbol(mode_symbol, Value::string(" Isearch"));
+    if let Err(flow) = i.set_symbol(mode_symbol, Value::string(" Isearch")) {
+        if i.macro_replaying || i.macro_strict {
+            i.macro_replay.clear();
+            i.macro_pending_flow = Some(flow);
+        } else {
+            report_flow(i, flow);
+        }
+        return Ok(());
+    }
     st.run_lisp_hook(i, "isearch-mode-hook");
     let mut render_needed = true;
     let mut message_needed = true;
@@ -2813,7 +2749,22 @@ pub(super) fn isearch_loop<T: KeyIo>(
             let _ = t.draw_echo_message_with_state(i, &label);
             render_needed = false;
         }
-        let input = term.borrow_mut().poll_key_or_mouse(Duration::from_millis(50))?;
+        let input = if i.macro_replaying {
+            match i.macro_replay.pop_front() {
+                Some(key) => {
+                    let index = i.q("executing-kbd-macro-index");
+                    let next = i.symbol_value(index).int().unwrap_or(0) + 1;
+                    i.store_internal_value(index, Value::Int(next));
+                    Some(InputEvent::Key(key))
+                }
+                // The macro is finished. The outer command loop or
+                // `kbd-macro-termination-hook' handles the next state.
+                None => break,
+            }
+        } else {
+            term.borrow_mut()
+                .poll_key_or_mouse(Duration::from_millis(50))?
+        };
         apply_frame_selection(term, i);
         super::sync_mouse_absolute_pixel_position(term, i);
         if let Err(flow) = super::sync_nested_frame_geometry(term, i) {
@@ -2846,10 +2797,12 @@ pub(super) fn isearch_loop<T: KeyIo>(
                         frame.borrow().minibuffer.as_ref().is_some_and(|window| {
                             let window = window.borrow();
                             !window.dead
-                                && mouse.start.window_id.map_or(
-                                    window.buffer == mouse.start.buffer_id,
-                                    |id| id == window.id,
-                                )
+                                && mouse
+                                    .start
+                                    .window_id
+                                    .map_or(window.buffer == mouse.start.buffer_id, |id| {
+                                        id == window.id
+                                    })
                         })
                     });
                 if !edit_click_pending {
@@ -2967,10 +2920,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                         i.apply(&occur, vec![Value::string(pattern), Value::Nil])
                             .map(|_| ())
                     });
-                if let Err(flow) = match (result, i.unbind_to(depth)) {
-                    (Ok(()), Ok(())) => Ok(()),
-                    (Err(flow), _) | (Ok(()), Err(flow)) => Err(flow),
-                } {
+                if let Err(flow) = i.unbind_to(depth).and(result) {
                     report_flow(i, flow);
                 }
                 return Ok(());

@@ -305,6 +305,7 @@ fn creation_disconnect_and_pointer_errors_return_to_lisp() {
     }
 }
 
+
 #[test]
 fn x_popup_dialog_waits_until_a_new_frame_is_ready() {
     thread::Builder::new()

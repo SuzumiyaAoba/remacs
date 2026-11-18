@@ -28,7 +28,11 @@ pub fn initialize() {
     INVOCATION.get_or_init(|| {
         let arguments: Vec<_> = std::env::args_os().collect();
         let executable = arguments.first().and_then(|name| find_executable(name));
-        Invocation { arguments, executable, shutdown: Mutex::new(None) }
+        Invocation {
+            arguments,
+            executable,
+            shutdown: Mutex::new(None),
+        }
     });
 }
 
@@ -41,7 +45,9 @@ pub(crate) fn validate_restart() -> Result<(), RestartError> {
         return Err(RestartError::UnknownExecutable);
     };
     if !file_access(executable, libc::F_OK) {
-        return Err(RestartError::MissingExecutable(invocation.arguments[0].clone()));
+        return Err(RestartError::MissingExecutable(
+            invocation.arguments[0].clone(),
+        ));
     }
     Ok(())
 }
@@ -49,7 +55,10 @@ pub(crate) fn validate_restart() -> Result<(), RestartError> {
 /// Only an accepted exit reaches here. Inner exits from hooks win first.
 pub(crate) fn accept_shutdown(code: i128, restart: bool) {
     if let Some(invocation) = INVOCATION.get() {
-        let mut shutdown = invocation.shutdown.lock().unwrap_or_else(|e| e.into_inner());
+        let mut shutdown = invocation
+            .shutdown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         shutdown.get_or_insert(Shutdown { code, restart });
     }
 }
@@ -58,7 +67,10 @@ pub(crate) fn accept_shutdown(code: i128, restart: bool) {
 /// Batch exits can reach this directly, without running Lisp cleanup.
 pub fn exit(code: i128) -> ! {
     if let Some(invocation) = INVOCATION.get() {
-        let shutdown = *invocation.shutdown.lock().unwrap_or_else(|e| e.into_inner());
+        let shutdown = *invocation
+            .shutdown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(shutdown) = shutdown {
             if shutdown.restart {
                 if let Some(executable) = &invocation.executable {
@@ -66,14 +78,24 @@ pub fn exit(code: i128) -> ! {
                     let error = reexecute(executable, &invocation.arguments[1..]);
                     #[cfg(not(unix))]
                     let error = match std::process::Command::new(executable)
-                        .args(&invocation.arguments[1..]).status() {
+                        .args(&invocation.arguments[1..])
+                        .status()
+                    {
                         Ok(status) => std::process::exit(status.code().unwrap_or(1)),
                         Err(error) => error,
                     };
-                    let message = error.raw_os_error().map(|number| unsafe {
-                        std::ffi::CStr::from_ptr(libc::strerror(number)).to_string_lossy().into_owned()
-                    }).unwrap_or_else(|| error.to_string());
-                    eprintln!("{}: Unable to re-execute Emacs: {message}", invocation.arguments[0].to_string_lossy());
+                    let message = error
+                        .raw_os_error()
+                        .map(|number| unsafe {
+                            std::ffi::CStr::from_ptr(libc::strerror(number))
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .unwrap_or_else(|| error.to_string());
+                    eprintln!(
+                        "{}: Unable to re-execute Emacs: {message}",
+                        invocation.arguments[0].to_string_lossy()
+                    );
                 }
             }
             std::process::exit(shutdown.code as i32);
@@ -88,11 +110,18 @@ fn reexecute(executable: &Path, arguments: &[OsString]) -> std::io::Error {
     // execvp preserves the process environment and ignored signal dispositions.
     // Command::exec also performs child setup (including resetting SIGPIPE).
     let program = std::ffi::CString::new(executable.as_os_str().as_bytes()).unwrap();
-    let arguments: Vec<_> = std::iter::once(program.clone()).chain(arguments.iter()
-        .map(|arg| std::ffi::CString::new(arg.as_bytes()).unwrap())).collect();
+    let arguments: Vec<_> = std::iter::once(program.clone())
+        .chain(
+            arguments
+                .iter()
+                .map(|arg| std::ffi::CString::new(arg.as_bytes()).unwrap()),
+        )
+        .collect();
     let mut pointers: Vec<_> = arguments.iter().map(|arg| arg.as_ptr()).collect();
     pointers.push(std::ptr::null());
-    unsafe { libc::execvp(program.as_ptr(), pointers.as_ptr()); }
+    unsafe {
+        libc::execvp(program.as_ptr(), pointers.as_ptr());
+    }
     std::io::Error::last_os_error()
 }
 
@@ -112,15 +141,21 @@ fn file_access(path: &Path, mode: libc::c_int) -> bool {
 }
 
 #[cfg(not(unix))]
-fn file_access(path: &Path, _mode: libc::c_int) -> bool { path.exists() }
+fn file_access(path: &Path, _mode: libc::c_int) -> bool {
+    path.exists()
+}
 
 #[cfg(unix)]
 fn default_path() -> Option<OsString> {
     use std::os::unix::ffi::OsStringExt;
     let length = unsafe { libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0) };
-    if length == 0 { return None; }
+    if length == 0 {
+        return None;
+    }
     let mut bytes = vec![0; length];
-    unsafe { libc::confstr(libc::_CS_PATH, bytes.as_mut_ptr().cast(), length); }
+    unsafe {
+        libc::confstr(libc::_CS_PATH, bytes.as_mut_ptr().cast(), length);
+    }
     bytes.pop();
     Some(OsString::from_vec(bytes))
 }
@@ -131,9 +166,15 @@ fn find_executable(name: &OsStr) -> Option<PathBuf> {
     if name.as_bytes().contains(&b'/') {
         return Some(follow_if_symlink(PathBuf::from(name)));
     }
-    let path = std::env::var_os("PATH").filter(|p| !p.is_empty()).or_else(default_path)?;
+    let path = std::env::var_os("PATH")
+        .filter(|p| !p.is_empty())
+        .or_else(default_path)?;
     for directory in std::env::split_paths(&path) {
-        let directory = if directory.as_os_str().is_empty() { Path::new(".") } else { &directory };
+        let directory = if directory.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            &directory
+        };
         let candidate = directory.join(name);
         if file_access(&candidate, libc::X_OK) && candidate.is_file() {
             return Some(follow_if_symlink(candidate));
@@ -144,4 +185,6 @@ fn find_executable(name: &OsStr) -> Option<PathBuf> {
 }
 
 #[cfg(not(unix))]
-fn find_executable(_name: &OsStr) -> Option<PathBuf> { std::env::current_exe().ok() }
+fn find_executable(_name: &OsStr) -> Option<PathBuf> {
+    std::env::current_exe().ok()
+}

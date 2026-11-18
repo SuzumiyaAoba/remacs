@@ -16,6 +16,30 @@ use std::time::{Duration, Instant};
 mod isearch;
 use isearch::*;
 
+/// Macro replay has no physical device, but isearch still needs the shared
+/// loop to consume the macro's remaining keys. Redisplay is inert here.
+struct MacroReplayKeyIo;
+
+impl KeyIo for MacroReplayKeyIo {
+    fn poll_key(&mut self, _dur: Duration) -> io::Result<Option<i128>> {
+        Ok(None)
+    }
+
+    fn unread(&mut self, _key: i128) {}
+
+    fn render(&mut self, _interp: &Interp) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn draw_echo(&mut self, _text: &str) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn size(&self) -> (usize, usize) {
+        (0, 0)
+    }
+}
+
 pub(super) fn sync_mouse_absolute_pixel_position<T: KeyIo>(
     term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
@@ -37,10 +61,7 @@ pub(super) fn sync_nested_frame_geometry<T: KeyIo>(
     Ok(())
 }
 
-fn sync_frame_pixel_geometry<T: KeyIo>(
-    term: &std::rc::Rc<std::cell::RefCell<T>>,
-    i: &mut Interp,
-) {
+fn sync_frame_pixel_geometry<T: KeyIo>(term: &std::rc::Rc<std::cell::RefCell<T>>, i: &mut Interp) {
     let geometry = term.borrow().frame_pixel_geometry();
     if geometry.is_empty() {
         return;
@@ -57,10 +78,10 @@ fn sync_frame_pixel_geometry<T: KeyIo>(
             continue;
         };
         let mut frame = frame.borrow_mut();
-        let width_changed = crate::lisp::eval::plist_get(&frame.params, pixel_width).int()
-            != Some(width);
-        let height_changed = crate::lisp::eval::plist_get(&frame.params, pixel_height).int()
-            != Some(height);
+        let width_changed =
+            crate::lisp::eval::plist_get(&frame.params, pixel_width).int() != Some(width);
+        let height_changed =
+            crate::lisp::eval::plist_get(&frame.params, pixel_height).int() != Some(height);
         if !width_changed && !height_changed {
             continue;
         }
@@ -121,7 +142,7 @@ pub fn run_batch_editor(i: &mut Interp) -> Result<(), crate::lisp::Flow> {
                     Some(&mut flow),
                     None,
                 )
-                    .map_err(|error| i.error(&error.to_string()))?;
+                .map_err(|error| i.error(&error.to_string()))?;
                 if flow.is_some() {
                     break;
                 }
@@ -235,15 +256,20 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
     }));
 
     let t = term.clone();
-    i.sit_for_waiter = Some(std::rc::Rc::new(move |interp, duration| {
+    i.sit_for_waiter = Some(std::rc::Rc::new(move |interp, duration, options| {
         let deadline = Instant::now() + duration;
-        let mut render_needed = true;
+        let mut render_needed = options.redisplay;
         loop {
             let thread_activity = crate::lisp::eval::threads::yield_now(interp)?;
-            let event_activity = crate::lisp::builtins::evalfn::thread_wait_events(interp)?;
+            let event_activity = if options.process_timers {
+                crate::lisp::builtins::evalfn::thread_wait_events(interp)?
+            } else {
+                crate::lisp::builtins::evalfn::thread_wait_events_without_timers(interp)?
+            };
             let window_activity = run_frontend_changes(&t, interp)?;
-            let render_requested = t.borrow_mut().take_render_request();
-            render_needed |= thread_activity || event_activity || window_activity || render_requested;
+            let render_requested = options.redisplay && t.borrow_mut().take_render_request();
+            render_needed |= options.redisplay
+                && (thread_activity || event_activity || window_activity || render_requested);
             if render_needed {
                 if let Err(flow) = t.borrow_mut().run_pre_redisplay_functions(interp) {
                     return Err(flow);
@@ -273,7 +299,7 @@ pub fn install_minibuf_reader<T: KeyIo + 'static>(
                 interp.pending_frontend_input.push_back(input);
                 return Ok(true);
             }
-            if t.borrow_mut().take_render_request() {
+            if options.redisplay && t.borrow_mut().take_render_request() {
                 render_needed = true;
             }
             if remaining.is_zero() {
@@ -566,7 +592,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             None => {
                 let ek = i.q("executing-kbd-macro");
                 if i.symbol_value(ek).truthy() {
-                    let _ = i.set_symbol(ek, Value::Nil);
+                    i.store_internal_value(ek, Value::Nil);
                 }
                 if let Some(input) = i.pending_frontend_input.pop_front() {
                     input
@@ -590,11 +616,11 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
         };
         match input {
             InputEvent::Key(key) => dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?,
-            InputEvent::Text(text) => {
-                dispatch_text(&term, i, &text, &mut keys, &mut arg_mode)?
-            }
-            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. }
-            | InputEvent::PopupMenuHover { .. } | InputEvent::PopupMenuScrollAt { .. } => {}
+            InputEvent::Text(text) => dispatch_text(&term, i, &text, &mut keys, &mut arg_mode)?,
+            InputEvent::PopupMenuSelection { .. }
+            | InputEvent::PopupMenuScroll { .. }
+            | InputEvent::PopupMenuHover { .. }
+            | InputEvent::PopupMenuScrollAt { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
@@ -693,19 +719,13 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::TouchEnd {
                 modifiers,
                 position,
-            } => dispatch_touch_end(
-                &term,
-                i,
-                modifiers,
-                position,
-                &mut keys,
-                &mut arg_mode,
-            )?,
+            } => dispatch_touch_end(&term, i, modifiers, position, &mut keys, &mut arg_mode)?,
             InputEvent::ScrollBar {
                 window_id,
                 orientation,
                 offset,
                 max_offset,
+                text_width,
                 mouse,
             } => dispatch_scroll_bar_input(
                 &term,
@@ -714,6 +734,7 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 orientation,
                 offset,
                 max_offset,
+                text_width,
                 mouse,
                 &mut keys,
                 &mut arg_mode,
@@ -721,7 +742,6 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             InputEvent::FrameMoved {
                 frame_id,
                 left,
-                text_width,
                 top,
             } => {
                 if let Err(flow) = dispatch_frame_moved(i, frame_id, left, top) {
@@ -730,7 +750,6 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
             }
             InputEvent::FrameFontMetrics { frame_id, metrics } => {
                 i.frame_font_metrics.insert(frame_id, metrics);
-                text_width,
             }
         }
         render_needed = true;
@@ -805,10 +824,7 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         } else {
             "handle-focus-out"
         };
-        let event = Value::list(vec![
-            Value::Sym(i.intern(event_name)),
-            Value::Frame(frame),
-        ]);
+        let event = Value::list(vec![Value::Sym(i.intern(event_name)), Value::Frame(frame)]);
         let handler = Value::Sym(i.intern(handler_name));
         if let Err(flow) = i.apply(&handler, vec![event]) {
             report_flow(i, flow);
@@ -876,6 +892,70 @@ mod native_fullscreen_parameter_tests {
                     apply_native_fullscreen_update(&mut interp, frame_id, state);
                     let actual = interp
                         .eval_str("(frame-parameter nil 'fullscreen)")
+                        .unwrap();
+                    assert_eq!(interp.prin1_to_string(&actual), expected);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod native_visibility_update_tests {
+    use super::apply_frame_selection;
+    use crate::{
+        frontend::{FrameVisibility, KeyIo},
+        lisp::Interp,
+    };
+    use std::{cell::RefCell, io, rc::Rc, time::Duration};
+
+    struct VisibilityIo(Option<(usize, FrameVisibility)>);
+
+    impl KeyIo for VisibilityIo {
+        fn poll_key(&mut self, _dur: Duration) -> io::Result<Option<i128>> {
+            Ok(None)
+        }
+
+        fn unread(&mut self, _key: i128) {}
+
+        fn render(&mut self, _interp: &Interp) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn draw_echo(&mut self, _text: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn size(&self) -> (usize, usize) {
+            (80, 24)
+        }
+
+        fn take_frame_visibility_update(&mut self) -> Option<(usize, FrameVisibility)> {
+            self.0.take()
+        }
+    }
+
+    #[test]
+    fn native_visibility_updates_keep_hidden_and_iconified_distinct() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let frame_id = interp.selected_frame.as_ref().unwrap().borrow().id;
+                for (native_visibility, expected) in [
+                    (FrameVisibility::Hidden, "nil"),
+                    (FrameVisibility::Iconified, "icon"),
+                    (FrameVisibility::Visible, "t"),
+                ] {
+                    let term = Rc::new(RefCell::new(VisibilityIo(Some((
+                        frame_id,
+                        native_visibility,
+                    )))));
+                    apply_frame_selection(&term, &mut interp);
+                    let actual = interp
+                        .eval_str("(frame-visible-p (selected-frame))")
                         .unwrap();
                     assert_eq!(interp.prin1_to_string(&actual), expected);
                 }
@@ -961,7 +1041,7 @@ fn dispatch_key_core_inner(
                 i.command_raw_key_events = vec![input_event.clone()];
                 i.command_key_start = 0;
                 let lce = i.q("last-command-event");
-                let _ = i.set_symbol(lce, input_event);
+                i.store_internal_value(lce, input_event);
                 let name = if cu {
                     "universal-argument"
                 } else {
@@ -969,8 +1049,13 @@ fn dispatch_key_core_inner(
                 };
                 let id = i.intern(name);
                 let was_capturing = std::mem::replace(&mut i.command_key_capture_active, true);
-                if i.command_execute(&Value::Sym(id)).is_ok() {
-                    post_command_undo_boundary(i);
+                match i.command_execute(&Value::Sym(id)) {
+                    Ok(_) => post_command_undo_boundary(i),
+                    Err(flow) if i.macro_replaying || i.macro_strict => {
+                        i.macro_replay.clear();
+                        i.macro_pending_flow = Some(flow);
+                    }
+                    Err(flow) => report_flow(i, flow),
                 }
                 i.command_key_capture_active = was_capturing;
                 crate::editor::record_recent_command(i, Value::Sym(id));
@@ -1038,20 +1123,20 @@ fn dispatch_key_core_inner(
                 crate::editor::record_recent_command(i, cmd.clone());
                 keys.clear();
                 let lce = i.q("last-command-event");
-                let _ = i.set_symbol(lce, input_event.clone());
+                i.store_internal_value(lce, input_event.clone());
                 let this_cmd = i.q("this-command");
                 let prev = i.symbol_value(this_cmd);
                 let lc = i.q("last-command");
-                let _ = i.set_symbol(lc, prev);
-                let _ = i.set_symbol(this_cmd, cmd.clone());
+                i.store_internal_value(lc, prev);
+                i.store_internal_value(this_cmd, cmd.clone());
                 let pa = i.q("prefix-arg");
                 let prefix = i.symbol_value(pa);
                 let has_prefix_arg = !prefix.is_nil();
                 let cpa = i.q("current-prefix-arg");
-                let _ = i.set_symbol(cpa, prefix);
+                i.store_internal_value(cpa, prefix);
                 // Consume prefix-arg BEFORE executing so commands that
                 // set it (C-u, digit-argument) affect the NEXT command.
-                let _ = i.set_symbol(pa, Value::Nil);
+                i.store_internal_value(pa, Value::Nil);
                 // isearch commands enter a dedicated incremental loop
                 // rather than running once through command_execute.
                 let isearch_cmd = if let Value::Sym(id) = &cmd {
@@ -1077,6 +1162,22 @@ fn dispatch_key_core_inner(
                         i.command_raw_key_events.clear();
                         i.command_key_start = 0;
                         return Ok(());
+                    } else if i.macro_replaying {
+                        // GNU keyboard macros feed their remaining events to
+                        // the nested isearch loop. Running the Lisp
+                        // interactive fallback here would instead prompt
+                        // for a search string and hit EOF in batch mode.
+                        let term = std::rc::Rc::new(std::cell::RefCell::new(MacroReplayKeyIo));
+                        let was_capturing =
+                            std::mem::replace(&mut i.command_key_capture_active, true);
+                        let result = isearch_loop(&term, i, back, re);
+                        i.command_key_capture_active = was_capturing;
+                        result?;
+                        post_command_undo_boundary(i);
+                        i.command_key_events.clear();
+                        i.command_raw_key_events.clear();
+                        i.command_key_start = 0;
+                        return Ok(());
                     }
                 }
                 // GNU command_loop_1: `pre-command-hook' runs before
@@ -1091,17 +1192,15 @@ fn dispatch_key_core_inner(
                 let result = if skip_command {
                     Ok(Value::Nil)
                 } else if let Some(event) = command_event {
-                    i.command_execute_with_keys(
-                        &cmd,
-                        &Value::vector(vec![event.clone()]),
-                    )
+                    i.command_execute_with_keys(&cmd, &Value::vector(vec![event.clone()]))
                 } else {
                     i.command_execute(&cmd)
                 };
                 match result {
                     Ok(_) => {
                         boundary = !skip_command;
-                        if matches!(&cmd, Value::Sym(id) if i.symbol_name(*id) == "self-insert-command") {
+                        if matches!(&cmd, Value::Sym(id) if i.symbol_name(*id) == "self-insert-command")
+                        {
                             hide_pointer_after_self_insert(i);
                         }
                     }
@@ -1169,8 +1268,8 @@ fn dispatch_key_core_inner(
                             i.macro_pending_flow = Some(crate::lisp::error::Flow::Throw(tag, v));
                         } else {
                             let mut message = EmacsText::from("No catch for tag: ");
-            message.append(&i.princ_to_string(&tag));
-            i.message(&message);
+                            message.append(&i.princ_to_string(&tag));
+                            i.message(&message);
                         }
                     }
                     Err(crate::lisp::error::Flow::Exit(_)) => {
@@ -1225,8 +1324,8 @@ fn dispatch_key_core_inner(
                             let this_cmd = i.q("this-command");
                             let prev = i.symbol_value(this_cmd);
                             let lc = i.q("last-command");
-                            let _ = i.set_symbol(lc, prev);
-                            let _ = i.set_symbol(this_cmd, cmd_sym);
+                            i.store_internal_value(lc, prev);
+                            i.store_internal_value(this_cmd, cmd_sym);
                             let was_capturing =
                                 std::mem::replace(&mut i.command_key_capture_active, true);
                             let _ = crate::lisp::builtins::evalfn::safe_call_hook(
@@ -1243,7 +1342,8 @@ fn dispatch_key_core_inner(
                                     if let Some(b) = i.current_buffer_ref() {
                                         let p = b.borrow().point();
                                         if p > 0 {
-                                            let _ = crate::buffer::primitives::chg_delete(i, p - 1, p);
+                                            let _ =
+                                                crate::buffer::primitives::chg_delete(i, p - 1, p);
                                         }
                                     }
                                 } else if i.current_buffer_ref().is_some() {
@@ -1307,7 +1407,7 @@ pub fn replay_macro_events(i: &mut Interp, stop: usize) {
             break;
         };
         let eki = i.q("executing-kbd-macro-index");
-        let _ = i.set_symbol(eki, Value::Int(idx));
+        i.store_internal_value(eki, Value::Int(idx));
         idx += 1;
         i.macro_replaying = true;
         if dispatch_key_core(i, k, &mut keys, &mut arg_mode, None).is_err() {
@@ -1429,10 +1529,13 @@ fn dispatch_ns_open_files(
         } else {
             "ns-find-file"
         };
-        let _ = i.set_symbol(ns_input_file, Value::list(vec![Value::string(path)]));
-        let _ = i.set_symbol(
+        // GNU's AppKit event bridge writes these forwarded NS input cells
+        // directly before dispatching the corresponding Lisp command.
+        i.store_internal_value(ns_input_file, Value::list(vec![Value::string(path)]));
+        i.store_internal_value(
             ns_input_line,
-            line.map(|line| Value::Int(line as i128)).unwrap_or(Value::Nil),
+            line.map(|line| Value::Int(line as i128))
+                .unwrap_or(Value::Nil),
         );
         dispatch_frontend_command(i, command, keys, arg_mode);
     }
@@ -1447,8 +1550,9 @@ fn dispatch_ns_service(
 ) {
     let service_name = i.intern("ns-input-spi-name");
     let service_argument = i.intern("ns-input-spi-arg");
-    let _ = i.set_symbol(service_name, Value::string(name));
-    let _ = i.set_symbol(service_argument, Value::string(argument));
+    // Match the direct C writes made by GNU's NS service callback.
+    i.store_internal_value(service_name, Value::string(name));
+    i.store_internal_value(service_argument, Value::string(argument));
     dispatch_frontend_command(i, "ns-spi-service-call", keys, arg_mode);
 }
 
@@ -1499,11 +1603,7 @@ fn reveal_pointer_after_mouse_move(i: &mut Interp, frame_id: Option<usize>) {
     }
 }
 
-fn mouse_movement_event(
-    i: &mut Interp,
-    position: Option<MousePosition>,
-    modifiers: i128,
-) -> Value {
+fn mouse_movement_event(i: &mut Interp, position: Option<MousePosition>, modifiers: i128) -> Value {
     let position = position
         .and_then(|position| mouse_position_value(i, position))
         .unwrap_or(Value::Nil);
@@ -1523,7 +1623,10 @@ fn dispatch_mouse_movement(
     crate::editor::record_recent_input_event(i, event.clone());
     let key = crate::editor::event_code_for(&name);
     let sequence = Value::vector(vec![Value::Int(key)]);
-    if matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None) {
+    if matches!(
+        lookup_command_at_event(i, &sequence, &event),
+        LookupResult::None
+    ) {
         return Ok(());
     }
     let last_input = i.q("last-input-event");
@@ -1537,11 +1640,7 @@ fn remember_gui_mouse_position(
     frame_position: Option<(i128, i128)>,
     frame_pixel_position: Option<(i128, i128)>,
 ) -> Option<usize> {
-    let frame_id = frame_id.or_else(|| {
-        i.selected_frame
-            .as_ref()
-            .map(|frame| frame.borrow().id)
-    });
+    let frame_id = frame_id.or_else(|| i.selected_frame.as_ref().map(|frame| frame.borrow().id));
     i.gui_mouse_frame_position = frame_id
         .zip(frame_position)
         .map(|(frame_id, (x, y))| (frame_id, x, y));
@@ -1849,9 +1948,7 @@ fn dispatch_mouse<T: KeyIo>(
     let last_input = i.q("last-input-event");
     i.store_internal_value(last_input, event.clone());
     i.gui_popup_menu = None;
-    let old_mouse_position = i
-        .gui_mouse_position
-        .replace((mouse.end.x, mouse.end.y));
+    let old_mouse_position = i.gui_mouse_position.replace((mouse.end.x, mouse.end.y));
 
     let drag = mouse_input_dragged(mouse);
     let context_menu_mode = i
@@ -1912,19 +2009,12 @@ fn dispatch_mouse<T: KeyIo>(
     // the selection to mouse-set-region / mouse-start-end.
     let mut promote_click = false;
     if mouse.button == MouseButton::Left && !drag && click_count > 1 {
-        let specific = lookup_command_at_event(
-            i,
-            &Value::vector(vec![Value::Int(key)]),
-            &event,
-        );
+        let specific = lookup_command_at_event(i, &Value::vector(vec![Value::Int(key)]), &event);
         if matches!(specific, LookupResult::None) {
             let base_name = mouse_event_name("mouse-1", mouse.modifiers);
             let base_key = crate::editor::event_code_for(&base_name);
-            let base = lookup_command_at_event(
-                i,
-                &Value::vector(vec![Value::Int(base_key)]),
-                &event,
-            );
+            let base =
+                lookup_command_at_event(i, &Value::vector(vec![Value::Int(base_key)]), &event);
             if matches!(&base, LookupResult::Command(Value::Sym(id))
                 if i.symbol_name(*id) == "mouse-set-point")
             {
@@ -1935,11 +2025,12 @@ fn dispatch_mouse<T: KeyIo>(
     }
     if promote_click && keys.is_empty() && !*arg_mode {
         let prefix_arg = i.q("prefix-arg");
-        let _ = i.set_symbol(prefix_arg, Value::Int(1));
+        i.store_internal_value(prefix_arg, Value::Int(1));
     }
 
     let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
-    let result = dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event));
+    let result =
+        dispatch_key_core_inner(i, key, keys, arg_mode, Some(&mut hook), None, Some(&event));
     i.gui_mouse_position = old_mouse_position;
     result
 }
@@ -2131,7 +2222,10 @@ fn dispatch_mouse_down(
     }
     let key = crate::editor::event_code_for(&name);
     let sequence = Value::vector(vec![Value::Int(key)]);
-    if !matches!(lookup_command_at_event(i, &sequence, &event), LookupResult::None) {
+    if !matches!(
+        lookup_command_at_event(i, &sequence, &event),
+        LookupResult::None
+    ) {
         dispatch_key_core_inner(i, key, keys, arg_mode, None, None, Some(&event))?;
     }
     Ok(())
@@ -2143,6 +2237,7 @@ fn dispatch_scroll_bar(
     orientation: GridScrollBarOrientation,
     offset: usize,
     max_offset: usize,
+    text_width: usize,
 ) {
     let Some(frame) = i.selected_frame.clone() else {
         return;
@@ -2221,6 +2316,7 @@ fn dispatch_scroll_bar_input<T: KeyIo>(
     orientation: GridScrollBarOrientation,
     offset: usize,
     max_offset: usize,
+    text_width: usize,
     mouse: Option<MouseInput>,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
@@ -2239,7 +2335,6 @@ fn dispatch_scroll_bar_input<T: KeyIo>(
 
 fn dispatch_drop(
     i: &mut Interp,
-    text_width: usize,
     position: Option<MousePosition>,
     urls: &[String],
     action: &str,
@@ -2312,7 +2407,6 @@ mod drop_target_tests {
     #[test]
     fn drop_handler_receives_the_window_under_the_drop_position() {
         std::thread::Builder::new()
-    text_width: usize,
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let mut interp = Interp::new();
@@ -2423,11 +2517,12 @@ fn dispatch_color_drop(
                 .is_none()
                 .then(|| frame.borrow().selected.clone())
         });
-    let cursor_position = position.area.is_none()
-        && cursor_window.is_some_and(|window| {
+    let cursor_window_point = cursor_window.as_ref().and_then(|window| {
             let window = window.borrow();
-            window.buffer == position.buffer_id && window.point == position.buffer_position
+            (window.buffer == position.buffer_id).then_some(window.point)
         });
+    let cursor_position =
+        position.area.is_none() && cursor_window_point == Some(position.buffer_position);
     if cursor_position {
         let parameter = Value::Sym(i.intern("cursor-color"));
         let set_frame_parameter = Value::Sym(i.intern("set-frame-parameter"));
@@ -2903,7 +2998,8 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
             }
             super::MouseArea::ImageMap(id) => Value::Sym(id),
         };
-        let mode_line_string = (position.mode_line_buffer_name && area == super::MouseArea::ModeLine)
+        let mode_line_string = (position.mode_line_buffer_name
+            && area == super::MouseArea::ModeLine)
             .then(|| i.q_soft("mode-line-buffer-identification"))
             .flatten()
             .and_then(|id| {
@@ -3039,16 +3135,8 @@ fn dispatch_frame_moved(
     let left_parameter = Value::Sym(i.intern("left"));
     let top_parameter = Value::Sym(i.intern("top"));
     let mut parameters = frame.borrow().params.clone();
-    parameters = crate::lisp::eval::plist_put_front(
-        &parameters,
-        &left_parameter,
-        Value::Int(left),
-    );
-    parameters = crate::lisp::eval::plist_put_front(
-        &parameters,
-        &top_parameter,
-        Value::Int(top),
-    );
+    parameters = crate::lisp::eval::plist_put_front(&parameters, &left_parameter, Value::Int(left));
+    parameters = crate::lisp::eval::plist_put_front(&parameters, &top_parameter, Value::Int(top));
     frame.borrow_mut().params = parameters;
 
     let hook = Value::Sym(i.intern("move-frame-functions"));
@@ -3137,19 +3225,19 @@ pub(super) fn dispatch_text<T: KeyIo>(
     let prefix_arg = i.q("prefix-arg");
     let prefix = i.symbol_value(prefix_arg);
     let current_prefix_arg = i.q("current-prefix-arg");
-    let _ = i.set_symbol(current_prefix_arg, prefix);
-    let _ = i.set_symbol(prefix_arg, Value::Nil);
+    i.store_internal_value(current_prefix_arg, prefix);
+    i.store_internal_value(prefix_arg, Value::Nil);
 
     let this_command = i.q("this-command");
     let previous = i.symbol_value(this_command);
     let last_command = i.q("last-command");
-    let _ = i.set_symbol(last_command, previous);
+    i.store_internal_value(last_command, previous);
     let self_insert = i.intern("self-insert-command");
-    let _ = i.set_symbol(this_command, Value::Sym(self_insert));
+    i.store_internal_value(this_command, Value::Sym(self_insert));
     if let Some(ch) = text.chars().last() {
         let last_event = i.q("last-command-event");
         let event = Value::Int(ch as i128);
-        let _ = i.set_symbol(last_event, event.clone());
+        i.store_internal_value(last_event, event.clone());
         let last_input = i.q("last-input-event");
         i.store_internal_value(last_input, event);
     }
@@ -3185,8 +3273,8 @@ fn dispatch_text_through_input_method(
     let prefix_arg = i.q("prefix-arg");
     let prefix = i.symbol_value(prefix_arg);
     let current_prefix_arg = i.q("current-prefix-arg");
-    let _ = i.set_symbol(current_prefix_arg, prefix);
-    let _ = i.set_symbol(prefix_arg, Value::Nil);
+    i.store_internal_value(current_prefix_arg, prefix);
+    i.store_internal_value(prefix_arg, Value::Nil);
     i.command_key_events.clear();
     i.command_raw_key_events.clear();
     i.command_key_start = 0;
@@ -3248,18 +3336,18 @@ fn dispatch_text_range(
     let prefix_arg = i.q("prefix-arg");
     let prefix = i.symbol_value(prefix_arg);
     let current_prefix_arg = i.q("current-prefix-arg");
-    let _ = i.set_symbol(current_prefix_arg, prefix);
-    let _ = i.set_symbol(prefix_arg, Value::Nil);
+    i.store_internal_value(current_prefix_arg, prefix);
+    i.store_internal_value(prefix_arg, Value::Nil);
 
     let this_command = i.q("this-command");
     let previous = i.symbol_value(this_command);
     let last_command = i.q("last-command");
-    let _ = i.set_symbol(last_command, previous);
+    i.store_internal_value(last_command, previous);
     let self_insert = i.intern("self-insert-command");
-    let _ = i.set_symbol(this_command, Value::Sym(self_insert));
+    i.store_internal_value(this_command, Value::Sym(self_insert));
     if let Some(ch) = text.chars().last() {
         let last_event = i.q("last-command-event");
-        let _ = i.set_symbol(last_event, Value::Int(ch as i128));
+        i.store_internal_value(last_event, Value::Int(ch as i128));
     }
     if !i.macro_replaying {
         let defining = i.q("defining-kbd-macro");
@@ -3388,8 +3476,7 @@ fn translation_map_binding(
     while cursor < keys.len() {
         let mut replacement = None;
         for end in (cursor + 1..=keys.len()).rev() {
-            let Some(binding) =
-                crate::editor::lookup_keymap_sequence(i, &map, &keys[cursor..end])?
+            let Some(binding) = crate::editor::lookup_keymap_sequence(i, &map, &keys[cursor..end])?
             else {
                 continue;
             };
@@ -3584,7 +3671,9 @@ fn minibuf_loop<T: KeyIo>(
                 if let Err(flow) = super::prepare_native_menus(i) {
                     report_flow(i, flow);
                 }
-                let _ = term.borrow_mut().draw_echo_with_state(i, &shown.to_unicode_lossy());
+                let _ = term
+                    .borrow_mut()
+                    .draw_echo_with_state(i, &shown.to_unicode_lossy());
             }
             render_needed = false;
         }
@@ -3645,12 +3734,8 @@ fn minibuf_loop<T: KeyIo>(
                 modifiers,
             } => {
                 reveal_pointer_after_mouse_move(i, frame_id);
-                let frame_id = remember_gui_mouse_position(
-                    i,
-                    frame_id,
-                    frame_position,
-                    frame_pixel_position,
-                );
+                let frame_id =
+                    remember_gui_mouse_position(i, frame_id, frame_position, frame_pixel_position);
                 if single {
                     if let Err(error) = dispatch_gui_window_autoselect(
                         i,
@@ -3670,14 +3755,13 @@ fn minibuf_loop<T: KeyIo>(
                     }
                 } else {
                     if mouse_movement_tracking_enabled(i)
-                        && let Err(error) =
-                            dispatch_mouse_movement(
-                                i,
-                                position,
-                                modifiers,
-                                &mut keys,
-                                &mut arg_mode,
-                            )
+                        && let Err(error) = dispatch_mouse_movement(
+                            i,
+                            position,
+                            modifiers,
+                            &mut keys,
+                            &mut arg_mode,
+                        )
                     {
                         return Err(i.error(format!("minibuffer input: {error}")));
                     }
@@ -3717,8 +3801,10 @@ fn minibuf_loop<T: KeyIo>(
                     return Err(i.error(format!("minibuffer input: {e}")));
                 }
             }
-            InputEvent::PopupMenuSelection { .. } | InputEvent::PopupMenuScroll { .. }
-            | InputEvent::PopupMenuHover { .. } | InputEvent::PopupMenuScrollAt { .. } => {}
+            InputEvent::PopupMenuSelection { .. }
+            | InputEvent::PopupMenuScroll { .. }
+            | InputEvent::PopupMenuHover { .. }
+            | InputEvent::PopupMenuScrollAt { .. } => {}
             InputEvent::Command(command) => {
                 dispatch_frontend_command(i, &command, &mut keys, &mut arg_mode)
             }
@@ -3785,6 +3871,17 @@ fn minibuf_loop<T: KeyIo>(
                 position,
                 line_count,
                 pixel_delta,
+            } if single => {
+                let (_, event) =
+                    mouse_wheel_event(i, direction, modifiers, position, line_count, pixel_delta);
+                return Ok(MinibufInput::Event(event));
+            }
+            InputEvent::MouseWheel {
+                direction,
+                modifiers,
+                position,
+                line_count,
+                pixel_delta,
             } if !single => {
                 if let Err(e) = dispatch_mouse_wheel(
                     term,
@@ -3812,14 +3909,9 @@ fn minibuf_loop<T: KeyIo>(
                 modifiers,
                 position,
             } => {
-                if let Err(e) = dispatch_touch_end(
-                    term,
-                    i,
-                    modifiers,
-                    position,
-                    &mut keys,
-                    &mut arg_mode,
-                ) {
+                if let Err(e) =
+                    dispatch_touch_end(term, i, modifiers, position, &mut keys, &mut arg_mode)
+                {
                     return Err(i.error(format!("minibuffer input: {e}")));
                 }
             }
@@ -3828,6 +3920,7 @@ fn minibuf_loop<T: KeyIo>(
                 orientation,
                 offset,
                 max_offset,
+                text_width,
                 mouse,
             } => {
                 if let Err(error) = dispatch_scroll_bar_input(
@@ -3837,6 +3930,7 @@ fn minibuf_loop<T: KeyIo>(
                     orientation,
                     offset,
                     max_offset,
+                    text_width,
                     mouse,
                     &mut keys,
                     &mut arg_mode,
@@ -3866,96 +3960,6 @@ fn minibuf_loop<T: KeyIo>(
     }
 }
 
-/// The minibuffer's display text for the echo area: buffer text plus
-            InputEvent::MouseWheel {
-                direction,
-                modifiers,
-                position,
-                line_count,
-                pixel_delta,
-            } if single => {
-                let (_, event) =
-                    mouse_wheel_event(i, direction, modifiers, position, line_count, pixel_delta);
-                return Ok(MinibufInput::Event(event));
-            }
-/// overlay `before-string'/`after-string' contributions, like GNU's
-/// redisplay (icomplete shows its prospects through an `after-string'
-/// on `icomplete-overlay').
-fn signal_text(i: &Interp, symbol: &Value, data: &Value) -> EmacsText {
-    let mut text = match symbol { Value::Sym(id) => i.symbol_name_text(*id), _ => EmacsText::from("error") };
-    text.push_str(": ");
-    let parts: Vec<_> = data.list_to_vec().unwrap_or_default().iter().map(|value| i.princ_to_string(value)).collect();
-    text.append(&EmacsText::join(&parts, " "));
-    text
-}
-
-fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
-    let Some(b) = i.buffers.get(i.current_buffer) else {
-        return prompt.to_string();
-    };
-    let bb = b.borrow();
-    let text = bb.text.text();
-    // Collect (pos, string) splices; after-string goes at the
-    // overlay's end, before-string at its start.
-    let before_sym = i.q("before-string");
-    let after_sym = i.q("after-string");
-    let mut overlay_strings: Vec<(&crate::buffer::Overlay, Value, Value)> = Vec::new();
-    for ov in &bb.overlays {
-        if ov.buffer.is_none() {
-            continue;
-        }
-        let bs = crate::lisp::eval::plist_get(&ov.plist, before_sym);
-        let as_ = crate::lisp::eval::plist_get(&ov.plist, after_sym);
-        if matches!(bs, Value::Str(_)) || matches!(as_, Value::Str(_)) {
-            overlay_strings.push((ov, bs, as_));
-        }
-    }
-
-    let mut overlay_order: Vec<_> = overlay_strings
-        .iter()
-        .enumerate()
-        .map(|(index, (overlay, _, _))| (*overlay, index))
-        .collect();
-                text_width,
-    crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
-
-    let mut splices: Vec<(usize, usize, EmacsText)> = Vec::new();
-    for (_, index) in overlay_order {
-        let (ov, bs, as_) = &overlay_strings[index];
-        for (value, at_start) in [(bs, true), (as_, false)] {
-            if let Value::Str(string) = value {
-                let pos = if at_start { ov.start } else { ov.end };
-                splices.push((
-                    text_width,
-                    pos,
-                    usize::from(!at_start),
-                    string.borrow().clone(),
-                ));
-            }
-        }
-    }
-    splice_echo_text(text, splices)
-}
-
-fn splice_echo_text(text: EmacsText, mut splices: Vec<(usize, usize, EmacsText)>) -> EmacsText {
-    if splices.is_empty() {
-        return text;
-    }
-    // Splice right-to-left so positions stay valid; later-positioned
-    // strings at the same spot come after earlier ones.
-    splices.sort_by_key(|&(pos, is_after, ref _s)| (pos, is_after));
-    let mut chars: Vec<EmacsChar> = text.chars().collect();
-    for (pos, _, s) in splices.into_iter().rev() {
-        let p = pos.min(chars.len());
-        let tail: Vec<EmacsChar> = chars.split_off(p);
-        chars.extend(s.chars());
-        chars.extend(tail);
-    }
-    chars.into_iter().collect()
-}
-
-#[cfg(test)]
-#[path = "tests.rs"]
 #[cfg(test)]
 mod wrapped_vertical_scrollbar_tests {
     use super::dispatch_scroll_bar;
@@ -4018,6 +4022,87 @@ mod wrapped_vertical_scrollbar_tests {
     }
 }
 
+/// The minibuffer's display text for the echo area: buffer text plus
+/// overlay `before-string'/`after-string' contributions, like GNU's
+/// redisplay (icomplete shows its prospects through an `after-string'
+/// on `icomplete-overlay').
+fn signal_text(i: &Interp, symbol: &Value, data: &Value) -> EmacsText {
+    let mut text = match symbol {
+        Value::Sym(id) => i.symbol_name_text(*id),
+        _ => EmacsText::from("error"),
+    };
+    text.push_str(": ");
+    let parts: Vec<_> = data
+        .list_to_vec()
+        .unwrap_or_default()
+        .iter()
+        .map(|value| i.princ_to_string(value))
+        .collect();
+    text.append(&EmacsText::join(&parts, " "));
+    text
+}
+
+fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
+    let Some(b) = i.buffers.get(i.current_buffer) else {
+        return prompt.to_string();
+    };
+    let bb = b.borrow();
+    let text = bb.text.text();
+    // Collect (pos, string) splices; after-string goes at the
+    // overlay's end, before-string at its start.
+    let before_sym = i.q("before-string");
+    let after_sym = i.q("after-string");
+    let mut overlay_strings: Vec<(&crate::buffer::Overlay, Value, Value)> = Vec::new();
+    for ov in &bb.overlays {
+        if ov.buffer.is_none() {
+            continue;
+        }
+        let bs = crate::lisp::eval::plist_get(&ov.plist, before_sym);
+        let as_ = crate::lisp::eval::plist_get(&ov.plist, after_sym);
+        if matches!(bs, Value::Str(_)) || matches!(as_, Value::Str(_)) {
+            overlay_strings.push((ov, bs, as_));
+        }
+    }
+
+    let mut overlay_order: Vec<_> = overlay_strings
+        .iter()
+        .enumerate()
+        .map(|(index, (overlay, _, _))| (*overlay, index))
+        .collect();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
+
+    let mut splices: Vec<(usize, usize, EmacsText)> = Vec::new();
+    for (_, index) in overlay_order {
+        let (ov, bs, as_) = &overlay_strings[index];
+        for (value, at_start) in [(bs, true), (as_, false)] {
+            if let Value::Str(string) = value {
+                let pos = if at_start { ov.start } else { ov.end };
+                splices.push((pos, usize::from(!at_start), string.borrow().clone()));
+            }
+        }
+    }
+    splice_echo_text(text, splices)
+}
+
+fn splice_echo_text(text: EmacsText, mut splices: Vec<(usize, usize, EmacsText)>) -> EmacsText {
+    if splices.is_empty() {
+        return text;
+    }
+    // Splice right-to-left so positions stay valid; later-positioned
+    // strings at the same spot come after earlier ones.
+    splices.sort_by_key(|&(pos, is_after, ref _s)| (pos, is_after));
+    let mut chars: Vec<EmacsChar> = text.chars().collect();
+    for (pos, _, s) in splices.into_iter().rev() {
+        let p = pos.min(chars.len());
+        let tail: Vec<EmacsChar> = chars.split_off(p);
+        chars.extend(s.chars());
+        chars.extend(tail);
+    }
+    chars.into_iter().collect()
+}
+
+#[cfg(test)]
+#[path = "tests.rs"]
 mod tests;
 
 #[cfg(test)]
@@ -4029,7 +4114,10 @@ mod wide_echo_text_tests {
         let before = EmacsText::from_codes([0xd800]).unwrap();
         let after = EmacsText::from_codes([0x3fff80]).unwrap();
         let rendered = splice_echo_text(text, vec![(1, 1, after), (1, 0, before)]);
-        assert_eq!(rendered.codes().collect::<Vec<_>>(), [0xf0080, 0xd800, 0x3fff80, 0x110000]);
+        assert_eq!(
+            rendered.codes().collect::<Vec<_>>(),
+            [0xf0080, 0xd800, 0x3fff80, 0x110000]
+        );
     }
     #[test]
     fn presentation_conversion_does_not_change_logical_echo_text() {

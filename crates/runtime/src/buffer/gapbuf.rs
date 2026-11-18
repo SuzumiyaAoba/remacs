@@ -316,17 +316,104 @@ impl GapBuffer {
     }
 
     pub fn set_multibyte(&mut self, multibyte: bool) {
+        let _ = self.change_multibyte(multibyte, false);
+    }
+
+    /// Change the character view while preserving the underlying internal
+    /// byte sequence.  POSITION_MAP converts old character boundaries to
+    /// their corresponding positions in the new view.  TO_BYTE8 is GNU's
+    /// `set-buffer-multibyte' `to' mode, which treats every high unibyte byte
+    /// as a byte8 character instead of decoding UTF-8 sequences.
+    pub(crate) fn change_multibyte(
+        &mut self,
+        multibyte: bool,
+        to_byte8: bool,
+    ) -> (Vec<usize>, usize) {
+        let old_len = self.len();
         if self.multibyte == multibyte {
-            return;
+            return ((0..=old_len).collect(), 0);
         }
-        let bytes = (0..self.len())
-            .map(|k| storage_bytes(self.char_at(k), multibyte))
-            .sum();
-        if bytes > self.text_bytes {
-            self.ensure_gap(bytes - self.text_bytes);
-        }
-        self.text_bytes = bytes;
-        self.multibyte = multibyte;
+
+        let old_chars: Vec<_> = (0..old_len).map(|pos| self.char_at(pos)).collect();
+        let old_bytes = self.text_bytes;
+        let mut converted = Vec::new();
+        let positions = if self.multibyte {
+            let mut positions = Vec::with_capacity(old_len + 1);
+            positions.push(0);
+            for character in old_chars {
+                if let Some(byte) = character.byte8() {
+                    converted.push(EmacsChar::new(u32::from(byte)).unwrap());
+                } else {
+                    let mut bytes = Vec::new();
+                    character.encode_internal(&mut bytes);
+                    converted.extend(
+                        bytes
+                            .into_iter()
+                            .map(|byte| EmacsChar::new(u32::from(byte)).unwrap()),
+                    );
+                }
+                positions.push(converted.len());
+            }
+            positions
+        } else {
+            let mut bytes = Vec::new();
+            let mut old_byte_positions = Vec::with_capacity(old_len + 1);
+            old_byte_positions.push(0);
+            for character in old_chars {
+                if let Some(byte) = character.byte8() {
+                    bytes.push(byte);
+                } else if character.code() <= 0xff {
+                    bytes.push(character.code() as u8);
+                } else {
+                    // An unibyte buffer should contain only byte chars.  If a
+                    // host has supplied another character, preserve its
+                    // internal byte spelling when changing representations.
+                    character.encode_internal(&mut bytes);
+                }
+                old_byte_positions.push(bytes.len());
+            }
+
+            let mut byte_positions = vec![0; bytes.len() + 1];
+            let mut at = 0;
+            while at < bytes.len() {
+                let (character, width) = if to_byte8 {
+                    let byte = bytes[at];
+                    let character = if byte < 0x80 {
+                        EmacsChar::new(u32::from(byte)).unwrap()
+                    } else {
+                        EmacsChar::new(0x3fff00 + u32::from(byte)).unwrap()
+                    };
+                    (character, 1)
+                } else if let Some((code, width)) =
+                    crate::lisp::value::canonical_emacs_char(&bytes[at..])
+                {
+                    (EmacsChar::new(code).unwrap(), width)
+                } else {
+                    (
+                        EmacsChar::new(0x3fff00 + u32::from(bytes[at])).unwrap(),
+                        1,
+                    )
+                };
+                converted.push(character);
+                at += width;
+                for position in &mut byte_positions[at - width + 1..=at] {
+                    *position = converted.len();
+                }
+            }
+            old_byte_positions
+                .into_iter()
+                .map(|position| byte_positions[position])
+                .collect()
+        };
+
+        let text: EmacsText = converted.into_iter().collect();
+        let mut replacement = Self::new();
+        replacement.multibyte = multibyte;
+        replacement.insert(0, &text);
+        replacement.mod_count = self.mod_count.wrapping_add(1);
+        let byte_delta = old_bytes.abs_diff(replacement.text_bytes);
+        *self = replacement;
+        (positions, byte_delta)
     }
 
     /// Sorted char positions of every `\n', built once per mod_count
@@ -565,6 +652,10 @@ impl SharedText {
         self.inner.borrow().len()
     }
 
+    pub(crate) fn is_multibyte(&self) -> bool {
+        self.inner.borrow().multibyte
+    }
+
     /// Unused encoded-byte headroom (GNU GAP_SIZE), consumed by insertion
     /// and increased by deletion or allocation. Char slots are separate.
     pub fn gap_size(&self) -> usize {
@@ -572,7 +663,32 @@ impl SharedText {
     }
 
     pub fn set_multibyte(&self, multibyte: bool) {
-        self.inner.borrow_mut().set_multibyte(multibyte);
+        if self.set_multibyte_with_mode(multibyte, false).is_some() {
+            self.notify_multibyte_reset();
+        }
+    }
+
+    pub(crate) fn set_multibyte_with_mode(
+        &self,
+        multibyte: bool,
+        to_byte8: bool,
+    ) -> Option<(Vec<usize>, usize)> {
+        let (changed, position_map, byte_delta, new_len) = {
+            let mut inner = self.inner.borrow_mut();
+            let changed = inner.multibyte != multibyte;
+            let (position_map, byte_delta) = inner.change_multibyte(multibyte, to_byte8);
+            (changed, position_map, byte_delta, inner.len())
+        };
+        if !changed {
+            return None;
+        }
+        self.props.borrow_mut().remap_positions(&position_map, new_len);
+        Some((position_map, byte_delta))
+    }
+
+    pub(crate) fn notify_multibyte_reset(&self) {
+        let text = self.text();
+        self.notify_edit(TextChange::Reset { text: &text });
     }
 
     /// The gap's leading edge in logical chars (GNU `GPT').
@@ -751,7 +867,12 @@ mod tests {
         text.replace_same_length(0, 7, "日本語--ab");
         assert_eq!(
             &*seen.borrow(),
-            &[(0, 7, EmacsText::from("日本語--ab"), EmacsText::from("日本語--ab"))]
+            &[(
+                0,
+                7,
+                EmacsText::from("日本語--ab"),
+                EmacsText::from("日本語--ab")
+            )]
         );
         assert_eq!(text.len(), 7);
         assert_eq!(text.inner.borrow().text_bytes, "日本語--ab".len());

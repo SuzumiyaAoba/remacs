@@ -25,12 +25,12 @@ use std::{
 };
 use unicode_width::UnicodeWidthChar;
 
-#[cfg(all(test, target_os = "macos"))]
-mod frame_ready_tests;
 #[cfg(test)]
 mod clipboard_tests;
 #[cfg(test)]
 mod application_visibility_tests;
+#[cfg(all(test, target_os = "macos"))]
+mod frame_ready_tests;
 
 pub(super) const COLOR_DROP_PREFIX: &str = "\u{1f}remacs-color-drop:";
 
@@ -587,12 +587,8 @@ fn frame_snapshot(
         left: frame_position_parameter(i, frame, "left"),
         top: frame_position_parameter(i, frame, "top"),
         undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
-        ns_transparent_titlebar: frame_parameter_value(
-            i,
-            frame,
-            "ns-transparent-titlebar",
-        )
-        .truthy(),
+        ns_transparent_titlebar: frame_parameter_value(i, frame, "ns-transparent-titlebar")
+            .truthy(),
         ns_appearance: frame_ns_appearance(i, frame),
         represented_file: frame_proxy_file(i, frame),
         fullscreen,
@@ -702,7 +698,10 @@ pub(super) enum GuiRequest {
         absolute: bool,
         reply: SyncSender<Result<(), String>>,
     },
-    Bell { frame_id: Option<usize>, visible: bool },
+    Bell {
+        frame_id: Option<usize>,
+        visible: bool,
+    },
     ColorPanel {
         frame_id: usize,
         reply: SyncSender<Result<(), String>>,
@@ -912,7 +911,11 @@ pub(super) enum ClipboardRequest {
     Ready(Arc<AtomicBool>),
     Read(ClipboardTarget, SyncSender<Result<Option<String>, String>>),
     ReadInfo(SyncSender<Result<Option<ClipboardInfo>, String>>),
-    Write(ClipboardTarget, String, Option<SyncSender<Result<(), String>>>),
+    Write(
+        ClipboardTarget,
+        String,
+        Option<SyncSender<Result<(), String>>>,
+    ),
     ReadChangeCount(SyncSender<Result<Option<u64>, String>>),
     WriteWithChangeCount(String, SyncSender<Result<Option<u64>, String>>),
     Clear(Option<SyncSender<Result<(), String>>>),
@@ -1278,6 +1281,7 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
                     height,
                     self.primary_frame_id,
                     self.image_cache_entries.clone(),
+                    None,
                     grid,
                 ));
             }
@@ -1295,13 +1299,20 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
     fn set_visible(&self, frame_id: usize, visible: bool) -> Result<(), String> {
         self.set_visibility(
             frame_id,
-            if visible { FrameVisibility::Visible } else { FrameVisibility::Iconified },
+            if visible {
+                FrameVisibility::Visible
+            } else {
+                FrameVisibility::Iconified
+            },
         )
     }
 
     fn set_visibility(&self, frame_id: usize, visibility: FrameVisibility) -> Result<(), String> {
         self.requests
-            .send_blocking(GuiRequest::FrameVisibility { frame_id, visibility })
+            .send_blocking(GuiRequest::FrameVisibility {
+                frame_id,
+                visibility,
+            })
             .map_err(|_| "GUI window service is unavailable".to_owned())
     }
 
@@ -1337,12 +1348,7 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
         self.warp_pointer(frame_id, x, y, false)
     }
 
-    fn warp_pointer_absolute(
-        &self,
-        frame_id: usize,
-        x: i128,
-        y: i128,
-    ) -> Result<(), String> {
+    fn warp_pointer_absolute(&self, frame_id: usize, x: i128, y: i128) -> Result<(), String> {
         self.warp_pointer(frame_id, x, y, true)
     }
 }
@@ -1555,9 +1561,7 @@ struct GuiApplicationVisibilityBackend {
     requests: smol::channel::Sender<GuiRequest>,
 }
 
-impl remacs_runtime::frontend::ApplicationVisibilityBackend
-    for GuiApplicationVisibilityBackend
-{
+impl remacs_runtime::frontend::ApplicationVisibilityBackend for GuiApplicationVisibilityBackend {
     fn hide(&self) -> Result<(), String> {
         self.request_hide(true)
     }
@@ -1745,14 +1749,9 @@ impl remacs_runtime::frontend::XResourceBackend for GuiXResourceBackend {
     }
 }
 
-
 #[cfg(target_os = "macos")]
 impl remacs_runtime::frontend::NativeServiceBackend for GuiNativeServiceBackend {
-    fn perform_service(
-        &self,
-        service: &str,
-        send: Option<&str>,
-    ) -> Result<Option<String>, String> {
+    fn perform_service(&self, service: &str, send: Option<&str>) -> Result<Option<String>, String> {
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(GuiRequest::PerformService {
@@ -1790,7 +1789,11 @@ impl GuiClipboardBackend {
         let ready = self.ready.load(Ordering::Acquire);
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
-            .send_blocking(ClipboardRequest::Write(target, text, ready.then_some(reply)))
+            .send_blocking(ClipboardRequest::Write(
+                target,
+                text,
+                ready.then_some(reply),
+            ))
             .map_err(|_| "GUI clipboard service is unavailable".to_owned())?;
         if !ready {
             return Ok(());
@@ -1993,11 +1996,7 @@ fn echo_char_width(character: char, column: usize, tab_width: usize) -> usize {
     }
 }
 
-fn echo_input_cursor(
-    text: &str,
-    cursor_utf16: usize,
-    tab_width: usize,
-) -> Option<(usize, usize)> {
+fn echo_input_cursor(text: &str, cursor_utf16: usize, tab_width: usize) -> Option<(usize, usize)> {
     let mut utf16 = 0usize;
     let mut characters = 0usize;
     let mut columns = 0usize;
@@ -2111,10 +2110,10 @@ fn fit_echo_text_at_cursor(
             }
         } else if visible_end > visible_start {
             let visible_width = visible_end - visible_start;
-            let whole_character_visible =
-                raw_character != '\t' && raw_character == character
-                    && visible_start == source_column
-                    && visible_end == char_end;
+            let whole_character_visible = raw_character != '\t'
+                && raw_character == character
+                && visible_start == source_column
+                && visible_end == char_end;
             if !whole_character_visible {
                 rendered.push_str(&" ".repeat(visible_width));
             } else {
@@ -2186,13 +2185,8 @@ mod echo_hscroll_tests {
     #[test]
     fn combining_marks_follow_their_base_across_scroll_edges() {
         let text = "a\u{0301}bbb";
-        let (shown, columns, visible_bytes, _, _) = fit_echo_text_at_cursor(
-            text,
-            4,
-            text.chars().count(),
-            4,
-            8,
-        );
+        let (shown, columns, visible_bytes, _, _) =
+            fit_echo_text_at_cursor(text, 4, text.chars().count(), 4, 8);
         assert_eq!(shown, "bbb ");
         assert_eq!(columns, 3);
         assert_eq!(visible_bytes, 3);
@@ -2448,14 +2442,15 @@ fn native_frame_geometry_alist(
         entry(keys.tool_bar_external, external_tool_bar),
         entry(keys.tool_bar_position, tool_bar_position),
         entry(keys.tool_bar_size, pair(tool_bar_width, tool_bar_height)),
-        entry(
-            keys.internal_border_width,
-            Value::Int(internal_border),
-        ),
+        entry(keys.internal_border_width, Value::Int(internal_border)),
     ])
 }
 
-fn frame_minimum(i: &Interp, frame: &remacs_runtime::editor::FrameRef, name: &str) -> Option<usize> {
+fn frame_minimum(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+    name: &str,
+) -> Option<usize> {
     frame_parameter_value(i, frame, name)
         .int()
         .and_then(|value| usize::try_from(value).ok())
@@ -2661,7 +2656,10 @@ impl ChanIo {
             let event = if let Some(event) = self.pending_events.pop_front() {
                 Some(event)
             } else {
-                match self.events.recv_timeout(remaining.min(Duration::from_millis(50))) {
+                match self
+                    .events
+                    .recv_timeout(remaining.min(Duration::from_millis(50)))
+                {
                     Ok(event) => Some(event),
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -3046,9 +3044,7 @@ impl KeyIo for ChanIo {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
-            GuiEvent::SystemSleep { sleeping } => {
-                Ok(Some(InputEvent::SystemSleep { sleeping }))
-            }
+            GuiEvent::SystemSleep { sleeping } => Ok(Some(InputEvent::SystemSleep { sleeping })),
             GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) => Ok(Some(InputEvent::Text(text))),
@@ -3059,15 +3055,31 @@ impl KeyIo for ChanIo {
             GuiEvent::PopupMenuSelection { menu_id, index } => {
                 Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
             }
-            GuiEvent::PopupMenuScroll { menu_id, delta_lines } => {
-                Ok(Some(InputEvent::PopupMenuScroll { menu_id, delta_lines }))
-            }
-            GuiEvent::PopupMenuHover { menu_id, parent, index } => {
-                Ok(Some(InputEvent::PopupMenuHover { menu_id, parent, index }))
-            }
-            GuiEvent::PopupMenuScrollAt { menu_id, parent, delta_lines } => {
-                Ok(Some(InputEvent::PopupMenuScrollAt { menu_id, parent, delta_lines }))
-            }
+            GuiEvent::PopupMenuScroll {
+                menu_id,
+                delta_lines,
+            } => Ok(Some(InputEvent::PopupMenuScroll {
+                menu_id,
+                delta_lines,
+            })),
+            GuiEvent::PopupMenuHover {
+                menu_id,
+                parent,
+                index,
+            } => Ok(Some(InputEvent::PopupMenuHover {
+                menu_id,
+                parent,
+                index,
+            })),
+            GuiEvent::PopupMenuScrollAt {
+                menu_id,
+                parent,
+                delta_lines,
+            } => Ok(Some(InputEvent::PopupMenuScrollAt {
+                menu_id,
+                parent,
+                delta_lines,
+            })),
             GuiEvent::CommandArgs { command, args } => {
                 Ok(Some(InputEvent::CommandArgs { command, args }))
             }
@@ -3136,10 +3148,7 @@ impl KeyIo for ChanIo {
                     let geometry = geometry?;
                     let char_width = geometry.char_width.max(1);
                     let char_height = geometry.char_height.max(1);
-                    Some((
-                        x.div_euclid(char_width),
-                        y.div_euclid(char_height),
-                    ))
+                    Some((x.div_euclid(char_width), y.div_euclid(char_height)))
                 });
                 let frame_position_changed =
                     self.mouse_frame_position != Some((frame_id, frame_position, text_window_id));
@@ -3168,12 +3177,10 @@ impl KeyIo for ChanIo {
             GuiEvent::MouseDragMove {
                 position,
                 modifiers,
-            } => {
-                Ok(Some(InputEvent::MouseMovement {
-                    position,
-                    modifiers,
-                }))
-            }
+            } => Ok(Some(InputEvent::MouseMovement {
+                position,
+                modifiers,
+            })),
             GuiEvent::MouseDown {
                 button,
                 click_count,
@@ -3267,23 +3274,23 @@ impl KeyIo for ChanIo {
                 orientation,
                 offset,
                 max_offset,
+                text_width,
                 mouse,
             } => Ok(Some(InputEvent::ScrollBar {
                 window_id,
                 orientation,
                 offset,
                 max_offset,
+                text_width,
                 mouse,
             })),
         };
-                text_width,
         if let Ok(Some(input)) = &result {
             if !matches!(input, InputEvent::FrameMoved { .. }) {
                 self.last_input_at = Instant::now();
             }
         }
         result
-                text_width,
     }
 
     fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
@@ -3338,9 +3345,7 @@ impl KeyIo for ChanIo {
                 self.record_frame_focus(frame_id, focused);
                 Ok(None)
             }
-            GuiEvent::SystemSleep { sleeping } => {
-                Ok(Some(InputEvent::SystemSleep { sleeping }))
-            }
+            GuiEvent::SystemSleep { sleeping } => Ok(Some(InputEvent::SystemSleep { sleeping })),
             GuiEvent::Key(k) if self.discard_quit_key(k) => Ok(None),
             GuiEvent::Key(k) => Ok(Some(InputEvent::Key(k))),
             GuiEvent::Text(text) if text.chars().any(char::is_control) => {
@@ -3356,19 +3361,33 @@ impl KeyIo for ChanIo {
             GuiEvent::PopupMenuSelection { menu_id, index } => {
                 Ok(Some(InputEvent::PopupMenuSelection { menu_id, index }))
             }
-            GuiEvent::PopupMenuScroll { menu_id, delta_lines } => {
-                Ok(Some(InputEvent::PopupMenuScroll { menu_id, delta_lines }))
-            }
-            GuiEvent::PopupMenuHover { menu_id, parent, index } => {
-                Ok(Some(InputEvent::PopupMenuHover { menu_id, parent, index }))
-            }
-            GuiEvent::PopupMenuScrollAt { menu_id, parent, delta_lines } => {
-                Ok(Some(InputEvent::PopupMenuScrollAt { menu_id, parent, delta_lines }))
-            }
+            GuiEvent::PopupMenuScroll {
+                menu_id,
+                delta_lines,
+            } => Ok(Some(InputEvent::PopupMenuScroll {
+                menu_id,
+                delta_lines,
+            })),
+            GuiEvent::PopupMenuHover {
+                menu_id,
+                parent,
+                index,
+            } => Ok(Some(InputEvent::PopupMenuHover {
+                menu_id,
+                parent,
+                index,
+            })),
+            GuiEvent::PopupMenuScrollAt {
+                menu_id,
+                parent,
+                delta_lines,
+            } => Ok(Some(InputEvent::PopupMenuScrollAt {
+                menu_id,
+                parent,
+                delta_lines,
+            })),
             GuiEvent::CommandArgs { .. } => Ok(None),
-            GuiEvent::ReplaceText { range, text }
-                if text.chars().any(char::is_control) =>
-            {
+            GuiEvent::ReplaceText { range, text } if text.chars().any(char::is_control) => {
                 Ok(Some(InputEvent::ReplaceText { range, text }))
             }
             GuiEvent::ReplaceText { text, .. } => {
@@ -3405,11 +3424,8 @@ impl KeyIo for ChanIo {
                 };
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 if let Some(frame_id) = moved_frame {
-                    self.pending_frame_moved = Some((
-                        frame_id,
-                        geometry.frame_left,
-                        geometry.frame_top,
-                    ));
+                    self.pending_frame_moved =
+                        Some((frame_id, geometry.frame_left, geometry.frame_top));
                 }
                 Ok(None)
             }
@@ -3475,9 +3491,7 @@ impl KeyIo for ChanIo {
             let mut frames: Vec<_> = i
                 .frames
                 .iter()
-                .filter(|frame| {
-                    !frame.borrow().dead && frame_system_is_graphical(i, frame)
-                })
+                .filter(|frame| !frame.borrow().dead && frame_system_is_graphical(i, frame))
                 .cloned()
                 .collect();
             if let Some(selected) = &i.selected_frame
@@ -3617,8 +3631,7 @@ impl KeyIo for ChanIo {
         self.frame_grids.retain(|id, _| live_ids.contains(id));
         self.frame_runtime_sizes
             .retain(|id, _| live_ids.contains(id));
-        self.frame_geometries
-            .retain(|id, _| live_ids.contains(id));
+        self.frame_geometries.retain(|id, _| live_ids.contains(id));
         self.mouse_positions.retain(|id, _| live_ids.contains(id));
         self.scroll_remainders
             .retain(|(frame_id, _, _), _| frame_id.is_none_or(|id| live_ids.contains(&id)));
@@ -3648,15 +3661,14 @@ impl KeyIo for ChanIo {
                 .entry(frame_id)
                 .or_insert((frame_width, frame_height));
             if (frame_width, frame_height) != (width, height) {
-                let graphical =
-                    self.gui_requests.is_some() && frame_system_is_graphical(i, frame);
+                let graphical = self.gui_requests.is_some() && frame_system_is_graphical(i, frame);
                 let last_runtime_size = self
                     .frame_runtime_sizes
                     .get(&frame_id)
                     .copied()
                     .unwrap_or((frame_width, frame_height));
-                let runtime_requested_size = graphical
-                    && (frame_width, frame_height) != last_runtime_size;
+                let runtime_requested_size =
+                    graphical && (frame_width, frame_height) != last_runtime_size;
                 if runtime_requested_size {
                     // Lisp changed the requested frame size. Keep it as the
                     // target size and let the native window report its actual
@@ -3741,16 +3753,14 @@ impl KeyIo for ChanIo {
                 }
                 let left_parameter = Value::Sym(keys.frame_left);
                 let current_left = frame_parameter_value(i, frame, "left");
-                let left = if matches!(&current_left, Value::Int(left) if *left != geometry.frame_left) {
+                let left = if matches!(&current_left, Value::Int(left) if *left != geometry.frame_left)
+                {
                     current_left
                 } else {
                     Value::Int(geometry.frame_left)
                 };
-                params = remacs_runtime::lisp::eval::plist_put_front(
-                    &params,
-                    &left_parameter,
-                    left,
-                );
+                params =
+                    remacs_runtime::lisp::eval::plist_put_front(&params, &left_parameter, left);
                 let top_parameter = Value::Sym(keys.frame_top);
                 let current_top = frame_parameter_value(i, frame, "top");
                 let top = if matches!(&current_top, Value::Int(top) if *top != geometry.frame_top) {
@@ -3758,11 +3768,7 @@ impl KeyIo for ChanIo {
                 } else {
                     Value::Int(geometry.frame_top)
                 };
-                params = remacs_runtime::lisp::eval::plist_put_front(
-                    &params,
-                    &top_parameter,
-                    top,
-                );
+                params = remacs_runtime::lisp::eval::plist_put_front(&params, &top_parameter, top);
                 frame.borrow_mut().params = params;
             }
 
@@ -3823,7 +3829,6 @@ impl KeyIo for ChanIo {
         };
         self.send_grid(grid)
     }
-
     fn render_on_idle(&self) -> bool {
         let Some(grid) = self.last.as_ref() else {
             return false;
@@ -3954,9 +3959,7 @@ impl KeyIo for ChanIo {
         let mut geometry = self
             .frame_geometries
             .iter()
-            .map(|(frame_id, geometry)| {
-                (*frame_id, geometry.pixel_width, geometry.pixel_height)
-            })
+            .map(|(frame_id, geometry)| (*frame_id, geometry.pixel_width, geometry.pixel_height))
             .collect::<Vec<_>>();
         if let (Some(frame_id), Some(primary)) = (self.primary_frame_id, self.geometry.as_ref())
             && !geometry.iter().any(|(id, _, _)| *id == frame_id)
@@ -4049,7 +4052,9 @@ mod discard_input_tests {
 #[cfg(test)]
 mod frame_font_metrics_event_tests {
     use super::{ChanIo, GuiEvent};
-    use remacs_runtime::frontend::{FrameFontMetrics, InputEvent, KeyIo};
+    use remacs_runtime::frontend::{
+        FrameFontMetrics, GridScrollBarOrientation, InputEvent, KeyIo,
+    };
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -4077,13 +4082,6 @@ mod frame_font_metrics_event_tests {
             Some(InputEvent::FrameFontMetrics { frame_id: 42, .. })
         ));
     }
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod native_frame_geometry_tests {
-    use super::*;
-
-    #[test]
 
     #[test]
     fn scrollbar_text_width_reaches_the_runtime_input_protocol() {
@@ -4109,6 +4107,13 @@ mod native_frame_geometry_tests {
             })
         ));
     }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod native_frame_geometry_tests {
+    use super::*;
+
+    #[test]
     fn ns_frame_geometry_and_edges_use_gpui_window_bounds() {
         std::thread::Builder::new()
             .stack_size(128 << 20)
@@ -4157,15 +4162,19 @@ mod native_frame_geometry_tests {
                               (cdr (assq 'title-bar-size (frame-geometry nil))))",
                     )
                     .unwrap();
-                assert_eq!(i.prin1_to_string(&geometry), "((10 . 20) (640 . 500) (0 . 20))");
+                assert_eq!(
+                    i.prin1_to_string(&geometry),
+                    "((10 . 20) (640 . 500) (0 . 20))"
+                );
                 let outer_edges = i.eval_str("(frame-edges nil 'outer-edges)").unwrap();
                 assert_eq!(i.prin1_to_string(&outer_edges), "(10 20 650 520)");
                 let native_edges = i.eval_str("(frame-edges nil)").unwrap();
                 assert_eq!(i.prin1_to_string(&native_edges), "(10 40 650 520)");
                 let inner_edges = i.eval_str("(frame-edges nil 'inner-edges)").unwrap();
                 assert_eq!(i.prin1_to_string(&inner_edges), "(12 42 648 518)");
-                let outer_dimensions =
-                    i.eval_str("(list (frame-outer-width nil) (frame-outer-height nil))").unwrap();
+                let outer_dimensions = i
+                    .eval_str("(list (frame-outer-width nil) (frame-outer-height nil))")
+                    .unwrap();
                 assert_eq!(i.prin1_to_string(&outer_dimensions), "(640 500)");
             })
             .unwrap()
@@ -4286,10 +4295,7 @@ fn apply_startup_arguments(
         remacs_cli::Argument::File(file) => Some(file),
         remacs_cli::Argument::Option { .. } => None,
     }) {
-        if let Some(index) = files_to_open
-            .iter()
-            .position(|file| file == argument_file)
-        {
+        if let Some(index) = files_to_open.iter().position(|file| file == argument_file) {
             files_to_open.remove(index);
         }
     }
@@ -4386,23 +4392,16 @@ fn start_logic_with_frames_inner(
     Option<InitialFrameSize>,
     std::thread::JoinHandle<()>,
 )> {
-    let (
-        events,
-        quit_request,
-        grids,
-        gui_requests,
-        clipboard,
-        initial_frame_size_rx,
-        logic_thread,
-    ) = start_logic_inner(
-        files,
-        dump_file,
-        arguments,
-        true,
-        false,
-        true,
-        wait_for_native_geometry,
-    )?;
+    let (events, quit_request, grids, gui_requests, clipboard, initial_frame_size_rx, logic_thread) =
+        start_logic_inner(
+            files,
+            dump_file,
+            arguments,
+            true,
+            false,
+            true,
+            wait_for_native_geometry,
+        )?;
     drop(grids);
     let initial_frame_size = initial_frame_size_rx
         .recv()
@@ -4668,9 +4667,8 @@ fn start_logic_inner(
                 .filter_map(|frame| {
                     let frame = frame.borrow();
                     let size = (frame.width, frame.height);
-                    (!frame.dead
-                        && initial_frame_dimensions.get(&frame.id).copied() != Some(size))
-                    .then_some((frame.id, size.0, size.1))
+                    (!frame.dead && initial_frame_dimensions.get(&frame.id).copied() != Some(size))
+                        .then_some((frame.id, size.0, size.1))
                 })
                 .collect::<Vec<_>>();
             {
@@ -4724,11 +4722,8 @@ fn configure_gui_window_system(i: &mut Interp) -> GuiStartupIdentity {
     let _ = i.set_symbol_default(initial_window_system, value.clone());
     if let Some(frame) = i.selected_frame.clone() {
         let key = remacs_runtime::lisp::Value::Sym(window_system);
-        let params = remacs_runtime::lisp::eval::plist_put_front(
-            &frame.borrow().params,
-            &key,
-            value,
-        );
+        let params =
+            remacs_runtime::lisp::eval::plist_put_front(&frame.borrow().params, &key, value);
         frame.borrow_mut().params = params;
         let update_faces = i.intern("frame-set-background-mode");
         let _ = i.apply(

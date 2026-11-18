@@ -2,9 +2,9 @@
 //! Many are stubs returning sensible tty defaults — the window tree
 //! (internal windows, splits) is a later milestone.
 
+use num_traits::ToPrimitive;
 use std::cell::RefCell;
 use std::rc::Rc;
-use num_traits::ToPrimitive;
 
 use crate::editor::{
     FrameRef, HorizontalScrollBarType, VerticalScrollBarType, WindowRef, f_window_list, frame_any,
@@ -282,8 +282,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("set-window-margins", 2, 3, f_set_window_margins, ""),
     S!("window-scroll-bars", 0, 1, f_window_scroll_bars, ""),
-    S!("window-scroll-bar-width", 0, 1, f_window_scroll_bar_width, ""),
-    S!("window-scroll-bar-height", 0, 1, f_window_scroll_bar_height, ""),
+    S!(
+        "window-scroll-bar-width",
+        0,
+        1,
+        f_window_scroll_bar_width,
+        ""
+    ),
+    S!(
+        "window-scroll-bar-height",
+        0,
+        1,
+        f_window_scroll_bar_height,
+        ""
+    ),
     S!("set-window-scroll-bars", 1, 6, f_set_window_scroll_bars, ""),
     S!(
         "window-current-scroll-bars",
@@ -299,7 +311,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_mode_line_height,
         ""
     ),
-    S!("window-header-line-height", 0, 1, f_window_header_line_height, ""),
+    S!(
+        "window-header-line-height",
+        0,
+        1,
+        f_window_header_line_height,
+        ""
+    ),
     S!("window-tab-line-height", 0, 1, f_window_tab_line_height, ""),
     S!(
         "window-bottom-divider-width",
@@ -478,7 +496,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("frame-scroll-bar-width", 0, 1, f_frame_scroll_bar_width, ""),
-    S!("frame-scroll-bar-height", 0, 1, f_frame_scroll_bar_height, ""),
+    S!(
+        "frame-scroll-bar-height",
+        0,
+        1,
+        f_frame_scroll_bar_height,
+        ""
+    ),
     S!("frame-child-frame-border-width", 0, 1, f_zero_framep, ""),
     S!("frame-scale-factor", 0, 1, f_frame_scale_factor, ""),
     S!(
@@ -511,7 +535,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_frame_window_state_change,
         ""
     ),
-    S!("frame-window-state-change", 0, 1, f_frame_window_state_change, ""),
+    S!(
+        "frame-window-state-change",
+        0,
+        1,
+        f_frame_window_state_change,
+        ""
+    ),
     S!("frame-after-make-frame", 2, 2, f_frame_after_make_frame, ""),
     S!(
         "frame--set-was-invisible",
@@ -967,12 +997,16 @@ fn frame_metric_target(i: &mut Interp, value: &Value) -> Result<FrameRef, Flow> 
 
 fn f_frame_char_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = frame_metric_target(i, &arg(&a, 0))?;
-    Ok(Value::Int(crate::editor::frame_char_width(i, &frame) as i128))
+    Ok(Value::Int(
+        crate::editor::frame_char_width(i, &frame) as i128
+    ))
 }
 
 fn f_frame_char_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = frame_metric_target(i, &arg(&a, 0))?;
-    Ok(Value::Int(crate::editor::frame_char_height(i, &frame) as i128))
+    Ok(Value::Int(
+        crate::editor::frame_char_height(i, &frame) as i128
+    ))
 }
 
 /// `window-scroll-bars' — window-live-p check; batch GNU reports
@@ -1065,9 +1099,7 @@ fn buffer_horizontal_scroll_side(
 fn buffer_vertical_scroll_type(i: &Interp, value: Option<&Value>) -> VerticalScrollBarType {
     match value {
         Some(Value::Nil) => VerticalScrollBarType::Disabled,
-        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "left" => {
-            VerticalScrollBarType::Left
-        }
+        Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "left" => VerticalScrollBarType::Left,
         Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "right" => {
             VerticalScrollBarType::Right
         }
@@ -1075,10 +1107,7 @@ fn buffer_vertical_scroll_type(i: &Interp, value: Option<&Value>) -> VerticalScr
     }
 }
 
-fn buffer_horizontal_scroll_type(
-    i: &Interp,
-    value: Option<&Value>,
-) -> HorizontalScrollBarType {
+fn buffer_horizontal_scroll_type(i: &Interp, value: Option<&Value>) -> HorizontalScrollBarType {
     match value {
         Some(Value::Nil) => HorizontalScrollBarType::Disabled,
         Some(Value::Sym(symbol)) if i.symbol_name(*symbol) == "bottom" => {
@@ -1097,12 +1126,8 @@ fn window_vertical_scroll_type_argument(
         Value::Sym(symbol) if i.symbol_name(*symbol) == "t" => {
             Ok(VerticalScrollBarType::FrameDefault)
         }
-        Value::Sym(symbol) if i.symbol_name(*symbol) == "left" => {
-            Ok(VerticalScrollBarType::Left)
-        }
-        Value::Sym(symbol) if i.symbol_name(*symbol) == "right" => {
-            Ok(VerticalScrollBarType::Right)
-        }
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "left" => Ok(VerticalScrollBarType::Left),
+        Value::Sym(symbol) if i.symbol_name(*symbol) == "right" => Ok(VerticalScrollBarType::Right),
         _ => Err(i.wrong_type_mut("scroll-bar-type-p", value)),
     }
 }
@@ -1126,7 +1151,13 @@ fn window_horizontal_scroll_type_argument(
 pub(crate) fn window_scroll_bar_settings(
     i: &Interp,
     window: &WindowRef,
-) -> (Option<usize>, Option<bool>, Option<usize>, Option<bool>, bool) {
+) -> (
+    Option<usize>,
+    Option<bool>,
+    Option<usize>,
+    Option<bool>,
+    bool,
+) {
     let stored = window.borrow().scroll_bars;
     let frame = frame_of_window(i, window);
     let graphical = frame
@@ -1163,16 +1194,10 @@ pub(crate) fn window_scroll_bar_settings(
             .unwrap_or(Value::Nil),
     );
     let horizontal_scroll_value = buffer_scroll_parameter(i, window, "horizontal-scroll-bar");
-    let buffer_vertical_side = buffer_vertical_scroll_side(
-        i,
-        vertical_scroll_value.as_ref(),
-        frame_vertical_side,
-    );
-    let buffer_horizontal_side = buffer_horizontal_scroll_side(
-        i,
-        horizontal_scroll_value.as_ref(),
-        frame_horizontal_side,
-    );
+    let buffer_vertical_side =
+        buffer_vertical_scroll_side(i, vertical_scroll_value.as_ref(), frame_vertical_side);
+    let buffer_horizontal_side =
+        buffer_horizontal_scroll_side(i, horizontal_scroll_value.as_ref(), frame_horizontal_side);
     let buffer_vertical_width = buffer_scroll_parameter(i, window, "scroll-bar-width")
         .and_then(|value| match value {
             Value::Int(width) => Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX)),
@@ -1224,20 +1249,31 @@ pub(crate) fn window_scroll_bar_settings(
 fn f_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let window = win_live(i, &arg(&a, 0))?;
     let frame = frame_of_window(i, &window);
-    let char_width = frame.as_ref().map_or(1, |frame| {
-        crate::editor::frame_char_width(i, frame).max(1)
-    });
-    let char_height = frame.as_ref().map_or(1, |frame| {
-        crate::editor::frame_char_height(i, frame).max(1)
-    });
+    let char_width = frame
+        .as_ref()
+        .map_or(1, |frame| crate::editor::frame_char_width(i, frame).max(1));
+    let char_height = frame
+        .as_ref()
+        .map_or(1, |frame| crate::editor::frame_char_height(i, frame).max(1));
     let stored = window.borrow().scroll_bars;
-    let (width, vertical, height, horizontal, persistent) =
-        stored.unwrap_or_else(|| {
+    let graphical = frame
+        .as_ref()
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame));
+    let (width, vertical, height, horizontal, persistent) = match stored {
+        Some(stored) => stored,
+        // GNU's TTY window has no scroll bars: report the frame defaults
+        // and ignore buffer-local bar settings for this non-graphical view.
+        None if !graphical => (
+            None,
+            VerticalScrollBarType::FrameDefault,
+            None,
+            HorizontalScrollBarType::FrameDefault,
+            false,
+        ),
+        None => {
             let width = buffer_scroll_parameter(i, &window, "scroll-bar-width")
                 .and_then(|value| match value {
-                    Value::Int(width) => {
-                        Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX))
-                    }
+                    Value::Int(width) => Some(usize::try_from(width.max(0)).unwrap_or(usize::MAX)),
                     _ => None,
                 });
             let vertical = buffer_vertical_scroll_type(
@@ -1256,7 +1292,8 @@ fn f_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 buffer_scroll_parameter(i, &window, "horizontal-scroll-bar").as_ref(),
             );
             (width, vertical, height, horizontal, false)
-        });
+        }
+    };
     let (effective_width, effective_vertical, effective_height, effective_horizontal, _) =
         window_scroll_bar_settings(i, &window);
     let cols = if effective_vertical.is_some() {
@@ -1317,13 +1354,12 @@ fn frame_scroll_bar_dimensions(i: &Interp, frame: &FrameRef) -> (usize, usize) {
     if !crate::editor::frame_is_graphical(i, frame) {
         return (0, 0);
     }
-    let vertical_value = frame_scroll_parameter(i, frame, "vertical-scroll-bars").unwrap_or_else(
-        || {
+    let vertical_value =
+        frame_scroll_parameter(i, frame, "vertical-scroll-bars").unwrap_or_else(|| {
             i.q_soft("default-frame-scroll-bars")
                 .map(|symbol| i.symbol_value(symbol))
                 .unwrap_or(Value::Nil)
-        },
-    );
+        });
     let vertical = frame_vertical_scroll_side(i, &vertical_value);
     let horizontal = frame_horizontal_scroll_side(
         &frame_scroll_parameter(i, frame, "horizontal-scroll-bars").unwrap_or(Value::Nil),
@@ -1337,16 +1373,8 @@ fn frame_scroll_bar_dimensions(i: &Interp, frame: &FrameRef) -> (usize, usize) {
         _ => 8,
     };
     (
-        if vertical.is_some() {
-            width
-        } else {
-            0
-        },
-        if horizontal.is_some() {
-            height
-        } else {
-            0
-        },
+        if vertical.is_some() { width } else { 0 },
+        if horizontal.is_some() { height } else { 0 },
     )
 }
 
@@ -1358,6 +1386,21 @@ fn f_frame_scroll_bar_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 fn f_frame_scroll_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = frame_any(i, &arg(&a, 0))?;
     Ok(Value::Int(frame_scroll_bar_dimensions(i, &frame).1 as i128))
+}
+
+fn f_frame_fringe_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame = frame_any(i, &arg(&a, 0))?;
+    if !crate::editor::frame_is_graphical(i, &frame) {
+        return Ok(Value::Int(0));
+    }
+    let parameters = frame.borrow().params.clone();
+    let width = crate::frontend::frame_fringe_pixels(i, &parameters, "left-fringe")
+        .saturating_add(crate::frontend::frame_fringe_pixels(
+            i,
+            &parameters,
+            "right-fringe",
+        ));
+    Ok(Value::Int(width as i128))
 }
 
 /// `window-current-scroll-bars' — GNU window.el `window-normalize-window
@@ -1388,21 +1431,6 @@ fn f_old_selected_window(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if let Some(symbol) = i.q_soft("remacs--mode-line-selected-window")
         && i.bound_p(symbol)
     {
-fn f_frame_fringe_width(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let frame = frame_any(i, &arg(&a, 0))?;
-    if !crate::editor::frame_is_graphical(i, &frame) {
-        return Ok(Value::Int(0));
-    }
-    let parameters = frame.borrow().params.clone();
-    let width = crate::frontend::frame_fringe_pixels(i, &parameters, "left-fringe")
-        .saturating_add(crate::frontend::frame_fringe_pixels(
-            i,
-            &parameters,
-            "right-fringe",
-        ));
-    Ok(Value::Int(width as i128))
-}
-
         return Ok(i.symbol_value(symbol));
     }
     f_sel_window(i, a)
@@ -1725,7 +1753,8 @@ fn f_window_text_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     } else {
         (0, 0, 0)
     };
-    let (scroll_height, _, _, horizontal_scroll_side, _) = window_scroll_bar_settings(i, &w);
+    let (scroll_height, _, _, horizontal_scroll_side, _) =
+        window_scroll_bar_settings(i, &w);
     let frame = crate::editor::frame_of_window(i, &w);
     let char_height = frame
         .as_ref()
@@ -1753,7 +1782,6 @@ fn f_window_text_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Ok(Value::Int((body_pixels / char_height) as i128))
     }
 }
-
 
 fn f_window_new_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
@@ -1801,8 +1829,13 @@ fn f_window_buffer1(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if data.horiz.is_some() || data.old_buffer.is_nil() {
         return Ok(Value::Nil);
     }
-    let frame = data.change_frame.and_then(|id| i.frames.iter().find(|f| f.borrow().id == id));
-    let stamp = data.change_clock.as_ref().map(|clock| clock.get())
+    let frame = data
+        .change_frame
+        .and_then(|id| i.frames.iter().find(|f| f.borrow().id == id));
+    let stamp = data
+        .change_clock
+        .as_ref()
+        .map(|clock| clock.get())
         .or_else(|| frame.map(|frame| frame.borrow().change_stamp.get()));
     if stamp.is_some_and(|stamp| stamp != data.change_stamp) {
         Ok(Value::t())
@@ -1871,10 +1904,7 @@ fn f_window_resize_no_error(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 
 /// Return the nearest ancestor combination that splits along the resize
 /// axis, the child branch containing W, and that combination's children.
-fn resize_axis(
-    w: &WindowRef,
-    horizontal: bool,
-) -> Option<(WindowRef, WindowRef, Vec<WindowRef>)> {
+fn resize_axis(w: &WindowRef, horizontal: bool) -> Option<(WindowRef, WindowRef, Vec<WindowRef>)> {
     let mut child = w.clone();
     let mut parent = w_parent(&child)?;
     loop {
@@ -1953,7 +1983,11 @@ fn resize_caps(
         for sibling in &eligible {
             let size = {
                 let sibling = sibling.borrow();
-                (if horizontal { sibling.width } else { sibling.height }) as i128
+                (if horizontal {
+                    sibling.width
+                } else {
+                    sibling.height
+                }) as i128
             };
             let minimum = crate::lisp::builtins::misc::win_min_size(
                 i,
@@ -1981,10 +2015,7 @@ fn pixelwise_char_size(i: &Interp, w: &WindowRef, horizontal: bool) -> i128 {
     }
 }
 
-pub(crate) fn pixelwise_window_extent_adjustment(
-    w: &WindowRef,
-    horizontal: bool,
-) -> i128 {
+pub(crate) fn pixelwise_window_extent_adjustment(w: &WindowRef, horizontal: bool) -> i128 {
     let (local, extent) = {
         let window = w.borrow();
         (
@@ -1993,7 +2024,11 @@ pub(crate) fn pixelwise_window_extent_adjustment(
             } else {
                 window.pixelwise_height_adjustment
             },
-            if horizontal { window.width } else { window.height },
+            if horizontal {
+                window.width
+            } else {
+                window.height
+            },
         )
     };
     let Some(parent) = crate::editor::w_parent(w) else {
@@ -2033,19 +2068,14 @@ pub(crate) fn pixelwise_window_extent_adjustment(
             }
         })
         .sum::<usize>();
-    let edge_adjustment = |edge: usize| {
-        (inherited as f64 * edge as f64 / total as f64).round() as i128
-    };
+    let edge_adjustment =
+        |edge: usize| (inherited as f64 * edge as f64 / total as f64).round() as i128;
     local + edge_adjustment(start + extent) - edge_adjustment(start)
 }
 
 fn pixelwise_window_size(w: &WindowRef, horizontal: bool, char_size: i128) -> i128 {
     let wb = w.borrow();
-    let cells = if horizontal {
-        wb.width
-    } else {
-        wb.height
-    };
+    let cells = if horizontal { wb.width } else { wb.height };
     drop(wb);
     cells as i128 * char_size + pixelwise_window_extent_adjustment(w, horizontal)
 }
@@ -2717,14 +2747,7 @@ fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     if crate::editor::frame_is_graphical(i, &f) {
         let window = window.unwrap_or_else(|| f.borrow().selected.clone());
-        return posn_at_xy_graphical(
-            i,
-            &f,
-            &window,
-            x,
-            y,
-            a.get(3).is_some_and(Value::truthy),
-        );
+        return posn_at_xy_graphical(i, &f, &window, x, y, a.get(3).is_some_and(Value::truthy));
     }
     // Outside the frame's text area GNU reports the short form
     // `(FRAME nil (X . Y) 0)'.
@@ -2860,9 +2883,6 @@ fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_posn_pair(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    // Match `window-absolute-pixel-position': validate WINDOW before POSITION,
-    // then combine the visible glyph position with the window's absolute body
-    // origin.
     let wv = match arg(&a, 1) {
         Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
         v => v.clone(),
@@ -3520,16 +3540,10 @@ fn f_set_frame_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     fb.width = usize::try_from(width).unwrap_or(usize::MAX);
     fb.height = usize::try_from(height).unwrap_or(usize::MAX);
     let mut parameters = fb.params.clone();
-    parameters = crate::lisp::eval::plist_put_front(
-        &parameters,
-        &width_parameter,
-        Value::Int(width),
-    );
-    parameters = crate::lisp::eval::plist_put_front(
-        &parameters,
-        &height_parameter,
-        Value::Int(height),
-    );
+    parameters =
+        crate::lisp::eval::plist_put_front(&parameters, &width_parameter, Value::Int(width));
+    parameters =
+        crate::lisp::eval::plist_put_front(&parameters, &height_parameter, Value::Int(height));
     fb.params = parameters;
     Ok(Value::Nil)
 }
@@ -3614,8 +3628,7 @@ fn f_window_lines_pixel_dimensions(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         .map(|frame| crate::editor::frame_char_width(i, frame))
         .unwrap_or(1)
         .max(1);
-    let rendered_rows = (height as f64 * window_pixel_scale_y(i, &window)
-        / char_height as f64)
+    let rendered_rows = (height as f64 * window_pixel_scale_y(i, &window) / char_height as f64)
         .round()
         .max(0.0) as usize;
     let (header, tab, mode) = if leaf && !minibuffer {
@@ -3708,7 +3721,8 @@ fn f_window_sizable_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let delta = arg(&a, 1);
     let positive = {
         let greater = Value::Sym(i.q(">"));
-        i.apply(&greater, vec![delta.clone(), Value::Int(0)])?.truthy()
+        i.apply(&greater, vec![delta.clone(), Value::Int(0)])?
+            .truthy()
     };
     let sizable = Value::Sym(i.q("window-sizable"));
     let actual = i.apply(
@@ -3732,16 +3746,8 @@ fn f_set_frame_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let left_parameter = Value::Sym(i.intern("left"));
     let top_parameter = Value::Sym(i.intern("top"));
     let mut parameters = frame.borrow().params.clone();
-    parameters = crate::lisp::eval::plist_put_front(
-        &parameters,
-        &left_parameter,
-        Value::Int(left),
-    );
-    parameters = crate::lisp::eval::plist_put_front(
-        &parameters,
-        &top_parameter,
-        Value::Int(top),
-    );
+    parameters = crate::lisp::eval::plist_put_front(&parameters, &left_parameter, Value::Int(left));
+    parameters = crate::lisp::eval::plist_put_front(&parameters, &top_parameter, Value::Int(top));
     frame.borrow_mut().params = parameters;
     Ok(Value::t())
 }
@@ -3758,7 +3764,6 @@ fn f_frame_window_state_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     let frame = frame_live(i, &arg(&a, 0))?;
     Ok(Value::from_bool(frame.borrow().window_state_change))
 }
-
 
 /// `set-frame-size-and-position-pixelwise' — GNU Fset_frame_size_and_
 /// position_pixelwise on a tty: decode_live_frame, nil gravity → 1,
@@ -3863,19 +3868,14 @@ pub(crate) fn window_format_line_height(
     window: &WindowRef,
     variable: &str,
 ) -> Result<usize, Flow> {
-    let buffer = i
-        .buffer_value(window.borrow().buffer)
-        .unwrap_or(Value::Nil);
+    let buffer = i.buffer_value(window.borrow().buffer).unwrap_or(Value::Nil);
     let variable = Value::Sym(i.q(variable));
     let buffer_local_value = Value::Sym(i.q("buffer-local-value"));
     let value = i.apply(&buffer_local_value, vec![variable, buffer])?;
     Ok(usize::from(value.truthy()))
 }
 
-pub(crate) fn window_mode_line_height(
-    i: &mut Interp,
-    window: &WindowRef,
-) -> Result<usize, Flow> {
+pub(crate) fn window_mode_line_height(i: &mut Interp, window: &WindowRef) -> Result<usize, Flow> {
     let has_mode_line = {
         let window = window.borrow();
         !window.minibuffer && window.horiz.is_none()
@@ -4006,9 +4006,7 @@ fn f_window_discard_buffer_from_window(i: &mut Interp, a: crate::lisp::Argv) -> 
         Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
         other => win_live(i, other)?,
     };
-    let same_buf = |v: &Value| -> bool {
-        matches!(v, Value::Buffer(b) if b.borrow().id == bid)
-    };
+    let same_buf = |v: &Value| -> bool { matches!(v, Value::Buffer(b) if b.borrow().id == bid) };
     let all = arg(&a, 2).truthy();
     // prev-buffers entries are (BUFFER START MARKER POINT MARKER).
     let mut wb = w.borrow_mut();
@@ -4105,9 +4103,7 @@ fn f_set_window_fringes(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let fringe_width = |i: &mut Interp, value: &Value| -> Result<Option<usize>, Flow> {
         match value {
             Value::Nil => Ok(None),
-            Value::Int(width) => {
-                Ok(Some(usize::try_from((*width).max(0)).unwrap_or(usize::MAX)))
-            }
+            Value::Int(width) => Ok(Some(usize::try_from((*width).max(0)).unwrap_or(usize::MAX))),
             other => Err(i.wrong_type_mut("integer-or-nil", other)),
         }
     };
@@ -4367,7 +4363,11 @@ fn f_tty_find_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             other => return Err(i.wrong_type_mut("stringp", other)),
         };
         let cut = s
-            .chars().enumerate().filter(|(_, c)| *c == '-' || *c == '_' || *c == '.').map(|(index, _)| index).last()
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '-' || *c == '_' || *c == '.')
+            .map(|(index, _)| index)
+            .last()
             .map(|p| &s[..p])
             .unwrap_or_default();
         if cut.is_empty() {
@@ -4382,10 +4382,7 @@ fn f_tty_find_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn terminal_params(i: &mut Interp) -> &Vec<(Value, Value)> {
     if i.terminal_params.is_empty() {
         i.terminal_params = vec![
-            (
-                Value::Sym(i.q("normal-erase-is-backspace")),
-                Value::Int(0),
-            ),
+            (Value::Sym(i.q("normal-erase-is-backspace")), Value::Int(0)),
             (
                 Value::Sym(i.q("keyboard-coding-saved-meta-mode")),
                 // GNU stores a one-element list here (the saved
@@ -4450,12 +4447,15 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Validate FRAME like GNU (frame-live-p), then hand back a hash
     // table of the frame's faces: symbol → lface vector
     // [face ATTR...] — `frame-face-alist' maphashes over this.
-    if let Some(v) = a.first() {
-        match v {
-            Value::Nil | Value::Frame(_) => {}
-            other => return Err(i.wrong_type_mut("frame-live-p", other)),
-        }
-    }
+    let frame = match a.first() {
+        None | Some(Value::Nil) => i.selected_frame.clone(),
+        Some(Value::Frame(frame)) if !frame.borrow().dead => Some(frame.clone()),
+        Some(other) => return Err(i.wrong_type_mut("frame-live-p", other)),
+    };
+    let frame_attributes = frame
+        .as_ref()
+        .map(|frame| frame.borrow().face_attributes.clone())
+        .unwrap_or_default();
     use crate::lisp::value::{HashTest, LispHash};
     let mut h = LispHash::new(HashTest::Eq);
     let un = Value::Sym(i.q("unspecified"));
@@ -4483,8 +4483,12 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ":distant-foreground",
         ":extend",
     ];
-    let mut names: Vec<_> = crate::editor::KNOWN_FACES.iter().map(|name| i.q(name)).collect();
+    let mut names: Vec<_> = crate::editor::KNOWN_FACES
+        .iter()
+        .map(|name| i.q(name))
+        .collect();
     names.extend(i.face_table.iter().map(|(face, _)| *face));
+    names.extend(frame_attributes.iter().map(|(face, _)| *face));
     for n in names {
         let sym = Value::Sym(n);
         let key = crate::lisp::builtins::hashfn::hash_key_for(i, &sym, HashTest::Eq);
@@ -4498,6 +4502,10 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .find(|(m, _)| *m == n)
                 .map(|(_, p)| p.clone()),
             i.face_t_table
+                .iter()
+                .find(|(m, _)| *m == n)
+                .map(|(_, p)| p.clone()),
+            frame_attributes
                 .iter()
                 .find(|(m, _)| *m == n)
                 .map(|(_, p)| p.clone()),
@@ -4587,11 +4595,11 @@ fn text_line_columns(text: &EmacsText, tab_width: usize) -> Vec<usize> {
 }
 
 fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (usize, usize) {
-    let (buffer_id, start, hscroll) = {
+    let (buffer, start, hscroll) = {
         let window = window.borrow();
         (window.buffer, window.start, window.hscroll)
     };
-    let Some(buffer) = i.buffers.get(buffer_id) else {
+    let Some(buffer) = i.buffers.get(buffer) else {
         return (0, 0);
     };
     let tab_width = i
@@ -4613,7 +4621,6 @@ fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (u
         let line_end = buffer.text.line_end(line_start).min(buffer.zv);
         let line = buffer.text.substring(line_start, line_end);
         let line_len = line.chars().count();
-        // A physical line can occupy several display rows when it wraps.
         let ranges = crate::frontend::visual_line_ranges_for_window(
             i,
             buffer.id,
@@ -4908,23 +4915,43 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         .unwrap_or(8)
         .max(1);
     let frame = crate::editor::frame_of_window(i, &w);
-    let (char_width, x_limit_default) = frame
+    let graphical_frame = frame
         .as_ref()
-        .map(|frame| {
-            let char_width = crate::editor::frame_char_width(i, frame).max(1);
-            let body_cells = w
-                .borrow()
-                .width
-                .saturating_sub(w.borrow().margins.0.saturating_add(w.borrow().margins.1));
-            let x_limit = (body_cells as f64 * window_pixel_scale_x(i, &w)).round() as usize;
-            (char_width, x_limit)
-        })
-        .unwrap_or((1, 0));
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame));
+    let (char_width, x_limit_default) = if graphical_frame {
+        frame
+            .as_ref()
+            .map(|frame| {
+                let char_width = crate::editor::frame_char_width(i, frame).max(1);
+                let body_cells = w
+                    .borrow()
+                    .width
+                    .saturating_sub(w.borrow().margins.0.saturating_add(w.borrow().margins.1));
+                let x_limit = (body_cells as f64 * window_pixel_scale_x(i, &w)).round() as usize;
+                (char_width, x_limit)
+            })
+            .unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
     let x_limit = match a.get(3) {
         Some(value) if !value.is_nil() => {
             crate::lisp::builtins::want_int(i, value)?.max(0) as usize
         }
         _ => x_limit_default,
+    };
+    let mut display_pixel_size = if graphical_frame {
+        crate::frontend::window_text_display_pixel_size(
+            i,
+            &w,
+            &segment,
+            start0,
+            tab_width,
+            char_width,
+            window_char_height(i, &w).max(1),
+        )
+    } else {
+        None
     };
     let y_limit = match a.get(4) {
         Some(value) if !value.is_nil() => {
@@ -4940,25 +4967,10 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         .is_some_and(|character| matches!(character.unicode(), Some('\n' | '\r')));
     if ignore_line_at_end && ends_at_line_start && !text_lines.is_empty() {
         text_lines.pop();
-    }
-    let mut display_pixel_size = if graphical_window {
-        crate::frontend::window_text_display_pixel_size(
-            i,
-            &w,
-            &segment,
-            start0,
-            tab_width,
-            char_width,
-            window_char_height(i, &w).max(1),
-        )
-    } else {
-        None
-    };
-    if ignore_line_at_end && ends_at_line_start {
-        if let Some((_, rows)) = &mut display_pixel_size {
-            if rows.len() > 1 {
-                rows.pop();
-            }
+        if let Some((_, rows)) = &mut display_pixel_size
+            && rows.len() > 1
+        {
+            rows.pop();
         }
     }
     let raw_pixel_width = text_lines
@@ -4998,12 +5010,16 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let tab = !minibuffer && formats[2] && height > 1 + usize::from(mode) + usize::from(header);
     let lines = arg(&a, 5);
     let all = i.sym_id(&lines) == Some(sym::T);
-    let requested_line_height = match frame.as_ref() {
-        Some(frame) => crate::editor::frame_char_height(i, frame).max(1),
-        None => 1,
+    // TTY windows have no pixel-measured text rows, but GNU reports
+    // their mode/header/tab lines as one unit each.
+    let (text_line_height, decoration_line_height) = if graphical_frame {
+        let height = window_char_height(i, &w).max(1);
+        (height, height)
+    } else {
+        (0, 1)
     };
     let mut measured_height = display_pixel_size.as_ref().map_or_else(
-        || text_lines.len().saturating_mul(requested_line_height),
+        || text_lines.len().saturating_mul(text_line_height),
         |(_, rows)| rows.iter().copied().fold(0, usize::saturating_add),
     );
     for (name, wanted) in [
@@ -5012,7 +5028,7 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         ("tab-line", tab),
     ] {
         if wanted && (all || i.sym_id(&lines).is_some_and(|s| i.symbol_name(s) == name)) {
-            measured_height = measured_height.saturating_add(requested_line_height);
+            measured_height = measured_height.saturating_add(decoration_line_height);
         }
     }
     if let Some(y_limit) = y_limit {
@@ -5237,7 +5253,11 @@ fn f_window_resize_apply_total(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     let horizontal = arg(&a, 1).truthy();
     let (root, minibuffer, text_margin) = {
         let frame = frame.borrow();
-        (frame.root.clone(), frame.minibuffer.clone(), frame.text_margin)
+        (
+            frame.root.clone(),
+            frame.minibuffer.clone(),
+            frame.text_margin,
+        )
     };
     let Some(root) = root.or_else(|| minibuffer.clone()) else {
         return Ok(Value::t());
@@ -5335,13 +5355,9 @@ fn fontified_interval_end(
         .max()
 }
 
-fn run_window_fontification_functions(
-    i: &mut Interp,
-    window: &WindowRef,
-) -> Result<(), Flow> {
+fn run_window_fontification_functions(i: &mut Interp, window: &WindowRef) -> Result<(), Flow> {
     let buffer_id = window.borrow().buffer;
-    let Some((mut position, end)) = crate::frontend::visible_fontification_range(i, window)
-    else {
+    let Some((mut position, end)) = crate::frontend::visible_fontification_range(i, window) else {
         return Ok(());
     };
     if position >= end {
@@ -5421,8 +5437,8 @@ fn run_window_fontification_functions(
     if i.buffer_live(previous_buffer) {
         i.set_current_buffer(previous_buffer);
     }
-    result?;
     unwind?;
+    result?;
     Ok(())
 }
 

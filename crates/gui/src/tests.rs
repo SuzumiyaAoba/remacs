@@ -1,6 +1,6 @@
-use super::keys::unicode_key_text;
 #[cfg(target_os = "macos")]
 use super::keys::is_native_command_w;
+use super::keys::unicode_key_text;
 use super::{
     ChanIo, EditorView, GuiEvent, build_editor_view, command_keystroke, keystroke_to_code,
     start_logic,
@@ -94,17 +94,19 @@ fn initial_frame_visibility_applies_to_existing_primary_window() {
     let mut app = gpui::TestAppContext::single();
     let (tx, _rx) = mpsc::channel();
     let handle = app.add_window(|_, cx| EditorView::new(tx, cx));
-    handle.update(&mut app, |_, window, _| {
-        assert!(window.is_visible());
-        // An early visibility request may have arrived before a frame ID was
-        // bound to this initial native window. The first snapshot must apply it.
-        super::apply_initial_frame_visibility(window, FrameVisibility::Hidden, false);
-        assert!(!window.is_visible());
-        super::apply_initial_frame_visibility(window, FrameVisibility::Iconified, false);
-        assert!(!window.is_visible());
-        super::apply_initial_frame_visibility(window, FrameVisibility::Visible, false);
-        assert!(window.is_visible());
-    }).unwrap();
+    handle
+        .update(&mut app, |_, window, _| {
+            assert!(window.is_visible());
+            // An early visibility request may have arrived before a frame ID was
+            // bound to this initial native window. The first snapshot must apply it.
+            super::apply_initial_frame_visibility(window, FrameVisibility::Hidden, false);
+            assert!(!window.is_visible());
+            super::apply_initial_frame_visibility(window, FrameVisibility::Iconified, false);
+            assert!(!window.is_visible());
+            super::apply_initial_frame_visibility(window, FrameVisibility::Visible, false);
+            assert!(window.is_visible());
+        })
+        .unwrap();
 }
 
 #[test]
@@ -113,7 +115,9 @@ fn initial_frame_visibility_is_preserved_in_snapshots() {
     use remacs_runtime::frontend::FrameVisibility;
 
     let mut interp = Interp::new();
-    interp.eval_str("(set-frame-parameter nil 'window-system 'ns)").unwrap();
+    interp
+        .eval_str("(set-frame-parameter nil 'window-system 'ns)")
+        .unwrap();
     let (mut io, _tx, _grx) = chan_pair();
     let (requests, received) = smol::channel::unbounded();
     io.gui_requests = Some(requests);
@@ -127,10 +131,12 @@ fn initial_frame_visibility_is_preserved_in_snapshots() {
         if let Some(setting) = setting {
             // This is the parameter application performed after an init file.
             // Init-file discovery is deliberately outside this transport test.
-            interp.eval_str(&format!(
-                "(let ((initial-frame-alist (list (cons 'visibility {setting}))))
+            interp
+                .eval_str(&format!(
+                    "(let ((initial-frame-alist (list (cons 'visibility {setting}))))
                    (modify-frame-parameters nil initial-frame-alist))"
-            )).unwrap();
+                ))
+                .unwrap();
         }
         io.render(&interp).unwrap();
         let GuiRequest::FrameSnapshots(mailbox) = received.try_recv().unwrap() else {
@@ -377,9 +383,18 @@ fn frame_display_selection_handles_monitors_left_of_and_above_primary() {
 fn frame_display_selection_retains_fallback_outside_available_monitors() {
     let displays = [(1, monitor_bounds(0.0, 0.0, 1920.0, 1080.0))];
     let offscreen = monitor_bounds(5000.0, 5000.0, 640.0, 480.0);
-    assert_eq!(super::display_for_frame_bounds(offscreen, displays, Some(1)), Some(1));
-    assert_eq!(super::display_for_frame_bounds(offscreen, displays, None), None);
-    assert_eq!(super::display_for_frame_bounds(offscreen, [], Some(2)), Some(2));
+    assert_eq!(
+        super::display_for_frame_bounds(offscreen, displays, Some(1)),
+        Some(1)
+    );
+    assert_eq!(
+        super::display_for_frame_bounds(offscreen, displays, None),
+        None
+    );
+    assert_eq!(
+        super::display_for_frame_bounds(offscreen, [], Some(2)),
+        Some(2)
+    );
 }
 
 fn ks(
@@ -557,9 +572,15 @@ fn keystroke_meta_and_super() {
 #[cfg(target_os = "macos")]
 #[test]
 fn command_w_is_left_for_native_window_close() {
-    assert!(is_native_command_w(&ks("w", None, false, false, false, true)));
-    assert!(!is_native_command_w(&ks("w", None, false, false, true, true)));
-    assert!(!is_native_command_w(&ks("w", None, false, false, false, false)));
+    assert!(is_native_command_w(&ks(
+        "w", None, false, false, false, true
+    )));
+    assert!(!is_native_command_w(&ks(
+        "w", None, false, false, true, true
+    )));
+    assert!(!is_native_command_w(&ks(
+        "w", None, false, false, false, false
+    )));
 }
 
 #[test]
@@ -646,7 +667,11 @@ fn reset_stop_and_sys_req_keysyms_remain_named_events() {
     for name in ["reset", "stop", "sys-req"] {
         let key = ks(name, None, false, false, false, false);
         assert!(command_keystroke(&key), "{name}");
-        assert_eq!(keystroke_to_code(&key), Some(event_code_for(name)), "{name}");
+        assert_eq!(
+            keystroke_to_code(&key),
+            Some(event_code_for(name)),
+            "{name}"
+        );
     }
 }
 

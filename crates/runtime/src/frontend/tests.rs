@@ -3,8 +3,7 @@ mod read_event_tests;
 
 use super::*;
 use crate::frontend::{
-    CellColor, GridImageSource, MousePosition, render_grid_mut,
-    render_grid_with_mouse_position_cached,
+    CellColor, GridImageSource, MousePosition, render_grid_mut, render_grid_with_mouse_position_cached,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -15,6 +14,7 @@ struct TestFrontend {
     height: usize,
     out: Rc<RefCell<Vec<u8>>>,
     pending: Vec<i128>,
+    input_on_render: Option<i128>,
     frame_pixel_geometry: Vec<(usize, i128, i128)>,
 }
 impl KeyIo for TestFrontend {
@@ -28,6 +28,9 @@ impl KeyIo for TestFrontend {
         let grid = render_grid(i, self.width, self.height);
         for row in grid.rows {
             self.out.borrow_mut().extend_from_slice(row.as_bytes());
+        }
+        if let Some(key) = self.input_on_render.take() {
+            self.pending.push(key);
         }
         Ok(())
     }
@@ -50,6 +53,7 @@ fn test_term(width: usize, height: usize) -> (TestFrontend, Rc<RefCell<Vec<u8>>>
             height,
             out: out.clone(),
             pending: Vec::new(),
+            input_on_render: None,
             frame_pixel_geometry: Vec::new(),
         },
         out,
@@ -60,7 +64,7 @@ fn test_term(width: usize, height: usize) -> (TestFrontend, Rc<RefCell<Vec<u8>>>
 fn sit_for_redisplays_and_returns_early_without_consuming_input() {
     let mut i = interp_with_frame("");
     let (mut frontend, out) = test_term(80, 25);
-    frontend.pending.push('x' as i128);
+    frontend.input_on_render = Some('x' as i128);
     let term = Rc::new(RefCell::new(frontend));
     install_minibuf_reader(&term, &mut i);
 
@@ -76,7 +80,10 @@ fn sit_for_redisplays_and_returns_early_without_consuming_input() {
         Some(InputEvent::Key(key)) if key == 'x' as i128
     ));
     let timed_out = i.eval_str("(sit-for 0.001)").unwrap();
-    assert!(timed_out.truthy(), "sit-for should return t after its timeout");
+    assert!(
+        timed_out.truthy(),
+        "sit-for should return t after its timeout"
+    );
 }
 
 fn interp_with_frame(text: &str) -> crate::lisp::Interp {
@@ -618,9 +625,9 @@ fn horizontal_scroll_bar_drag_uses_display_columns_for_wide_chars_and_tabs_inner
         GridScrollBarOrientation::Horizontal,
         max_offset,
         max_offset,
+        text_width,
     );
     let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
-        text_width,
     assert_eq!(window.borrow().hscroll, max_offset);
 
     let scrolled = render_grid(&i, 80, 25);
@@ -674,9 +681,9 @@ fn vertical_scroll_bar_reaches_buffer_end_with_header_and_tab_lines_inner() {
         GridScrollBarOrientation::Vertical,
         max_offset,
         max_offset,
+        text_width,
     );
     let scrolled = render_grid(&i, 80, 25);
-        text_width,
     assert!(
         scrolled.rows.iter().any(|row| row.contains("line-099")),
         "last buffer line should be visible after scrolling to max_offset {max_offset}"
@@ -742,10 +749,7 @@ fn visual_line_numbers_count_continuation_rows_only_in_visual_mode() {
     i.eval_str("(setq-local display-line-numbers t)").unwrap();
     let window = i.selected_frame.as_ref().unwrap().borrow().selected.clone();
     window.borrow_mut().start = 17;
-    i.current_buffer_ref()
-        .unwrap()
-        .borrow_mut()
-        .set_point(17);
+    i.current_buffer_ref().unwrap().borrow_mut().set_point(17);
     let absolute = render_grid(&i, 20, 6);
     assert_eq!(absolute.rows[0].chars().take(3).collect::<String>(), "   ");
 }
@@ -763,10 +767,7 @@ fn relative_line_numbers_can_show_zero_on_the_current_line() {
         .unwrap()
         .borrow_mut()
         .insert("one\ntwo\nthree");
-    i.current_buffer_ref()
-        .unwrap()
-        .borrow_mut()
-        .set_point(4);
+    i.current_buffer_ref().unwrap().borrow_mut().set_point(4);
 
     let grid = render_grid(&i, 20, 6);
     assert_eq!(grid.rows[0].chars().take(3).collect::<String>(), " 1 ");
@@ -858,10 +859,14 @@ fn relative_image_file_is_searched_in_image_load_path() {
 
     let mut i = interp_with_frame("x");
     let search_path = i
-        .prin1_to_string(&crate::lisp::Value::string(directory.to_string_lossy().as_ref()))
+        .prin1_to_string(&crate::lisp::Value::string(
+            directory.to_string_lossy().as_ref(),
+        ))
         .to_string();
     let unrelated_directory = i
-        .prin1_to_string(&crate::lisp::Value::string("/definitely/not/the/image/directory/"))
+        .prin1_to_string(&crate::lisp::Value::string(
+            "/definitely/not/the/image/directory/",
+        ))
         .to_string();
     i.eval_str(&format!(
         "(setq image-load-path (list {search_path}))\
@@ -919,7 +924,10 @@ fn partial_width_window_honors_truncate_partial_width_windows() {
             .take(area.width)
             .collect::<String>();
         assert!(first_row.contains('x'));
-        assert!(!second_row.contains('x'), "partial window wrapped: {second_row:?}");
+        assert!(
+            !second_row.contains('x'),
+            "partial window wrapped: {second_row:?}"
+        );
     }
 }
 
@@ -957,7 +965,14 @@ fn mode_line_m_is_empty_for_non_string_mode_name() {
     let mut i = interp_with_frame("x");
     i.eval_str("(setq-local mode-line-format \"%m\" mode-name '(\"Mode\" (:eval \"extra\")))")
         .unwrap();
-    let window_id = i.selected_frame.as_ref().unwrap().borrow().selected.borrow().id;
+    let window_id = i
+        .selected_frame
+        .as_ref()
+        .unwrap()
+        .borrow()
+        .selected
+        .borrow()
+        .id;
 
     let grid = render_grid(&i, 40, 4);
     let mode_line = grid
@@ -1330,7 +1345,11 @@ fn double_and_triple_mouse_clicks_select_word_and_line() {
     let selected = triple
         .eval_str("(buffer-substring-no-properties (region-beginning) (region-end))")
         .unwrap();
-    assert!(triple.prin1_to_string(&selected).starts_with("\"alpha beta"));
+    assert!(
+        triple
+            .prin1_to_string(&selected)
+            .starts_with("\"alpha beta")
+    );
     assert!(!triple.prin1_to_string(&selected).contains("second"));
 
     let mut drag = interp_with_frame("alpha beta\n");
@@ -1837,7 +1856,12 @@ fn minibuf_loop_reads_text() {
     // pending is a stack — reverse order.
     term.borrow_mut().pending.reverse();
     let mut i = interp_with_minibuffer("P: ");
-    match minibuf_loop(&term, &mut i, &crate::lisp::text::EmacsText::from("P: "), false) {
+    match minibuf_loop(
+        &term,
+        &mut i,
+        &crate::lisp::text::EmacsText::from("P: "),
+        false,
+    ) {
         Ok(crate::lisp::eval::MinibufInput::Text(s)) => assert_eq!(s, "ab"),
         other => panic!("expected Text, got {:?}", other.map(|_| ())),
     }
@@ -1858,7 +1882,12 @@ fn minibuf_loop_del_and_cg() {
     let mut i = interp_with_minibuffer("");
     // GNU: `abort-minibuffers' throws `exit' with a function that
     // signals `minibuffer-quit' after unwind.
-    match minibuf_loop(&term, &mut i, &crate::lisp::text::EmacsText::from(""), false) {
+    match minibuf_loop(
+        &term,
+        &mut i,
+        &crate::lisp::text::EmacsText::from(""),
+        false,
+    ) {
         Ok(crate::lisp::eval::MinibufInput::Call(f)) => {
             let r = i.apply(&f, vec![]);
             assert!(
@@ -2070,7 +2099,12 @@ fn minibuf_loop_single_key_mode() {
     let term = Rc::new(RefCell::new(t));
     term.borrow_mut().unread(b'y' as i128);
     let mut i = crate::lisp::Interp::new();
-    match minibuf_loop(&term, &mut i, &crate::lisp::text::EmacsText::from("y/n "), true) {
+    match minibuf_loop(
+        &term,
+        &mut i,
+        &crate::lisp::text::EmacsText::from("y/n "),
+        true,
+    ) {
         Ok(crate::lisp::eval::MinibufInput::Key(k)) => assert_eq!(k, b'y' as i128),
         _ => panic!("expected Key"),
     }
@@ -2102,6 +2136,33 @@ fn isearch_loop_abort_restores() {
     let mut i = interp_with_frame("xx yy\n");
     isearch_loop(&term, &mut i, false, false).unwrap();
     assert_eq!(i.current_buffer_ref().unwrap().borrow().point(), 0);
+}
+
+#[test]
+fn isearch_mode_watcher_errors_abort_keyboard_macro_replay() {
+    let (t, _out) = test_term(20, 5);
+    let term = Rc::new(RefCell::new(t));
+    let mut i = interp_with_frame("xx yy\n");
+    i.eval_str(
+        "(defun qa-isearch-mode-watcher (_symbol _value operation _where)\
+           (when (eq operation 'set)\
+             (signal 'file-error '(\"isearch mode watcher\"))))\
+         (add-variable-watcher 'isearch-mode #'qa-isearch-mode-watcher)",
+    )
+    .unwrap();
+    i.macro_replaying = true;
+    i.macro_replay.push_back(b'g' as i128);
+
+    isearch_loop(&term, &mut i, false, false).unwrap();
+
+    assert!(i.macro_replay.is_empty());
+    assert!(matches!(
+        i.macro_pending_flow,
+        Some(crate::lisp::Flow::Signal(ref signal))
+            if signal.is_symbol(crate::lisp::sym::FILE_ERROR)
+    ));
+    let mode = i.q("isearch-mode");
+    assert!(i.symbol_value(mode).is_nil());
 }
 
 #[test]
@@ -2344,12 +2405,13 @@ fn printable_text_input_uses_key_bindings_prefixes_hooks_and_overwrite() {
             )
             .unwrap();
             dispatch_text(&term, &mut i, "c", &mut keys, &mut arg_mode).unwrap();
-            assert_eq!(i.eval_str("qa-post-self-insert-count").unwrap().int(), Some(1));
+            assert_eq!(
+                i.eval_str("qa-post-self-insert-count").unwrap().int(),
+                Some(1)
+            );
 
-            i.eval_str(
-                "(erase-buffer) (insert \"ab\") (goto-char 2) (overwrite-mode 1)",
-            )
-            .unwrap();
+            i.eval_str("(erase-buffer) (insert \"ab\") (goto-char 2) (overwrite-mode 1)")
+                .unwrap();
             dispatch_text(&term, &mut i, "x", &mut keys, &mut arg_mode).unwrap();
             assert_eq!(buffer.borrow().text.text(), "ax");
         })

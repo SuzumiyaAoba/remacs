@@ -851,8 +851,8 @@ pub(super) fn prepare(
             })
         })();
         let unwind = i.unbind_to(mark);
-        let (evaluated, title) = result?;
         unwind?;
+        let (evaluated, title) = result?;
         if evaluated && !frame.borrow().dead && !window.borrow().dead {
             let final_root = root_title(i, &frame, context.buffer_id, graphical);
             let entry = Value::list(vec![

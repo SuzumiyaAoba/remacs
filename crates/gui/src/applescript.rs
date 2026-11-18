@@ -1,10 +1,10 @@
 //! Main-thread bridge for macOS AppleScript execution.
 
+use block::ConcreteBlock;
 use cocoa::{
-    base::{id, nil, NO},
+    base::{NO, id, nil},
     foundation::NSString,
 };
-use block::ConcreteBlock;
 use objc::{class, msg_send, sel, sel_impl};
 use remacs_runtime::frontend::AppleScriptResult;
 use std::{
@@ -86,7 +86,10 @@ unsafe fn error_message(error_info: id) -> String {
     if error_info == nil {
         return "AppleScript compilation or execution failed".to_owned();
     }
-    for key in ["NSAppleScriptErrorMessage", "NSAppleScriptErrorBriefMessage"] {
+    for key in [
+        "NSAppleScriptErrorMessage",
+        "NSAppleScriptErrorBriefMessage",
+    ] {
         let key = unsafe { NSString::alloc(nil).init_str(key) };
         let key: id = unsafe { msg_send![key, autorelease] };
         let value: id = unsafe { msg_send![error_info, objectForKey: key] };

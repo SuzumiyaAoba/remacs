@@ -2,8 +2,8 @@
 //! variables, markers, undo records — plus the registry (`BufferSet`)
 //! and all buffer primitives installed into the interpreter.
 
-pub mod extra;
 mod base64_data;
+pub mod extra;
 mod gapbuf;
 pub mod primitives;
 mod replace;
@@ -16,8 +16,8 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::{Rc, Weak};
 
-use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
 use crate::lisp::text::{EmacsText, TextSource};
+use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
 
 pub use gapbuf::{EditObserver, EditSubscription, GapBuffer, SharedText, TextChange};
 
@@ -136,15 +136,23 @@ pub struct Buffer {
 pub fn file_truename<T: TextSource + ?Sized>(path: &T) -> EmacsText {
     path.with_text(|path| {
         use std::collections::VecDeque;
-        let absolute = if path.starts_with('/') { path.to_owned() } else {
+        let absolute = if path.starts_with('/') {
+            path.to_owned()
+        } else {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
             let mut absolute = EmacsText::from_os_str(cwd.as_os_str());
-            if !absolute.ends_with('/') { absolute.push('/'); }
+            if !absolute.ends_with('/') {
+                absolute.push('/');
+            }
             absolute.push_str(path);
             absolute
         };
         let root = |name: &crate::lisp::text::EmacsStr| {
-            if name.starts_with("//") && !name.starts_with("///") { "//" } else { "/" }
+            if name.starts_with("//") && !name.starts_with("///") {
+                "//"
+            } else {
+                "/"
+            }
         };
         let mut out = EmacsText::from(root(&absolute));
         let mut root_len = out.len();
@@ -152,28 +160,44 @@ pub fn file_truename<T: TextSource + ?Sized>(path: &T) -> EmacsText {
         let mut dirlike = path.ends_with('/');
         let mut links = 0;
         while let Some(component) = pending.pop_front() {
-            if component.is_empty() || component == "." { continue; }
+            if component.is_empty() || component == "." {
+                continue;
+            }
             if component == ".." {
-                if out.len() > root_len { out.truncate(out.rfind('/').unwrap().max(root_len)); }
+                if out.len() > root_len {
+                    out.truncate(out.rfind('/').unwrap().max(root_len));
+                }
                 continue;
             }
             let mut candidate = out.clone();
-            if !candidate.ends_with('/') { candidate.push('/'); }
+            if !candidate.ends_with('/') {
+                candidate.push('/');
+            }
             candidate.append(&component);
             if links < 100 {
-                let target = candidate.to_os_string().ok().and_then(|path| std::fs::read_link(path).ok());
+                let target = candidate
+                    .to_os_string()
+                    .ok()
+                    .and_then(|path| std::fs::read_link(path).ok());
                 if let Some(target) = target {
                     links += 1;
                     let target = EmacsText::from_os_str(target.as_os_str());
                     dirlike |= pending.iter().all(EmacsText::is_empty) && target.ends_with('/');
-                    if target.starts_with('/') { out = EmacsText::from(root(&target)); root_len = out.len(); }
-                    for part in target.split('/').rev() { pending.push_front(part.to_owned()); }
+                    if target.starts_with('/') {
+                        out = EmacsText::from(root(&target));
+                        root_len = out.len();
+                    }
+                    for part in target.split('/').rev() {
+                        pending.push_front(part.to_owned());
+                    }
                     continue;
                 }
             }
             out = candidate;
         }
-        if dirlike && !out.ends_with('/') { out.push('/'); }
+        if dirlike && !out.ends_with('/') {
+            out.push('/');
+        }
         out
     })
 }
@@ -186,25 +210,43 @@ mod wide_truename_tests {
         assert_eq!(file_truename("//.."), "//");
         assert_eq!(file_truename("///.."), "/");
         let name = EmacsText::from_codes([47, 0xf0080, 47, 0x3fff80, 0xd800, 0x110000]).unwrap();
-        assert_eq!(lock_file_name(&name).codes().collect::<Vec<_>>(), [47, 0xf0080, 47, 46, 35, 0x3fff80, 0xd800, 0x110000]);
+        assert_eq!(
+            lock_file_name(&name).codes().collect::<Vec<_>>(),
+            [47, 0xf0080, 47, 46, 35, 0x3fff80, 0xd800, 0x110000]
+        );
     }
     #[cfg(unix)]
     #[test]
     fn physical_symlinks_and_missing_components_retain_character_identity() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let directory = std::env::temp_dir().join(format!("remacs-wide-truename-{}-{unique}", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "remacs-wide-truename-{}-{unique}",
+            std::process::id()
+        ));
         std::fs::create_dir(&directory).unwrap();
         struct Cleanup(std::path::PathBuf);
-        impl Drop for Cleanup { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let _cleanup = Cleanup(directory.clone());
         let child = EmacsText::from_codes([0xf0080, 0xf0100]).unwrap();
         std::fs::create_dir(directory.join(child.to_os_string().unwrap())).unwrap();
         std::os::unix::fs::symlink(child.to_os_string().unwrap(), directory.join("alias")).unwrap();
         let mut input = EmacsText::from_os_str(directory.as_os_str());
-        input.push_str("/alias/"); input.push(crate::lisp::text::EmacsChar::new(0x110000).unwrap());
-        input.push_str("/../"); input.push(crate::lisp::text::EmacsChar::new(0xd800).unwrap());
-        let mut expected = EmacsText::from_os_str(std::fs::canonicalize(&directory).unwrap().as_os_str());
-        expected.push('/'); expected.append(&child); expected.push('/');
+        input.push_str("/alias/");
+        input.push(crate::lisp::text::EmacsChar::new(0x110000).unwrap());
+        input.push_str("/../");
+        input.push(crate::lisp::text::EmacsChar::new(0xd800).unwrap());
+        let mut expected =
+            EmacsText::from_os_str(std::fs::canonicalize(&directory).unwrap().as_os_str());
+        expected.push('/');
+        expected.append(&child);
+        expected.push('/');
         expected.push(crate::lisp::text::EmacsChar::new(0xd800).unwrap());
         assert_eq!(file_truename(&input), expected);
     }
@@ -214,8 +256,17 @@ mod wide_truename_tests {
 pub(crate) fn lock_file_name<T: TextSource + ?Sized>(file: &T) -> EmacsText {
     file.with_text(|file| {
         let result = match file.rfind('/') {
-            Some(position) => { let mut directory = file[..=position].to_owned(); directory.push_str(".#"); directory.push_str(&file[position + 1..]); directory }
-            None => { let mut name = EmacsText::from(".#"); name.push_str(file); name }
+            Some(position) => {
+                let mut directory = file[..=position].to_owned();
+                directory.push_str(".#");
+                directory.push_str(&file[position + 1..]);
+                directory
+            }
+            None => {
+                let mut name = EmacsText::from(".#");
+                name.push_str(file);
+                name
+            }
         };
         result
     })
@@ -362,13 +413,12 @@ impl Overlay {
         if let Some(value) = crate::lisp::eval::plist_lookup_v(&self.plist, property) {
             return value;
         }
-        let category =
-            i.q_soft("category").and_then(|key| {
-                match crate::lisp::eval::plist_get(&self.plist, key) {
-                    Value::Sym(symbol) => Some(symbol),
-                    _ => None,
-                }
-            });
+        let category = i.q_soft("category").and_then(|key| {
+            match crate::lisp::eval::plist_get(&self.plist, key) {
+                Value::Sym(symbol) => Some(symbol),
+                _ => None,
+            }
+        });
         match (category, i.sym_id(property)) {
             (Some(category), Some(property)) => i.get_prop(category, property),
             _ => Value::Nil,
@@ -654,7 +704,9 @@ impl Buffer {
         {
             // GNU locks the visited file's truename.
             let lname = lock_file_name(&file_truename(&file));
-            let Ok(native) = lname.to_os_string() else { return; };
+            let Ok(native) = lname.to_os_string() else {
+                return;
+            };
             if std::os::unix::fs::symlink(&lock_owner_string(), native).is_ok() {
                 self.file_lock_name = Some(lname);
             }
@@ -664,7 +716,9 @@ impl Buffer {
     /// Remove the lock file this buffer created, if any.
     pub fn release_lock_file(&mut self) {
         if let Some(lname) = self.file_lock_name.take() {
-            if let Ok(native) = lname.to_os_string() { let _ = std::fs::remove_file(native); }
+            if let Ok(native) = lname.to_os_string() {
+                let _ = std::fs::remove_file(native);
+            }
         }
     }
 
@@ -691,13 +745,12 @@ impl Buffer {
     /// `before_markers`: text goes before markers at pos (insert-before-markers).
     pub fn insert_at<T: TextSource + ?Sized>(&mut self, pos: usize, s: &T) {
         s.with_text(|s| {
-        let n = s.chars().count();
-        if n == 0 {
-            return;
-        }
-        self.raw_insert_at(pos, s);
-        self.note_text_change(n);
-
+            let n = s.chars().count();
+            if n == 0 {
+                return;
+            }
+            self.raw_insert_at(pos, s);
+            self.note_text_change(n);
         })
     }
 
@@ -705,25 +758,24 @@ impl Buffer {
     /// composite change (`replace_range', casify) with a single tick.
     pub fn raw_insert_at<T: TextSource + ?Sized>(&mut self, pos: usize, s: &T) {
         s.with_text(|s| {
-        let pos = pos.min(self.text.len());
-        let n = s.chars().count();
-        if n == 0 {
-            return;
-        }
-        self.record_insert(pos, n);
-        self.text.insert(pos, s);
-        self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
-        let id = self.id;
-        let text = self.text.clone();
-        text.each_sibling(id, move |sib| {
-            // GNU PT is an insertion_type=false marker: insert at the
-            // exact position does not advance it.
-            if sib.point > pos {
-                sib.point += n;
+            let pos = pos.min(self.text.len());
+            let n = s.chars().count();
+            if n == 0 {
+                return;
             }
-            sib.adjust_markers_insert(pos, n, false)
-        });
-
+            self.record_insert(pos, n);
+            self.text.insert(pos, s);
+            self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
+            let id = self.id;
+            let text = self.text.clone();
+            text.each_sibling(id, move |sib| {
+                // GNU PT is an insertion_type=false marker: insert at the
+                // exact position does not advance it.
+                if sib.point > pos {
+                    sib.point += n;
+                }
+                sib.adjust_markers_insert(pos, n, false)
+            });
         })
     }
 
@@ -732,78 +784,74 @@ impl Buffer {
     /// (Emacs `insert` inserts before point, advancing it.)
     pub fn insert<T: TextSource + ?Sized>(&mut self, s: &T) {
         s.with_text(|s| {
-        let n = s.chars().count();
-        if n == 0 {
-            return;
-        }
-        self.raw_insert(s);
-        self.note_text_change(n);
-
+            let n = s.chars().count();
+            if n == 0 {
+                return;
+            }
+            self.raw_insert(s);
+            self.note_text_change(n);
         })
     }
 
     /// `insert' without the MODIFF bump.
     pub fn raw_insert<T: TextSource + ?Sized>(&mut self, s: &T) {
         s.with_text(|s| {
-        let p = self.point();
-        let n = s.chars().count();
-        if n == 0 {
-            return;
-        }
-        self.record_insert(p, n);
-        self.text.insert(p, s);
-        self.point = p + n;
-        self.adjust_markers_insert(p, n, false);
-        let id = self.id;
-        let text = self.text.clone();
-        text.each_sibling(id, move |sib| {
-            if sib.point > p {
-                sib.point += n;
+            let p = self.point();
+            let n = s.chars().count();
+            if n == 0 {
+                return;
             }
-            sib.adjust_markers_insert(p, n, false)
-        });
-
+            self.record_insert(p, n);
+            self.text.insert(p, s);
+            self.point = p + n;
+            self.adjust_markers_insert(p, n, false);
+            let id = self.id;
+            let text = self.text.clone();
+            text.each_sibling(id, move |sib| {
+                if sib.point > p {
+                    sib.point += n;
+                }
+                sib.adjust_markers_insert(p, n, false)
+            });
         })
     }
 
     /// `insert-before-markers`.
     pub fn insert_before_markers<T: TextSource + ?Sized>(&mut self, s: &T) {
         s.with_text(|s| {
-        let n = s.chars().count();
-        if n == 0 {
-            return;
-        }
-        self.raw_insert_before_markers(s);
-        self.note_text_change(n);
-
+            let n = s.chars().count();
+            if n == 0 {
+                return;
+            }
+            self.raw_insert_before_markers(s);
+            self.note_text_change(n);
         })
     }
 
     /// `insert_before_markers' without the MODIFF bump.
     pub fn raw_insert_before_markers<T: TextSource + ?Sized>(&mut self, s: &T) {
         s.with_text(|s| {
-        let p = self.point();
-        let n = s.chars().count();
-        if n == 0 {
-            return;
-        }
-        self.record_insert(p, n);
-        self.text.insert(p, s);
-        self.point = p + n;
-        // Active BEGV is a buffer field, not an insertion marker.  Text
-        // inserted at point-min remains accessible even before markers.
-        let begv = self.begv;
-        self.adjust_markers_insert(p, n, true);
-        self.begv = begv;
-        let id = self.id;
-        let text = self.text.clone();
-        text.each_sibling(id, move |sib| {
-            if sib.point >= p {
-                sib.point += n;
+            let p = self.point();
+            let n = s.chars().count();
+            if n == 0 {
+                return;
             }
-            sib.adjust_markers_insert(p, n, true)
-        });
-
+            self.record_insert(p, n);
+            self.text.insert(p, s);
+            self.point = p + n;
+            // Active BEGV is a buffer field, not an insertion marker.  Text
+            // inserted at point-min remains accessible even before markers.
+            let begv = self.begv;
+            self.adjust_markers_insert(p, n, true);
+            self.begv = begv;
+            let id = self.id;
+            let text = self.text.clone();
+            text.each_sibling(id, move |sib| {
+                if sib.point >= p {
+                    sib.point += n;
+                }
+                sib.adjust_markers_insert(p, n, true)
+            });
         })
     }
 
@@ -986,67 +1034,66 @@ impl Buffer {
         replacement: &T,
     ) -> Option<crate::lisp::value::StrRef> {
         replacement.with_text(|replacement| {
-        let inserted = replacement.chars().count();
-        let deleted = end - start;
-        if inserted == 0 && deleted == 0 {
-            return None;
-        }
-        // Undo inserts the old text before removing the new text.
-        self.record_insert(end, inserted);
-        let undo = if deleted > 0 {
-            self.record_delete_with_markers(start, self.text.substring(start, end), false)
-        } else {
-            None
-        };
-        self.text.delete(start, end);
-        self.text.insert(start, replacement);
-        let adjust = |buffer: &mut Buffer, active: bool| {
-            let relocate = |position: usize| {
-                if position >= end {
-                    position - deleted + inserted
-                } else if position > start {
-                    start
-                } else {
-                    position
-                }
-            };
-            if active && (buffer.point > start || buffer.point == end) {
-                buffer.point = start + inserted + buffer.point.saturating_sub(end);
-            } else if !active {
-                buffer.point = if deleted == 0 && buffer.point == start {
-                    start
-                } else {
-                    relocate(buffer.point)
-                };
+            let inserted = replacement.chars().count();
+            let deleted = end - start;
+            if inserted == 0 && deleted == 0 {
+                return None;
             }
-            if deleted == 0 {
-                buffer.adjust_markers_insert(start, inserted, false);
-                return;
-            }
-            for marker in buffer.markers.iter().filter_map(Weak::upgrade) {
-                let mut marker = marker.borrow_mut();
-                if marker.buffer == Some(buffer.id) {
-                    marker.position = relocate(marker.position);
-                }
-            }
-            buffer.begv = if buffer.begv == start {
-                start
+            // Undo inserts the old text before removing the new text.
+            self.record_insert(end, inserted);
+            let undo = if deleted > 0 {
+                self.record_delete_with_markers(start, self.text.substring(start, end), false)
             } else {
-                relocate(buffer.begv)
+                None
             };
-            buffer.zv = relocate(buffer.zv);
-            // GNU moves overlays by inserting at the OLD end first; doing
-            // deletion first would collapse or evaporate live overlays.
-            buffer.adjust_overlays_insert(end, inserted, true);
-            buffer.adjust_overlays_delete(start, end);
-        };
-        adjust(self, true);
-        self.text
-            .clone()
-            .each_sibling(self.id, |sibling| adjust(sibling, false));
-        self.note_text_change(deleted + inserted);
-        undo
-
+            self.text.delete(start, end);
+            self.text.insert(start, replacement);
+            let adjust = |buffer: &mut Buffer, active: bool| {
+                let relocate = |position: usize| {
+                    if position >= end {
+                        position - deleted + inserted
+                    } else if position > start {
+                        start
+                    } else {
+                        position
+                    }
+                };
+                if active && (buffer.point > start || buffer.point == end) {
+                    buffer.point = start + inserted + buffer.point.saturating_sub(end);
+                } else if !active {
+                    buffer.point = if deleted == 0 && buffer.point == start {
+                        start
+                    } else {
+                        relocate(buffer.point)
+                    };
+                }
+                if deleted == 0 {
+                    buffer.adjust_markers_insert(start, inserted, false);
+                    return;
+                }
+                for marker in buffer.markers.iter().filter_map(Weak::upgrade) {
+                    let mut marker = marker.borrow_mut();
+                    if marker.buffer == Some(buffer.id) {
+                        marker.position = relocate(marker.position);
+                    }
+                }
+                buffer.begv = if buffer.begv == start {
+                    start
+                } else {
+                    relocate(buffer.begv)
+                };
+                buffer.zv = relocate(buffer.zv);
+                // GNU moves overlays by inserting at the OLD end first; doing
+                // deletion first would collapse or evaporate live overlays.
+                buffer.adjust_overlays_insert(end, inserted, true);
+                buffer.adjust_overlays_delete(start, end);
+            };
+            adjust(self, true);
+            self.text
+                .clone()
+                .each_sibling(self.id, |sibling| adjust(sibling, false));
+            self.note_text_change(deleted + inserted);
+            undo
         })
     }
 
@@ -1099,6 +1146,43 @@ impl Buffer {
             return;
         }
         self.markers.push(Rc::downgrade(m));
+    }
+
+    /// Map buffer character positions after the shared text's multibyte
+    /// representation changes. The map includes every old character
+    /// boundary and rounds byte positions inside a newly decoded sequence
+    /// forward to its ending boundary, as GNU's markers do.
+    pub(crate) fn remap_text_positions(&mut self, positions: &[usize]) {
+        if positions.is_empty() {
+            return;
+        }
+        let remap = |position: usize| {
+            positions
+                .get(position.min(positions.len() - 1))
+                .copied()
+                .unwrap_or_else(|| *positions.last().unwrap())
+        };
+        self.point = remap(self.point);
+        self.last_window_start = remap(self.last_window_start);
+        self.begv = remap(self.begv);
+        self.zv = remap(self.zv);
+        self.undo_pt_before = self.undo_pt_before.map(remap);
+        for (begv, zv, _) in &mut self.narrow_labels {
+            *begv = remap(*begv);
+            *zv = remap(*zv);
+        }
+        for marker in self.markers.iter().filter_map(Weak::upgrade) {
+            let mut marker = marker.borrow_mut();
+            if marker.buffer == Some(self.id) {
+                marker.position = remap(marker.position);
+            }
+        }
+        for overlay in &mut self.overlays {
+            if overlay.buffer == Some(self.id) {
+                overlay.start = remap(overlay.start);
+                overlay.end = remap(overlay.end);
+            }
+        }
     }
 
     /// The mark as a plain position (0-based char index), or None when
@@ -1281,20 +1365,19 @@ impl Buffer {
         new_len: usize,
     ) -> Option<crate::lisp::value::StrRef> {
         old.with_text(|old| {
-        if self.undo_disabled() {
-            return None;
-        }
-        self.record_point(start + 1);
-        let position = if self.point == start + old.chars().count() {
-            -(start as i128 + 1)
-        } else {
-            start as i128 + 1
-        };
-        let text = Value::string_ref(old);
-        self.push_undo(Value::cons(Value::Str(text.clone()), Value::Int(position)));
-        self.record_insert(start, new_len);
-        Some(text)
-
+            if self.undo_disabled() {
+                return None;
+            }
+            self.record_point(start + 1);
+            let position = if self.point == start + old.chars().count() {
+                -(start as i128 + 1)
+            } else {
+                start as i128 + 1
+            };
+            let text = Value::string_ref(old);
+            self.push_undo(Value::cons(Value::Str(text.clone()), Value::Int(position)));
+            self.record_insert(start, new_len);
+            Some(text)
         })
     }
 
@@ -1542,68 +1625,60 @@ impl BufferSet {
     /// Create a buffer; if the name exists, uniquify with `<N>`.
     pub fn create<T: TextSource + ?Sized>(&mut self, name: &T) -> usize {
         name.with_text(|name| {
-        let mut final_name = name.to_string();
-        let mut n = 2;
-        while self.name_map.contains_key(&final_name) {
-            final_name = name.to_string();
-            final_name.push_str(format!("<{n}>"));
-            n += 1;
-        }
-        let id = self.bufs.len();
-        let buf = Buffer::new(
-            id,
-            final_name.clone(),
-            self.undo_sym,
-            self.undo_inhibit.clone(),
-        );
-        let rc = crate::lisp::memory::allocate(buf, crate::lisp::Value::Buffer);
-        rc.borrow().text.add_viewer(&rc);
-        self.bufs.push(Some(rc));
-        self.name_map.insert(final_name, id);
-        self.order.push(id);
-        self.counter += 1;
-        id
-
+            let mut final_name = name.to_string();
+            let mut n = 2;
+            while self.name_map.contains_key(&final_name) {
+                final_name = name.to_string();
+                final_name.push_str(format!("<{n}>"));
+                n += 1;
+            }
+            let id = self.bufs.len();
+            let buf = Buffer::new(
+                id,
+                final_name.clone(),
+                self.undo_sym,
+                self.undo_inhibit.clone(),
+            );
+            let rc = crate::lisp::memory::allocate(buf, crate::lisp::Value::Buffer);
+            rc.borrow().text.add_viewer(&rc);
+            self.bufs.push(Some(rc));
+            self.name_map.insert(final_name, id);
+            self.order.push(id);
+            self.counter += 1;
+            id
         })
     }
 
     /// Create a buffer with exactly this name (kills none; used at init).
     /// `last_name' is the creation name (GNU get-buffer-create).
     pub fn create_exact<T: TextSource + ?Sized>(&mut self, name: &T) -> usize {
-        name.with_text(|name| {
-        self.create_exact_named(name, true)
-
-        })
+        name.with_text(|name| self.create_exact_named(name, true))
     }
 
     /// Boot-time `*scratch*'-only variant: GNU `init_buffer' leaves
     /// `b->last_name' nil, so `(buffer-last-name " *scratch*")' is nil.
     pub fn create_exact_nolast<T: TextSource + ?Sized>(&mut self, name: &T) -> usize {
-        name.with_text(|name| {
-        self.create_exact_named(name, false)
-
-        })
+        name.with_text(|name| self.create_exact_named(name, false))
     }
 
     fn create_exact_named<T: TextSource + ?Sized>(&mut self, name: &T, with_last: bool) -> usize {
         name.with_text(|name| {
-        let id = self.bufs.len();
-        let mut buf = Buffer::new(
-            id,
-            name.to_string(),
-            self.undo_sym,
-            self.undo_inhibit.clone(),
-        );
-        if !with_last {
-            buf.last_name = None;
-        }
-        let rc = crate::lisp::memory::allocate(buf, crate::lisp::Value::Buffer);
-        rc.borrow().text.add_viewer(&rc);
-        self.bufs.push(Some(rc));
-        self.name_map.insert(name.to_string(), id);
-        self.order.push(id);
-        id
-
+            let id = self.bufs.len();
+            let mut buf = Buffer::new(
+                id,
+                name.to_string(),
+                self.undo_sym,
+                self.undo_inhibit.clone(),
+            );
+            if !with_last {
+                buf.last_name = None;
+            }
+            let rc = crate::lisp::memory::allocate(buf, crate::lisp::Value::Buffer);
+            rc.borrow().text.add_viewer(&rc);
+            self.bufs.push(Some(rc));
+            self.name_map.insert(name.to_string(), id);
+            self.order.push(id);
+            id
         })
     }
 
@@ -1612,10 +1687,7 @@ impl BufferSet {
     }
 
     pub fn by_name<T: TextSource + ?Sized>(&self, name: &T) -> Option<usize> {
-        name.with_text(|name| {
-        self.name_map.get(name).copied()
-
-        })
+        name.with_text(|name| self.name_map.get(name).copied())
     }
 
     /// Kill buffer `id`.  `always_local` identifies DEFVAR_PER_BUFFER
@@ -1674,27 +1746,26 @@ impl BufferSet {
     /// Rename buffer `id`; returns the actual (possibly uniquified) name.
     pub fn rename<T: TextSource + ?Sized>(&mut self, id: usize, new_name: &T) -> EmacsText {
         new_name.with_text(|new_name| {
-        let old_name = match self.get(id) {
-            Some(b) => b.borrow().name.clone(),
-            None => return EmacsText::new(),
-        };
-        self.name_map.remove(&old_name);
-        let mut final_name = new_name.to_string();
-        let mut n = 2;
-        while self.name_map.contains_key(&final_name) {
-            final_name = new_name.to_string();
-            final_name.push_str(format!("<{n}>"));
-            n += 1;
-        }
-        if let Some(b) = self.get(id) {
-            let mut bb = b.borrow_mut();
-            // GNU Frename_buffer: last_name records the previous name.
-            bb.last_name = Some(old_name.clone());
-            bb.name = final_name.clone();
-        }
-        self.name_map.insert(final_name.clone(), id);
-        final_name
-
+            let old_name = match self.get(id) {
+                Some(b) => b.borrow().name.clone(),
+                None => return EmacsText::new(),
+            };
+            self.name_map.remove(&old_name);
+            let mut final_name = new_name.to_string();
+            let mut n = 2;
+            while self.name_map.contains_key(&final_name) {
+                final_name = new_name.to_string();
+                final_name.push_str(format!("<{n}>"));
+                n += 1;
+            }
+            if let Some(b) = self.get(id) {
+                let mut bb = b.borrow_mut();
+                // GNU Frename_buffer: last_name records the previous name.
+                bb.last_name = Some(old_name.clone());
+                bb.name = final_name.clone();
+            }
+            self.name_map.insert(final_name.clone(), id);
+            final_name
         })
     }
 
@@ -1720,7 +1791,10 @@ impl BufferSet {
     }
     /// GNU scans the global list from its head, skipping BUFFER by identity.
     fn other_scan(&self, exclude: usize, pred: &dyn Fn(usize) -> bool) -> Option<usize> {
-        self.order.iter().copied().find(|&id| id != exclude && pred(id))
+        self.order
+            .iter()
+            .copied()
+            .find(|&id| id != exclude && pred(id))
     }
     /// First live non-space-named buffer in selection order.
     pub fn other(&self, exclude: usize) -> Option<usize> {
@@ -1764,18 +1838,17 @@ impl BufferSet {
     }
     pub fn unique_name<T: TextSource + ?Sized>(&self, base: &T) -> EmacsText {
         base.with_text(|base| {
-        if !self.name_map.contains_key(base) {
-            return base.to_string();
-        }
-        for n in 2.. {
-            let mut cand = base.to_string();
-            cand.push_str(format!("<{n}>"));
-            if !self.name_map.contains_key(&cand) {
-                return cand;
+            if !self.name_map.contains_key(base) {
+                return base.to_string();
             }
-        }
-        unreachable!()
-
+            for n in 2.. {
+                let mut cand = base.to_string();
+                cand.push_str(format!("<{n}>"));
+                if !self.name_map.contains_key(&cand) {
+                    return cand;
+                }
+            }
+            unreachable!()
         })
     }
 }

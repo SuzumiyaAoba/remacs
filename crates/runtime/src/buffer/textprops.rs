@@ -325,6 +325,31 @@ impl TextProperties {
         self.rebuild_flat();
     }
 
+    /// Reposition text-property boundaries when the buffer changes between
+    /// multibyte and unibyte character views.  POSITION_MAP maps each old
+    /// character boundary to its boundary in the converted text.
+    pub(crate) fn remap_positions(&mut self, position_map: &[usize], new_len: usize) {
+        let remap = |position: usize| {
+            position_map
+                .get(position.min(position_map.len().saturating_sub(1)))
+                .copied()
+                .unwrap_or(new_len)
+                .min(new_len)
+        };
+        self.intervals = std::mem::take(&mut self.intervals)
+            .into_vec()
+            .into_iter()
+            .filter_map(|(start, end, plist)| {
+                let start = remap(start);
+                let end = remap(end);
+                (start < end).then_some((start, end, plist))
+            })
+            .collect::<Vec<_>>()
+            .into();
+        self.len = new_len;
+        self.rebuild_flat();
+    }
+
     fn ensure_tree(&mut self) {
         if self.intervals.is_empty() && self.len != 0 {
             self.intervals.edit().push((0, self.len, Vec::new()));
