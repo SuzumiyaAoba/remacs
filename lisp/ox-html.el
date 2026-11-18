@@ -1807,11 +1807,15 @@ a communication channel."
   "Transcode ELEMENT into a textarea block.
 ELEMENT is either a source or an example block."
   (let* ((code (car (org-export-unravel-code element)))
-	 (attr (org-export-read-attribute :attr_html element)))
-    (format "<p>\n<textarea cols=\"%s\" rows=\"%s\">\n%s</textarea>\n</p>"
-	    (or (plist-get attr :width) 80)
-	    (or (plist-get attr :height) (org-count-lines code))
-	    code)))
+	 (attr (org-export-read-attribute :attr_html element))
+	 (attributes
+	  (org-html--make-attribute-string
+	   (list :cols (format "%s" (or (plist-get attr :width) 80))
+		 :rows (format "%s" (or (plist-get attr :height)
+					 (org-count-lines code)))))))
+	(format "<p>\n<textarea %s>\n%s</textarea>\n</p>"
+		attributes
+		(org-html-encode-plain-text code))))
 
 (defun org-html--has-caption-p (element &optional _info)
   "Non-nil when ELEMENT has a caption affiliated keyword.
