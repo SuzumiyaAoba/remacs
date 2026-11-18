@@ -390,10 +390,12 @@ is a wrapper for this function which can be added to that list."
                                        (1+ line-end)
                                      reg-end))))
           (let ((bol (point))
-                (eol (make-marker)))
+                (eol (make-marker))
+                folded)
             (while (< bol reg-end)
               (let ((inhibit-field-text-motion t))
                 (end-of-line))
+              (setq folded nil)
               (set-marker eol (point))
               (when (< 75 (- (position-bytes (marker-position eol))
                              (position-bytes bol)))
@@ -402,8 +404,9 @@ is a wrapper for this function which can be added to that list."
                  ;; characters we're about to add.
                  (byte-to-position (+ 75 (position-bytes bol))))
                 (insert line-fold)
-                (set-marker eol (point)))
-              (setq bol (goto-char (1+ eol)))))))
+                (set-marker eol (point))
+                (setq folded t))
+              (setq bol (goto-char (if folded (1- eol) (1+ eol)))))))
     ;; Return annotations, or nil if we modified the buffer directly:
     (nreverse annotations)))
 
