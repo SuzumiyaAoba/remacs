@@ -714,9 +714,32 @@ TEXT is the string to transcode.  INFO is a plist holding
 contextual information."
   (when (plist-get info :with-smart-quotes)
     (setq text (org-export-activate-smart-quotes text :html info)))
-  ;; The below series of replacements in `text' is order sensitive.
-  ;; Protect `, *, _, and \
-  (setq text (replace-regexp-in-string "[`*_\\]" "\\\\\\&" text))
+  ;; The below replacements in `text' are order sensitive.  In
+  ;; particular, Org uses backslash to allow a closing bracket in a link
+  ;; description; keep one Markdown escape instead of doubling it.
+  (setq text
+        (let ((index 0)
+              (end (length text))
+              result)
+          (while (< index end)
+            (let ((character (aref text index)))
+              (cond
+               ((and (= character ?\\)
+                     (< (1+ index) end)
+                     (memq (aref text (1+ index)) '(?[ ?])))
+                (push (concat "\\" (char-to-string (aref text (1+ index))))
+                      result)
+                (setq index (+ index 2)))
+               ((memq character '(?[ ?]))
+                (push (concat "\\" (char-to-string character)) result)
+                (setq index (1+ index)))
+               ((memq character '(?` ?* ?_ ?\\))
+                (push (concat "\\" (char-to-string character)) result)
+                (setq index (1+ index)))
+               (t
+                (push (char-to-string character) result)
+                (setq index (1+ index))))))
+          (apply #'concat (nreverse result))))
   ;; Protect ambiguous #.  This will protect # at the beginning of
   ;; a line, but not at the beginning of a paragraph.  See
   ;; `org-md-paragraph'.
