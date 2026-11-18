@@ -114,6 +114,7 @@
 (defvar locate-local-filter nil)
 (defvar locate-local-search nil)
 (defvar locate-local-prompt nil)
+(defvar locate-local-make-command-line nil)
 (defvar-local locate--nul-separated-output nil)
 
 (defgroup locate nil
@@ -368,6 +369,7 @@ then `locate-post-command-hook'."
 	(setq-local locate--nul-separated-output nil)
 
 	(setq locate-current-filter filter)
+        (setq-local locate-local-make-command-line locate-make-command-line)
         (setq-local locate-local-search search-string)
         (setq-local locate-local-filter filter)
         (setq-local locate-local-prompt run-locate-command)
@@ -640,7 +642,9 @@ do not work in subdirectories.
 If `locate-update-when-revert' is non-nil, offer to update the
 locate database using the shell command in `locate-update-command'."
   (let ((locate-buffer-name (buffer-name))
-	(locate-prompt-for-command locate-local-prompt))
+	(locate-prompt-for-command locate-local-prompt)
+	(locate-make-command-line
+	 (or locate-local-make-command-line locate-make-command-line)))
     (and locate-update-when-revert
 	 (yes-or-no-p "Update locate database (may take a few seconds)? ")
 	 ;; `expand-file-name' is used in order to autoload Tramp if
