@@ -578,7 +578,8 @@ export backend currently used."
 	  (pcase opt
 	    (`path (setq template
 			 (replace-regexp-in-string
-			  "%SCRIPT_PATH" val template t t)))
+			  "%SCRIPT_PATH" (org-html--encode-attribute-value val)
+			  template t t)))
 	    (`sdepth (when (integerp (read val))
 		       (setq sdepth (min (read val) sdepth))))
 	    (`tdepth (when (integerp (read val))
