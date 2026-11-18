@@ -431,6 +431,20 @@ If END is non-nil, stop before a match that extends past END."
             (setq start (match-end 0)
                   number (unless (string= style-separator ":")
                            (ansi-color--underline-style-code style)))))
+        ;; In colon-form truecolor, skip the optional color-space ID (Pi).
+        ;; The remaining three values are the RGB channels.
+        (when (and (numberp number)
+                   (= number 2)
+                   (string= separator ":")
+                   (>= match-start 3)
+                   (member (substring string (- match-start 3) match-start)
+                           '("38:" "48:" "58:"))
+                   (string-match ansi-color-parameter-regexp string start)
+                   (= (match-beginning 0) start)
+                   (string= (match-string 2 string) ":")
+                   (or (null end) (<= (match-end 0) end)))
+          (setq start (match-end 0)
+                number 2002))
         (when number
           (setq result (cons number start)))))
     result))
@@ -1065,7 +1079,7 @@ unset all properties and colors."
               ;; extended parameters without resetting existing faces.
               (pcase (funcall iterator)
                 (5 (funcall iterator))
-                ((or 2 3) (dotimes (_ 3) (funcall iterator)))
+                ((or 2 3 2002) (dotimes (_ 3) (funcall iterator)))
                 (4 (dotimes (_ 4) (funcall iterator)))))
              (59 nil)
              (_ (setq do-clear t))))
@@ -1077,7 +1091,7 @@ unset all properties and colors."
               (pcase (funcall iterator)
                 (5 (setq new (setcar cell (funcall iterator)))
                    (setq do-clear (or (null new) (>= new 256))))
-                (2
+                ((or 2 2002)
                  (let ((red (funcall iterator))
                        (green (funcall iterator))
                        (blue (funcall iterator)))
