@@ -121,6 +121,24 @@ as a PDF file."
   :group 'ansi-colors
   :version "31.1")
 
+(defface ansi-color-curly-underline
+  '((t :underline (:style wave)))
+  "Face used to render text with a curly underline."
+  :group 'ansi-colors
+  :version "31.1")
+
+(defface ansi-color-dotted-underline
+  '((t :underline (:style dots)))
+  "Face used to render text with a dotted underline."
+  :group 'ansi-colors
+  :version "31.1")
+
+(defface ansi-color-dashed-underline
+  '((t :underline (:style dashes)))
+  "Face used to render text with a dashed underline."
+  :group 'ansi-colors
+  :version "31.1")
+
 (defface ansi-color-slow-blink
   '((t :box (:line-width -1)))
   "Face used to render slowly blinking text."
@@ -281,10 +299,13 @@ control sequences differently), use `ansi-color-normal-colors-vector'."
    ansi-color-slow-blink
    ansi-color-fast-blink
    ansi-color-inverse
-   ansi-color-double-underline]
+   ansi-color-double-underline
+   ansi-color-curly-underline
+   ansi-color-dotted-underline
+   ansi-color-dashed-underline]
   "Faces used for SGR control sequences determining a face.
 This vector holds the faces used for SGR control sequence parameters 0
-to 7, plus a slot for SGR 21 double underline.
+to 7, plus slots for double, curly, dotted, and dashed underlines.
 
 Parameter  Description
   0        default
@@ -360,7 +381,8 @@ version of that color."
   "\e\\[[\x30-\x3F]*[\x20-\x2F]*\\|\e"
   "Regexp matching a partial ANSI control sequence.")
 
-(defconst ansi-color-parameter-regexp "\\([0-9]*\\)\\([;:]\\|m\\)"
+(defconst ansi-color-parameter-regexp
+  "\\([0-9]*\\)\\([;:]\\|m\\)"
   "Regexp that matches SGR control sequence parameters.")
 
 (defun ansi-color--parameter-value (parameter separator)
@@ -371,17 +393,44 @@ version of that color."
         0
       (string-to-number parameter 10))))
 
+(defun ansi-color--underline-style-code (style)
+  "Return an internal code for underline STYLE, or nil if unsupported."
+  (pcase style
+    (0 24)
+    (1 4)
+    (2 21)
+    ((or 3 4 5) (+ 4000 style))))
+
 (defun ansi-color--next-parameter (string start &optional end)
   "Return the next SGR parameter and end position in STRING from START.
 If END is non-nil, stop before a match that extends past END."
-  (let (parameter separator result)
+  (let (parameter separator match-start match-end result)
     (while (and (not result)
                 (string-match ansi-color-parameter-regexp string start)
                 (or (null end) (<= (match-end 0) end)))
-      (setq start (match-end 0)
+      (setq match-start (match-beginning 0)
+            match-end (match-end 0)
             parameter (match-string 1 string)
-            separator (match-string 2 string))
+            separator (match-string 2 string)
+            start match-end)
       (let ((number (ansi-color--parameter-value parameter separator)))
+        ;; In 4:n, N is a style subparameter, not an independent SGR code.
+        ;; Restrict this form to top-level parameters so 38:4:... color
+        ;; sequences keep their own colon-separated components.
+        (when (and (numberp number)
+                   (= number 4)
+                   (string= separator ":")
+                   (or (= match-start 0)
+                       (memq (aref string (1- match-start)) '(?; ?[)))
+                   (string-match "\\([0-9]+\\)\\([;:]\\|m\\)"
+                                 string start)
+                   (= (match-beginning 0) start)
+                   (or (null end) (<= (match-end 0) end)))
+          (let ((style (string-to-number (match-string 1 string) 10))
+                (style-separator (match-string 2 string)))
+            (setq start (match-end 0)
+                  number (unless (string= style-separator ":")
+                           (ansi-color--underline-style-code style)))))
         (when number
           (setq result (cons number start)))))
     result))
@@ -613,7 +662,7 @@ number POSITION, if non-nil."
               context)
           context)
       (set context-sym
-           (list (list (make-bool-vector 9 nil)
+           (list (list (make-bool-vector 12 nil)
                        nil nil)
                  (if position
                      (copy-marker position)
@@ -772,18 +821,18 @@ being deleted."
                    esc-beg (ansi-color--face-vec-face face-vec))
           ;; If this is a color sequence,
           (when (eq (char-before esc-end) ?m)
-            (goto-char esc-beg)
-            (ansi-color--update-face-vec
-             face-vec
-             (lambda ()
-               (let (number)
-                 (while (and (not number)
-                             (re-search-forward ansi-color-parameter-regexp
-                                                esc-end t))
-                   (setq number
-                         (ansi-color--parameter-value
-                          (match-string 1) (match-string 2))))
-                 number))))
+            (let ((escape-sequence
+                   (buffer-substring-no-properties esc-beg esc-end))
+                  (parameter-start 0))
+              (ansi-color--update-face-vec
+               face-vec
+               (lambda ()
+                 (let ((parameter
+                        (ansi-color--next-parameter
+                         escape-sequence parameter-start)))
+                   (when parameter
+                     (setq parameter-start (cdr parameter))
+                     (car parameter)))))))
 
           (if preserve-sequences
               ;; Make the escape sequence transparent.
@@ -904,6 +953,21 @@ Returns nil only if there's no match for `ansi-color-parameter-regexp'."
       (push (car parameter) codes))
     (nreverse codes)))
 
+(defun ansi-color--set-underline-style (basic-faces style)
+  "Set underline STYLE in BASIC-FACES, for SGR styles 0 through 5."
+  (let ((face-index
+         (pcase style
+           (0 nil)
+           (1 4)
+           (2 8)
+           (3 9)
+           (4 10)
+           (5 11)
+           (_ 'unknown))))
+    (unless (eq face-index 'unknown)
+      (dolist (index '(4 8 9 10 11))
+        (aset basic-faces index (eq index face-index)))))
+
 (defun ansi-color-apply-sequence (escape-sequence codes)
   "Apply ESCAPE-SEQUENCE to CODES and return the new list of codes.
 
@@ -960,7 +1024,8 @@ the next ANSI code in the current sequence as a number or nil if
 there are no more ANSI codes left.
 
 For each new code, the following happens: if it is 1-7, set the
-corresponding properties; 21 sets double underline; 22-27 unset
+corresponding properties; 21 sets double underline; colon-form 4:0-5
+selects underline styles; 22-27 unset
 appropriate properties; if it is 30-37 (or 90-97) or resp. 39, set
 the foreground color or resp. unset it; if it is 40-47 (or 100-107)
 resp. 49, set the background color or resp. unset it; if it is 38
@@ -971,26 +1036,26 @@ unset all properties and colors."
         (colors (cdr face-vec))
         new q do-clear)
     (while (setq new (funcall iterator))
-      (setq q (/ new 10))
-      (pcase q
+      (if (memq new '(4003 4004 4005))
+          (ansi-color--set-underline-style basic-faces (- new 4000))
+        (setq q (/ new 10))
+        (pcase q
         (0 (cond ((= new 0)
                   (setq do-clear t))
                  ((memq new '(8 9)))
                  (t
                   (when (= new 4)
-                    (aset basic-faces 8 nil))
+                    (ansi-color--set-underline-style basic-faces 1))
                   (aset basic-faces new t))))
         ;; SGR 10-19 selects fonts; ignore unsupported font changes.
         (1 nil)
         (2 (pcase new
              ((or 20 26 28 29) nil)
-             (21 (aset basic-faces 4 nil)
-                 (aset basic-faces 8 t))
+             (21 (ansi-color--set-underline-style basic-faces 2))
              (22 (aset basic-faces 1 nil)
                  (aset basic-faces 2 nil))
              (23 (aset basic-faces 3 nil))
-             (24 (aset basic-faces 4 nil)
-                 (aset basic-faces 8 nil))
+             (24 (ansi-color--set-underline-style basic-faces 0))
              (25 (aset basic-faces 5 nil)
                  (aset basic-faces 6 nil))
              (27 (aset basic-faces 7 nil))))
@@ -1028,12 +1093,12 @@ unset all properties and colors."
                 (_ (setq do-clear t))))
              (9 (setcar cell nil))
              (_ (setcar cell (+ (if (memq q '(3 4)) 0 8) r))))))
-        (_ (setq do-clear t)))
+        (_ (setq do-clear t))))
 
       (when do-clear
         (setq do-clear nil)
         ;; Zero out our bool vector without any allocation.
-        (bool-vector-intersection basic-faces #&9"\0\0" basic-faces)
+        (bool-vector-intersection basic-faces #&12"\0\0" basic-faces)
         (setcar colors nil)
         (setcar (cdr colors) nil)))))
 
