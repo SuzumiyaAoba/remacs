@@ -1708,6 +1708,14 @@ containing current export state."
 	  (org-string-nw-p (concat " " attr))
 	  (if (org-html-xhtml-p info) " />" ">")))
 
+(defun org-html--valid-doctype-p (doctype)
+  "Return non-nil if DOCTYPE is a single safe document type declaration."
+  (and (stringp doctype)
+       (let ((case-fold-search t))
+         (string-match-p
+          "\\`<!DOCTYPE[[:space:]]+html\\(?:[[:space:]]+PUBLIC[[:space:]]+\\(?:\"[^\"<>]*\"\\|'[^'<>]*'\\)[[:space:]]+\\(?:\"[^\"<>]*\"\\|'[^'<>]*'\\)\\|[[:space:]]+SYSTEM[[:space:]]+\\(?:\"[^\"<>]*\"\\|'[^'<>]*'\\)\\)?[[:space:]]*>\\'"
+          doctype))))
+
 (defun org-html-doctype (info)
   "Return correct HTML doctype tag.
 INFO is a plist used as a communication channel.  Doctype tag is
@@ -1715,7 +1723,11 @@ extracted from `org-html-doctype-alist', or the literal value
 of :html-doctype from INFO if :html-doctype is not found in the
 alist."
   (let ((dt (plist-get info :html-doctype)))
-    (or (cdr (assoc dt org-html-doctype-alist)) dt)))
+    (or (cdr (assoc dt org-html-doctype-alist))
+        (cond
+         ((null dt) nil)
+         ((org-html--valid-doctype-p dt) dt)
+         (t (error "Invalid HTML doctype: %S" dt))))))
 
 (defun org-html--make-attribute-string (attributes)
   "Return a list of attributes, as a string.
