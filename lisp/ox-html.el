@@ -2089,6 +2089,70 @@ INFO is a plist used as a communication channel."
 			  info))
     (when (plist-get info :html-head-include-scripts) org-html-scripts))))
 
+(defun org-html--encode-js-string-content (value)
+  "Escape VALUE for inclusion inside a single-quoted JavaScript string."
+  (mapconcat
+   (lambda (character)
+     (cond ((= character 92) (concat (string 92) (string 92)))
+           ((= character 39) (concat (string 92) (string 39)))
+           ((= character 60) (concat (string 92) "x3C"))
+           ((= character 8) (concat (string 92) "b"))
+           ((= character 9) (concat (string 92) "t"))
+           ((= character 10) (concat (string 92) "n"))
+           ((= character 12) (concat (string 92) "f"))
+           ((= character 13) (concat (string 92) "r"))
+           ((or (= character #x2028) (= character #x2029))
+            (concat (string 92) (format "u%04X" character)))
+           ((or (< character 32) (= character 127))
+            (concat (string 92) (format "x%02X" character)))
+           (t (char-to-string character))))
+   (string-to-list value)
+   ""))
+
+(defun org-html--mathjax-validate-option (option value allowed)
+  "Return VALUE if it is an allowed value for MathJax OPTION."
+  (unless (and (stringp value) (member value allowed))
+    (error "Invalid MathJax %s option: %S" option value))
+  value)
+
+(defun org-html--mathjax-template-value (option value)
+  "Validate and encode MathJax OPTION VALUE for template substitution."
+  (pcase option
+    ('path
+     (unless (stringp value)
+       (error "Invalid MathJax path: %S" value))
+     (org-html--encode-attribute-value value))
+    ('scale
+     (unless (numberp value)
+       (error "Invalid MathJax scale: %S" value))
+     (format "%s" value))
+    ('align
+     (org-html--encode-js-string-content
+      (org-html--mathjax-validate-option option value '("left" "center" "right"))))
+    ('font
+     (org-html--encode-js-string-content
+      (org-html--mathjax-validate-option
+       option value
+       '("mathjax-modern" "mathjax-asana" "mathjax-bonum"
+         "mathjax-dejavu" "mathjax-pagella" "mathjax-schola"
+         "mathjax-termes" "mathjax-stix2" "mathjax-fira"
+         "mathjax-euler" "mathjax-tex"))))
+    ('overflow
+     (org-html--encode-js-string-content
+      (org-html--mathjax-validate-option
+       option value '("overflow" "scale" "scroll" "truncate" "linebreak" "elide"))))
+    ('tags
+     (org-html--encode-js-string-content
+      (org-html--mathjax-validate-option option value '("none" "all" "ams"))))
+    ('tagside
+     (org-html--encode-js-string-content
+      (org-html--mathjax-validate-option option value '("left" "right"))))
+    ((or 'indent 'multlinewidth 'tagindent)
+     (unless (stringp value)
+       (error "Invalid MathJax %s option: %S" option value))
+     (org-html--encode-js-string-content value))
+    (_ (org-html--encode-js-string-content (format "%s" value)))))
+
 (defun org-html--build-mathjax-config (info)
   "Insert the user setup into the mathjax template.
 INFO is a plist used as a communication channel."
@@ -2152,6 +2216,8 @@ INFO is a plist used as a communication channel."
                                         value))
                                1.0)
                            value-maybe))))
+               (unless (numberp value)
+                 (error "Invalid MathJax scale: %S" value))
                (when (>= value 10)
                  (setq value
                        (let ((value-new (/ (float value) 100)))
@@ -2165,13 +2231,15 @@ INFO is a plist used as a communication channel."
                 "Converting legacy MathJax option: autonumber")
                (setq symbol 'tags
                      value (downcase value))))
-            (while (string-match (format "\\(%%%s\\)[^A-Z]"
-                                         (upcase (symbol-name symbol)))
-                                 template)
-              (setq template
-                    (replace-match (format "%s" value)
-                                   t
-                                   t template 1)))))))))
+            (let ((regexp (format "\\(%%%s\\)[^A-Z]"
+                                  (upcase (symbol-name symbol))))
+                  (start 0))
+              (while (string-match regexp template start)
+                (let ((match-start (match-beginning 0))
+                      (replacement
+                       (org-html--mathjax-template-value symbol value)))
+                  (setq template (replace-match replacement t t template 1)
+                        start (+ match-start (length replacement) 1)))))))))))
 
 (defun org-html--encode-mailto-address (email)
   "URI-encode EMAIL for use as a `mailto' recipient."
