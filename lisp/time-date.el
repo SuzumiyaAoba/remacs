@@ -327,7 +327,16 @@ right of \"%x\", trailing zero units are not output."
         (case-fold-search t)
         spec match usedunits zeroflag larger prev name unit num
 	leading-zeropos trailing-zeropos fraction minus
+	format-leading-whitespace format-trailing-whitespace
         chop-leading chop-trailing valid-spec-starts)
+    (setq format-leading-whitespace
+	  (if (string-match "\\`[[:space:]]*" string)
+	      (match-string 0 string)
+	    "")
+	  format-trailing-whitespace
+	  (if (string-match "[[:space:]]*\\'" string)
+	      (match-string 0 string)
+	    ""))
     (while (string-match "%\\(?:\\.?[0-9]+\\)?\\(,[0-9]+\\)?\\(.\\)" string start)
       (setq start (match-end 0)
             spec (match-string 2 string))
@@ -441,8 +450,14 @@ right of \"%x\", trailing zero units are not output."
       ;; string in full.
       (when (equal string "")
         (setq string pre)))
-    (setq string (format-seconds--strip-control-specifiers string))
-    (concat minus (string-trim (string-replace "%%" "%" string)))))
+    (setq string (format-seconds--strip-control-specifiers string)
+	  string (string-replace "%%" "%" string))
+    (concat minus
+	    (if zeroflag
+		(concat format-leading-whitespace
+			(string-trim string)
+			format-trailing-whitespace)
+	      string))))
 
 (defvar seconds-to-string
   (list (list 1 "ms" 0.001)

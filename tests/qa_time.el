@@ -95,6 +95,23 @@
 (qa (format-seconds "%s seconds" 90) "90 seconds")
 (qa (format-seconds "%y days %h hours %m minutes %s seconds" 90)
     "0 days 0 hours 1 minutes 30 seconds")
+(if qa--remacs
+    (progn
+      (qa (format-seconds "  %s seconds  " 1) "  1 seconds  ")
+      (qa (format-seconds "  literal  " 1) "  literal  ")
+      (qa (format-seconds "  %H %M %S%x  " 3600) "  1 hour  ")
+      (qa (format-seconds "  %Y %D %H %M %S %z  " 3661)
+          "  1 hour 1 minute 1 second  "))
+  (progn
+    (qa-xf (format-seconds "  %s seconds  " 1) "  1 seconds  "
+           "Issue #2655: preserve literal format-string whitespace")
+    (qa-xf (format-seconds "  literal  " 1) "  literal  "
+           "Issue #2655: preserve literal format-string whitespace")
+    (qa-xf (format-seconds "  %H %M %S%x  " 3600) "  1 hour  "
+           "Issue #2655: preserve literal format-string whitespace")
+    (qa-xf (format-seconds "  %Y %D %H %M %S %z  " 3661)
+           "  1 hour 1 minute 1 second  "
+           "Issue #2655: preserve literal format-string whitespace")))
 
 ;; == format-time-string under UTC tz (deterministic) ==
 (let ((system-time-locale "C"))
