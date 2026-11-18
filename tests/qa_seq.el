@@ -104,6 +104,14 @@
 (qa (seq-let (a &rest b) '(1 2 3) (cons a b)) '(1 2 3))
 (qa (seq-let [a b] [1 2] (list a b)) '(1 2))
 (qa (seq-let (a (b c)) '(1 (2 3)) (list a b c)) '(1 2 3))
+(qa (let* ((args (list '(a) '(list 1) 'a))
+           (form (cons 'seq-let args))
+           (tail (last args)))
+      (setcdr tail args)
+      (unwind-protect
+          (condition-case err (eval form) (error (car err)))
+        (setcdr tail nil)))
+    'circular-list)
 
 (qa-err (seq-elt [1 2] 5) 'args-out-of-range)
 (qa-err (seq-min nil) 'wrong-number-of-arguments)

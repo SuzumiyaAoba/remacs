@@ -97,6 +97,17 @@
 (qa-err-data (cl-equalp (vector qa182-seq-fa) (vector qa182-seq-fb))
     'error '("Stack overflow in equal"))
 (qa (cl-equalp '(1 "AbC") '(1.0 "abc")) t)
+;; cl-equalp walks vectors from the final slot down; a later mismatch must
+;; short-circuit before comparing an earlier pair that overflows in `equal'.
+(qa (cl-equalp (vector qa182-seq-fa 1) (vector qa182-seq-fb 2)) nil)
+;; Recursive cl-equalp calls still obey the active Lisp evaluation-depth limit.
+(qa (let ((max-lisp-eval-depth 110))
+      (condition-case nil
+          (progn
+            (cl-equalp (qa182-seq-deep 205) (qa182-seq-deep 205))
+            'no-depth-error)
+        (error 'depth-error)))
+    'depth-error)
 
 ;; Direct BEqual, including a handler inside the bytecode function. Using
 ;; r! in opcode 154 is essential: ordinary ? would skip dispatch handlers.
@@ -116,6 +127,20 @@
   (let ((s (copy-sequence "x")))
     (set-text-properties 0 1 plist s)
     s))
+(defun qa182-property-cycle (value)
+  (let ((cycle (cons value nil)))
+    (setcdr cycle cycle)
+    cycle))
+(qa (equal-including-properties
+     (qa182-seq-string (list 'deep (qa182-property-cycle 'value)))
+     (qa182-seq-string (list 'deep (qa182-property-cycle 'value)))) t)
+(qa (equal-including-properties
+     (qa182-seq-string (list 'deep (qa182-property-cycle 'left)))
+     (qa182-seq-string (list 'deep (qa182-property-cycle 'right)))) nil)
+;; Property values use ordinary `equal', ignoring text properties on a value string.
+(qa (equal-including-properties
+     (qa182-seq-string (list 'deep (propertize "value" 'inner 1)))
+     (qa182-seq-string (list 'deep (propertize "value" 'inner 2)))) t)
 (qa (equal-including-properties
      (qa182-seq-string (list 'deep (qa182-seq-deep 199)))
      (qa182-seq-string (list 'deep (qa182-seq-deep 199)))) t)

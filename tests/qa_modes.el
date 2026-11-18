@@ -7,6 +7,36 @@
 ;;   - define-derived-mode creates a mode with major-mode set.
 ;;   - function-put/function-get sync to symbol plist.
 ;;   - package-initialize / package-installed-p are fns; package-archives
+
+(advice-add
+ 'require :around
+ (lambda (original &rest args)
+   (let ((feature (car args)))
+     (when (memq feature '(mm-decode url-handlers gnus sendmail package))
+       (message "MODES-REQUIRE-START feature=%S from=%S" feature load-file-name))
+     (condition-case err
+         (let ((result (apply original args)))
+           (when (memq feature '(mm-decode url-handlers gnus sendmail package))
+             (message "MODES-REQUIRE-DONE feature=%S" feature))
+           result)
+       (error
+        (when (memq feature '(mm-decode url-handlers gnus sendmail package))
+          (message "MODES-REQUIRE-ERROR feature=%S from=%S signal=%S"
+                   feature load-file-name err))
+        (signal (car err) (cdr err)))))))
+
+(advice-add
+ 'eval-when-compile :around
+ (lambda (original &rest args)
+   (message "MODES-EWC-START %S" args)
+   (condition-case err
+       (let ((result (apply original args)))
+         (message "MODES-EWC-DONE")
+         result)
+     (error
+      (message "MODES-EWC-ERROR %S" err)
+      (signal (car err) (cdr err))))))
+
 ;; == major-mode / derived-mode-p ==
 (with-temp-buffer
   (emacs-lisp-mode)

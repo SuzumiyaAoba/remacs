@@ -13,7 +13,10 @@
    (insert-file-contents (locate-library "cc-engine"))
    (goto-char (point-min))
    (while (progn
-            (skip-chars-forward " \t\n\r")
+            (skip-chars-forward " \t\n\r\f")
+            (while (eq (char-after) ?\;)
+              (forward-line 1)
+              (skip-chars-forward " \t\n\r\f"))
             (not (eobp)))
      (read (current-buffer)))
    t)

@@ -38,6 +38,27 @@
           (let ((display-buffer-mark-dedicated flag))
             (window--display-buffer original window 'window nil)
             (qa (eq (window-dedicated-p window) flag) t)))
+      (set-window-dedicated-p window nil)
+      (let ((display-buffer-mark-dedicated nil))
+        (window--display-buffer original window 'window
+                                (list (cons (make-symbol "dedicated") t)))
+        (qa (window-dedicated-p window) nil))
+      (set-window-dedicated-p window nil)
+      (let ((display-buffer-mark-dedicated nil))
+        (window--display-buffer original window (make-symbol "reuse")
+                                '((dedicated . t)))
+        (qa (window-dedicated-p window) t))
+      (let ((old-bump (symbol-function 'window-bump-use-time))
+            (calls 0))
+        (unwind-protect
+            (progn
+              (fset 'window-bump-use-time
+                    (lambda (_window) (setq calls (1+ calls))))
+              (window--display-buffer
+               original window 'window
+               (list (cons (make-symbol "bump-use-time") t)))
+              (qa calls 0))
+          (fset 'window-bump-use-time old-bump)))
         (qa-err-data (set-window-dedicated-p 5 'x) 'wrong-type-argument '(window-live-p 5))
         (qa-err-data (window-dedicated-p 5) 'wrong-type-argument '(window-live-p 5)))
     (set-window-dedicated-p window nil)

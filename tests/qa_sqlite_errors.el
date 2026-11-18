@@ -21,6 +21,17 @@
        (t (sqlite-select db sql values mode)))
     (error err)))
 
+;; Circular bind parameter lists retain GNU's circular-list condition and
+;; carry the cycle itself as the error datum.
+(qa (q165-db
+      (let ((values (list 1)))
+        (setcdr values values)
+        (unwind-protect
+            (condition-case err (sqlite-execute db "select ?" values)
+              (circular-list (list (car err) (eq (cadr err) values))))
+          (setcdr values nil))))
+    '(circular-list t))
+
 ;; Preparation is the only stage with the nested four-element payload.
 ;; SQLITE_ERROR is 1, not rusqlite ErrorCode::Unknown's discriminant.
 (dolist (mode '(execute nil full set))

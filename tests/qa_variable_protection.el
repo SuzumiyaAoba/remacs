@@ -92,4 +92,15 @@
            (condition-case error (defvaralias 'gc-cons-threshold 'qa98-unbound-base) (error error)))
     '(error "Don’t know how to make a buffer-local variable an alias: gc-cons-threshold"))
 
+;; C integer forwarding belongs to the interned symbol identity, not every
+;; uninterned variable with the same printed name.
+(qa (let ((variable (make-symbol "gc-cons-threshold")))
+      (list (set variable 'ordinary-value) (symbol-value variable)))
+    '(ordinary-value ordinary-value))
+(qa (let ((variable (make-symbol "gc-cons-threshold"))
+          (value (expt 2 80)))
+      (set variable value)
+      (equal (symbol-value variable) value))
+    t)
+
 (princ (qa--done)) (terpri)

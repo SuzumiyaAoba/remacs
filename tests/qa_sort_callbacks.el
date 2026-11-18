@@ -351,6 +351,19 @@
                  (fset 'identity (lambda (&rest _) (error "Should not call identity cell")))
                  (sort '(3 1 2) :lessp 'value< :key 'identity))
         (fset 'value< less) (fset 'identity identity))) '(1 2 3))
+(qa-err (sort '(3 1 2) :lessp (make-symbol "value<")) 'void-function)
+(qa-err (sort '(3 1 2) :lessp #'< :key (make-symbol "identity")) 'void-function)
+(qa (let* ((predicate (make-symbol "qa28-fake-autoload"))
+           (fake-autoload (make-symbol "autoload"))
+           (bad-function (list fake-autoload "does-not-exist" nil t nil))
+           (key (lambda (value)
+                  (when (= value 3) (fset predicate #'<))
+                  value)))
+      (fset predicate bad-function)
+      (condition-case e
+          (sort '(3 1 2) :lessp predicate :key key)
+        (invalid-function (eq (cadr e) bad-function))))
+    t)
 
 ;; A live predicate is captured before computing keys, not re-resolved
 ;; through its symbol after a key callback redefines the function cell.

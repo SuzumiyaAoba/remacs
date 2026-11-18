@@ -15,7 +15,10 @@ impl KeyIo for InputFrontend {
 
     fn poll_input(&mut self, _dur: Duration) -> io::Result<Option<InputEvent>> {
         self.events.pop_front().map(Some).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::UnexpectedEof, "read-event test exhausted its events")
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read-event test exhausted its events",
+            )
         })
     }
 
@@ -119,6 +122,12 @@ fn read_event_without_timeout_returns_mouse_click_and_position() {
     let event_id = interp.intern("qa-read-event-result");
     let event = interp.symbol_value(event_id);
     let printed = interp.prin1_to_string(&event);
-    assert!(printed.starts_with("(mouse-1 "), "unexpected event: {printed}");
-    assert!(printed.contains(" 2 "), "missing buffer position: {printed}");
+    assert!(
+        printed.starts_with("(mouse-1 "),
+        "unexpected event: {printed}"
+    );
+    assert!(
+        printed.contains(" 2 "),
+        "missing buffer position: {printed}"
+    );
 }

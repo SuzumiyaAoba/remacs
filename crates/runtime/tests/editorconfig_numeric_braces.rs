@@ -52,8 +52,7 @@ fn eval(interp: &mut Interp, source: &str) -> String {
 
 #[test]
 fn editorconfig_fnmatch_braces_only_expand_whole_numeric_ranges_3010() {
-    let path = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
-        .join("lisp/editorconfig-fnmatch.el");
+    let path = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/editorconfig-fnmatch.el");
     let mut interp = Interp::new();
     let code = format!(
         "(progn (setq noninteractive t) (load {} nil t t) {})",

@@ -349,9 +349,10 @@
 (qa (truncate-string-to-width "abcdef" 4 1) "bcd")
 ;; PADDING fills up to WIDTH with that character
 (qa (truncate-string-to-width "ab" 5 nil ?.) "ab...")
-;; ELLIPSIS non-nil uses U+2026 and reserves its column
-(qa (truncate-string-to-width "abcdef" 4 nil nil t) "ab…")
-(qa (truncate-string-to-width "abcdef" 3 nil nil "…") "a…")
+;; Pin an explicit ellipsis so batch frame glyph support is irrelevant.
+(let ((truncate-string-ellipsis "…"))
+  (qa (truncate-string-to-width "abcdef" 4 nil nil t) "abc…"))
+(qa (truncate-string-to-width "abcdef" 3 nil nil "…") "ab…")
 ;; a tab jumps to the next tab stop and drops following overflow
 (qa (truncate-string-to-width "a\tbc" 8) "a")
 

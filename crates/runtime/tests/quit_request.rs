@@ -17,7 +17,10 @@ fn host_quit_request_interrupts_evaluation_and_consumes_its_key() {
     let result = interp.eval_str("(while t)");
     input.join().unwrap();
 
-    assert!(result.is_err(), "the pending host quit must stop evaluation");
+    assert!(
+        result.is_err(),
+        "the pending host quit must stop evaluation"
+    );
     assert!(
         request.discard_queued_key(),
         "the queued C-g key is consumed by the interpreter quit"

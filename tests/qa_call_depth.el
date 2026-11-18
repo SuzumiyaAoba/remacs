@@ -15,6 +15,21 @@
 (qa (qa-cd-run '(funcall #'qa-cd-rec) t) '(error "Lisp nesting exceeds ‘max-lisp-eval-depth’"))
 (qa (qa-cd-run '(apply #'qa-cd-rec nil) t) '(error "Lisp nesting exceeds ‘max-lisp-eval-depth’"))
 
+;; The live limit honors a small dynamic binding and reports the integer
+;; depth after GNU raises undersized limits to 100 on first overflow.
+(defun qa-cd-small-limit-rec (n)
+  (if (> n 0) (qa-cd-small-limit-rec (1- n)) 'done))
+(qa (let ((max-lisp-eval-depth 5))
+      (condition-case err
+          (qa-cd-small-limit-rec 100)
+        (excessive-lisp-nesting (list (car err) (cadr err)))))
+    '(excessive-lisp-nesting 101))
+(qa (let ((max-lisp-eval-depth 800))
+      (condition-case err
+          (qa-cd-small-limit-rec 500)
+        (excessive-lisp-nesting (list (car err) (cadr err)))))
+    '(excessive-lisp-nesting 801))
+
 ;; A dedicated opcode neither consumes another call depth nor consults
 ;; a redefined primitive's function cell.
 (qa (let* ((byte-optimize t)

@@ -18,6 +18,43 @@
         (let* ((file (expand-file-name "relative.el" directory))
                (default-directory (file-name-as-directory directory)))
           (with-temp-file file (insert "(defun qa-cache-relative () 42)\n"))
-          (qa (comp-el-to-eln-rel-filename "relative.el") (comp-el-to-eln-rel-filename file))))
+          (qa (comp-el-to-eln-rel-filename "relative.el") (comp-el-to-eln-rel-filename file)))
+        (let* ((target (make-temp-file "qa-native-cache-target-" t))
+               (file (expand-file-name "output.el" directory)))
+          (unwind-protect
+              (progn
+                (with-temp-file file (insert "(defun qa-cache-output () 42)\n"))
+                (let* ((native-comp-eln-load-path (list directory target))
+                       (relative (comp-el-to-eln-rel-filename file)))
+                  (qa (comp-el-to-eln-filename file)
+                      (expand-file-name
+                       (concat comp-native-version-dir "/" relative) directory))
+                  (qa (comp-el-to-eln-filename file target)
+                      (expand-file-name
+                       (concat comp-native-version-dir "/" relative) target)))
+                (qa-err (let ((native-comp-eln-load-path nil))
+                          (comp-el-to-eln-filename file))
+                        'error))
+            (delete-directory target t))))
+        (when (native-comp-available-p)
+          (let* ((cache (make-temp-file "qa-native-cache-compile-" t))
+                 (source (expand-file-name "compiled.el" cache))
+                 output)
+            (unwind-protect
+                (progn
+                  (with-temp-file source
+                    (insert ";;; -*- lexical-binding: t; -*-\n"
+                            "(defun qa-cache-native-output () 42)\n"))
+                  (let ((native-comp-eln-load-path (list cache)))
+                    (setq output (native-compile source))
+                    (qa (file-name-directory output)
+                        (expand-file-name
+                         (concat comp-native-version-dir "/") cache))
+                    (qa (file-exists-p output) t)
+                    (native-elisp-load output)
+                    (qa (qa-cache-native-output) 42)))
+              (when (and output (file-exists-p output))
+                (delete-file output))
+              (delete-directory cache t))))
     (delete-directory directory t)))
 (princ (qa--done))

@@ -479,7 +479,10 @@ const SURFACE: &str = r#####"(progn
 #[test]
 fn gnu_flymake_public_api_and_local_backend() {
     let mut interp = Interp::new_with_noninteractive(true);
-    assert_eq!(eval(&mut interp, "(featurep 'flymake)", "fresh state"), "nil");
+    assert_eq!(
+        eval(&mut interp, "(featurep 'flymake)", "fresh state"),
+        "nil"
+    );
     assert_eq!(eval(&mut interp, PRELOAD, "preload"), "t");
     let lisp = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp");
     let lifecycle = LIFECYCLE.replace("LISP_DIR", &lisp_string(lisp.to_str().unwrap()));

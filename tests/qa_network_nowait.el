@@ -64,6 +64,29 @@
         (qa (length (delq nil (mapcar (lambda (event)
                                       (and (eq (car event) 'sentinel) event))
                                     (process-get c 'events)))) 1))
+      ;; Explicit :local/:remote sockaddrs take precedence over :family,
+      ;; :host and :service. This uses only the loopback interface.
+      (let* ((server
+              (qa179-remember
+               (make-network-process
+                :name "qa179-explicit-server" :local [127 0 0 1 0]
+                :family (make-symbol "unsupported-family") :host 7 :service 7
+                :server t :noquery t :coding 'binary
+                :filter #'qa179-echo :sentinel 'ignore)))
+             (remote (process-contact server :local))
+             (client
+              (qa179-remember
+               (make-network-process
+                :name "qa179-explicit-client" :remote remote
+                :family (make-symbol "unsupported-family") :host 7 :service 7
+                :nowait t :noquery t :coding 'binary
+                :sentinel #'qa179-sentinel :filter #'qa179-filter))))
+        (qa (process-status client) 'connect)
+        (process-send-string client "explicit-address")
+        (qa179-wait
+         (lambda () (equal (process-get client 'received) "explicit-address")))
+        (qa (process-get client 'received) "explicit-address")
+        (qa (process-contact client :remote) remote))
       ;; Sending before completion waits while dispatching the open sentinel,
       ;; then sends the bytes; merely queueing or rejecting the send is wrong.
       (let* ((s (qa179-server)) (c (qa179-client s)))

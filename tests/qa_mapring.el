@@ -282,8 +282,8 @@
 (let ((v (vector 'a 'b)))
   (qa (map-insert v 1 'z) '[a z])
   (qa v '[a b])
-  ;; map-insert extends an array when KEY is beyond its current length.
-  (qa (map-insert v 2 'z) '[a b z])
+  ;; Out-of-range vector insertion follows `aset' and leaves MAP intact.
+  (qa-err-data (map-insert v 2 'z) 'args-out-of-range '([a b] 2))
   (qa v '[a b]))
 (let ((h (make-hash-table)))
   (puthash 'a 1 h)

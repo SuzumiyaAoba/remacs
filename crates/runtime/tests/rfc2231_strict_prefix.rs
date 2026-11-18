@@ -70,7 +70,10 @@ fn eval(interp: &mut Interp, source: &str) -> String {
 
 fn load_source(interp: &mut Interp) {
     let source = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/rfc2231.el");
-    eval(interp, &format!("(load {} nil t)", lisp_string(source.to_str().unwrap())));
+    eval(
+        interp,
+        &format!("(load {} nil t)", lisp_string(source.to_str().unwrap())),
+    );
 }
 
 #[test]

@@ -89,10 +89,7 @@ fn local_filenames_are_encoded_before_building_file_urls() {
 
     let source = include_str!("../../../lisp/eww.el");
     let start = source.find("(defun eww-open-file ").unwrap();
-    let end = source[start..]
-        .find("(defun eww--file-buffer ")
-        .unwrap()
-        + start;
+    let end = source[start..].find("(defun eww--file-buffer ").unwrap() + start;
     check(&mut interp, &source[start..end]);
     check(&mut interp, CASES);
 }

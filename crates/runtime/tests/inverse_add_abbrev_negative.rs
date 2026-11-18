@@ -48,7 +48,10 @@ fn eval(interp: &mut Interp, source: &str) {
 
 fn load_source_abbrev(interp: &mut Interp) {
     let source = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/abbrev.el");
-    eval(interp, &format!("(load {} nil t)", lisp_string(source.to_str().unwrap())));
+    eval(
+        interp,
+        &format!("(load {} nil t)", lisp_string(source.to_str().unwrap())),
+    );
 }
 
 #[test]

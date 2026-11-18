@@ -31,6 +31,36 @@
 ;; - `with-current-buffer' accepts a buffer OBJECT or a live buffer NAME.
 ;; - `(interactive)' evaluated at top level returns nil.
 
+;; The 49-variable mismatch recorded in the early GNU comparison is a
+;; regression surface for lexical let: all are special in GNU 31.1.
+(qa (delq nil
+          (mapcar (lambda (symbol)
+                    (unless (special-variable-p symbol) symbol))
+                  '(after-focus-change-function clear-message-function
+                    clone-indirect-buffer-hook comp-enable-subr-trampolines
+                    display-mm-dimensions-alist edit-abbrevs-map
+                    eldoc-documentation-function emacs-bzr-version
+                    even-window-heights find-file-hooks focus-in-hook
+                    focus-out-hook fringe-cursor-alist fringe-indicator-alist
+                    help-enable-auto-load indicate-unused-lines
+                    inhibit-nul-byte-detection inhibit-splash-screen
+                    internal--get-default-lexical-binding-function
+                    isearch-lazy-highlight-word isearch-new-word isearch-word
+                    jit-lock-defer-contextually last-input-event
+                    latin-extra-code-table lisp-font-lock-keywords
+                    lisp-font-lock-keywords-1 lisp-font-lock-keywords-2
+                    messages-buffer-max-lines minibuffer-mode-map
+                    native-comp-deferred-compilation ns-version-string
+                    overriding-terminal-local-map quit-flag
+                    read-process-output-max real-last-command
+                    region-extract-function revert-buffer-in-progress-p
+                    scroll-step set-message-function standard-display-table
+                    text-quoting-style throw-on-input
+                    truncate-partial-width-windows uniquify-after-kill-buffer-p
+                    uniquify-trailing-separator-p window-safe-min-height
+                    window-safe-min-width write-file-hooks)))
+    nil)
+
 ;; -- fixtures -------------------------------------------------------------
 (defvar qasp-dyn 'top)                 ; dynamic variable for binding tests
 (defvar qasp-let-specs nil)            ; mutable variable list for let eval-order tests
@@ -179,6 +209,23 @@
   (setq qasp-s1 (progn (push 'v1 o) 1)
         qasp-s2 (progn (push 'v2 o) 2))
   (qa (list qasp-s1 qasp-s2 (reverse o)) '(1 2 (v1 v2))))
+;; A dotted tail added after the final setq value form does not make the
+;; completed assignment sequence malformed; GNU returns the last value.
+(defvar qasp-setq-form nil)
+(defun qasp-setq-mutate-tail ()
+  (setcdr (cddddr qasp-setq-form) 'tail)
+  1)
+(qa (let ((qasp-setq-form
+           (list 'setq 'qasp-setq-x '(qasp-setq-mutate-tail)
+                 'qasp-setq-y 2)))
+      (eval qasp-setq-form))
+    2)
+;; An initially dotted setq call is still rejected before the special form
+;; starts; only tails introduced by a right-hand side are ignored.
+(qa (condition-case err
+        (eval '(setq qasp-setq-initial-dotted 1 . tail))
+      (wrong-type-argument (list (car err) (cadr err) (caddr err))))
+    '(wrong-type-argument listp tail))
 ;; setq on a never-bound variable in lexical code: no error, sets the
 ;; dynamic value cell (31.1 semantics).
 (qa (setq qasp-unbound 42) 42)
@@ -248,6 +295,17 @@
 (let ((o nil))
   (qa (cond ((progn (push 'a o) t) 'v) (t 'else)) 'v)
   (qa (reverse o) '(a)))
+;; A test can detach the current clause from the spine; its remaining tail
+;; must stay live while cond advances to the next clause.
+(defvar qasp-cond-detach-clauses nil)
+(qa (let* ((clauses
+            (list '(nil)
+                  '((progn (setcdr qasp-cond-detach-clauses nil) nil) ignored)
+                  '(t 'after-detach)))
+           (qasp-cond-detach-clauses clauses)
+           (form (cons 'cond clauses)))
+      (eval form))
+    'after-detach)
 ;; `(t)` is a clause whose test is t -> returns t (test value, no body).
 (qa (cond (t)) t)
 (qa (cond ('x)) 'x)                             ; clause test is (quote x)
@@ -282,6 +340,30 @@
 (let ((a nil) (b 2))
   (qa (or a b 'c) 2)
   (qa (and b 'z) 'z))
+;; The current operand's saved next cell remains live even if it acquires a
+;; dotted tail while that operand is being evaluated; GNU stops at the tail.
+(defvar qasp-and-form nil)
+(defun qasp-and-mutate-tail ()
+  (setcdr (cddr qasp-and-form) 'tail)
+  t)
+(qa (let ((qasp-and-form (list 'and '(qasp-and-mutate-tail) t)))
+      (eval qasp-and-form))
+    t)
+(defvar qasp-or-form nil)
+(defun qasp-or-mutate-tail ()
+  (setcdr (cddr qasp-or-form) 'tail)
+  nil)
+(qa (let ((qasp-or-form (list 'or '(qasp-or-mutate-tail) nil)))
+      (eval qasp-or-form))
+    nil)
+(defvar qasp-cond-form nil)
+(defun qasp-cond-mutate-tail ()
+  (setcdr (cdr qasp-cond-form) 'tail)
+  nil)
+(qa (let ((qasp-cond-form
+           (list 'cond (list '(qasp-cond-mutate-tail) 'ignored))))
+      (eval qasp-cond-form))
+    nil)
 
 ;; == while / dolist / dotimes =============================================
 (let ((n 0) (i 0))
@@ -412,6 +494,27 @@
         (condition-case v (car 5) (arith-error 'nope))
       (error (car e)))
     'wrong-type-argument)
+;; A nested list is not recursively flattened into condition names.
+(qa (let ((ran nil))
+      (condition-case outer
+          (condition-case nil
+              (progn (setq ran t) (signal 'error '(body)))
+            (((error)) 'handled))
+        (error (list (car outer) (cdr outer) ran))))
+    '(error (body) t))
+;; `handler-bind' uses the same flat condition-name lists.
+(qa (let ((ran nil))
+      (condition-case outer
+          (handler-bind ((((error)) (lambda (_) (setq ran t))))
+            (signal 'error '(body)))
+        (error (list (car outer) (cdr outer) ran))))
+    '(error (body) nil))
+(qa (let ((ran nil))
+      (condition-case outer
+          (handler-bind ((error (lambda (_) (setq ran t))))
+            (signal 'error '(body)))
+        (error (list (car outer) (cdr outer) ran))))
+    '(error (body) t))
 ;; a handler that errors replaces the original error outward.
 (qa (condition-case e
         (condition-case v (car 5) (error (error "in-handler")))

@@ -3,10 +3,7 @@ use std::{fs, path::PathBuf, time::SystemTime};
 use remacs_runtime::lisp::{Flow, Interp};
 
 fn lisp_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 struct TempDirectory(PathBuf);
@@ -58,5 +55,8 @@ fn find_lisp_size_switch_uses_ceiling_kibibytes() {
         ),
         other => panic!("{other:?}"),
     });
-    assert_eq!(interp.prin1_to_string(&result), "(\"   0\" \"   1\" \"   2\")");
+    assert_eq!(
+        interp.prin1_to_string(&result),
+        "(\"   0\" \"   1\" \"   2\")"
+    );
 }

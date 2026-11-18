@@ -1,6 +1,8 @@
 ;;; -*- lexical-binding: t; -*-
 (defvar qa220-peer nil)
 (defun qa220-log (_server peer _message) (setq qa220-peer peer))
+(defun qa220-filter (process text)
+  (process-put process 'text (concat (process-get process 'text) text)))
 
 (defun qa220-run (family host nowait function &optional wildcard close-early client-local)
   (let* ((before (process-list)) server client (qa220-peer nil)
@@ -97,6 +99,44 @@
 (qa (qa220-run 'local nil nil #'qa220-local nil nil t) '(t t t t t t t t t t t t t t))
 (qa (qa220-run 'ipv4 "127.0.0.1" nil #'qa220-independent) '(t t t t))
 (qa (qa220-run 'local nil nil #'qa220-independent) '(t t t t))
+
+;; Explicit local socket addresses bypass the otherwise unused family, host,
+;; and service arguments on both server and client creation.
+(qa
+ (let* ((directory (make-temp-file "/tmp/qa220-explicit-" t))
+        (path (expand-file-name "socket" directory))
+        (qa220-peer nil) server client)
+   (unwind-protect
+       (progn
+         (setq server
+               (make-network-process
+                :name "qa220-explicit-server" :local path
+                :family (make-symbol "unsupported-family") :host 42 :service 42
+                :server t :noquery t :filter #'qa220-filter :sentinel #'ignore
+                :log #'qa220-log))
+         (setq client
+               (make-network-process
+                :name "qa220-explicit-client" :remote path
+                :family (make-symbol "unsupported-family") :host 42 :service 42
+                :nowait t :noquery t :filter #'ignore :sentinel #'ignore))
+         (qa (process-status client) 'connect)
+         (process-send-string client "explicit-local")
+         (let ((deadline (+ (float-time) 3)))
+           (while (and (or (not qa220-peer)
+                           (not (equal (process-get qa220-peer 'text) "explicit-local")))
+                       (< (float-time) deadline))
+             (accept-process-output nil 0.01)))
+         (list (process-status server) (process-status client)
+               (processp qa220-peer)
+               (equal (process-contact server :local) path)
+               (equal (process-contact client :remote) path)
+               (process-get qa220-peer 'text)))
+     (when client (delete-process client))
+     (when (processp qa220-peer) (delete-process qa220-peer))
+     (when server (delete-process server))
+     (when (file-exists-p path) (delete-file path))
+     (delete-directory directory)))
+ '(listen open t t t "explicit-local"))
 
 (defvar qa220-v6-host (if (= (byteorder) 108) "0:0:0:0:0:0:0:100" "0:0:0:0:0:0:0:1"))
 (let ((probe (condition-case nil

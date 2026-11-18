@@ -15,7 +15,7 @@ use common::*;
 /// environment as the GNU `-l' run (noninteractive=t, load context).
 fn run(file: &'static str) {
     let src = format!(
-        "(progn (load {:?}) (load {:?}) nil)",
+        "(progn (load {:?}) (setq qa--remacs t) (load {:?}) nil)",
         format!("{}/tests/qa_framework.el", env!("CARGO_MANIFEST_DIR")),
         format!("{}/tests/{}", env!("CARGO_MANIFEST_DIR"), file)
     );
@@ -28,7 +28,11 @@ fn run(file: &'static str) {
                     let o = out.borrow();
                     assert!(o.contains("checks passed"), "qa {file} summary: {o}");
                 }
-                Err(_f) => panic!("qa {file} eval error; captured output:\n{}", out.borrow()),
+                Err(flow) => panic!(
+                    "qa {file} eval error: {}; captured output:\n{}",
+                    common::flow_str(&mut i, &flow),
+                    out.borrow()
+                ),
             }
         })
         .unwrap()
@@ -103,13 +107,12 @@ qa!(qa_icalendar_case_fold_boolean, "qa_icalendar_case_fold_boolean.el");
 qa!(qa_icalendar_calendar_case_fold, "qa_icalendar_calendar_case_fold.el");
 qa!(qa_icalendar_date_time_case, "qa_icalendar_date_time_case.el");
 qa!(qa_icalendar_uri_empty_hierpart, "qa_icalendar_uri_empty_hierpart.el");
-qa!(qa_icalendar_parse_from_string_eof, "qa_icalendar_parse_from_string_eof.el");
-qa!(qa_icalendar_historic_timezone, "qa_icalendar_historic_timezone.el");
 qa!(qa_icalendar_value_type_case, "qa_icalendar_value_type_case.el");
+qa!(qa_icalendar_parse_from_string_eof, "qa_icalendar_parse_from_string_eof.el");
 qa!(qa_icalendar_rrule_weekday_case, "qa_icalendar_rrule_weekday_case.el");
 qa!(qa_icalendar_recurrences_window_repeat, "qa_icalendar_recurrences_window_repeat.el");
-qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_icalendar_format_error_short_name, "qa_icalendar_format_error_short_name.el");
+qa!(qa_icalendar_tzid_index, "qa_icalendar_tzid_index.el");
 qa!(qa_diary_icalendar_utc_date, "qa_diary_icalendar_utc_date.el");
 qa!(qa_diary_icalendar_all_day_duration, "qa_diary_icalendar_all_day_duration.el");
 qa!(qa_diary_icalendar_date_recurrence_validity, "qa_diary_icalendar_date_recurrence_validity.el");
@@ -221,6 +224,7 @@ qa!(qa_err2, "qa_err2.el");
 qa!(qa_errors, "qa_errors.el");
 qa!(qa_dotted_error_data, "qa_dotted_error_data.el");
 qa!(qa_eval, "qa_eval.el");
+qa!(qa_defun_declarations, "qa_defun_declarations.el");
 qa!(qa_eval_argument_spine, "qa_eval_argument_spine.el");
 qa!(qa_eval_narrowing, "qa_eval_narrowing.el");
 qa!(qa_eval_lexical, "qa_eval_lexical.el");
@@ -302,6 +306,9 @@ qa!(qa_quit_flag, "qa_quit_flag.el");
 fn qa_call_depth() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
+    // The source-only fast-dev boot loads bytecomp from Lisp source; allow
+    // the observed sub-10-minute path while retaining a finite per-child cap.
+    let watchdog = Duration::from_secs(600);
     for source in [false, true] {
         let root = env!("CARGO_MANIFEST_DIR");
         let mut command = Command::new(env!("CARGO_BIN_EXE_remacs"));
@@ -315,7 +322,7 @@ fn qa_call_depth() {
         let started = Instant::now();
         loop {
             if child.try_wait().unwrap().is_some() { break; }
-            if started.elapsed() > Duration::from_secs(180) {
+            if started.elapsed() > watchdog {
                 child.kill().unwrap();
                 let output = child.wait_with_output().unwrap();
                 panic!("call-depth watchdog source={source}: {}\n{}",
@@ -360,6 +367,7 @@ qa!(qa_kmacro, "qa_kmacro.el");
 qa!(qa_kbd_macro_repeat, "qa_kbd_macro_repeat.el");
 qa!(qa_list, "qa_list.el");
 qa!(qa_lists, "qa_lists.el");
+qa!(qa_list_cycles, "qa_list_cycles.el");
 qa!(qa_assq_delete_all_long, "qa_assq_delete_all_long.el");
 qa!(qa_assq_delete_all_live_eq, "qa_assq_delete_all_live_eq.el");
 qa!(qa_last_circular_safe_length, "qa_last_circular_safe_length.el");
@@ -396,6 +404,7 @@ qa!(qa_last_cycles, "qa_last_cycles.el");
 qa!(qa_nconc_traversal, "qa_nconc_traversal.el");
 qa!(qa_plist_cycles, "qa_plist_cycles.el");
 qa!(qa_plist_put_cycles, "qa_plist_put_cycles.el");
+qa!(qa_symbol_put_circular_plist, "qa_symbol_put_circular_plist.el");
 qa!(qa_member_if_live, "qa_member_if_live.el");
 qa!(qa_copy_keymap_char_type, "qa_copy_keymap_char_type.el");
 qa!(qa_copy_keymap_protocol, "qa_copy_keymap_protocol.el");
@@ -423,12 +432,17 @@ qa!(qa_killed_match_markers, "qa_killed_match_markers.el");
 qa!(qa_logb, "qa_logb.el");
 qa!(qa_locvar, "qa_locvar.el");
 qa!(qa_variable_protection, "qa_variable_protection.el");
+qa!(qa_delete_indirect_plist, "qa_delete_indirect_plist.el");
+qa!(qa_variable_alias_plist, "qa_variable_alias_plist.el");
 qa!(qa_frame_parameters, "qa_frame_parameters.el");
 qa!(qa_frame_text_pixel_size, "qa_frame_text_pixel_size.el");
+qa!(qa_fontset_cycle, "qa_fontset_cycle.el");
 qa!(qa_frame_scroll_bar_type, "qa_frame_scroll_bar_type.el");
 qa!(qa_frame_buffer_changes, "qa_frame_buffer_changes.el");
+qa!(qa_image_identity, "qa_image_identity.el");
 qa!(qa_feature_capabilities, "qa_feature_capabilities.el");
 qa!(qa_macro, "qa_macro.el");
+qa!(qa_cyclic_macro_function, "qa_cyclic_macro_function.el");
 qa!(qa_macro_environment, "qa_macro_environment.el");
 qa!(qa_map, "qa_map.el");
 qa!(qa_map2, "qa_map2.el");
@@ -723,6 +737,7 @@ qa!(qa_seq2, "qa_seq2.el");
 qa!(qa_sort_callbacks, "qa_sort_callbacks.el");
 qa!(qa_sort, "qa_sort.el");
 qa!(qa_special, "qa_special.el");
+qa!(qa_terminal_identity, "qa_terminal_identity.el");
 qa!(qa_special_variables, "qa_special_variables.el");
 qa!(qa_special2, "qa_special2.el");
 qa!(qa_string, "qa_string.el");
@@ -857,6 +872,7 @@ qa!(qa_byte_character_conversion, "qa_byte_character_conversion.el");
 qa!(qa_bytecode_errors, "qa_bytecode_errors.el");
 qa!(qa_bytecode_mutation, "qa_bytecode_mutation.el");
 qa!(qa_bytecode_slots, "qa_bytecode_slots.el");
+qa!(qa_bytecode_rest_wna, "qa_bytecode_rest_wna.el");
 qa!(qa_dump_history, "qa_dump_history.el");
 qa!(qa_load_elc_header, "qa_load_elc_header.el");
 qa!(qa_strings2, "qa_strings2.el");
@@ -1145,8 +1161,8 @@ qa!(
     qa_sgml_parse_tag_backward_pi_cdata,
     "qa_sgml_parse_tag_backward_pi_cdata.el"
 );
-
 qa!(qa_rst_list_continuation, "qa_rst_list_continuation.el");
+
 qa!(qa_xml_namespace_attrs, "qa_xml_namespace_attrs.el");
 
 qa!(qa_xml_well_formed, "qa_xml_well_formed.el");

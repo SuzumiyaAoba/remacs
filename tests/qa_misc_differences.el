@@ -146,5 +146,8 @@
 (qa-err-data (read "#^[]") 'invalid-read-syntax '("Invalid size char-table"))
 (qa-err-data (read "?\\u{41}") 'error '("Non-hex character used for Unicode escape: { (123)"))
 (qa-err-data (read "?\\u00g0") 'error '("Non-hex character used for Unicode escape: g (103)"))
+(qa-err-data (read "?\\U0000") 'error '("Malformed Unicode escape: \\U0"))
+(qa-err-data (read "?\\x10000000") 'error
+             '("Hex character out of range: \\x10000000..."))
 
 (princ (qa--done)) (terpri)

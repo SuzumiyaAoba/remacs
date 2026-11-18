@@ -26,10 +26,7 @@ const CASES: &str = r#"(list
       (delete-directory directory t))))"#;
 
 fn lisp_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn eval(interp: &mut Interp, source: &str) -> remacs_runtime::lisp::Value {

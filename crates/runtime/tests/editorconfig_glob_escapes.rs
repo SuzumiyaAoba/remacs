@@ -124,8 +124,7 @@ fn eval(interp: &mut Interp, source: &str) -> String {
 
 #[test]
 fn editorconfig_fnmatch_honors_backslash_glob_escapes_1685() {
-    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
-        .join("lisp/editorconfig-fnmatch.el");
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/editorconfig-fnmatch.el");
     let mut interp = Interp::new();
     let code = format!(
         "(progn (setq noninteractive t) (load {} nil t t) {})",

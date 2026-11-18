@@ -81,10 +81,7 @@ fn refresh_url_keywords_ignore_caller_search_case_folding() {
 
     let source = include_str!("../../../lisp/eww.el");
     let start = source.find("(defun eww-tag-meta ").unwrap();
-    let end = source[start..]
-        .find("(defun eww-tag-link ")
-        .unwrap()
-        + start;
+    let end = source[start..].find("(defun eww-tag-link ").unwrap() + start;
     check(&mut interp, &source[start..end]);
     check(&mut interp, CASES);
 }

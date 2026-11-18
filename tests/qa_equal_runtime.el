@@ -113,6 +113,32 @@
         (funcall (list 'lambda nil (list 'quote qa-equal-callers-a)
                        '(mapbacktrace #'ignore qa-equal-callers-base))))
     nil)
+  ;; Interpreted closures are equal by their vector-like slots, including
+  ;; captured lexical values. Matching environment shape alone is insufficient.
+  (qa (let* ((left
+              (eval '(let ((qa-equal-closure-value 1))
+                       (lambda () qa-equal-closure-value)) t))
+             (same
+              (eval '(let ((qa-equal-closure-value 1))
+                       (lambda () qa-equal-closure-value)) t))
+             (different
+              (eval '(let ((qa-equal-closure-value 2))
+                       (lambda () qa-equal-closure-value)) t)))
+        (list (equal left same)
+              (equal left different)
+              (equal left left)
+              (funcall left)
+              (funcall different)))
+    '(t nil t 1 2))
+  (qa (let* ((doc-a (eval '(lambda () "doc-a" 1) t))
+             (doc-a-copy (eval '(lambda () "doc-a" 1) t))
+             (doc-b (eval '(lambda () "doc-b" 1) t))
+             (interactive-a (eval '(lambda () (interactive) 1) t))
+             (interactive-b (eval '(lambda () (interactive "p") 1) t)))
+        (list (equal doc-a doc-a-copy)
+              (equal doc-a doc-b)
+              (equal interactive-a interactive-b)))
+    '(t nil nil))
   (qa (with-temp-buffer
         (insert "abc")
         (internal--labeled-narrow-to-region 1 2 qa-equal-callers-a)

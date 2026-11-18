@@ -131,11 +131,19 @@ fn dropping_a_suspended_native_worker_unwinds_across_the_c_boundary() {
         "drop-thread196.el",
         "(defun nc196-drop () (thread-yield) 7)\n",
     );
+    let output = std::path::Path::new(&path).with_extension("eln");
+    struct RemoveOutput(std::path::PathBuf);
+    impl Drop for RemoveOutput {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _remove_output = RemoveOutput(output.clone());
     // ev drops its interpreter before returning. The worker is still
     // suspended inside generated C, so its stack must be unwound safely.
     assert_eq!(
         ev(&format!(
-            "(progn (native-elisp-load (native-compile {path:?})) \
+            "(progn (native-elisp-load (native-compile {path:?} {output:?})) \
           (make-thread (lambda () (nc196-drop))) \
           (thread-yield) 'paused)"
         )),
@@ -488,6 +496,7 @@ fn async_file_parse_errors() {
         ev(r#"
           (let* ((dir (make-temp-file "remacs-native-parse-errors-" t))
                  (source (expand-file-name "broken.el" dir))
+                 (native-comp-eln-load-path (list dir))
                  output)
             (unwind-protect
                 (progn

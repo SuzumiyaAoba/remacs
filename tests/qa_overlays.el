@@ -305,4 +305,17 @@
       (count-lines 1 2))
     1)
 
+;; Malformed circular visibility specifications and properties must not hang.
+(when qa--remacs
+  (let ((spec (list 'hidden)))
+    (setcdr spec spec)
+    (qa-err (let ((buffer-invisibility-spec spec))
+              (invisible-p 'visible))
+            'circular-list))
+  (let ((property (list 'visible)))
+    (setcdr property property)
+    (qa-err (let ((buffer-invisibility-spec '(hidden)))
+              (invisible-p property))
+            'circular-list)))
+
 (princ (qa--done))

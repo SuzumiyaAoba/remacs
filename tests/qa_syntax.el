@@ -443,6 +443,36 @@
 (qa (with-temp-buffer (insert "(a \"str\") ;; c\n(d)")
                       (parse-partial-sexp 1 9))
     '(1 1 4 nil nil nil 0 nil nil (1) nil))
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (let ((parse-sexp-lookup-properties t)
+         (syntax-propertize-function
+          (lambda (&rest _) (signal 'file-error '("syntax propertize")))))
+     (condition-case error
+         (progn (parse-partial-sexp 1 3) 'returned)
+       (error (car error)))))
+ 'file-error)
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (let ((parse-sexp-lookup-properties t)
+         (syntax-propertize-function
+          (lambda (&rest _) (signal 'file-error '("syntax propertize")))))
+     (condition-case error
+         (parse-partial-sexp 1 3 'bad-depth)
+       (error (car error)))))
+ 'wrong-type-argument)
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (let ((parse-sexp-lookup-properties t)
+         (syntax-propertize-function
+          (lambda (&rest _) (signal 'file-error '("syntax propertize")))))
+     (condition-case error
+         (skip-syntax-forward "w" 'bad-limit)
+       (error (car error)))))
+ 'wrong-type-argument)
 (qa (with-temp-buffer (insert "(a b) c")
                       (parse-partial-sexp 1 6))
     '(0 nil 1 nil nil nil 0 nil nil nil nil))

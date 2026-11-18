@@ -23,10 +23,7 @@ const CASES: &str = r#"(progn
       (delete-directory directory t))))"#;
 
 fn lisp_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn eval(interp: &mut Interp, source: &str) -> remacs_runtime::lisp::Value {
@@ -58,8 +55,5 @@ fn a_closing_bracket_can_be_the_first_character_class_member() {
     let result = eval(&mut interp, CASES);
     assert_eq!(interp.prin1_to_string(&result), "(t t t t t t t t t)");
     let result = eval(&mut interp, &source_eval);
-    assert_eq!(
-        interp.prin1_to_string(&result),
-        "(t t t t t t t t t)"
-    );
+    assert_eq!(interp.prin1_to_string(&result), "(t t t t t t t t t)");
 }

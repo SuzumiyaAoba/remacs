@@ -15,6 +15,7 @@
 (qa (listp (coding-system-list)) t)
 (qa (listp (coding-system-list t)) t)
 (qa (coding-system-p 'utf-8) t)
+(qa (coding-system-p (make-symbol "utf-8")) nil)
 (qa (coding-system-p 'utf-8-unix) t)
 (qa (coding-system-p 'iso-8859-1) t)
 (qa (coding-system-p 'utf-16) t)

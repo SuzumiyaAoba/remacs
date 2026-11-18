@@ -38,4 +38,20 @@
 ;; its own mapping function and separator, not be treated as unidata.
 (qa (funcall #[257 "\300\301\2\302#\207" [mapconcat symbol-name ","] 5]
              '(font compat)) "font,compat")
+(let* ((alist '((key . "value")))
+       (function (make-byte-code 257 (unibyte-string 192 135)
+                                (vector alist) 2)))
+  ;; An arbitrary byte-code constant that looks like a property alist is
+  ;; still the function's return value; it is not a unidata lookup.
+  (qa (eq (funcall function 'missing) alist) t))
+(let* ((table (make-char-table 'qa-unidata-fastpath))
+       (function (make-byte-code 771 (unibyte-string 192 135)
+                                [0 char-table-extra-slot 1] 4)))
+  ;; Matching the unidata argument count and constants is insufficient when
+  ;; the actual bytecode is a plain constant return.
+  (qa (funcall function 65 "raw" table) 0))
+(let* ((table (make-char-table 'qa-unidata-fastpath))
+       (function (make-byte-code 771 (unibyte-string 192 135)
+                                [char-table-extra-slot] 4)))
+  (qa (funcall function 65 "raw" table) 'char-table-extra-slot))
 (princ (qa--done))

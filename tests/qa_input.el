@@ -59,6 +59,50 @@
 (qa (boundp 'num-input-keys) t)
 (qa (boundp 'num-nonmacro-input-events) t)
 
+;; The internal C setter changes terminal state; the Lisp wrapper sets the
+;; defcustom afterward.  A direct internal call must not mutate that variable
+;; or notify its watchers.
+(defvar qa-input-keyboard-coding-events nil)
+(defun qa-input-keyboard-coding-watcher (_symbol value operation _where)
+  (push (list operation value) qa-input-keyboard-coding-events))
+(qa
+ (let ((old-coding (keyboard-coding-system))
+       (keyboard-coding-system 'no-conversion)
+       (qa-input-keyboard-coding-events nil))
+   (add-variable-watcher 'keyboard-coding-system
+                         #'qa-input-keyboard-coding-watcher)
+   (unwind-protect
+       (progn
+         (setq qa-input-keyboard-coding-events nil)
+         (set-keyboard-coding-system-internal 'utf-8 nil)
+         (list qa-input-keyboard-coding-events
+               keyboard-coding-system
+               (keyboard-coding-system)))
+     (remove-variable-watcher 'keyboard-coding-system
+                              #'qa-input-keyboard-coding-watcher)
+     (set-keyboard-coding-system-internal old-coding nil)))
+ '(nil no-conversion utf-8))
+
+;; The Lisp wrapper sets the defcustom after the internal terminal update,
+;; so its watcher must run exactly once.
+(qa
+ (let ((old-coding (keyboard-coding-system))
+       (old-variable keyboard-coding-system)
+       (qa-input-keyboard-coding-events nil))
+   (add-variable-watcher 'keyboard-coding-system
+                         #'qa-input-keyboard-coding-watcher)
+   (unwind-protect
+       (progn
+         (set-keyboard-coding-system 'utf-8)
+         (list qa-input-keyboard-coding-events
+               keyboard-coding-system
+               (keyboard-coding-system)))
+     (remove-variable-watcher 'keyboard-coding-system
+                              #'qa-input-keyboard-coding-watcher)
+     (setq keyboard-coding-system old-variable)
+     (set-keyboard-coding-system-internal old-coding nil)))
+ '(((set utf-8-unix)) utf-8-unix utf-8-unix))
+
 ;; == hooks (bound vars) ==
 (qa (boundp 'pre-command-hook) t)
 (qa (boundp 'post-command-hook) t)
@@ -96,5 +140,74 @@
 ;; == this-command-keys in batch ==
 (qa (this-command-keys) "")
 (qa (this-command-keys-vector) [])
+
+;; `internal-auto-fill' errors abort self-insert before post-self-insert-hook.
+(qa
+ (let ((qa-input-post-self-insert-ran nil))
+   (with-temp-buffer
+     (let ((auto-fill-function
+            (lambda () (signal 'file-error '("auto-fill failed"))))
+           (post-self-insert-hook
+            (list (lambda () (setq qa-input-post-self-insert-ran t)))))
+       (list (condition-case error
+                 (self-insert-command 1 ?\s)
+               (error (car error)))
+             (buffer-string)
+             qa-input-post-self-insert-ran))))
+ '(file-error " " nil))
+
+;; `yank-pop' is a Lisp sequence: watched `setq's and the final window update
+;; must propagate failures instead of continuing with the replacement.
+(defun qa-input-yank-pop-set-watcher (symbol _value operation _where)
+  (when (and (eq operation 'set)
+             (memq symbol '(this-command yank-undo-function)))
+    (signal 'file-error '("yank-pop watcher"))))
+
+(qa
+ (with-temp-buffer
+   (let ((last-command 'yank)
+         (this-command 'qa-input-original-command))
+     (add-variable-watcher 'this-command #'qa-input-yank-pop-set-watcher)
+     (unwind-protect
+         (list (condition-case error (yank-pop) (error (car error)))
+               (buffer-string)
+               this-command)
+       (remove-variable-watcher 'this-command #'qa-input-yank-pop-set-watcher))))
+ '(file-error "" qa-input-original-command))
+
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (set-mark 1)
+   (goto-char (point-max))
+   (let ((last-command 'yank)
+         (kill-ring '("x"))
+         (yank-window-start 1)
+         (qa-input-yank-undo-ran nil)
+         (yank-undo-function
+          (lambda (_start _end) (setq qa-input-yank-undo-ran t))))
+     (add-variable-watcher 'yank-undo-function #'qa-input-yank-pop-set-watcher)
+     (unwind-protect
+         (list (condition-case error (yank-pop) (error (car error)))
+               (buffer-string)
+               qa-input-yank-undo-ran
+               (functionp yank-undo-function))
+       (remove-variable-watcher 'yank-undo-function #'qa-input-yank-pop-set-watcher))))
+ '(file-error "abc" t t))
+
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (set-mark 1)
+   (goto-char (point-max))
+   (let ((last-command 'yank)
+         (kill-ring '("x"))
+         (yank-window-start "bad")
+         (yank-undo-function (lambda (_start _end) nil)))
+     (list (condition-case error
+               (yank-pop)
+             (error (list (car error) (cadr error))))
+           (buffer-string))))
+ '((wrong-type-argument integer-or-marker-p) "abcx"))
 
 (princ (qa--done))

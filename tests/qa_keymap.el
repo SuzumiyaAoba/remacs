@@ -63,6 +63,15 @@
   (define-key k "a" #'car)
   (qa (lookup-key k "a") 'car))
 
+;; An uninterned symbol named `keymap' is an event, not the keymap marker.
+(qa (let* ((event (make-symbol "keymap"))
+           (map (make-sparse-keymap))
+           (seen nil))
+      (setcdr map (list (cons event 'ignore)))
+      (map-keymap (lambda (key _binding) (push key seen)) map)
+      (eq (car seen) event))
+    t)
+
 ;; == keymap-set (modern API) ==
 (let ((k (make-sparse-keymap)))
   (keymap-set k "b" #'cdr)
@@ -236,4 +245,50 @@
                    (where-is-internal 'qa148-advertised (list k 5) t)
                  (put 'qa148-advertised 'advertised-binding nil)))
              'wrong-type-argument '(keymapp 5))
+
+;; User-replaced map lists can be circular. Reject them instead of hanging
+;; while collecting minor maps or the map list passed to where-is-internal.
+(when qa--remacs
+  (let ((maps (list (make-sparse-keymap))))
+    (setcdr maps maps)
+    (qa-err (where-is-internal 'ignore maps) 'circular-list))
+  (let ((emulation-mode-map-alists nil)
+        (cycle (list nil)))
+    (setcdr cycle cycle)
+    (setq emulation-mode-map-alists cycle)
+    (qa-err (current-minor-mode-maps) 'circular-list))
+  (let ((minor-mode-overriding-map-alist nil)
+        (cycle (list nil)))
+    (setcdr cycle cycle)
+    (setq minor-mode-overriding-map-alist cycle)
+    (qa-err (current-minor-mode-maps) 'circular-list))
+  (let ((emulation-mode-map-alists nil)
+        (qa148-cycle-mode t))
+    (let* ((map (make-sparse-keymap))
+           (alist (list (cons 'qa148-cycle-mode map)))
+           (wrapper (list alist)))
+      (setcdr alist alist)
+      (setq emulation-mode-map-alists wrapper)
+      (qa-err (current-minor-mode-maps) 'circular-list))))
+(when qa--remacs
+  (let ((map (make-sparse-keymap))
+        (binding (list [?z])))
+    (define-key map [?a] 'qa148-cycle-advertised)
+    (setcdr binding binding)
+    (put 'qa148-cycle-advertised 'advertised-binding binding)
+    (unwind-protect
+        (qa-err (where-is-internal 'qa148-cycle-advertised (list map) t)
+                'circular-list)
+      (put 'qa148-cycle-advertised 'advertised-binding nil))))
+
+(when qa--remacs
+  (let* ((maps (list (make-sparse-keymap)))
+         (saved (symbol-function 'current-active-maps)))
+    (setcdr maps maps)
+    (unwind-protect
+        (progn
+          (fset 'current-active-maps (lambda (&rest _) maps))
+          (qa-err (key-binding "z") 'circular-list))
+      (fset 'current-active-maps saved))))
+
 (princ (qa--done))

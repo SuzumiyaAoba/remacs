@@ -139,6 +139,121 @@
         (list (nreverse events) (point) deactivate-mark)))
     '(((before 2 4 5) (after 2 8 2 9)) 9 keep))
 
+;; GNU sets deactivate-mark after before-change hooks and before the edit;
+;; a failing watcher aborts the buffer change at that point.
+(defvar qa-coding-deactivate-events nil)
+(defun qa-coding-deactivate-watcher (_symbol value operation _where)
+  (push (list operation value (buffer-string)) qa-coding-deactivate-events))
+(defun qa-coding-deactivate-error-watcher (_symbol _value operation _where)
+  (when (eq operation 'set)
+    (signal 'file-error '("deactivate watcher"))))
+(defun qa-coding-before-error (_beg _end)
+  (signal 'file-error '("before-change")))
+(defun qa-coding-deactivate-observe (operation)
+  (with-temp-buffer
+    (insert "ab")
+    (setq deactivate-mark nil)
+    (let ((qa-coding-deactivate-events nil))
+      (add-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher)
+      (unwind-protect
+          (progn
+            (cond ((eq operation 'delete) (delete-region 1 2))
+                  ((eq operation 'empty-delete) (delete-region 1 1))
+                  ((eq operation 'property) (put-text-property 1 2 'face 'bold)))
+            (list (reverse qa-coding-deactivate-events)
+                  (buffer-string) deactivate-mark))
+        (remove-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher)))))
+(qa
+ (with-temp-buffer
+   (insert "a")
+   (let ((qa-coding-deactivate-events nil)
+         (deactivate-mark 'keep))
+     (add-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher)
+     (unwind-protect
+         (progn
+           (insert "b")
+           (list (reverse qa-coding-deactivate-events)
+                 deactivate-mark (buffer-string)))
+       (remove-variable-watcher 'deactivate-mark
+                                #'qa-coding-deactivate-watcher))))
+ '(((set t "a")) t "ab"))
+(qa
+ (with-temp-buffer
+   (let ((deactivate-mark nil))
+     (add-variable-watcher 'deactivate-mark #'qa-coding-deactivate-error-watcher)
+     (unwind-protect
+         (list (condition-case error
+                   (progn (insert "abc") 'returned)
+                 (error (car error)))
+               (buffer-string))
+       (remove-variable-watcher 'deactivate-mark
+                                #'qa-coding-deactivate-error-watcher))))
+ '(file-error ""))
+(qa
+ (with-temp-buffer
+   (let ((deactivate-mark nil)
+         (inhibit-modification-hooks t)
+         (qa-coding-deactivate-events nil))
+     (add-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher)
+     (unwind-protect
+         (progn
+           (insert "x")
+           (list (reverse qa-coding-deactivate-events) deactivate-mark))
+       (remove-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher))))
+ '(nil nil))
+(qa
+ (with-temp-buffer
+   (let ((deactivate-mark nil)
+         (before-change-functions '(qa-coding-before-error))
+         (qa-coding-deactivate-events nil))
+     (add-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher)
+     (unwind-protect
+         (list (condition-case error
+                   (progn (insert "x") 'returned)
+                 (error (car error)))
+               (buffer-string) deactivate-mark qa-coding-deactivate-events)
+       (remove-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher))))
+ '(file-error "" nil nil))
+(qa (qa-coding-deactivate-observe 'delete) '(((set t "ab")) "b" t))
+(qa (qa-coding-deactivate-observe 'empty-delete) '(nil "ab" nil))
+(qa (qa-coding-deactivate-observe 'property)
+    '(((set t "ab")) #("ab" 0 1 (face bold)) t))
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (let ((qa-coding-deactivate-events nil)
+         (deactivate-mark 'keep))
+     (add-variable-watcher 'deactivate-mark #'qa-coding-deactivate-watcher)
+     (unwind-protect
+         (progn
+           (encode-coding-region 1 4 'utf-8)
+           (list (reverse qa-coding-deactivate-events) deactivate-mark))
+       (remove-variable-watcher 'deactivate-mark
+                                #'qa-coding-deactivate-watcher))))
+ '(((set t "abc")) keep))
+
+;; kill-region's second set is Lisp-visible; a failing watcher must escape
+;; after the text is deleted instead of being swallowed by the primitive.
+(defvar qa-kill-deactivate-count 0)
+(defun qa-kill-deactivate-error-watcher (_symbol _value operation _where)
+  (when (eq operation 'set)
+    (setq qa-kill-deactivate-count (1+ qa-kill-deactivate-count))
+    (when (= qa-kill-deactivate-count 2)
+      (signal 'file-error '("second deactivate")))))
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (setq deactivate-mark nil qa-kill-deactivate-count 0)
+   (add-variable-watcher 'deactivate-mark #'qa-kill-deactivate-error-watcher)
+   (unwind-protect
+       (list (condition-case error
+                 (progn (kill-region 1 4) 'returned)
+               (error (car error)))
+             qa-kill-deactivate-count (buffer-string))
+     (remove-variable-watcher 'deactivate-mark
+                              #'qa-kill-deactivate-error-watcher)))
+ '(file-error 2 ""))
+
 ;; Native Unicode is passed through while the legacy decoder remains
 ;; in its current designation and charset run.
 (qa (with-temp-buffer

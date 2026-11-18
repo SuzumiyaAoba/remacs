@@ -41,6 +41,7 @@
 ;; == lisp reader: objects, arrays, key/array types ==
 (qa (json-read-from-string "{\"a\":1}") '((a . 1)))
 (qa (json-read-from-string "{}") nil)
+(qa (json-read-from-string "{\"a\":1,}") '((a . 1)))
 (qa (json-read-from-string "{\"a b\":1,\"c-d\":2}") '((a\ b . 1) (c-d . 2)))
 (qa (let ((json-key-type 'string)) (json-read-from-string "{\"a\":1}"))
     '(("a" . 1)))

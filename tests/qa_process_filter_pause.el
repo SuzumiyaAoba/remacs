@@ -28,8 +28,9 @@
       (when (and p (process-live-p p)) (delete-process p))
       (kill-buffer buffer))))
 
-(defun qa206-bulk (mode reentrant)
-  (let ((text "") (calls 0) (nested 'not-called) p)
+(defun qa206-bulk (mode reentrant &optional size)
+  (let* ((size (or size 50000))
+         (text "") (calls 0) (nested 'not-called) p)
     (unwind-protect
         (progn
           (setq p (make-process :name "qa206-bulk" :noquery t :sentinel #'ignore
@@ -39,14 +40,16 @@
                                           (set-process-filter process t)
                                           (when reentrant
                                             (setq nested (accept-process-output process 0.01 nil t))))
-                                :command '("/bin/sh" "-c" "printf '%050000d' 0; read done")))
+                                :command (list "/bin/sh" "-c"
+                                               (concat "printf '%0" (number-to-string size)
+                                                       "d' 0; read done"))))
           (qa206-until p (lambda () (> calls 0)))
           (let ((quiet (null (accept-process-output p 0.03 nil t))))
             (set-process-filter p (lambda (_process string) (setq text (concat text string))))
             (process-send-string p "go\n")
-            (qa206-until p (lambda () (= (length text) 50000)))
+            (qa206-until p (lambda () (= (length text) size)))
             (list calls quiet (if reentrant (null nested) t)
-                  (equal text (make-string 50000 ?0)))))
+                  (equal text (make-string size ?0)))))
       (when (and p (process-live-p p)) (delete-process p)))))
 
 (defun qa206-exited (mode)
@@ -78,6 +81,8 @@
 (qa (qa206-exited '(pipe . pty)) '(exit exit ""))
 (qa (qa206-exited '(pty . pipe)) '(exit exit ""))
 (qa (qa206-bulk 'pipe t) '(1 t t t))
+(qa (qa206-bulk '(pipe . pty) nil) '(1 t t t))
+(qa (qa206-bulk '(pipe . pty) nil 100000) '(1 t t t))
 
 ;; Pending decoder bytes cannot reappear after a paused child exits.
 (qa-lex

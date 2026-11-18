@@ -12,11 +12,14 @@
 (defvar qa--fails nil)
 (defvar qa--xfails nil)
 (defvar qa--xpass nil)
-;; t when running under remacs — detected via invocation-name.
+;; t when running under remacs. Rust test runners may set
+;; `invocation-name' to "emacs", so also check the version function.
 (defvar qa--remacs
-  (and (boundp 'invocation-name)
-       (stringp invocation-name)
-       (string-match-p "remacs" invocation-name)))
+  (or (and (boundp 'invocation-name)
+           (stringp invocation-name)
+           (string-match-p "remacs" (downcase invocation-name)))
+      (and (fboundp 'emacs-version)
+           (string-match-p "remacs" (downcase (emacs-version))))))
 
 (defun qa--eval (form)
   (condition-case e (eval form) (error (list 'qa--err (car e) (cdr e)))))

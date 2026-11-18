@@ -49,7 +49,10 @@ fn rectangle_extraction_keeps_tab_interior_rows() {
         .unwrap()
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
-    evaluate(&mut interp, &format!("(progn (load \"{compiled}\" nil t t) t)"));
+    evaluate(
+        &mut interp,
+        &format!("(progn (load \"{compiled}\" nil t t) t)"),
+    );
     evaluate(&mut interp, CASES);
     let source = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/rect.el");
     let filename = source
@@ -57,6 +60,9 @@ fn rectangle_extraction_keeps_tab_interior_rows() {
         .unwrap()
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
-    evaluate(&mut interp, &format!("(progn (load \"{filename}\" nil t t) t)"));
+    evaluate(
+        &mut interp,
+        &format!("(progn (load \"{filename}\" nil t t) t)"),
+    );
     evaluate(&mut interp, CASES);
 }

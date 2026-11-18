@@ -1,5 +1,7 @@
-;;; qa_window_buffer_scroll_bars.el --- Reset nonpersistent window scroll bars -*- lexical-binding:t; -*-
+;;; qa_window_buffer_scroll_bars.el --- TTY window scroll bar defaults -*- lexical-binding:t; -*-
 
+;; GNU's batch TTY frame reports frame-default scroll bars and ignores
+;; buffer-local settings, since it cannot display scroll bars.
 (qa
  (let* ((window (selected-window))
         (original-buffer (window-buffer window))
@@ -26,6 +28,6 @@
                    (nth 6 (window-scroll-bars window))))))
      (set-window-buffer window original-buffer)
      (mapc #'kill-buffer (list reset-buffer keep-buffer persistent-buffer))))
- '(right left left t))
+ '(t t t nil))
 
 (princ (qa--done))

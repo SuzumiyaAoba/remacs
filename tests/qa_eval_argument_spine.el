@@ -1,6 +1,10 @@
 ;;; -*- lexical-binding: t; -*-
 ;; GNU snapshots the next argument cell before evaluating the current one.
 (defvar qa-eval-spine-form nil)
+(defvar qa-eval-dotted-arg-effect nil)
+(defvar qa-eval-dotted-autoload-loaded nil)
+(defvar qa-eval-circular-unbound-side nil)
+(defun qa-eval-dotted-one-arg (arg) arg)
 
 (defun qa-eval-spine-replace-tail ()
   (setcdr (cdr qa-eval-spine-form) '((quote added)))
@@ -29,6 +33,17 @@
       (eval qa-eval-spine-form))
     '(first original))
 
+;; `cond' reads the selected clause body after evaluating its test. A test
+;; that removes the body leaves the test value as the clause result.
+(defvar qa-eval-cond-clause nil)
+(defun qa-eval-cond-remove-body ()
+  (setcdr qa-eval-cond-clause nil)
+  t)
+(qa (let* ((qa-eval-cond-clause
+            (list '(qa-eval-cond-remove-body) '(quote original))))
+      (eval (list 'cond qa-eval-cond-clause)))
+    t)
+
 ;; Circular argument spines signal before evaluating any argument forms.
 (defvar qa-eval-spine-circular-side nil)
 (defun qa-eval-spine-circular-function (&rest args) args)
@@ -38,5 +53,472 @@
       (condition-case err (eval form) (error (car err))))
     'circular-list)
 (qa qa-eval-spine-circular-side nil)
+(qa (let* ((args (list '(setq qa-eval-spine-circular-side t) 'a 'b))
+           (cycle (cdr args))
+           (form (cons 'qa-eval-spine-circular-function args)))
+      (setcdr (cdr cycle) cycle)
+      (setq qa-eval-spine-circular-side nil)
+      (condition-case err
+          (eval form)
+        (circular-list
+         (list (eq (cadr err) args)
+               (eq (cadr err) cycle)
+               (eq (cadr err) (cdr cycle))
+               qa-eval-spine-circular-side))))
+    '(nil nil t nil))
+(qa (let* ((args (list '(setq qa-eval-spine-circular-side t) 'a 'b))
+           (cycle (cdr args))
+           (form (cons '(lambda (&rest args) args) args)))
+      (setcdr (cdr cycle) cycle)
+      (setq qa-eval-spine-circular-side nil)
+      (condition-case err
+          (eval form)
+        (circular-list
+         (list (eq (cadr err) args)
+               (eq (cadr err) cycle)
+               (eq (cadr err) (cdr cycle))
+               qa-eval-spine-circular-side))))
+    '(nil nil t nil))
+(qa (let* ((args (list '(setq qa-eval-circular-unbound-side t)))
+           (form (cons 'qa-eval-circular-unbound args)))
+      (setcdr args args)
+      (condition-case err
+          (eval form)
+        (void-function
+         (list (car err) (cadr err) qa-eval-circular-unbound-side))))
+    '(void-function qa-eval-circular-unbound nil))
+(qa (let* ((args (list 1)) (form (cons 5 args)))
+      (setcdr args args)
+      (condition-case err
+          (eval form)
+        (invalid-function (list (car err) (cadr err)))))
+    '(invalid-function 5))
+(qa (condition-case err
+        (eval '((autoload "qa-no-such-file" nil nil nil) 1))
+      (wrong-type-argument (list (car err) (cadr err) (caddr err))))
+    '(wrong-type-argument symbolp
+      (autoload "qa-no-such-file" nil nil nil)))
+
+;; Autoload code can mutate the caller's form before GNU recomputes the
+;; function-call argument count. The new circular spine signals before any
+;; argument form runs; the pre-load count must not drive the later walk.
+(defvar qa-eval-autoload-mutated-form nil)
+(defvar qa-eval-autoload-argument-ran nil)
+(qa
+ (let* ((file (make-temp-file "qa-eval-autoload-mutates-args" nil ".el"))
+        (qa-eval-autoload-mutated-form nil)
+        (qa-eval-autoload-argument-ran nil)
+        (result nil))
+   (unwind-protect
+       (let* ((args (list '(setq qa-eval-autoload-argument-ran t)))
+              (form (cons 'qa-eval-autoload-mutates-args args)))
+         (setq qa-eval-autoload-mutated-form form)
+         (with-temp-file file
+           (insert "(setcdr (cdr qa-eval-autoload-mutated-form) \
+                           (cdr qa-eval-autoload-mutated-form))\n"
+                   "(defun qa-eval-autoload-mutates-args (&rest args) args)\n"))
+         (fmakunbound 'qa-eval-autoload-mutates-args)
+         (autoload 'qa-eval-autoload-mutates-args file nil nil)
+         (condition-case err
+             (eval form)
+           (circular-list
+            (setq result
+                  (list (car err) qa-eval-autoload-argument-ran))))
+         result)
+     (ignore-errors (delete-file file))
+     (fmakunbound 'qa-eval-autoload-mutates-args)))
+ '(circular-list nil))
+
+;; Macro expansion also receives raw forms, but GNU reports the cyclic
+;; argument spine with `circular-list' before invoking the expander.
+(defvar qa-eval-spine-circular-macro-side nil)
+(defmacro qa-eval-spine-circular-macro (&rest args)
+  (setq qa-eval-spine-circular-macro-side 'expanded)
+  nil)
+(qa (let* ((args (list '(setq qa-eval-spine-circular-macro-side 'evaluated)))
+           (form (cons 'qa-eval-spine-circular-macro args)))
+      (setcdr args args)
+      (setq qa-eval-spine-circular-macro-side nil)
+      (condition-case err
+          (eval form)
+        (circular-list (list (car err) (eq (cadr err) args)
+                             qa-eval-spine-circular-macro-side))))
+    '(circular-list t nil))
+(qa (let* ((args (list 'raw))
+           (form (cons 'qa-eval-spine-circular-macro args)))
+      (setcdr args args)
+      (condition-case err
+          (macroexpand-1 form)
+        (circular-list (list (car err) (eq (cadr err) args)))))
+    '(circular-list t))
+(qa (let* ((args (list 'raw))
+           (form (cons 'qa-eval-spine-circular-macro args)))
+      (setcdr args args)
+      (condition-case err
+          (macroexpand form)
+        (circular-list (list (car err) (eq (cadr err) args)))))
+    '(circular-list t))
+(qa (let ((form (cons 'qa-eval-spine-circular-macro (cons 'raw 'tail))))
+      (setq qa-eval-spine-circular-macro-side nil)
+      (condition-case err
+          (eval form)
+        (wrong-type-argument
+         (list (car err) (cadr err) (caddr err)
+               qa-eval-spine-circular-macro-side))))
+    '(wrong-type-argument listp tail nil))
+(qa (let ((form (cons 'qa-eval-spine-circular-macro (cons 'raw 'tail))))
+      (setq qa-eval-spine-circular-macro-side nil)
+      (condition-case err
+          (macroexpand-1 form)
+        (wrong-type-argument
+         (list (car err) (cadr err) (caddr err)
+               qa-eval-spine-circular-macro-side))))
+    '(wrong-type-argument listp tail nil))
+(qa (let ((form (cons 'qa-eval-spine-circular-macro (cons 'raw 'tail))))
+      (setq qa-eval-spine-circular-macro-side nil)
+      (condition-case err
+          (macroexpand form)
+        (wrong-type-argument
+         (list (car err) (cadr err) (caddr err)
+               qa-eval-spine-circular-macro-side))))
+    '(wrong-type-argument listp tail nil))
+
+;; Circular malformed let specs signal promptly and retain the original
+;; cyclic spec as one error datum instead of flattening it forever.
+(qa (let ((spec (list 'x)))
+      (setcdr spec spec)
+      (condition-case err
+          (eval (list 'let (list spec) 'body))
+        (error (list (car err) (eq (caddr err) spec)))))
+    '(error t))
+
+;; Required circular lambda parameters consume the supplied arguments, then
+;; signal wrong-number-of-arguments when the next cycle needs another value.
+(qa (let ((args (list 'x)))
+      (setcdr args args)
+      (condition-case err
+          (funcall (list 'lambda args 'x) 1)
+        (wrong-number-of-arguments (car err))))
+    'wrong-number-of-arguments)
+
+;; Binding a raw lambda parameter runs variable watchers. GNU advances from
+;; the live arglist cdr afterward, so mutations from the watcher affect the
+;; remaining parameter list.
+(qa (let* ((arglist (list 'qa-eval-lambda-first 'qa-eval-lambda-second))
+           (form (list 'lambda arglist
+                       '(list qa-eval-lambda-first qa-eval-lambda-second)))
+           (watcher
+            (lambda (_symbol _value operation _where)
+              (when (eq operation 'let)
+                (setcdr arglist nil)))))
+      (unwind-protect
+          (progn
+            (add-variable-watcher 'qa-eval-lambda-first watcher)
+            (condition-case err
+                (funcall form 'first 'second)
+              (wrong-number-of-arguments
+               (list (car err) (equal (cadr err) form) (caddr err)))))
+        (remove-variable-watcher 'qa-eval-lambda-first watcher)))
+    '(wrong-number-of-arguments t 2))
+
+;; The same live-cdr rule applies to an interpreted closure's raw arglist.
+(qa (let* ((arglist (list 'qa-eval-closure-first 'qa-eval-closure-second))
+           (function
+            (make-interpreted-closure
+             arglist
+             '((list qa-eval-closure-first qa-eval-closure-second))
+             nil))
+           (watcher
+            (lambda (_symbol _value operation _where)
+              (when (eq operation 'let)
+                (setcdr arglist nil)))))
+      (unwind-protect
+          (progn
+            (add-variable-watcher 'qa-eval-closure-first watcher)
+            (condition-case err
+                (funcall function 'first 'second)
+              (wrong-number-of-arguments
+               (list (car err) (eq (cadr err) function) (caddr err)))))
+        (remove-variable-watcher 'qa-eval-closure-first watcher)))
+    '(wrong-number-of-arguments t 2))
+
+;; A watcher can replace a raw lambda's body while its parameters bind.
+;; GNU reads XCDR(XCDR(FUN)) after that binding loop.
+(qa (let* ((arglist (list 'qa-eval-lambda-body-parameter))
+           (form (list 'lambda arglist '(quote old)))
+           (watcher
+            (lambda (_symbol _value operation _where)
+              (when (eq operation 'let)
+                (setcdr form (cons arglist '((quote new))))))))
+      (unwind-protect
+          (progn
+            (add-variable-watcher 'qa-eval-lambda-body-parameter watcher)
+            (funcall form 'argument))
+        (remove-variable-watcher 'qa-eval-lambda-body-parameter watcher)))
+    'new)
+
+;; Lambda construction accepts malformed optional parameters; the raw
+;; argument walker reports invalid-function when the resulting closure runs.
+(qa (let ((function (eval '(function (lambda (&optional 5) 'body)) nil)))
+      (condition-case err
+          (funcall function)
+        (invalid-function (eq (cadr err) function))))
+    t)
+(qa (let ((function (eval '(function (lambda (&optional (5)) 'body)) nil)))
+      (condition-case err
+          (funcall function)
+        (invalid-function (eq (cadr err) function))))
+    t)
+
+;; A trailing &optional marker is valid: it introduces no slots. Calls with
+;; an argument still fail the ordinary arity check.
+(qa (let ((function (eval '(function (lambda (&optional) 'body)) nil)))
+      (list (funcall function)
+            (condition-case err
+                (funcall function 'extra)
+              (wrong-number-of-arguments (car err)))))
+    '(body wrong-number-of-arguments))
+
+;; Interpreted lambda calls reject malformed marker sequences after
+;; construction, while a dotted tail is checked after required arguments.
+(defun qa-eval-arglist-result (arglist arguments)
+  (let ((function (make-interpreted-closure arglist '(t) nil)))
+    (condition-case err
+        (apply function arguments)
+      (error (car err)))))
+(qa (mapcar (lambda (arglist)
+              (qa-eval-arglist-result arglist nil))
+            '((&rest)
+              (&optional x &optional y)
+              (&rest x &rest y)
+              (&rest x &optional y)
+              (&optional x &rest y &optional z)))
+    '(invalid-function invalid-function invalid-function
+      invalid-function invalid-function))
+(qa (list (qa-eval-arglist-result '(x . tail) nil)
+          (qa-eval-arglist-result '(x . tail) '(value)))
+    '(wrong-number-of-arguments invalid-function))
+
+;; GNU `lambda_arity' stops at the first &rest marker and does not inspect
+;; malformed parameters or tails that follow it.
+(qa (func-arity '(lambda (x &rest 5) x)) '(1 . many))
+(qa (func-arity '(lambda (x &rest . tail) x)) '(1 . many))
+
+;; `defun' validates its argument list with `mapcar', which signals on a
+;; circular spine instead of looping while checking each parameter.
+(qa (let ((args (list 'x)))
+      (setcdr args args)
+      (condition-case err
+          (eval (list 'defun 'qa-eval-spine-circular-defun args 't))
+        (circular-list (car err))))
+    'circular-list)
+
+;; `mapcar' in the GNU defun arglist check traverses past a nonsymbol so a
+;; later dotted tail still signals its listp error before malformed-arglist.
+(qa (condition-case err
+        (eval '(defun qa-eval-spine-dotted-defun (x 5 . tail) t))
+      (wrong-type-argument (list (car err) (cadr err) (caddr err))))
+    '(wrong-type-argument listp tail))
+
+;; Parallel `let' rejects the circular varlist before any initializer;
+;; sequential `let*' has evaluated the first binding before it reaches the
+;; repeated cell.
+(defvar qa-eval-circular-let-count nil)
+(qa (let ((bindings
+           (list (list 'x '(setq qa-eval-circular-let-count 'ran)))))
+      (setcdr bindings bindings)
+      (setq qa-eval-circular-let-count nil)
+      (condition-case err
+          (eval (list 'let bindings nil))
+        (circular-list (list (car err) qa-eval-circular-let-count))))
+    '(circular-list nil))
+(qa (let ((bindings
+           (list (list 'x '(setq qa-eval-circular-let-count 'ran)))))
+      (setcdr bindings bindings)
+      (setq qa-eval-circular-let-count nil)
+      (condition-case err
+          (eval (list 'let* bindings nil))
+        (circular-list (list (car err) qa-eval-circular-let-count))))
+    '(circular-list ran))
+
+;; Circular `setq' arguments are rejected before any RHS is evaluated.
+(defvar qa-eval-circular-setq-side-effect nil)
+(qa (let ((args
+           (list 'qa-eval-circular-setq-side-effect
+                 '(setq qa-eval-circular-setq-side-effect 'ran))))
+      (setcdr (cdr args) args)
+      (setq qa-eval-circular-setq-side-effect nil)
+      (condition-case err
+          (eval (cons 'setq args))
+        (circular-list
+         (list (car err) qa-eval-circular-setq-side-effect))))
+    '(circular-list nil))
+
+;; A circular progn body is rejected before its first form runs.
+(defvar qa-eval-circular-progn-side-effect nil)
+(qa (let ((forms (list '(setq qa-eval-circular-progn-side-effect 'ran))))
+      (setcdr forms forms)
+      (setq qa-eval-circular-progn-side-effect nil)
+      (condition-case err
+          (eval (cons 'progn forms))
+        (circular-list
+         (list (car err) qa-eval-circular-progn-side-effect))))
+    '(circular-list nil))
+
+;; `and'/`or'/`cond' reject a circular outer argument spine before
+;; evaluating a form that would otherwise short-circuit.
+(defvar qa-eval-circular-short-circuit-side nil)
+(qa (let ((forms
+           (list '(progn (setq qa-eval-circular-short-circuit-side 'ran) nil))))
+      (setcdr forms forms)
+      (setq qa-eval-circular-short-circuit-side nil)
+      (condition-case err
+          (eval (cons 'and forms))
+        (circular-list (list (car err) qa-eval-circular-short-circuit-side))))
+    '(circular-list nil))
+(qa (let ((forms
+           (list '(progn (setq qa-eval-circular-short-circuit-side 'ran) t))))
+      (setcdr forms forms)
+      (setq qa-eval-circular-short-circuit-side nil)
+      (condition-case err
+          (eval (cons 'or forms))
+        (circular-list (list (car err) qa-eval-circular-short-circuit-side))))
+    '(circular-list nil))
+(qa (let ((clauses
+           (list (list '(progn (setq qa-eval-circular-short-circuit-side 'ran) t)))))
+      (setcdr clauses clauses)
+      (setq qa-eval-circular-short-circuit-side nil)
+      (condition-case err
+          (eval (cons 'cond clauses))
+        (circular-list (list (car err) qa-eval-circular-short-circuit-side))))
+    '(circular-list nil))
+
+;; Function-definition bodies must reject circular and dotted tails instead
+;; of silently turning them into empty bodies.
+(qa (let* ((body (list 42))
+           (form (list 'defun 'qa-eval-circular-defun-body nil 42)))
+      (setcdr (nthcdr 2 form) body)
+      (setcdr body body)
+      (condition-case err (eval form) (circular-list (car err))))
+    'circular-list)
+(qa (let* ((body-form (list 42))
+           (form (list 'defun 'qa-eval-dotted-defun-body nil 42)))
+      (setcdr (nthcdr 2 form) body-form)
+      (setcdr body-form 'dotted-tail)
+      (condition-case err (eval form) (wrong-type-argument (car err))))
+    'wrong-type-argument)
+(qa (let* ((body (list 42))
+           (form (list 'defmacro 'qa-eval-circular-defmacro-body nil 42)))
+      (setcdr (nthcdr 2 form) body)
+      (setcdr body body)
+      (condition-case err (eval form) (circular-list (car err))))
+    'circular-list)
+
+;; GNU resolves a symbol's function cell before rejecting dotted arguments:
+;; an unbound head wins, while a resolved callable reports the bad tail.
+(qa (condition-case err
+        (eval (cons 'qa-eval-dotted-unbound 'tail))
+      (wrong-type-argument (list (car err) (cadr err) (caddr err))))
+    '(wrong-type-argument listp tail))
+(qa (condition-case err
+        (eval (cons 'qa-eval-dotted-unbound (cons 1 'tail)))
+      (void-function (list (car err) (cadr err))))
+    '(void-function qa-eval-dotted-unbound))
+(qa (let ((qa-eval-dotted-arg-effect nil))
+      (fmakunbound 'qa-eval-dotted-unbound)
+      (condition-case err
+          (eval (cons 'qa-eval-dotted-unbound
+                      (cons '(setq qa-eval-dotted-arg-effect t) 'tail)))
+        (void-function
+         (list (car err) (cadr err) qa-eval-dotted-arg-effect))))
+    '(void-function qa-eval-dotted-unbound nil))
+(qa (let ((qa-eval-dotted-arg-effect nil))
+      (unwind-protect
+          (progn
+            (fset 'qa-eval-dotted-nonfunction 5)
+            (condition-case err
+                (eval (cons 'qa-eval-dotted-nonfunction
+                            (cons '(setq qa-eval-dotted-arg-effect t) 'tail)))
+              (invalid-function
+               (list (car err) (cadr err) qa-eval-dotted-arg-effect))))
+        (fmakunbound 'qa-eval-dotted-nonfunction)))
+    '(invalid-function qa-eval-dotted-nonfunction nil))
+(qa (condition-case err
+        (eval (cons 'qa-eval-dotted-one-arg (cons 1 (cons 2 'tail))))
+      (wrong-type-argument
+       (list (car err) (cadr err) (caddr err))))
+    '(wrong-type-argument listp tail))
+(qa (condition-case err
+        (eval (cons '(lambda (x) x) (cons 1 'tail)))
+      (wrong-type-argument
+       (list (car err) (cadr err) (caddr err))))
+    '(wrong-type-argument listp tail))
+(qa (let ((qa-eval-dotted-arg-effect nil))
+      (unwind-protect
+          (progn
+            (fset 'qa-eval-dotted-nil-function nil)
+            (condition-case err
+                (eval (cons 'qa-eval-dotted-nil-function 'tail))
+              (wrong-type-argument
+               (list (car err) (cadr err) (caddr err) qa-eval-dotted-arg-effect))))
+        (fmakunbound 'qa-eval-dotted-nil-function)))
+    '(wrong-type-argument listp tail nil))
+(qa (let ((qa-eval-dotted-arg-effect nil))
+      (unwind-protect
+          (progn
+            (fset 'qa-eval-dotted-nil-function nil)
+            (condition-case err
+                (eval (cons 'qa-eval-dotted-nil-function
+                            (cons '(setq qa-eval-dotted-arg-effect t) 'tail)))
+              (void-function
+               (list (car err) (cadr err) qa-eval-dotted-arg-effect))))
+        (fmakunbound 'qa-eval-dotted-nil-function)))
+    '(void-function qa-eval-dotted-nil-function nil))
+(qa (condition-case err
+        (eval (cons nil (cons 1 'tail)))
+      (void-function (list (car err) (cadr err))))
+    '(void-function nil))
+(qa (condition-case err
+        (eval (cons 5 (cons 1 'tail)))
+      (invalid-function (list (car err) (cadr err))))
+    '(invalid-function 5))
+(qa (let ((qa-eval-dotted-arg-effect nil))
+      (condition-case err
+          (eval (cons 'if
+                      (cons '(setq qa-eval-dotted-arg-effect t)
+                            (cons t 'tail))))
+          (wrong-type-argument
+         (list (car err) (cadr err) (caddr err) qa-eval-dotted-arg-effect)))
+      )
+    '(wrong-type-argument listp tail nil))
+(qa (progn
+      (fmakunbound 'qa-eval-dotted-alias)
+      (fmakunbound 'qa-eval-dotted-alias-target)
+      (fset 'qa-eval-dotted-alias 'qa-eval-dotted-alias-target)
+      (condition-case err
+          (eval (cons 'qa-eval-dotted-alias (cons 1 'tail)))
+        (void-function (list (car err) (cadr err)))))
+    '(void-function qa-eval-dotted-alias))
+(qa (let* ((file (make-temp-file "qa-eval-dotted-autoload" nil ".el"))
+           (qa-eval-dotted-autoload-loaded nil)
+           (form (cons 'qa-eval-dotted-autoload (cons 1 'tail)))
+           (result nil))
+      (unwind-protect
+          (progn
+            (with-temp-file file
+              (insert "(setq qa-eval-dotted-autoload-loaded t)\n"
+                      "(defun qa-eval-dotted-autoload (&rest args) args)\n"))
+            (fmakunbound 'qa-eval-dotted-autoload)
+            (autoload 'qa-eval-dotted-autoload file nil nil)
+            (condition-case err
+                (eval form)
+              (wrong-type-argument
+               (setq result
+                     (list (car err) (cadr err) (caddr err)
+                           qa-eval-dotted-autoload-loaded))))
+            result)
+        (ignore-errors (delete-file file))
+        (fmakunbound 'qa-eval-dotted-autoload)))
+    '(wrong-type-argument listp tail t))
 
 (princ (qa--done))

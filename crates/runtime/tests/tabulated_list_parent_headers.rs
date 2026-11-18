@@ -86,10 +86,7 @@ fn grouped_tabulated_list_preserves_parent_paths_and_entry_objects() {
         .join("lisp-elc/tabulated-list.elc")
         .canonicalize()
         .unwrap();
-    let source = root
-        .join("lisp/tabulated-list.el")
-        .canonicalize()
-        .unwrap();
+    let source = root.join("lisp/tabulated-list.el").canonicalize().unwrap();
     let mut interp = Interp::new();
 
     // Interp::new boots tabulated-list from the AOT boot-library table.

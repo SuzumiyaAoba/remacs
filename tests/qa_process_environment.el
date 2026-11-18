@@ -2,6 +2,28 @@
 (defconst qa203-script
   "printf '<%s>|<%s>' \"${REMACS_AUDIT_CHILD+x}\" \"${REMACS_AUDIT_CHILD-}\"")
 
+;; `getenv' stops at the first matching entry instead of continuing through
+;; the rest of the dynamically bound environment list.
+(qa (let ((process-environment (list "QA_CIRCULAR_ENV=found")))
+      (setcdr process-environment process-environment)
+      (getenv "QA_CIRCULAR_ENV"))
+    "found")
+
+;; `setenv-internal' reaches `car' on a non-nil dotted tail and signals.
+(qa-err-data (setenv-internal 5 "QA_SETENV_TARGET" "value" nil)
+             'wrong-type-argument '(listp 5))
+(qa-err-data (setenv-internal '("QA_OTHER=first" . 5)
+                               "QA_SETENV_TARGET" "value" nil)
+             'wrong-type-argument '(listp 5))
+
+;; GNU checks locale encodability before substituting environment references.
+(qa (let ((locale-coding-system 'us-ascii)
+          (process-environment '("QA_SETENV_SOURCE=é")))
+      (condition-case nil
+          (progn (setenv "QA_SETENV_TARGET" "$QA_SETENV_SOURCE" t) 'ok)
+        (error 'failed)))
+    'ok)
+
 (defun qa203-output (environment method &optional program script)
   (let ((process-environment environment)
         (buffer (generate-new-buffer " *qa203-output*")) p)

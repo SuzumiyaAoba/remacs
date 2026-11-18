@@ -64,6 +64,11 @@
                  "(setq load-read-function (lambda (_) (setq load-read-function 'read) (read nil)))\n"
                  "(push :custom-2 qa92-events)\n(push :default-3 qa92-events)\n") qa92-suffix)
         (nreverse qa92-events)) '(:default-1 :custom-1 :default-2 :custom-2 :default-3))
+  (qa (let ((load-read-function (make-symbol "read")))
+        (condition-case err
+            (progn (qa92-load "(setq qa92-value t)\n" qa92-suffix) 'ok)
+          (void-function (car err))))
+      'void-function)
   (qa (let ((old-input standard-input))
         (condition-case nil (qa92-load "(read nil)\n" qa92-suffix) (end-of-file nil))
         (eq standard-input old-input)) t)

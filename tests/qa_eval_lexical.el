@@ -311,6 +311,52 @@
 'void-variable
 )
 
+;; `eval-region' uses its READ-FUNCTION for forms that survive the layout
+;; scan, and skips the reader entirely for whitespace/comment-only input.
+(defvar qa267-read-result nil)
+(qa
+ (let ((read-count 0))
+   (with-temp-buffer
+     (insert "(setq qa267-read-result 'first)\n"
+             "(setq qa267-read-result 'second)")
+     (eval-region
+      (point-min) (point-max) nil
+      (lambda (stream)
+        (setq read-count (1+ read-count))
+        (read stream))))
+   (list read-count qa267-read-result))
+ '(2 second))
+(qa
+ (let ((read-count 0))
+   (with-temp-buffer
+     (insert " ; comment\n ")
+     (eval-region
+      (point-min) (point-max) nil
+      (lambda (stream)
+        (setq read-count (1+ read-count))
+        (read stream))))
+   read-count)
+ 0)
+(qa (with-temp-buffer (insert "42") (eval-buffer)) nil)
+(qa (with-temp-buffer
+      (insert "42")
+      (eval-region (point-min) (point-max)))
+    nil)
+
+;; eval-buffer consults the live buffer multibyte mode for each subsequent
+;; read; changing it in one form makes the next literal unibyte.
+(defvar qa267-multibyte-result nil)
+(qa
+ (let ((qa267-multibyte-result nil))
+   (with-temp-buffer
+     (insert "(set-buffer-multibyte nil)\n"
+             "(setq qa267-multibyte-result "
+             "(list (multibyte-string-p \"é\") "
+             "(string-to-list \"é\") (string-bytes \"é\")))")
+     (eval-buffer))
+   qa267-multibyte-result)
+ '(nil (195 169) 2))
+
 (qa
 (let ((qa266-result nil))
   (with-temp-buffer
@@ -550,6 +596,20 @@
     (condition-case e (funcall qa266-result) (error (car e)))))
 'void-variable
 )
+
+(qa-err
+ (let* ((declaration (make-symbol ":documentation"))
+        (function (eval (list 'lambda nil (list declaration 'payload) 42) t)))
+   (funcall function))
+ 'void-function)
+(qa-err
+ (let* ((declaration (make-symbol ":documentation"))
+        (function
+         (eval (list 'function
+                     (list 'lambda nil (list declaration 'payload) 42))
+               t)))
+   (funcall function))
+ 'void-function)
 
 
 (princ (qa--done)) (terpri)

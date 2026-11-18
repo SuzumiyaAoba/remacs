@@ -36,6 +36,7 @@
 (qa (fboundp 'make-translation-table) t)
 (qa (fboundp 'make-translation-table-from-alist) t)
 (qa (fboundp 'make-translation-table-from-vector) t)
+(qa (fboundp 'set-translation-table) nil)
 (qa (fboundp 'translation-table-get-input) nil)
 ;; from-alist produces a char-table
 (let ((tt (make-translation-table-from-alist '((?a . ?A)))))

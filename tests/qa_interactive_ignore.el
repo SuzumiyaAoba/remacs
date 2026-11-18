@@ -2,6 +2,10 @@
 ;; Issue #41: `i' is a valid ignored-argument control code, not parser leniency.
 (defun qa41-direct (spec)
  (call-interactively (eval (list 'lambda '(&rest args) (list 'interactive spec) 'args) t)))
+(defvar qa41-returned-args nil)
+(defun qa41-returned-list-command ()
+ (interactive qa41-returned-args)
+ 'ran)
 (dolist (prefix '(nil 7 -3 (4) -))
  (let ((current-prefix-arg prefix))
   (dolist (spec '("i" "iP" "ii" "i~" "iIgnored prompt" "i😀" "iPp" "-i"))
@@ -24,12 +28,50 @@
  '("Invalid control letter ‘~’ (#o176, #x007e) in interactive calling string"))
 (qa-err-data (advice-eval-interactive-spec "i\nI") 'error
  '("Invalid control letter ‘I’ (#o111, #x0049) in interactive calling string"))
+;; Dynamic interactive specs preserve list-error kind and error tail.
+(qa
+ (let ((qa41-returned-args (list 1)))
+   (setcdr qa41-returned-args qa41-returned-args)
+   (condition-case err (call-interactively 'qa41-returned-list-command)
+     (circular-list (list (car err) (eq (cadr err) qa41-returned-args)))))
+ '(circular-list t))
+(qa-err-data
+ (let ((qa41-returned-args (cons 1 'tail)))
+   (call-interactively 'qa41-returned-list-command))
+ 'wrong-type-argument '(listp tail))
 ;; Ordinary prefixes and non-string specs keep their existing semantics.
 (qa (with-temp-buffer (qa41-direct "*i")) '(nil))
 (qa (with-temp-buffer (setq buffer-read-only t) (qa41-direct "i")) '(nil))
 (qa-err (with-temp-buffer (setq buffer-read-only t) (qa41-direct "*i")) 'buffer-read-only)
 (qa (advice-eval-interactive-spec '(list 1 2)) '(1 2))
 (qa (advice-eval-interactive-spec nil) nil)
+(qa-err-data (with-temp-buffer (qa41-direct "m")) 'error
+             '("The mark is not set now"))
+(qa (let ((current-prefix-arg nil)) (qa41-direct "Z")) '(nil))
+(qa (with-temp-buffer
+      (insert "abc")
+      (goto-char 2)
+      (set-mark 4)
+      (let ((transient-mark-mode t))
+        (setq mark-active t)
+        (let ((region (qa41-direct "R")))
+          (list (markerp (car region)) (marker-position (car region))
+                (markerp (cadr region)) (marker-position (cadr region))))))
+    '(t 2 t 4))
+(qa (with-temp-buffer
+      (let ((transient-mark-mode t)
+            (mark-even-if-inactive nil))
+        (set-mark 3)
+        (setq mark-active nil)
+        (qa41-direct "R")))
+    '(nil nil))
+(qa-err (with-temp-buffer
+          (let ((transient-mark-mode t)
+                (mark-even-if-inactive nil))
+            (set-mark 3)
+            (setq mark-active nil)
+            (qa41-direct "r")))
+        'mark-inactive)
 (defun qa41-command (ignored) (interactive "iP") (list ignored))
 (defun qa41-around (fn &rest args) (apply fn args))
 (unwind-protect

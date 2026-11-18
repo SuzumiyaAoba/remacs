@@ -22,6 +22,8 @@
 (defun qadv-arb (orig x) (funcall orig (concat "B" x)))
 (defun qadv-h (x) (* x 10))
 (defun qadv-fa (args) (list (1+ (car args))))
+(defun qadv-fa-non-list (_args) 7)
+(defun qadv-fa-dotted (_args) '(1 . bad))
 (defun qadv-i (x) (+ x 100))
 (defun qadv-neg (x) -1)
 (defun qadv-errf () (signal 'arith-error nil))
@@ -105,6 +107,7 @@
 (qa (func-arity (lambda (a &rest b) a)) '(1 . many))
 (qa (func-arity 'qadv-cl) '(1 . many))
 (qa (func-arity 'when) '(1 . many))
+(qa-err (func-arity (list (make-symbol "lambda") nil)) 'invalid-function)
 (qa-err (func-arity 'qadv-undef) 'void-function)
 (qa (help-function-arglist (lambda (a &optional b) (list a b)))
     '(a &optional b))
@@ -123,6 +126,10 @@
 (qa (interactive-form #'car) nil)
 (qa (interactive-form '(lambda () (interactive))) '(interactive))
 (qa (interactive-form '(lambda ())) nil)
+(qa (interactive-form (list (make-symbol "lambda") nil
+                            '(interactive "P"))) nil)
+(qa (interactive-form (list (make-symbol "closure") nil nil
+                            '(interactive "P"))) nil)
 (qa (called-interactively-p 'any) nil)
 (qa (interactive-p) nil)
 
@@ -217,6 +224,16 @@
 (qa (advice-member-p #'1- 'qadv-h) nil)
 (advice-remove 'qadv-h #'qadv-fa)
 (advice-remove 'qadv-h #'1+)
+(unwind-protect
+    (progn
+      (advice-add 'qadv-h :filter-args #'qadv-fa-non-list)
+      (qa-err-data (qadv-h 3) 'wrong-type-argument '(listp 7)))
+  (advice-remove 'qadv-h #'qadv-fa-non-list))
+(unwind-protect
+    (progn
+      (advice-add 'qadv-h :filter-args #'qadv-fa-dotted)
+      (qa-err-data (qadv-h 3) 'wrong-type-argument '(listp bad)))
+  (advice-remove 'qadv-h #'qadv-fa-dotted))
 (advice-add 'qadv-i :override #'qadv-neg)
 (qa (qadv-i 5) -1)
 (advice-remove 'qadv-i #'qadv-neg)

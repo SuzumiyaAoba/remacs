@@ -47,6 +47,18 @@
     (with-temp-buffer (qa (symbolp p) nil))
     (qa (eq p 'qa571-scope) t))
   (qa (eq p 'qa571-scope) nil))
+;; Catch/throw compare tags with the dynamic EQ view, including positioned
+;; symbols whose base symbol is the same object.
+(let* ((symbols-with-pos-enabled nil)
+       (tag (position-symbol 'qa571-catch-tag 4))
+       (compiled (byte-compile
+                  '(lambda (catch-tag throw-tag)
+                     (catch catch-tag (throw throw-tag 'caught)))))
+       (symbols-with-pos-enabled t))
+  (qa (catch tag (throw 'qa571-catch-tag 'caught)) 'caught)
+  (qa (catch 'qa571-catch-tag (throw tag 'caught)) 'caught)
+  (qa (funcall compiled tag 'qa571-catch-tag) 'caught)
+  (qa (funcall compiled 'qa571-catch-tag tag) 'caught))
 ;; User-controlled record slots do not create positioned symbols (#579).
 (dolist (enabled '(nil t))
   (let ((symbols-with-pos-enabled enabled))

@@ -325,6 +325,14 @@
 (qa (car (read-from-string "-1.0e+INF")) -1.0e+INF)
 (qa (isnan (car (read-from-string "0.0e+NaN"))) t)
 (qa (= (car (read-from-string "1e999")) 1.0e+INF) t)
+;; GNU preserves the truncated integer mantissa in the NaN payload, including
+;; the reader's canonical payload for a leading-dot mantissa and big integers.
+(qa-prin1 (car (read-from-string ".5e+NaN")) "2251799813685246.0e+NaN")
+(qa-prin1 (car (read-from-string "-.5e+NaN")) "-2251799813685246.0e+NaN")
+(qa-prin1 (car (read-from-string "4503599627370495e+NaN")) "2251799813685247.0e+NaN")
+(qa-prin1 (car (read-from-string
+                "999999999999999999999999999999999999999999999999e+NaN"))
+          "281474976710655.0e+NaN")
 ;; radix literals read as integers; C-style and underscore forms don't
 (qa (car (read-from-string "#x1F")) 31)
 (qa (car (read-from-string "#b101")) 5)

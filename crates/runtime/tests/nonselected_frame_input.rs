@@ -1,8 +1,8 @@
 use remacs_runtime::{
     editor::{Frame, Window},
     frontend::{
-        InputEvent, KeyIo, MousePosition, render_frame_grid_with_input_cached,
-        MouseButton, MouseInput, render_grid_with_input_cached, run_editor_with,
+        InputEvent, KeyIo, MouseButton, MouseInput, MousePosition,
+        render_frame_grid_with_input_cached, render_grid_with_input_cached, run_editor_with,
     },
     lisp::Interp,
 };
@@ -27,7 +27,10 @@ impl KeyIo for DropFrontend {
 
     fn poll_input(&mut self, _dur: Duration) -> io::Result<Option<InputEvent>> {
         self.events.pop_front().map(Some).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::UnexpectedEof, "drop test exhausted its events")
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "drop test exhausted its events",
+            )
         })
     }
 
@@ -437,7 +440,10 @@ fn split_window_drops_use_the_target_buffer_and_window() {
     let displayed_buffer = displayed_buffer_ref.borrow();
     assert_eq!(left_text, "left side\n");
     assert_eq!(right_text, "target DROPPEDbuffer\n");
-    assert_eq!(format!("{}", displayed_buffer.text.text()), "file contents\n");
+    assert_eq!(
+        format!("{}", displayed_buffer.text.text()),
+        "file contents\n"
+    );
     assert!(displayed_buffer.file_name.is_some());
     let face_changed_symbol = interp.intern("qa-split-drop-color-changed");
     let face_changed = interp.symbol_value(face_changed_symbol);
@@ -477,9 +483,7 @@ fn file_drop_opens_local_file_in_the_target_window_inner() {
     interp.frames.push(frame);
     interp.set_current_buffer(target_buffer);
     interp
-        .eval_str(
-            "(global-set-key [f12] (lambda () (interactive) (kill-emacs)))",
-        )
+        .eval_str("(global-set-key [f12] (lambda () (interactive) (kill-emacs)))")
         .unwrap();
 
     let frontend = DropFrontend {

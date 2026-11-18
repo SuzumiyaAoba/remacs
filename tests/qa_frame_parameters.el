@@ -22,6 +22,17 @@
               (condition-case error (modify-frame-parameters nil parameters)
                 (circular-list (eq (cadr error) parameters)))) t)
         (qa (frame-parameter nil 'qa106-unapplied) nil)
+        (when qa--remacs
+          (qa (let* ((old (frame-parameter nil 'buffer-list))
+                     (buffers (list (current-buffer))))
+                (setcdr buffers buffers)
+                (list (condition-case nil
+                          (progn
+                            (set-frame-parameter nil 'buffer-list buffers)
+                            nil)
+                        (circular-list t))
+                      (equal (frame-parameter nil 'buffer-list) old)))
+              '(t t)))
         (qa (modify-frame-parameters nil '((qa106-duplicate . 1) (qa106-duplicate . 2))) nil)
         (qa (frame-parameter nil 'qa106-duplicate) 1)
         (qa (modify-frame-parameters nil '((42 . numeric) (nil . 3))) nil)
@@ -89,5 +100,39 @@
           (qa (cdr (assq 'font (frame-parameters))) "tty")))
     (set-frame-parameter nil 'name qa106-saved-name)
     (set-frame-parameter nil 'font "tty")))
+
+;; Special frame parameters are selected by symbol identity; uninterned
+;; symbols with the same names are ordinary stored parameters.
+(qa
+ (let* ((real-name (frame-parameter nil 'name))
+        (real-width (frame-parameter nil 'width))
+        (fake-name (make-symbol "name"))
+        (fake-font (make-symbol "font"))
+        (fake-width (make-symbol "width")))
+   (set-frame-parameter nil fake-name 'fake-name-value)
+   (set-frame-parameter nil fake-font 'fake-font-value)
+   (set-frame-parameter nil fake-width 5)
+   (list (frame-parameter nil fake-name)
+         (frame-parameter nil fake-font)
+         (frame-parameter nil fake-width)
+         (eq (frame-parameter nil 'name) real-name)
+         (= (frame-parameter nil 'width) real-width)
+         (equal (frame-parameter nil 'font) "tty")
+         (eq (cdr (assq fake-name (frame-parameters))) 'fake-name-value)
+         (eq (cdr (assq fake-font (frame-parameters))) 'fake-font-value)
+         (eq (cdr (assq fake-width (frame-parameters))) 5)))
+ '(fake-name-value fake-font-value 5 t t t t t t))
+
+(qa
+ (let* ((frame-buffers (frame-parameter nil 'buffer-list))
+        (fake-buffer-list (make-symbol "buffer-list"))
+        (fake-minibuffer (make-symbol "minibuffer")))
+   (set-frame-parameter nil fake-buffer-list nil)
+   (set-frame-parameter nil fake-minibuffer 'fake-minibuffer-value)
+   (list (equal (frame-parameter nil 'buffer-list) frame-buffers)
+         (frame-parameter nil fake-buffer-list)
+         (eq (frame-parameter nil 'minibuffer) t)
+         (frame-parameter nil fake-minibuffer)))
+ '(t nil t fake-minibuffer-value))
 
 (princ (qa--done)) (terpri)

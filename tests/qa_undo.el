@@ -101,6 +101,12 @@
 (qa (with-temp-buffer (buffer-enable-undo) (setq buffer-undo-list nil)
       (insert "ab") (undo-boundary) (undo-boundary) buffer-undo-list) '(nil (1 . 3) (t . 0)))
 (qa (with-temp-buffer (setq buffer-undo-list t) (undo-boundary) buffer-undo-list) t)
+(qa (with-temp-buffer
+      (insert "abc")
+      (let ((buffer-undo-list nil))
+        (primitive-undo 1 '(2))
+        (list (point) buffer-undo-list)))
+    '(2 nil))
 (qa (with-temp-buffer (insert "ab") (buffer-enable-undo)
       (setq buffer-undo-list nil) (goto-char 2) (undo-boundary) (goto-char 1)
       (insert "x") buffer-undo-list) '((1 . 2) 2))
@@ -353,5 +359,19 @@
 '("" t)
 )
 
+(qa
+ (with-temp-buffer
+   (insert "abc")
+   (let ((marker (copy-marker 2))
+         (original-warn (symbol-function 'warn)))
+     (unwind-protect
+         (progn
+           (fset 'warn (lambda (&rest _) (signal 'file-error '("warning failed"))))
+           (list (condition-case error
+                   (primitive-undo 1 (list (cons marker 2)))
+                   (error (car error)))
+                 (marker-position marker)))
+       (fset 'warn original-warn))))
+ '(file-error 2))
 
 (princ (qa--done))

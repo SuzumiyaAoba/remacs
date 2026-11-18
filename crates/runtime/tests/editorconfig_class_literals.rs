@@ -84,8 +84,7 @@ fn eval(interp: &mut Interp, source: &str) -> String {
 
 #[test]
 fn editorconfig_fnmatch_classes_treat_question_and_star_literally_3012() {
-    let path = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
-        .join("lisp/editorconfig-fnmatch.el");
+    let path = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/editorconfig-fnmatch.el");
     let mut interp = Interp::new();
     let code = format!(
         "(progn (setq noninteractive t) (load {} nil t t) {})",

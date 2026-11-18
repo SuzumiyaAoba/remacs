@@ -47,4 +47,17 @@
           (plist-get (nthcdr 3 (cdr (assq 'cut (cdr menu)))) :keys)) t)
  "#[nil (\"k\") (t)]")
 
+;; Malformed circular menu lists must not trap popup-menu validation.
+(when qa--remacs
+  (let* ((pane (cons "Pane" (list "Item")))
+         (menu (list "Title" pane))
+         (panes (cdr menu)))
+    (setcdr panes panes)
+    (qa-err (x-popup-menu t menu) 'circular-list))
+  (let* ((items (list "Item"))
+         (pane (cons "Pane" items))
+         (menu (list "Title" pane)))
+    (setcdr items items)
+    (qa-err (x-popup-menu t menu) 'circular-list)))
+
 (princ (qa--done)) (terpri)

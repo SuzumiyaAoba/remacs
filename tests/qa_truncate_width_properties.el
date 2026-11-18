@@ -5,5 +5,5 @@
   (qa (get-text-property 0 'face (truncate-string-to-width s 3)) 'bold)
   (qa (get-text-property 1 'face
                          (truncate-string-to-width s 3 0 nil ellipsis))
-      'italic))
+      'bold))
 (princ (qa--done))

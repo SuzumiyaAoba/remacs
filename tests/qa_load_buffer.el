@@ -47,15 +47,12 @@
       (qa38-exec ";;; -*- lexical-binding: nil -*-\n(setq qa38-owned standard-input)\n")
       qa38-state) '(t nil))
 (qa (let (qa38-owned)
-      (condition-case e (qa38-exec ";;; -*- lexical-binding: nil -*-\n(setq qa38-owned standard-input)\n(error \"qa38 boom\")\n") (error nil))
-      (list (bufferp qa38-owned) (buffer-live-p qa38-owned))) '(t nil))
-(qa (let (qa38-owned)
-      ;; Cleanup coverage, not throw-propagation parity: remacs already
-      ;; converts a cross-load throw to this precise no-catch condition.
-      (let ((result (condition-case e
-                        (catch 'qa38-throw (qa38-exec ";;; -*- lexical-binding: nil -*-\n(setq qa38-owned standard-input)\n(throw 'qa38-throw 7)\n"))
-                      (no-catch e))))
-        (list (or (equal result 7) (equal result '(no-catch qa38-throw 7)))
+      ;; A throw from a loaded file reaches an enclosing catch, after load
+      ;; cleanup has killed only the owned temporary input buffer.
+      (let ((result
+             (catch 'qa38-throw
+               (qa38-exec ";;; -*- lexical-binding: nil -*-\n(setq qa38-owned standard-input)\n(throw 'qa38-throw 7)\n"))))
+        (list (equal result 7)
               (bufferp qa38-owned) (buffer-live-p qa38-owned)))) '(t t nil))
 (qa (let (qa38-owned)
       (condition-case e (qa38-exec ";;; -*- lexical-binding: nil -*-\n(setq qa38-owned standard-input)\n)\n") (error nil))

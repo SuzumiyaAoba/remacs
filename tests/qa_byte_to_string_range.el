@@ -1,5 +1,5 @@
 ;;; -*- lexical-binding: nil; -*-
-;; byte-to-string accepts only byte values (#425).
-(qa-err-data (byte-to-string 256) 'args-out-of-range '(256))
-(qa-err-data (byte-to-string -1) 'args-out-of-range '(-1))
+;; GNU 31.1 reports out-of-range values with its byte constructor error.
+(qa-err-data (byte-to-string 256) 'error '("Invalid byte"))
+(qa-err-data (byte-to-string -1) 'error '("Invalid byte"))
 (princ (qa--done))

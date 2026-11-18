@@ -12,5 +12,5 @@
     '("b" . custom))
 (qa (assoc-string (unibyte-string 233)
                   (list (cons (string #x3fffe9) 'byte8)) nil)
-    nil)
+    (cons (string #x3fffe9) 'byte8))
 (princ (qa--done))

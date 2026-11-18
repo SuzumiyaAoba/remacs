@@ -163,7 +163,10 @@ fn table_boundaries_follow_matching_candidates_and_preserve_file_fallbacks() {
         .find("\n(defun completion-table-with-quoting ")
         .unwrap()
         + start;
-    eval(&mut interp, &format!("(eval '(progn {}) t)", &source[start..end]));
+    eval(
+        &mut interp,
+        &format!("(eval '(progn {}) t)", &source[start..end]),
+    );
     assert!(eval(&mut interp, CASES).truthy());
     assert!(eval(&mut interp, FILE_CASES).truthy());
 }

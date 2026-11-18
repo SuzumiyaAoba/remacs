@@ -149,6 +149,9 @@
 (qa-err (set-char-table-range (make-char-table 'qact nil) "a" 1) 'error)
 (qa-err (set-char-table-range (make-char-table 'qact nil) -1 1) 'error)
 (qa-err (set-char-table-range (make-char-table 'qact nil) 'sym 1) 'error)
+(qa-err
+ (set-char-table-range (make-char-table 'qact nil) (make-symbol "t") 'v)
+ 'error)
 (qa-err (set-char-table-range (make-char-table 'qact nil) #x400000 'v) 'error)
 (qa-err-data (set-char-table-range (make-char-table 'qact nil) '(?a . "b") 1)
              'wrong-type-argument '(characterp "b"))
@@ -165,6 +168,15 @@
       (aset ct ?a 'v)
       (char-table-range ct ?a))
     'v)
+(qa
+ (let* ((purpose (make-symbol "char-code-property-table"))
+        (value (unibyte-string 1 65))
+        (ct (progn
+              (put purpose 'char-table-extra-slots 5)
+              (make-char-table purpose))))
+   (aset ct 200 value)
+   (eq (aref ct 200) value))
+ t)
 (qa (let ((ct (make-char-table 'qact nil)))
       (set-char-table-range ct ?a 'v)
       (aref ct ?a))
@@ -495,6 +507,10 @@
       (list (optimize-char-table ct) (char-table-range ct ?b)
             (optimize-char-table ct 'eq)))
     '(nil v nil))
+(let ((ct (make-char-table 'qact nil)))
+  (set-char-table-range ct '(0 . 100) 'v)
+  (qa-err (optimize-char-table ct (make-symbol "eq")) 'void-function)
+  (qa (char-table-range ct 1) 'v))
 (qa-err-data (optimize-char-table [1])
              'wrong-type-argument '(char-table-p [1]))
 ;; init object is shared across all cells
@@ -509,6 +525,13 @@
 (qa (category-table-p (make-char-table 'qact nil)) nil)
 ;; purpose alone makes a char-table count as a category table
 (qa (category-table-p (make-char-table 'category-table nil)) t)
+(qa
+ (let* ((purpose (make-symbol "category-table"))
+        (table (progn
+                 (put purpose 'char-table-extra-slots 2)
+                 (make-char-table purpose))))
+   (category-table-p table))
+ nil)
 (qa (category-table-p [1]) nil)
 (qa (category-table-p 7) nil)
 (qa (category-table-p nil) nil)

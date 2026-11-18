@@ -63,6 +63,32 @@
 (qa (macrop 'if) nil)
 (qa (subrp (symbol-function 'car)) t)
 (qa (subrp (symbol-function 'when)) nil)
+(qa (let ((old (symbol-function 'if)))
+      (unwind-protect
+          (progn
+            (fset 'if (lambda (&rest args) 'redefined))
+            (eval '(if t 1 2)))
+        (fset 'if old)))
+    'redefined)
+(qa (let ((old (symbol-function 'if)))
+      (unwind-protect
+          (progn
+            (fmakunbound 'if)
+            (list (fboundp 'if)
+                  (condition-case err
+                      (eval '(if t 1 2))
+                    (void-function (list (car err) (cadr err))))))
+        (fset 'if old)))
+    '(nil (void-function if)))
+(qa (let ((old (symbol-function 'defun)))
+      (unwind-protect
+          (progn
+            (fset 'defun
+                  (cons 'macro
+                        (function (lambda (&rest args) '(quote redefined)))))
+            (eval '(defun qa-redefined-defun nil 1)))
+        (fset 'defun old)))
+    'redefined)
 
 ;; == cond ==
 (qa (cond (nil 'a) (t 'b)) 'b)
@@ -304,4 +330,5 @@
       (eval '(defmacro qa153-defined-macro (x) (declare (indent 1)) x))
       (list (macroexpand '(qa153-defined-macro 5))
             (get 'qa153-defined-macro 'lisp-indent-function))) '(5 1))
+
 (princ (qa--done))

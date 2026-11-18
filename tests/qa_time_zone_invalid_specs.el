@@ -11,4 +11,8 @@
 (qa (current-time-zone (current-time) 800000) '(0 "UTC"))
 (qa (format-time-string "%Y %z %Z" 0 800000) "1970 +0000 UTC")
 (qa (decode-time 0 800000) '(0 0 0 1 1 1970 4 nil 0))
+(qa (car (current-time-zone (current-time) 604799)) 604799)
+(qa (current-time-zone (current-time) 604800) '(0 "UTC"))
+(qa (car (current-time-zone (current-time) -604799)) -604799)
+(qa (current-time-zone (current-time) -604800) '(0 "UTC"))
 (princ (qa--done))

@@ -46,4 +46,18 @@
           (signal-hook-function (lambda (_symbol _data) (throw 'room-exit 'escaped))))
       (list (catch 'room-exit (qa-sr-recurse))
             max-lisp-eval-depth lisp-eval-depth-reserve)) '(escaped 110 200))
+
+;; BigInt values within the forwarded signed-EMACS_INT range participate in
+;; the same temporary debugger-headroom calculation and restore exactly.
+(qa (let ((max-lisp-eval-depth 110)
+          (lisp-eval-depth-reserve 9223372036854775807)
+          qa-sr-seen
+          (signal-hook-function
+           (lambda (symbol data)
+             (setq qa-sr-seen
+                   (list symbol data max-lisp-eval-depth lisp-eval-depth-reserve)))))
+      (list (condition-case nil (qa-sr-recurse) (excessive-lisp-nesting 'caught))
+            qa-sr-seen max-lisp-eval-depth lisp-eval-depth-reserve))
+    '(caught (excessive-lisp-nesting (111) 131 9223372036854775786)
+      110 9223372036854775807))
 (princ (qa--done)) (terpri)

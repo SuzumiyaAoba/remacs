@@ -78,6 +78,75 @@
 (qa (get-text-property 0 'x (propertize "ab" 'x 1)) 1)
 (qa (get-text-property 1 'x (propertize "ab" 'x 1)) 1)
 (qa (text-properties-at 0 (propertize "ab" 'x 1 'y 2)) '(x 1 y 2))
+;; `propertize' applies duplicate plist entries through plist-put from the
+;; reversed argument list, so the first value wins and only one key remains.
+(qa (let* ((duplicate (propertize "x" 'qa-textprops-duplicate 1
+                                  'qa-textprops-duplicate 2))
+           (single (propertize "x" 'qa-textprops-duplicate 1)))
+      (list (text-properties-at 0 duplicate)
+            (equal-including-properties duplicate single)))
+    '((qa-textprops-duplicate 1) t))
+(qa (let* ((source (propertize "x" 'qa-textprops-duplicate 0))
+           (duplicate (propertize source 'qa-textprops-duplicate 1
+                                  'qa-textprops-duplicate 2))
+           (single (propertize "x" 'qa-textprops-duplicate 1)))
+      (list (text-properties-at 0 duplicate)
+            (equal-including-properties duplicate single)))
+    '((qa-textprops-duplicate 1) t))
+(qa (let* ((source (copy-sequence "xy"))
+           (_ (put-text-property 0 1 'qa-textprops-old 'old source))
+           (duplicate (propertize source 'qa-textprops-duplicate 1
+                                  'qa-textprops-duplicate 2)))
+      (list (text-properties-at 0 duplicate)
+            (text-properties-at 1 duplicate)
+            (get-text-property 0 'qa-textprops-duplicate duplicate)
+            (get-text-property 1 'qa-textprops-duplicate duplicate)))
+    '((qa-textprops-duplicate 1 qa-textprops-old old)
+      (qa-textprops-duplicate 1) 1 1))
+;; The lower-level setters keep their own ordering contracts: add updates in
+;; argument order (last value wins), while set stores the supplied plist.
+(qa (let ((string (copy-sequence "x")))
+      (add-text-properties 0 1 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 2) string)
+      (text-properties-at 0 string))
+    '(qa-textprops-duplicate 2))
+(qa (let ((string (copy-sequence "x")))
+      (set-text-properties 0 1 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 2) string)
+      (text-properties-at 0 string))
+    '(qa-textprops-duplicate 1 qa-textprops-duplicate 2))
+(qa (with-temp-buffer
+      (insert "x")
+      (set-text-properties 1 2 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 2))
+      (list (text-properties-at 1)
+            (get-text-property 1 'qa-textprops-duplicate)))
+    '((qa-textprops-duplicate 1 qa-textprops-duplicate 2) 1))
+;; GNU's equal-including-properties looks up the first matching plist key:
+;; even identical duplicate-key plists therefore compare false, while
+;; unique keys compare independent of plist order.
+(qa (let ((a (copy-sequence "x")) (b (copy-sequence "x")))
+      (set-text-properties 0 1 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 2) a)
+      (set-text-properties 0 1 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 2) b)
+      (equal-including-properties a b))
+    nil)
+;; GNU's first-matching-key rule can make duplicate-key comparisons
+;; asymmetric when the left plist repeats its first value.
+(qa (let ((a (copy-sequence "x")) (b (copy-sequence "x")))
+      (set-text-properties 0 1 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 1) a)
+      (set-text-properties 0 1 '(qa-textprops-duplicate 1
+                                 qa-textprops-duplicate 2) b)
+      (list (equal-including-properties a b)
+            (equal-including-properties b a)))
+    '(t nil))
+(qa (let ((a (copy-sequence "x")) (b (copy-sequence "x")))
+      (set-text-properties 0 1 '(qa-textprops-a 1 qa-textprops-b 2) a)
+      (set-text-properties 0 1 '(qa-textprops-b 2 qa-textprops-a 1) b)
+      (equal-including-properties a b))
+    t)
 (qa-err-data (get-text-property 5 'x (propertize "ab" 'x 1)) 'args-out-of-range '(5 5))
 (qa-err-data (get-text-property -1 'x "ab") 'args-out-of-range '(-1 -1))
 (qa (get-text-property 2 'x "ab") nil)

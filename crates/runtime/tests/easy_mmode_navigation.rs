@@ -3,10 +3,7 @@ use std::path::PathBuf;
 use remacs_runtime::lisp::{Flow, Interp};
 
 fn lisp_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[test]

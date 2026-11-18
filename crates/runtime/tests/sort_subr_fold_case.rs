@@ -134,5 +134,8 @@ fn sort_subr_string_keys_follow_sort_fold_case() {
         ),
         other => panic!("{other:?}"),
     });
-    assert_eq!(interp.prin1_to_string(&result), "(t t t t t t t t t t t t t t t)");
+    assert_eq!(
+        interp.prin1_to_string(&result),
+        "(t t t t t t t t t t t t t t t)"
+    );
 }

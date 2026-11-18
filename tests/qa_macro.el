@@ -23,6 +23,38 @@
 (qa (let () (defmacro qa-m-fb (x) `(list ,x)) (fboundp 'qa-m-fb)) t)
 ;; the macro actually works
 (qa (let () (defmacro qa-m-call (x) `(list ,x)) (qa-m-call 7)) '(7))
+;; Interpreted macro call sites are expanded each time they execute; an
+;; expansion can have observable side effects.
+(defvar qa-m-effect-count 0)
+;; Define the function first so the load-time macro expander leaves this
+;; unresolved call for runtime, where the macro is then defined.
+(defun qa-m-effect-loop (n)
+  (let ((values nil))
+    (while (> n 0)
+      (push (qa-m-effect) values)
+      (setq n (1- n)))
+    (nreverse values)))
+(defmacro qa-m-effect ()
+  (setq qa-m-effect-count (1+ qa-m-effect-count))
+  qa-m-effect-count)
+(qa (let ((qa-m-effect-count 0))
+      (list (qa-m-effect-loop 3) qa-m-effect-count))
+    '((1 2 3) 3))
+;; `macroexpand-all' visits each occurrence even when two list positions
+;; share the exact same macro-call cons; expansion effects remain visible.
+(defvar qa-macroexpand-shared-count 0)
+(defmacro qa-macroexpand-shared ()
+  (setq qa-macroexpand-shared-count (1+ qa-macroexpand-shared-count)))
+(qa (let* ((call (list 'qa-macroexpand-shared))
+           (form (list 'list call call)))
+      (setq qa-macroexpand-shared-count 0)
+      (list (macroexpand-all form) qa-macroexpand-shared-count))
+    '((list 1 2) 2))
+(qa (let ((call (list 'qa-macroexpand-shared)))
+      (setq qa-macroexpand-shared-count 0)
+      (macroexpand-all call)
+      (list (macroexpand-all call) qa-macroexpand-shared-count))
+    '(2 2))
 ;; macro arg arrives UNevaluated
 (qa (let () (defmacro qa-m-raw (x) `',x) (qa-m-raw (+ 1 2))) '(+ 1 2))
 ;; &optional / &rest in macro lambda lists
@@ -71,6 +103,37 @@
           (defmacro qa-m-arity (x) `(list ,x))
           (macroexpand-1 '(qa-m-arity)))
         'wrong-number-of-arguments)
+(qa-err-data (macroexpand-1 '(when))
+             'wrong-number-of-arguments '((1 . 1) 0))
+
+;; User-defined interpreted and byte-code macros preserve the actual
+;; function object in wrong-number-of-arguments data.
+(qa (let ()
+      (defmacro qa-m-arity-datum (x) `(list ,x))
+      (condition-case error
+          (macroexpand-1 '(qa-m-arity-datum))
+        (wrong-number-of-arguments
+         (eq (cadr error) (cdr (symbol-function 'qa-m-arity-datum))))))
+    t)
+(qa (progn
+      (eval '(defmacro qa-m-arity-lexical-datum (x) `(list ,x)) t)
+      (let ((function (cdr (symbol-function 'qa-m-arity-lexical-datum))))
+        (condition-case error
+            (macroexpand-1 '(qa-m-arity-lexical-datum))
+          (wrong-number-of-arguments
+           (eq (cadr error) function)))))
+    t)
+(qa (let* ((name (make-symbol "qa-bytecode-macro-arity"))
+           (function (make-byte-code '(x y z)
+                                     (string-as-unibyte "") [] 0)))
+      (fset name (cons 'macro function))
+      (unwind-protect
+          (condition-case error
+              (macroexpand-1 (list name))
+            (wrong-number-of-arguments
+             (eq (cadr error) function)))
+        (fmakunbound name)))
+    t)
 
 ;; == macroexpand: recursive at top level ==
 (qa (let ()
@@ -172,5 +235,17 @@
                      ((foo a) (foo b))))
     '((foo a) (foo b)))
 (qa (macroexpand-all '((if x y))) '((if x y)))
+
+;; GNU macroexpand stops when a global macro returns the identical input
+;; object; otherwise a self-returning expander loops forever.
+(defvar qa-macro-identical-expansion nil)
+(defmacro qa-macro-return-form () qa-macro-identical-expansion)
+(qa (let ((form '(qa-macro-return-form))
+          (qa-macro-identical-expansion nil))
+      (setq qa-macro-identical-expansion form)
+      (list (eq (macroexpand-1 form) form)
+            (eq (macroexpand form) form)
+            (equal (macroexpand-all form) form)))
+    '(t t t))
 
 (princ (qa--done))

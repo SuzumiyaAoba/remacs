@@ -61,6 +61,38 @@ fn literal(path: &Path) -> String {
 }
 
 #[test]
+fn image_preserves_special_macro_cell_dispatch() {
+    let fixture = Fixture::new();
+    let image = fixture.image();
+    let source = format!("(dump-emacs-portable {} t)", literal(&image));
+    Fixture::ok(fixture.eval("producer-cache", &[], &source));
+
+    let default_macro = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", image.to_str().unwrap()],
+        "(progn (defalias 'qa-pdump-defun-alias 'defun) \
+         (condition-case err (eval '(qa-pdump-defun-alias)) \
+           (wrong-number-of-arguments (prin1 err))))",
+    ));
+    assert_eq!(default_macro, "(wrong-number-of-arguments (2 . 2) 0)");
+
+    let source = format!(
+        "(progn \
+           (fset 'defun (cons 'macro \
+             (function (lambda (&rest args) '(quote redefined))))) \
+           (dump-emacs-portable {} t))",
+        literal(&image)
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &source));
+    let replacement_macro = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", image.to_str().unwrap()],
+        "(prin1 (eval '(defun qa-pdump-custom-defun nil 1)))",
+    ));
+    assert_eq!(replacement_macro, "redefined");
+}
+
+#[test]
 fn image_preserves_copied_full_keymap_type_and_ascii_aliasing() {
     let fixture = Fixture::new();
     let producer = format!(
@@ -88,6 +120,27 @@ fn image_preserves_copied_full_keymap_type_and_ascii_aliasing() {
          (eq (keymap-parent keymap518-copy) (keymap-parent keymap518-source)))))",
     ));
     assert_eq!(result, "(t extra nil extra upper digits t t)");
+}
+
+#[test]
+fn image_preserves_interpreted_closure_body_identity_and_mutations() {
+    let fixture = Fixture::new();
+    let producer = format!(
+        "(progn (setq closure-body-source (list 42) \
+         closure-body-function \
+         (make-interpreted-closure nil closure-body-source nil)) \
+         (dump-emacs-portable {} t))",
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(prin1 (list (eq (aref closure-body-function 1) closure-body-source) \
+         (funcall closure-body-function) \
+         (progn (setcar closure-body-source 7) (funcall closure-body-function))))",
+    ));
+    assert_eq!(result, "(t 42 7)");
 }
 
 #[test]
@@ -165,6 +218,30 @@ fn image_preserves_opaque_vector_kinds_and_ordinary_records_with_matching_tags()
          (mapcar #'char-table-p values) (aref kinds469-bits 0) (aref kinds469-table 65))))",
     ));
     assert_eq!(result, "((nil nil t t) (t nil nil nil) (nil t nil nil) t cell)");
+}
+
+#[test]
+fn image_preserves_sub_char_table_kind_distinct_from_a_record_tag() {
+    let fixture = Fixture::new();
+    let source = format!("#^^[3 0{}]", " nil".repeat(128));
+    let producer = format!(
+        "(progn (setq kinds469-sub-char-table (read {:?}) \
+         kinds469-fake-sub-char-table (record 'sub-char-table 1 0 nil)) \
+         (dump-emacs-portable {} t))",
+        source,
+        literal(&fixture.image())
+    );
+    Fixture::ok(fixture.eval("producer-cache", &[], &producer));
+    let result = Fixture::ok(fixture.eval(
+        "consumer-cache",
+        &["--dump-file", fixture.image().to_str().unwrap()],
+        "(prin1 (list (prin1-to-string kinds469-sub-char-table) \
+         (prin1-to-string kinds469-fake-sub-char-table)))",
+    ));
+    assert_eq!(
+        result,
+        format!("({:?} {:?})", source, "#s(sub-char-table 1 0 nil)")
+    );
 }
 
 #[test]

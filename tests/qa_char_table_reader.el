@@ -53,4 +53,6 @@
 ;; User-created short records cannot reach the printer's trie slice.
 (qa (prin1-to-string (record 'sub-char-table)) "#s(sub-char-table)")
 (qa (prin1-to-string (record 'sub-char-table 1)) "#s(sub-char-table 1)")
+(qa (prin1-to-string (record 'sub-char-table 1 0 nil))
+    "#s(sub-char-table 1 0 nil)")
 (princ (qa--done))

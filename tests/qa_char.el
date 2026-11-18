@@ -6,7 +6,7 @@
 ;;     and case-insensitive under the default case-fold-search=t.
 ;;   - char-to-string returns a MULTIBYTE string for non-ASCII.
 ;;   - string-to-char "" => 0.
-;;   - char-width: ASCII 1, TAB obeys tab-width (8), CJK 2, NUL 2.
+;;   - char-width: ASCII 1, Greek alpha 1, TAB obeys tab-width (8), CJK 2, NUL 2.
 ;;   - char-syntax returns the syntax code integer.
 ;;   - ucs-normalize-* are autoloads (fboundp t before require).
 
@@ -81,7 +81,7 @@
 ;; == char-width ==
 (qa (char-width ?a) 1)
 (qa (char-width ?\t) 8)
-(qa (char-width ?α) 2)
+(qa (char-width ?α) 1)
 (qa (char-width ?中) 2)
 (qa (char-width 0) 2)
 ;; tab width follows tab-width var
@@ -120,6 +120,51 @@
 (qa (get-char-code-property ?a 'name) "LATIN SMALL LETTER A")
 (qa (get-char-code-property ?A 'general-category) 'Lu)
 (qa (get-char-code-property ?a 'general-category) 'Ll)
+;; Built-in descriptions also require the canonical interned property and
+;; value symbols; same-named uninterned symbols are distinct names.
+(qa (char-code-property-description (make-symbol "general-category") 'Lu) nil)
+(qa (char-code-property-description 'general-category (make-symbol "Lu")) nil)
+(qa (char-code-property-description (make-symbol "bidi-class") 'L) nil)
+;; Built-in defaults belong to the registered property symbol, not to any
+;; uninterned symbol that happens to have the same printed name.
+(qa (get-char-code-property ?A (make-symbol "name")) nil)
+(qa (get-char-code-property ?A 42) nil)
+(qa
+ (let ((char-code-property-table (make-char-table 'char-code-property-table)))
+   (put-char-code-property ?A 42 'non-symbol-property)
+   (get-char-code-property ?A 42))
+ 'non-symbol-property)
+(qa-err-data (get-char-code-property -1 'name)
+             'wrong-type-argument '(characterp -1))
+(qa-err-data (get-char-code-property -1 42)
+             'wrong-type-argument '(characterp -1))
+(qa-err-data (get-char-code-property 4194304 'name)
+             'wrong-type-argument '(characterp 4194304))
+
+;; A registered property must use a char-code-property table whose name
+;; slot agrees with the property.  Other char-table subtypes are rejected.
+(qa-err
+ (define-char-code-property (make-symbol "qa58-wrong-subtype")
+                            (make-char-table 'syntax-table))
+ 'error)
+(qa-err
+ (let ((table (make-char-table 'char-code-property-table)))
+   (set-char-table-extra-slot table 0 'qa58-different-property)
+   (define-char-code-property 'qa58-expected-property table))
+ 'error)
+
+;; When an unregistered property later gains a table, the table replaces
+;; its old fallback values for lookups and writes.
+(qa
+ (let* ((char-code-property-alist char-code-property-alist)
+        (property (make-symbol "qa58-late-table"))
+        (table (make-char-table 'char-code-property-table)))
+   (put-char-code-property 65 property 'fallback-value)
+   (set-char-table-extra-slot table 0 property)
+   (define-char-code-property property table)
+   (put-char-code-property 65 property 'table-value)
+   (get-char-code-property 65 property))
+ 'table-value)
 
 ;; Property writes accept all internal characters, but never wrap or
 ;; clamp invalid integer codes into another character's table entry.
@@ -153,12 +198,234 @@
                               (lambda (ch value table) (setq observed ch)))
     (qa (put-char-code-property 4194304 registered 'callback-value) 'callback-value)
     (qa observed 4194304)))
+
+;; Adding a new char-code property assigns char-code-property-alist through
+;; the normal Lisp setter; a watcher error aborts the registration.
+(defun qa58-char-code-alist-watcher (_symbol _value operation _where)
+  (when (eq operation 'set)
+    (signal 'arith-error '("char-code property watcher"))))
+(qa (let* ((before char-code-property-alist)
+           (char-code-property-alist (copy-sequence before))
+           (name (make-symbol "qa58-watched"))
+           (table (make-char-table 'char-code-property-table)))
+      (set-char-table-extra-slot table 0 name)
+      (add-variable-watcher 'char-code-property-alist
+                            #'qa58-char-code-alist-watcher)
+      (unwind-protect
+          (list (condition-case err
+                    (progn (define-char-code-property name table) 'ok)
+                  (error (car err)))
+                (equal char-code-property-alist before))
+        (remove-variable-watcher 'char-code-property-alist
+                                 #'qa58-char-code-alist-watcher)))
+    '(arith-error t))
+
+;; Charset aliases update the C-backed charset list without invoking its
+;; Lisp variable watchers.
+(defvar qa58-charset-list-events nil)
+(defun qa58-charset-list-watcher (_symbol _value operation _where)
+  (push operation qa58-charset-list-events))
+(qa (let ((qa58-charset-list-events nil))
+      (add-variable-watcher 'charset-list #'qa58-charset-list-watcher)
+      (unwind-protect
+          (progn
+            (define-charset-alias 'qa58-audit-charset-alias 'ascii)
+            (list (reverse qa58-charset-list-events)
+                  (eq (car charset-list) 'qa58-audit-charset-alias)))
+        (remove-variable-watcher 'charset-list #'qa58-charset-list-watcher)))
+    '(nil t))
+
+;; Defining a table mutates an available vector slot with `aset'; it does
+;; not rebind translation-table-vector or notify its variable watchers.
+(defun qa58-translation-table-vector-watcher (_symbol _value operation _where)
+  (push operation qa58-translation-table-vector-events))
+(qa (let ((translation-table-vector (make-vector 16 nil))
+          (qa58-translation-table-vector-events nil)
+          (symbol (make-symbol "qa58-translation-table")))
+      (add-variable-watcher 'translation-table-vector
+                            #'qa58-translation-table-vector-watcher)
+      (unwind-protect
+          (let ((original translation-table-vector))
+            (define-translation-table symbol '((?a . ?b)))
+            (list (eq original translation-table-vector)
+                  (reverse qa58-translation-table-vector-events)
+                  (= (get symbol 'translation-table-id) 0)
+                  (eq (cdr (aref translation-table-vector 0))
+                      (get symbol 'translation-table))))
+        (remove-variable-watcher 'translation-table-vector
+                                 #'qa58-translation-table-vector-watcher)))
+    '(t nil t t))
+(qa (let ((translation-table-vector (vector (cons 'qa58-occupied nil)))
+          (qa58-translation-table-vector-events nil)
+          (symbol (make-symbol "qa58-grown-translation-table")))
+      (add-variable-watcher 'translation-table-vector
+                            #'qa58-translation-table-vector-watcher)
+      (unwind-protect
+          (let ((original translation-table-vector))
+            (define-translation-table symbol '((?a . ?b)))
+            (list (eq original translation-table-vector)
+                  (reverse qa58-translation-table-vector-events)
+                  (length translation-table-vector)
+                  (get symbol 'translation-table-id)
+                  (eq (cdr (aref translation-table-vector 1))
+                      (get symbol 'translation-table))))
+        (remove-variable-watcher 'translation-table-vector
+                                 #'qa58-translation-table-vector-watcher)))
+    '(nil (set) 2 1 t))
+(qa-err (let ((translation-table-vector "x"))
+          (define-translation-table (make-symbol "qa58-invalid-vector")
+                                    '((?a . ?b))))
+        'wrong-type-argument)
+(qa-err (let ((translation-table-vector nil))
+          (define-translation-table (make-symbol "qa58-empty-vector")
+                                    '((?a . ?b))))
+        'args-out-of-range)
+
+;; `make-translation-table' processes each mapping before it reaches a dotted
+;; tail, so an earlier AREF error takes precedence over the later listp error.
+(qa-err-data
+ (make-translation-table (cons (cons 65 66) 'qa58-dotted-tail))
+ 'wrong-type-argument '(listp qa58-dotted-tail))
+(qa-err-data
+ (make-translation-table (cons (cons 65 "bad") 'qa58-dotted-tail))
+ 'wrong-type-argument '(fixnump "bad"))
+(qa-err-data (make-translation-table 5)
+             'wrong-type-argument '(listp 5))
+
+;; The Lisp accessor returns the registered cdr directly; C's uniprop_table
+;; performs lazy loading and validates Unicode table subtypes separately.
+(qa (let* ((table (make-char-table 'qa58-generic-purpose))
+           (char-code-property-alist
+            (cons (cons 'qa58-generic-prop table) char-code-property-alist)))
+      (eq (unicode-property-table-internal 'qa58-generic-prop)
+          (cdr (assq 'qa58-generic-prop char-code-property-alist))))
+    t)
+(qa-err
+ (let* ((property (make-symbol "qa58-generic-get-prop"))
+        (table (make-char-table 'qa58-generic-purpose))
+        (char-code-property-alist
+         (cons (cons property table) char-code-property-alist)))
+   (get-char-code-property 65 property))
+ 'args-out-of-range)
+(qa (let ((char-code-property-alist
+           (cons (cons 'qa58-missing-prop "qa58-no-such-unicode-property")
+                 char-code-property-alist)))
+      (unicode-property-table-internal 'qa58-missing-prop))
+    "qa58-no-such-unicode-property")
+
+;; `char-code-property-alist' is authoritative over the Rust lookup cache;
+;; removing a registration makes the internal lookup return nil immediately.
+(qa
+ (let* ((property (make-symbol "qa58-removed-property"))
+        (table (make-char-table 'char-code-property-table))
+        (char-code-property-alist char-code-property-alist))
+   (set-char-table-extra-slot table 0 property)
+   (define-char-code-property property table)
+   (let ((registered (unicode-property-table-internal property)))
+     (setf (alist-get property char-code-property-alist) nil)
+     (list (eq registered table)
+           (unicode-property-table-internal property))))
+ '(t nil))
+
+(defvar qa58-stale-property-file-loaded nil)
+(qa
+ (let* ((property 'qa58-interned-stale-backing)
+        (file (make-temp-file "qa58-stale-property-" nil ".el"))
+        (table (make-char-table 'char-code-property-table))
+        (char-code-property-alist char-code-property-alist)
+        (qa58-stale-property-file-loaded nil))
+   (unwind-protect
+       (progn
+         (with-temp-file file
+           (insert "(setq qa58-stale-property-file-loaded t)"))
+         (set-char-table-extra-slot table 0 property)
+         (define-char-code-property property file)
+         (setcdr (assq property char-code-property-alist) table)
+         (aset table 65 'table-value)
+         (list (get-char-code-property 65 property)
+               qa58-stale-property-file-loaded))
+     (define-char-code-property property table)
+     (delete-file file)))
+ '(table-value nil))
+
+;; Unregistered properties use the Lisp char-code-property-table itself;
+;; direct table edits and `put-char-code-property' must share that plist.
+(qa
+ (let* ((property (make-symbol "qa58-direct-fallback"))
+        (char-code-property-table (make-char-table 'char-code-property-table)))
+   (aset char-code-property-table 65 (list property 'direct-value))
+   (let ((read (get-char-code-property 65 property))
+         (written (put-char-code-property 66 property 'written-value)))
+     (list (eq read 'direct-value)
+           (eq written 'written-value)
+           (eq (car (aref char-code-property-table 66)) property)
+           (eq (cadr (aref char-code-property-table 66)) 'written-value)
+           (eq (get-char-code-property 66 property) 'written-value))))
+ '(t t t t t))
+
+;; Reloading a file-backed property after its table has registered must not
+;; replace the materialized table with the filename again.
+(qa
+ (let* ((property (make-symbol "qa58-reloaded-table"))
+        (table (make-char-table 'char-code-property-table))
+        (char-code-property-alist char-code-property-alist))
+   (set-char-table-extra-slot table 0 property)
+   (define-char-code-property property table)
+   (define-char-code-property property "qa58-missing-reload-file")
+   (eq (unicode-property-table-internal property) table))
+ t)
+
+;; Property keys are symbols compared with `eq'; distinct uninterned symbols
+;; that share a printed name do not share a registration.
+(qa
+ (let* ((first (make-symbol "qa58-same-name"))
+        (second (make-symbol "qa58-same-name"))
+        (interned 'qa58-same-name)
+        (table (make-char-table 'char-code-property-table))
+        (char-code-property-alist char-code-property-alist))
+   (set-char-table-extra-slot table 0 first)
+   (aset table 65 'first-property-value)
+   (define-char-code-property first table)
+   (list (eq (caar char-code-property-alist) first)
+         (eq (unicode-property-table-internal first) table)
+         (unicode-property-table-internal second)
+         (unicode-property-table-internal interned)
+         (get-char-code-property 65 first)
+         (get-char-code-property 65 second)
+         (get-char-code-property 65 interned)))
+ '(t t nil nil first-property-value nil nil))
+
 (qa-err-data (put-char-code-property 4194304 'name "invalid")
              'wrong-type-argument '(characterp 4194304))
 (qa-err-data (put-char-code-property -1 'name "invalid")
              'wrong-type-argument '(characterp -1))
 (qa-err-data (put-char-code-property 18446744073709551616 'name "invalid")
              'wrong-type-argument '(fixnump 18446744073709551616))
+
+;; `dolist' in `make-translation-table' visits an improper list's tail as
+;; nil once, which then fails the mapping's `aref' index check.
+(qa-err-data
+ (make-translation-table (cons (list (cons ?a ?b)) 'bad-tail))
+ 'wrong-type-argument '(fixnump nil))
+(qa-err-data (make-translation-table 'bad-tail)
+             'wrong-type-argument '(listp bad-tail))
+
+;; `define-translation-table' evaluates the old vector before `make-vector'
+;; runs; an advised constructor cannot replace that captured first argument.
+(defun qa58-translation-vector-side-effect (original length initial)
+  (setq translation-table-vector (vector (cons 'qa58-replaced nil)))
+  (funcall original length initial))
+(qa
+ (let ((translation-table-vector (vector (cons 'qa58-occupied nil)))
+       (symbol (make-symbol "qa58-vector-evaluation-order")))
+   (advice-add 'make-vector :around #'qa58-translation-vector-side-effect)
+   (unwind-protect
+       (progn
+         (define-translation-table symbol '((?a . ?b)))
+         (list (eq (car (aref translation-table-vector 0)) 'qa58-occupied)
+               (eq (car (aref translation-table-vector 1)) symbol)))
+     (advice-remove 'make-vector #'qa58-translation-vector-side-effect)))
+ '(t t))
 
 ;; == ucs-normalize (autoloaded in 31.1) ==
 (qa (ucs-normalize-NFC-string "é") "é")           ; already composed

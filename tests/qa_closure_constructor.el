@@ -78,12 +78,45 @@
       (eval '(function (lambda () (:documentation nil) 7)) t)) '(nil (7) (t) nil nil))
 (qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) (error "Must not run"))))
       (funcall (eval '(function (lambda () 7)) nil))) 7)
+;; GNU's constructor checks that BODY is a cons, but Fprogn ignores a
+;; non-list tail after evaluating the cons prefix.
+(qa (let* ((body (cons '(+ 20 22) 'ignored))
+           (function (make-interpreted-closure nil body nil)))
+      (list (eq (aref function 1) body) (funcall function)))
+    '(t 42))
+(qa (let* ((body (list 42))
+           (function (make-interpreted-closure nil body nil)))
+      (setcar body 7)
+      (funcall function))
+    7)
+(qa (let* ((body-a (list 42))
+           (function-a (make-interpreted-closure nil body-a nil))
+           (function-b (make-interpreted-closure nil (list 7) nil)))
+      (setcar body-a 7)
+      (list (equal function-a function-b)
+            (= (sxhash-equal function-a) (sxhash-equal function-b))))
+    '(t t))
+(qa (fboundp 'internal-make-interpreted-closure-function) nil)
 (qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) 'custom)))
       (eval '(defun qa31-custom-defun () 7) t)
       (symbol-function 'qa31-custom-defun)) 'custom)
 (qa (let ((internal-make-interpreted-closure-function (lambda (&rest _) 'custom)))
       (eval '(defmacro qa31-custom-macro () 7) t)
       (symbol-function 'qa31-custom-macro)) '(macro . custom))
+
+;; `defalias' checks NAME only after evaluating its function argument.
+(qa (let ((constructor-ran nil)
+          (internal-make-interpreted-closure-function
+           (lambda (&rest _) (setq constructor-ran t) 'custom)))
+      (condition-case nil (eval '(defun 5 () 7) t) (error nil))
+      constructor-ran)
+    t)
+(qa (let ((constructor-ran nil)
+          (internal-make-interpreted-closure-function
+           (lambda (&rest _) (setq constructor-ran t) 'custom)))
+      (condition-case nil (eval '(defmacro 5 () 7) t) (error nil))
+      constructor-ran)
+    t)
 
 ;; The real optimizer handles expansion/free variables and explicit envs.
 (qa (eval '(let ((value 7) (unused 9))

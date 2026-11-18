@@ -22,6 +22,16 @@
     (qa-st-run `(let ((qa-st-handlers ',handlers)) ,protected) compiled)))
 
 (dolist (qa-st-mode '(nil t))
+  ;; A custom condition may have a circular error-conditions property.  Its
+  ;; leading `error' entry still matches without looping over the cycle.
+  (qa (qa-st-run
+       '(let ((conditions (list 'error)))
+          (setcdr conditions conditions)
+          (put 'qa-st-circular-condition 'error-conditions conditions)
+          (condition-case err
+              (signal 'qa-st-circular-condition '(detail))
+            (error (list (car err) (cadr err))))) qa-st-mode)
+      '(qa-st-circular-condition detail))
   ;; Both clauses belong to the same interpreted condition-case scope.
   (qa (qa-st-run
        '(progn
@@ -101,5 +111,28 @@
                     (:success (list 'first result))
                     (:success (list 'last result))) qa-st-mode)
       (if qa-st-mode '(first body) '(last body))))
+
+;; Handler validation must terminate on a circular clause spine before the
+;; condition-case body runs.
+(qa
+ (let* ((form (list 'condition-case nil nil (list 'error 'handled)))
+        (clauses (nthcdr 3 form)))
+   (setcdr clauses clauses)
+   (condition-case error
+       (eval form)
+     (error (car error))))
+ 'circular-list)
+
+;; A dotted handler spine is rejected before the protected body runs.
+(qa
+ (let* ((form (list 'condition-case nil nil (list 'error 'handled)))
+        (tail (last form)))
+   (setcdr tail 'bad)
+   (unwind-protect
+       (condition-case error
+           (eval form)
+         (error (list (car error) (cadr error))))
+     (setcdr tail nil)))
+ '(wrong-type-argument listp))
 
 (princ (qa--done))

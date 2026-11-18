@@ -189,7 +189,10 @@ fn eval(interp: &mut Interp, source: &str) -> String {
 fn etags_ignores_match_project_root_and_incremental_paths() {
     let mut interp = Interp::new();
     let source = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/etags-regen.el");
-    eval(&mut interp, &format!("(load {} nil t)", lisp_string(source.to_str().unwrap())));
+    eval(
+        &mut interp,
+        &format!("(load {} nil t)", lisp_string(source.to_str().unwrap())),
+    );
     let expected = "(t t t t t t t t t t (t t t t t t t t t t))";
     assert_eq!(eval(&mut interp, CASES), expected);
 }

@@ -42,6 +42,21 @@
 ;; (apply '+) with no last arg: listp check fires first
 (qa (condition-case e (apply '+) (error (list (car e) (cdr e))))
     '(wrong-type-argument (listp +)))
+(qa (let ((cycle (list 1 2)))
+      (setcdr (cdr cycle) cycle)
+      (condition-case error
+          (apply #'list cycle)
+        (circular-list (list (car error) (eq (cadr error) cycle)))))
+    '(circular-list t))
+(qa (let* ((cycle (list 3 4))
+           (prefix (cons 1 cycle))
+           (meeting (cdr cycle)))
+      (setcdr (last cycle) cycle)
+      (condition-case error
+          (apply #'list prefix)
+        (circular-list (list (car error) (eq (cadr error) meeting)
+                             (eq (cadr error) prefix)))))
+    '(circular-list t nil))
 (qa-err (apply) 'wrong-number-of-arguments)
 
 ;; == funcall ==
@@ -50,7 +65,6 @@
 (qa (funcall '+ 1) 1)
 (qa (funcall 'car '(a)) 'a)
 (qa (funcall 'list) nil)
-;; remacs: nil signals invalid-function (GNU: void-function)
 (qa (condition-case e (funcall nil) (error (car e))) 'void-function)
 (qa (condition-case e (funcall 'qa-nosuchsym) (error (car e)))
     'void-function)
@@ -58,7 +72,6 @@
 (qa (condition-case e (funcall [1 2]) (error (car e))) 'invalid-function)
 (qa (condition-case e (funcall '(1 2)) (error (car e)))
     'invalid-function)
-;; remacs: nil signals invalid-function (GNU: void-function)
 (qa (condition-case e (apply nil '(1)) (error (car e))) 'void-function)
 ;; strings are not functions
 (qa (condition-case e (funcall "f") (error (car e))) 'invalid-function)

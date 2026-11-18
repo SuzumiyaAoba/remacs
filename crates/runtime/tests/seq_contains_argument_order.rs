@@ -78,10 +78,7 @@ fn obsolete_seq_contains_calls_the_predicate_element_first() {
 
     let dumped = include_str!("../../../lisp/subr-x.el");
     let start = dumped.find("(defun seq-contains ").unwrap();
-    let end = dumped[start..]
-        .find("\n(defun seq-set-equal-p ")
-        .unwrap()
-        + start;
+    let end = dumped[start..].find("\n(defun seq-set-equal-p ").unwrap() + start;
     eval(&mut interp, &format!("(eval '{} t)", &dumped[start..end]));
     assert!(eval(&mut interp, CASES).truthy());
 }

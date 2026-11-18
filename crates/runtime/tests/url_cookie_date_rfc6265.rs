@@ -163,8 +163,7 @@ fn eval(interp: &mut Interp, source: &str) -> String {
 
 #[test]
 fn url_cookie_date_parser_follows_rfc6265_511() {
-    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
-        .join("lisp/url-cookie.el");
+    let source = PathBuf::from(env!("REMACS_SOURCE_ROOT")).join("lisp/url-cookie.el");
     let test_cookie_file = std::env::temp_dir().join("remacs-url-cookie-rfc6265-test");
     let code = format!(
         "(progn

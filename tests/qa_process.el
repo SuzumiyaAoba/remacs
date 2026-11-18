@@ -336,6 +336,38 @@
   (accept-process-output p 1)
   (sit-for 0.1)
   (qa (process-status p) 'signal))
+;; Only canonical lambda has the shell-owned-tty special handling; an
+;; uninterned symbol named lambda still signals this ordinary child.
+(let ((p (start-process "qa-ctl-lambda-identity" nil "sleep" "5")))
+  (unwind-protect
+      (progn
+        (qa-same (kill-process p (make-symbol "lambda")) p)
+        (accept-process-output p 1)
+        (sit-for 0.1)
+        (qa (process-status p) 'signal))
+    (when (process-live-p p) (delete-process p))))
+;; CURRENT-GROUP is ignored for pipe processes, so the canonical `lambda'
+;; sentinel must still signal the subprocess's own process group.
+(let ((process-connection-type nil))
+  (let ((p (start-process "qa-ctl-lambda-pipe" nil "sleep" "5")))
+    (unwind-protect
+        (progn
+          (qa-same (interrupt-process p 'lambda) p)
+          (accept-process-output p 1)
+          (sit-for 0.1)
+          (qa (process-status p) 'signal))
+      (when (process-live-p p) (delete-process p)))))
+;; On a pty, this process heads the foreground group, so the canonical
+;; `lambda' sentinel deliberately leaves it running.
+(let ((process-connection-type t))
+  (let ((p (start-process "qa-ctl-lambda-pty" nil "sleep" "5")))
+    (unwind-protect
+        (progn
+          (qa (process-running-child-p p) nil)
+          (interrupt-process p 'lambda)
+          (accept-process-output p 0.1)
+          (qa (process-status p) 'run))
+      (when (process-live-p p) (delete-process p)))))
 ;; signal-process on a dead process returns -1
 (let ((p (start-process "qa-ctl4" nil "true")))
   (sit-for 0.3)

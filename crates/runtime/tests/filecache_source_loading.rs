@@ -37,7 +37,11 @@ fn filecache_source_loads_and_imports_nul_delimited_names() {
         .join("lisp/filecache.el")
         .canonicalize()
         .unwrap();
-    let code = format!("(progn (load {} nil t t) {})", lisp_string(source.to_str().unwrap()), CASES);
+    let code = format!(
+        "(progn (load {} nil t t) {})",
+        lisp_string(source.to_str().unwrap()),
+        CASES
+    );
     let mut interp = Interp::new();
     match interp.eval_str(&code) {
         Ok(value) => assert!(value.truthy()),

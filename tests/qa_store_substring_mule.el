@@ -1,6 +1,6 @@
 ;;; -*- lexical-binding: nil; -*-
-;; store-substring stores high-Mule integers as their string proxy (#382).
+;; store-substring rejects a non-byte character in an unibyte string.
 (let ((s (string ?a)))
-  (store-substring s 0 #x110000)
-  (qa (aref s 0) #x110000))
+  (qa-err (store-substring s 0 #x110000) 'error)
+  (qa (aref s 0) ?a))
 (princ (qa--done))

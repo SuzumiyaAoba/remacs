@@ -332,7 +332,10 @@ fn run_fixture(load_mode: u8) -> String {
     let cookie_file = std::env::temp_dir().join(format!(
         "remacs-cookie-date-{}-{}.cookie",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let load_form = if load_mode == 0 {
         format!("(load {} nil t t)", lisp_string(source.to_str().unwrap()))

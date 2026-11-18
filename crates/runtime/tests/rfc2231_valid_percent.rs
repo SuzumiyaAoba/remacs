@@ -48,6 +48,9 @@ fn rfc2231_strict_accepts_valid_percent_octets_and_rejects_malformed_ones() {
         .unwrap()
         .replace('\\', "\\\\")
         .replace('"', "\\\"");
-    check(&mut interp, &format!("(progn (load \"{filename}\" nil t t) t)"));
+    check(
+        &mut interp,
+        &format!("(progn (load \"{filename}\" nil t t) t)"),
+    );
     check(&mut interp, CASES);
 }

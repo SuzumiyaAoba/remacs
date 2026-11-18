@@ -32,6 +32,14 @@
 '((ok (a)) (32 40 98 41) (ok (b)) nil)
 )
 
+;; A final escape consumes EOF and signals end-of-file instead of returning
+;; the symbol prefix or an empty-token syntax error.
+(qa (qa261-first-trace (string 92))
+    '((error end-of-file nil) nil ((read 92) (read nil))))
+(qa (qa261-first-trace (concat "foo" (string 92)))
+    '((error end-of-file nil) nil
+      ((read 102) (read 111) (read 111) (read 92) (read nil))))
+
 (qa
 (qa261-two "123 456")
 '((ok 123) (32 52 53 54) (ok 456) nil)

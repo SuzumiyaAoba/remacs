@@ -121,10 +121,7 @@ fn get_form_data_replaces_the_query_and_preserves_the_fragment() {
         ),
     ] {
         let start = source.find(&format!("(defun {name} ")).unwrap();
-        let end = source[start..]
-            .find(&format!("(defun {next} "))
-            .unwrap()
-            + start;
+        let end = source[start..].find(&format!("(defun {next} ")).unwrap() + start;
         check(&mut interp, &source[start..end]);
     }
     check(&mut interp, CASES);

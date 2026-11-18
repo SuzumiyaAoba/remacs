@@ -138,6 +138,23 @@
   (qa (symbol-plist s) '(a 1 b 2)) ;; put appends
   (put s 'a 9)
   (qa (symbol-plist s) '(a 9 b 2))) ;; overwrite keeps position
+;; `put' updates a complete existing pair before validating the remaining
+;; tail, but rejects a dangling key and validates before appending a new key.
+(let ((s (make-symbol "qap-odd-put")))
+  (setplist s '(a))
+  (qa-err-data (put s 'a 9) 'wrong-type-argument '(plistp (a)))
+  (qa (symbol-plist s) '(a))
+  (qa-err-data (put s 'b 2) 'wrong-type-argument '(plistp (a)))
+  (qa (symbol-plist s) '(a)))
+(let ((s (make-symbol "qap-dotted-put")))
+  (setplist s '(a 1 . tail))
+  (qa-err-data (put s 'b 2) 'wrong-type-argument '(plistp (a 1 . tail)))
+  (qa (put s 'a 9) 9)
+  (qa (symbol-plist s) '(a 9 . tail)))
+(let ((s (make-symbol "qap-dotted-put-key")))
+  (setplist s '(a . tail))
+  (qa-err-data (put s 'a 9) 'wrong-type-argument '(plistp (a . tail)))
+  (qa (symbol-plist s) '(a . tail)))
 (let ((s (make-symbol "qap-str")))
   (qa (put s "p" 'v) 'v)
   (qa (get s "p") nil)               ;; eq on strings: literal is a different object
@@ -169,7 +186,9 @@
 (let ((s (make-symbol "qap-junk")))
   (qa (setplist s 'atom) 'atom) ;; ANY object stored verbatim
   (qa (symbol-plist s) 'atom)
-  (qa (get s 'p) nil))
+  (qa (get s 'p) nil)
+  (qa-err-data (put s 'new 'value) 'wrong-type-argument '(plistp atom))
+  (qa (symbol-plist s) 'atom))
 (let ((s (make-symbol "qap-dot")))
   (setplist s '(a 1 . b))
   (qa (symbol-plist s) '(a 1 . b))

@@ -127,7 +127,13 @@ fn eval_checks(interp: &mut Interp) {
 #[test]
 fn unknown_alpha_zones_via_fresh_require() {
     let mut interp = Interp::new();
-    assert_eq!(eval(&mut interp, "(progn (require 'parse-time) (featurep 'parse-time))"), "t");
+    assert_eq!(
+        eval(
+            &mut interp,
+            "(progn (require 'parse-time) (featurep 'parse-time))"
+        ),
+        "t"
+    );
     eval_checks(&mut interp);
 }
 
@@ -139,11 +145,17 @@ fn unknown_alpha_zones_via_full_source_load() {
     let mut interp = Interp::new();
     eval(
         &mut interp,
-        &format!("(load {} nil t t)", lisp_string(iso_source.to_str().unwrap())),
+        &format!(
+            "(load {} nil t t)",
+            lisp_string(iso_source.to_str().unwrap())
+        ),
     );
     eval(
         &mut interp,
-        &format!("(load {} nil t t)", lisp_string(parse_source.to_str().unwrap())),
+        &format!(
+            "(load {} nil t t)",
+            lisp_string(parse_source.to_str().unwrap())
+        ),
     );
     eval_checks(&mut interp);
 }

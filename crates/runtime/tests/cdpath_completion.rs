@@ -191,7 +191,10 @@ fn run_cdpath_case(load_files_source: bool) {
     };
     assert_eq!(eval(&mut interp, &code), "t");
     assert_eq!(
-        eval(&mut interp, "(let ((file (symbol-file 'files--cd-completion-table 'defun))) (and (stringp file) (file-name-absolute-p file) (file-readable-p file) t))"),
+        eval(
+            &mut interp,
+            "(let ((file (symbol-file 'files--cd-completion-table 'defun))) (and (stringp file) (file-name-absolute-p file) (file-readable-p file) t))"
+        ),
         "t"
     );
 }

@@ -37,6 +37,10 @@
 (qa (number-to-string (lognot (expt 2 130))) "-1361129467683753853853498429727072845825")
 (qa (logcount (- (expt 2 130))) 130)
 (qa (logb (expt 2 10000)) 10000)
+(qa (logb most-positive-fixnum) 60)
+(qa (logb most-negative-fixnum) 61)
+(qa (logb (1- (expt 2 61))) 60)
+(qa (logb (expt 2 61)) 61)
 (qa (let ((n (expt 2 130))) (list (integerp n) (numberp n) (number-or-marker-p n) (natnump n) (fixnump n))) '(t t t t nil))
 (qa (let ((n (expt 2 65))) (eq n n)) t)
 (qa (eq (expt 2 65) (expt 2 65)) nil)
@@ -119,4 +123,119 @@
                  (sqlite-execute db "insert into x values (?)" (list (1+ most-positive-fixnum)))
                  (sqlite-select db "select n from x"))
         (sqlite-close db))) '((2305843009213693952)))
+
+;; C-forwarded evaluation limits use signed EMACS_INT storage: bignums
+;; within that range are accepted, while larger values overflow before a
+;; binding or assignment is installed.
+(qa (let ((max-lisp-eval-depth (* 3 (1+ most-positive-fixnum))))
+      max-lisp-eval-depth) (* 3 (1+ most-positive-fixnum)))
+(qa (let ((lisp-eval-depth-reserve (* 3 (1+ most-positive-fixnum))))
+      lisp-eval-depth-reserve) (* 3 (1+ most-positive-fixnum)))
+(qa-err-data (let ((max-lisp-eval-depth (* 4 (1+ most-positive-fixnum)))) 'unreachable)
+              'overflow-error (list (* 4 (1+ most-positive-fixnum))))
+(qa-err-data (let ((lisp-eval-depth-reserve (* 4 (1+ most-positive-fixnum)))) 'unreachable)
+              'overflow-error (list (* 4 (1+ most-positive-fixnum))))
+(qa-err-data (let ((max-lisp-eval-depth 1600))
+                (setq max-lisp-eval-depth (* 4 (1+ most-positive-fixnum))))
+              'overflow-error (list (* 4 (1+ most-positive-fixnum))))
+(qa-err-data (let ((lisp-eval-depth-reserve 200))
+                (setq lisp-eval-depth-reserve (* 4 (1+ most-positive-fixnum))))
+              'overflow-error (list (* 4 (1+ most-positive-fixnum))))
+(qa-err-data (let ((max-lisp-eval-depth 1.5)) 'unreachable)
+              'wrong-type-argument '(integerp 1.5))
+(qa-err-data (let ((lisp-eval-depth-reserve 1.5)) 'unreachable)
+              'wrong-type-argument '(integerp 1.5))
+(qa-err-data (setq max-lisp-eval-depth 1.5)
+              'wrong-type-argument '(integerp 1.5))
+(qa-err-data (setq lisp-eval-depth-reserve 1.5)
+              'wrong-type-argument '(integerp 1.5))
+
+;; Rejecting an out-of-range forwarded value keeps GNU's watcher order and
+;; leaves failed `setq'/`let' writes and the outer dynamic binding intact.
+(defvar qa2-depth-limit-events nil)
+(defun qa2-depth-limit-watcher (_symbol value operation where)
+  (push (list operation value max-lisp-eval-depth where)
+        qa2-depth-limit-events))
+(qa
+ (let ((max-lisp-eval-depth 1600)
+       qa2-depth-limit-events)
+   (add-variable-watcher 'max-lisp-eval-depth #'qa2-depth-limit-watcher)
+   (unwind-protect
+       (let* ((set-result
+               (condition-case error
+                   (setq max-lisp-eval-depth (* 4 (1+ most-positive-fixnum)))
+                 (error (list (car error) (cadr error)))))
+              (set-events (nreverse qa2-depth-limit-events))
+              (let-result nil)
+              (let-events nil))
+         (setq qa2-depth-limit-events nil)
+         (setq let-result
+               (condition-case error
+                   (let ((max-lisp-eval-depth
+                          (* 4 (1+ most-positive-fixnum))))
+                     'ok)
+                 (error (list (car error) (cadr error)))))
+         (setq let-events (nreverse qa2-depth-limit-events))
+         (list set-result set-events let-result let-events max-lisp-eval-depth))
+     (remove-variable-watcher 'max-lisp-eval-depth
+                              #'qa2-depth-limit-watcher)))
+ '((overflow-error 9223372036854775808)
+   ((set 9223372036854775808 1600 nil))
+   (overflow-error 9223372036854775808)
+   ((let 9223372036854775808 1600 nil)
+    (set 1600 1600 nil)
+    (unlet 1600 1600 nil))
+   1600))
+
+;; Other GNU-forwarded signed EMACS_INT cells reject the same out-of-range
+;; bignum through `set', while leaving their original global values intact.
+(defvar qa2-forwarded-int-value (* 4 (1+ most-positive-fixnum)))
+(defvar qa2-forwarded-int-symbols
+  '(auto-save-interval baud-rate command-line-max-length cons-cells-consed
+    display-line-numbers-major-tick display-line-numbers-minor-tick
+    double-click-fuzz executing-kbd-macro-index extra-keyboard-modifiers
+    face-near-same-color-threshold floats-consed gc-cons-threshold gcs-done
+    gnutls-log-level hscroll-margin integer-width internal-when-entered-debugger
+    intervals-consed
+    large-hscroll-threshold line-number-display-limit-width
+    long-line-optimizations-bol-search-limit long-line-optimizations-region-size
+    max-redisplay-ticks next-screen-context-lines num-input-keys
+    num-nonmacro-input-events overline-margin
+    process-error-pause-time profiler-log-size profiler-max-stack-depth
+    pure-bytes-used read-process-output-max scroll-conservatively scroll-margin
+    scroll-step string-chars-consed strings-consed symbols-consed
+    tab-bar-button-relief tool-bar-button-relief tool-bar-max-label-size
+    undo-limit undo-strong-limit underline-minimum-offset vector-cells-consed))
+(defun qa2-check-forwarded-int-range (symbol value)
+  (let ((old (symbol-value symbol)))
+    (unwind-protect
+        (condition-case error
+            (progn (set symbol value) 'accepted)
+              (error error))
+      (set symbol old))))
+(defun qa2-check-forwarded-int-binding (symbol value)
+  (condition-case error
+      (eval (list 'let (list (list symbol value)) '(quote ok)))
+    (error error)))
+(qa (mapcar (lambda (symbol)
+              (list symbol
+                    (qa2-check-forwarded-int-range symbol qa2-forwarded-int-value)))
+            qa2-forwarded-int-symbols)
+    (mapcar (lambda (symbol)
+              (list symbol (list 'overflow-error qa2-forwarded-int-value)))
+            qa2-forwarded-int-symbols))
+(qa (mapcar (lambda (symbol)
+              (list symbol (qa2-check-forwarded-int-range symbol 1.5)))
+            qa2-forwarded-int-symbols)
+    (mapcar (lambda (symbol)
+              (list symbol (list 'wrong-type-argument 'integerp 1.5)))
+            qa2-forwarded-int-symbols))
+(qa (mapcar (lambda (symbol)
+              (list symbol
+                    (qa2-check-forwarded-int-binding
+                     symbol qa2-forwarded-int-value)))
+            qa2-forwarded-int-symbols)
+    (mapcar (lambda (symbol)
+              (list symbol (list 'overflow-error qa2-forwarded-int-value)))
+            qa2-forwarded-int-symbols))
 (princ (qa--done))

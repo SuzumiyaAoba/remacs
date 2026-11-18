@@ -42,12 +42,16 @@
 ;; vectors too
 (qa (seq-take [a b c d] 2) [a b])
 (qa (seq-drop [a b c d] 2) [c d])
-;; Character tables have fixed size, so subsequences are vectors.
-(qa (let ((table (make-char-table 'generic nil)))
-      (list (sequencep table)
-            (type-of (seq-take table 2))
-            (type-of (seq-drop table (- (seq-length table) 2)))))
-    '(t vector vector))
+;; Remacs extends seq subsequences to character tables; GNU 31.1 does not.
+(qa (sequencep (make-char-table 'generic nil)) t)
+(if qa--remacs
+    (qa (let ((table (make-char-table 'generic nil)))
+          (list (type-of (seq-take table 2))
+                (type-of (seq-drop table (- (seq-length table) 2)))))
+        '(vector vector))
+  (let ((table (make-char-table 'generic nil)))
+    (qa-err (seq-take table 2) 'error)
+    (qa-err (seq-drop table 2) 'error)))
 
 ;; == seq-take-while / drop-while ==
 (qa (seq-take-while #'evenp '(2 4 5 6)) '(2 4))
@@ -77,17 +81,19 @@
 ;; == seq-reverse ==
 (qa (seq-reverse '(a b c)) '(c b a))
 (qa (seq-reverse [a b c]) [c b a])
-(qa (let* ((table (make-char-table 'generic nil))
-           (length (seq-length table))
-           (last (1- length)))
-      (set-char-table-range table 0 'first)
-      (set-char-table-range table last 'last)
-      (let ((reversed (seq-reverse table)))
-        (list (vectorp reversed)
-              (= (length reversed) length)
-              (aref reversed 0)
-              (aref reversed last))))
-    '(t t last first))
+(if qa--remacs
+    (qa (let* ((table (make-char-table 'generic nil))
+               (length (seq-length table))
+               (last (1- length)))
+          (set-char-table-range table 0 'first)
+          (set-char-table-range table last 'last)
+          (let ((reversed (seq-reverse table)))
+            (list (vectorp reversed)
+                  (= (length reversed) length)
+                  (aref reversed 0)
+                  (aref reversed last))))
+        '(t t last first))
+  (qa-err (seq-reverse (make-char-table 'generic nil)) 'wrong-type-argument))
 
 ;; == seq-contains-p / seq-contains / seq-empty-p / seq-set-equal-p ==
 (qa (seq-contains-p '(a b) 'b) t)

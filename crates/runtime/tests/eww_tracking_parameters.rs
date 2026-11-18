@@ -92,10 +92,7 @@ fn tracking_removal_preserves_unrelated_url_components() {
 
     let source = include_str!("../../../lisp/eww.el");
     let start = source.find("(defun eww-remove-tracking ").unwrap();
-    let end = source[start..]
-        .find("(defun eww--transform-url ")
-        .unwrap()
-        + start;
+    let end = source[start..].find("(defun eww--transform-url ").unwrap() + start;
     check(&mut interp, &source[start..end]);
     check(&mut interp, CASES);
 }

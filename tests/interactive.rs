@@ -177,6 +177,66 @@ fn read_string_via_hook() {
 }
 
 #[test]
+fn read_string_initial_input_is_installed_in_the_minibuffer() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        let seen = Rc::new(std::cell::RefCell::new(None));
+        let seen_by_reader = seen.clone();
+        i.minibuf_reader = Some(Rc::new(move |interp, _prompt, _single| {
+            let initial = interp.minibuf_contents().to_unicode_lossy();
+            let history = interp.intern("minibuffer-history-variable");
+            let history = interp
+                .prin1_to_string(&interp.symbol_value(history))
+                .to_unicode_lossy();
+            *seen_by_reader.borrow_mut() = Some((initial, history));
+            Ok(MinibufInput::Text("answer".into()))
+        }));
+        let result = ev_in(
+            &mut i,
+            "(read-string \"Name: \" \"seed\" 'qa-read-string-history)",
+        );
+        assert_eq!(i.prin1_to_string(&result), "\"answer\"");
+        assert_eq!(
+            seen.borrow().as_ref(),
+            Some(&("seed".to_string(), "qa-read-string-history".to_string()))
+        );
+    })
+}
+
+#[test]
+fn read_command_and_variable_require_matching_names() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        canned(&mut i, vec![MinibufInput::Text("forward-char".into())]);
+        let command = ev_in(&mut i, "(read-command \"Command: \")");
+        assert_eq!(i.prin1_to_string(&command), "forward-char");
+
+        canned(&mut i, vec![MinibufInput::Text("not-a-command".into())]);
+        assert_eq!(
+            ev_err_in(&mut i, "(read-command \"Command: \")"),
+            "user-error"
+        );
+
+        ev_in(
+            &mut i,
+            "(defcustom qa-read-variable 1 \"test option\" :type 'integer)",
+        );
+        canned(&mut i, vec![MinibufInput::Text("qa-read-variable".into())]);
+        let variable = ev_in(&mut i, "(read-variable \"Variable: \")");
+        assert_eq!(i.prin1_to_string(&variable), "qa-read-variable");
+
+        canned(
+            &mut i,
+            vec![MinibufInput::Text("not-a-custom-option".into())],
+        );
+        assert_eq!(
+            ev_err_in(&mut i, "(read-variable \"Variable: \")"),
+            "user-error"
+        );
+    })
+}
+
+#[test]
 fn read_char_via_hook() {
     common::on_big_stack(move || {
         let (mut i, _) = interp();
@@ -222,12 +282,122 @@ fn interactive_s_and_a_codes() {
             "(defun f (s) (interactive \"sIn: \") s) (call-interactively 'f)",
         );
         assert_eq!(i.prin1_to_string(&v), "\"somestring\"");
+        ev_in(&mut i, "(defun somesym () nil)");
         canned(&mut i, vec![MinibufInput::Text("somesym".into())]);
         let v = ev_in(
             &mut i,
             "(defun g (s) (interactive \"aSym: \") s) (call-interactively 'g)",
         );
         assert_eq!(i.prin1_to_string(&v), "somesym");
+
+        canned(&mut i, vec![MinibufInput::Text("not-a-function".into())]);
+        assert_eq!(
+            ev_err_in(
+                &mut i,
+                "(defun bad (s) (interactive \"aSym: \") s) (call-interactively 'bad)",
+            ),
+            "user-error"
+        );
+
+        ev_in(&mut i, "(defun qa-interactive-command () (interactive))");
+        canned(
+            &mut i,
+            vec![MinibufInput::Text("qa-interactive-command".into())],
+        );
+        let v = ev_in(
+            &mut i,
+            "(defun h (s) (interactive \"CCommand: \") s) (call-interactively 'h)",
+        );
+        assert_eq!(i.prin1_to_string(&v), "qa-interactive-command");
+
+        ev_in(
+            &mut i,
+            "(defcustom qa-interactive-variable 1 \"test variable\" :type 'integer)",
+        );
+        canned(
+            &mut i,
+            vec![MinibufInput::Text("qa-interactive-variable".into())],
+        );
+        let v = ev_in(
+            &mut i,
+            "(defun j (s) (interactive \"vVariable: \") s) (call-interactively 'j)",
+        );
+        assert_eq!(i.prin1_to_string(&v), "qa-interactive-variable");
+    })
+}
+
+#[test]
+fn interactive_file_codes_keep_their_default_and_match_arguments() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        for (code, expected) in [
+            ("f", "(\"File: \" nil nil lambda nil nil)"),
+            ("F", "(\"File: \" nil nil nil nil nil)"),
+            (
+                "D",
+                "(\"Directory: \" nil \"/qa-dir/\" lambda nil file-directory-p)",
+            ),
+            ("G", "(\"Directory: \" nil nil nil \"\" nil)"),
+        ] {
+            let form = format!(
+                "(let ((read-file-name-function (lambda (&rest args) args)))\
+                   (setq default-directory \"/qa-dir/\")\
+                   (call-interactively (lambda (file) (interactive \"{code}{}\") file)))",
+                if code == "D" || code == "G" {
+                    "Directory: "
+                } else {
+                    "File: "
+                }
+            );
+            let result = ev_in(&mut i, &form);
+            assert_eq!(i.prin1_to_string(&result), expected, "code {code}");
+        }
+    })
+}
+
+#[test]
+fn interactive_at_selects_the_event_window() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        let target = ev_in(&mut i, "(split-window-right)");
+        let Value::Window(target) = target else {
+            panic!("split-window-right did not return a window");
+        };
+        let mouse = Value::Sym(i.intern("mouse-1"));
+        let event = Value::list(vec![
+            mouse,
+            Value::cons(Value::Window(target.clone()), Value::Int(1)),
+        ]);
+        let keys = Value::vector(vec![event]);
+        let command = ev_in(&mut i, "(lambda () (interactive \"@\") (selected-window))");
+        let dispatcher = Value::Sym(i.intern("call-interactively"));
+        let selected = i
+            .apply(&dispatcher, vec![command, Value::Nil, keys])
+            .unwrap();
+        let Value::Window(selected) = selected else {
+            panic!("selected-window did not return a window");
+        };
+        assert!(Rc::ptr_eq(&selected, &target));
+    })
+}
+
+#[test]
+fn interactive_e_error_uses_generic_name_for_anonymous_command() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        let message = ev_in(
+            &mut i,
+            "(condition-case error\
+                 (call-interactively (lambda () (interactive \"e\") nil))\
+               (error (cadr error)))",
+        );
+        let Value::Str(message) = message else {
+            panic!("interactive e error message was not a string");
+        };
+        assert_eq!(
+            message.borrow().to_unicode_lossy(),
+            "command must be bound to an event with parameters"
+        );
     })
 }
 
@@ -263,6 +433,52 @@ fn interactive_r_region_bounds() {
             "(defun f (b e) (interactive \"r\") (list b e)) (call-interactively 'f)",
         );
         assert_eq!(i.prin1_to_string(&v), "(2 5)");
+    })
+}
+
+#[test]
+fn interactive_R_returns_markers_only_for_an_active_region() {
+    common::on_big_stack(move || {
+        let (mut i, _) = interp();
+        ev_in(&mut i, "(insert \"abc\") (goto-char 3) (set-mark 1)");
+        ev_in(
+            &mut i,
+            "(defun qa-interactive-R (begin end)\
+               (interactive \"R\")\
+               (list (if (markerp begin) (marker-position begin) begin)\
+                     (if (markerp end) (marker-position end) end)\
+                     (and (markerp begin) (markerp end))))",
+        );
+        let active = ev_in(
+            &mut i,
+            "(let ((transient-mark-mode t) (mark-active t))\
+               (call-interactively 'qa-interactive-R))",
+        );
+        assert_eq!(i.prin1_to_string(&active), "(1 3 t)");
+
+        let inactive = ev_in(
+            &mut i,
+            "(let ((transient-mark-mode t) (mark-active nil))\
+               (call-interactively 'qa-interactive-R))",
+        );
+        assert_eq!(i.prin1_to_string(&inactive), "(nil nil nil)");
+
+        ev_in(
+            &mut i,
+            "(defun qa-interactive-R-no-region () nil)\
+             (advice-add 'use-region-p :override #'qa-interactive-R-no-region)",
+        );
+        let advised_inactive = ev_in(
+            &mut i,
+            "(let ((transient-mark-mode t) (mark-active t))\
+               (call-interactively 'qa-interactive-R))",
+        );
+        assert_eq!(i.prin1_to_string(&advised_inactive), "(nil nil nil)");
+        ev_in(
+            &mut i,
+            "(advice-remove 'use-region-p #'qa-interactive-R-no-region)\
+             (fmakunbound 'qa-interactive-R-no-region)",
+        );
     })
 }
 

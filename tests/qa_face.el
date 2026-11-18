@@ -37,6 +37,10 @@
 (qa (fboundp 'face-default-spec) t)
 (qa (fboundp 'face-user-default-spec) t)
 (qa (fboundp 'face-set-after-frame-default) t)
+;; Only the canonical symbol t selects every frame; an uninterned symbol
+;; with the same name is an invalid frame-list value.
+(qa-err (set-frame-font "Monospace-10" nil (make-symbol "t"))
+        'wrong-type-argument)
 ;; NOT fns
 (qa (fboundp 'internal-facep) nil)
 (qa (fboundp 'face-id-history) nil)

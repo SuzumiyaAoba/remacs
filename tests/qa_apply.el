@@ -24,6 +24,8 @@
 (defun qaap-cmd () (interactive) (called-interactively-p 'any))
 (defun qaap-2 (a b) (list a b))
 (defmacro qaap-m2 (a b) `(+ ,a ,b))
+(defmacro qaap-one-arg-macro (x) x)
+(defalias 'qaap-one-arg-macro-alias 'qaap-one-arg-macro)
 (defmacro qaap-wrap (x) `(list ,x))
 (defmacro qaap-outer (x) `(qaap-wrap ,x))
 (defmacro qaap-restm (&rest args) `(quote ,args))
@@ -182,6 +184,11 @@
 (qa (func-arity '(lambda (a &optional b c) a)) '(1 . 3))
 (qa (func-arity (let ((x 1)) (lambda (a &optional b) (list a b x)))) '(1 . 2))
 (qa (func-arity '(macro . (lambda (a b) a))) '(2 . 2))
+;; Interpreted lambda arities are not limited to the subr's 16-bit fields.
+(qa (let* ((arglist (make-list 65536 'x))
+           (function (eval (list 'lambda arglist nil))))
+      (func-arity function))
+    '(65536 . 65536))
 ;; Special forms report unevalled.
 (qa (func-arity 'if) '(2 . unevalled))
 (qa (func-arity 'setq) '(0 . unevalled))
@@ -227,6 +234,10 @@
 (qa (function-get 5 'prop) nil)
 (qa-err-data (function-put 5 'p 'v)
              'wrong-type-argument '((symbolp symbol-with-pos-p) 5))
+(qa-err (function-put (list (make-symbol "lambda") nil) 'p 'v)
+        'wrong-type-argument)
+(qa-err (function-put (list (make-symbol "closure") nil nil) 'p 'v)
+        'wrong-type-argument)
 (qa (function-get 'car 'side-effect-free) nil)
 (qa (function-get 'car 'doc-string-elt) nil)
 
@@ -252,12 +263,49 @@
 (progn
   (qa (defalias 'qaap-n nil) 'qaap-n)
   (qa (fboundp 'qaap-n) nil)
-  (qa-err-data (funcall 'qaap-n) 'void-function '(qaap-n)))
+  (qa-err-data (funcall 'qaap-n) 'void-function '(qaap-n))
+  ;; The evaluator and funcall both treat a nil function cell as void.
+  (qa-err-data (eval '(qaap-n)) 'void-function '(qaap-n)))
+(qa-err-data (eval '(nil)) 'void-function '(nil))
+(unwind-protect
+    (progn
+      (fset 'qaap-alias-nil-target nil)
+      (defalias 'qaap-alias-nil-alias 'qaap-alias-nil-target)
+      (qa-err-data (eval '(qaap-alias-nil-alias))
+                   'void-function '(qaap-alias-nil-alias))
+      (qa-err-data (funcall 'qaap-alias-nil-alias)
+                   'void-function '(qaap-alias-nil-alias)))
+  (fmakunbound 'qaap-alias-nil-alias)
+  (fmakunbound 'qaap-alias-nil-target))
 ;; fset accepts arbitrary objects; calls then fail at funcall time.
 (progn
   (qa (fset 'qaap-nf 5) 5)
   (qa (symbol-function 'qaap-nf) 5)
-  (qa-err-data (funcall 'qaap-nf 1) 'invalid-function '(qaap-nf)))
+  (qa-err-data (funcall 'qaap-nf 1) 'invalid-function '(qaap-nf))
+  (qa-err-data (eval '(qaap-nf 1)) 'invalid-function '(qaap-nf)))
+(progn
+  (fset 'qaap-bad-cons '(quote x))
+  (qa-err-data (eval '(qaap-bad-cons)) 'invalid-function '(qaap-bad-cons))
+  (fmakunbound 'qaap-bad-cons))
+(qa-err-data (eval '((quote 5) 1)) 'invalid-function '((quote 5)))
+(unwind-protect
+    (progn
+      (defalias 'qaap-if-alias 'if)
+      (qa-err-data (eval '(qaap-if-alias))
+                   'wrong-number-of-arguments '(qaap-if-alias 0)))
+  (fmakunbound 'qaap-if-alias))
+(unwind-protect
+    (progn
+      (defalias 'qaap-defun-alias 'defun)
+      (qa-err-data (eval '(qaap-defun-alias))
+                   'wrong-number-of-arguments '((2 . 2) 0)))
+  (fmakunbound 'qaap-defun-alias))
+(unwind-protect
+    (progn
+      (defalias 'qaap-defmacro-alias 'defmacro)
+      (qa-err-data (eval '(qaap-defmacro-alias))
+                   'wrong-number-of-arguments '((2 . 2) 0)))
+  (fmakunbound 'qaap-defmacro-alias))
 (progn
   (fset 'qaap-nl '(lambda (x) (* x x)))
   (qa (funcall 'qaap-nl 4) 16))
@@ -278,6 +326,12 @@
 ;; reported "function" is the arity cons (1 . 1).
 (qa-err-data (macroexpand-1 '(when))
              'wrong-number-of-arguments '((1 . 1) 0))
+(qa (let ((function (cdr (symbol-function 'qaap-one-arg-macro))))
+      (condition-case err
+          (eval '(qaap-one-arg-macro-alias))
+        (wrong-number-of-arguments
+         (list (eq (cadr err) function) (caddr err)))))
+    '(t 0))
 (qa (macroexpand-1 '(when-let* ((x 1)) x)) '(if-let* ((x 1)) x))
 ;; macroexpand peels the outermost macro, then repeats on the RESULT head.
 (qa (macroexpand '(qaap-wrap (qaap-wrap 1))) '(list (qaap-wrap 1)))
@@ -324,6 +378,44 @@
     '(let ((x 5)) (if x (progn x))))
 (qa (macroexpand-all '(defun qaap-f (x) (when x 1)))
     '(defalias 'qaap-f #'(lambda (x) (if x (progn 1)))))
+(qa (let* ((variable (make-symbol ":qaap-variable"))
+           (expanded
+            (macroexpand-all (list 'setq variable '(when t 1)))))
+      (list (eq (car expanded) 'setq)
+            (eq (cadr expanded) variable)
+            (equal (caddr expanded) '(if t (progn 1)))))
+    '(t t t))
+(defvar qaap-dynvars-events nil)
+(defun qaap-dynvars-watch (_symbol _value operation _where)
+  (push operation qaap-dynvars-events))
+(add-variable-watcher 'macroexp--dynvars #'qaap-dynvars-watch)
+(unwind-protect
+    (qa (let* ((ordinary
+                (progn
+                  (setq qaap-dynvars-events nil)
+                  (macroexpand-all '(ordinary x))
+                  (nreverse qaap-dynvars-events)))
+               (fake-closure (make-symbol "closure"))
+               (uninterned
+                (progn
+                  (setq qaap-dynvars-events nil)
+                  (macroexpand-all
+                   (list fake-closure nil nil '(when t 1)))
+                  (nreverse qaap-dynvars-events))))
+          (equal ordinary uninterned))
+        t)
+  (remove-variable-watcher 'macroexp--dynvars #'qaap-dynvars-watch))
+(defmacro qaap-declare-expand () 'expanded)
+(qa (let* ((fake-declare (make-symbol "declare"))
+           (expanded
+            (macroexpand-all
+             (list 'funcall
+                   (list 'function
+                         (list 'lambda nil
+                               (list fake-declare '(qaap-declare-expand))))))))
+      (list (eq (car expanded) fake-declare)
+            (eq (cadr expanded) 'expanded)))
+    '(t t))
 ;; cond is a special form in 31.1 — untouched.
 (qa (macroexpand-1 '(cond (a 1) (t 2))) '(cond (a 1) (t 2)))
 

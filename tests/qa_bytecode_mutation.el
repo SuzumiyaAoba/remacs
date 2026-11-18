@@ -211,6 +211,19 @@
 '(11 11 "b")
 )
 
+;; Dynamic arglist conses stay live too; the decoded arity/binding cache may
+;; not reuse a parsed name after `setcar' mutates the bytecode object's slot.
+(defvar qa254-argdesc-x 1)
+(defvar qa254-argdesc-y 2)
+(qa (let ((function (make-byte-code '(qa254-argdesc-x)
+                                    (unibyte-string 8 135)
+                                    [qa254-argdesc-x]
+                                    1)))
+      (list (funcall function 7)
+            (progn (setcar (aref function 0) 'qa254-argdesc-y)
+                   (funcall function 9))))
+    '(7 1))
+
 (qa
 (let*
     ((qa254-code (unibyte-string 192 32 136 193 135))
@@ -224,6 +237,5 @@
   (list (funcall f) (funcall f)))
 '(22 22)
 )
-
 
 (princ (qa--done)) (terpri)

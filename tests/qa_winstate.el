@@ -145,6 +145,29 @@
 (qa (window-font-height) 1)
 (qa (window-text-width) 80)
 
+;; Only the canonical columns selector requests a floating-point width;
+;; an uninterned symbol with the same name is an ordinary truthy argument.
+(require 'display-line-numbers)
+(qa
+ (let* ((window (selected-window))
+        (old-buffer (window-buffer window))
+        (buffer (generate-new-buffer " *qa-line-number-width*"))
+        (fake (make-symbol "columns")))
+   (unwind-protect
+       (progn
+         (with-current-buffer buffer
+           (insert "a\nb\nc\n")
+           (display-line-numbers-mode 1)
+           (setq-local display-line-numbers-width 5))
+         (set-window-buffer window buffer)
+         (with-current-buffer buffer
+           (list (floatp (line-number-display-width 'columns))
+                 (integerp (line-number-display-width fake))))
+         )
+     (set-window-buffer window old-buffer)
+     (kill-buffer buffer)))
+ '(t t))
+
 ;; == sizable/resizable/resize on the sole (root) window ==
 (qa (window-sizable-p (selected-window) 1) t)
 (qa (window-sizable-p (selected-window) 1 t) t)
@@ -176,6 +199,14 @@
 (qa (window-in-direction 'down) nil)
 (qa (window-in-direction 'above nil nil nil t) nil) ; WRAP still finds none
 (qa-err (window-in-direction 'qaws-diagonal) 'error) ; "Wrong direction"
+(qa
+ (let ((root (frame-root-window))
+       (minibuffer (minibuffer-window)))
+   (list (eq (window-in-direction 'below root nil 0 nil (make-symbol "t"))
+             minibuffer)
+         (eq (window-in-direction 'below root nil 0 nil t)
+             minibuffer)))
+ '(nil t))
 
 ;; == split: tree accessors, edges, state shape ==
 (let* ((qaws-w1 (selected-window))

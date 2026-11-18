@@ -6,6 +6,25 @@
       (accept-process-output process 0.01)))
   (funcall ready))
 
+;; A named lexical function used as a process filter remains callable after
+;; the process callback context switches back to its owner buffer.
+(defvar qa-pcc-named-filter-output nil)
+(defun qa-pcc-named-filter (_process text)
+  (setq qa-pcc-named-filter-output (concat qa-pcc-named-filter-output text)))
+(qa
+ (let ((qa-pcc-named-filter-output "") process)
+   (unwind-protect
+       (progn
+         (setq process
+               (make-process :name "qa-pcc-named-filter" :noquery t
+                             :connection-type 'pipe
+                             :filter #'qa-pcc-named-filter
+                             :command '("/bin/sh" "-c" "printf payload")))
+         (qa-pcc-wait process (lambda () (equal qa-pcc-named-filter-output "payload")))
+         qa-pcc-named-filter-output)
+     (when process (set-process-sentinel process #'ignore) (delete-process process))))
+ "payload")
+
 (defun qa-pcc-context (kind source tail)
   (let ((owner (generate-new-buffer " *qa-pcc-owner*"))
         (other (generate-new-buffer " *qa-pcc-other*"))

@@ -27,6 +27,11 @@ impl ApplicationVisibilityBackend for RecordingBackend {
         Ok(())
     }
 
+    fn unhide(&self) -> Result<(), String> {
+        self.0.borrow_mut().push(Call::Unhide);
+        Ok(())
+    }
+
     fn activate_unhidden(
         &self,
         frame_id: Option<usize>,
@@ -36,11 +41,6 @@ impl ApplicationVisibilityBackend for RecordingBackend {
             has_frame: frame_id.is_some(),
             front: bring_frame_to_front,
         });
-        Ok(())
-    }
-
-    fn unhide(&self) -> Result<(), String> {
-        self.0.borrow_mut().push(Call::Unhide);
         Ok(())
     }
 

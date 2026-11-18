@@ -62,6 +62,8 @@
       (qa-reader-kind qa-reader-buffer-value)) '(nil (255)))
 (qa (qa-reader-kind (read "\"\\uD800\\U0000DFFF\"")) '(t (55296 57343)))
 (qa (qa-reader-kind (read "\"\\u0041\\U00000042\\x0043\"")) '(nil (65 66 67)))
+(qa (qa-reader-kind (read "\"\\x80\"")) '(nil (128)))
+(qa (qa-reader-kind (read "\"\\x100\"")) '(t (256)))
 (qa (qa-reader-kind (read "\"\\u00E9\\x00FF\"")) '(t (233 255)))
 (qa (qa-reader-kind (read "\"a\\ b\\\nc\"")) '(nil (97 98 99)))
 (qa (qa-reader-kind (read "\"\\é\"")) '(t (233)))

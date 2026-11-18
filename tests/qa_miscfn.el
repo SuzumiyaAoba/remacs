@@ -80,6 +80,74 @@
 (qa (getenv "QAMISC_NEVER_XYZ") nil)
 (qa-err (getenv 5) 'wrong-type-argument)
 
+;; setenv-internal updates only the first string entry and preserves its
+;; in-place list identity.  KEEP-EMPTY distinguishes a bare name from removal.
+(qa (let* ((env (list "QAMISC_DUP=old" "QAMISC_DUP=stale"))
+           (result (setenv-internal env "QAMISC_DUP" "new" t)))
+      (list (eq result env) env))
+    '(t ("QAMISC_DUP=new" "QAMISC_DUP=stale")))
+(qa (setenv-internal (list "QAMISC_DROP=old" "QAMISC_KEEP=1")
+                     "QAMISC_DROP" nil nil)
+    '("QAMISC_KEEP=1"))
+(qa (setenv-internal (list "QAMISC_EMPTY=old" "QAMISC_KEEP=1")
+                     "QAMISC_EMPTY" nil t)
+    '("QAMISC_EMPTY" "QAMISC_KEEP=1"))
+(qa (let* ((env (list "QAMISC_BEFORE=1" 17 "QAMISC_AFTER=old"))
+           (result (setenv-internal env "QAMISC_AFTER" "new" t)))
+      (list (eq result env) result env))
+    '(nil ("QAMISC_AFTER=new" "QAMISC_BEFORE=1" 17 "QAMISC_AFTER=old")
+          ("QAMISC_BEFORE=1" 17 "QAMISC_AFTER=old")))
+
+;; setenv uses KEEP-EMPTY, retaining a bare entry when a variable is unset
+;; and leaving later duplicate entries in place.
+(qa (let ((process-environment
+           '("QAMISC_DUP=old" "QAMISC_DUP=stale" "QAMISC_EMPTY=old")))
+      (setenv "QAMISC_DUP" "new")
+      (setenv "QAMISC_EMPTY" nil)
+      process-environment)
+    '("QAMISC_DUP=new" "QAMISC_DUP=stale" "QAMISC_EMPTY"))
+(qa (let ((process-environment '("QAMISC_SOURCE=from-env")))
+      (setenv "QAMISC_EXPANDED" "$QAMISC_SOURCE/tail" t)
+      (getenv "QAMISC_EXPANDED"))
+    "from-env/tail")
+(qa (let ((process-environment nil))
+      (let ((value (setenv "QAMISC_UTF8" "é")))
+        (list (multibyte-string-p value)
+              (multibyte-string-p (car process-environment))
+              (getenv "QAMISC_UTF8"))))
+    '(nil nil "é"))
+(qa (let* ((name (string-as-unibyte "QAMISC_RAW"))
+           (value (unibyte-string 233))
+           (entry (car (setenv-internal nil name value t))))
+      (list (multibyte-string-p entry)
+            (equal entry (concat name (string-as-unibyte "=") value))))
+    '(nil t))
+(qa (let ((name (copy-sequence "QAMISC_EMPTY")))
+      (eq name (car (setenv-internal nil name nil t))))
+    t)
+(qa (let ((old (getenv "TZ")))
+      (unwind-protect
+          (progn (setenv "TZ" "UTC0") (car (current-time-zone 0)))
+        (setenv "TZ" old)))
+    0)
+(qa-err (setenv "QAMISC=BAD" "value") 'error)
+
+;; setenv assigns process-environment through the variable's normal setter:
+;; a watcher error must escape and leave the old value intact.
+(defun qa-miscfn-setenv-watcher (_symbol _value operation _where)
+  (when (eq operation 'set)
+    (signal 'file-error '("process-environment watcher"))))
+(qa (let ((process-environment '("QAMISC_KEEP=1")))
+      (add-variable-watcher 'process-environment #'qa-miscfn-setenv-watcher)
+      (unwind-protect
+          (list (condition-case err
+                    (progn (setenv "QAMISC_WATCHED" "new") 'returned)
+                  (error (car err)))
+                (equal process-environment '("QAMISC_KEEP=1")))
+        (remove-variable-watcher 'process-environment
+                                 #'qa-miscfn-setenv-watcher)))
+    '(file-error t))
+
 ;; command line
 (qa (listp command-line-args) t)
 (qa (stringp (car command-line-args)) t)
@@ -126,6 +194,29 @@
 (qa (integerp (1+ most-positive-fixnum)) t)
 (qa (natnump (1+ most-positive-fixnum)) t)
 (qa (< most-positive-fixnum (1+ most-positive-fixnum)) t)
+
+;; Symbol-property lookup must not impose a fixed plist length limit.
+(qa
+ (let ((symbol (make-symbol "qa-long-symbol-plist")) plist)
+   (dotimes (index 10001)
+     (setq plist (cons index (cons 'filler plist))))
+   (setq plist (nreverse plist))
+   (setq plist (nconc plist '(target 42)))
+   (setplist symbol plist)
+   (get symbol 'target))
+ 42)
+
+;; Updating a cyclic symbol plist reports `circular-list' instead of looping.
+(qa
+ (let* ((symbol (make-symbol "qa-circular-symbol-plist"))
+        (key (cons 'existing nil))
+        (value (cons 1 key)))
+   (setcdr key value)
+   (setplist symbol key)
+   (condition-case error
+       (put symbol 'missing 42)
+     (circular-list (car error))))
+ 'circular-list)
 
 ;; float specials
 (qa (car (read-from-string "1e999")) 1.0e+INF)

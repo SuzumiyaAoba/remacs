@@ -1,0 +1,26 @@
+;;; -*- lexical-binding: nil; -*-
+;; A user record whose tag happens to be `terminal' is not a terminal.
+(qa (let ((fake (record 'terminal 0 "initial_terminal")))
+      (list (terminal-live-p fake)
+            (prin1-to-string fake)
+            (terminal-live-p (car (terminal-list)))))
+    '(nil "#s(terminal 0 \"initial_terminal\")" t))
+(qa (let* ((fake (record 'terminal 0 "initial_terminal"))
+           (calls 0)
+           (output (let ((print-unreadable-function
+                          (lambda (_object _escape)
+                            (setq calls (1+ calls))
+                            "callback")))
+                     (prin1-to-string fake))))
+      (list output calls))
+    '("#s(terminal 0 \"initial_terminal\")" 0))
+(qa (let* ((terminal (car (terminal-list)))
+           (calls 0)
+           (output (let ((print-unreadable-function
+                          (lambda (_object _escape)
+                            (setq calls (1+ calls))
+                            "callback")))
+                     (prin1-to-string terminal))))
+      (list output calls))
+    '("callback" 1))
+(princ (qa--done)) (terpri)

@@ -24,10 +24,7 @@ const CASES: &str = r#"(list
   (not (null (string-match-p (wildcard-to-regexp "foo\\\\") "foo\\"))))"#;
 
 fn lisp_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value.replace('\\', "\\\\").replace('"', "\\\"")
-    )
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[test]
@@ -53,15 +50,23 @@ fn wildcard_backslash_quotes_and_consumes_the_next_character() {
         ),
         other => panic!("{other:?}"),
     });
-    assert_eq!(interp.prin1_to_string(&result), "(t t t t t t t t t t t t t t t t t t)");
+    assert_eq!(
+        interp.prin1_to_string(&result),
+        "(t t t t t t t t t t t t t t t t t t)"
+    );
 
-    let result = interp.eval_str(&source_eval).unwrap_or_else(|flow| match flow {
-        Flow::Signal(signal) => panic!(
-            "{} {}",
-            interp.prin1_to_string(&signal.symbol()),
-            interp.prin1_to_string(&signal.data())
-        ),
-        other => panic!("{other:?}"),
-    });
-    assert_eq!(interp.prin1_to_string(&result), "(t t t t t t t t t t t t t t t t t t)");
+    let result = interp
+        .eval_str(&source_eval)
+        .unwrap_or_else(|flow| match flow {
+            Flow::Signal(signal) => panic!(
+                "{} {}",
+                interp.prin1_to_string(&signal.symbol()),
+                interp.prin1_to_string(&signal.data())
+            ),
+            other => panic!("{other:?}"),
+        });
+    assert_eq!(
+        interp.prin1_to_string(&result),
+        "(t t t t t t t t t t t t t t t t t t)"
+    );
 }

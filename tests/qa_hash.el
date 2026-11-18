@@ -20,6 +20,14 @@
 (qa (integerp (sxhash-eq 'sym)) t)
 (qa (integerp (sxhash-eql 42)) t)
 (qa (integerp (sxhash-equal "abc")) t)
+;; GNU 31.1 pins deterministic hashes for builtin symbols, fixnums, and
+;; content-hashed strings/structures. Dynamic symbol and identity hashes are
+;; intentionally excluded because GNU does not promise session stability.
+(qa (list (sxhash-eq 't) (sxhash-equal 't)
+          (sxhash-eq 'car) (sxhash-equal 'car)
+          (sxhash-equal "abc") (sxhash-equal '(1 2))
+          (sxhash-equal [1 2]))
+    '(15 15 5790 5790 8059383 22 662))
 ;; deterministic
 (qa (= (sxhash-equal "abc") (sxhash-equal "abc")) t)
 ;; sxhash-equal ignores text properties

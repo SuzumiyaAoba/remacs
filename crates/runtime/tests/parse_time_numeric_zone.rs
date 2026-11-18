@@ -93,13 +93,18 @@ fn lisp_string(value: &str) -> String {
 
 #[test]
 fn parse_time_numeric_zone_checks_rfc5322_minute_range() {
-    let root = PathBuf::from(env!("REMACS_SOURCE_ROOT")).canonicalize().unwrap();
+    let root = PathBuf::from(env!("REMACS_SOURCE_ROOT"))
+        .canonicalize()
+        .unwrap();
     let iso = root.join("lisp/iso8601.el");
     let parse_time = root.join("lisp/parse-time.el");
     let mut interp = Interp::new();
     let fixture = CASES
         .replace("ISO8601_SOURCE", &lisp_string(iso.to_str().unwrap()))
-        .replace("PARSE_TIME_SOURCE", &lisp_string(parse_time.to_str().unwrap()));
+        .replace(
+            "PARSE_TIME_SOURCE",
+            &lisp_string(parse_time.to_str().unwrap()),
+        );
     let result = interp.eval_str(&fixture).unwrap_or_else(|flow| match flow {
         Flow::Signal(signal) => panic!(
             "{} {}",

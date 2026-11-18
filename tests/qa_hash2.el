@@ -25,6 +25,9 @@
 (qa (hash-table-size (make-hash-table :size 100)) 100)
 (qa (hash-table-p "abc") nil)
 (qa (hash-table-p [1 2]) nil)
+(qa-err (make-hash-table :test (make-symbol "eq")) 'error)
+(qa-err (make-hash-table :weakness (make-symbol "key")) 'error)
+(qa-err (make-hash-table :weakness (make-symbol "t")) 'error)
 
 ;; == gethash / puthash ==
 (qa (let ((h (make-hash-table)))
@@ -216,4 +219,18 @@
       (list (hash-table-size h) (hash-table-count h))) '(2 2))
 (qa (let ((h (read "#s(hash-table test eql data (1 a 1 b 2 c))")))
       (list (hash-table-size h) (hash-table-count h) (gethash 1 h))) '(3 2 b))
+(qa (let* ((left
+            (eval '(let ((qa-hash-closure-value 1))
+                     (lambda () qa-hash-closure-value)) t))
+           (right
+            (eval '(let ((qa-hash-closure-value 2))
+                     (lambda () qa-hash-closure-value)) t))
+           (table (make-hash-table :test 'equal)))
+      (puthash left 'left table)
+      (puthash right 'right table)
+      (list (equal left right)
+            (hash-table-count table)
+            (gethash left table)
+            (gethash right table)))
+    '(nil 2 left right))
 (princ (qa--done))

@@ -83,6 +83,16 @@
                 (setq qa-qf-seen quit-flag))
             (error nil))
           (list qa-qf-seen quit-flag)) qa-qf-mode) '((nil pending) pending))
+  ;; A caught cleanup error must not replace the quit state saved for the
+  ;; still-pending outer condition-case transfer.
+  (qa (qa-qf-state
+       '(progn
+          (setq quit-flag 'older)
+          (condition-case err
+              (unwind-protect (error "body")
+                (condition-case nil (error "cleanup") (error nil)))
+            (error (list (cadr err) quit-flag)))) qa-qf-mode)
+      '(("body" older) older))
   (qa (qa-qf-state
        '(let (qa-qf-seen
               (signal-hook-function

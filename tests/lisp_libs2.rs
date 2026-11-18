@@ -3329,6 +3329,37 @@ fn f90_change_keywords_changes_every_word_of_multiword_keywords() {
 }
 
 #[test]
+fn mhtml_indent_anchor_uses_the_containing_html_element() {
+    assert_eq!(
+        ev(r#"(progn
+              (provide 'cus-edit)
+              (defmacro easy-menu-define (&rest _) nil)
+              (require 'cl-lib)
+              (require 'mhtml-ts-mode)
+              (with-temp-buffer
+                (insert "<script>\n  const tag = \"<script>\";\n  call();\n</script>\n")
+                (goto-char (point-min))
+                (forward-line 2)
+                (cl-letf (((symbol-function 'treesit-language-at)
+                           (lambda (&rest _) 'javascript))
+                          ((symbol-function 'treesit-node-at)
+                           (lambda (_position language)
+                             (and (eq language 'html) 'raw-text)))
+                          ((symbol-function 'treesit-node-parent)
+                           (lambda (node)
+                             (and (eq node 'raw-text) 'script-element)))
+                          ((symbol-function 'treesit-node-type)
+                           (lambda (node)
+                             (if (eq node 'script-element) "script_element" "raw_text")))
+                          ((symbol-function 'treesit-node-start)
+                           (lambda (_) (point-min))))
+                  (line-number-at-pos
+                   (mhtml-ts-mode--js-css-tag-bol nil nil)))))"#),
+        "1"
+    );
+}
+
+#[test]
 fn simula_skip_comment_forward_ignores_directive_semicolons() {
     assert_eq!(
         ev(r#"(progn

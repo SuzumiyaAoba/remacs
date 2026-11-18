@@ -438,4 +438,12 @@
       (qa352-info (qa352-value 'select "select cast(x'80ff' as text) as value")))
     '(t 4 (4194176 4194303) nil))
 
+;; Only canonical return-type symbols select sqlite-select's special modes.
+(qa (let ((db (sqlite-open)))
+      (unwind-protect
+          (list (sqlite-select db "select 1" nil (make-symbol "set"))
+                (sqlite-select db "select 1" nil (make-symbol "full")))
+        (sqlite-close db)))
+    '(((1)) ((1))))
+
 (princ (qa--done))

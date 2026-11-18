@@ -619,4 +619,45 @@
             qafs-src))
     (delete-directory qafs-cd t)))
 
+;; A cyclic abbreviation alist is malformed, but must not trap the editor in
+;; `each_car' while checking path prefixes.
+(when qa--remacs
+  (let ((directory-abbrev-alist nil)
+        (entries (list (cons "never-matches" "/tmp"))))
+    (setcdr entries entries)
+    (setq directory-abbrev-alist entries)
+    (qa-err (abbreviate-file-name "/not-abbreviated") 'circular-list)))
+
+;; A malformed revert regexp is signaled after the visited file is known stale.
+(qa
+ (let* ((file (make-temp-file "qa-revert-invalid-regexp-" nil ".el"))
+        (buffer (find-file-noselect file))
+        (revert-without-query '("["))
+        (query-about-changed-file nil))
+   (unwind-protect
+       (progn
+         (with-current-buffer buffer
+           (set-visited-file-modtime (seconds-to-time 0)))
+         (condition-case error
+             (progn (find-file-noselect file) 'returned)
+           (error (car error))))
+     (when (buffer-live-p buffer) (kill-buffer buffer))
+     (delete-file file)))
+ 'invalid-regexp)
+
+(when qa--remacs
+  (let* ((file (make-temp-file "qa-revert-circular-" nil ".el"))
+         (buffer (find-file-noselect file))
+         (patterns (list "never-matches"))
+         (query-about-changed-file nil))
+    (setcdr patterns patterns)
+    (unwind-protect
+        (progn
+          (with-current-buffer buffer
+            (set-visited-file-modtime (seconds-to-time 0)))
+          (let ((revert-without-query patterns))
+            (qa-err (find-file-noselect file) 'circular-list)))
+      (when (buffer-live-p buffer) (kill-buffer buffer))
+      (delete-file file))))
+
 (princ (qa--done))

@@ -77,5 +77,21 @@
     (setcdr a b)
     (setcdr b a)
     (qa (qa68-set-parent child a) '(error "Cyclic keymap inheritance"))
-    (qa (null (keymap-parent child)) t)))
+    (qa (null (keymap-parent child)) t))
+  (let* ((map (make-sparse-keymap)))
+    (define-key map "a" 'ignore)
+    (let ((bindings (cdr map)))
+      (setcdr (last bindings) bindings)
+      (qa-err (copy-keymap map) 'circular-list))))
+;; PREFIX list validation distinguishes circular-list from a dotted tail.
+(let ((prefix (list ?a)))
+  (setcdr prefix prefix)
+  (unwind-protect
+      (qa (condition-case err
+              (accessible-keymaps (make-sparse-keymap) prefix)
+            (circular-list (list (car err) (eq (cadr err) prefix))))
+          '(circular-list t))
+    (setcdr prefix nil)))
+(qa-err-data (accessible-keymaps (make-sparse-keymap) '(?a . tail))
+             'wrong-type-argument '(listp tail))
 (princ (qa--done)) (terpri)
