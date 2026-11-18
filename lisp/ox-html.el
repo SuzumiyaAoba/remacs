@@ -3471,6 +3471,10 @@ images, set it to:
 	       info nil 'link)
 	     (= link-count 1))))))
 
+(defun org-html--format-mathjax-reference (format-string label)
+  "Format LABEL with FORMAT-STRING and escape the result as HTML text."
+  (org-html-encode-plain-text (format format-string label)))
+
 (defun org-html-link (link desc info)
   "Transcode a LINK object from Org to HTML.
 DESC is the description part of the link, or the empty string.
@@ -3612,8 +3616,9 @@ INFO is a plist holding contextual information.  See
                ;; Caption and labels are introduced within LaTeX
 	       ;; environment.  Use "ref" or "eqref" macro, depending on user
                ;; preference to refer to those in the document.
-               (format (plist-get info :html-equation-reference-format)
-                       (org-html--reference destination info))
+               (org-html--format-mathjax-reference
+                (plist-get info :html-equation-reference-format)
+                (org-html--reference destination info))
              (let* ((ref (org-html--reference destination info))
                     (org-html-standalone-image-predicate
                      #'org-html--has-caption-p)
