@@ -2954,10 +2954,15 @@ description of TODO, PRIORITY, TEXT, TAGS, and INFO arguments."
 (defun org-html--container (headline info)
   "Return HTML container name for HEADLINE as a string.
 INFO is the info plist."
-  (or (org-element-property :HTML_CONTAINER headline)
-      (if (= 1 (org-export-get-relative-level headline info))
-	  (plist-get info :html-container)
-	"div")))
+  (let ((container
+         (or (org-element-property :HTML_CONTAINER headline)
+             (if (= 1 (org-export-get-relative-level headline info))
+                 (plist-get info :html-container)
+               "div"))))
+    (unless (and (stringp container)
+                 (string-match-p "\\`[A-Za-z][A-Za-z0-9-]*\\'" container))
+      (error "Invalid HTML container name: %S" container))
+    container))
 
 ;;;; Horizontal Rule
 
