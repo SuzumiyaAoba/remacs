@@ -3119,8 +3119,9 @@ INFO is a plist holding contextual information.  See
 	(cl-case (org-element-type destination)
 	  ;; Id link points to an external file.
 	  (plain-text
-	   (if desc (format "\\href{%s}{%s}" destination desc)
-	     (format "\\url{%s}" destination)))
+	   (let ((destination (org-latex--protect-text destination)))
+	     (if desc (format "\\href{%s}{%s}" destination desc)
+	       (format "\\url{%s}" destination))))
 	  ;; Fuzzy link points nowhere.
 	  ((nil)
 	   (format (plist-get info :latex-link-with-unknown-path-format)
