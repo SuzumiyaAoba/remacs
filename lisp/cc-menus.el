@@ -178,7 +178,7 @@ nested angle brackets constructs."
       (concat "<"
 		"[][.," c-alnum "_? \t\n\r]+"
 		(if (> depth 1)
-		    "\\(")
+		    "\\(?:")
 		(cc-imenu-java-build-type-args-regex (1- depth))
 		(if (> depth 1)
 		  (concat "[][.," c-alnum "_? \t\n\r]*"
@@ -198,7 +198,8 @@ nested angle brackets constructs."
    ;; (option 1) type arguments list which _may_ be followed with brackets
    ;; and/or spaces, then optional variable arity
      "[ \t\n\r]*"
-     (cc-imenu-java-build-type-args-regex 3)
+     ;; The regexp is statically expanded, so permit several nested levels.
+     (cc-imenu-java-build-type-args-regex 8)
      "[][ \t\n\r]*"
      "\\(" cc-imenu-java-ellipsis-regexp "\\)?"
    "\\|"
@@ -285,7 +286,7 @@ nested angle brackets constructs."
 	")"
 	"[.,_" c-alnum " \t\n\r]*"	      ; throws etc.
 	"{"
-	)) 7))
+	)) 5))
   "Imenu generic expression for Java mode.  See `imenu-generic-expression'.")
 
 
