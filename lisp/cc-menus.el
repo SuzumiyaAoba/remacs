@@ -241,7 +241,8 @@ nested angle brackets constructs."
      "\\("
        "@[" c-alpha "_]"
        "[" c-alnum "._]*"
-       ;; TODO support element-value pairs!
+       ;; Optional annotation values such as @Anno(value="x").
+       "\\(?:[ \t\n\r]*(\\(?:[^)]*\\))\\)?"
      "\\|"
        "final"
      "\\)"
