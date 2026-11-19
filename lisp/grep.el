@@ -395,13 +395,12 @@ Notice that using \\[next-error] or \\[compile-goto-error] modifies
               ;; The NUL separator allows newlines in filenames.
               "\\(?1:[^\0]+\\)\\(?3:\0\\)\\(?2:[0-9]+\\):"
               "\\|"
-              ;; Fallback if `--null' is not used, use a tight regexp
-              ;; to handle weird file names (with colons in them) as
-              ;; well as possible.  E.g., use [1-9][0-9]* rather than
-              ;; [0-9]+ so as to accept ":034:" in file names.
-              "\\(?1:"
-              "\\(?:[a-zA-Z]:\\)?" ; Allow "C:..." for w32.
-              "[^\n:]+?[^\n/:]\\):[\t ]*\\(?2:[1-9][0-9]*\\)[\t ]*:"
+              ;; Without NUL separators, use the last colon followed by
+              ;; a positive line number as the file/line boundary.  This
+              ;; accepts one-character names and filenames containing
+              ;; colons.  A colon followed by digits in a filename remains
+              ;; inherently ambiguous in this output format.
+              "\\(?1:[^\n]+\\):[\t ]*\\(?2:[1-9][0-9]*\\)[\t ]*:"
               "\\)")
      1 2
      ;; Calculate column positions (col . end-col) of first grep match on a line
