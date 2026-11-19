@@ -224,8 +224,7 @@ with halfway values rounded upward."
 
 (defun shr-color-hue-to-rgb (x y h)
   "Convert X Y H to RGB value."
-  (when (< h 0) (incf h))
-  (when (> h 1) (decf h))
+  (setq h (mod h 1.0))
   (cond ((< h (/ 6.0)) (+ x (* (- y x) h 6)))
         ((< h 0.5) y)
         ((< h (/ 2.0 3.0)) (+ x (* (- y x) (- (/ 2.0 3.0) h) 6)))
