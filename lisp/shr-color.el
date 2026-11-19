@@ -213,8 +213,9 @@ Each entry should have the form (COLOR-NAME . HEXADECIMAL-COLOR).")
           shr-color--rgb-component-regexp "[[:space:]]+"
           shr-color--rgb-component-regexp "[[:space:]]+"
           shr-color--rgb-component-regexp
-          "\\(?:[[:space:]]*/[[:space:]]*"
-          shr-color--css-number-regexp "[[:space:]]*%?\\)?[[:space:]]*)")
+          "\\(?:[[:space:]]*/[[:space:]]*\\("
+          shr-color--css-number-regexp
+          "\\(?:[[:space:]]*%\\)?\\)\\)?[[:space:]]*)")
   "Regexp matching modern space-separated rgb() or rgba() syntax.")
 
 (defconst shr-color--modern-hsl-regexp
@@ -222,9 +223,37 @@ Each entry should have the form (COLOR-NAME . HEXADECIMAL-COLOR).")
           shr-color--component-regexp "[[:space:]]+"
           shr-color--rgb-component-regexp "[[:space:]]+"
           shr-color--rgb-component-regexp
-          "\\(?:[[:space:]]*/[[:space:]]*"
-          shr-color--css-number-regexp "[[:space:]]*%?\\)?[[:space:]]*)")
+          "\\(?:[[:space:]]*/[[:space:]]*\\("
+          shr-color--css-number-regexp
+          "\\(?:[[:space:]]*%\\)?\\)\\)?[[:space:]]*)")
   "Regexp matching modern space-separated hsl() or hsla() syntax.")
+
+(defconst shr-color--legacy-alpha-regexp
+  (concat "\\(?:rgba\\|hsla\\)([[:space:]]*.*,[[:space:]]*\\("
+          shr-color--css-number-regexp
+          "\\(?:[[:space:]]*%\\)?\\)[[:space:]]*)")
+  "Regexp capturing alpha in legacy rgba() and hsla() syntax.")
+
+(defun shr-color--alpha-from-color (color)
+  "Return COLOR's opacity, defaulting to 1.0."
+  (let ((case-fold-search t))
+    (cond
+     ((string-equal (downcase color) "transparent") 0.0)
+     ((and (= (length color) 5)
+           (string-match-p "\\`#[[:xdigit:]]\\{4\\}\\'" color))
+      (/ (* 17 (string-to-number (substring color 4 5) 16)) 255.0))
+     ((and (= (length color) 9)
+           (string-match-p "\\`#[[:xdigit:]]\\{8\\}\\'" color))
+      (/ (string-to-number (substring color 7 9) 16) 255.0))
+     ((string-match shr-color--legacy-alpha-regexp color)
+      (shr-color--alpha-number (match-string-no-properties 1 color)))
+     ((string-match shr-color--modern-rgb-regexp color)
+      (let ((alpha (match-string-no-properties 4 color)))
+        (if alpha (shr-color--alpha-number alpha) 1.0)))
+     ((string-match shr-color--modern-hsl-regexp color)
+      (let ((alpha (match-string-no-properties 4 color)))
+        (if alpha (shr-color--alpha-number alpha) 1.0)))
+     (t 1.0))))
 
 (defun shr-color-relative-to-absolute (number)
   "Convert CSS RGB component NUMBER to a clamped 8-bit channel.
@@ -259,16 +288,100 @@ with halfway values rounded upward."
 	  (shr-color-hue-to-rgb m1 m2 h)
 	  (shr-color-hue-to-rgb m1 m2 (- h (/ 3.0))))))
 
+(defun shr-color--alpha-number (number)
+  "Return NUMBER as an opacity in the range 0 to 1."
+  (let* ((string-length (length number))
+         (percentage (and (> string-length 0)
+                          (eq (aref number (1- string-length)) ?%)))
+         (value (string-to-number
+                 (if percentage (substring number 0 (1- string-length))
+                   number)))
+         (alpha (if percentage (/ value 100.0) value)))
+    (max 0 (min 1 alpha))))
+
+(defun shr-color--alpha-byte (number)
+  "Convert CSS opacity NUMBER to an 8-bit alpha channel."
+  (floor (+ (* (shr-color--alpha-number number) 255) 0.5)))
+
+(defun shr-color--append-alpha (rgb alpha)
+  "Append CSS opacity ALPHA to the RGB hexadecimal color RGB."
+  (if alpha
+      (concat (upcase rgb) (format "%02X" (shr-color--alpha-byte alpha)))
+    rgb))
+
+(defun shr-color--normalize-alpha-hex (color)
+  "Return COLOR as #RRGGBBAA, expanding its short hexadecimal form."
+  (let ((digits (substring color 1)))
+    (if (= (length digits) 4)
+        (format "#%02X%02X%02X%02X"
+                (* 17 (string-to-number (substring digits 0 1) 16))
+                (* 17 (string-to-number (substring digits 1 2) 16))
+                (* 17 (string-to-number (substring digits 2 3) 16))
+                (* 17 (string-to-number (substring digits 3 4) 16)))
+      (upcase color))))
+
+(defun shr-color--alpha-from-hex (color)
+  "Return COLOR's 8-bit hexadecimal opacity, or nil when it is opaque."
+  (when (and (stringp color)
+             (= (length color) 9)
+             (string-match-p "\\`#[[:xdigit:]]\\{8\\}\\'" color))
+    (/ (string-to-number (substring color 7 9) 16) 255.0)))
+
+(defun shr-color--hex-to-rgb (color)
+  "Return COLOR's normalized RGB components."
+  (when (stringp color)
+    (let ((length (length color)))
+      (cond
+       ((and (= length 7)
+             (string-match-p "\\`#[[:xdigit:]]\\{6\\}\\'" color))
+        (list (/ (string-to-number (substring color 1 3) 16) 255.0)
+              (/ (string-to-number (substring color 3 5) 16) 255.0)
+              (/ (string-to-number (substring color 5 7) 16) 255.0)))
+       ((and (= length 4)
+             (string-match-p "\\`#[[:xdigit:]]\\{3\\}\\'" color))
+        (list (/ (* 17 (string-to-number (substring color 1 2) 16)) 255.0)
+              (/ (* 17 (string-to-number (substring color 2 3) 16)) 255.0)
+              (/ (* 17 (string-to-number (substring color 3 4) 16)) 255.0)))
+       (t (color-name-to-rgb color))))))
+
+(defun shr-color--composite-alpha (color background &optional alpha)
+  "Composite RGBA COLOR over opaque BACKGROUND.
+ALPHA, when non-nil, is the unquantized opacity of COLOR."
+  (if (not (and (stringp color)
+                (= (length color) 9)
+                (string-match-p "\\`#[[:xdigit:]]\\{8\\}\\'" color)))
+      color
+    (let ((alpha (or alpha (shr-color--alpha-from-hex color)))
+          (rgb (substring color 0 7)))
+      (cond
+       ((or (null alpha) (>= alpha 1.0)) rgb)
+       ((= alpha 0.0) background)
+       (t
+        (let ((foreground-values (shr-color--hex-to-rgb rgb))
+              (background-values (shr-color--hex-to-rgb background)))
+          (if (and foreground-values background-values)
+              (color-rgb-to-hex
+               (+ (* alpha (nth 0 foreground-values))
+                  (* (- 1 alpha) (nth 0 background-values)))
+               (+ (* alpha (nth 1 foreground-values))
+                  (* (- 1 alpha) (nth 1 background-values)))
+               (+ (* alpha (nth 2 foreground-values))
+                  (* (- 1 alpha) (nth 2 background-values)))
+               2)
+            rgb)))))))
+
 (defun shr-color->hexadecimal (color)
-  "Convert any color format to hexadecimal representation.
-Like rgb() or hsl()."
+  "Convert COLOR to hexadecimal, including alpha as a final byte when present."
   (when color
     (cond
-     ;; Hexadecimal color: #abc or #aabbcc
-     ((string-match
-       "\\(#[[:xdigit:]]\\{3\\}[[:xdigit:]]\\{3\\}?\\)"
-       color)
-      (match-string 1 color))
+     ;; CSS hex colors have exactly 3, 4, 6, or 8 digits.
+     ((string-equal (downcase color) "transparent")
+      "#00000000")
+     ((and (string-match-p "\\`#[[:xdigit:]]+\\'" color)
+           (memq (length (substring color 1)) '(3 4 6 8)))
+      (if (memq (length (substring color 1)) '(4 8))
+          (shr-color--normalize-alpha-hex color)
+        color))
      ;; rgb() or rgba() colors
      ((or (string-match
            (concat "rgb([[:space:]]*" shr-color--rgb-component-regexp
@@ -280,14 +393,17 @@ Like rgb() or hsl()."
            (concat "rgba([[:space:]]*" shr-color--rgb-component-regexp
                    "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
                    "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
-                   "[[:space:]]*,[[:space:]]*" shr-color--css-number-regexp
-                   "[[:space:]]*%?[[:space:]]*)")
+                   "[[:space:]]*,[[:space:]]*\\("
+                   shr-color--css-number-regexp
+                   "\\(?:[[:space:]]*%\\)?\\)[[:space:]]*)")
            color)
           (string-match shr-color--modern-rgb-regexp color))
-      (format "#%02X%02X%02X"
-              (shr-color-relative-to-absolute (match-string-no-properties 1 color))
-              (shr-color-relative-to-absolute (match-string-no-properties 2 color))
-              (shr-color-relative-to-absolute (match-string-no-properties 3 color))))
+      (shr-color--append-alpha
+       (format "#%02X%02X%02X"
+               (shr-color-relative-to-absolute (match-string-no-properties 1 color))
+               (shr-color-relative-to-absolute (match-string-no-properties 2 color))
+               (shr-color-relative-to-absolute (match-string-no-properties 3 color)))
+       (match-string-no-properties 4 color)))
      ;; hsl() or hsla() colors
      ((or (string-match
            (concat "hsl([[:space:]]*" shr-color--component-regexp
@@ -300,16 +416,18 @@ Like rgb() or hsl()."
                    "[[:space:]]*,[[:space:]]*" shr-color--component-regexp
                    "[[:space:]]*%[[:space:]]*,[[:space:]]*"
                    shr-color--component-regexp
-                   "[[:space:]]*%[[:space:]]*,[[:space:]]*"
-                   shr-color--css-number-regexp "[[:space:]]*%?[[:space:]]*)")
+                   "[[:space:]]*%[[:space:]]*,[[:space:]]*\\("
+                   shr-color--css-number-regexp
+                   "\\(?:[[:space:]]*%\\)?\\)[[:space:]]*)")
            color)
           (string-match shr-color--modern-hsl-regexp color))
-      (let ((h (/ (string-to-number (match-string-no-properties 1 color)) 360.0))
-            (s (/ (max 0 (string-to-number (match-string-no-properties 2 color)))
-                  100.0))
-            (l (/ (string-to-number (match-string-no-properties 3 color)) 100.0)))
+      (let* ((alpha (match-string-no-properties 4 color))
+             (h (/ (string-to-number (match-string-no-properties 1 color)) 360.0))
+             (s (/ (max 0 (string-to-number (match-string-no-properties 2 color)))
+                   100.0))
+             (l (/ (string-to-number (match-string-no-properties 3 color)) 100.0)))
         (pcase-let ((`(,r ,g ,b) (shr-color-hsl-to-rgb-fractions h s l)))
-          (color-rgb-to-hex r g b 2))))
+          (shr-color--append-alpha (color-rgb-to-hex r g b 2) alpha))))
      ;; Color names
      ((cdr (assoc-string color shr-color-html-colors-alist t)))
      ;; Unrecognized color :(

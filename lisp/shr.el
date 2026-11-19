@@ -1450,21 +1450,32 @@ Returns (fg bg) with corrected values.
 Returns nil if the colors that would be used are the default
 ones, in case fg and bg are nil."
   (when (or fg bg)
-    (let ((fixed (cond ((null fg) 'fg)
-                       ((null bg) 'bg))))
-      ;; Convert colors to hexadecimal, or set them to default.
-      (let ((fg (or (shr-color->hexadecimal fg)
-                    (frame-parameter nil 'foreground-color)))
-            (bg (or (shr-color->hexadecimal bg)
-                    (frame-parameter nil 'background-color))))
-        (cond ((eq fixed 'bg)
-               ;; Only return the new fg
-               (list nil (cadr (shr-color-visible bg fg t))))
-              ((eq fixed 'fg)
-               ;; Invert args and results and return only the new bg
-               (list (cadr (shr-color-visible fg bg t)) nil))
-              (t
-               (shr-color-visible bg fg)))))))
+    (let* ((fixed (cond ((null fg) 'fg)
+                        ((null bg) 'bg)))
+           (default-fg (frame-parameter nil 'foreground-color))
+           (default-bg (frame-parameter nil 'background-color))
+           ;; Convert colors to hexadecimal, or set them to default.
+           (fg-color (or (shr-color->hexadecimal fg) default-fg))
+           (bg-color (or (shr-color->hexadecimal bg) default-bg))
+           (fg-alpha (and fg (shr-color--alpha-from-color fg)))
+           (bg-alpha (and bg (shr-color--alpha-from-color bg)))
+           (bg-color (shr-color--composite-alpha bg-color default-bg bg-alpha))
+           (fg-color (shr-color--composite-alpha fg-color bg-color fg-alpha)))
+      (cond
+       ;; A transparent or translucent foreground is blended with the
+       ;; background before it reaches Emacs's opaque face color API.
+       ((and fg-alpha (< fg-alpha 1.0))
+        (if (eq fixed 'bg)
+            (list nil fg-color)
+          (list bg-color fg-color)))
+       ((eq fixed 'bg)
+        ;; Only return the new fg.
+        (list nil (cadr (shr-color-visible bg-color fg-color t))))
+       ((eq fixed 'fg)
+        ;; Invert args and results and return only the new bg.
+        (list (cadr (shr-color-visible fg-color bg-color t)) nil))
+       (t
+        (shr-color-visible bg-color fg-color))))))
 
 (defun shr-colorize-region (start end fg &optional bg)
   (when (and shr-use-colors
