@@ -324,11 +324,13 @@ impl Printer<'_> {
                         self.push_text(out, &t)?;
                         prefix_written = true;
                         if let Some(label) = label {
-                            if self.output_stream.is_some() {
-                                self.record_number_event(out, label)?;
-                            } else {
-                                pending_number_event = Some(label);
-                            }
+                            // The number-table label is visible to nested
+                            // objects as soon as its complete `#N=' prefix
+                            // has been emitted. Deferring this event until
+                            // the object's body finishes can print a second
+                            // `#N=' for a cycle that points back into that
+                            // body.
+                            self.record_number_event(out, label)?;
                         }
                     }
                 }

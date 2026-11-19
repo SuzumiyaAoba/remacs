@@ -1189,7 +1189,7 @@ solution."
               (aset copy line-end 32))))
         (when found
           (setq remaining (cdr remaining))))
-    position))
+    position)))
 
 ;; Remacs: mask command separators inside quotes and subshells while scanning.
 (defun shell-directory-tracker--mask-nested-separators (command)
@@ -1309,7 +1309,7 @@ This lets the directory tracker split only commands in the parent shell."
          ((and (> depth 0) (memq char '(?\; ?& ?| ?\n)))
           (aset copy index 32)))))
       (setq index (1+ index)))
-    copy))
+    copy)))
 
 ;; Remacs: distinguish a pipeline bar from the shell's || operator.
 (defun shell-directory-tracker--pipeline-separator-p (separator)

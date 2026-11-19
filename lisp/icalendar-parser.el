@@ -408,7 +408,7 @@ is a wrapper for this function which can be added to that list."
                 (setq folded t))
               (setq bol (goto-char (if folded (1- eol) (1+ eol)))))))
     ;; Return annotations, or nil if we modified the buffer directly:
-    (nreverse annotations)))
+    (nreverse annotations))))))
 
 (defun icalendar-folding-annotations (start end &optional buffer)
   "Return a list of annotations for folding lines in the region.

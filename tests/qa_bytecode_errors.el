@@ -12,6 +12,14 @@
 (qa-err-data (byte-code "" [] "0") 'error '("Invalid byte-code"))
 (qa-err-data (byte-code "" [] []) 'error '("Invalid byte-code"))
 (qa-err-data (byte-code "" [] 2305843009213693952) 'error '("Invalid byte-code"))
+(qa-err-data (byte-code (unibyte-string 135) [] 600000)
+             'error '("Bytecode stack overflow"))
+(qa-err-data (funcall (make-byte-code 0 (unibyte-string 135) [] 600000))
+             'error '("Bytecode stack overflow"))
+(when qa--remacs
+  ;; The declared stack depth cannot hold the optional argument slots.
+  (qa-err-data (funcall (make-byte-code 32768 (unibyte-string 135) [] 1))
+               'error '("Invalid byte-code")))
 
 (qa-err-data (byte-code "" [] 0) 'error '("Invalid byte opcode: op=0, ptr=0"))
 (qa-err-data (byte-code "" [] 1) 'error '("Invalid byte opcode: op=0, ptr=0"))

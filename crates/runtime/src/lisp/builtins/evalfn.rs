@@ -5539,7 +5539,11 @@ fn f_byte_code(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     } else {
         args[0].clone()
     };
-    crate::lisp::bytecode::exec_raw(i, &code, &args[1])
+    let depth = args[2]
+        .int()
+        .and_then(|depth| usize::try_from(depth).ok())
+        .ok_or_else(|| i.error("Invalid byte-code"))?;
+    crate::lisp::bytecode::exec_raw(i, &code, &args[1], depth)
 }
 
 fn f_make_byte_code(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {

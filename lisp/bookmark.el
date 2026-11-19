@@ -1739,7 +1739,7 @@ probably because we were called from there."
       (setq bookmark-alist-modification-count
             (1+ bookmark-alist-modification-count))
       (when (bookmark-time-to-save-p)
-        (bookmark-save))))
+        (bookmark-save)))))
 
 
 ;;;###autoload

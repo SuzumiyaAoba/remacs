@@ -76,7 +76,7 @@ pair to NFC before encoding it as UTF-8."
                (string-equal (downcase charset) "utf-8"))
       (require 'ucs-normalize)
       (setq user-pass (ucs-normalize-NFC-string user-pass)))
-    (base64-encode-string (encode-coding-string user-pass 'utf-8) t)))
+    (base64-encode-string (encode-coding-string user-pass 'utf-8) t))))
 
 (defun url-basic-auth--directory-prefix-p (directory file)
   "Return non-nil if DIRECTORY is an ancestor directory of FILE."
@@ -104,7 +104,7 @@ prefix.  Realm entries are a fallback when FILE is a directory path."
                   (when (or (null best-directory)
                             (> (length key) (length (car best-directory))))
                     (setq best-directory entry)))))
-          (or best-directory realm-entry)))))
+          (or best-directory realm-entry))))))
 
 (defun url-basic-auth (url &optional prompt overwrite realm args)
   "Get the username/password for the specified URL.

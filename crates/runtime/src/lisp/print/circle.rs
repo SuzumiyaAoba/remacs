@@ -3,6 +3,7 @@
 use crate::lisp::{
     Interp,
     error::{EvalResult, Flow},
+    print_text::PrintText,
     text::EmacsText,
     value::{HashKey, Value},
 };
@@ -406,6 +407,26 @@ pub(super) fn number_table_subst(
         _ => None,
     };
     Ok(substitution)
+}
+
+/// Whether LIST's cdr must be rendered as a dotted object because either
+/// the pointer-based circle context or `print-number-table' has assigned it
+/// a label. Continuous numbering with the built-in table intentionally
+/// disables `CIRCLE' to avoid duplicate prefixes, but list traversal still
+/// needs to know when flattening a shared cdr would move its `#N=' past the
+/// first occurrence.
+pub(super) fn print_circle_tail_is_labeled(
+    i: &Interp,
+    value: &Value,
+    output: &PrintText,
+) -> Result<bool, Flow> {
+    let Some(key) = print_stack_key(value) else {
+        return Ok(false);
+    };
+    if circle_counted(key) {
+        return Ok(true);
+    }
+    Ok(number_table_subst(i, value, key, output)?.is_some())
 }
 
 impl Interp {

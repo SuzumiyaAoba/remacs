@@ -2168,7 +2168,7 @@ holding export options."
      (and (plist-get info :with-creator)
 	  (concat (plist-get info :creator) "\n"))
      ;; Document end.
-     "\\end{document}")))
+     "\\end{document}"))))
 
 
 

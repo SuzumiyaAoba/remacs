@@ -8,6 +8,24 @@
         (car (read-from-string source))
       (funcall qa94-reader source))))
 
+(defun qa94-read-from-buffer (source)
+  (with-temp-buffer
+    (insert source)
+    (goto-char (point-min))
+    (read (current-buffer))))
+
+;; `org-persist' reads circular data from a source buffer, not a string.
+(qa (let ((buffer (generate-new-buffer " *qa94-reader-buffer*")))
+      (unwind-protect
+          (with-current-buffer buffer
+            (insert "#1=(1 . #1#)")
+            (goto-char (point-min))
+            (let ((read-circle t))
+              (let ((value (read (current-buffer))))
+                (eq value (cdr value)))))
+        (kill-buffer buffer)))
+    t)
+
 (dolist (qa94-reader '(read read-from-string read-positioning-symbols))
   (qa (let ((value (qa94-read "#1=(1 . #1#)")))
         (eq value (cdr value))) t)
@@ -57,6 +75,76 @@
   ;; Label scope ends with each read call.
   (qa-err-data (progn (qa94-read "#1=(1)") (qa94-read "#1#"))
                'invalid-read-syntax '("#1#")))
+
+;; Buffer-backed reads must also fix up nested cons/vector and hash-table cycles.
+(qa (let* ((read-circle t)
+           (value (qa94-read-from-buffer "#1=(1 . #2=[#1# #2#])"))
+           (vector (cdr value)))
+      (list (eq value (aref vector 0)) (eq vector (aref vector 1))))
+    '(t t))
+(qa (let* ((read-circle t)
+           (table (qa94-read-from-buffer
+                   "#1=#s(hash-table size 1 test eq data (#1# #1#))"))
+           key value)
+      (maphash (lambda (current actual) (setq key current value actual)) table)
+      (list (hash-table-count table) (consp key) (eq key value)
+            (consp value) (eq value table) (eq (gethash key table) value)))
+    '(1 t t t nil t))
+
+;; Continuous numbering installs print-number-table as the label source.
+;; A shared cons tail must still be printed with its label before the vector
+;; that points back to it, or the printer can emit an invalid `#N=#N#'.
+(qa (let* ((cell (list 'node))
+           (vector (vector nil nil))
+           (data nil)
+           (print-circle t)
+           (print-continuous-numbering t)
+           (print-number-table nil)
+           (read-circle t))
+      (setcdr cell vector)
+      (aset vector 0 cell)
+      (aset vector 1 cell)
+      (setq data (list (cons 'entry cell) (cons 'entry-vector vector)))
+      (let* ((printed (prin1-to-string data))
+             (copy (qa94-read-from-buffer printed))
+             (copy-cell (cdr (car copy)))
+             (copy-vector (cdr (cadr copy)))
+             (readback (list (eq copy-cell (aref copy-vector 0))
+                             (eq copy-vector (cdr copy-cell))
+                             (eq copy-cell (aref copy-vector 1)))))
+        (list printed readback)))
+    '("((entry . #1=(node . #2=[#1# #1#])) (entry-vector . #2#))" (t t t)))
+
+;; User-defined hash tests in print-number-table use the prepared identity
+;; substitutions too. A shared list tail must stay dotted so its #N= label
+;; remains at the first occurrence, and the printed graph must still read back.
+(define-hash-table-test 'qa94-print-circle-identity #'eq (lambda (_key) 0))
+(qa (progn
+      ;; Reset GNU's process-global print_number_index before using a fresh table.
+      (let ((print-circle t)) (print--preprocess nil))
+      (let* ((cell (list 'node))
+             (vector (vector nil nil))
+             (data nil)
+             (print-circle t)
+             (print-continuous-numbering t)
+             (print-number-table
+              (make-hash-table :test 'qa94-print-circle-identity))
+             (read-circle t))
+        (setcdr cell vector)
+        (aset vector 0 cell)
+        (aset vector 1 cell)
+        (setq data (list (cons 'entry cell) (cons 'entry-vector vector)))
+        (let* ((printed (prin1-to-string data))
+               (copy (qa94-read-from-buffer printed))
+               (copy-cell (cdr (car copy)))
+               (copy-vector (cdr (cadr copy))))
+          (list printed
+                (list (eq copy-cell (aref copy-vector 0))
+                      (eq copy-vector (cdr copy-cell))
+                      (eq copy-cell (aref copy-vector 1)))
+                (hash-table-count print-number-table)))))
+    '("((entry . #1=(node . #2=[#1# #1#])) (entry-vector . #2#))"
+      (t t t) 2))
 
 ;; GNU preserves hash-table keys and values exactly as they were read.
 ;; A direct self-key remains the placeholder cons, so lookup by the resolved

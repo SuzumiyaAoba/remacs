@@ -690,7 +690,7 @@ INFO is a plist holding contextual information.  See
 		  desc))))
      (t (let ((destination (org-md--link-destination path)))
 	  (if (not desc) destination
-	    (format "[%s](%s)" desc destination)))))))
+	    (format "[%s](%s)" desc destination))))))))))
 
 
 ;;;; Node Property

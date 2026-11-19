@@ -299,7 +299,7 @@ return the subject.  Otherwise, return nil."
                (("text/html") . ,(format "<a href=\"%s\">[%s]</a> "
                                          (xml-escape-string link)
                                          (xml-escape-string label))))))))
-     (dom-children (dom-child-by-tag article 'links)))))
+     (dom-children (dom-child-by-tag article 'links))))))
 (defvoo nnatom-read-links-function #'nnatom--read-links
   nil nnfeed-read-links-function)
 

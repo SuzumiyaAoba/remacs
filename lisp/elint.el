@@ -1141,7 +1141,8 @@ Marks the function with their arguments, and returns a list of variables."
 			     (cons t
 				   (read
 				    (replace-regexp-in-string "^(fn ?" "(" args)))))
-		     (elint-put-function-args sym (cdr args))))))))
+		     (elint-put-function-args sym (cdr args)))))))))
+
     vars))
 
 (defun elint-find-autoloaded-variables ()

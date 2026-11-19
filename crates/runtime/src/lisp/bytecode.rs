@@ -10,7 +10,8 @@
 //!   - ops 8..47 (varref/varset/varbind/call/unbind): low 3 bits hold
 //!     the operand inline (0..5); 6 → one operand byte follows;
 //!     7 → a two-byte little-endian operand follows.
-//!   - 1..7: `stack-ref' with immediate depth.
+//!   - 1..5: `stack-ref' depth is encoded in the opcode; opcode 6 reads
+//!     one depth byte, and opcode 7 reads a little-endian u16 depth.
 //!   - 192..255: `constant' with immediate index.
 //!   - goto/pushcatch/pushconditioncase/constant2/stack-set2: u16 LE.
 //!   - listN/concatN/insertN/stack-set/discardN: u8.
@@ -27,6 +28,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 mod opcodes;
+
+/// GNU's per-thread byte-code stack has 512 Ki Lisp_Object slots.
+const MAX_BYTECODE_STACK_SLOTS: usize = 512 * 1024;
 
 /// Invocation-local VM state. Handlers drop before unwind records, then the
 /// value stack, as when these were independent locals in run().
@@ -197,6 +201,13 @@ pub(crate) fn exec(
     if !matches!(argdesc, Value::Int(_) | Value::Nil | Value::Cons(_)) {
         return Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Lambda(l.clone())]));
     }
+    let stack_depth = match items.get(3) {
+        Some(Value::Int(depth)) if *depth >= 0 => usize::try_from(*depth).ok(),
+        _ => None,
+    };
+    let Some(stack_depth) = stack_depth else {
+        return Err(i.error("Invalid byte-code"));
+    };
     let bytestr = items.get(1).cloned().unwrap_or(Value::Nil);
     let consts = items.get(2).cloned().unwrap_or(Value::Nil);
     // Retain both code-slot identity and its decoded source contents:
@@ -267,15 +278,20 @@ pub(crate) fn exec(
             }
             std::process::exit(3);
         }
-        let r = run(i, &prog, &bytestr, &consts, &argv, who, named);
+        let r = run(i, &prog, &bytestr, &consts, &argv, who, named, stack_depth);
         i.bc_depth -= 1;
         return r;
     }
-    run(i, &prog, &bytestr, &consts, &argv, who, named)
+    run(i, &prog, &bytestr, &consts, &argv, who, named, stack_depth)
 }
 
 /// `(byte-code BYTESTR CONSTVEC DEPTH)' entry point — no arguments.
-pub(crate) fn exec_raw(i: &mut Interp, bytestr: &Value, consts: &Value) -> EvalResult {
+pub(crate) fn exec_raw(
+    i: &mut Interp,
+    bytestr: &Value,
+    consts: &Value,
+    stack_depth: usize,
+) -> EvalResult {
     let code = code_bytes(i, bytestr)?;
     let argdesc = parse_argdesc(i, &Value::Int(0));
     let prog = BcProg {
@@ -297,7 +313,7 @@ pub(crate) fn exec_raw(i: &mut Interp, bytestr: &Value, consts: &Value) -> EvalR
         dyn_rest_index: argdesc.dyn_rest_index,
         invalid_argdesc_at: argdesc.invalid_at,
     };
-    run(i, &prog, bytestr, consts, &[], None, false)
+    run(i, &prog, bytestr, consts, &[], None, false, stack_depth)
 }
 
 fn run(
@@ -308,10 +324,14 @@ fn run(
     argv: &[Value],
     who: Option<&Value>,
     named: bool,
+    stack_depth: usize,
 ) -> EvalResult {
     let Value::Vec(consts) = consts else {
         return Err(i.wrong_type_mut("vectorp", consts));
     };
+    if stack_depth > MAX_BYTECODE_STACK_SLOTS {
+        return Err(i.error("Bytecode stack overflow"));
+    }
     let (req, max, has_rest, dyn_names, dyn_rest_index) = (
         prog.req,
         prog.max,
@@ -358,6 +378,17 @@ fn run(
             .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(max as i128)));
         return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
     }
+    let stack_slots = if dyn_names.is_none() {
+        let Some(stack_slots) = max.checked_add(has_rest as usize) else {
+            return Err(i.error("Invalid byte-code"));
+        };
+        if stack_slots > stack_depth {
+            return Err(i.error("Invalid byte-code"));
+        }
+        stack_slots
+    } else {
+        0
+    };
     let specmark = i.specbind_depth();
     // Dynamic-style argdesc (a list of names): each parameter name is
     // specbind'd to its argument — GNU binds them in order, &rest
@@ -390,7 +421,7 @@ fn run(
     // deepest, last on top).  Dynamic code leaves the stack empty and
     // reaches args through varref on the specbinds above.
     let stack: Vec<Value> = if dyn_names.is_none() {
-        let mut s = Vec::with_capacity(max + has_rest as usize);
+        let mut s = Vec::with_capacity(stack_slots);
         let pushed = argv.len().min(max);
         s.extend(argv[..pushed].iter().cloned());
         if max < argv.len() {
@@ -661,7 +692,15 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
         Value::Int(n) => {
             let req = (*n & 0x7f).max(0) as usize;
             let rest = (*n >> 7) & 1 != 0;
-            let max = ((*n >> 8) & 0x7f).max(req as i128) as usize;
+            // GNU uses the packed upper field as-is. An inconsistent
+            // descriptor with max < required remains uncallable rather
+            // than being normalized into a valid fixed-arity descriptor.
+            let packed_max = *n >> 8;
+            let max = if packed_max < 0 {
+                (packed_max & 0x7f) as usize
+            } else {
+                packed_max as usize
+            };
             ParsedArgDesc {
                 req,
                 max,

@@ -127,4 +127,57 @@
   ;; the inner list IS l
   (qa (eq (cadr r) l) t))
 
+;; GNU 31.1's backquote expander exhausts memory on circular templates.
+;; Remacs detects the cycle before its Rust traversal can grow without bound.
+(when qa--remacs
+  (qa (let* ((template (list 'a))
+             (form (list 'backquote template)))
+        (setcdr template template)
+        (condition-case err
+            (macroexpand form)
+          (circular-list (list (car err) (eq (cadr err) template)))))
+      '(circular-list t))
+  (qa (let* ((template (list nil))
+             (form (list 'backquote template)))
+        (setcar template template)
+        (condition-case err
+            (macroexpand form)
+          (circular-list (list (car err) (eq (cadr err) template)))))
+      '(circular-list t))
+  (qa (let* ((template (vector nil))
+             (form (list 'backquote template)))
+        (aset template 0 template)
+        (condition-case err
+            (macroexpand form)
+          (circular-list (list (car err) (eq (cadr err) template)))))
+      '(circular-list t))
+  ;; Unquote arity and the internal list helpers also walk raw lists.
+  (qa (let* ((template (list 'comma nil))
+             (form (list 'backquote template)))
+        (setcdr (cdr template) template)
+        (condition-case err
+            (macroexpand form)
+          (circular-list (list (car err) (eq (cadr err) template)))))
+      '(circular-list t))
+  (qa (let ((items (list (list 0 'a))))
+        (setcdr items items)
+        (condition-case err
+            (backquote-listify items nil)
+          (circular-list (list (car err) (eq (cadr err) items)))))
+      '(circular-list t))
+  (qa (let* ((item (list 0 'a))
+             (items (list item)))
+        (setcdr (cdr item) item)
+        (condition-case err
+            (backquote-listify items nil)
+          (circular-list (list (car err) (eq (cadr err) item)))))
+      '(circular-list t)))
+
+;; Active-path cycle detection must still allow shared acyclic subforms.
+(qa (let* ((shared (list 'a))
+           (template (list shared shared))
+           (form (list 'backquote template)))
+      (equal (macroexpand form) (list 'quote template)))
+    t)
+
 (princ (qa--done))

@@ -1400,7 +1400,7 @@ the prefix fallback behavior."
 	     (and (boundp 'delete-selection-save-to-register)
 		  delete-selection-save-to-register)
 	     cua-highlight-region-shift-only
-	     transient-mark-mode))
+	     transient-mark-mode)))
     (if cua-delete-selection
         (delete-selection-mode 1)
       (if (and (boundp 'delete-selection-mode) delete-selection-mode)

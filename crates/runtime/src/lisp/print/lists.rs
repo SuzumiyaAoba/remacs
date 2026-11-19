@@ -1,6 +1,6 @@
 //! Shared list traversal for readable and display output, including Brent cycle detection.
 
-use super::circle::{circle_active, circle_counted, print_stack_key};
+use super::circle::print_circle_tail_is_labeled;
 use super::render::{PrintMode, Printer};
 use crate::lisp::{print_text::PrintText, value::Value};
 
@@ -68,9 +68,8 @@ impl Printer<'_> {
                     // `print-circle': a shared/cyclic tail prints as
                     // `. #N=(...)' (first occurrence) or `. #N#';
                     // GNU checks this before `print-length'.
-                    if circle_active()
-                        && self.print_var("print-circle").truthy()
-                        && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
+                    if self.print_var("print-circle").truthy()
+                        && print_circle_tail_is_labeled(self.interp(), &cur, out)?
                     {
                         self.push_text(out, " . ")?;
                         mode.render(self, &cur, out, depth + 1, bq)?;

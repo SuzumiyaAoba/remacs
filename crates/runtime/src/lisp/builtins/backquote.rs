@@ -17,18 +17,26 @@ use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, SymId, Value};
+use rustc_hash::FxHashSet;
+use std::rc::Rc;
 
-fn car(v: &Value) -> Value {
+fn car(i: &Interp, v: &Value) -> Result<Value, Flow> {
     match v {
-        Value::Cons(c) => c.borrow().car.clone(),
-        _ => Value::Nil,
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.car.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote cons cell")),
+        _ => Ok(Value::Nil),
     }
 }
 
-fn cdr(v: &Value) -> Value {
+fn cdr(i: &Interp, v: &Value) -> Result<Value, Flow> {
     match v {
-        Value::Cons(c) => c.borrow().cdr.clone(),
-        _ => Value::Nil,
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.cdr.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote cons cell")),
+        _ => Ok(Value::Nil),
     }
 }
 
@@ -41,16 +49,16 @@ fn listp(v: &Value) -> bool {
     matches!(v, Value::Cons(_) | Value::Nil)
 }
 
-fn nth(v: &Value, n: usize) -> Value {
-    car(&nthcdr(v, n))
+fn nth(i: &Interp, v: &Value, n: usize) -> Result<Value, Flow> {
+    car(i, &nthcdr(i, v, n)?)
 }
 
-fn nthcdr(v: &Value, n: usize) -> Value {
+fn nthcdr(i: &Interp, v: &Value, n: usize) -> Result<Value, Flow> {
     let mut cur = v.clone();
     for _ in 0..n {
-        cur = cdr(&cur);
+        cur = cdr(i, &cur)?;
     }
-    cur
+    Ok(cur)
 }
 
 /// `length' of a proper list; signals `wrong-type-argument listp' on a
@@ -58,10 +66,18 @@ fn nthcdr(v: &Value, n: usize) -> Value {
 fn list_length(i: &mut Interp, v: &Value) -> Result<usize, Flow> {
     let mut n = 0usize;
     let mut cur = v.clone();
+    let mut seen = FxHashSet::default();
     loop {
-        match cur {
+        match cur.clone() {
             Value::Cons(c) => {
-                cur = c.borrow().cdr.clone();
+                if !seen.insert(Rc::as_ptr(&c) as usize) {
+                    return Err(crate::lisp::builtins::listfn::err_circular(i, &cur));
+                }
+                cur = c
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote form"))?
+                    .cdr
+                    .clone();
                 n += 1;
             }
             Value::Nil => return Ok(n),
@@ -81,6 +97,10 @@ struct BqSyms {
     unquote: SymId,
     splice: SymId,
 }
+
+type BqActive = FxHashSet<(u8, usize)>;
+const BQ_CONS: u8 = 0;
+const BQ_VECTOR: u8 = 1;
 
 fn bq_syms(i: &mut Interp) -> BqSyms {
     let get = |i: &mut Interp, name: &str, fallback: SymId| {
@@ -117,137 +137,195 @@ fn named_sym(i: &mut Interp, name: &str) -> Value {
 /// `(TAG . FORM)' pair: 0 constant, 1 form evaluates to the
 /// structure, 2 form produces a list to splice.
 fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Value, Flow> {
+    bq_process_inner(i, s, level, syms, &mut FxHashSet::default())
+}
+
+/// Walk one backquote object while tracking only the active recursion path.
+/// Shared, acyclic subobjects remain valid and are expanded at each use.
+fn bq_process_inner(
+    i: &mut Interp,
+    s: &Value,
+    level: i64,
+    syms: &BqSyms,
+    active: &mut BqActive,
+) -> Result<Value, Flow> {
     match s {
         Value::Vec(v) => {
-            // `(append s ())' — vector to list, then re-run.
-            let elems: Vec<Value> = v.borrow().clone();
-            let n = bq_process(i, &Value::list(elems), level, syms)?;
-            if is_tag(&car(&n), 0) {
-                return Ok(Value::cons(Value::Int(0), s.clone()));
+            let key = (BQ_VECTOR, Rc::as_ptr(v) as usize);
+            if !active.insert(key) {
+                return Err(crate::lisp::builtins::listfn::err_circular(i, s));
             }
-            let list_id = i.q("list");
-            let append_id = i.q("append");
-            let form = cdr(&n);
-            // n = (tag . form): `(nth 1 n)' is `car form', `(nthcdr 2 n)'
-            // is `cdr form' — GNU relies on the same pair indexing.
-            let result = if !listp(&form) {
-                Value::list(vec![named_sym(i, "vconcat"), form])
-            } else if i.sym_is(&car(&form), list_id) {
-                Value::cons(named_sym(i, "vector"), cdr(&form))
-            } else if i.sym_is(&car(&form), append_id) {
-                Value::cons(named_sym(i, "vconcat"), cdr(&form))
-            } else {
-                // (list 'apply '(function vector) form)
-                let q = Value::list(vec![named_sym(i, "function"), named_sym(i, "vector")]);
-                Value::list(vec![named_sym(i, "apply"), q, form])
-            };
-            Ok(Value::cons(Value::Int(1), result))
+            let result = (|| {
+                // `(append s ())' — vector to list, then re-run.
+                let elems: Vec<Value> = v
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote vector"))?
+                    .clone();
+                let n = bq_process_inner(i, &Value::list(elems), level, syms, active)?;
+                if is_tag(&car(i, &n)?, 0) {
+                    return Ok(Value::cons(Value::Int(0), s.clone()));
+                }
+                let list_id = i.q("list");
+                let append_id = i.q("append");
+                let form = cdr(i, &n)?;
+                // n = (tag . form): `(nth 1 n)' is `car form', `(nthcdr 2 n)'
+                // is `cdr form' — GNU relies on the same pair indexing.
+                let result = if !listp(&form) {
+                    Value::list(vec![named_sym(i, "vconcat"), form])
+                } else if i.sym_is(&car(i, &form)?, list_id) {
+                    Value::cons(named_sym(i, "vector"), cdr(i, &form)?)
+                } else if i.sym_is(&car(i, &form)?, append_id) {
+                    Value::cons(named_sym(i, "vconcat"), cdr(i, &form)?)
+                } else {
+                    // (list 'apply '(function vector) form)
+                    let q = Value::list(vec![named_sym(i, "function"), named_sym(i, "vector")]);
+                    Value::list(vec![named_sym(i, "apply"), q, form])
+                };
+                Ok(Value::cons(Value::Int(1), result))
+            })();
+            active.remove(&key);
+            result
         }
         Value::Cons(_) => {
-            let head = car(s);
-            if let Value::Sym(h) = head {
-                if h == syms.unquote {
-                    if level <= 0 {
-                        if list_length(i, s)? > 2 {
-                            return Err(bq_error(i, "Multiple args to , are not supported: ", s));
-                        }
-                        let qid = i.q("quote");
-                        let inner = nth(s, 1);
-                        let tag = if i.sym_is(&car(&inner), qid) { 0 } else { 1 };
-                        return Ok(Value::cons(Value::Int(tag), inner));
-                    }
-                    return bq_delay_process(i, s, level - 1, syms);
-                }
-                if h == syms.splice {
-                    if level <= 0 {
-                        if list_length(i, s)? > 2 {
-                            return Err(bq_error(i, "Multiple args to ,@ are not supported: ", s));
-                        }
-                        return Ok(Value::cons(Value::Int(2), nth(s, 1)));
-                    }
-                    return bq_delay_process(i, s, level - 1, syms);
-                }
-                if h == syms.backquote {
-                    return bq_delay_process(i, s, level + 1, syms);
-                }
+            let start = match s {
+                Value::Cons(cell) => (BQ_CONS, Rc::as_ptr(cell) as usize),
+                _ => unreachable!(),
+            };
+            if !active.insert(start) {
+                return Err(crate::lisp::builtins::listfn::err_circular(i, s));
             }
-            // List level: scan items, collecting FIRSTLIST/LIST/LISTS.
-            // `list', `lists' and listify's `heads' accumulate
-            // NEWEST-FIRST because the Lisp code conses onto its
-            // accumulators; `Value::list' then yields that same
-            // newest-first order, matching GNU's object layout.
-            let mut firstlist: Vec<Value> = Vec::new();
-            let mut list: Vec<Value> = Vec::new();
-            let mut lists: Vec<Value> = Vec::new();
-            let mut rest = s.clone();
-            while consp(&rest) {
-                let rcar = car(&rest);
-                if let Value::Sym(r) = &rcar {
-                    if *r == syms.unquote || *r == syms.backquote {
+            let mut entered = vec![start];
+            let result = (|| {
+                let head = car(i, s)?;
+                if let Value::Sym(h) = head {
+                    if h == syms.unquote {
+                        if level <= 0 {
+                            if list_length(i, s)? > 2 {
+                                return Err(bq_error(
+                                    i,
+                                    "Multiple args to , are not supported: ",
+                                    s,
+                                ));
+                            }
+                            let qid = i.q("quote");
+                            let inner = nth(i, s, 1)?;
+                            let tag = if i.sym_is(&car(i, &inner)?, qid) {
+                                0
+                            } else {
+                                1
+                            };
+                            return Ok(Value::cons(Value::Int(tag), inner));
+                        }
+                        return bq_delay_process_inner(i, s, level - 1, syms, active);
+                    }
+                    if h == syms.splice {
+                        if level <= 0 {
+                            if list_length(i, s)? > 2 {
+                                return Err(bq_error(
+                                    i,
+                                    "Multiple args to ,@ are not supported: ",
+                                    s,
+                                ));
+                            }
+                            return Ok(Value::cons(Value::Int(2), nth(i, s, 1)?));
+                        }
+                        return bq_delay_process_inner(i, s, level - 1, syms, active);
+                    }
+                    if h == syms.backquote {
+                        return bq_delay_process_inner(i, s, level + 1, syms, active);
+                    }
+                }
+
+                // List level: scan items, collecting FIRSTLIST/LIST/LISTS.
+                // The active path catches cdr cycles and recursive car
+                // references without rejecting shared acyclic subobjects.
+                // Accumulators stay newest-first like GNU's cons chains.
+                let mut firstlist: Vec<Value> = Vec::new();
+                let mut list: Vec<Value> = Vec::new();
+                let mut lists: Vec<Value> = Vec::new();
+                let mut rest = s.clone();
+                let mut first_cell = true;
+                while consp(&rest) {
+                    let rcar = car(i, &rest)?;
+                    if !first_cell
+                        && matches!(&rcar, Value::Sym(r) if *r == syms.unquote || *r == syms.backquote)
+                    {
                         break;
                     }
-                }
-                let item = bq_process(i, &rcar, level, syms)?;
-                if is_tag(&car(&item), 2) {
-                    if lists.is_empty() {
-                        firstlist = std::mem::take(&mut list);
+                    if !first_cell {
+                        let Value::Cons(cell) = &rest else {
+                            unreachable!()
+                        };
+                        let key = (BQ_CONS, Rc::as_ptr(cell) as usize);
+                        if !active.insert(key) {
+                            return Err(crate::lisp::builtins::listfn::err_circular(i, &rest));
+                        }
+                        entered.push(key);
                     }
-                    if !list.is_empty() {
-                        let grouped = bq_listify(
-                            i,
-                            &Value::list(std::mem::take(&mut list)),
-                            &Value::cons(Value::Int(0), Value::Nil),
-                            syms,
-                        )?;
-                        lists.insert(0, grouped);
+                    first_cell = false;
+                    let item = bq_process_inner(i, &rcar, level, syms, active)?;
+                    if is_tag(&car(i, &item)?, 2) {
+                        if lists.is_empty() {
+                            firstlist = std::mem::take(&mut list);
+                        }
+                        if !list.is_empty() {
+                            let grouped = bq_listify(
+                                i,
+                                &Value::list(std::mem::take(&mut list)),
+                                &Value::cons(Value::Int(0), Value::Nil),
+                                syms,
+                            )?;
+                            lists.insert(0, grouped);
+                        }
+                        lists.insert(0, cdr(i, &item)?);
+                    } else {
+                        list.insert(0, item);
                     }
-                    lists.insert(0, cdr(&item));
-                } else {
-                    list.insert(0, item);
+                    rest = cdr(i, &rest)?;
                 }
-                rest = cdr(&rest);
-            }
-            // Tail: `rest' is either nil (proper end), an atom (dotted
-            // tail), or a ( , / ` ) form that stops the scan; GNU's
-            // `(or rest list)' guards on non-nil rest OR nonempty list.
-            if !rest.is_nil() || !list.is_empty() {
-                let tail_pair = bq_process(i, &rest, level, syms)?;
-                let grouped = bq_listify(i, &Value::list(list), &tail_pair, syms)?;
-                lists.insert(0, grouped);
-            }
-            // `(cons 'append (nreverse lists))' when >1 lists or the
-            // newest element is itself a splice form.
-            let first_is_splice = lists
-                .first()
-                .map(|f| match f {
-                    Value::Cons(c) => i.sym_is(&c.borrow().car, syms.splice),
+                // Tail: `rest' is nil, a dotted atom, or a stopped comma/
+                // backquote form. The stopped special form is left out of
+                // `entered' so its recursive visit owns that path entry.
+                if !rest.is_nil() || !list.is_empty() {
+                    let tail_pair = bq_process_inner(i, &rest, level, syms, active)?;
+                    let grouped = bq_listify(i, &Value::list(list), &tail_pair, syms)?;
+                    lists.insert(0, grouped);
+                }
+                let first_is_splice = match lists.first() {
+                    Some(Value::Cons(c)) => {
+                        i.sym_is(&car(i, &Value::Cons(c.clone()))?, syms.splice)
+                    }
                     _ => false,
-                })
-                .unwrap_or(false);
-            let expression = if lists.len() > 1 || first_is_splice {
-                let mut items = vec![named_sym(i, "append")];
-                items.extend(lists.iter().rev().cloned());
-                Value::list(items)
-            } else {
-                lists.into_iter().next().unwrap_or(Value::Nil)
-            };
-            let expression = if !firstlist.is_empty() {
-                bq_listify(
-                    i,
-                    &Value::list(firstlist),
-                    &Value::cons(Value::Int(1), expression),
-                    syms,
-                )?
-            } else {
-                expression
-            };
-            let qid = i.q("quote");
-            let tag = if i.sym_is(&car(&expression), qid) {
-                0
-            } else {
-                1
-            };
-            Ok(Value::cons(Value::Int(tag), expression))
+                };
+                let expression = if lists.len() > 1 || first_is_splice {
+                    let mut items = vec![named_sym(i, "append")];
+                    items.extend(lists.iter().rev().cloned());
+                    Value::list(items)
+                } else {
+                    lists.into_iter().next().unwrap_or(Value::Nil)
+                };
+                let expression = if !firstlist.is_empty() {
+                    bq_listify(
+                        i,
+                        &Value::list(firstlist),
+                        &Value::cons(Value::Int(1), expression),
+                        syms,
+                    )?
+                } else {
+                    expression
+                };
+                let qid = i.q("quote");
+                let tag = if i.sym_is(&car(i, &expression)?, qid) {
+                    0
+                } else {
+                    1
+                };
+                Ok(Value::cons(Value::Int(tag), expression))
+            })();
+            for key in entered {
+                active.remove(&key);
+            }
+            result
         }
         _ => {
             // Atom: `(null s)', `t' and non-symbols pass raw; other
@@ -272,13 +350,23 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
 }
 
 /// Port of `backquote-delay-process'.
-fn bq_delay_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Value, Flow> {
-    let head_item = Value::cons(Value::Int(0), Value::list(vec![quote_sym(i), car(s)]));
-    let tail = bq_process(i, &cdr(s), level, syms)?;
+fn bq_delay_process_inner(
+    i: &mut Interp,
+    s: &Value,
+    level: i64,
+    syms: &BqSyms,
+    active: &mut BqActive,
+) -> Result<Value, Flow> {
+    let head_item = Value::cons(Value::Int(0), Value::list(vec![quote_sym(i), car(i, s)?]));
+    let tail = bq_process_inner(i, &cdr(i, s)?, level, syms, active)?;
     let exp = bq_listify(i, &Value::list(vec![head_item]), &tail, syms)?;
     let qid = i.q("quote");
-    let tag = if i.sym_is(&car(&exp), qid) { 0 } else { 1 };
+    let tag = if i.sym_is(&car(i, &exp)?, qid) { 0 } else { 1 };
     Ok(Value::cons(Value::Int(tag), exp))
+}
+
+fn bq_delay_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Value, Flow> {
+    bq_delay_process_inner(i, s, level, syms, &mut FxHashSet::default())
 }
 
 /// Port of `backquote-listify'.  `list' is a proper list of
@@ -290,23 +378,23 @@ fn bq_listify(
     syms: &BqSyms,
 ) -> Result<Value, Flow> {
     let mut heads: Vec<Value> = Vec::new(); // newest first (GNU conses)
-    let mut tail = cdr(old_tail);
+    let mut tail = cdr(i, old_tail)?;
     let mut old_tail_live = old_tail.clone();
-    if is_tag(&car(old_tail), 0) {
+    if is_tag(&car(i, old_tail)?, 0) {
         tail = i.eval(&tail)?;
         old_tail_live = Value::Nil;
     }
     let mut list_tail = list.clone();
     while consp(&list_tail) {
-        let item = car(&list_tail);
-        list_tail = cdr(&list_tail);
-        if !heads.is_empty() || !old_tail_live.is_nil() || !is_tag(&car(&item), 0) {
-            heads.insert(0, cdr(&item));
+        let item = car(i, &list_tail)?;
+        list_tail = cdr(i, &list_tail)?;
+        if !heads.is_empty() || !old_tail_live.is_nil() || !is_tag(&car(i, &item)?, 0) {
+            heads.insert(0, cdr(i, &item)?);
         } else {
             if std::env::var_os("REMACS_BQ_DBG").is_some() {
-                eprintln!("BQ listify eval: {}", i.prin1_to_string(&cdr(&item)));
+                eprintln!("BQ listify eval: {}", i.prin1_to_string(&cdr(i, &item)?));
             }
-            let evaled = i.eval(&cdr(&item))?;
+            let evaled = i.eval(&cdr(i, &item)?)?;
             tail = Value::cons(evaled, tail);
         }
     }
@@ -320,7 +408,7 @@ fn bq_listify(
         // `(cdr heads)' non-nil => >1 heads => list*; else a single
         // head that is a splice form also uses list*.
         let first_is_splice = match heads.first() {
-            Some(Value::Cons(h)) => i.sym_is(&h.borrow().car, syms.splice),
+            Some(Value::Cons(h)) => i.sym_is(&car(i, &Value::Cons(h.clone()))?, syms.splice),
             _ => false,
         };
         let name = if heads.len() > 1 || first_is_splice {
@@ -351,14 +439,22 @@ fn f_backquote_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// is reported with `wrong-type-argument listp'.
 fn bq_check_list(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     let mut cur = v.clone();
+    let mut seen = FxHashSet::default();
     loop {
-        match &cur {
+        match cur.clone() {
             Value::Nil => return Ok(()),
             Value::Cons(c) => {
-                let cdr = c.borrow().cdr.clone();
-                cur = cdr;
+                if !seen.insert(Rc::as_ptr(&c) as usize) {
+                    return Err(crate::lisp::builtins::listfn::err_circular(i, &cur));
+                }
+                let next = c
+                    .try_borrow()
+                    .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote list"))?
+                    .cdr
+                    .clone();
+                cur = next;
             }
-            other => return Err(i.wrong_type_mut("listp", other)),
+            other => return Err(i.wrong_type_mut("listp", &other)),
         }
     }
 }
@@ -367,12 +463,18 @@ fn bq_check_list(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 /// proper list.
 fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
     let mut cur = list.clone();
+    let mut seen = FxHashSet::default();
     loop {
         match &cur {
             Value::Nil => return Ok(()),
             Value::Cons(c) => {
+                if !seen.insert(Rc::as_ptr(c) as usize) {
+                    return Err(crate::lisp::builtins::listfn::err_circular(i, &cur));
+                }
                 let (car_v, cdr_v) = {
-                    let b = c.borrow();
+                    let b = c
+                        .try_borrow()
+                        .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote list"))?;
                     (b.car.clone(), b.cdr.clone())
                 };
                 bq_check_list(i, &car_v)?;
@@ -407,7 +509,11 @@ fn f_backquote_listify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     bq_check_list_car(i, &a[0])?;
     match &a[1] {
         Value::Cons(c) => {
-            let car_v = c.borrow().car.clone();
+            let car_v = c
+                .try_borrow()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote cons cell"))?
+                .car
+                .clone();
             bq_check_num_or_mark(i, &car_v)?;
         }
         Value::Nil => bq_check_num_or_mark(i, &Value::Nil)?,
@@ -448,7 +554,7 @@ fn f_backquote_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let syms = bq_syms(i);
     let pair = bq_process(i, &a[0], 0, &syms)?;
-    Ok(cdr(&pair))
+    cdr(i, &pair)
 }
 
 /// `backquote-list*-macro' expansion (backquote.el): folds the whole
@@ -538,5 +644,47 @@ pub fn install_macros(i: &mut Interp) {
     ] {
         let id = i.intern(name);
         i.fset(id, Value::cons(macro_sym.clone(), Value::Subr(subr)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::{error::Flow, obarray::Obarray};
+    use std::{cell::RefCell, panic::AssertUnwindSafe};
+
+    fn assert_borrowed_backquote_value_errors(value: &Value, borrow: impl FnOnce()) {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let syms = BqSyms {
+            backquote: interp.intern("backquote"),
+            unquote: interp.intern("unquote"),
+            splice: interp.intern("splice"),
+        };
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            bq_process(&mut interp, value, 0, &syms)
+        }));
+        borrow();
+        assert!(matches!(
+            result,
+            Ok(Err(Flow::Signal(ref signal))) if signal.is_symbol(sym::ERROR)
+        ));
+    }
+
+    #[test]
+    fn backquote_reports_mutably_borrowed_cons_and_vector_without_panicking() {
+        let cons = Value::cons(Value::Sym(sym::T), Value::Nil);
+        let Value::Cons(cell) = &cons else {
+            unreachable!()
+        };
+        let cons_borrow = cell.borrow_mut();
+        assert_borrowed_backquote_value_errors(&cons, || drop(cons_borrow));
+
+        let vector = Value::Vec(Rc::new(RefCell::new(vec![Value::Nil])));
+        let Value::Vec(items) = &vector else {
+            unreachable!()
+        };
+        let vector_borrow = items.borrow_mut();
+        assert_borrowed_backquote_value_errors(&vector, || drop(vector_borrow));
     }
 }
