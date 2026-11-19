@@ -376,7 +376,8 @@ ALPHA, when non-nil, is the unquantized opacity of COLOR."
 (defun shr-color->hexadecimal (color)
   "Convert COLOR to hexadecimal, including alpha as a final byte when present."
   (when color
-    (cond
+    (let ((case-fold-search t))
+      (cond
      ;; CSS hex colors have exactly 3, 4, 6, or 8 digits.
      ((string-equal (downcase color) "transparent")
       "#00000000")
@@ -434,8 +435,8 @@ ALPHA, when non-nil, is the unquantized opacity of COLOR."
      ;; Color names
      ((cdr (assoc-string color shr-color-html-colors-alist t)))
      ;; Unrecognized color :(
-     (t
-      nil))))
+       (t
+        nil)))))
 
 (defun shr-color-set-minimum-interval (val1 val2 min max interval
 					    &optional fixed)
