@@ -278,7 +278,10 @@ with halfway values rounded upward."
         (t x)))
 
 (defun shr-color-hsl-to-rgb-fractions (h s l)
-  "Convert H S L to fractional RGB values."
+  "Convert H S L to fractional RGB values after clipping to sRGB gamut."
+  (setq h (mod h 1.0)
+        s (max 0 (min 1.0 s))
+        l (max 0 (min 1.0 l)))
   (let (m1 m2)
     (if (<= l 0.5)
         (setq m2 (* l (+ s 1)))
