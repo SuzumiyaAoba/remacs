@@ -289,6 +289,11 @@ it finishes, type \\[kill-find]."
     (let ((point (point)))
       (insert "  " command "\n")
       (dired-insert-set-properties point (point)))
+    ;; The user can move point while FIND is running.  Keep the start of
+    ;; its output on the process rather than relying on the current point.
+    (let ((proc (get-buffer-process (current-buffer))))
+      (when proc
+        (process-put proc 'find-dired-output-start (copy-marker (point-max)))))
     (setq buffer-read-only t)
     (setq mode-line-process '(":%s"))))
 
@@ -406,12 +411,21 @@ specifies what to use in place of \"-ls\" as the final argument."
 	    (save-excursion
               (save-restriction
                 (widen)
-                (when find-dired-refine-function
-                  ;; `find-dired-filter' puts two whitespace characters
-                  ;; at the beginning of every line.
-                  (narrow-to-region (point) (- (point-max) 2))
-                  (funcall find-dired-refine-function)
-                  (widen))
+                (let* ((output-start
+                        (process-get proc 'find-dired-output-start))
+                       (start
+                        (if (and (markerp output-start)
+                                 (eq (marker-buffer output-start)
+                                     (current-buffer)))
+                            (marker-position output-start)
+                          (point-min)))
+                       (end (max start (- (point-max) 2))))
+                  (when find-dired-refine-function
+                    ;; `find-dired-filter' puts two whitespace characters
+                    ;; at the beginning of every line.
+                    (narrow-to-region start end)
+                    (funcall find-dired-refine-function)
+                    (widen)))
                 (let ((point (point-max)))
                   (goto-char point)
                   (insert "\n  find "
