@@ -155,4 +155,24 @@
 ;; == url-at-point not a fn in 31.1 ==
 (qa (fboundp 'url-at-point) nil)
 
+;; == URLs ending in unmatched square brackets ==
+(with-temp-buffer
+  (insert "https://example.com/path]")
+  (goto-char (point-max))
+  (if qa--remacs
+      (qa (thing-at-point 'url) "https://example.com/path")
+    (qa-xf (thing-at-point 'url) "https://example.com/path"
+           "Issue #2656: trim unmatched closing square brackets")))
+(with-temp-buffer
+  (insert "https://[2001:db8::1]/path")
+  (goto-char (point-max))
+  (qa (thing-at-point 'url) "https://[2001:db8::1]/path"))
+(with-temp-buffer
+  (insert "https://[2001:db8::1]/path]")
+  (goto-char (point-max))
+  (if qa--remacs
+      (qa (thing-at-point 'url) "https://[2001:db8::1]/path")
+    (qa-xf (thing-at-point 'url) "https://[2001:db8::1]/path"
+           "Issue #2656: retain IPv6 authority, trim extra bracket")))
+
 (princ (qa--done))

@@ -583,6 +583,24 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
             unmatched (cdr unmatched)))
     end))
 
+(defun thing-at-point--trim-unmatched-closing-square-brackets (beg end)
+  "Trim trailing unmatched `]' characters from the URI between BEG and END."
+  (let ((position beg)
+        (depth 0)
+        unmatched)
+    (while (< position end)
+      (let ((character (char-after position)))
+        (cond ((= character ?\[) (setq depth (1+ depth)))
+              ((= character ?\])
+               (if (> depth 0)
+                   (setq depth (1- depth))
+                 (push position unmatched)))))
+      (setq position (1+ position)))
+    (while (and unmatched (= (car unmatched) (1- end)))
+      (setq end (1- end)
+            unmatched (cdr unmatched)))
+    end))
+
 (defun thing-at-point--bounds-of-well-formed-url (beg end pt &optional delimited)
   (save-excursion
     (goto-char beg)
@@ -600,7 +618,7 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
 	     ;; URI must have non-empty contents.
 	     (< (point) end)
 	     (setq url-beg (match-beginning 1))))
-      (when url-beg
+	(when url-beg
 	;; If there is an open paren before the URI, truncate to the
 	;; matching close paren.
 	(and (> url-beg (point-min))
@@ -613,14 +631,23 @@ the bounds of a possible ill-formed URI (one lacking a scheme)."
                                    (scan-lists (1- url-beg) 1 0)))))
 	     (not (blink-matching-check-mismatch (1- url-beg) paren-end))
 	     (setq end (1- paren-end)))
-	(unless delimited
-	  (setq end (thing-at-point--trim-unmatched-closing-parentheses
-		      url-beg end)))
-	;; Ensure PT is actually within BOUNDARY. Check the following
-	;; example with point on the beginning of the line:
-	;;
-	;; 3,1406710489,https://gnu.org,0,"0"
-	(and (<= url-beg pt end) (cons url-beg end))))))
+	(let ((candidate-end end))
+	  (unless delimited
+	    (let ((trimmed t))
+	      (while trimmed
+		(let ((previous-end end))
+		  (setq end (thing-at-point--trim-unmatched-closing-parentheses
+			     url-beg end)
+			end (thing-at-point--trim-unmatched-closing-square-brackets
+			     url-beg end)
+			trimmed (< end previous-end))))))
+	  ;; PT may be just after a trailing delimiter that was excluded from
+	  ;; the returned bounds.  Keep it within the original URI candidate.
+	  ;; This also handles point-max after an unmatched closing bracket.
+	  ;; Check the following example with point on the beginning of the line:
+	  ;;
+	  ;; 3,1406710489,https://gnu.org,0,"0"
+	  (and (<= url-beg pt candidate-end) (cons url-beg end)))))))
 
 (put 'url 'thing-at-point 'thing-at-point-url-at-point)
 
