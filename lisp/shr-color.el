@@ -195,15 +195,32 @@ absolute value without any unit."
   "Alist of HTML colors.
 Each entry should have the form (COLOR-NAME . HEXADECIMAL-COLOR).")
 
+(defconst shr-color--css-number-regexp
+  "[+-]?\\(?:[0-9]+\\(?:\\.[0-9]+\\)?\\|\\.[0-9]+\\)\\(?:[eE][+-]?[0-9]+\\)?"
+  "Regexp matching a signed CSS number, including fractional and exponent forms.")
+
+(defconst shr-color--component-regexp
+  (concat "\\(" shr-color--css-number-regexp "\\)")
+  "Regexp matching a captured CSS number.")
+
+(defconst shr-color--rgb-component-regexp
+  (concat "\\(" shr-color--css-number-regexp
+          "\\(?:[[:space:]]*%\\)?\\)")
+  "Regexp matching a captured CSS RGB number or percentage.")
+
 (defun shr-color-relative-to-absolute (number)
-  "Convert a relative NUMBER to absolute.
-If NUMBER is absolute, return NUMBER.
-This will convert \"80 %\" to 204, \"100 %\" to 255 but \"123\" to \"123\"."
-  (let ((string-length (- (length number) 1)))
-    ;; Is this a number with %?
-    (if (eq (elt number string-length) ?%)
-        (/ (* (string-to-number (substring number 0 string-length)) 255) 100)
-      (string-to-number number))))
+  "Convert CSS RGB component NUMBER to a clamped 8-bit channel.
+Percentages are scaled to 255 and rounded to the nearest integer,
+with halfway values rounded upward."
+  (let* ((string-length (length number))
+         (percentage (and (> string-length 0)
+                          (eq (aref number (1- string-length)) ?%)))
+         (value (string-to-number
+                 (if percentage (substring number 0 (1- string-length))
+                   number)))
+         (absolute (if percentage (/ (* value 255.0) 100.0) value))
+         (clamped (max 0 (min 255 absolute))))
+    (floor (+ clamped 0.5))))
 
 (defun shr-color-hue-to-rgb (x y h)
   "Convert X Y H to RGB value."
@@ -237,10 +254,17 @@ Like rgb() or hsl()."
       (match-string 1 color))
      ;; rgb() or rgba() colors
      ((or (string-match
-           "rgb(\s*\\([0-9]\\{1,3\\}\\(?:\s*%\\)?\\)\s*,\s*\\([0-9]\\{1,3\\}\\(?:\s*%\\)?\\)\s*,\s*\\([0-9]\\{1,3\\}\\(?:\s*%\\)?\\)\s*)"
+           (concat "rgb([[:space:]]*" shr-color--rgb-component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
+                   "[[:space:]]*)")
            color)
           (string-match
-           "rgba(\s*\\([0-9]\\{1,3\\}\\(?:\s*%\\)?\\)\s*,\s*\\([0-9]\\{1,3\\}\\(?:\s*%\\)?\\)\s*,\s*\\([0-9]\\{1,3\\}\\(?:\s*%\\)?\\)\s*,\s*[0-9]*\\.?[0-9]+\s*%?\s*)"
+           (concat "rgba([[:space:]]*" shr-color--rgb-component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--css-number-regexp
+                   "[[:space:]]*%?[[:space:]]*)")
            color))
       (format "#%02X%02X%02X"
               (shr-color-relative-to-absolute (match-string-no-properties 1 color))
@@ -248,13 +272,22 @@ Like rgb() or hsl()."
               (shr-color-relative-to-absolute (match-string-no-properties 3 color))))
      ;; hsl() or hsla() colors
      ((or (string-match
-           "hsl(\s*\\([0-9]\\{1,3\\}\\)\s*,\s*\\([0-9]\\{1,3\\}\\)\s*%\s*,\s*\\([0-9]\\{1,3\\}\\)\s*%\s*)"
+           (concat "hsl([[:space:]]*" shr-color--component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--component-regexp
+                   "[[:space:]]*%[[:space:]]*,[[:space:]]*"
+                   shr-color--component-regexp "[[:space:]]*%[[:space:]]*)")
            color)
           (string-match
-           "hsla(\s*\\([0-9]\\{1,3\\}\\)\s*,\s*\\([0-9]\\{1,3\\}\\)\s*%\s*,\s*\\([0-9]\\{1,3\\}\\)\s*%\s*,\s*[0-9]*\\.?[0-9]+\s*%?\s*)"
+           (concat "hsla([[:space:]]*" shr-color--component-regexp
+                   "[[:space:]]*,[[:space:]]*" shr-color--component-regexp
+                   "[[:space:]]*%[[:space:]]*,[[:space:]]*"
+                   shr-color--component-regexp
+                   "[[:space:]]*%[[:space:]]*,[[:space:]]*"
+                   shr-color--css-number-regexp "[[:space:]]*%?[[:space:]]*)")
            color))
       (let ((h (/ (string-to-number (match-string-no-properties 1 color)) 360.0))
-            (s (/ (string-to-number (match-string-no-properties 2 color)) 100.0))
+            (s (/ (max 0 (string-to-number (match-string-no-properties 2 color)))
+                  100.0))
             (l (/ (string-to-number (match-string-no-properties 3 color)) 100.0)))
         (pcase-let ((`(,r ,g ,b) (shr-color-hsl-to-rgb-fractions h s l)))
           (color-rgb-to-hex r g b 2))))
