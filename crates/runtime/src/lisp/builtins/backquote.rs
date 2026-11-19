@@ -17,6 +17,7 @@ use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, SymId, Value};
+use num_bigint::BigInt;
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
 
@@ -90,6 +91,49 @@ fn is_tag(v: &Value, n: i128) -> bool {
     matches!(v, Value::Int(t) if *t == n)
 }
 
+/// `backquote-process' defaults only nil/omitted LEVEL to zero.  Other
+/// values are checked lazily when a nested comma/backquote needs arithmetic.
+fn bq_level_arg(level: Option<&Value>) -> Value {
+    match level {
+        None | Some(Value::Nil) => Value::Int(0),
+        Some(value) => value.clone(),
+    }
+}
+
+fn bq_level_nonpositive(i: &mut Interp, level: &Value) -> Result<bool, Flow> {
+    match level {
+        Value::Int(number) => Ok(*number <= 0),
+        Value::BigInt(number) => Ok(number.as_ref() <= &BigInt::from(0)),
+        Value::Float(number) => Ok(**number <= 0.0),
+        Value::Marker(marker) => {
+            let marker = marker.borrow();
+            if marker.buffer.is_none() {
+                return Err(i.error("Marker does not point anywhere"));
+            }
+            Ok(marker.position as i128 + 1 <= 0)
+        }
+        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
+    }
+}
+
+fn bq_level_adjust(i: &mut Interp, level: &Value, delta: i8) -> Result<Value, Flow> {
+    let delta = i128::from(delta);
+    match level {
+        Value::Int(number) => Ok(Value::from_bigint(BigInt::from(*number) + delta)),
+        Value::BigInt(number) => Ok(Value::from_bigint(number.as_ref() + delta)),
+        Value::Float(number) => Ok(Value::float(**number + delta as f64)),
+        Value::Marker(marker) => {
+            let marker = marker.borrow();
+            if marker.buffer.is_none() {
+                return Err(i.error("Marker does not point anywhere"));
+            }
+            let position = marker.position as i128 + 1;
+            Ok(Value::from_bigint(BigInt::from(position) + delta))
+        }
+        other => Err(i.wrong_type_mut("number-or-marker-p", other)),
+    }
+}
+
 /// The configured marker symbols — GNU reads the `backquote-*-symbol'
 /// variables each expansion, so callers may rebind them.
 struct BqSyms {
@@ -103,18 +147,24 @@ const BQ_CONS: u8 = 0;
 const BQ_VECTOR: u8 = 1;
 
 fn bq_syms(i: &mut Interp) -> BqSyms {
-    let get = |i: &mut Interp, name: &str, fallback: SymId| {
-        let id = i.intern(name);
-        match i.symbol_value(id) {
-            Value::Sym(s) => s,
-            _ => fallback,
-        }
-    };
     BqSyms {
-        backquote: get(i, "backquote-backquote-symbol", sym::BACKQUOTE),
-        unquote: get(i, "backquote-unquote-symbol", sym::COMMA),
-        splice: get(i, "backquote-splice-symbol", sym::COMMA_AT),
+        backquote: i.intern("backquote-backquote-symbol"),
+        unquote: i.intern("backquote-unquote-symbol"),
+        splice: i.intern("backquote-splice-symbol"),
     }
+}
+
+/// GNU compares against the current variable value with `eq'.  Keep the
+/// lookup lazy so atoms do not read these variables, and so bindings changed
+/// during expansion take effect at the same comparison point.
+fn bq_marker_eq(i: &mut Interp, value: &Value, marker_variable: SymId) -> Result<bool, Flow> {
+    let marker = i.symbol_value(marker_variable);
+    if matches!(&marker, Value::Sym(id) if *id == sym::UNBOUND) {
+        return Err(i.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(marker_variable)]));
+    }
+    Ok(crate::lisp::builtins::eq_values_with_interp(
+        i, value, &marker,
+    ))
 }
 
 /// `(error "...: %S" s)' — GNU formats the offending form with prin1.
@@ -136,7 +186,7 @@ fn named_sym(i: &mut Interp, name: &str) -> Value {
 /// Port of `backquote-process' (backquote.el).  Returns the
 /// `(TAG . FORM)' pair: 0 constant, 1 form evaluates to the
 /// structure, 2 form produces a list to splice.
-fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Value, Flow> {
+fn bq_process(i: &mut Interp, s: &Value, level: &Value, syms: &BqSyms) -> Result<Value, Flow> {
     bq_process_inner(i, s, level, syms, &mut FxHashSet::default())
 }
 
@@ -145,7 +195,7 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
 fn bq_process_inner(
     i: &mut Interp,
     s: &Value,
-    level: i64,
+    level: &Value,
     syms: &BqSyms,
     active: &mut BqActive,
 ) -> Result<Value, Flow> {
@@ -197,43 +247,36 @@ fn bq_process_inner(
             let mut entered = vec![start];
             let result = (|| {
                 let head = car(i, s)?;
-                if let Value::Sym(h) = head {
-                    if h == syms.unquote {
-                        if level <= 0 {
-                            if list_length(i, s)? > 2 {
-                                return Err(bq_error(
-                                    i,
-                                    "Multiple args to , are not supported: ",
-                                    s,
-                                ));
-                            }
-                            let qid = i.q("quote");
-                            let inner = nth(i, s, 1)?;
-                            let tag = if i.sym_is(&car(i, &inner)?, qid) {
-                                0
-                            } else {
-                                1
-                            };
-                            return Ok(Value::cons(Value::Int(tag), inner));
+                if bq_marker_eq(i, &head, syms.unquote)? {
+                    if bq_level_nonpositive(i, level)? {
+                        if list_length(i, s)? > 2 {
+                            return Err(bq_error(i, "Multiple args to , are not supported: ", s));
                         }
-                        return bq_delay_process_inner(i, s, level - 1, syms, active);
+                        let qid = i.q("quote");
+                        let inner = nth(i, s, 1)?;
+                        let tag = if i.sym_is(&car(i, &inner)?, qid) {
+                            0
+                        } else {
+                            1
+                        };
+                        return Ok(Value::cons(Value::Int(tag), inner));
                     }
-                    if h == syms.splice {
-                        if level <= 0 {
-                            if list_length(i, s)? > 2 {
-                                return Err(bq_error(
-                                    i,
-                                    "Multiple args to ,@ are not supported: ",
-                                    s,
-                                ));
-                            }
-                            return Ok(Value::cons(Value::Int(2), nth(i, s, 1)?));
+                    let next_level = bq_level_adjust(i, level, -1)?;
+                    return bq_delay_process_inner(i, s, &next_level, syms, active);
+                }
+                if bq_marker_eq(i, &head, syms.splice)? {
+                    if bq_level_nonpositive(i, level)? {
+                        if list_length(i, s)? > 2 {
+                            return Err(bq_error(i, "Multiple args to ,@ are not supported: ", s));
                         }
-                        return bq_delay_process_inner(i, s, level - 1, syms, active);
+                        return Ok(Value::cons(Value::Int(2), nth(i, s, 1)?));
                     }
-                    if h == syms.backquote {
-                        return bq_delay_process_inner(i, s, level + 1, syms, active);
-                    }
+                    let next_level = bq_level_adjust(i, level, -1)?;
+                    return bq_delay_process_inner(i, s, &next_level, syms, active);
+                }
+                if bq_marker_eq(i, &head, syms.backquote)? {
+                    let next_level = bq_level_adjust(i, level, 1)?;
+                    return bq_delay_process_inner(i, s, &next_level, syms, active);
                 }
 
                 // List level: scan items, collecting FIRSTLIST/LIST/LISTS.
@@ -248,7 +291,8 @@ fn bq_process_inner(
                 while consp(&rest) {
                     let rcar = car(i, &rest)?;
                     if !first_cell
-                        && matches!(&rcar, Value::Sym(r) if *r == syms.unquote || *r == syms.backquote)
+                        && (bq_marker_eq(i, &rcar, syms.unquote)?
+                            || bq_marker_eq(i, &rcar, syms.backquote)?)
                     {
                         break;
                     }
@@ -293,7 +337,8 @@ fn bq_process_inner(
                 }
                 let first_is_splice = match lists.first() {
                     Some(Value::Cons(c)) => {
-                        i.sym_is(&car(i, &Value::Cons(c.clone()))?, syms.splice)
+                        let head = car(i, &Value::Cons(c.clone()))?;
+                        bq_marker_eq(i, &head, syms.splice)?
                     }
                     _ => false,
                 };
@@ -353,7 +398,7 @@ fn bq_process_inner(
 fn bq_delay_process_inner(
     i: &mut Interp,
     s: &Value,
-    level: i64,
+    level: &Value,
     syms: &BqSyms,
     active: &mut BqActive,
 ) -> Result<Value, Flow> {
@@ -365,7 +410,12 @@ fn bq_delay_process_inner(
     Ok(Value::cons(Value::Int(tag), exp))
 }
 
-fn bq_delay_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Value, Flow> {
+fn bq_delay_process(
+    i: &mut Interp,
+    s: &Value,
+    level: &Value,
+    syms: &BqSyms,
+) -> Result<Value, Flow> {
     bq_delay_process_inner(i, s, level, syms, &mut FxHashSet::default())
 }
 
@@ -408,7 +458,10 @@ fn bq_listify(
         // `(cdr heads)' non-nil => >1 heads => list*; else a single
         // head that is a splice form also uses list*.
         let first_is_splice = match heads.first() {
-            Some(Value::Cons(h)) => i.sym_is(&car(i, &Value::Cons(h.clone()))?, syms.splice),
+            Some(Value::Cons(h)) => {
+                let head = car(i, &Value::Cons(h.clone()))?;
+                bq_marker_eq(i, &head, syms.splice)?
+            }
             _ => false,
         };
         let name = if heads.len() > 1 || first_is_splice {
@@ -428,9 +481,9 @@ fn bq_listify(
 
 /// `backquote-process' as a subr: (S &optional LEVEL).
 fn f_backquote_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let level = a.get(1).and_then(|v| v.int()).unwrap_or(0) as i64;
+    let level = bq_level_arg(a.get(1));
     let syms = bq_syms(i);
-    bq_process(i, &a[0], level, &syms)
+    bq_process(i, &a[0], &level, &syms)
 }
 
 // ---------- GNU DEFUN entry checks (backquote.c) ----------
@@ -527,8 +580,8 @@ fn f_backquote_listify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_backquote_delay_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     bq_check_list(i, &a[0])?;
     let syms = bq_syms(i);
-    let level = a.get(1).and_then(|v| v.int()).unwrap_or(0) as i64;
-    bq_delay_process(i, &a[0], level, &syms)
+    let level = bq_level_arg(a.get(1));
+    bq_delay_process(i, &a[0], &level, &syms)
 }
 
 /// `backquote-list*-function' (the defun): `(list* FIRST LIST...)'.
@@ -553,7 +606,8 @@ fn f_backquote_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         eprintln!("BQ macro arg: {}", i.prin1_to_string(&a[0]));
     }
     let syms = bq_syms(i);
-    let pair = bq_process(i, &a[0], 0, &syms)?;
+    let level = Value::Int(0);
+    let pair = bq_process(i, &a[0], &level, &syms)?;
     cdr(i, &pair)
 }
 
@@ -656,13 +710,20 @@ mod tests {
     fn assert_borrowed_backquote_value_errors(value: &Value, borrow: impl FnOnce()) {
         let mut interp = Interp::vacant();
         interp.obarray = Obarray::new();
-        let syms = BqSyms {
-            backquote: interp.intern("backquote"),
-            unquote: interp.intern("unquote"),
-            splice: interp.intern("splice"),
-        };
+        let markers = [
+            ("backquote-backquote-symbol", "backquote"),
+            ("backquote-unquote-symbol", "unquote"),
+            ("backquote-splice-symbol", "splice"),
+        ];
+        for (variable, value) in markers {
+            let variable = interp.intern(variable);
+            let value = interp.intern(value);
+            interp.set_symbol(variable, Value::Sym(value)).unwrap();
+        }
+        let syms = bq_syms(&mut interp);
+        let level = Value::Int(0);
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            bq_process(&mut interp, value, 0, &syms)
+            bq_process(&mut interp, value, &level, &syms)
         }));
         borrow();
         assert!(matches!(
