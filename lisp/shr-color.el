@@ -208,6 +208,24 @@ Each entry should have the form (COLOR-NAME . HEXADECIMAL-COLOR).")
           "\\(?:[[:space:]]*%\\)?\\)")
   "Regexp matching a captured CSS RGB number or percentage.")
 
+(defconst shr-color--modern-rgb-regexp
+  (concat "\\(?:rgb\\|rgba\\)([[:space:]]*"
+          shr-color--rgb-component-regexp "[[:space:]]+"
+          shr-color--rgb-component-regexp "[[:space:]]+"
+          shr-color--rgb-component-regexp
+          "\\(?:[[:space:]]*/[[:space:]]*"
+          shr-color--css-number-regexp "[[:space:]]*%?\\)?[[:space:]]*)")
+  "Regexp matching modern space-separated rgb() or rgba() syntax.")
+
+(defconst shr-color--modern-hsl-regexp
+  (concat "\\(?:hsl\\|hsla\\)([[:space:]]*"
+          shr-color--component-regexp "[[:space:]]+"
+          shr-color--rgb-component-regexp "[[:space:]]+"
+          shr-color--rgb-component-regexp
+          "\\(?:[[:space:]]*/[[:space:]]*"
+          shr-color--css-number-regexp "[[:space:]]*%?\\)?[[:space:]]*)")
+  "Regexp matching modern space-separated hsl() or hsla() syntax.")
+
 (defun shr-color-relative-to-absolute (number)
   "Convert CSS RGB component NUMBER to a clamped 8-bit channel.
 Percentages are scaled to 255 and rounded to the nearest integer,
@@ -264,7 +282,8 @@ Like rgb() or hsl()."
                    "[[:space:]]*,[[:space:]]*" shr-color--rgb-component-regexp
                    "[[:space:]]*,[[:space:]]*" shr-color--css-number-regexp
                    "[[:space:]]*%?[[:space:]]*)")
-           color))
+           color)
+          (string-match shr-color--modern-rgb-regexp color))
       (format "#%02X%02X%02X"
               (shr-color-relative-to-absolute (match-string-no-properties 1 color))
               (shr-color-relative-to-absolute (match-string-no-properties 2 color))
@@ -283,7 +302,8 @@ Like rgb() or hsl()."
                    shr-color--component-regexp
                    "[[:space:]]*%[[:space:]]*,[[:space:]]*"
                    shr-color--css-number-regexp "[[:space:]]*%?[[:space:]]*)")
-           color))
+           color)
+          (string-match shr-color--modern-hsl-regexp color))
       (let ((h (/ (string-to-number (match-string-no-properties 1 color)) 360.0))
             (s (/ (max 0 (string-to-number (match-string-no-properties 2 color)))
                   100.0))
