@@ -546,7 +546,11 @@ Hamming weight of the solution --- ie the number of strokes to
 achieve it --- and G is the grid of positions to click in order
 to complete the 5x5.
 
-Solutions are sorted from least to greatest Hamming weight."
+Solutions are sorted from least to greatest Hamming weight.
+
+Currently only the 5x5 grid size is supported; other sizes signal an error."
+  (unless (= 5x5-grid-size 5)
+    (error "Transfer matrix rank not known for grid-size != 5"))
   (require 'calc-ext)
   (cl-flet ((5x5-mat-mode-2
              (a)
@@ -618,10 +622,9 @@ Solutions are sorted from least to greatest Hamming weight."
 				       (5x5-set-cell transfer-grid
 						     (1+ k0) k0 t)))))
 				transfer-grid))))
-	   ;; TODO: this is hard-coded for grid-size = 5, make it generic.
-	   (transferm-kernel-size
-	    (if (= 5x5-grid-size 5) 2
-	      (error "Transfer matrix rank not known for grid-size != 5")))
+	   ;; The solver currently only supports the 5x5 transfer matrix; the
+	   ;; size guard above keeps other grids from reaching its fixed strides.
+	   (transferm-kernel-size 2)
 
 	   ;; TODO: this is hard-coded for grid-size = 5, make it generic.
 	   ;;
