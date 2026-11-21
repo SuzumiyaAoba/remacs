@@ -134,7 +134,7 @@ fn with_print_overrides(
             // GNU creates the complete mapping even for an invalid override.
             let mapping: Vec<_> = PRINT_SETTINGS
                 .iter()
-                .map(|(key, variable, default)| (i.intern(key), i.intern(variable), *default))
+                .map(|(key, variable, default)| (i.q(key), i.q(variable), *default))
                 .collect();
             let bind_defaults = |i: &mut Interp| -> Result<(), crate::lisp::error::Flow> {
                 for &(_, variable, default) in &mapping {
@@ -221,11 +221,46 @@ fn f_print(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(args[0].clone())
 }
 
+fn check_terpri_function_stream(
+    i: &mut Interp,
+    stream: &Value,
+) -> Result<(), crate::lisp::error::Flow> {
+    let Value::Cons(cell) = stream else {
+        return Ok(());
+    };
+    let head = cell
+        .try_borrow()
+        .map(|cell| cell.car.clone())
+        .map_err(|_| i.error("Cannot inspect a mutably borrowed output function"))?;
+    if i.sym_is(&head, sym::LAMBDA) {
+        // GNU's ENSURE path cannot determine BOL for a raw lambda-list
+        // stream and signals before taking the no-output shortcut. Ordinary
+        // `princ' to that same stream remains supported.
+        let mut data = vec![Value::string("Unsupported function argument")];
+        match stream.list_to_vec() {
+            Ok(arguments) => data.extend(arguments),
+            Err(_) => data.push(stream.clone()),
+        }
+        return Err(i.signal_data(sym::ERROR, data));
+    }
+    Ok(())
+}
+
 fn f_terpri(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU print_prepare validates the stream before the ENSURE/BOL
     // shortcut, including when no newline would be emitted.
     let stream = i.checked_output_stream(&arg(&args, 0))?;
     let ensure = arg(&args, 1).truthy();
+    if ensure {
+        check_terpri_function_stream(i, &stream)?;
+        if matches!(stream, Value::Cons(_)) {
+            // Function-like conses and invalid cons streams have no BOL
+            // state. Applying them validates/calls the stream before an
+            // ENSURE shortcut can suppress the observable result.
+            i.write_output_to("\n", &stream)?;
+            return Ok(Value::Sym(sym::T));
+        }
+    }
     if ensure && i.output_at_bol_checked(&stream)? {
         return Ok(Value::Nil);
     }
@@ -353,6 +388,30 @@ fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn print_overrides_keep_their_key_and_variable_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let key = interp.q("length");
+        let variable = interp.q("print-length");
+        interp.obarray.symbol_mut(variable).value = Value::Int(10);
+        assert!(interp.obarray.unintern_symbol(key));
+        assert!(interp.obarray.unintern_symbol(variable));
+        let replacement_key = interp.intern("length");
+        let replacement_variable = interp.intern("print-length");
+        assert_ne!(key, replacement_key);
+        assert_ne!(variable, replacement_variable);
+
+        let overrides = Value::list(vec![Value::cons(Value::Sym(key), Value::Int(2))]);
+        let result = with_print_overrides(&mut interp, &overrides, false, |interp| {
+            Ok(interp.symbol_value(variable))
+        })
+        .unwrap();
+
+        assert!(matches!(result, Value::Int(2)));
+        assert!(matches!(interp.symbol_value(variable), Value::Int(10)));
+    }
 
     #[test]
     fn with_output_to_string_cleans_up_failed_standard_output_binding() {

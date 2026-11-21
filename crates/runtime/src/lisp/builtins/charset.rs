@@ -2,8 +2,9 @@
 //!
 //! GNU Emacs carries a full Unicode/charset machinery; we keep a compact
 //! model that matches the observable Lisp API: charset objects identified
-//! by name with plists, char-code property tables (general-category
-//! provided for ASCII), and coding-system type resolution.
+//! by symbol identity with name-indexed native lookups and per-symbol
+//! plists, char-code property tables (general-category provided for ASCII),
+//! and coding-system type resolution.
 
 use crate::lisp::text::{EmacsChar, EmacsText, TextSource};
 use rustc_hash::FxHashSet;
@@ -21,6 +22,31 @@ fn want_sym(i: &mut Interp, v: &Value) -> Result<u32, Flow> {
 
 fn symv(i: &mut Interp, s: &str) -> Value {
     Value::Sym(i.intern(s))
+}
+
+fn q_symv(i: &mut Interp, s: &str) -> Value {
+    Value::Sym(i.q(s))
+}
+
+pub(crate) fn charset_symv(i: &mut Interp, name: &str) -> Value {
+    if BUILTIN_CHARSETS.contains(&name) {
+        return q_symv(i, name);
+    }
+    let registered = i
+        .charset_symbols
+        .iter()
+        .find(|(_, registered)| registered == name)
+        .map(|(symbol, _)| *symbol)
+        .or_else(|| {
+            i.charset_alias_symbols
+                .iter()
+                .find(|(symbol, _)| i.symbol_name(*symbol) == name)
+                .map(|(symbol, _)| *symbol)
+        });
+    if let Some(symbol) = registered {
+        return Value::Sym(symbol);
+    }
+    symv(i, name)
 }
 
 /// Names GNU Emacs defines as charsets (subset covering the common ones;
@@ -60,15 +86,127 @@ pub(crate) fn charset_defined(i: &Interp, name: &str) -> bool {
     BUILTIN_CHARSETS.contains(&name.as_str()) || charset_entry(i, &name).is_some()
 }
 
+#[derive(Clone)]
+pub(crate) struct CharsetRef {
+    pub symbol: SymId,
+    pub name: String,
+}
+
+pub(crate) fn charset_name_for_symbol(i: &Interp, symbol: SymId) -> Option<String> {
+    if let Some((_, name)) = i
+        .charset_symbols
+        .iter()
+        .find(|(registered, _)| *registered == symbol)
+    {
+        return Some(name.clone());
+    }
+    if let Some((_, target)) = i
+        .charset_alias_symbols
+        .iter()
+        .find(|(registered, _)| *registered == symbol)
+    {
+        return Some(target.clone());
+    }
+
+    let name = i.symbol_name(symbol);
+    // A name registered as a symbol alias is valid only for the exact
+    // symbol object passed to `define-charset-alias'.
+    if i.charset_aliases
+        .iter()
+        .any(|(alias, _)| alias.as_str() == name)
+    {
+        return None;
+    }
+    // Built-in charsets are native symbols with stable Q identities.
+    if BUILTIN_CHARSETS.contains(&name.as_str()) {
+        return (i.q_soft(&name) == Some(symbol)).then_some(name);
+    }
+    // Older portable images predate the symbol-id metadata; retain their
+    // interned custom charset names as a compatibility fallback.
+    if !i.obarray.symbol(symbol).uninterned
+        && !i
+            .charset_symbols
+            .iter()
+            .any(|(_, registered)| registered == &name)
+        && charset_entry(i, &name).is_some()
+    {
+        return Some(canonical_charset(i, &name));
+    }
+    None
+}
+
+fn charset_ref_for_symbol(i: &Interp, symbol: SymId) -> Option<CharsetRef> {
+    charset_name_for_symbol(i, symbol).map(|name| CharsetRef { symbol, name })
+}
+
+pub(crate) fn want_charset_ref(i: &mut Interp, v: &Value) -> Result<CharsetRef, Flow> {
+    i.sym_id(v)
+        .and_then(|symbol| charset_ref_for_symbol(i, symbol))
+        .ok_or_else(|| i.wrong_type_mut("charsetp", v))
+}
+
 pub(crate) fn want_charset(i: &mut Interp, v: &Value) -> Result<String, Flow> {
-    let name = match v {
-        Value::Sym(s) => i.symbol_name(*s),
-        _ => return Err(i.wrong_type_mut("charsetp", v)),
-    };
-    if charset_defined(i, &name) {
-        Ok(canonical_charset(i, &name))
+    want_charset_ref(i, v).map(|charset| charset.name)
+}
+
+fn charset_uses_native_tables(
+    i: &Interp,
+    symbol: SymId,
+    name: &str,
+    seen: &mut FxHashSet<SymId>,
+) -> bool {
+    if !seen.insert(symbol) {
+        return false;
+    }
+    if BUILTIN_CHARSETS.contains(&name) && i.q_soft(name) == Some(symbol) {
+        return true;
+    }
+    if let Some((_, target)) = i
+        .charset_alias_symbol_targets
+        .iter()
+        .find(|(alias, _)| *alias == symbol)
+    {
+        let target = *target;
+        let target_name = charset_name_for_symbol(i, target).unwrap_or_else(|| i.symbol_name(target));
+        return charset_uses_native_tables(i, target, &target_name, seen);
+    }
+    // Compatibility with portable images that only saved the alias name.
+    if let Some((_, target_name)) = i
+        .charset_alias_symbols
+        .iter()
+        .find(|(alias, _)| *alias == symbol)
+    {
+        return BUILTIN_CHARSETS.contains(&target_name.as_str())
+            && i.q_soft(target_name).is_some();
+    }
+    false
+}
+
+fn charset_storage_symbol(i: &Interp, symbol: SymId, seen: &mut FxHashSet<SymId>) -> SymId {
+    if !seen.insert(symbol) {
+        return symbol;
+    }
+    i.charset_alias_symbol_targets
+        .iter()
+        .find(|(alias, _)| *alias == symbol)
+        .map(|(_, target)| charset_storage_symbol(i, *target, seen))
+        .unwrap_or(symbol)
+}
+
+fn charset_map_key_for_symbol(i: &Interp, symbol: SymId, name: &str) -> String {
+    let symbol = charset_storage_symbol(i, symbol, &mut FxHashSet::default());
+    let primary = if BUILTIN_CHARSETS.contains(&name) {
+        i.q_soft(name)
     } else {
-        Err(i.wrong_type_mut("charsetp", v))
+        i.charset_symbols
+            .iter()
+            .find(|(_, registered)| registered == name)
+            .map(|(registered, _)| *registered)
+    };
+    if primary == Some(symbol) {
+        format!("charset:{name}")
+    } else {
+        format!("charset:{name}:symbol:{symbol}")
     }
 }
 
@@ -87,11 +225,10 @@ fn ensure_charset(i: &mut Interp, name: &str) {
 }
 
 fn f_charsetp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let name = match &a[0] {
-        Value::Sym(s) => i.symbol_name(*s),
-        _ => return Ok(Value::Nil),
-    };
-    Ok(Value::from_bool(charset_defined(i, &name)))
+    let charset = i
+        .sym_id(&a[0])
+        .is_some_and(|symbol| charset_name_for_symbol(i, symbol).is_some());
+    Ok(Value::from_bool(charset))
 }
 
 fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -131,7 +268,7 @@ fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             None => 4,
         };
-        props.push(symv(i, ":dimension"));
+        props.push(q_symv(i, ":dimension"));
         props.push(Value::Int(dim));
     }
     // :code-space defaults to an 8-vector [0 FF] × dimension.
@@ -145,7 +282,7 @@ fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             cs.push(Value::Int(0));
             cs.push(Value::Int(if d < dim { 0xFF } else { 0 }));
         }
-        props.push(symv(i, ":code-space"));
+        props.push(q_symv(i, ":code-space"));
         props.push(Value::vector(cs));
     }
     // Pad :code-space to 8 elements (GNU vconcats zeros).
@@ -182,9 +319,9 @@ fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         argv.push(attr(i, &props, k).unwrap_or(Value::Nil));
     }
     let mut plist_items = vec![
-        symv(i, ":name"),
+        q_symv(i, ":name"),
         Value::Sym(sid),
-        symv(i, ":docstring"),
+        q_symv(i, ":docstring"),
         docstring,
     ];
     plist_items.extend(props.iter().cloned());
@@ -193,8 +330,8 @@ fn f_define_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let name = want_charset(i, &a[0])?;
-    Ok(effective_charset_plist(i, &name))
+    let charset = want_charset_ref(i, &a[0])?;
+    Ok(charset_plist_for_symbol(i, charset.symbol, &charset.name))
 }
 
 /// GNU's synthesized attribute plist for the C builtins
@@ -227,27 +364,27 @@ fn builtin_charset_plist(i: &mut Interp, name: &str) -> Option<Value> {
         spacev.push(Value::Int(hi.into()));
     }
     let kv = vec![
-        symv(i, ":name"),
-        symv(i, name),
-        symv(i, ":dimension"),
+        q_symv(i, ":name"),
+        charset_symv(i, name),
+        q_symv(i, ":dimension"),
         Value::Int(dim.into()),
-        symv(i, ":code-space"),
+        q_symv(i, ":code-space"),
         Value::vector(spacev),
-        symv(i, ":iso-final-char"),
+        q_symv(i, ":iso-final-char"),
         if fin < 0 {
             Value::Nil
         } else {
             Value::Int(fin.into())
         },
-        symv(i, ":emacs-mule-id"),
+        q_symv(i, ":emacs-mule-id"),
         if mule < 0 {
             Value::Nil
         } else {
             Value::Int(mule.into())
         },
-        symv(i, ":ascii-compatible-p"),
+        q_symv(i, ":ascii-compatible-p"),
         Value::from_bool(compat),
-        symv(i, ":code-offset"),
+        q_symv(i, ":code-offset"),
         Value::Int(off.into()),
     ];
     Some(Value::list(kv))
@@ -294,30 +431,202 @@ pub(crate) fn effective_charset_plist(i: &mut Interp, name: &str) -> Value {
     }
 }
 
-fn f_set_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let name = want_charset(i, &a[0])?;
-    ensure_charset(i, &name);
-    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-        e.1 = a[1].clone();
+fn effective_charset_plist_for_symbol(
+    i: &mut Interp,
+    symbol: SymId,
+    name: &str,
+    seen: &mut FxHashSet<SymId>,
+) -> Value {
+    if !seen.insert(symbol) {
+        return Value::Nil;
     }
+    if BUILTIN_CHARSETS.contains(&name) && i.q_soft(name) == Some(symbol) {
+        return effective_charset_plist(i, name);
+    }
+    if let Some((_, plist)) = i
+        .charset_symbol_plists
+        .iter()
+        .find(|(registered, _)| *registered == symbol)
+    {
+        return plist.clone();
+    }
+    if let Some((_, target)) = i
+        .charset_alias_symbol_targets
+        .iter()
+        .find(|(alias, _)| *alias == symbol)
+    {
+        let target = *target;
+        let target_name = charset_name_for_symbol(i, target).unwrap_or_else(|| i.symbol_name(target));
+        return effective_charset_plist_for_symbol(i, target, &target_name, seen);
+    }
+    // Portable images predating the symbol-keyed plist table retain the
+    // old name-keyed representation. Native charsets also synthesize their
+    // standard fields from their names.
+    effective_charset_plist(i, name)
+}
+
+fn charset_plist_for_symbol(i: &mut Interp, symbol: SymId, name: &str) -> Value {
+    effective_charset_plist_for_symbol(i, symbol, name, &mut FxHashSet::default())
+}
+
+fn charset_symbol_plist_readonly(
+    i: &Interp,
+    symbol: SymId,
+    name: &str,
+    seen: &mut FxHashSet<SymId>,
+) -> Option<Value> {
+    if !seen.insert(symbol) {
+        return None;
+    }
+    if let Some((_, plist)) = i
+        .charset_symbol_plists
+        .iter()
+        .find(|(registered, _)| *registered == symbol)
+    {
+        return Some(plist.clone());
+    }
+    if let Some((_, target)) = i
+        .charset_alias_symbol_targets
+        .iter()
+        .find(|(alias, _)| *alias == symbol)
+    {
+        let target = *target;
+        let target_name = charset_name_for_symbol(i, target).unwrap_or_else(|| i.symbol_name(target));
+        return charset_symbol_plist_readonly(i, target, &target_name, seen);
+    }
+    charset_entry(i, name).map(|entry| entry.1.clone())
+}
+
+fn charset_decode_symbol_at(
+    i: &Interp,
+    symbol: SymId,
+    name: &str,
+    code: i64,
+    depth: u8,
+) -> Option<i64> {
+    if charset_uses_native_tables(i, symbol, name, &mut FxHashSet::default()) {
+        return charset_decode_at(i, name, code, depth);
+    }
+    let Some(plist) = charset_symbol_plist_readonly(i, symbol, name, &mut FxHashSet::default())
+    else {
+        return charset_decode_at(i, name, code, depth);
+    };
+    let map_key = charset_map_key_for_symbol(i, symbol, name);
+    charset_decode_plist_from(i, name, code, depth, &map_key, &plist)
+}
+
+fn charset_encode_symbol_at(
+    i: &Interp,
+    symbol: SymId,
+    name: &str,
+    ch: i64,
+    depth: u8,
+) -> Option<i64> {
+    if charset_uses_native_tables(i, symbol, name, &mut FxHashSet::default()) {
+        return charset_encode_at(i, name, ch, depth);
+    }
+    let Some(plist) = charset_symbol_plist_readonly(i, symbol, name, &mut FxHashSet::default())
+    else {
+        return charset_encode_at(i, name, ch, depth);
+    };
+    let map_key = charset_map_key_for_symbol(i, symbol, name);
+    charset_encode_plist_from(i, name, ch, depth, &map_key, &plist)
+}
+
+fn store_named_charset_plist(i: &mut Interp, name: &str, plist: Value) {
+    ensure_charset(i, name);
+    let canonical = canonical_charset(i, name);
+    if let Some(entry) = i.charsets.iter_mut().find(|(stored, _)| *stored == canonical) {
+        entry.1 = plist;
+    }
+}
+
+fn set_charset_plist_for_symbol(
+    i: &mut Interp,
+    symbol: SymId,
+    name: &str,
+    plist: Value,
+    seen: &mut FxHashSet<SymId>,
+) -> bool {
+    if !seen.insert(symbol) {
+        return false;
+    }
+    if BUILTIN_CHARSETS.contains(&name) && i.q_soft(name) == Some(symbol) {
+        store_named_charset_plist(i, name, plist);
+        return true;
+    }
+    if let Some((_, stored)) = i
+        .charset_symbol_plists
+        .iter_mut()
+        .find(|(registered, _)| *registered == symbol)
+    {
+        *stored = plist.clone();
+        let primary = i.charset_symbols
+                .iter()
+                .find(|(_, registered)| registered == name)
+                .is_some_and(|(registered, _)| *registered == symbol);
+        if primary {
+            store_named_charset_plist(i, name, plist);
+        }
+        return true;
+    }
+    if let Some((_, target)) = i
+        .charset_alias_symbol_targets
+        .iter()
+        .find(|(alias, _)| *alias == symbol)
+    {
+        let target = *target;
+        let target_name = charset_name_for_symbol(i, target).unwrap_or_else(|| i.symbol_name(target));
+        return set_charset_plist_for_symbol(i, target, &target_name, plist, seen);
+    }
+    // For the canonical native symbol (or an older image without symbol
+    // metadata), the shared name table is still the backing store.
+    if BUILTIN_CHARSETS.contains(&name)
+        && i.q_soft(name) == Some(symbol)
+        || (!i.obarray.symbol(symbol).uninterned
+            && !i
+                .charset_symbols
+                .iter()
+                .any(|(_, registered)| registered == name))
+    {
+        store_named_charset_plist(i, name, plist);
+        return true;
+    }
+    false
+}
+
+fn f_set_charset_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let charset = want_charset_ref(i, &a[0])?;
+    set_charset_plist_for_symbol(
+        i,
+        charset.symbol,
+        &charset.name,
+        a[1].clone(),
+        &mut FxHashSet::default(),
+    );
     invalidate_char_charset_cache(i);
     Ok(Value::Nil)
 }
 
 fn f_get_charset_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let name = want_charset(i, &a[0])?;
+    let charset = want_charset_ref(i, &a[0])?;
     let prop = want_sym(i, &a[1])?;
-    let plist = effective_charset_plist(i, &name);
+    let plist = charset_plist_for_symbol(i, charset.symbol, &charset.name);
     Ok(crate::lisp::eval::plist_get(&plist, prop))
 }
 
 fn f_put_charset_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let name = want_charset(i, &a[0])?;
+    let charset = want_charset_ref(i, &a[0])?;
     let prop = want_sym(i, &a[1])?;
-    ensure_charset(i, &name);
-    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-        e.1 = crate::lisp::eval::plist_put(&e.1, prop, a[2].clone());
-    }
+    let plist = charset_plist_for_symbol(i, charset.symbol, &charset.name);
+    let updated = crate::lisp::eval::plist_put(&plist, prop, a[2].clone());
+    set_charset_plist_for_symbol(
+        i,
+        charset.symbol,
+        &charset.name,
+        updated,
+        &mut FxHashSet::default(),
+    );
     invalidate_char_charset_cache(i);
     Ok(a[2].clone())
 }
@@ -327,10 +636,36 @@ fn f_define_charset_alias(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // CHECK_CHARSET_GET_ATTR — any non-charset object signals
     // `charsetp'.  ALIAS is a bare hash-table key: Fputhash accepts any
     // object, so non-symbol aliases register nothing and return nil.
-    let target = want_charset(i, &a[1])?;
+    let target = want_charset_ref(i, &a[1])?;
     if let Value::Sym(aid) = &a[0] {
         let alias = i.symbol_name(*aid);
-        i.charset_aliases.push((alias, target));
+        if let Some((_, previous)) = i
+            .charset_aliases
+            .iter_mut()
+            .find(|(name, _)| name == &alias)
+        {
+            *previous = target.name.clone();
+        } else {
+            i.charset_aliases.push((alias, target.name.clone()));
+        }
+        if let Some((_, previous)) = i
+            .charset_alias_symbols
+            .iter_mut()
+            .find(|(symbol, _)| *symbol == *aid)
+        {
+            *previous = target.name.clone();
+        } else {
+            i.charset_alias_symbols.push((*aid, target.name.clone()));
+        }
+        if let Some((_, previous)) = i
+            .charset_alias_symbol_targets
+            .iter_mut()
+            .find(|(symbol, _)| *symbol == *aid)
+        {
+            *previous = target.symbol;
+        } else {
+            i.charset_alias_symbol_targets.push((*aid, target.symbol));
+        }
         // GNU Fdefine_charset_alias: `Vcharset_list = Fcons (alias,
         // Vcharset_list)' — aliases prepend just like real charsets
         // (that's how `ucs' enters the list in mule-conf).
@@ -350,10 +685,12 @@ fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // "Can't unify charset: X".  Unifying installs the charset's
     // :unify-map table (parsed from etc/charsets/*.map) so later
     // `decode-char'/`map-charset-chars' produce real Unicode chars.
-    let name = want_charset(i, &a[0])?;
+    let charset = want_charset_ref(i, &a[0])?;
+    let name = charset.name;
+    let plist = charset_plist_for_symbol(i, charset.symbol, &name);
     let deunify = a.get(2).is_some_and(|v| !v.is_nil());
-    let offset = charset_entry(i, &name).and_then(|e| {
-        let mut cur = e.1.clone();
+    let offset = {
+        let mut cur = plist.clone();
         loop {
             let (k, v, rest) = match &cur {
                 Value::Cons(c) => {
@@ -373,12 +710,12 @@ fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             }
             cur = rest;
         }
-    });
-    let unified = !deunify && matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
-    if !unified {
+    };
+    let can_unify = matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
+    if !can_unify {
         return Err(i.error(format!("Can't unify charset: {name}")));
     }
-    let key = format!("charset:{name}");
+    let key = charset_map_key_for_symbol(i, charset.symbol, &name);
     if deunify {
         i.charset_maps.borrow_mut().remove(&key);
         invalidate_char_charset_cache(i);
@@ -392,13 +729,12 @@ fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => None,
     }
     .or_else(|| {
-        let plist = charset_entry(i, &name).map(|e| e.1.clone())?;
         let v = charset_prop(i, &plist, ":unify-map");
         (!v.is_nil()).then_some(v)
     });
     match mapval {
         Some(Value::Str(s)) => {
-            if let Some(t) = charset_table(i, &s.borrow(), &name) {
+            if let Some(t) = charset_table(i, &s.borrow(), &plist) {
                 i.charset_maps.borrow_mut().insert(key, t);
             }
         }
@@ -418,18 +754,17 @@ fn f_unify_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// supplementary one, supplementary charsets append at the tail.
 /// With the default (-Q) order the names are virtual, so runtime
 /// definitions just append in `charsets_ordered'.
-fn charset_ordered_insert(i: &mut Interp, name: &str) {
-    let supp = charset_prop_of(i, name, ":supplementary-p").truthy();
+fn charset_ordered_insert(i: &mut Interp, symbol: SymId, name: &str, supp: bool) {
     let mut st = i.charset_order.borrow_mut();
     if st.0.is_empty() {
         return;
     }
     if supp {
         st.0.push(name.to_string());
-        return;
-    }
-    let pos =
-        st.0.iter()
+    } else {
+        let pos = st
+            .0
+            .iter()
             .position(|n| {
                 matches!(
                     n.as_str(),
@@ -437,16 +772,42 @@ fn charset_ordered_insert(i: &mut Interp, name: &str) {
                 )
             })
             .unwrap_or(st.0.len());
-    st.0.insert(pos, name.to_string());
+        st.0.insert(pos, name.to_string());
+    }
+    drop(st);
+    let mut symbol_order = i.charset_priority_symbols.borrow_mut();
+    if let Some((symbols, _)) = symbol_order.as_mut() {
+        if supp {
+            symbols.push(symbol);
+        } else {
+            let pos = symbols
+                .iter()
+                .position(|candidate| {
+                    let candidate_name =
+                        charset_name_for_symbol(i, *candidate).unwrap_or_else(|| i.symbol_name(*candidate));
+                    matches!(
+                        candidate_name.as_str(),
+                        "emacs" | "eight-bit" | "eight-bit-control" | "eight-bit-graphic"
+                    )
+                })
+                .unwrap_or(symbols.len());
+            symbols.insert(pos, symbol);
+        }
+    }
 }
 
 /// `:map' property → table: a string names etc/charsets/NAME.map;
 /// a vector is inline [CODE-1 CHAR-1 ...] pairs (cached per charset).
-fn map_value_table(i: &Interp, name: &str, v: &Value) -> Option<Rc<CharsetTable>> {
+fn map_value_table(
+    i: &Interp,
+    map_key: &str,
+    plist: &Value,
+    v: &Value,
+) -> Option<Rc<CharsetTable>> {
     match v {
-        Value::Str(s) => charset_table(i, &s.borrow(), &name),
+        Value::Str(s) => charset_table(i, &s.borrow(), plist),
         Value::Vec(_) => {
-            let key = format!("vecmap:{name}");
+            let key = format!("vecmap:{map_key}");
             let cached = i.charset_maps.borrow().get(&key).cloned();
             Some(match cached {
                 Some(t) => t,
@@ -503,7 +864,7 @@ fn f_charset_after(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Some(c) => {
             let code = lisp_char_code(c) as i64;
             match char_charset(i, code, &[]) {
-                Some(name) => symv(i, &name),
+                Some(symbol) => Value::Sym(symbol),
                 None => Value::Nil,
             }
         }
@@ -514,20 +875,24 @@ fn find_charset_of_chars(i: &mut Interp, chars: impl Iterator<Item = EmacsChar>)
     // GNU picks, for each char, the highest-priority charset containing
     // it (char-charset on the ordered list), then emits the covering
     // set sorted by charset id — ascii first, then the JIS tables.
-    let mut names: Vec<String> = Vec::new();
+    let mut symbols: Vec<SymId> = Vec::new();
     for c in chars {
-        if let Some(cs) = char_charset(i, lisp_char_code(c) as i64, &[]) {
-            if !names.contains(&cs) {
-                names.push(cs);
+        if let Some(symbol) = char_charset(i, lisp_char_code(c) as i64, &[]) {
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
             }
         }
     }
-    if names.is_empty() {
+    if symbols.is_empty() {
         // GNU returns nil for an empty range/string.
         return Value::Nil;
     }
-    names.sort_by_key(|n| charset_id(i, n));
-    Value::list(names.iter().map(|n| symv(i, n)).collect())
+    symbols.sort_by_key(|symbol| {
+        let name = charset_name_for_symbol(i, *symbol)
+            .unwrap_or_else(|| i.symbol_name(*symbol));
+        charset_id_for_symbol(i, *symbol, &name)
+    });
+    Value::list(symbols.into_iter().map(Value::Sym).collect())
 }
 
 fn f_find_charset_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1269,7 +1634,7 @@ fn builtin_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
                 .map(|idx| super::bidi_table::BIDI_CLASS_TABLE[idx].2)
                 .ok();
             match cls {
-                Some(cls) => symv(i, cls),
+                Some(cls) => q_symv(i, cls),
                 None => return Value::Nil,
             }
         }
@@ -1283,7 +1648,7 @@ fn builtin_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
                 Some(_) => "N",
                 None => return Value::Nil,
             };
-            symv(i, m)
+            q_symv(i, m)
         }
         _ => Value::Nil,
     }
@@ -1543,7 +1908,7 @@ fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     // mapping TO -> TO-ALT makes FROM also map to TO-ALT, and chars
     // that mapped to FROM are updated to map to TO (tracked by
     // REVLIST, an alist (TO . (FROM ...))).
-    let tag = symv(i, "translation-table");
+    let tag = q_symv(i, "translation-table");
     let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
     let mut revlist: Vec<(i128, Vec<i128>)> = vec![];
     for arg in a.iter() {
@@ -1580,6 +1945,23 @@ fn f_make_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
 #[cfg(test)]
 mod translation_table_cycle_tests {
     use super::*;
+
+    #[test]
+    fn translation_table_keeps_its_original_subtype_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let subtype = interp.q("translation-table");
+        assert!(interp.obarray.unintern_symbol(subtype));
+        let replacement = interp.intern("translation-table");
+
+        let table = f_make_translation_table(&mut interp, Vec::new().into()).unwrap();
+        let Value::Record(table) = table else {
+            panic!("expected a translation char-table record");
+        };
+
+        assert_ne!(subtype, replacement);
+        assert!(matches!(table.borrow().get(1), Some(Value::Sym(symbol)) if *symbol == subtype));
+    }
 
     #[test]
     fn make_translation_table_rejects_a_circular_mapping_list() {
@@ -1774,7 +2156,7 @@ fn f_define_translation_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResul
 fn f_make_translation_table_from_vector(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (make-translation-table-from-vector VEC) — VEC is a 256-element array
     // mapping unibyte codes to multibyte chars.
-    let tag = symv(i, "translation-table");
+    let tag = q_symv(i, "translation-table");
     let table = misc::make_ct(i, tag.clone(), Value::Nil, vec![Value::Nil, Value::Nil]);
     let reverse = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil, Value::Nil]);
     let aref = Value::Sym(i.q("aref"));
@@ -1864,17 +2246,14 @@ pub(crate) fn f_coding_system_type(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         }
         _ => "charset",
     };
-    Ok(symv(i, ty))
+    Ok(q_symv(i, ty))
 }
 
 /// A charset's attribute plist entry as i64 (`:iso-final-char',
 /// `:emacs-mule-id', `:code-offset'), consulting builtin attrs too.
 fn charset_prop_of(i: &mut Interp, name: &str, key: &str) -> Value {
     let plist = effective_charset_plist(i, name);
-    match i.intern_soft(key) {
-        Some(id) => crate::lisp::eval::plist_get(&plist, id),
-        None => Value::Nil,
-    }
+    charset_prop(i, &plist, key)
 }
 
 /// GNU `Viso_2022_charset_list': charsets with an iso-final-char, in
@@ -1988,10 +2367,10 @@ pub(crate) fn coding_system_charset_names(i: &mut Interp, v: &Value) -> Value {
     let attr_is = |want: &str| matches!(&attr, Value::Sym(s) if i.symbol_name(*s) == want);
     if type_is("emacs-mule") {
         let names = emacs_mule_charsets(i);
-        Value::list(names.iter().map(|x| symv(i, x)).collect())
+        Value::list(names.iter().map(|x| charset_symv(i, x)).collect())
     } else if type_is("iso-2022") && attr_is("iso-2022") {
         let names = iso_2022_charsets(i);
-        Value::list(names.iter().map(|x| symv(i, x)).collect())
+        Value::list(names.iter().map(|x| charset_symv(i, x)).collect())
     } else {
         attr
     }
@@ -2213,8 +2592,8 @@ fn f_find_coding_systems_region_internal(i: &mut Interp, a: crate::lisp::Argv) -
             safe.push(coding);
         }
     }
-    safe.push(symv(i, "raw-text"));
-    safe.push(symv(i, "no-conversion"));
+    safe.push(q_symv(i, "raw-text"));
+    safe.push(q_symv(i, "no-conversion"));
     Ok(Value::list(safe))
 }
 
@@ -2247,10 +2626,54 @@ fn charset_id(i: &Interp, name: &str) -> i128 {
         .unwrap_or(-1)
 }
 
+fn charset_id_for_symbol(i: &Interp, symbol: SymId, name: &str) -> i128 {
+    let symbol = charset_storage_symbol(i, symbol, &mut FxHashSet::default());
+    let native_id = match name {
+        "ascii" => Some(("ascii", 0)),
+        "iso-8859-1" => Some(("iso-8859-1", 1)),
+        "unicode" => Some(("unicode", 2)),
+        "emacs" => Some(("emacs", 3)),
+        "eight-bit" => Some(("eight-bit", 4)),
+        _ => None,
+    };
+    if let Some((native_name, id)) = native_id
+        && i.q_soft(native_name) == Some(symbol)
+    {
+        return id;
+    }
+
+    let native_symbols: FxHashSet<SymId> = ["ascii", "iso-8859-1", "unicode", "emacs", "eight-bit"]
+        .into_iter()
+        .filter_map(|name| i.q_soft(name))
+        .collect();
+    let mut id = 5i128;
+    for (registered, _) in &i.charset_symbols {
+        let registered = charset_storage_symbol(i, *registered, &mut FxHashSet::default());
+        if native_symbols.contains(&registered) {
+            continue;
+        }
+        if registered == symbol {
+            return id;
+        }
+        id += 1;
+    }
+    // Old portable images retain the name-keyed table but may not have
+    // symbol registration metadata.
+    if !i
+        .charset_symbols
+        .iter()
+        .any(|(_, registered_name)| registered_name == name)
+    {
+        charset_id(i, name)
+    } else {
+        -1
+    }
+}
+
 fn f_charset_id_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: nil/missing arg or unknown name → wrong-type-argument charsetp.
-    let name = want_charset(i, &arg(&a, 0))?;
-    Ok(Value::Int(charset_id(i, &name)))
+    let charset = want_charset_ref(i, &arg(&a, 0))?;
+    Ok(Value::Int(charset_id_for_symbol(i, charset.symbol, &charset.name)))
 }
 
 /// GNU 31's `(charset-priority-list)' order at -Q.
@@ -2454,6 +2877,60 @@ fn charsets_ordered(i: &Interp) -> Vec<String> {
     names
 }
 
+fn push_unique_charset_symbol(symbols: &mut Vec<SymId>, symbol: SymId) {
+    if !symbols.contains(&symbol) {
+        symbols.push(symbol);
+    }
+}
+
+fn charset_symbols_for_name(i: &Interp, name: &str) -> Vec<SymId> {
+    let mut symbols = Vec::new();
+    if BUILTIN_CHARSETS.contains(&name)
+        && let Some(symbol) = i.q_soft(name)
+    {
+        push_unique_charset_symbol(&mut symbols, symbol);
+    }
+    for (symbol, registered) in &i.charset_symbols {
+        if registered == name {
+            push_unique_charset_symbol(&mut symbols, *symbol);
+        }
+    }
+    for (symbol, _) in &i.charset_alias_symbols {
+        if i.symbol_name(*symbol) == name {
+            push_unique_charset_symbol(&mut symbols, *symbol);
+        }
+    }
+    if symbols.is_empty()
+        && let Some(symbol) = i.q_soft(name).or_else(|| i.intern_soft(name))
+    {
+        symbols.push(symbol);
+    }
+    symbols
+}
+
+fn charsets_ordered_symbols(i: &Interp) -> Vec<SymId> {
+    if let Some((symbols, _)) = i.charset_priority_symbols.borrow().as_ref() {
+        return symbols.clone();
+    }
+    charsets_ordered(i)
+        .iter()
+        .flat_map(|name| charset_symbols_for_name(i, name))
+        .collect()
+}
+
+fn charset_non_preferred_symbol_idx(i: &Interp) -> usize {
+    if let Some((_, boundary)) = i.charset_priority_symbols.borrow().as_ref() {
+        return *boundary;
+    }
+    let names = charsets_ordered(i);
+    let boundary = charset_non_preferred_idx(i);
+    names
+        .iter()
+        .take(boundary)
+        .map(|name| charset_symbols_for_name(i, name).len())
+        .sum()
+}
+
 /// Index of `Vcharset_non_preferred_head' within `charsets_ordered'.
 /// At -Q the first 16 entries are preferred (jisx0208..control-1);
 /// `set-charset-priority' resets the boundary to its arg count.
@@ -2476,19 +2953,39 @@ fn invalidate_char_charset_cache(i: &Interp) {
 /// nothing signals "Invalid code(s)".
 pub(crate) fn make_char(i: &mut Interp, name: &str, codes: &[Value]) -> Result<i64, Flow> {
     let plist = effective_charset_plist(i, name);
-    let dims: Vec<(i64, i64)> = charset_dims(i, &plist).unwrap_or_default();
-    let dim = match prop_int(&charset_prop(i, &plist, ":dimension")) {
+    make_char_from_plist(i, None, name, &plist, codes)
+}
+
+pub(crate) fn make_char_for_symbol(
+    i: &mut Interp,
+    symbol: SymId,
+    name: &str,
+    codes: &[Value],
+) -> Result<i64, Flow> {
+    let plist = charset_plist_for_symbol(i, symbol, name);
+    make_char_from_plist(i, Some(symbol), name, &plist, codes)
+}
+
+fn make_char_from_plist(
+    i: &mut Interp,
+    symbol: Option<SymId>,
+    name: &str,
+    plist: &Value,
+    codes: &[Value],
+) -> Result<i64, Flow> {
+    let dims: Vec<(i64, i64)> = charset_dims(i, plist).unwrap_or_default();
+    let dim = match prop_int(&charset_prop(i, plist, ":dimension")) {
         Some(d) if d >= 1 => d as usize,
         _ => dims.len().max(1),
     };
-    let iso_final = prop_int(&charset_prop(i, &plist, ":iso-final-char")).unwrap_or(-1);
-    let compat = charset_prop(i, &plist, ":ascii-compatible-p").truthy();
+    let iso_final = prop_int(&charset_prop(i, plist, ":iso-final-char")).unwrap_or(-1);
+    let compat = charset_prop(i, plist, ":ascii-compatible-p").truthy();
     let mut min_code = 0i64;
     for k in 0..dim {
         let lo = dims.get(k).map(|d| d.0).unwrap_or(0);
         min_code = (min_code << 8) | lo;
     }
-    if let Some(v) = prop_int(&charset_prop(i, &plist, ":min-code")) {
+    if let Some(v) = prop_int(&charset_prop(i, plist, ":min-code")) {
         min_code = v;
     }
     // GNU: each supplied code goes into byte position (dim - j)
@@ -2523,7 +3020,11 @@ pub(crate) fn make_char(i: &mut Interp, name: &str, codes: &[Value]) -> Result<i
     if iso_final >= 0 {
         code &= 0x7F7F7F7F;
     }
-    match charset_decode(i, name, code) {
+    let decoded = match symbol {
+        Some(symbol) => charset_decode_for_symbol(i, symbol, name, code),
+        None => charset_decode(i, name, code),
+    };
+    match decoded {
         Some(c) => Ok(c),
         None => Err(i.error("Invalid code(s)")),
     }
@@ -2590,12 +3091,20 @@ pub(crate) fn charset_dimension_of(i: &mut Interp, name: &str) -> usize {
     }
 }
 
+pub(crate) fn charset_dimension_of_symbol(i: &mut Interp, symbol: SymId, name: &str) -> usize {
+    let plist = charset_plist_for_symbol(i, symbol, name);
+    match prop_int(&charset_prop(i, &plist, ":dimension")) {
+        Some(d) if d >= 1 => d as usize,
+        _ => charset_dims(i, &plist).map(|d| d.len()).unwrap_or(1).max(1),
+    }
+}
+
 /// GNU `char_charset': the first charset in ORDER (empty = the ordered
 /// list) whose ENCODE_CHAR succeeds; restricted lists may yield no
 /// winner, the default order falls back to `unicode' at the
 /// non-preferred boundary (for Unicode chars), then `emacs' or
 /// `eight-bit' for internal codes above Unicode.
-pub(crate) fn char_charset(i: &Interp, ch: i64, order: &[String]) -> Option<String> {
+pub(crate) fn char_charset(i: &Interp, ch: i64, order: &[SymId]) -> Option<SymId> {
     if !(0..=0x3FFFFF).contains(&ch) {
         return None;
     }
@@ -2603,66 +3112,77 @@ pub(crate) fn char_charset(i: &Interp, ch: i64, order: &[String]) -> Option<Stri
         // GNU's CHAR_CHARSET macro: ASCII chars are hardwired to
         // charset_ascii — the ordered-list walk never sees them.
         if ch < 128 {
-            return Some("ascii".to_string());
+            return i.q_soft("ascii");
         }
-        let ordered = charsets_ordered(i);
-        let boundary = charset_non_preferred_idx(i);
+        let ordered = charsets_ordered_symbols(i);
+        let boundary = charset_non_preferred_symbol_idx(i);
         let default_order = i.charset_order.borrow().0.is_empty();
         if default_order {
             if let Some(hit) = i.char_charset_cache.borrow().get(&ch) {
-                return Some(hit.clone());
+                return Some(*hit);
             }
         }
         let mut winner = None;
-        for (ix, name) in ordered.iter().enumerate() {
-            if charset_encode(i, name, ch).is_some() {
-                winner = Some(name.clone());
+        for (ix, symbol) in ordered.iter().enumerate() {
+            let name = charset_name_for_symbol(i, *symbol)
+                .unwrap_or_else(|| i.symbol_name(*symbol));
+            if charset_encode_for_symbol(i, *symbol, &name, ch).is_some() {
+                winner = Some(*symbol);
                 break;
             }
             if ix + 1 == boundary && ch <= 0x10FFFF {
-                winner = Some("unicode".to_string());
+                winner = i.q_soft("unicode");
                 break;
             }
         }
-        let winner = winner.unwrap_or_else(|| {
+        let winner = winner.or_else(|| {
             if ch <= 0x3FFF7F {
-                "emacs".to_string()
+                i.q_soft("emacs")
             } else {
-                "eight-bit".to_string()
+                i.q_soft("eight-bit")
             }
         });
-        if default_order {
-            i.char_charset_cache.borrow_mut().insert(ch, winner.clone());
+        if let Some(winner) = winner
+            && default_order
+        {
+            i.char_charset_cache.borrow_mut().insert(ch, winner);
         }
-        return Some(winner);
+        return winner;
     }
     order
         .iter()
-        .find(|name| charset_encode(i, name, ch).is_some())
-        .cloned()
+        .find(|symbol| {
+            let name = charset_name_for_symbol(i, **symbol)
+                .unwrap_or_else(|| i.symbol_name(**symbol));
+            charset_encode_for_symbol(i, **symbol, &name, ch).is_some()
+        })
+        .copied()
 }
 
 fn f_charset_priority_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fcharset_priority_list: a non-nil HIGHEST arg
     // returns just the HIGHEST-PRIORITY-CHARSET itself (a symbol), not a
     // list — regardless of what the arg names.
-    let names = charsets_ordered(i);
+    let symbols = charsets_ordered_symbols(i);
     if !arg(&a, 0).is_nil() {
-        return Ok(symv(i, &names[0]));
+        return Ok(symbols
+            .first()
+            .copied()
+            .map(Value::Sym)
+            .unwrap_or(Value::Nil));
     }
-    Ok(Value::list(names.iter().map(|n| symv(i, n)).collect()))
+    Ok(Value::list(symbols.into_iter().map(Value::Sym).collect()))
 }
 
 fn f_sort_charsets(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU sorts by position in `Vcharset_ordered_list'.
     let items = super::want_list(i, &a[0])?;
-    let order = charsets_ordered(i);
+    let order = charsets_ordered_symbols(i);
     let mut keyed: Vec<(usize, Value)> = Vec::with_capacity(items.len());
     for v in items.into_iter() {
         let pos = match &v {
             Value::Sym(s) => {
-                let n = canonical_charset(i, &i.symbol_name(*s));
-                order.iter().position(|o| *o == n).unwrap_or(usize::MAX)
+                order.iter().position(|ordered| ordered == s).unwrap_or(usize::MAX)
             }
             _ => usize::MAX,
         };
@@ -2676,20 +3196,27 @@ fn f_set_charset_priority(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU: each arg must be a charset; args present in the ordered
     // list move to the head in argument order; the rest of the old
     // list (which becomes the non-preferred head) follows.
-    let mut new_order: Vec<String> = Vec::with_capacity(a.len());
-    let mut old = charsets_ordered(i);
+    let mut new_order: Vec<SymId> = Vec::with_capacity(a.len());
+    let mut old = charsets_ordered_symbols(i);
     for v in a.iter() {
         // GNU drops an arg already moved to the new head (Fdelq +
         // memq): duplicate arguments produce a single entry.
-        let n = want_charset(i, v)?;
-        if let Some(pos) = old.iter().position(|x| *x == n) {
+        let charset = want_charset_ref(i, v)?;
+        if let Some(pos) = old.iter().position(|symbol| *symbol == charset.symbol) {
             old.remove(pos);
-            new_order.push(n);
+            new_order.push(charset.symbol);
         }
     }
     let boundary = new_order.len();
     new_order.append(&mut old);
-    *i.charset_order.borrow_mut() = (new_order, boundary);
+    let names = new_order
+        .iter()
+        .map(|symbol| {
+            charset_name_for_symbol(i, *symbol).unwrap_or_else(|| i.symbol_name(*symbol))
+        })
+        .collect();
+    *i.charset_order.borrow_mut() = (names, boundary);
+    *i.charset_priority_symbols.borrow_mut() = Some((new_order, boundary));
     invalidate_char_charset_cache(i);
     Ok(Value::Nil)
 }
@@ -2744,10 +3271,11 @@ pub(crate) fn iso_charset_lookup(
     dim: i64,
     chars96: bool,
     fc: i64,
-) -> Option<String> {
-    let mut found: Option<String> = None;
-    for name in charsets_ordered(i) {
-        let plist = effective_charset_plist(i, &name);
+) -> Option<SymId> {
+    let mut found: Option<SymId> = None;
+    for symbol in charsets_ordered_symbols(i) {
+        let name = charset_name_for_symbol(i, symbol).unwrap_or_else(|| i.symbol_name(symbol));
+        let plist = charset_plist_for_symbol(i, symbol, &name);
         let fin = prop_int(&charset_prop(i, &plist, ":iso-final-char"));
         if fin != Some(fc) {
             continue;
@@ -2757,15 +3285,17 @@ pub(crate) fn iso_charset_lookup(
         if pdim != Some(dim) || iso_chars_96(i, &plist) != chars96 {
             continue;
         }
-        found = Some(name);
+        found = Some(symbol);
     }
-    if let Some((_, _, _, n)) = i
+    let overridden_name = i
         .iso_charset_overrides
         .iter()
         .rev()
         .find(|(d, c, f, _)| *d == dim && *c == chars96 && *f == fc)
-    {
-        found = Some(n.clone());
+        .map(|(_, _, _, name)| name.clone());
+    if let Some(name) = overridden_name {
+        let value = charset_symv(i, &name);
+        found = i.sym_id(&value);
     }
     found
 }
@@ -2775,7 +3305,7 @@ fn f_iso_charset(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // CHARS FINAL-CHAR) indexes iso_charset_table, NOT a coding system.
     let (dim, chars96, fc) = iso_check(i, &a)?;
     match iso_charset_lookup(i, dim, chars96, fc) {
-        Some(name) => Ok(symv(i, &name)),
+        Some(symbol) => Ok(Value::Sym(symbol)),
         None => Ok(Value::Nil),
     }
 }
@@ -2801,7 +3331,8 @@ fn f_map_charset_chars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // points* visited (big-endian packed per the :code-space dims),
     // clamped to the charset's min/max code like GNU's
     // Fmap_charset_chars.
-    let name = want_charset(i, &a[1])?;
+    let charset = want_charset_ref(i, &a[1])?;
+    let name = charset.name;
     // Resolve FUNCTION's symbol cell once: per-range `apply' would
     // redo the alias/`indirect_function' walk thousands of times
     // inside characters.el's category seeding.
@@ -2825,9 +3356,7 @@ fn f_map_charset_chars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     };
     let from_req = read_bound(a.get(3))?;
     let to_req = read_bound(a.get(4))?;
-    let plist = charset_entry(i, &name)
-        .map(|e| e.1.clone())
-        .unwrap_or(Value::Nil);
+    let plist = charset_plist_for_symbol(i, charset.symbol, &name);
     let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
     let pack = |sel: usize| -> i64 {
         dims.iter()
@@ -2836,7 +3365,7 @@ fn f_map_charset_chars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fmap_charset_chars clamps the arguments to min/max code.
     let from = from_req.unwrap_or_else(|| pack(0)).max(pack(0));
     let to = to_req.unwrap_or_else(|| pack(1)).min(pack(1));
-    map_cc(i, &name, from, to, &function, &arg, 0)
+    map_cc(i, charset.symbol, &name, from, to, &function, &arg, 0)
 }
 
 /// GNU `map_charset_chars': recurse through :subset/:superset
@@ -2846,6 +3375,7 @@ fn f_map_charset_chars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// range.  FROM/TO of None mean the charset's min/max code.
 fn map_cc(
     i: &mut Interp,
+    symbol: SymId,
     name: &str,
     from: i64,
     to: i64,
@@ -2856,10 +3386,7 @@ fn map_cc(
     if depth > 8 {
         return Ok(Value::Nil);
     }
-    let name = canonical_charset(i, name);
-    let plist = charset_entry(i, &name)
-        .map(|e| e.1.clone())
-        .unwrap_or(Value::Nil);
+    let plist = charset_plist_for_symbol(i, symbol, name);
     let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
     let pack = |sel: usize| -> i64 {
         dims.iter()
@@ -2872,21 +3399,19 @@ fn map_cc(
     let partial = from > min_code || to < max_code;
 
     // :subset — adjust the window into parent code space and recurse.
-    if let Some((parent, pmin, pmax, off)) = subset_spec(i, &plist) {
+    if let Some((parent_symbol, parent, pmin, pmax, off)) = subset_spec(i, &plist) {
         let f = (from - off).max(pmin);
         let t = (to - off).min(pmax);
-        return map_cc(i, &parent, f, t, function, arg, depth + 1);
+        return map_cc(i, parent_symbol, &parent, f, t, function, arg, depth + 1);
     }
     // :superset — one recursion per parent with offset subtraction;
     // GNU clamps each window to the parent's min/max code.
     let supers = superset_list(i, &plist);
     if !supers.is_empty() {
-        for (pname, off) in supers {
+        for (parent_symbol, pname, off) in supers {
             let mut this_from = if from > off { from - off } else { 0 };
             let mut this_to = if to > off { to - off } else { 0 };
-            let pplist = charset_entry(i, &pname)
-                .map(|e| e.1.clone())
-                .unwrap_or(Value::Nil);
+            let pplist = charset_plist_for_symbol(i, parent_symbol, &pname);
             if let Some(pd) = charset_dims(i, &pplist) {
                 let ppack = |sel: usize| -> i64 {
                     pd.iter()
@@ -2895,20 +3420,33 @@ fn map_cc(
                 this_from = this_from.max(ppack(0));
                 this_to = this_to.min(ppack(1));
             }
-            map_cc(i, &pname, this_from, this_to, function, arg, depth + 1)?;
+            map_cc(
+                i,
+                parent_symbol,
+                &pname,
+                this_from,
+                this_to,
+                function,
+                arg,
+                depth + 1,
+            )?;
         }
         return Ok(Value::Nil);
     }
 
-    let unified = i
-        .charset_maps
-        .borrow()
-        .get(&format!("charset:{name}"))
-        .cloned();
+    let map_key = charset_map_key_for_symbol(i, symbol, name);
+    let unified = i.charset_maps.borrow().get(&map_key).cloned();
     let off = prop_int(&charset_prop(i, &plist, ":code-offset"));
     let table = unified
         .clone()
-        .or_else(|| map_value_table(i, &name, &charset_prop(i, &plist, ":map")));
+        .or_else(|| {
+            map_value_table(
+                i,
+                &map_key,
+                &plist,
+                &charset_prop(i, &plist, ":map"),
+            )
+        });
     // Fast path: characters.el calls `map-charset-chars' with
     // #'modify-category-entry ~4k times per charset.  When FUNCTION
     // resolved to that subr and ARG is a valid category char, write
@@ -3579,6 +4117,15 @@ pub(crate) fn charset_decode(i: &Interp, name: &str, code: i64) -> Option<i64> {
     charset_decode_at(i, name, code, 0)
 }
 
+pub(crate) fn charset_decode_for_symbol(
+    i: &Interp,
+    symbol: SymId,
+    name: &str,
+    code: i64,
+) -> Option<i64> {
+    charset_decode_symbol_at(i, symbol, name, code, 0)
+}
+
 fn charset_decode_at(i: &Interp, name: &str, code: i64, depth: u8) -> Option<i64> {
     if depth > 8 {
         return None;
@@ -3704,13 +4251,10 @@ fn charset_map_dirs() -> Vec<std::path::PathBuf> {
 fn charset_table<T: TextSource + ?Sized>(
     i: &Interp,
     mapname: &T,
-    name: &str,
+    plist: &Value,
 ) -> Option<Rc<CharsetTable>> {
     mapname.with_text(|mapname| {
-        let plist = charset_entry(i, name)
-            .map(|e| e.1.clone())
-            .unwrap_or(Value::Nil);
-        let dims = charset_dims(i, &plist);
+        let dims = charset_dims(i, plist);
         let codes: Vec<_> = mapname.chars().map(EmacsChar::code).collect();
         let key = format!("filemap:{codes:?}:{dims:?}");
         if let Some(t) = i.charset_maps.borrow().get(&key) {
@@ -3742,10 +4286,9 @@ fn charset_table<T: TextSource + ?Sized>(
 }
 
 fn charset_prop(i: &Interp, plist: &Value, key: &str) -> Value {
-    match i.intern_soft(key) {
-        Some(id) => crate::lisp::eval::plist_get(plist, id),
-        None => Value::Nil,
-    }
+    i.q_soft(key)
+        .map(|id| crate::lisp::eval::plist_get(plist, id))
+        .unwrap_or(Value::Nil)
 }
 
 fn prop_int(v: &Value) -> Option<i64> {
@@ -3811,18 +4354,22 @@ fn unlinear_index(dims: &[(i64, i64)], mut idx: i64) -> Option<i64> {
 }
 
 /// `(PARENT MIN-CODE MAX-CODE OFFSET)' from a `:subset' property.
-fn subset_spec(i: &Interp, plist: &Value) -> Option<(String, i64, i64, i64)> {
+fn subset_spec(i: &Interp, plist: &Value) -> Option<(SymId, String, i64, i64, i64)> {
     let spec = charset_prop(i, plist, ":subset");
     let items = spec.list_to_vec().ok()?;
     if items.len() != 4 {
         return None;
     }
-    let parent = match &items[0] {
-        Value::Sym(s) => i.symbol_name(*s),
+    let (parent_symbol, parent_name) = match &items[0] {
+        Value::Sym(s) => (
+            *s,
+            charset_name_for_symbol(i, *s).unwrap_or_else(|| i.symbol_name(*s)),
+        ),
         _ => return None,
     };
     Some((
-        parent,
+        parent_symbol,
+        parent_name,
         prop_int(&items[1])?,
         prop_int(&items[2])?,
         prop_int(&items[3])?,
@@ -3831,7 +4378,7 @@ fn subset_spec(i: &Interp, plist: &Value) -> Option<(String, i64, i64, i64)> {
 
 /// `(P1 P2 (P3 . OFF) ...)' from a `:superset' property — each entry
 /// is a bare parent symbol (offset 0) or a (PARENT . OFFSET) cons.
-fn superset_list(i: &Interp, plist: &Value) -> Vec<(String, i64)> {
+fn superset_list(i: &Interp, plist: &Value) -> Vec<(SymId, String, i64)> {
     let spec = charset_prop(i, plist, ":superset");
     let Ok(items) = spec.list_to_vec() else {
         return Vec::new();
@@ -3839,11 +4386,19 @@ fn superset_list(i: &Interp, plist: &Value) -> Vec<(String, i64)> {
     items
         .iter()
         .filter_map(|e| match e {
-            Value::Sym(s) => Some((i.symbol_name(*s), 0i64)),
+            Value::Sym(s) => Some((
+                *s,
+                charset_name_for_symbol(i, *s).unwrap_or_else(|| i.symbol_name(*s)),
+                0i64,
+            )),
             Value::Cons(c) => {
                 let b = c.borrow();
                 match (&b.car, &b.cdr) {
-                    (Value::Sym(s), off) => Some((i.symbol_name(*s), prop_int(off)?)),
+                    (Value::Sym(s), off) => Some((
+                        *s,
+                        charset_name_for_symbol(i, *s).unwrap_or_else(|| i.symbol_name(*s)),
+                        prop_int(off)?,
+                    )),
                     _ => None,
                 }
             }
@@ -3855,25 +4410,37 @@ fn superset_list(i: &Interp, plist: &Value) -> Vec<(String, i64)> {
 /// Generic plist-driven `DECODE_CHAR': installed unify map → `:map'
 /// table → `:subset'/`:superset' composition → `:code-offset'.
 fn charset_decode_plist(i: &Interp, name: &str, code: i64, depth: u8) -> Option<i64> {
-    if depth > 8 || code < 0 {
-        return None;
-    }
     let plist = charset_entry(i, name)
         .map(|e| e.1.clone())
         .unwrap_or(Value::Nil);
+    let map_key = format!("charset:{name}");
+    charset_decode_plist_from(i, name, code, depth, &map_key, &plist)
+}
+
+fn charset_decode_plist_from(
+    i: &Interp,
+    name: &str,
+    code: i64,
+    depth: u8,
+    map_key: &str,
+    plist: &Value,
+) -> Option<i64> {
+    if depth > 8 || code < 0 {
+        return None;
+    }
     // GNU DECODE_CHAR: reject codes outside [MIN-CODE, MAX-CODE] first;
     // these default to the packed :code-space extremes and can be
     // narrowed by :min-code/:max-code.
-    if let Some(dims) = charset_dims(i, &plist) {
+    if let Some(dims) = charset_dims(i, plist) {
         let (mut min, mut max) = (0i64, 0i64);
         for &(lo, hi) in &dims {
             min = (min << 8) | lo;
             max = (max << 8) | hi;
         }
-        if let Some(v) = prop_int(&charset_prop(i, &plist, ":min-code")) {
+        if let Some(v) = prop_int(&charset_prop(i, plist, ":min-code")) {
             min = v;
         }
-        if let Some(v) = prop_int(&charset_prop(i, &plist, ":max-code")) {
+        if let Some(v) = prop_int(&charset_prop(i, plist, ":max-code")) {
             max = v;
         }
         if code < min || code > max {
@@ -3886,40 +4453,45 @@ fn charset_decode_plist(i: &Interp, name: &str, code: i64, depth: u8) -> Option<
     let unified = i
         .charset_maps
         .borrow()
-        .get(&format!("charset:{name}"))
+        .get(map_key)
         .cloned();
     if let Some(t) = unified {
         if let Some(c) = table_lookup(&t.dec, code) {
             return Some(c);
         }
-    } else if let Some(t) = map_value_table(i, &name, &charset_prop(i, &plist, ":map")) {
+    } else if let Some(t) = map_value_table(
+        i,
+        map_key,
+        plist,
+        &charset_prop(i, plist, ":map"),
+    ) {
         if let Some(c) = table_lookup(&t.dec, code) {
             return Some(c);
         }
         // Map-method charset, unmapped code → nil (no offset
         // fallback in GNU for non-unified map charsets).
-        if prop_int(&charset_prop(i, &plist, ":code-offset")).is_none() {
+        if prop_int(&charset_prop(i, plist, ":code-offset")).is_none() {
             return None;
         }
     }
-    if let Some((parent, min, max, off)) = subset_spec(i, &plist) {
+    if let Some((parent_symbol, parent, min, max, off)) = subset_spec(i, plist) {
         let pc = code - off;
         if (min..=max).contains(&pc) {
-            return charset_decode_at(i, &parent, pc, depth + 1);
+            return charset_decode_symbol_at(i, parent_symbol, &parent, pc, depth + 1);
         }
         return None;
     }
-    let supers = superset_list(i, &plist);
-    for (pname, off) in &supers {
-        if let Some(c) = charset_decode_at(i, pname, code - off, depth + 1) {
+    let supers = superset_list(i, plist);
+    for (parent_symbol, pname, off) in &supers {
+        if let Some(c) = charset_decode_symbol_at(i, *parent_symbol, pname, code - off, depth + 1) {
             return Some(c);
         }
     }
     if !supers.is_empty() {
         return None;
     }
-    if let Some(off) = prop_int(&charset_prop(i, &plist, ":code-offset")) {
-        let dims = charset_dims(i, &plist)?;
+    if let Some(off) = prop_int(&charset_prop(i, plist, ":code-offset")) {
+        let dims = charset_dims(i, plist)?;
         return linear_index(&dims, code).map(|idx| off + idx);
     }
     None
@@ -3927,56 +4499,68 @@ fn charset_decode_plist(i: &Interp, name: &str, code: i64, depth: u8) -> Option<
 
 /// Mirror of `charset_decode_plist' for `ENCODE_CHAR'.
 fn charset_encode_plist(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i64> {
-    if depth > 8 {
-        return None;
-    }
     let plist = charset_entry(i, name)
         .map(|e| e.1.clone())
         .unwrap_or(Value::Nil);
+    let map_key = format!("charset:{name}");
+    charset_encode_plist_from(i, name, ch, depth, &map_key, &plist)
+}
+
+fn charset_encode_plist_from(
+    i: &Interp,
+    name: &str,
+    ch: i64,
+    depth: u8,
+    map_key: &str,
+    plist: &Value,
+) -> Option<i64> {
+    if depth > 8 {
+        return None;
+    }
     // GNU ENCODE_CHAR order: deunify (unified offset charsets map the
     // char through the installed unify map) → subset → superset →
     // map/offset leaf.
     let unified = i
         .charset_maps
         .borrow()
-        .get(&format!("charset:{name}"))
+        .get(map_key)
         .cloned();
     if let Some(t) = unified {
         if let Some(c) = table_lookup(&t.enc, ch) {
             return Some(c);
         }
     }
-    if let Some((parent, min, max, off)) = subset_spec(i, &plist) {
-        if let Some(pc) = charset_encode_at(i, &parent, ch, depth + 1) {
+    if let Some((parent_symbol, parent, min, max, off)) = subset_spec(i, plist) {
+        if let Some(pc) = charset_encode_symbol_at(i, parent_symbol, &parent, ch, depth + 1) {
             if (min..=max).contains(&pc) {
                 return Some(pc + off);
             }
         }
         return None;
     }
-    let supers = superset_list(i, &plist);
-    for (pname, off) in &supers {
-        if let Some(c) = charset_encode_at(i, pname, ch, depth + 1) {
+    let supers = superset_list(i, plist);
+    for (parent_symbol, pname, off) in &supers {
+        if let Some(c) = charset_encode_symbol_at(i, *parent_symbol, pname, ch, depth + 1) {
             return Some(c + off);
         }
     }
     if !supers.is_empty() {
         return None;
     }
-    if let Some(off) = prop_int(&charset_prop(i, &plist, ":code-offset")) {
+    if let Some(off) = prop_int(&charset_prop(i, plist, ":code-offset")) {
         // GNU OFFSET method: CH must lie in [MIN_CHAR, MAX_CHAR] =
         // OFFSET + index(MIN-CODE) .. OFFSET + index(MAX-CODE), then
         // the index maps back to a code point.
-        let dims = charset_dims(i, &plist)?;
+        let dims = charset_dims(i, plist)?;
         let (mut min_code, mut max_code) = (0i64, 0i64);
         for &(lo, hi) in &dims {
             min_code = (min_code << 8) | lo;
             max_code = (max_code << 8) | hi;
         }
-        if let Some(v) = prop_int(&charset_prop(i, &plist, ":min-code")) {
+        if let Some(v) = prop_int(&charset_prop(i, plist, ":min-code")) {
             min_code = v;
         }
-        if let Some(v) = prop_int(&charset_prop(i, &plist, ":max-code")) {
+        if let Some(v) = prop_int(&charset_prop(i, plist, ":max-code")) {
             max_code = v;
         }
         let lo_idx = linear_index(&dims, min_code).unwrap_or(0);
@@ -3987,7 +4571,12 @@ fn charset_encode_plist(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i6
         }
         return unlinear_index(&dims, idx);
     }
-    if let Some(t) = map_value_table(i, &name, &charset_prop(i, &plist, ":map")) {
+    if let Some(t) = map_value_table(
+        i,
+        map_key,
+        plist,
+        &charset_prop(i, plist, ":map"),
+    ) {
         return table_lookup(&t.enc, ch);
     }
     None
@@ -4018,6 +4607,15 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
 /// resolution (`charset_decode's mirror image).
 pub(crate) fn charset_encode(i: &Interp, name: &str, ch: i64) -> Option<i64> {
     charset_encode_at(i, name, ch, 0)
+}
+
+pub(crate) fn charset_encode_for_symbol(
+    i: &Interp,
+    symbol: SymId,
+    name: &str,
+    ch: i64,
+) -> Option<i64> {
+    charset_encode_symbol_at(i, symbol, name, ch, 0)
 }
 
 fn charset_encode_at(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i64> {
@@ -4608,29 +5206,53 @@ fn define_charset_internal_impl(i: &mut Interp, a: &[Value]) -> EvalResult {
     let plist = a[16].clone();
     let supp = a[9].truthy();
     let name = i.symbol_name(sid);
-    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
-        if e.1.is_nil() && !plist.is_nil() {
-            e.1 = plist;
+    let already_registered = i.charset_symbols.iter().any(|(symbol, _)| *symbol == sid);
+    let new_symbol = !already_registered;
+    let primary_symbol = if BUILTIN_CHARSETS.contains(&name.as_str()) {
+        i.q_soft(&name) == Some(sid)
+    } else {
+        i.charset_symbols
+            .iter()
+            .find(|(_, registered)| registered == &name)
+            .map(|(symbol, _)| *symbol)
+            .unwrap_or(sid)
+            == sid
+    };
+    if let Some(entry) = i.charsets.iter_mut().find(|(stored, _)| *stored == name) {
+        if primary_symbol {
+            entry.1 = plist.clone();
         }
     } else {
-        i.charsets.push((name.clone(), plist));
+        i.charsets.push((name.clone(), plist.clone()));
+    }
+    if new_symbol {
+        i.charset_symbols.push((sid, name.clone()));
+        i.charset_symbol_plists.push((sid, plist.clone()));
+        let charset_list = i.q("charset-list");
+        let current = i.symbol_value(charset_list);
+        let already_in_list = current
+            .list_to_vec()
+            .is_ok_and(|items| items.iter().any(|item| i.sym_id(item) == Some(sid)));
+        if !already_in_list {
+            let cell = Value::cons(Value::Sym(sid), current);
+            i.set_symbol_default_no_watchers(charset_list, cell)?;
+        }
+    } else if let Some((_, stored)) = i
+        .charset_symbol_plists
+        .iter_mut()
+        .find(|(symbol, _)| *symbol == sid)
+    {
+        *stored = plist.clone();
+    } else {
+        // Older portable images can retain symbol membership without the
+        // symbol-keyed plist field. Seed it on the next definition.
+        i.charset_symbol_plists.push((sid, plist.clone()));
+    }
+    if new_symbol {
         // GNU Fdefine_charset_internal: `Vcharset_list = Fcons (name,
         // Vcharset_list)' — newest definitions prepend; the seed in
         // eval.rs holds the builtins oldest-first at the tail.
-        {
-            let cl = i.q("charset-list");
-            let cur = i.symbol_value(cl);
-            let cell = Value::cons(Value::Sym(sid), cur);
-            i.set_symbol_default_no_watchers(cl, cell)?;
-        }
-        if supp {
-            let mut st = i.charset_order.borrow_mut();
-            if !st.0.is_empty() {
-                st.0.push(name.clone());
-            }
-        } else {
-            charset_ordered_insert(i, &name);
-        }
+        charset_ordered_insert(i, sid, &name, supp);
     }
     invalidate_char_charset_cache(i);
     Ok(Value::Nil)
@@ -4712,11 +5334,14 @@ fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     if !i.extra_coding_systems.iter().any(|n| *n == name) {
         i.extra_coding_systems.push(name.clone());
     }
+    if !i.extra_coding_system_symbols.contains(&sid) {
+        i.extra_coding_system_symbols.push(sid);
+    }
     // GNU: define-coding-system-internal `add-to-coding-system-list's
     // the name, and — when EOL-TYPE is a 3-vector — registers the three
     // subsidiary coding systems too (parents land before their
     // subsidiaries since equal mnemonics insert after equal keys).
-    crate::lisp::builtins::misc::add_to_coding_system_list(i, &name)?;
+    crate::lisp::builtins::misc::add_coding_system_symbol_to_list(i, sid)?;
     // GNU coding.c Fdefine_coding_system_internal pushes
     // `(SYMBOL-NAME . nil)' onto `coding-system-alist' when absent
     // (subsidiary eol names get the same treatment below).
@@ -4737,22 +5362,25 @@ fn f_define_coding_system_internal(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     push_alist(i, &name)?;
     if let Some(eol) = a.get(12) {
         if let Value::Vec(v) = eol {
-            let subs: Vec<String> = v
+            let subs: Vec<(SymId, String)> = v
                 .borrow()
                 .iter()
                 .filter_map(|x| match x {
-                    Value::Sym(s) => Some(i.symbol_name(*s)),
+                    Value::Sym(s) => Some((*s, i.symbol_name(*s))),
                     _ => None,
                 })
                 .collect();
             if subs.len() == 3 {
                 // GNU var order is parent, MAC, DOS, UNIX — the vector
                 // order is (UNIX DOS MAC), so register in reverse.
-                for sub in subs.iter().rev() {
+                for (sub_id, sub) in subs.iter().rev() {
                     if !i.extra_coding_systems.iter().any(|n| n == sub) {
                         i.extra_coding_systems.push(sub.clone());
                     }
-                    crate::lisp::builtins::misc::add_to_coding_system_list(i, sub)?;
+                    if !i.extra_coding_system_symbols.contains(sub_id) {
+                        i.extra_coding_system_symbols.push(*sub_id);
+                    }
+                    crate::lisp::builtins::misc::add_coding_system_symbol_to_list(i, *sub_id)?;
                     push_alist(i, sub)?;
                 }
             }
@@ -5250,5 +5878,176 @@ mod char_code_property_subtype_identity_tests {
             result,
             Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
         ));
+    }
+}
+
+#[cfg(test)]
+mod charset_keyword_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn charset_plist_lookup_keeps_keyword_identity_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.q(":dimension");
+        let plist = Value::list(vec![Value::Sym(key), Value::Int(2)]);
+        assert!(interp.obarray.unintern_symbol(key));
+
+        let replacement = interp.intern(":dimension");
+
+        assert_ne!(key, replacement);
+        assert!(matches!(
+            charset_prop(&interp, &plist, ":dimension"),
+            Value::Int(2)
+        ));
+    }
+
+    #[test]
+    fn builtin_charset_results_keep_the_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let ascii = interp.q("ascii");
+        assert!(interp.obarray.unintern_symbol(ascii));
+        let replacement = interp.intern("ascii");
+
+        let charsets = f_find_charset_string(&mut interp, vec![Value::string("A")].into())
+            .unwrap()
+            .list_to_vec()
+            .unwrap();
+
+        assert_ne!(ascii, replacement);
+        assert!(matches!(charsets.as_slice(), [Value::Sym(symbol)] if *symbol == ascii));
+    }
+
+    #[test]
+    fn charset_definition_defaults_keep_fixed_property_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let charset = interp.make_symbol("qa-native-charset-defaults");
+        let code_space = interp.q(":code-space");
+        let dimension = interp.q(":dimension");
+        let code_offset = interp.q(":code-offset");
+        assert!(interp.obarray.unintern_symbol(code_space));
+        let replacement = interp.intern(":code-space");
+
+        let result = f_define_charset(
+            &mut interp,
+            vec![
+                Value::Sym(charset),
+                Value::Nil,
+                Value::Sym(dimension),
+                Value::Int(1),
+                Value::Sym(code_offset),
+                Value::Int(0),
+            ]
+            .into(),
+        );
+        if let Err(Flow::Signal(signal)) = &result {
+            panic!(
+                "unexpected charset definition signal: {}",
+                interp.prin1_to_string(&signal.condition).to_unicode_lossy()
+            );
+        }
+        result.unwrap();
+        let charset_name = interp.symbol_name(charset);
+        let plist = effective_charset_plist(&mut interp, &charset_name);
+
+        assert_ne!(code_space, replacement);
+        assert!(matches!(charset_prop(&interp, &plist, ":code-space"), Value::Vec(_)));
+        assert_eq!(want_charset(&mut interp, &Value::Sym(charset)).unwrap(), charset_name);
+        let same_name_replacement = interp.intern("qa-native-charset-defaults");
+        assert!(want_charset(&mut interp, &Value::Sym(same_name_replacement)).is_err());
+    }
+
+    #[test]
+    fn charset_aliases_keep_their_original_symbol_identity() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let alias = interp.make_symbol("qa-uninterned-charset-alias");
+        let same_name = interp.intern("qa-uninterned-charset-alias");
+        let ascii = interp.q("ascii");
+
+        f_define_charset_alias(&mut interp, vec![Value::Sym(alias), Value::Sym(ascii)].into())
+            .unwrap();
+
+        assert!(f_charsetp(&mut interp, vec![Value::Sym(alias)].into())
+            .unwrap()
+            .truthy());
+        assert!(f_charsetp(&mut interp, vec![Value::Sym(same_name)].into())
+            .unwrap()
+            .is_nil());
+        assert_eq!(want_charset(&mut interp, &Value::Sym(alias)).unwrap(), "ascii");
+        assert!(want_charset(&mut interp, &Value::Sym(same_name)).is_err());
+    }
+
+    #[test]
+    fn safe_coding_results_keep_raw_coding_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let raw = interp.q("raw-text");
+        let no_conversion = interp.q("no-conversion");
+        for symbol in [raw, no_conversion] {
+            assert!(interp.obarray.unintern_symbol(symbol));
+        }
+        let raw_replacement = interp.intern("raw-text");
+        let no_conversion_replacement = interp.intern("no-conversion");
+        let coding_list = interp.q("coding-system-list");
+        interp.obarray.symbol_mut(coding_list).value = Value::Nil;
+
+        let safe = f_find_coding_systems_region_internal(
+            &mut interp,
+            vec![Value::string("é")].into(),
+        )
+        .unwrap()
+        .list_to_vec()
+        .unwrap();
+
+        assert_ne!(raw, raw_replacement);
+        assert_ne!(no_conversion, no_conversion_replacement);
+        assert!(matches!(safe.as_slice(), [Value::Sym(raw_id), Value::Sym(no_id)]
+            if *raw_id == raw && *no_id == no_conversion));
+    }
+
+    #[test]
+    fn coding_system_definition_keeps_its_uninterned_name_symbol() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let name = "qa-uninterned-coding-system";
+        let coding = interp.make_symbol(name);
+        let coding_type = interp.q("utf-8");
+
+        f_define_coding_system_internal(
+            &mut interp,
+            vec![
+                Value::Sym(coding),
+                Value::Int('Q' as i128),
+                Value::Sym(coding_type),
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+            ]
+            .into(),
+        )
+        .unwrap();
+
+        assert!(coding_known(&interp, &Value::Sym(coding)).is_some());
+        let same_name = interp.intern(name);
+        assert!(coding_known(&interp, &Value::Sym(same_name)).is_none());
+        let coding_list = interp.q("coding-system-list");
+        let symbols = interp
+            .symbol_value(coding_list)
+            .list_to_vec()
+            .unwrap();
+        assert!(symbols
+            .iter()
+            .any(|value| matches!(value, Value::Sym(symbol) if *symbol == coding)));
     }
 }

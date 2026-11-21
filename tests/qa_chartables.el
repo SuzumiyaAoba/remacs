@@ -795,6 +795,21 @@
           (set-category-table (make-char-table 'qact nil)))
         'wrong-type-argument)
 
+;; `optimize-char-table' uses the builtin EQ operation after uninterning,
+;; even when EQ's public function cell is void.
+(qa (let* ((eq-symbol 'eq)
+           (eq-function (symbol-function eq-symbol))
+           (table (make-char-table 'qact nil)))
+      (set-char-table-range table '(0 . 100) 'same)
+      (unwind-protect
+          (progn
+            (unintern eq-symbol obarray)
+            (fmakunbound eq-symbol)
+            (optimize-char-table table eq-symbol)
+            'done)
+        (fset eq-symbol eq-function)))
+    'done)
+
 ;; == absent in GNU 31.1 ==
 (qa (fboundp 'in-category) nil)
 (qa (fboundp 'char-table-extra-slots) nil)

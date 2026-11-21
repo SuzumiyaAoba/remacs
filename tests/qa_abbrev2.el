@@ -115,4 +115,30 @@
   (qa (lax-plist-get pl :a) 1)
   (qa (lax-plist-get pl :z) nil))
 
+;; Abbrev suggestions retain EXPANSION as supplied.  A non-cons can be
+;; recorded even though the later report expects the normal cons shape.
+(qa (let ((abbrev--suggest-saved-recommendations nil))
+      (list (abbrev--suggest-inform-user "a")
+            abbrev--suggest-saved-recommendations))
+    '(("a") ("a")))
+(qa-err-data
+ (let ((abbrev--suggest-saved-recommendations '("~")))
+   (abbrev-suggest-show-report))
+ 'wrong-type-argument '(listp "~"))
+
+;; A read-only buffer suppresses abbrev expansion after its variable is uninterned.
+(qa (let* ((read-only-symbol 'buffer-read-only)
+           (saved-function (symbol-function 'expand-abbrev))
+           (expanded nil))
+      (unwind-protect
+          (with-temp-buffer
+            (insert "foo")
+            (setq abbrev-mode t buffer-read-only t last-command-event 32)
+            (unintern read-only-symbol obarray)
+            (fset 'expand-abbrev (lambda (&rest _) (setq expanded t)))
+            (condition-case nil (self-insert-command 1) (buffer-read-only nil))
+            expanded)
+        (fset 'expand-abbrev saved-function)))
+    nil)
+
 (princ (qa--done))

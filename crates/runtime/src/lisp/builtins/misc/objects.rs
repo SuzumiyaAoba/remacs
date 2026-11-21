@@ -139,7 +139,7 @@ pub(super) fn f_cl_type_of(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::CondVar(_) => "condition-variable",
         Value::Finalizer(_) => "finalizer",
     };
-    Ok(Value::Sym(i.intern(name)))
+    Ok(Value::Sym(i.q(name)))
 }
 
 pub(super) fn f_memory_limit(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
@@ -285,7 +285,7 @@ pub(super) fn value_order_kind(i: &Interp, value: &Value) -> Option<ValueOrderKi
         Value::CondVar(_) => K::CondVar,
         Value::Finalizer(_) => K::Finalizer,
         Value::Subr(_) => K::Subr,
-        Value::Lambda(function) if function.compiled && !function.is_macro => K::Subr,
+        Value::Lambda(function) if function.is_native_compiled() && !function.is_macro => K::Subr,
         Value::Lambda(_) => K::Closure,
         Value::BigInt(_) => K::BigInt,
         _ => return None,
@@ -559,4 +559,24 @@ enum ValueOrderKind {
     Closure,
     BigInt,
     SymbolWithPos,
+}
+
+#[cfg(test)]
+mod cl_type_of_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn cl_type_of_keeps_its_original_type_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let fixnum = interp.q("fixnum");
+        assert!(interp.obarray.unintern_symbol(fixnum));
+        let replacement = interp.intern("fixnum");
+
+        let result = f_cl_type_of(&mut interp, vec![Value::Int(1)].into()).unwrap();
+
+        assert_ne!(fixnum, replacement);
+        assert!(matches!(result, Value::Sym(id) if id == fixnum));
+    }
 }

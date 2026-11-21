@@ -125,4 +125,17 @@
               '(file-error "Searching for program" "Too many levels of symbolic links" t))))
     (delete-directory qa205-directory t)
     (delete-directory qa205-other t)))
+;; The native openp path uses the original C variable cell after its name
+;; is removed from the public obarray.
+(let* ((qa205-directory (make-temp-file "qa205-unintern-cwd-" t))
+       (qa205-other (make-temp-file "qa205-unintern-path-" t)))
+  (unwind-protect
+      (progn
+        (qa205-write-tool (expand-file-name "qa205-tool" qa205-directory) "CWD")
+        (qa205-write-tool (expand-file-name "qa205-tool" qa205-other) "OTHER")
+        (unintern 'exec-path obarray)
+        (qa (qa205-lookup (list qa205-other) 'call) "OTHER"))
+    (delete-directory qa205-directory t)
+    (delete-directory qa205-other t)))
+
 (princ (qa--done)) (terpri)

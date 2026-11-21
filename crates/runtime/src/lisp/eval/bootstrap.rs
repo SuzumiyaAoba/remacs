@@ -210,13 +210,20 @@ impl Interp {
             dbus: crate::lisp::builtins::dbus::DbusState::new(),
             charsets: Vec::new(),
             charset_order: std::cell::RefCell::new((Vec::new(), 16)),
+            charset_priority_symbols: std::cell::RefCell::new(None),
             char_charset_cache: std::cell::RefCell::new(HashMap::default()),
             var_alias_prop: 0,
             charset_aliases: Vec::new(),
+            charset_symbols: Vec::new(),
+            charset_alias_symbols: Vec::new(),
+            charset_symbol_plists: Vec::new(),
+            charset_alias_symbol_targets: Vec::new(),
             iso_charset_overrides: Vec::new(),
             charset_maps: std::cell::RefCell::new(HashMap::default()),
             extra_coding_systems: Vec::new(),
+            extra_coding_system_symbols: Vec::new(),
             extra_coding_aliases: Vec::new(),
+            extra_coding_alias_symbols: Vec::new(),
             coding_detection_members: HashMap::default(),
             terminal_coding: Value::Nil,
             keyboard_coding: Value::Nil,
@@ -2014,8 +2021,685 @@ command-line arguments.\" \
             }
         }
         crate::lisp::load::finish_load_path(interp);
+        // Variable-watch notifications use GNU's fixed operation symbols.
+        // Cache each before user code can unintern its public name.
+        for operation in ["set", "let", "unlet", "defvaralias", "makunbound"] {
+            interp.q(operation);
+        }
+        // `make-hash-table' recognizes these by its fixed Lisp symbols,
+        // even if their public names are later removed from the obarray.
+        for weakness in ["key", "value", "key-and-value", "key-or-value"] {
+            interp.q(weakness);
+        }
+        // GnuTLS treats `iv-auto' as a fixed marker in cipher parameters.
+        interp.q("iv-auto");
+        // Native GnuTLS descriptors use fixed type and attribute symbols.
+        for symbol in [
+            ":cipher-aead-capable",
+            ":cipher-blocksize",
+            ":cipher-id",
+            ":cipher-ivsize",
+            ":cipher-keysize",
+            ":cipher-tagsize",
+            ":digest-algorithm-id",
+            ":digest-algorithm-length",
+            ":mac-algorithm-id",
+            ":mac-algorithm-keysize",
+            ":mac-algorithm-length",
+            ":mac-algorithm-noncesize",
+            ":warnings",
+            "gnutls-digest-algorithm",
+            "gnutls-mac-algorithm",
+            "gnutls-symmetric-cipher",
+        ] {
+            interp.q(symbol);
+        }
+        // `secure-hash-algorithms' returns these fixed primitive symbols.
+        for symbol in [
+            "md5",
+            "sha1",
+            "sha224",
+            "sha256",
+            "sha384",
+            "sha512",
+            "sha3-224",
+            "sha3-256",
+            "sha3-384",
+            "sha3-512",
+        ] {
+            interp.q(symbol);
+        }
+        // Runtime helpers that receive native Q names through string tables
+        // must retain those cells even if Lisp uninterns them before first use.
+        for symbol in [
+            "default-process-coding-system",
+            "coding-system-for-read",
+            "coding-system-for-write",
+            "signal-process-functions",
+            "interrupt-process-functions",
+            "network",
+            "run",
+            "stop",
+            "exit",
+            "signal",
+            "closed",
+            "open",
+            "connect",
+            "failed",
+            "listen",
+            "pipe",
+            "real",
+            "process",
+            "serial",
+            ":server",
+            ":host",
+            ":remote",
+            ":service",
+            ":local",
+            "args",
+            "thcount",
+            "rss",
+            "vsize",
+            "etime",
+            "start",
+            "nice",
+            "majflt",
+            "time",
+            "stime",
+            "utime",
+            "tpgid",
+            "pgrp",
+            "ppid",
+            "state",
+            "comm",
+            "group",
+            "egid",
+            "user",
+            "euid",
+            "ttname",
+            "latin-extra-code-table",
+            "remacs-coding-system-priorities",
+            "inhibit-iso-escape-detection",
+            "inhibit-null-byte-detection",
+            ":ascii-compatible-p",
+            ":eol-type",
+            ":flags",
+            ":emacs-mule-id",
+            ":valids",
+            ":charset-list",
+            ":name",
+            ":coding-type",
+            ":dimension",
+            ":default-char",
+            "front-sticky",
+            "rear-nonsticky",
+            "field",
+            "kill-buffer-hook",
+            "kill-buffer-query-functions",
+            "length",
+            "level",
+            "circle",
+            "quoted",
+            "escape-newlines",
+            "escape-control-characters",
+            "escape-nonascii",
+            "escape-multibyte",
+            "charset-text-property",
+            "unreadable-function",
+            "unreadeable-function",
+            "gensym",
+            "continuous-numbering",
+            "number-table",
+            "float-format",
+            "integers-as-characters",
+            "symbols-bare",
+            "print-length",
+            "print-level",
+            "print-circle",
+            "print-quoted",
+            "print-escape-newlines",
+            "print-escape-control-characters",
+            "print-escape-nonascii",
+            "print-escape-multibyte",
+            "print-charset-text-property",
+            "print-unreadable-function",
+            "print-gensym",
+            "print-continuous-numbering",
+            "print-number-table",
+            "float-output-format",
+            "print-integers-as-characters",
+            "print-symbols-bare",
+            "png",
+            "gif",
+            "jpeg",
+            "webp",
+            "bmp",
+            "xpm",
+            "pbm",
+            "xbm",
+            "postscript",
+            "tiff",
+            "svg",
+            "heic",
+            "unknown-image-type",
+            "meta",
+            "control",
+            "shift",
+            "hyper",
+            "super",
+            "alt",
+            "triple",
+            "double",
+            "down",
+            "drag",
+            "click",
+            "up",
+            "file-notify-error",
+            "special-event-map",
+            "lookup-key",
+            "file-missing",
+            "functionp",
+            "file-notify",
+            "delete",
+            "write",
+            "extend",
+            "attrib",
+            "link",
+            "rename",
+            "revoke",
+            "dbus-error",
+            "dbus-registered-objects-table",
+            "dbus-return-values-table",
+            "last-input-event",
+            "error-conditions",
+            "error-message",
+            "dbus-message-type-invalid",
+            "dbus-message-type-method-call",
+            "dbus-message-type-method-return",
+            "dbus-message-type-error",
+            "dbus-message-type-signal",
+            "dbus-runtime-version",
+            "dbus-compiled-version",
+            "dbusbind",
+            "dbus-message-internal",
+            "dbus-event",
+            "make-hash-table",
+            "equal",
+            ":byte",
+            ":boolean",
+            ":int16",
+            ":uint16",
+            ":int32",
+            ":uint32",
+            ":int64",
+            ":uint64",
+            ":double",
+            ":string",
+            ":object-path",
+            ":signature",
+            ":unix-fd",
+            ":array",
+            ":variant",
+            ":struct",
+            ":dict-entry",
+            ":system",
+            ":session",
+            ":system-private",
+            ":session-private",
+            ":timeout",
+            ":authorizable",
+            ":keep-fd",
+            ":serial",
+            ":signal",
+            ":monitor",
+            ":method",
+            ":test",
+            "buffer-file-truename",
+            "find-function-source-path",
+            "load-path",
+            "default-directory",
+            "buffer-file-name",
+            "translation-table",
+            "raw-text",
+            "no-conversion",
+            "Y",
+            "N",
+            "BN",
+            "S",
+            "B",
+            "WS",
+            "ON",
+            "ET",
+            "ES",
+            "CS",
+            "EN",
+            "L",
+            "R",
+            "AL",
+            "AN",
+            "FSI",
+            "LRE",
+            "LRI",
+            "LRO",
+            "NSM",
+            "PDF",
+            "PDI",
+            "RLE",
+            "RLI",
+            "RLO",
+            "charset",
+            "shift-jis",
+            "big5",
+            "iso-2022",
+            "ascii",
+            "unicode",
+            "emacs",
+            "eight-bit",
+            "ucs",
+            "iso-8859-1",
+            "latin-iso8859-1",
+            "eight-bit-control",
+            "eight-bit-graphic",
+            "control-1",
+            "mule-unicode-0100-24ff",
+            "mule-unicode-2500-33ff",
+            "mule-unicode-e000-ffff",
+            "cp932",
+            "cp932-2-byte",
+            "chinese-big5-1",
+            "chinese-big5-2",
+            "japanese-jisx0208",
+            "jisx0201",
+            "latin-jisx0201",
+            "katakana-jisx0201",
+            "katakana-sjis",
+            ":family",
+            ":height",
+            ":foundry",
+            ":weight",
+            ":slant",
+            ":width",
+            ":adstyle",
+            ":registry",
+            ":size",
+            ":dpi",
+        ] {
+            interp.q(symbol);
+        }
         // Native lookup keeps Qnumeric even if user code later uninterns it.
         interp.q("numeric");
+        // Native isearch uses these C-style symbol references even when
+        // the corresponding Lisp library is loaded lazily.
+        for symbol in [
+            "add-to-history",
+            "case-fold-search",
+            "char-fold-to-regexp",
+            "completing-read",
+            "completion-ignore-case",
+            "current-kill",
+            "deactivate-transient-input-method",
+            "emoji",
+            "emoji--init",
+            "emoji--read-emoji",
+            "executing-kbd-macro-index",
+            "face",
+            "facep",
+            "format",
+            "hi-lock",
+            "hi-lock-read-face-name",
+            "history-delete-duplicates",
+            "invisible-p",
+            "isearch",
+            "isearch--saved-local-map",
+            "isearch-allow-prefix",
+            "isearch-error",
+            "isearch-fail",
+            "isearch-group-1",
+            "isearch-help-for-help",
+            "isearch-last-case-fold-search",
+            "isearch-lazy-count",
+            "isearch-lazy-count-current",
+            "isearch-lazy-count-invisible",
+            "isearch-lazy-count-total",
+            "isearch-lax-whitespace",
+            "isearch-message-function",
+            "isearch-mode",
+            "isearch-mode-map",
+            "isearch-mode-end-hook-quit",
+            "isearch-no-upper-case-p",
+            "isearch-other-end",
+            "isearch-regexp-lax-whitespace",
+            "isearch-repeat-on-direction-change",
+            "isearch-symbol-regexp",
+            "isearch-transient-input-method",
+            "isearch-toggle-input-method",
+            "isearch-toggle-specified-input-method",
+            "isearch-wrapped",
+            "input-method-function",
+            "current-input-method",
+            "current-transient-input-method",
+            "downcase",
+            "delete-overlay",
+            "move-overlay",
+            "overlay-put",
+            "lazy-highlight",
+            "lazy-count-invisible-format",
+            "lazy-count-prefix-format",
+            "lazy-count-suffix-format",
+            "lazy-highlight-initial-delay",
+            "lazy-highlight-interval",
+            "lazy-highlight-max-at-a-time",
+            "lazy-highlight-no-delay-length",
+            "make-overlay",
+            "occur",
+            "open",
+            "overriding-terminal-local-map",
+            "priority",
+            "read-char-by-name",
+            "regexp-quote",
+            "regexp-search-ring",
+            "regexp-search-ring-max",
+            "regexp-search-ring-yank-pointer",
+            "require",
+            "search-default-mode",
+            "search-exit-option",
+            "search-highlight",
+            "search-highlight-submatches",
+            "search-invisible",
+            "search-nonincremental-instead",
+            "search-ring",
+            "search-ring-max",
+            "search-ring-yank-pointer",
+            "search-whitespace-regexp",
+            "isearch-lazy-highlight",
+            "isearch-wrap-pause",
+            "search-upper-case",
+            "selected-window",
+            "try-completion",
+            "window",
+            "window-end",
+            "window-start",
+            "word-search-regexp",
+            "yes",
+        ] {
+            interp.q(symbol);
+        }
+        // Native Tree-sitter helpers retain their C-style symbols even
+        // when the public Lisp names are removed before first use.
+        for symbol in [
+            "treesit-buffer_changed",
+            "treesit-buffer-too-large",
+            "treesit-compiled-query",
+            "treesit-extra-load-path",
+            "treesit-language-remap-alist",
+            "treesit-languages-require-line-column-tracking",
+            "treesit-load-language-error",
+            "treesit-load-name-override-list",
+            "treesit-node",
+            "treesit-node-buffer-killed",
+            "treesit-node-outdated",
+            "treesit-node-p",
+            "treesit-parse-error",
+            "treesit-parser",
+            "treesit-parser-deleted",
+            "treesit-parser-p",
+            "treesit-query-error",
+            "treesit-thing-settings",
+            "treesit-thing-symbol",
+            ":bytepos",
+            ":col",
+            ":line",
+        ] {
+            interp.q(symbol);
+        }
+        // Native NS geometry code reads fixed frame-parameter keys even
+        // if Lisp later removes their public names from the obarray.
+        for symbol in [
+            "external-border-size",
+            "internal-border-width",
+            "menu-bar-external",
+            "menu-bar-size",
+            "outer-position",
+            "outer-size",
+            "remacs--frame-geometry",
+            "title-bar-size",
+            "tool-bar-external",
+            "tool-bar-lines",
+            "tool-bar-position",
+            "tool-bar-size",
+        ] {
+            interp.q(symbol);
+        }
+        // The native-comp load bridge keeps its Lisp function cells when
+        // their public names are removed from the obarray.
+        for symbol in [
+            "batch-byte+native-compile",
+            "batch-native-compile",
+            "native-compile",
+            "native-compile-async",
+        ] {
+            interp.q(symbol);
+        }
+        // Process primitives inspect these fixed plist keywords by symbol
+        // identity, including before the corresponding Lisp files load.
+        for symbol in [
+            ":buffer",
+            ":command",
+            ":connection-type",
+            ":family",
+            ":filter",
+            ":host",
+            ":local",
+            ":log",
+            ":name",
+            ":noquery",
+            ":nowait",
+            ":port",
+            ":process",
+            ":plist",
+            ":remote",
+            ":sentinel",
+            ":server",
+            ":service",
+            ":speed",
+            ":stderr",
+            ":stop",
+        ] {
+            interp.q(symbol);
+        }
+        // The D-Bus backend calls the Lisp method by its fixed symbol.
+        interp.q("dbus-get-name-owner");
+        // Remaining native Q symbols used only by lazily entered paths.
+        // Intern them before Lisp can remove their public names.
+        for symbol in [
+            "&bad-param",
+            "(setf quote)",
+            "decode-hz-line-continuation",
+            "Discarded Samples",
+            "D-Bus",
+            "Unicode property value",
+            "XdndActionPrivate",
+            "activate-front",
+            "buffered",
+            "byte-opt",
+            "byte-optimize-letX",
+            "buffer-or-string-p",
+            "categoryp",
+            "categorysetp",
+            "ccl-program",
+            "cl--advice--orig",
+            "code-conversion-map",
+            "comp--spill-lap-function",
+            "db",
+            "direct-color",
+            "dump-file-name",
+            "dumped-with-pdumper",
+            "fixnum-or-symbol-with-pos-p",
+            "gui-selection-exists-p",
+            "ignore-self-insert",
+            "inner-edges",
+            "insert-behind-hooks",
+            "insert-in-front-hooks",
+            "modification-hooks",
+            "interactive-declare",
+            "ipv6",
+            "json-value-p",
+            "list-or-vector-p",
+            "load-time",
+            "minibuf-scroll-window",
+            "mm-size",
+            "not-useful",
+            "pty",
+            "remacs--raw-face",
+            "sqlite",
+            "static-gray",
+            "stderr",
+            "stdin",
+            "stdout",
+            "time-date",
+            ":array-type",
+            ":false",
+            ":false-object",
+            ":null",
+            ":null-object",
+            ":object-type",
+            ":purecopy",
+            ":rehash-size",
+            ":rehash-threshold",
+            ":remote",
+            ":weakness",
+        ] {
+            interp.q(symbol);
+        }
+        // `type-of' reports a fixed symbol for each built-in runtime type.
+        for symbol in [
+            "bignum",
+            "byte-code-function",
+            "buffer",
+            "condition-variable",
+            "cons",
+        "curve",
+            "finalizer",
+            "fixnum",
+            "float",
+            "frame",
+            "hash-table",
+            "integer",
+            "interpreted-function",
+            "marker",
+            "mutex",
+            "native-comp-function",
+            "obarray",
+            "null",
+            "overlay",
+            "process",
+            "primitive-function",
+            "record",
+            "special-form",
+            "string",
+            "subr",
+            "symbol",
+            "symbol-with-pos",
+            "thread",
+            "vector",
+            "window",
+        ] {
+            interp.q(symbol);
+        }
+        // `memory-use-counts' returns stable symbols for its report rows.
+        for symbol in [
+            "buffers",
+            "conses",
+            "floats",
+            "intervals",
+            "string-bytes",
+            "strings",
+            "symbols",
+            "vector-slots",
+            "vectors",
+        ] {
+            interp.q(symbol);
+        }
+        // Buffer construction reuses these fixed local-slot symbols.
+        for symbol in [
+            "buffer-auto-save-file-format",
+            "buffer-auto-save-file-name",
+            "buffer-backed-up",
+            "buffer-display-count",
+            "buffer-display-time",
+            "buffer-file-format",
+            "buffer-file-name",
+            "buffer-file-truename",
+            "buffer-invisibility-spec",
+            "buffer-read-only",
+            "buffer-saved-size",
+            "buffer-undo-list",
+            "default-directory",
+            "enable-multibyte-characters",
+            "local-minor-modes",
+            "major-mode",
+            "mark-active",
+            "mode-name",
+            "point-before-scroll",
+        ] {
+            interp.q(symbol);
+        }
+        // Fixed names passed through Rust helpers rather than appearing
+        // directly in a `q("...")` call.
+        for symbol in [
+            "backquote-list*",
+            "byte-compile-bound-variables",
+            "commandp",
+            "current-buffer",
+            "default-value",
+            "delete-all-overlays",
+            "display-buffer",
+            "dynamic-library-suffixes",
+            "erase-buffer",
+            "eval-minibuffer",
+            "first-change-hook",
+            "function",
+            "functionp",
+            "generate-new-buffer-name",
+            "get-buffer-create",
+            "goto-char",
+            "height",
+            "italic",
+            "keymap",
+            "kill-all-local-variables",
+            "kill-emacs-hook",
+            "last-command",
+            "left",
+            "list",
+            "local-map",
+            "macroexp--dynvars",
+            "make-frame-visible",
+            "normal",
+            "not-found",
+            "point-min",
+            "post-gc-hook",
+            "read-minibuffer",
+            "real-this-command",
+            "run-hooks",
+            "selected-frame",
+            "set-buffer-modified-p",
+            "this-command",
+            "this-original-command",
+            "user-emacs-directory",
+            "vconcat",
+            "vector",
+            "widen",
+            "width",
+            "window-buffer",
+            "window-frame",
+            "window-live-p",
+        ] {
+            interp.q(symbol);
+        }
+        // Reader/hash-table dispatch also compares these fixed option keys.
+        for symbol in ["rehash-size", "rehash-threshold", "weakness"] {
+            interp.q(symbol);
+        }
         for symbol in interp.obarray.all_ids() {
             let name = interp.symbol_name(symbol);
             interp.fixed_symbols.entry(name).or_insert(symbol);
@@ -2053,4 +2737,479 @@ fn boot_lib(i: &mut Interp, name: &str) {
         );
     }
     let _ = r;
+}
+
+#[cfg(test)]
+mod static_symbol_audit {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+
+    const INDIRECT_Q_SOFT_NAMES: &[&str] = &[
+        "&bad-param",
+        "batch-byte+native-compile",
+        "batch-native-compile",
+        "buffer-display-table",
+        "case-fold-search",
+        "char-width-table",
+        "ctl-arrow",
+        "debug-on-error",
+        "debug-on-next-call",
+        "debug-on-quit",
+        "debug-on-signal",
+        "defun-declarations-alist",
+        "eol-mnemonic-dos",
+        "eol-mnemonic-mac",
+        "eol-mnemonic-unix",
+        "eol-mnemonic-undecided",
+        "glyphless-char-display",
+        "input-decode-map",
+        "internal--text-quoting-flag",
+        "insert-behind-hooks",
+        "insert-in-front-hooks",
+        "local-function-key-map",
+        "load-file-rep-suffixes",
+        "load-suffixes",
+        "macro-declarations-alist",
+        "modification-hooks",
+        "native-compile",
+        "native-compile-async",
+        "outer-position",
+        "profiler-log-size",
+        "profiler-max-stack-depth",
+        "signal-hook-function",
+        "standard-display-table",
+        "tab-width",
+        "text-quoting-style",
+        "thin-space",
+        "tool-bar-external",
+        "tool-bar-lines",
+        "tool-bar-position",
+        "treesit-compiled-query",
+        "treesit-node",
+        "treesit-parser",
+        "png",
+        "gif",
+        "jpeg",
+        "webp",
+        "bmp",
+        "xpm",
+        "pbm",
+        "xbm",
+        "postscript",
+        "tiff",
+        "svg",
+        "heic",
+        "print-charset-text-property",
+        "print-escape-control-characters",
+        "print-escape-multibyte",
+        "print-escape-newlines",
+        "print-escape-nonascii",
+        "print-length",
+        "print-level",
+        ":buffer",
+        ":command",
+        ":connection-type",
+        ":family",
+        ":filter",
+        ":host",
+        ":local",
+        ":log",
+        ":name",
+        ":noquery",
+        ":nowait",
+        ":port",
+        ":process",
+        ":plist",
+        ":remote",
+        ":sentinel",
+        ":server",
+        ":service",
+        ":speed",
+        ":stderr",
+        ":stop",
+        ":ascii-compatible-p",
+        ":code-offset",
+        ":code-space",
+        ":coding-type",
+        ":default-char",
+        ":designation",
+        ":dimension",
+        ":eol-type",
+        ":emacs-mule-id",
+        ":flags",
+        ":iso-final-char",
+        ":map",
+        ":max-code",
+        ":min-code",
+        ":mime-charset",
+        ":mnemonic",
+        ":subset",
+        ":superset",
+        ":unify-map",
+        "search-whitespace-regexp",
+        "search-upper-case",
+        "downcase",
+        "current-input-method",
+        "current-transient-input-method",
+        "search-default-mode",
+        "search-invisible",
+        "isearch-lax-whitespace",
+        "isearch-regexp-lax-whitespace",
+        "isearch-no-upper-case-p",
+        "isearch-last-case-fold-search",
+        "isearch-allow-prefix",
+        "search-nonincremental-instead",
+        "isearch-repeat-on-direction-change",
+        "isearch-wrap-pause",
+        "search-exit-option",
+        "isearch-message-function",
+        "isearch-mode-end-hook-quit",
+        "input-method-function",
+        "lazy-count-invisible-format",
+        "isearch-lazy-count",
+        "lazy-count-prefix-format",
+        "lazy-count-suffix-format",
+        "search-highlight",
+        "isearch-lazy-highlight",
+        "search-highlight-submatches",
+        "lazy-highlight-max-at-a-time",
+        "lazy-highlight-no-delay-length",
+        "lazy-highlight-initial-delay",
+        "lazy-highlight-interval",
+        "delete-overlay",
+        "move-overlay",
+        "overlay-put",
+    ];
+
+    const INDIRECT_Q_NAMES: &[&str] = &[
+        "`",
+        "apply",
+        "args-out-of-range",
+        "append",
+        "backquote",
+        "backquote-backquote-symbol",
+        "backquote-list*",
+        "backquote-splice-symbol",
+        "backquote-unquote-symbol",
+        "bignum",
+        "buffer",
+        "buffers",
+        "byte-code-function",
+        "byte-compile-bound-variables",
+        "buffer-auto-save-file-format",
+        "buffer-auto-save-file-name",
+        "buffer-backed-up",
+        "buffer-display-count",
+        "buffer-display-time",
+        "buffer-file-format",
+        "buffer-file-name",
+        "buffer-file-truename",
+        "buffer-invisibility-spec",
+        "buffer-read-only",
+        "buffer-saved-size",
+        "buffer-undo-list",
+        "commandp",
+        "condition-variable",
+        "conses",
+        "charset",
+        "cons",
+        "current-buffer",
+        "default-value",
+        "default-directory",
+        "delete-all-overlays",
+        "display-buffer",
+        "dynamic-library-suffixes",
+        "erase-buffer",
+        "eval",
+        "eval-minibuffer",
+        "enable-multibyte-characters",
+        "finalizer",
+        "file-error",
+        "fixnum",
+        "float",
+        "floats",
+        "frame",
+        "function",
+        "functionp",
+        "first-change-hook",
+        "grave",
+        "generate-new-buffer-name",
+        "get-buffer-create",
+        "goto-char",
+        "hash-table",
+        "height",
+        "if",
+        "interpreted-function",
+        "integer",
+        "intervals",
+        "italic",
+        "kill-all-local-variables",
+        "kill-emacs-hook",
+        "keymap",
+        "load-with-code-conversion",
+        "last-command",
+        "let",
+        "let*",
+        "left",
+        "list",
+        "local-map",
+        "local-minor-modes",
+        "major-mode",
+        "make-keymap",
+        "make-sparse-keymap",
+        "macroexp--dynvars",
+        "make-frame-visible",
+        "marker",
+        "mark-active",
+        "mutex",
+        "native-comp-function",
+        "not",
+        "not-found",
+        "null",
+        "normal",
+        "obarray",
+        "or",
+        "overlay",
+        "permission-denied",
+        "point-min",
+        "primitive-function",
+        ":post-read-conversion",
+        ":pre-write-conversion",
+        "post-gc-hook",
+        "process",
+        "prin1",
+        "print",
+        "quote",
+        "read-minibuffer",
+        "real-this-command",
+        "record",
+        "special-form",
+        "run-hooks",
+        "selected-frame",
+        "set-buffer-modified-p",
+        "string-bytes",
+        "string",
+        "strings",
+        "string-match",
+        "string-match-p",
+        "straight",
+        "subr",
+        "symbol",
+        "symbols",
+        "symbol-with-pos",
+        "symbolp",
+        "this-command",
+        "this-original-command",
+        "thread",
+        "mode-name",
+        "point-before-scroll",
+        "top",
+        "user-emacs-directory",
+        "utf-8",
+        "vector",
+        "vector-slots",
+        "vectors",
+        "vconcat",
+        "widen",
+        "width",
+        "window",
+        "window-buffer",
+        "window-frame",
+        "window-live-p",
+        "treesit-buffer_changed",
+        "treesit-buffer-too-large",
+        "treesit-compiled-query",
+        "treesit-extra-load-path",
+        "treesit-language-remap-alist",
+        "treesit-languages-require-line-column-tracking",
+        "treesit-load-language-error",
+        "treesit-load-name-override-list",
+        "treesit-node",
+        "treesit-node-buffer-killed",
+        "treesit-node-outdated",
+        "treesit-node-p",
+        "treesit-parse-error",
+        "treesit-parser",
+        "treesit-parser-deleted",
+        "treesit-parser-p",
+        "treesit-query-error",
+        "treesit-thing-settings",
+        "treesit-thing-symbol",
+        "(setf quote)",
+        ":bytepos",
+        ":col",
+        ":line",
+        "regexp-search-ring",
+        "search-ring",
+        "regexp-search-ring-yank-pointer",
+        "search-ring-yank-pointer",
+        "regexp-search-ring-max",
+        "search-ring-max",
+        "isearch-wrapped",
+        "isearch-error",
+        "isearch-lazy-count-current",
+        "isearch-lazy-count-total",
+        "isearch-lazy-count-invisible",
+        "isearch-other-end",
+        "isearch-transient-input-method",
+        "isearch-toggle-input-method",
+        "isearch-toggle-specified-input-method",
+    ];
+
+    fn source_files(path: &Path, into: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                source_files(&path, into);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                into.push(path);
+            }
+        }
+    }
+
+    fn literal_names(source: &str, marker: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut rest = source;
+        while let Some(start) = rest.find(marker) {
+            rest = &rest[start + marker.len()..];
+            let Some(end) = rest.find("\")") else {
+                break;
+            };
+            let name = &rest[..end];
+            if !name.is_empty() && !name.contains('\\') {
+                names.push(name.to_owned());
+            }
+            rest = &rest[end + 2..];
+        }
+        names
+    }
+
+    fn literal_first_string_arguments(source: &str, marker: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut rest = source;
+        while let Some(start) = rest.find(marker) {
+            rest = &rest[start + marker.len()..];
+            let Some(end) = rest.find('"') else {
+                break;
+            };
+            let name = &rest[..end];
+            if !name.is_empty() && !name.contains('\\') {
+                names.push(name.to_owned());
+            }
+            rest = &rest[end + 1..];
+        }
+        names
+    }
+
+    fn bootstrap_q_seed_names(source: &str) -> Vec<String> {
+        let Some(start) = source.find("finish_load_path(interp);") else {
+            return Vec::new();
+        };
+        let source = &source[start..];
+        let end = source
+            .find("for symbol in interp.obarray.all_ids()")
+            .unwrap_or(source.len());
+        let source = &source[..end];
+        let mut names = literal_names(source, ".q(\"");
+        let mut rest = source;
+        while let Some(start) = rest.find(" in [") {
+            rest = &rest[start + " in [".len()..];
+            let Some(end) = rest.find("] {") else {
+                break;
+            };
+            let mut array = &rest[..end];
+            while let Some(start) = array.find('"') {
+                array = &array[start + 1..];
+                let Some(end) = array.find('"') else {
+                    break;
+                };
+                let name = &array[..end];
+                if !name.is_empty() && !name.contains('\\') {
+                    names.push(name.to_owned());
+                }
+                array = &array[end + 1..];
+            }
+            rest = &rest[end + 3..];
+        }
+        names
+    }
+
+    fn test_fixture_symbol(name: &str) -> bool {
+        name.starts_with("qa-") || name.starts_with("qa196-")
+    }
+
+    #[test]
+    fn literal_q_references_are_cached_before_user_code() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let interp = Interp::new();
+                let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lisp");
+                let bootstrap_source = std::fs::read_to_string(root.join("eval/bootstrap.rs"))
+                    .expect("read bootstrap source for static symbol audit");
+                let mut files = Vec::new();
+                source_files(&root, &mut files);
+                let mut missing_q = BTreeSet::new();
+                let mut missing_q_soft = BTreeSet::new();
+                for file in files {
+                    let Ok(source) = std::fs::read_to_string(&file) else {
+                        continue;
+                    };
+                    let relative = file.strip_prefix(&root).unwrap_or(&file).display();
+                    for name in literal_names(&source, ".q(\"") {
+                        if !test_fixture_symbol(&name) && !interp.fixed_symbols.contains_key(&name)
+                        {
+                            missing_q.insert(format!("{relative}: {name}"));
+                        }
+                    }
+                    for name in literal_first_string_arguments(&source, ".wrong_type_mut(\"") {
+                        if !test_fixture_symbol(&name) && !interp.fixed_symbols.contains_key(&name)
+                        {
+                            missing_q.insert(format!("{relative}: wrong-type predicate {name}"));
+                        }
+                    }
+                    for name in literal_names(&source, ".q_soft(\"") {
+                        if !test_fixture_symbol(&name) && !interp.fixed_symbols.contains_key(&name)
+                        {
+                            missing_q_soft.insert(format!("{relative}: {name}"));
+                        }
+                    }
+                }
+                for name in INDIRECT_Q_SOFT_NAMES {
+                    if !interp.fixed_symbols.contains_key(*name) {
+                        missing_q_soft.insert(format!("indirect q_soft name: {name}"));
+                    }
+                }
+                for name in INDIRECT_Q_NAMES {
+                    if !interp.fixed_symbols.contains_key(*name) {
+                        missing_q.insert(format!("indirect q name: {name}"));
+                    }
+                }
+                for subr in crate::lisp::builtins::dump_subrs() {
+                    if !interp.fixed_symbols.contains_key(subr.name) {
+                        missing_q.insert(format!("subr name: {}", subr.name));
+                    }
+                }
+                for name in bootstrap_q_seed_names(&bootstrap_source) {
+                    if !interp.fixed_symbols.contains_key(&name) {
+                        missing_q.insert(format!("bootstrap seed: {name}"));
+                    }
+                }
+                assert!(
+                    missing_q.is_empty(),
+                    "uncached literal q names: {missing_q:#?}"
+                );
+                assert!(
+                    missing_q_soft.is_empty(),
+                    "uncached literal q_soft names: {missing_q_soft:#?}"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

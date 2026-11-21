@@ -625,7 +625,7 @@ fn accepted_contact(
         (":host", host),
         (":remote", remote),
     ] {
-        contact = super::eval::plist_put(&contact, i.intern(key), value);
+        contact = super::eval::plist_put(&contact, i.q(key), value);
     }
     if let Some(service) = service {
         contact = super::eval::plist_put(&contact, i.q(":service"), service);
@@ -844,9 +844,14 @@ fn symv(i: &mut Interp, s: &str) -> Value {
     Value::Sym(i.intern(s))
 }
 
+fn q_symv(i: &mut Interp, s: &str) -> Value {
+    Value::Sym(i.q(s))
+}
+
 fn kw(i: &mut Interp, plist: &Value, name: &str) -> Value {
-    let id = i.intern(name);
-    plist_get(plist, id)
+    i.q_soft(name)
+        .map(|id| plist_get(plist, id))
+        .unwrap_or(Value::Nil)
 }
 
 fn nonblock_fd(fd: i32) {
@@ -1221,7 +1226,7 @@ fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> R
 fn run_sentinel_message(i: &mut Interp, pref: &ProcessRef, message: String) -> Result<(), Flow> {
     let mut sentinel = pref.borrow().sentinel.clone();
     if sentinel.is_nil() {
-        sentinel = symv(i, "internal-default-process-sentinel");
+        sentinel = Value::Sym(i.q("internal-default-process-sentinel"));
     }
     with_process_callback_context(i, |i| {
         call_process_callback(
@@ -2103,7 +2108,7 @@ fn finish_setup(
         p.log = kw(i, args, ":log");
     }
     if p.sentinel.is_nil() {
-        p.sentinel = symv(i, "internal-default-process-sentinel");
+        p.sentinel = Value::Sym(i.q("internal-default-process-sentinel"));
     }
     // GNU ignores :plist on `make-process' (child procs) but applies it
     // for pipe, network, and serial processes.
@@ -2437,11 +2442,7 @@ fn unbound_udp(ipv6: bool) -> std::io::Result<std::net::UdpSocket> {
 }
 
 fn datagram_error(i: &mut Interp, operation: &str, error: std::io::Error) -> Flow {
-    let symbol = i.intern(if error.kind() == std::io::ErrorKind::PermissionDenied {
-        "permission-denied"
-    } else {
-        "file-error"
-    });
+    let symbol = process_error_symbol(i, &error);
     let message = error.to_string();
     i.signal_data(
         symbol,
@@ -2450,6 +2451,14 @@ fn datagram_error(i: &mut Interp, operation: &str, error: std::io::Error) -> Flo
             Value::string(message.split(" (os error").next().unwrap_or(&message)),
         ],
     )
+}
+
+fn process_error_symbol(i: &mut Interp, error: &std::io::Error) -> crate::lisp::SymId {
+    i.q(if error.kind() == std::io::ErrorKind::PermissionDenied {
+        "permission-denied"
+    } else {
+        "file-error"
+    })
 }
 
 fn make_datagram_process(
@@ -2631,11 +2640,7 @@ fn make_datagram_process(
 }
 
 fn network_server_bind_error(i: &mut Interp, error: std::io::Error) -> Flow {
-    let symbol = i.intern(if error.kind() == std::io::ErrorKind::PermissionDenied {
-        "permission-denied"
-    } else {
-        "file-error"
-    });
+    let symbol = process_error_symbol(i, &error);
     let message = error.to_string();
     i.signal_data(
         symbol,
@@ -2992,11 +2997,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 // GNU reports bind failures via the errno-derived condition:
                 // EACCES → permission-denied, others → file-error, with data
                 // ("Cannot bind server socket" <strerror>).
-                let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    "permission-denied"
-                } else {
-                    "file-error"
-                });
+                let sig = process_error_symbol(i, &e);
                 let msg = e.to_string();
                 let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
                 i.signal_data(
@@ -3012,7 +3013,7 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let local_port = local_address.map(|address| address.port()).unwrap_or(port);
         let mut p = base_proc(name, "network", ProcIo::Listen(listener));
         p.status = "listen";
-        let local_kw = symv(i, ":local");
+        let local_kw = Value::Sym(i.q(":local"));
         let local_v = local_address.map(socket_addr_value).unwrap_or(Value::Nil);
         p.contact = contact_plist(local_port, vec![local_kw, local_v]);
         let pref = finish_setup(i, p, &args, false)?;
@@ -3108,8 +3109,8 @@ fn f_make_network_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // Even an immediately successful nonblocking connect is observable as
     // `connect' until an event-loop turn delivers its open sentinel.
     p.status = if nowait { "connect" } else { "open" };
-    let remote_kw = symv(i, ":remote");
-    let local_kw = symv(i, ":local");
+    let remote_kw = Value::Sym(i.q(":remote"));
+    let local_kw = Value::Sym(i.q(":local"));
     p.contact = contact_plist(port, vec![remote_kw, remote, local_kw, local]);
     let pref = finish_setup(i, p, &args, false)?;
     i.processes.push(pref.clone());
@@ -3178,7 +3179,7 @@ fn f_make_serial_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // (PORT SPEED) derived for the no-key form.
     p.status = "open";
     p.contact = args.clone();
-    p.connection_type = symv(i, "serial");
+    p.connection_type = Value::Sym(i.q("serial"));
     let pref = finish_setup(i, p, &args, false)?;
     if let Value::Int(speed) = kw(i, &args, ":speed") {
         serial_set_speed(&pref, speed as u32);
@@ -3257,15 +3258,15 @@ fn f_start_process(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => return Err(i.error(":name value not a string")),
     };
     let mut plist_items = vec![
-        symv(i, ":name"),
+        Value::Sym(i.q(":name")),
         Value::string(name),
-        symv(i, ":buffer"),
+        Value::Sym(i.q(":buffer")),
         a[1].clone(),
     ];
     if a.len() >= 3 && a[2].truthy() {
         let mut cmd = vec![a[2].clone()];
         cmd.extend(a[3..].iter().cloned());
-        plist_items.push(symv(i, ":command"));
+        plist_items.push(Value::Sym(i.q(":command")));
         plist_items.push(Value::list(cmd));
     }
     f_make_process(i, plist_items.into())
@@ -3373,7 +3374,7 @@ fn f_process_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // buffers resolve, unlike the CHECK_PROCESS accessors.
     let p = get_process(i, &a[0])?;
     let k = p.borrow().kind;
-    Ok(symv(i, k))
+    Ok(q_symv(i, k))
 }
 
 fn f_process_id(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3393,7 +3394,7 @@ fn f_process_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         },
         _ => get_process(i, &a[0])?,
     };
-    Ok(symv(i, p.borrow().status))
+    Ok(q_symv(i, p.borrow().status))
 }
 
 fn f_process_exit_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -3506,7 +3507,7 @@ fn f_process_filter(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if f.truthy() {
         Ok(f)
     } else {
-        Ok(symv(i, "internal-default-process-filter"))
+        Ok(Value::Sym(i.q("internal-default-process-filter")))
     }
 }
 
@@ -3524,7 +3525,7 @@ fn f_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_set_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
     let sentinel = if a[1].is_nil() {
-        symv(i, "internal-default-process-sentinel")
+        Value::Sym(i.q("internal-default-process-sentinel"))
     } else {
         a[1].clone()
     };
@@ -4160,7 +4161,7 @@ fn f_process_send_eof(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// HOOK-NAME's value with ARGS until one returns non-nil; that value
 /// is the result (nil when the hook runs out).
 fn run_hook_until_success(i: &mut Interp, hook: &str, args: Vec<Value>) -> EvalResult {
-    let id = i.intern(hook);
+    let id = i.q(hook);
     let list = if i.bound_p(id) {
         i.symbol_value(id)
     } else {
@@ -4941,7 +4942,7 @@ fn process_attributes_ps(i: &mut Interp, pid: i32) -> EvalResult {
                 .into_owned()
         }
     };
-    let pair = |i: &mut Interp, k: &str, v: Value| Value::cons(symv(i, k), v);
+    let pair = |i: &mut Interp, k: &str, v: Value| Value::cons(q_symv(i, k), v);
     let items = vec![
         pair(i, "args", Value::string(args_str)),
         pair(i, "thcount", Value::Int(1)),
@@ -5574,7 +5575,7 @@ fn f_internal_default_process_sentinel(i: &mut Interp, a: crate::lisp::Argv) -> 
         let read_only = i.q("buffer-read-only");
         // GNU changes the buffer slot directly, without variable watchers.
         let saved_read_only = buffer.borrow_mut().locals.insert(read_only, Value::Nil);
-        let insert = symv(i, "insert");
+        let insert = Value::Sym(i.q("insert"));
         let result = i.apply(
             &insert,
             vec![Value::string(format!("\nProcess {name} ")), a[1].clone()],
@@ -5623,13 +5624,13 @@ pub(crate) fn install(i: &mut Interp) {
     i.obarray.symbol_mut(read_max).special = true;
     let mnp = i.q("make-network-process");
     let subs = i.q("subfeatures");
-    let mkpair = |i: &mut Interp, a: &str, b: Value| Value::list(vec![Value::Sym(i.intern(a)), b]);
+    let mkpair = |i: &mut Interp, a: &str, b: Value| Value::list(vec![Value::Sym(i.q(a)), b]);
     let mut items: Vec<Value> = vec![
         mkpair(i, ":server", Value::t()),
         mkpair(i, ":service", Value::t()),
     ];
     for fam in ["ipv4", "local"] {
-        let fs = Value::Sym(i.intern(fam));
+        let fs = Value::Sym(i.q(fam));
         items.push(mkpair(i, ":family", fs));
     }
     let datagram = Value::Sym(i.q("datagram"));
@@ -6186,5 +6187,143 @@ mod process_contact_symbol_identity_tests {
         let actual = process.borrow().contact.clone();
         let actual = crate::lisp::eval::plist_get_v(&actual, &Value::Sym(remote_key));
         assert!(super::super::builtins::eq_values(&actual, &old_remote));
+    }
+}
+
+#[cfg(test)]
+mod process_keyword_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn process_keyword_lookup_keeps_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.q(":buffer");
+        let plist = Value::list(vec![Value::Sym(key), Value::Int(7)]);
+        assert!(interp.obarray.unintern_symbol(key));
+
+        let replacement = interp.intern(":buffer");
+
+        assert_ne!(key, replacement);
+        assert!(matches!(kw(&mut interp, &plist, ":buffer"), Value::Int(7)));
+    }
+
+    #[test]
+    fn process_error_conditions_keep_their_original_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        for (name, kind) in [
+            ("file-error", std::io::ErrorKind::Other),
+            ("permission-denied", std::io::ErrorKind::PermissionDenied),
+        ] {
+            let condition = interp.q(name);
+            assert!(interp.obarray.unintern_symbol(condition));
+            let replacement = interp.intern(name);
+            let flow = datagram_error(
+                &mut interp,
+                "send",
+                std::io::Error::new(kind, "qa process error"),
+            );
+
+            assert_ne!(condition, replacement);
+            assert!(matches!(flow, Flow::Signal(ref signal) if signal.is_symbol(condition)));
+        }
+    }
+}
+
+#[cfg(test)]
+mod process_static_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::{
+        obarray::Obarray,
+        value::{Argv, Arity, Subr},
+    };
+
+    fn hook_success(_: &mut Interp, _: Argv) -> EvalResult {
+        Ok(Value::Int(17))
+    }
+
+    static HOOK_SUCCESS: Subr = Subr {
+        name: "qa-process-static-hook-success",
+        arity: Arity::Range { min: 0, max: 0 },
+        func: hook_success,
+        doc: "",
+    };
+
+    #[test]
+    fn process_type_and_status_keep_their_static_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+
+        let network = interp.q("network");
+        let run = interp.q("run");
+        assert!(interp.obarray.unintern_symbol(network));
+        assert!(interp.obarray.unintern_symbol(run));
+        let network_replacement = interp.intern("network");
+        let run_replacement = interp.intern("run");
+        assert_ne!(network, network_replacement);
+        assert_ne!(run, run_replacement);
+
+        let process = Rc::new(std::cell::RefCell::new(base_proc(
+            EmacsText::from("qa-process-static-symbol"),
+            "network",
+            ProcIo::None,
+        )));
+        let argument = Value::Process(process);
+
+        let process_type = f_process_type(&mut interp, vec![argument.clone()].into()).unwrap();
+        let process_status = f_process_status(&mut interp, vec![argument].into()).unwrap();
+
+        assert!(matches!(process_type, Value::Sym(symbol) if symbol == network));
+        assert!(matches!(process_status, Value::Sym(symbol) if symbol == run));
+    }
+
+    #[test]
+    fn accepted_contact_uses_canonical_keywords_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+
+        let host_key = interp.q(":host");
+        assert!(interp.obarray.unintern_symbol(host_key));
+        let replacement = interp.intern(":host");
+        assert_ne!(host_key, replacement);
+
+        let server = Rc::new(std::cell::RefCell::new(base_proc(
+            EmacsText::from("qa-process-contact-server"),
+            "network",
+            ProcIo::None,
+        )));
+        let contact = accepted_contact(
+            &mut interp,
+            &server,
+            Value::string("example.test"),
+            None,
+            Value::t(),
+            None,
+        )
+        .unwrap();
+        let entries = contact.list_to_vec().unwrap();
+
+        assert!(entries
+            .chunks_exact(2)
+            .any(|entry| matches!(entry[0], Value::Sym(symbol) if symbol == host_key)));
+    }
+
+    #[test]
+    fn process_hooks_keep_their_canonical_variables_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+
+        let hook = interp.q("signal-process-functions");
+        interp.obarray.symbol_mut(hook).value = Value::list(vec![Value::Subr(&HOOK_SUCCESS)]);
+        assert!(interp.obarray.unintern_symbol(hook));
+        let replacement = interp.intern("signal-process-functions");
+        interp.obarray.symbol_mut(replacement).value = Value::Nil;
+
+        assert!(matches!(
+            run_hook_until_success(&mut interp, "signal-process-functions", Vec::new()).unwrap(),
+            Value::Int(17)
+        ));
     }
 }

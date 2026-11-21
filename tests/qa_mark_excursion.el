@@ -425,5 +425,23 @@
       (qa246-state) qa246-events)))
  '(caught (2 3 t) ((2 3 t))))
 
+;; `copy-to-register' with REGION delegates to the current active region;
+;; START and END are used only when REGION is nil.
+(qa
+ (let ((register-alist nil))
+   (with-temp-buffer
+     (insert "abcd")
+     (set-mark 2)
+     (goto-char 5)
+     (setq mark-active t)
+     (copy-to-register ?r 1 2 nil t)
+     (get-register ?r)))
+ "bcd")
+(qa-err-data
+ (let ((register-alist nil))
+   (with-temp-buffer
+     (copy-to-register ?r 'princ 'file-error 'variable-pitch 'l)))
+ 'error '("The mark is not set now, so there is no region"))
+
 
 (princ (qa--done)) (terpri)

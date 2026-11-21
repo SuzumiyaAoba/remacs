@@ -607,14 +607,14 @@ fn f_subrp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: strict type check — (subrp 'car) is nil.  GNU 31.1
     // native-compiles its dumped libraries, so a Lisp-defined
     // `forward-paragraph' is a (nativecomp) subr; remacs marks dumped
-    // definitions `compiled' — report those as subrs too.  Macros and
-    // `#[...]' byte-code objects are still plain closures — unless they
-    // were read while loading the bundled `.elc' dump blobs (`compiled'),
-    // which stand in for GNU's native-compiled subrs and report t.
-    let _ = i;
+    // definitions `compiled' — report those as subrs too. Byte-code
+    // objects loaded from `.elc' remain byte-code functions, not subrs.
     Ok(Value::from_bool(match &args[0] {
         Value::Subr(_) => true,
-        Value::Lambda(l) => l.compiled && !l.is_macro,
+        Value::Lambda(l) => l
+            .try_is_native_compiled()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?
+            && !l.is_macro,
         _ => false,
     }))
 }
@@ -632,7 +632,16 @@ fn f_subr_type(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         // `native-comp-function-p' counts compiled Lambdas as native (they
         // stand in for GNU's native-compiled defuns), so `subr-type' must
         // accept them too — comp-function-type-spec calls it on them.
-        Value::Lambda(l) if l.compiled => Ok(Value::Nil),
+        Value::Lambda(l) => {
+            let native = l
+                .try_is_native_compiled()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
+            if native && !l.is_macro {
+                Ok(Value::Nil)
+            } else {
+                Err(i.wrong_type_mut("subrp", &args[0]))
+            }
+        }
         other => Err(i.wrong_type_mut("subrp", other)),
     }
 }
@@ -800,15 +809,14 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
         Value::Lambda(l) => {
-            // GNU nativecomp parity: compiled lambdas (dumped source
-            // definitions and `#[...]' read from a bundled `.elc') report
-            // `subr'; raw `#[...]' literals stay `byte-code-function'.
-            if l.compiled {
-                "subr"
-            } else if l
+            let bytecode = l
                 .try_is_bytecode()
-                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?
-            {
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
+            // Dumped source definitions stand in for native-compiled
+            // functions. Bundled `.elc' functions remain byte-code objects.
+            if l.compiled && !bytecode {
+                "subr"
+            } else if bytecode {
                 "byte-code-function"
             } else {
                 "interpreted-function"
@@ -822,7 +830,7 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::CondVar(_) => "condition-variable",
         Value::Finalizer(_) => "finalizer",
     };
-    Ok(Value::Sym(i.intern(name)))
+    Ok(Value::Sym(i.q(name)))
 }
 fn f_symbol_value(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
@@ -1376,7 +1384,7 @@ fn f_text_quoting_style(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult 
         QuoteStyle::Straight => "straight",
         QuoteStyle::Curve => "curve",
     };
-    Ok(Value::Sym(i.intern(name)))
+    Ok(Value::Sym(i.q(name)))
 }
 fn f_fmakunbound(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
@@ -2148,7 +2156,7 @@ fn interactive_form_list(i: &mut Interp, f: &Value) -> EvalResult {
     let (head, mut body) = cons_parts(i, head_cell)?;
     let body_at = match i.sym_id(&head) {
         Some(sym::LAMBDA) => 2,
-        Some(id) if i.intern_soft("closure") == Some(id) => 3,
+        Some(id) if i.q_soft("closure") == Some(id) => 3,
         _ => return Ok(Value::Nil),
     };
     // Only step through the fixed header before scanning body forms. GNU
@@ -2210,12 +2218,20 @@ fn f_subr_name(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             Some(bytes) => i.auto_string_value(&bytes),
             None => Value::string(s.name),
         }),
-        // Compiled lambdas print as `#<subr NAME>' like GNU's native
-        // functions; `subr-name' must serve the same name.
-        Value::Lambda(l) if l.compiled => match i.lambda_name(l) {
-            Some(n) => Ok(Value::string(n)),
-            None => Err(i.wrong_type_mut("subrp", &args[0])),
-        },
+        // Native-compiled lambdas print as `#<subr NAME>' like GNU's
+        // native functions; byte-code objects are not subrs.
+        Value::Lambda(l) => {
+            let native = l
+                .try_is_native_compiled()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
+            if !native {
+                return Err(i.wrong_type_mut("subrp", &args[0]));
+            }
+            match i.lambda_name(l) {
+                Some(n) => Ok(Value::string(n)),
+                None => Err(i.wrong_type_mut("subrp", &args[0])),
+            }
+        }
         _ => Err(i.wrong_type_mut("subrp", &args[0])),
     }
 }
@@ -2241,7 +2257,7 @@ fn f_function_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                     .try_borrow()
                     .map(|cell| cell.car.clone())
                     .map_err(|_| i.error("Cannot inspect a mutably borrowed function form"))?;
-                let closure = i.intern_soft("closure");
+                let closure = i.q_soft("closure");
                 match i.sym_id(&head) {
                     Some(s) if s == sym::LAMBDA || Some(s) == closure => {
                         return Ok(args[2].clone());
@@ -2445,5 +2461,47 @@ mod makunbound_watch_tests {
             "sample-variable",
             Err(std::env::VarError::NotUnicode(invalid))
         ));
+    }
+}
+
+#[cfg(test)]
+mod type_of_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn type_of_returns_the_original_type_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.q("symbol");
+        assert!(interp.obarray.unintern_symbol(original));
+
+        let replacement = interp.intern("symbol");
+        let result = f_type_of(&mut interp, vec![Value::Sym(sym::T)].into()).unwrap();
+
+        assert_ne!(original, replacement);
+        assert!(matches!(result, Value::Sym(id) if id == original));
+    }
+}
+
+#[cfg(test)]
+mod text_quoting_style_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn text_quoting_style_returns_the_original_style_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let style_variable = interp.q("text-quoting-style");
+        let original = interp.q("grave");
+        interp.obarray.symbol_mut(style_variable).value = Value::Sym(original);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern("grave");
+
+        let result = f_text_quoting_style(&mut interp, crate::lisp::Argv::new(Vec::new())).unwrap();
+
+        assert_ne!(original, replacement);
+        assert!(matches!(result, Value::Sym(symbol) if symbol == original));
     }
 }

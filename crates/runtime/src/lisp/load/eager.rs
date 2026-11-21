@@ -84,7 +84,7 @@ pub(super) fn eval_str_for_load(
         let next = {
             let lrf = i.symbol_value(lrf_sym);
             let is_default = matches!(&lrf, Value::Nil)
-                || matches!(&lrf, Value::Sym(s) if i.intern_soft("read") == Some(*s));
+                || matches!(&lrf, Value::Sym(s) if i.q_soft("read") == Some(*s));
             if is_default {
                 // GNU's readevalloop consumes top-level whitespace and
                 // semicolon comments before calling the reader.  In
@@ -336,7 +336,7 @@ fn native_backend_bridges(
     ]
     .into_iter()
     .filter_map(|name| {
-        let symbol = i.intern_soft(name)?;
+        let symbol = i.q_soft(name)?;
         let function = i.symbol_function(symbol);
         match &function {
             Value::Lambda(_) | Value::Subr(_) => Some((symbol, function)),
@@ -386,4 +386,44 @@ fn expand_for_load(i: &mut Interp, expander: &Value, form: Value, full: bool) ->
     i.compiled_macro_expansion = saved_expansion;
     i.macroexp_call_depth -= 1;
     result
+}
+
+#[cfg(test)]
+mod native_backend_bridge_tests {
+    use super::*;
+    use crate::lisp::{
+        obarray::Obarray,
+        text::EmacsText,
+        value::{Argv, Arity, Subr},
+    };
+
+    fn stub_native_compile(_: &mut Interp, _: Argv) -> EvalResult {
+        Ok(Value::Nil)
+    }
+
+    static NATIVE_COMPILE_STUB: Subr = Subr {
+        name: "qa-native-compile-stub",
+        arity: Arity::Range { min: 0, max: 0 },
+        func: stub_native_compile,
+        doc: "",
+    };
+
+    #[test]
+    fn bridge_lookup_keeps_the_original_function_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        interp.boot_loading = false;
+        let original = interp.q("native-compile");
+        interp.obarray.symbol_mut(original).function = Value::Subr(&NATIVE_COMPILE_STUB);
+        assert!(interp.obarray.unintern_symbol(original));
+
+        let replacement = interp.intern("native-compile");
+        let file = EmacsText::from("builtin:comp");
+        let (_, embedded_source) = embedded_entry("comp").unwrap();
+        let source = EmacsText::from(embedded_source);
+        let bridges = native_backend_bridges(&interp, &file, &source);
+
+        assert_ne!(original, replacement);
+        assert!(bridges.iter().any(|(symbol, _)| *symbol == original));
+    }
 }

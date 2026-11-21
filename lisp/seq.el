@@ -329,6 +329,8 @@ The result is a sequence of the same type as SEQUENCE.  The sort
 operates on a copy of SEQUENCE and does not modify SEQUENCE.  For
 character tables, the result is a vector because character tables
 cannot be resized."
+  (unless (seqp sequence)
+    (signal 'wrong-type-argument (list 'sequencep sequence)))
   (let* ((sequence (seq-into-sequence sequence))
          (result (seq-sort pred (append sequence nil))))
     (seq-into result (type-of sequence))))

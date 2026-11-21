@@ -264,7 +264,7 @@ pub(super) fn f_func_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
             // `(2 . unevalled)' for `if' — min from the special-form table.
             let min = match &args[0] {
                 Value::Sym(id) => crate::lisp::special::special_form_min_args(*id),
-                Value::Subr(s) => crate::lisp::special::special_form_min_args(i.intern(s.name)),
+                Value::Subr(s) => crate::lisp::special::special_form_min_args(i.q(s.name)),
                 _ => 0,
             };
             (Value::integer(min as i128), Value::Sym(i.q("unevalled")))
@@ -277,20 +277,21 @@ pub(super) fn f_subr_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     // GNU requires the subr object itself (not a symbol naming one).
     let arity = match &args[0] {
         Value::Subr(s) => FunctionArity::from(s.arity),
-        // GNU 31.1 nativecomp: Lisp-defined functions report `subrp' t
-        // and `subr-arity' returns their arglist-derived range.  remacs
-        // marks dumped definitions `compiled' (`f_subrp'), so a compiled
-        // non-macro lambda must be accepted here too — and that INCLUDES
-        // `.elc'-twin `#[...]' objects, which GNU native-compiles to
-        // real subrs (their `subrp' is already t, so `subr-arity' must
-        // accept them or it contradicts `subrp').
-        // Only RAW `#[...]' literals (`compiled' false — e.g. what
-        // `apply-partially' returns or a reader byte-code vector) stay
-        // non-subrp and signal `wrong-type-argument' like GNU.
-        Value::Lambda(l) if l.compiled && !l.is_macro => match lambda_arity_raw(i, l) {
-            Some(arity) => arity,
-            None => return Err(i.signal_data(sym::INVALID_FUNCTION, vec![args[0].clone()])),
-        },
+        // Native-compiled dumped definitions report `subrp' and expose
+        // their arglist-derived range. Byte-code objects remain byte-code
+        // functions, so `subr-arity' rejects them like GNU.
+        Value::Lambda(l) => {
+            let native = l
+                .try_is_native_compiled()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
+            if !native || l.is_macro {
+                return Err(i.wrong_type_mut("subrp", &args[0]));
+            }
+            match lambda_arity_raw(i, l) {
+                Some(arity) => arity,
+                None => return Err(i.signal_data(sym::INVALID_FUNCTION, vec![args[0].clone()])),
+            }
+        }
         other => return Err(i.wrong_type_mut("subrp", other)),
     };
     let (min, max) = match arity {
@@ -300,7 +301,7 @@ pub(super) fn f_subr_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         // unevalled), so the special-form table lookup stays on its name.
         FunctionArity::Unevalled => (
             crate::lisp::special::special_form_min_args(match &args[0] {
-                Value::Subr(s) => i.intern(s.name),
+                Value::Subr(s) => i.q(s.name),
                 _ => unreachable!("unevalled arity on non-subr"),
             }) as i128,
             Value::Sym(i.q("unevalled")),
@@ -723,6 +724,35 @@ pub(super) fn f_subr_native_elisp_p(i: &mut Interp, a: crate::lisp::Argv) -> Eva
 mod arity_list_tests {
     use super::*;
     use crate::lisp::obarray::Obarray;
+    use crate::lisp::value::{Argv, Subr};
+
+    fn unevalled_special(_: &mut Interp, _: Argv) -> EvalResult {
+        Ok(Value::Nil)
+    }
+
+    static IF_SUBR: Subr = Subr {
+        name: "if",
+        arity: Arity::Unevalled,
+        func: unevalled_special,
+        doc: "",
+    };
+
+    #[test]
+    fn unevalled_subr_arities_keep_the_special_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let special = interp.q("if");
+        assert!(interp.obarray.unintern_symbol(special));
+        let replacement = interp.intern("if");
+
+        let function = Value::Subr(&IF_SUBR);
+        let func_arity = f_func_arity(&mut interp, vec![function.clone()].into()).unwrap();
+        let subr_arity = f_subr_arity(&mut interp, vec![function].into()).unwrap();
+
+        assert_ne!(special, replacement);
+        assert_eq!(interp.prin1_to_string(&func_arity), "(2 . unevalled)");
+        assert_eq!(interp.prin1_to_string(&subr_arity), "(2 . unevalled)");
+    }
 
     fn bytecode_lambda(arglist: Value, compiled: bool) -> Rc<Lambda> {
         Rc::new(Lambda {

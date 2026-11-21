@@ -199,4 +199,16 @@
         (insert "A a A") (goto-char 1)
         (perform-replace "a" "xy" nil nil nil)
         (buffer-string))) "XY xy XY")
+
+;; Case conversion retains the bound option after its obarray name is gone.
+(qa (let* ((case-symbols-as-words t)
+           (option 'case-symbols-as-words))
+      (unintern option obarray)
+      (list (capitalize "foo_bar")
+            (capitalize (string-make-unibyte "foo_bar"))
+            (with-temp-buffer
+              (string-match "Foo_bar" "Foo_bar")
+              (replace-match "one_two" nil t "Foo_bar"))))
+    '("Foo_bar" "Foo_bar" "One_two"))
+
 (princ (qa--done))

@@ -6734,7 +6734,7 @@ impl SkipClassContext {
             .any(|n| matches!(n.as_str(), "alpha" | "alnum" | "blank" | "graph" | "print"))
         {
             let current = i
-                .intern_soft("unicode-category-table")
+                .q_soft("unicode-category-table")
                 .map(|s| i.symbol_value(s))
                 .unwrap_or(Value::Nil);
             if current.is_nil() {
@@ -8200,12 +8200,12 @@ fn f_self_insert_command(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // char (non-table value falls back to SPC and \n), call
         // `internal-auto-fill' — for '\n', on the previous line.
         let aff = i
-            .intern_soft("auto-fill-function")
+            .q_soft("auto-fill-function")
             .map(|id| i.symbol_value(id))
             .unwrap_or(Value::Nil);
         if aff.truthy() && n > 0 {
             let chars = i
-                .intern_soft("auto-fill-chars")
+                .q_soft("auto-fill-chars")
                 .map(|id| i.symbol_value(id))
                 .unwrap_or(Value::Nil);
             let trigger = if crate::lisp::builtins::misc::is_char_table(i, &chars) {
@@ -8333,7 +8333,7 @@ fn self_insert_expand_abbrev(i: &mut Interp, c: EmacsChar) -> Result<bool, Flow>
         let b = cur(i);
         let bb = b.borrow();
         let ro = i
-            .intern_soft("buffer-read-only")
+            .q_soft("buffer-read-only")
             .map(|id| i.symbol_value(id))
             .unwrap_or(Value::Nil);
         if ro.truthy() || bb.point() <= bb.begv {
@@ -8893,7 +8893,7 @@ fn f_filter_buffer_substring(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
     // `filter-buffer-substring-function' hook: GNU delegates the whole
     // operation — call3(FUN, BEG, END, DELETE) returns the substring.
     let f = i
-        .intern_soft("filter-buffer-substring-function")
+        .q_soft("filter-buffer-substring-function")
         .map(|h| i.symbol_value(h))
         .filter(|v| !matches!(v, Value::Sym(s) if *s == sym::UNBOUND))
         .unwrap_or(Value::Nil);
@@ -11192,7 +11192,7 @@ pub(crate) fn search_common(
     // validating the bound, without scanning the text.
     if count == 0 {
         let inhibit = i
-            .intern_soft("inhibit-changing-match-data")
+            .q_soft("inhibit-changing-match-data")
             .map(|s| i.symbol_value(s).truthy())
             .unwrap_or(false);
         if !inhibit {
@@ -11298,7 +11298,7 @@ pub(crate) fn search_common(
             // match data untouched).  The store precedes point-motion
             // hooks: those callbacks observe the new match data.
             let inhibit = i
-                .intern_soft("inhibit-changing-match-data")
+                .q_soft("inhibit-changing-match-data")
                 .map(|s| i.symbol_value(s).truthy())
                 .unwrap_or(false);
             if !inhibit {
@@ -12230,7 +12230,7 @@ fn replacement_case_action<T: TextSource + ?Sized>(
         let down = i.current_case_table();
         let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
         let symbols_as_words = i
-            .intern_soft("case-symbols-as-words")
+            .q_soft("case-symbols-as-words")
             .is_some_and(|id| i.symbol_value(id).truthy());
         let mut previous = EmacsChar::from('\n');
         let (mut multi, mut lower, mut nonuppercase_initial, mut upper) =
@@ -13920,7 +13920,7 @@ pub(crate) fn f_get_pos_property(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     // GNU text_property_stickiness applies the default alist before
     // consulting the previous character's explicit rear-nonsticky value.
     let defaults = i
-        .intern_soft("text-property-default-nonsticky")
+        .q_soft("text-property-default-nonsticky")
         .map(|id| i.symbol_value(id))
         .unwrap_or(Value::Nil);
     let entry = crate::lisp::builtins::listfn::f_assq(i, vec![Value::Sym(prop), defaults].into())?;

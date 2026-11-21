@@ -688,9 +688,9 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
                 None => return Err(i.wrong_type_mut("symbolp", v)),
             },
         };
-        let eql_test = i.intern_soft("eql");
-        let eq_test = i.intern_soft("eq");
-        let equal_test = i.intern_soft("equal");
+        let eql_test = i.q_soft("eql");
+        let eq_test = i.q_soft("eq");
+        let equal_test = i.q_soft("equal");
         match test_id {
             None => (HashTest::Eql, Value::Nil, None),
             Some(id) if Some(id) == eql_test => (HashTest::Eql, Value::Nil, None),
@@ -736,10 +736,10 @@ pub(crate) fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> Eval
                     vec![Value::string("Invalid hash table weakness"), v.clone()],
                 ));
             };
-            let key = i.intern_soft("key");
-            let value = i.intern_soft("value");
-            let key_and_value = i.intern_soft("key-and-value");
-            let key_or_value = i.intern_soft("key-or-value");
+            let key = i.q_soft("key");
+            let value = i.q_soft("value");
+            let key_and_value = i.q_soft("key-and-value");
+            let key_or_value = i.q_soft("key-or-value");
             // GNU: `t' is a synonym for `key-and-value'.
             if id == sym::T || Some(id) == key_and_value {
                 Some(Value::Sym(i.q("key-and-value")))
@@ -1034,7 +1034,7 @@ fn f_hash_table_test(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
                 HashTest::Eql => "eql",
                 HashTest::Equal => "equal",
             };
-            Ok(Value::Sym(i.intern(name)))
+            Ok(Value::Sym(i.q(name)))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }

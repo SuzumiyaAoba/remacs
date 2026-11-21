@@ -456,12 +456,14 @@ impl Printer<'_> {
                 self.push_format(out, format_args!("#<subr {}>", s.name))?;
             }
             Value::Lambda(l) => {
-                // GNU nativecomp prints named compiled functions as
-                // `#<subr NAME>' — our compiled twins (dumped defs,
-                // `#[...]' read from a bundled .elc) carry `name' or,
-                // when `.elc' loading left it nameless, a name stamped
-                // by `defalias' in `compiled_fn_names'.
-                if l.compiled {
+                // GNU nativecomp prints named native-compiled functions
+                // as `#<subr NAME>'. Byte-code objects retain their
+                // readable `#[...]' representation even when loaded in a
+                // compiled-equivalent context.
+                if l
+                    .try_is_native_compiled()
+                    .map_err(|_| self.interp().error("Cannot inspect a mutably borrowed byte-code object"))?
+                {
                     let nm = self.lambda_name(l);
                     if let Some(n) = nm {
                         self.push_format(out, format_args!("#<subr {}>", n))?;
@@ -806,7 +808,7 @@ impl Interp {
     }
 
     fn print_var(&self, name: &str) -> Value {
-        self.intern_soft(name)
+        self.q_soft(name)
             .filter(|id| self.bound_p(*id))
             .map(|id| self.symbol_value(id))
             .unwrap_or(Value::Nil)

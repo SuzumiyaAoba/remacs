@@ -205,6 +205,12 @@ pub(super) fn f_open_termscript(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalR
 /// 16 + terpri).  Char-table runs never straddle the 0x3FFF80
 /// boundary and group by `eq'-equal raw/defalt values like GNU's
 /// char_table_ref_and_range.
+fn shadow_range_setting(i: &Interp) -> Value {
+    i.q_soft("describe-bindings-check-shadowing-in-ranges")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil)
+}
+
 pub(super) fn describe_vector(
     i: &mut Interp,
     vector: &Value,
@@ -245,10 +251,7 @@ pub(super) fn describe_vector(
     } else {
         Value::Nil
     };
-    let check_ranges = i
-        .intern_soft("describe-bindings-check-shadowing-in-ranges")
-        .map(|s| i.symbol_value(s))
-        .unwrap_or(Value::Nil);
+    let check_ranges = shadow_range_setting(i);
     let self_insert = i.q("self-insert-command");
     let key_desc = Value::Sym(i.q("key-description"));
     let indent_to = Value::Sym(i.q("indent-to"));
@@ -865,6 +868,21 @@ pub(super) fn f_backtrace_frame_internal(i: &mut Interp, a: crate::lisp::Argv) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shadow_range_setting_uses_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let original = interp.q("describe-bindings-check-shadowing-in-ranges");
+        interp.obarray.symbol_mut(original).value = Value::t();
+        assert!(interp.obarray.unintern_symbol(original));
+
+        let replacement = interp.intern("describe-bindings-check-shadowing-in-ranges");
+        interp.obarray.symbol_mut(replacement).value = Value::Nil;
+
+        assert_ne!(original, replacement);
+        assert!(matches!(shadow_range_setting(&interp), Value::Sym(id) if id == sym::T));
+    }
 
     #[test]
     fn describe_vector_entry_points_unwind_failed_output_bindings() {

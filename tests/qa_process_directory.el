@@ -143,6 +143,12 @@
   (qa (file-equal-p (qa204-output "" 'pipe) temporary-file-directory) t)
   (qa (file-equal-p (qa204-output "." 'call) temporary-file-directory) t))
 
+;; Relative default-directory still uses the original invocation-directory
+;; cell after the symbol is removed from the public obarray.
+(let ((invocation-directory temporary-file-directory))
+  (unintern 'invocation-directory obarray)
+  (qa (file-equal-p (qa204-output "." 'pipe) temporary-file-directory) t))
+
 ;; File-name handlers may supply a local directory or nil for HOME.
 (defun qa204-handler (operation &rest arguments)
   (if (eq operation 'unhandled-file-name-directory) qa204-local-directory

@@ -60,6 +60,10 @@
 (qa (seq-sort #'< '(3 1 2)) '(1 2 3))
 (qa (seq-sort #'> "bca") "cba")
 (qa (seq-sort-by #'length #'< '("bbb" "a" "cc")) '("a" "cc" "bbb"))
+(qa-err-data (seq-sort #'< 'write-file)
+             'wrong-type-argument '(sequencep write-file))
+(qa-err-data (seq-sort-by #'identity #'< 'write-file)
+             'wrong-type-argument '(sequencep write-file))
 (let* ((table (make-char-table 'generic 0))
        (original-seq-length (symbol-function 'seq-length)))
   ;; Character tables span millions of positions.  Give this test a small

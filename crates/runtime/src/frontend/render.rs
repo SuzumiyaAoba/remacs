@@ -3219,7 +3219,7 @@ fn prepare_mode_line_remote_buffer(i: &mut Interp, buffer: usize) -> Result<(), 
         } else {
             Ok(Value::Nil)
         };
-        let cache = i.intern("remacs--mode-line-remote-cache");
+    let cache = i.q("remacs--mode-line-remote-cache");
         if i.buffer_live(buffer) {
             let value = Value::cons(
                 snapshot,
@@ -7216,7 +7216,7 @@ impl FaceCtx {
         };
         if let Some(frame) = frame {
             ctx.frame_default_foreground = i
-                .intern_soft("foreground-color")
+                .q_soft("foreground-color")
                 .and_then(|parameter| {
                     let value = crate::lisp::eval::plist_get_v(
                         &frame.borrow().params,
@@ -7225,7 +7225,7 @@ impl FaceCtx {
                     ctx.color(&value)
                 });
             ctx.frame_default_background = i
-                .intern_soft("background-color")
+                .q_soft("background-color")
                 .and_then(|parameter| {
                     let value = crate::lisp::eval::plist_get_v(
                         &frame.borrow().params,
@@ -11533,7 +11533,7 @@ pub fn render_frame_grid_with_mouse_position_cached_mut(
 }
 
 fn frame_gamma_exponent(i: &Interp, frame: &crate::editor::FrameRef) -> Option<f64> {
-    let parameter = i.intern_soft("screen-gamma")?;
+    let parameter = i.q_soft("screen-gamma")?;
     let value = crate::lisp::eval::plist_get_v(
         &frame.borrow().params,
         &Value::Sym(parameter),
@@ -11550,7 +11550,7 @@ fn frame_gamma_exponent(i: &Interp, frame: &crate::editor::FrameRef) -> Option<f
 }
 
 fn face_near_same_color_threshold(i: &Interp) -> i128 {
-    i.intern_soft("face-near-same-color-threshold")
+    i.q_soft("face-near-same-color-threshold")
         .and_then(|symbol| i.symbol_value(symbol).int())
         .unwrap_or(30_000)
 }
@@ -15231,5 +15231,37 @@ mod long_rgb_face_color_tests {
             face_ctx.color(&Value::string("#00000000ffff")),
             Some(CellColor(0, 0, 255))
         );
+    }
+}
+
+#[cfg(test)]
+mod display_symbol_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn screen_gamma_parameter_keeps_its_cell_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let parameter = interp.q("screen-gamma");
+        let frame = crate::editor::Frame::new_tty(0, 0, 80, 24);
+        frame.borrow_mut().params = Value::list(vec![
+            Value::Sym(parameter),
+            Value::Int(2),
+        ]);
+        assert!(interp.obarray.unintern_symbol(parameter));
+
+        assert_eq!(frame_gamma_exponent(&interp, &frame), Some(1.0 / (0.4545 * 2.0)));
+    }
+
+    #[test]
+    fn face_color_threshold_keeps_its_cell_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let threshold = interp.q("face-near-same-color-threshold");
+        interp.obarray.symbol_mut(threshold).value = Value::Int(1234);
+        assert!(interp.obarray.unintern_symbol(threshold));
+
+        assert_eq!(face_near_same_color_threshold(&interp), 1234);
     }
 }

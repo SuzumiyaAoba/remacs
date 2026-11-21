@@ -1,5 +1,6 @@
 ;;; -*- lexical-binding: nil -*-
 ;; C variable declarations must remain dynamic in lexical Lisp code.
+(defvar qa64-original-straight-style 'straight)
 (qa (special-variable-p 'text-quoting-style) t)
 (qa (special-variable-p 'print-gensym-alist) nil)
 (qa (boundp 'print-gensym-alist) nil)
@@ -57,4 +58,19 @@
 (qa (special-variable-p 'text-quoting-style) t)
 (qa-lex (let ((text-quoting-style 'grave)) (qa64-message)) "`x'")
 (qa (boundp 'cus-start--preload) nil)
+(qa (let* ((grave-symbol 'grave)
+           (straight-symbol 'straight)
+           (text-quoting-style grave-symbol))
+      (unintern grave-symbol obarray)
+      (let ((grave-result (format-message "`x'")))
+        (setq text-quoting-style straight-symbol)
+        (unintern straight-symbol obarray)
+        (list grave-result (format-message "`x'"))))
+    '("`x'" "'x'"))
+
+;; C's fixed variable cell remains readable after its public name is removed.
+(qa (let ((text-quoting-style qa64-original-straight-style))
+      (unintern 'text-quoting-style obarray)
+      (format-message "`%s'" "x"))
+    "'x'")
 (princ (qa--done)) (terpri)

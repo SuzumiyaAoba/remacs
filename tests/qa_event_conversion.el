@@ -90,4 +90,12 @@
               "S-qa-mod-mask" "double-down-mouse-1" "mouse-1"))
     '((qa-mod-mask 201326592) (qa-mod-mask 201326592) (qa-mod-mask 264241152)
       (qa-mod-mask 33554432) (mouse-1 18) (mouse-1 8)))
+
+;; Key descriptions keep the bound meta-prefix-char after unintern.
+(qa (let ((option 'meta-prefix-char)
+          (meta-prefix-char 120))
+      (unintern option obarray)
+      (key-description [120 97]))
+    "M-a")
+
 (princ (qa--done))

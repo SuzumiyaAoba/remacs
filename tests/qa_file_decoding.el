@@ -126,4 +126,11 @@
         (qa (qa-file-read "bom" nil t)
             '(1 (233) utf-8-with-signature nil)))
     (apply #'set-coding-system-priority priorities)))
+
+;; A compiled Lisp caller retains its dynamic coding variable after unintern.
+(qa (let ((coding-symbol 'coding-system-for-read))
+      (unintern coding-symbol obarray)
+      (qa-file-read "valid" 'iso-latin-1 t))
+    '(2 (195 169) iso-latin-1 iso-8859-1))
+
 (princ (qa--done))

@@ -127,4 +127,13 @@
     (let ((case-fold-search fold))
       (qa (string-match (concat "[[:" name ":]]") (unibyte-string 255)) nil)
       (qa (string-match (concat "[^[:" name ":]]") (unibyte-string 255)) 0))))
+
+;; Regexp classes retain the custom category table after unintern.
+(qa (let ((unicode-category-table (copy-sequence unicode-category-table))
+          (table-symbol 'unicode-category-table))
+      (aset unicode-category-table #x0378 1)
+      (unintern table-symbol obarray)
+      (string-match "[[:alpha:]]" (string #x0378)))
+    0)
+
 (princ (qa--done))

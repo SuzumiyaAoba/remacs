@@ -11,7 +11,7 @@ use crate::lisp::{
     Interp,
     error::{EvalResult, Flow},
     obarray::sym,
-    value::{StrRef, Value},
+    value::{StrRef, SymId, Value},
 };
 
 // ---------- coding systems ----------
@@ -872,10 +872,34 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
 ];
 
 pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
-    let name = match v {
-        Value::Sym(s) if !i.obarray.symbol(*s).uninterned => i.symbol_name(*s).to_string(),
+    let (symbol, name) = match v {
+        Value::Sym(s) => (*s, i.symbol_name(*s).to_string()),
         _ => return None,
     };
+    if i.obarray.symbol(symbol).uninterned
+        && !i.extra_coding_alias_symbols.contains(&symbol)
+        && !i.extra_coding_system_symbols.contains(&symbol)
+    {
+        return None;
+    }
+    let registered_aliases: Vec<_> = i
+        .extra_coding_alias_symbols
+        .iter()
+        .copied()
+        .filter(|alias| i.symbol_name(*alias) == name)
+        .collect();
+    if !registered_aliases.is_empty() && !registered_aliases.contains(&symbol) {
+        return None;
+    }
+    let registered_coding_systems: Vec<_> = i
+        .extra_coding_system_symbols
+        .iter()
+        .copied()
+        .filter(|coding| i.symbol_name(*coding) == name)
+        .collect();
+    if !registered_coding_systems.is_empty() && !registered_coding_systems.contains(&symbol) {
+        return None;
+    }
     // Registered subsidiaries remain valid even if a parent alias is
     // later redirected to a coding system with a fixed EOL type.
     if crate::lisp::builtins::csl_table::CODING_SYSTEM_LIST_SEED.contains(&name.as_str()) {
@@ -968,7 +992,7 @@ pub(super) fn f_coding_system_list(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         match coding_alias_group(i, &member) {
             Some(group) if !group.is_empty() => {
                 for n in group {
-                    codings.push(Value::Sym(i.intern(&n)));
+                    codings.push(coding_alias_symbol(i, &n));
                 }
             }
             _ => codings.push(member),
@@ -1266,7 +1290,7 @@ pub(super) fn f_coding_system_aliases(i: &mut Interp, a: crate::lisp::Argv) -> E
     }
     match coding_alias_group(i, &a[0]) {
         Some(group) => Ok(Value::list(
-            group.iter().map(|n| Value::Sym(i.intern(n))).collect(),
+            group.iter().map(|n| coding_alias_symbol(i, n)).collect(),
         )),
         // GNU signals `coding-system-error' on unknown names.
         None => {
@@ -1413,7 +1437,7 @@ pub(super) fn f_coding_system_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     };
     match (coding_known(i, &cs), prop.as_str()) {
         (Some(n), ":name") => Ok(Value::Sym(i.intern(&n))),
-        (Some(n), ":coding-type") => Ok(Value::Sym(i.intern(if n.starts_with("utf-8") {
+        (Some(n), ":coding-type") => Ok(Value::Sym(i.q(if n.starts_with("utf-8") {
             "utf-8"
         } else {
             "charset"
@@ -1446,15 +1470,10 @@ pub(super) fn f_coding_system_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     }
 }
 
-/// GNU's `add-to-coding-system-list' (mule.el): sorted insert of NAME
-/// into the `coding-system-list' variable using `coding-system-lessp'
-/// (mnemonic-char ordering with no-conversion/emacs-mule/undecided
-/// special-cased), inserting AFTER equal keys — subsidiaries land in
-/// parent, mac, dos, unix order when registered that way.  Falls back
-/// to a plain append while the Lisp defun isn't bound yet (pre-mule
-/// init) or for names without a mnemonic.  No-op when already a member.
-pub(crate) fn add_to_coding_system_list(i: &mut Interp, name: &str) -> EvalResult {
-    let sid = i.intern(name);
+/// GNU's `add-to-coding-system-list' (mule.el): sorted insert of SYMBOL
+/// into `coding-system-list' using `coding-system-lessp'.  Preserve the
+/// passed symbol object; aliases may be uninterned.
+pub(crate) fn add_coding_system_symbol_to_list(i: &mut Interp, sid: SymId) -> EvalResult {
     let csl = i.q("coding-system-list");
     let cur = i.symbol_value(csl).list_to_vec().unwrap_or_default();
     if cur.iter().any(|v| matches!(v, Value::Sym(s) if *s == sid)) {
@@ -1475,6 +1494,23 @@ pub(crate) fn add_to_coding_system_list(i: &mut Interp, name: &str) -> EvalResul
     items.push(Value::Sym(sid));
     i.set_symbol(csl, Value::list(items))?;
     Ok(Value::Nil)
+}
+
+fn coding_alias_symbol(i: &mut Interp, name: &str) -> Value {
+    let alias = i
+        .extra_coding_alias_symbols
+        .iter()
+        .copied()
+        .find(|symbol| i.symbol_name(*symbol) == name);
+    let coding_system = alias.or_else(|| {
+        i.extra_coding_system_symbols
+            .iter()
+            .copied()
+            .find(|symbol| i.symbol_name(*symbol) == name)
+    });
+    coding_system
+        .map(Value::Sym)
+        .unwrap_or_else(|| Value::Sym(i.intern(name)))
 }
 
 pub(super) fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -2402,9 +2438,7 @@ pub(super) fn decode_hz(
     let mut spans = Vec::new();
     let mut pos = 0;
     let mut at = 0;
-    let continuation = i
-        .intern_soft("decode-hz-line-continuation")
-        .is_some_and(|id| i.symbol_value(id).truthy());
+    let continuation = hz_line_continuation_enabled(i);
     while at < chars.len() {
         if chars[at] == '~' && at + 1 == chars.len() {
             return Err(i.wrong_type_mut("wholenump", &Value::Nil));
@@ -2462,6 +2496,11 @@ pub(super) fn decode_hz(
         at += 1;
     }
     Ok((out, spans))
+}
+
+fn hz_line_continuation_enabled(i: &Interp) -> bool {
+    i.q_soft("decode-hz-line-continuation")
+        .is_some_and(|id| i.bound_p(id) && i.symbol_value(id).truthy())
 }
 
 pub(super) fn decode_coding_bytes(
@@ -3261,7 +3300,7 @@ pub(super) fn f_find_operation_coding_system(i: &mut Interp, a: crate::lisp::Arg
         "process-coding-system-alist"
     };
     let chain = {
-        let vs = i.intern(var_name);
+        let vs = i.q(var_name);
         i.symbol_value(vs)
     };
     let mut cur = chain;
@@ -3346,15 +3385,18 @@ pub(super) fn f_define_coding_system_alias(i: &mut Interp, a: crate::lisp::Argv)
     let target = coding_alias_group(i, &a[1])
         .and_then(|group| group.into_iter().next())
         .unwrap_or_else(|| i.symbol_name(target_id));
+    if !i.extra_coding_alias_symbols.contains(&alias_id) {
+        i.extra_coding_alias_symbols.push(alias_id);
+    }
     if alias == target {
-        return add_to_coding_system_list(i, &alias);
+        return add_coding_system_symbol_to_list(i, alias_id);
     }
     if let Some((_, previous)) = i.extra_coding_aliases.iter_mut().find(|(x, _)| *x == alias) {
         *previous = target;
     } else {
         i.extra_coding_aliases.push((alias.clone(), target));
     }
-    add_to_coding_system_list(i, &alias)
+    add_coding_system_symbol_to_list(i, alias_id)
 }
 
 /// `composition-sort-rules` — GNU listp-checks RULES; nil.
@@ -3894,7 +3936,7 @@ pub(super) fn region_conversion_hook(
     encode: bool,
 ) -> Result<Value, Flow> {
     let plist = f_coding_system_plist(i, vec![coding.clone()].into())?;
-    let property = i.intern(if encode {
+    let property = i.q(if encode {
         ":pre-write-conversion"
     } else {
         ":post-read-conversion"
@@ -4230,5 +4272,115 @@ mod coding_system_plist_cycle_tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod hz_line_continuation_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn hz_decoder_uses_the_original_option_cell_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let option = interp.q("decode-hz-line-continuation");
+        assert!(!interp.bound_p(option));
+        assert!(!hz_line_continuation_enabled(&interp));
+        assert_eq!(
+            decode_hz(&mut interp, b"~\nA")
+                .unwrap()
+                .0
+                .to_unicode_lossy(),
+            "~\nA"
+        );
+
+        interp.obarray.symbol_mut(option).value = Value::t();
+        assert!(interp.obarray.unintern_symbol(option));
+        let replacement = interp.intern("decode-hz-line-continuation");
+        interp.obarray.symbol_mut(replacement).value = Value::Nil;
+
+        assert_ne!(option, replacement);
+        assert!(hz_line_continuation_enabled(&interp));
+        assert_eq!(
+            decode_hz(&mut interp, b"~\nA")
+                .unwrap()
+                .0
+                .to_unicode_lossy(),
+            "A"
+        );
+    }
+}
+
+#[cfg(test)]
+mod operation_coding_symbol_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn operation_lookup_keeps_its_coding_alist_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let operation = interp.q("insert-file-contents");
+        let target_index = interp.q("target-idx");
+        interp.put_prop(operation, target_index, Value::Int(0));
+
+        let variable = interp.q("file-coding-system-alist");
+        let expected = Value::cons(Value::Sym(sym::T), Value::Nil);
+        let entry = Value::cons(Value::string(".*"), expected.clone());
+        interp.obarray.symbol_mut(variable).value = Value::list(vec![entry]);
+        assert!(interp.obarray.unintern_symbol(variable));
+        let replacement = interp.intern("file-coding-system-alist");
+        interp.obarray.symbol_mut(replacement).value = Value::Nil;
+
+        let found = f_find_operation_coding_system(
+            &mut interp,
+            vec![Value::Sym(operation), Value::string("file.txt")].into(),
+        )
+        .unwrap();
+
+        assert_ne!(variable, replacement);
+        assert!(crate::lisp::builtins::eq_values(&found, &expected));
+    }
+}
+
+#[cfg(test)]
+mod coding_alias_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn defining_an_uninterned_coding_alias_keeps_its_symbol_identity() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let alias = interp.make_symbol("qa-uninterned-coding-alias");
+        let replacement = interp.intern("qa-uninterned-coding-alias");
+        let target = interp.q("utf-8");
+
+        f_define_coding_system_alias(
+            &mut interp,
+            vec![Value::Sym(alias), Value::Sym(target)].into(),
+        )
+        .unwrap();
+
+        assert!(coding_known(&interp, &Value::Sym(alias)).is_some());
+        let coding_system_list = interp.q("coding-system-list");
+        let coding_systems = interp
+            .symbol_value(coding_system_list)
+            .list_to_vec()
+            .unwrap();
+        assert!(coding_systems
+            .iter()
+            .any(|coding| matches!(coding, Value::Sym(symbol) if *symbol == alias)));
+        let aliases = f_coding_system_aliases(&mut interp, vec![Value::Sym(alias)].into())
+            .unwrap()
+            .list_to_vec()
+            .unwrap();
+        assert!(aliases
+            .iter()
+            .any(|coding| matches!(coding, Value::Sym(symbol) if *symbol == alias)));
+        assert!(!aliases
+            .iter()
+            .any(|coding| matches!(coding, Value::Sym(symbol) if *symbol == replacement)));
     }
 }

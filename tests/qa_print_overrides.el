@@ -1330,4 +1330,24 @@
    (prin1-to-string table))
  "#s(hash-table test eq data (opaque nil))")
 
+;; With ENSURE, GNU cannot determine whether a raw lambda-list stream is at
+;; beginning-of-line and rejects that unsupported function argument.
+(qa-err-data (terpri '(lambda (character) nil) t)
+             'error '("Unsupported function argument" lambda
+                      (character) nil))
+(qa-err-data (terpri '(closure (t) (character) nil) t)
+             'invalid-function '((closure (t) (character) nil)))
+
+;; `terpri' must recognize a function-stream lambda by its captured symbol
+;; identity after the symbol name leaves the public obarray.
+(defvar qa-po-uninterned-stream-events nil)
+(qa (let* ((lambda-symbol 'lambda)
+           (stream (list lambda-symbol '(character)
+                         '(push character qa-po-uninterned-stream-events)))
+           (qa-po-uninterned-stream-events nil))
+      (unintern lambda-symbol obarray)
+      (terpri stream)
+      (nreverse qa-po-uninterned-stream-events))
+    '(10))
+
 (princ (qa--done)) (terpri)

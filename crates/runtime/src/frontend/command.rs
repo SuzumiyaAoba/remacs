@@ -781,7 +781,7 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
             .as_ref()
             .is_some_and(|selected| std::rc::Rc::ptr_eq(selected, &frame))
     {
-        let select_frame = Value::Sym(i.intern("select-frame"));
+        let select_frame = Value::Sym(i.q("select-frame"));
         if let Err(flow) = i.apply(&select_frame, vec![Value::Frame(frame)]) {
             report_flow(i, flow);
         }
@@ -797,10 +797,10 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         let visibility = match frame_visibility {
             FrameVisibility::Visible => Value::t(),
             FrameVisibility::Hidden => Value::Nil,
-            FrameVisibility::Iconified => Value::Sym(i.intern("icon")),
+            FrameVisibility::Iconified => Value::Sym(i.q("icon")),
         };
-        let visibility_key = Value::Sym(i.intern("visibility"));
-        let known_key = Value::Sym(i.intern("remacs--visibility-known"));
+        let visibility_key = Value::Sym(i.q("visibility"));
+        let known_key = Value::Sym(i.q("remacs--visibility-known"));
         let params =
             crate::lisp::eval::plist_put_front(&frame.borrow().params, &visibility_key, visibility);
         frame.borrow_mut().params =
@@ -838,14 +838,14 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
             .find(|frame| frame.borrow().id == frame_id)
             .cloned()
     {
-        let delete_frame = Value::Sym(i.intern("delete-frame"));
+        let delete_frame = Value::Sym(i.q("delete-frame"));
         if let Err(flow) = i.apply(&delete_frame, vec![Value::Frame(frame)]) {
             report_flow(i, flow);
         }
     }
 
     if term.borrow_mut().take_power_off_request() {
-        let save_and_quit = Value::Sym(i.intern("save-buffers-kill-emacs"));
+        let save_and_quit = Value::Sym(i.q("save-buffers-kill-emacs"));
         if let Err(flow) = i.apply(&save_and_quit, Vec::new()) {
             report_flow(i, flow);
         }
@@ -865,8 +865,8 @@ fn apply_native_fullscreen_update(
     else {
         return;
     };
-    let key = Value::Sym(i.intern("fullscreen"));
-    let value = fullscreen.map_or(Value::Nil, |mode| Value::Sym(i.intern(mode)));
+    let key = Value::Sym(i.q("fullscreen"));
+    let value = fullscreen.map_or(Value::Nil, |mode| Value::Sym(i.q(mode)));
     let params = crate::lisp::eval::plist_put_front(&frame.borrow().params, &key, value);
     frame.borrow_mut().params = params;
 }
@@ -913,6 +913,11 @@ mod native_visibility_update_tests {
 
     struct VisibilityIo(Option<(usize, FrameVisibility)>);
 
+    struct SelectionIo {
+        selection: Option<usize>,
+        delete: Option<usize>,
+    }
+
     impl KeyIo for VisibilityIo {
         fn poll_key(&mut self, _dur: Duration) -> io::Result<Option<i128>> {
             Ok(None)
@@ -937,6 +942,34 @@ mod native_visibility_update_tests {
         }
     }
 
+    impl KeyIo for SelectionIo {
+        fn poll_key(&mut self, _dur: Duration) -> io::Result<Option<i128>> {
+            Ok(None)
+        }
+
+        fn unread(&mut self, _key: i128) {}
+
+        fn render(&mut self, _interp: &Interp) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn draw_echo(&mut self, _text: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn size(&self) -> (usize, usize) {
+            (80, 24)
+        }
+
+        fn take_frame_selection(&mut self) -> Option<usize> {
+            self.selection.take()
+        }
+
+        fn take_frame_delete_request(&mut self) -> Option<usize> {
+            self.delete.take()
+        }
+    }
+
     #[test]
     fn native_visibility_updates_keep_hidden_and_iconified_distinct() {
         std::thread::Builder::new()
@@ -944,6 +977,10 @@ mod native_visibility_update_tests {
             .spawn(|| {
                 let mut interp = Interp::new();
                 let frame_id = interp.selected_frame.as_ref().unwrap().borrow().id;
+                for name in ["icon", "visibility", "remacs--visibility-known"] {
+                    let symbol = interp.q(name);
+                    assert!(interp.obarray.unintern_symbol(symbol));
+                }
                 for (native_visibility, expected) in [
                     (FrameVisibility::Hidden, "nil"),
                     (FrameVisibility::Iconified, "icon"),
@@ -959,6 +996,66 @@ mod native_visibility_update_tests {
                         .unwrap();
                     assert_eq!(interp.prin1_to_string(&actual), expected);
                 }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn native_frame_selection_keeps_select_frame_identity_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let target = crate::editor::Frame::new_tty(0, 0, 80, 24);
+                let target_id = target.borrow().id;
+                interp.frames.push(target.clone());
+                let select_frame = interp.q("select-frame");
+                assert!(interp.obarray.unintern_symbol(select_frame));
+
+                let term = Rc::new(RefCell::new(SelectionIo {
+                    selection: Some(target_id),
+                    delete: None,
+                }));
+                apply_frame_selection(&term, &mut interp);
+
+                assert!(
+                    Rc::ptr_eq(interp.selected_frame.as_ref().unwrap(), &target),
+                    "native frame selection did not reach the requested frame"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn native_frame_deletion_keeps_delete_frame_identity_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let target = crate::editor::Frame::new_tty(0, 0, 80, 24);
+                let target_id = target.borrow().id;
+                interp.frames.push(target.clone());
+                for name in [
+                    "delete-frame",
+                    "run-hook-with-args",
+                    "delete-frame-functions",
+                    "after-delete-frame-functions",
+                ] {
+                    let symbol = interp.q(name);
+                    assert!(interp.obarray.unintern_symbol(symbol));
+                }
+
+                let term = Rc::new(RefCell::new(SelectionIo {
+                    selection: None,
+                    delete: Some(target_id),
+                }));
+                apply_frame_selection(&term, &mut interp);
+
+                assert!(target.borrow().dead, "native frame deletion was ignored");
             })
             .unwrap()
             .join()
@@ -1521,8 +1618,8 @@ fn dispatch_ns_open_files(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) {
-    let ns_input_file = i.intern("ns-input-file");
-    let ns_input_line = i.intern("ns-input-line");
+    let ns_input_file = i.q("ns-input-file");
+    let ns_input_line = i.q("ns-input-line");
     for (path, line) in files {
         let command = if line.is_some() {
             "ns-open-file-select-line"
@@ -1548,8 +1645,8 @@ fn dispatch_ns_service(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) {
-    let service_name = i.intern("ns-input-spi-name");
-    let service_argument = i.intern("ns-input-spi-arg");
+    let service_name = i.q("ns-input-spi-name");
+    let service_argument = i.q("ns-input-spi-arg");
     // Match the direct C writes made by GNU's NS service callback.
     i.store_internal_value(service_name, Value::string(name));
     i.store_internal_value(service_argument, Value::string(argument));
@@ -2213,7 +2310,7 @@ fn dispatch_mouse_down(
     i.store_internal_value(last_input, event.clone());
 
     if mouse.button == MouseButton::Left {
-        let helper = i.intern("mouse--down-1-maybe-follows-link");
+        let helper = i.q("mouse--down-1-maybe-follows-link");
         if i.fbound_p(helper)
             && let Err(flow) = i.apply(&Value::Sym(helper), vec![])
         {
@@ -2371,7 +2468,7 @@ fn dispatch_drop(
         "dnd-handle-multiple-urls"
     };
     let command = Value::Sym(i.intern(command_name));
-    let events = [Value::Sym(i.intern("drag-n-drop"))];
+    let events = [Value::Sym(i.q("drag-n-drop"))];
     dispatch_frontend_command_action(
         i,
         command,
@@ -2494,7 +2591,7 @@ fn dispatch_color_drop(
         } else {
             "foreground-color"
         }));
-        let set_frame_parameter = Value::Sym(i.intern("set-frame-parameter"));
+            let set_frame_parameter = Value::Sym(i.q("set-frame-parameter"));
         i.apply(
             &set_frame_parameter,
             vec![Value::Frame(frame), parameter, color],
@@ -2524,8 +2621,8 @@ fn dispatch_color_drop(
     let cursor_position =
         position.area.is_none() && cursor_window_point == Some(position.buffer_position);
     if cursor_position {
-        let parameter = Value::Sym(i.intern("cursor-color"));
-        let set_frame_parameter = Value::Sym(i.intern("set-frame-parameter"));
+        let parameter = Value::Sym(i.q("cursor-color"));
+        let set_frame_parameter = Value::Sym(i.q("set-frame-parameter"));
         i.apply(
             &set_frame_parameter,
             vec![Value::Frame(frame), parameter, color],
@@ -2533,7 +2630,7 @@ fn dispatch_color_drop(
         return Ok(());
     }
     let face = if position.area == Some(MouseArea::ModeLine) {
-        Value::Sym(i.intern("mode-line"))
+                    Value::Sym(i.q("mode-line"))
     } else {
         let Some(buffer) = i.buffer_value(position.buffer_id) else {
             return Ok(());
@@ -2561,10 +2658,10 @@ fn dispatch_color_drop(
             false
         };
         if active_region {
-            Value::Sym(i.intern("region"))
+                Value::Sym(i.q("region"))
         } else {
-            let face_property = Value::Sym(i.intern("face"));
-            let get_char_property = Value::Sym(i.intern("get-char-property"));
+                let face_property = Value::Sym(i.q("face"));
+                let get_char_property = Value::Sym(i.q("get-char-property"));
             let face_value = i.apply(
                 &get_char_property,
                 vec![
@@ -2573,7 +2670,7 @@ fn dispatch_color_drop(
                     buffer,
                 ],
             )?;
-            let default_face = Value::Sym(i.intern("default"));
+                let default_face = Value::Sym(i.q("default"));
             match face_value {
                 Value::Sym(_) => face_value,
                 Value::Cons(cons) => {
@@ -2593,7 +2690,7 @@ fn dispatch_color_drop(
     } else {
         ":foreground"
     }));
-    let set_face_attribute = Value::Sym(i.intern("set-face-attribute"));
+                let set_face_attribute = Value::Sym(i.q("set-face-attribute"));
     i.apply(
         &set_face_attribute,
         vec![
@@ -2614,8 +2711,8 @@ fn dispatch_color_drop_command(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> Result<(), Flow> {
-    let command = Value::Sym(i.intern("ns-drag-color"));
-    let events = [Value::Sym(i.intern("ns-drag-color"))];
+                let command = Value::Sym(i.q("ns-drag-color"));
+                let events = [Value::Sym(i.q("ns-drag-color"))];
     let color = color.to_owned();
     dispatch_frontend_command_action(
         i,
@@ -2885,7 +2982,7 @@ fn mouse_event_name(base: &str, modifiers: i128) -> String {
 }
 
 fn translate_mouse_click(i: &mut Interp) -> Option<Value> {
-    let helper = i.intern("mouse--click-1-maybe-follows-link");
+        let helper = i.q("mouse--click-1-maybe-follows-link");
     if !i.fbound_p(helper) {
         return None;
     }
@@ -2911,7 +3008,7 @@ fn lookup_command_at_event(i: &mut Interp, seq: &Value, event: &Value) -> Lookup
     let Some(position) = mouse_event_position(event) else {
         return lookup_command(i, seq);
     };
-    let key_binding = Value::Sym(i.intern("key-binding"));
+    let key_binding = Value::Sym(i.q("key-binding"));
     let binding = i
         .apply(
             &key_binding,
@@ -2982,19 +3079,19 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
     if let Some(area) = position.area {
         let buffer_id = window.borrow().buffer;
         let area_symbol = match area {
-            super::MouseArea::ModeLine => Value::Sym(i.intern("mode-line")),
-            super::MouseArea::HeaderLine => Value::Sym(i.intern("header-line")),
-            super::MouseArea::TabBar => Value::Sym(i.intern("tab-bar")),
-            super::MouseArea::TabLine => Value::Sym(i.intern("tab-line")),
-            super::MouseArea::LeftMargin => Value::Sym(i.intern("left-margin")),
-            super::MouseArea::RightMargin => Value::Sym(i.intern("right-margin")),
-            super::MouseArea::LeftFringe => Value::Sym(i.intern("left-fringe")),
-            super::MouseArea::RightFringe => Value::Sym(i.intern("right-fringe")),
+            super::MouseArea::ModeLine => Value::Sym(i.q("mode-line")),
+            super::MouseArea::HeaderLine => Value::Sym(i.q("header-line")),
+            super::MouseArea::TabBar => Value::Sym(i.q("tab-bar")),
+            super::MouseArea::TabLine => Value::Sym(i.q("tab-line")),
+            super::MouseArea::LeftMargin => Value::Sym(i.q("left-margin")),
+            super::MouseArea::RightMargin => Value::Sym(i.q("right-margin")),
+            super::MouseArea::LeftFringe => Value::Sym(i.q("left-fringe")),
+            super::MouseArea::RightFringe => Value::Sym(i.q("right-fringe")),
             super::MouseArea::VerticalScrollBar => {
-                Value::Sym(i.intern("vertical-scroll-bar"))
+                Value::Sym(i.q("vertical-scroll-bar"))
             }
             super::MouseArea::HorizontalScrollBar => {
-                Value::Sym(i.intern("horizontal-scroll-bar"))
+                Value::Sym(i.q("horizontal-scroll-bar"))
             }
             super::MouseArea::ImageMap(id) => Value::Sym(id),
         };
@@ -3132,15 +3229,15 @@ fn dispatch_frame_moved(
     else {
         return Ok(());
     };
-    let left_parameter = Value::Sym(i.intern("left"));
-    let top_parameter = Value::Sym(i.intern("top"));
+    let left_parameter = Value::Sym(i.q("left"));
+    let top_parameter = Value::Sym(i.q("top"));
     let mut parameters = frame.borrow().params.clone();
     parameters = crate::lisp::eval::plist_put_front(&parameters, &left_parameter, Value::Int(left));
     parameters = crate::lisp::eval::plist_put_front(&parameters, &top_parameter, Value::Int(top));
     frame.borrow_mut().params = parameters;
 
-    let hook = Value::Sym(i.intern("move-frame-functions"));
-    let runner = Value::Sym(i.intern("run-hook-with-args"));
+    let hook = Value::Sym(i.q("move-frame-functions"));
+    let runner = Value::Sym(i.q("run-hook-with-args"));
     i.apply(&runner, vec![hook, Value::Frame(frame)])?;
     Ok(())
 }
@@ -3232,7 +3329,7 @@ pub(super) fn dispatch_text<T: KeyIo>(
     let previous = i.symbol_value(this_command);
     let last_command = i.q("last-command");
     i.store_internal_value(last_command, previous);
-    let self_insert = i.intern("self-insert-command");
+    let self_insert = i.q("self-insert-command");
     i.store_internal_value(this_command, Value::Sym(self_insert));
     if let Some(ch) = text.chars().last() {
         let last_event = i.q("last-command-event");
@@ -3343,7 +3440,7 @@ fn dispatch_text_range(
     let previous = i.symbol_value(this_command);
     let last_command = i.q("last-command");
     i.store_internal_value(last_command, previous);
-    let self_insert = i.intern("self-insert-command");
+    let self_insert = i.q("self-insert-command");
     i.store_internal_value(this_command, Value::Sym(self_insert));
     if let Some(ch) = text.chars().last() {
         let last_event = i.q("last-command-event");
@@ -3487,7 +3584,7 @@ fn translation_map_binding(
                 continue;
             }
             if allow_commands {
-                let commandp = Value::Sym(i.intern("commandp"));
+                let commandp = Value::Sym(i.q("commandp"));
                 if i.apply(&commandp, vec![binding.clone()])
                     .is_ok_and(|command| command.truthy())
                 {

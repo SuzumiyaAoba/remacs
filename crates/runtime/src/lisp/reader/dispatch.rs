@@ -322,7 +322,7 @@ impl Reader<'_> {
                     return Err(read_err_sym(self.interp, "#s"));
                 }
                 if let Value::Sym(t) = &items[0] {
-                    if self.interp.intern_soft("hash-table") == Some(*t) {
+                    if self.interp.q_soft("hash-table") == Some(*t) {
                         if let Some(h) = read_hash_literal(self.interp, &items[1..])? {
                             return Ok(h);
                         }
@@ -359,7 +359,7 @@ impl Reader<'_> {
                 self.pos += 2;
                 let name = self
                     .interp
-                    .intern_soft("load-file-name")
+                    .q_soft("load-file-name")
                     .filter(|id| self.interp.bound_p(*id))
                     .map(|id| self.interp.symbol_value(id));
                 match name {
@@ -413,7 +413,7 @@ impl Reader<'_> {
                         if n > ((1u64 << 61) - 1)
                             || self
                                 .interp
-                                .intern_soft("read-circle")
+                                .q_soft("read-circle")
                                 .is_some_and(|id| self.interp.symbol_value(id).is_nil()) =>
                     {
                         Err(self.hash_number_error(start))
@@ -542,20 +542,20 @@ impl Reader<'_> {
 fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Result<Option<Value>, Flow> {
     use crate::lisp::builtins::hashfn::table_key;
     use crate::lisp::value::{HashTest, LispHash};
-    let test_key = i.intern_soft("test");
-    let data_key = i.intern_soft("data");
-    let size_key = i.intern_soft("size");
-    let weakness_key = i.intern_soft("weakness");
-    let rehash_size_key = i.intern_soft("rehash-size");
-    let rehash_threshold_key = i.intern_soft("rehash-threshold");
-    let purecopy_key = i.intern_soft("purecopy");
-    let key_weakness_key = i.intern_soft("key");
-    let value_weakness_key = i.intern_soft("value");
-    let key_and_value_key = i.intern_soft("key-and-value");
-    let key_or_value_key = i.intern_soft("key-or-value");
-    let eq_test = i.intern_soft("eq");
-    let eql_test = i.intern_soft("eql");
-    let equal_test = i.intern_soft("equal");
+    let test_key = i.q_soft("test");
+    let data_key = i.q_soft("data");
+    let size_key = i.q_soft("size");
+    let weakness_key = i.q_soft("weakness");
+    let rehash_size_key = i.q_soft("rehash-size");
+    let rehash_threshold_key = i.q_soft("rehash-threshold");
+    let purecopy_key = i.q_soft("purecopy");
+    let key_weakness_key = i.q_soft("key");
+    let value_weakness_key = i.q_soft("value");
+    let key_and_value_key = i.q_soft("key-and-value");
+    let key_or_value_key = i.q_soft("key-or-value");
+    let eq_test = i.q_soft("eq");
+    let eql_test = i.q_soft("eql");
+    let equal_test = i.q_soft("equal");
     // GNU's printed custom tables use the first occurrence of each plist
     // field, ignore size/unknown fields, and size storage from the data.
     // Built-in literal metadata uses the existing path below.

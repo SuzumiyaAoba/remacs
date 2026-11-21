@@ -318,7 +318,7 @@ fn prepare_value(
 }
 
 pub(super) fn prepare(i: &mut Interp, windows: &[WindowRef]) -> Result<(), Flow> {
-    let cache = i.intern(CACHE);
+    let cache = i.q(CACHE);
     let mut buffers = HashSet::new();
     for window in windows {
         let buffer = window.borrow().buffer;
@@ -363,4 +363,24 @@ pub(super) fn prepare(i: &mut Interp, windows: &[WindowRef]) -> Result<(), Flow>
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cache_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::{Interp, obarray::Obarray};
+
+    #[test]
+    fn mode_line_cache_uses_its_first_interned_symbol() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.intern(CACHE);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern(CACHE);
+
+        prepare(&mut interp, &[]).unwrap();
+
+        assert_ne!(original, replacement);
+        assert_eq!(interp.fixed_symbols.get(CACHE), Some(&original));
+    }
 }

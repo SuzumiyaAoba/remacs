@@ -302,6 +302,9 @@
 (qa (display-planes) 3)
 (qa (display-supports-face-attributes-p '(:foreground "red")) nil)
 (qa (display-supports-face-attributes-p '(:underline t)) nil)
+(qa (display-supports-face-attributes-p "not-an-attribute") nil)
+(qa (display-supports-face-attributes-p "not-an-attribute" "file-a.txt") nil)
+(qa (display-supports-face-attributes-p '(:foreground "red") "file-a.txt") nil)
 
 ;; == color-distance / color-gray-p ==
 (qa (color-distance "red" "red") 0)

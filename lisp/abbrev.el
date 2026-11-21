@@ -1018,14 +1018,14 @@ The user can show this list by calling
 
 (defun abbrev--suggest-inform-user (expansion)
     "Display a message to the user about the existing abbrev.
-EXPANSION contains the expansion and abbrev name as its first two elements."
+EXPANSION is a cons cell where the `car' is the expansion and the
+`cdr' is the abbrev."
     (run-with-idle-timer
      1 nil
      (lambda ()
        (message "You can write `%s' using the abbrev `%s'."
-                (nth 0 expansion) (nth 1 expansion))))
-    (push (cons (nth 0 expansion) (nth 1 expansion))
-          abbrev--suggest-saved-recommendations))
+                (car expansion) (cdr expansion))))
+    (push expansion abbrev--suggest-saved-recommendations))
 
 (defun abbrev--suggest-shortest-abbrev (new current)
     "Return the shortest of the two abbrevs given by NEW and CURRENT.

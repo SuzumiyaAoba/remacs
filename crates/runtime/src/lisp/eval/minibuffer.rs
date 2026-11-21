@@ -129,7 +129,7 @@ impl Interp {
             // `throw 'exit' with the message.
             if self.minibuf_level > 0 {
                 let erm = self
-                    .intern_soft("enable-recursive-minibuffers")
+                    .q_soft("enable-recursive-minibuffers")
                     .map(|id| self.symbol_value(id).truthy())
                     .unwrap_or(false);
                 if !erm {
@@ -177,7 +177,7 @@ impl Interp {
             let mhp = self.q("minibuffer-history-position");
             let mhv = self.q("minibuffer-history-variable");
             let hform = self
-                .intern_soft("minibuffer-help-form")
+                .q_soft("minibuffer-help-form")
                 .map(|id| self.symbol_value(id))
                 .unwrap_or(Value::Nil);
             let hf = self.q("help-form");
@@ -419,7 +419,7 @@ impl Interp {
             // "in case the history variable is buffer-local").
             if let MinibufInput::Text(text) = &input {
                 let han = self
-                    .intern_soft("history-add-new-input")
+                    .q_soft("history-add-new-input")
                     .map(|id| self.symbol_value(id).truthy())
                     .unwrap_or(true);
                 let histstring = if !text.is_empty() {
@@ -502,7 +502,7 @@ impl Interp {
                     ("rear-nonsticky", Value::t()),
                     ("field", Value::t()),
                 ] {
-                    let key_sym = self.intern(key);
+                    let key_sym = self.q(key);
                     crate::buffer::primitives::f_put_text_property(
                         self,
                         vec![
@@ -517,10 +517,10 @@ impl Interp {
                 // minibuffer-prompt-properties plist: `face' is appended
                 // via add-face-text-property, others via put-text-property.
                 let mpp = self
-                    .intern_soft("minibuffer-prompt-properties")
+                    .q_soft("minibuffer-prompt-properties")
                     .map(|id| self.symbol_value(id))
                     .unwrap_or(Value::Nil);
-                let face_property = self.intern_soft("face");
+                let face_property = self.q_soft("face");
                 if let Value::Cons(_) = &mpp {
                     let mut list = mpp.clone();
                     let mut seen = rustc_hash::FxHashSet::default();
@@ -614,7 +614,7 @@ impl Interp {
             crate::stdio::write(&output.stdout_bytes());
             crate::stdio::flush();
             let hide = self
-                .intern_soft("read-hide-char")
+                .q_soft("read-hide-char")
                 .map(|id| self.symbol_value(id))
                 .and_then(|v| match v {
                     Value::Int(n) if (0..=0x3fffff).contains(&n) => {
@@ -777,6 +777,34 @@ impl Default for MinibufArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_installation_keeps_its_property_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let property = interp.q("front-sticky");
+        assert!(interp.obarray.unintern_symbol(property));
+        let replacement = interp.intern("front-sticky");
+
+        let buffer = interp.create_buffer("qa-minibuffer-property-unintern");
+        interp.set_current_buffer(buffer);
+        interp
+            .minibuf_install(">", &Value::Nil, buffer)
+            .expect("install prompt properties");
+        let installed = crate::buffer::primitives::f_get_text_property(
+            &mut interp,
+            vec![Value::Int(1), Value::Sym(property)].into(),
+        )
+        .unwrap();
+        let installed_replacement = crate::buffer::primitives::f_get_text_property(
+            &mut interp,
+            vec![Value::Int(1), Value::Sym(replacement)].into(),
+        )
+        .unwrap();
+
+        assert!(installed.truthy());
+        assert!(installed_replacement.is_nil());
+    }
 
     #[test]
     fn minibuffer_prompt_property_errors_propagate_after_unwind() {

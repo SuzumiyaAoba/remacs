@@ -171,7 +171,7 @@ pub(super) fn f_event_modifiers(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     Ok(Value::list(
         modifiers
             .into_iter()
-            .map(|name| Value::Sym(i.intern(name)))
+            .map(|name| Value::Sym(i.q(name)))
             .collect(),
     ))
 }
@@ -280,7 +280,7 @@ fn parse_event_symbol_cached(i: &mut Interp, s: SymId) -> EvalResult {
     lispy.sort_by_key(|m| mod_list_rank(m));
     let base_value = crate::lisp::builtins::data::f_intern(i, vec![Value::string(base)].into())?;
     let ese = i.q("event-symbol-elements");
-    let mod_syms: Vec<Value> = lispy.iter().map(|m| Value::Sym(i.intern(m))).collect();
+    let mod_syms: Vec<Value> = lispy.iter().map(|m| Value::Sym(i.q(m))).collect();
     let result = Value::list(vec![base_value.clone(), Value::Int(mask)]);
     i.put_prop(s, esem, result.clone());
     i.put_prop(
@@ -1050,6 +1050,53 @@ mod tooltip_mode_watcher_tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod static_modifier_symbol_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn event_modifier_results_keep_the_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let obarray_symbol = interp.q("obarray");
+        let default_obarray = Value::vector_ref(vec![
+            Value::Sym(obarray_symbol),
+            Value::vector(vec![Value::Nil; 4]),
+        ]);
+        let default_obarray_value = Value::Record(default_obarray.clone());
+        default_obarray_value
+            .set_record_kind(crate::lisp::value::RecordKind::Obarray);
+        interp.default_obarray = Some(default_obarray);
+        interp.obarray.symbol_mut(obarray_symbol).value = default_obarray_value;
+
+        let control = interp.q("control");
+        assert!(interp.obarray.unintern_symbol(control));
+        let replacement = interp.intern("control");
+        assert_ne!(control, replacement);
+
+        let numeric = f_event_modifiers(
+            &mut interp,
+            vec![Value::Int(65 | CHAR_CTL)].into(),
+        )
+        .unwrap()
+        .list_to_vec()
+        .unwrap();
+        assert!(numeric
+            .iter()
+            .any(|value| matches!(value, Value::Sym(symbol) if *symbol == control)));
+
+        let event = interp.intern("C-x");
+        let parsed = f_internal_event_symbol_parse(&mut interp, vec![Value::Sym(event)].into())
+            .unwrap();
+        let Value::Cons(parsed) = parsed else {
+            panic!("expected event parse result");
+        };
+        let modifiers = parsed.borrow().cdr.clone().list_to_vec().unwrap();
+        assert!(matches!(modifiers.as_slice(), [Value::Sym(symbol)] if *symbol == control));
     }
 }
 

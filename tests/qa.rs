@@ -49,6 +49,108 @@ macro_rules! qa {
     };
 }
 
+#[test]
+fn qa_find_file_visit_truename_unintern() {
+    on_big_stack(|| {
+        let (mut interp, _) = batch_interp();
+        let source = r#"(let* ((real (make-temp-file "qa-visit-true-"))
+                        (link (concat real ".link"))
+                        (option (intern "find-file-visit-truename"))
+                        (matches nil))
+                    (unwind-protect
+                        (progn
+                          (make-symbolic-link real link)
+                          (with-temp-buffer
+                            (let ((find-file-visit-truename t))
+                              (unintern option obarray)
+                              (set-visited-file-name link t)
+                              (setq matches
+                                    (equal buffer-file-name (file-truename real)))))
+                          matches)
+                      (delete-file link)
+                      (delete-file real)))"#;
+        match interp.eval_str(source) {
+            Ok(value) => assert!(
+                value.truthy(),
+                "truename option was lost: {}",
+                interp.prin1_to_string(&value)
+            ),
+            Err(flow) => panic!("file-visit regression: {}", common::flow_str(&mut interp, &flow)),
+        }
+    });
+}
+
+#[test]
+fn qa_change_major_mode_with_file_name_unintern() {
+    on_big_stack(|| {
+        let (mut interp, _) = batch_interp();
+        let source = r#"(let* ((file (make-temp-file "qa-cmmw-" nil ".el"))
+                        (option (intern "change-major-mode-with-file-name")))
+                    (unwind-protect
+                        (with-temp-buffer
+                          (let ((change-major-mode-with-file-name nil))
+                            (unintern option obarray)
+                            (set-visited-file-name file t)
+                            (eq major-mode (intern "fundamental-mode"))))
+                      (delete-file file)))"#;
+        match interp.eval_str(source) {
+            Ok(value) => assert!(
+                value.truthy(),
+                "mode changed despite disabled policy: {}",
+                interp.prin1_to_string(&value)
+            ),
+            Err(flow) => panic!("major-mode policy regression: {}", common::flow_str(&mut interp, &flow)),
+        }
+    });
+}
+
+#[test]
+fn qa_find_file_run_dired_unintern() {
+    on_big_stack(|| {
+        let (mut interp, _) = batch_interp();
+        let source = r#"(let* ((option (intern "find-file-run-dired"))
+                        (directory (make-temp-file "qa-dired-hook-" t))
+                        (called nil)
+                        (marker (intern "qa-directory-opened")))
+                    (unwind-protect
+                        (let ((find-file-run-dired t)
+                              (find-directory-functions
+                               (list (lambda (name) (setq called name) marker))))
+                          (unintern option obarray)
+                          (and (eq (find-file-noselect directory) marker)
+                               (equal called directory)))
+                      (delete-directory directory)))"#;
+        match interp.eval_str(source) {
+            Ok(value) => assert!(
+                value.truthy(),
+                "directory hook was bypassed after unintern: {}",
+                interp.prin1_to_string(&value)
+            ),
+            Err(flow) => panic!("directory hook regression: {}", common::flow_str(&mut interp, &flow)),
+        }
+    });
+}
+
+#[test]
+fn qa_post_gc_hook_runs_after_unintern() {
+    on_big_stack(|| {
+        let (mut interp, _) = batch_interp();
+        let source = r#"(let* ((hook-symbol (intern "post-gc-hook"))
+                        (ran nil))
+                    (set hook-symbol (list (lambda () (setq ran t))))
+                    (unintern hook-symbol obarray)
+                    (garbage-collect)
+                    ran)"#;
+        match interp.eval_str(source) {
+            Ok(value) => assert!(
+                value.truthy(),
+                "post-gc-hook's canonical cell was not run"
+            ),
+            Err(flow) => panic!("post-gc-hook regression: {}", common::flow_str(&mut interp, &flow)),
+        }
+    });
+}
+
 qa!(qa_abbrev, "qa_abbrev.el");
 qa!(qa_abbrev2, "qa_abbrev2.el");
 qa!(qa_dabbrev_punctuation, "qa_dabbrev_punctuation.el");
@@ -817,6 +919,7 @@ qa!(qa_dom_xml_character_validity, "qa_dom_xml_character_validity.el");
 qa!(qa_dom_xml_comment_validation, "qa_dom_xml_comment_validation.el");
 qa!(qa_dom_add_child_before_cl_lib, "qa_dom_add_child_before_cl_lib.el");
 qa!(qa_tool_bar_height, "qa_tool_bar_height.el");
+qa!(qa_nsgui, "qa_nsgui.el");
 qa!(qa_modula2_pointer_tokens, "qa_modula2_pointer_tokens.el");
 qa!(qa_file_name_as_directory_handler, "qa_file_name_as_directory_handler.el");
 qa!(qa_file_name_nondirectory_byte_kind, "qa_file_name_nondirectory_byte_kind.el");

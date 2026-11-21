@@ -291,4 +291,23 @@
           (qa-err (key-binding "z") 'circular-list))
       (fset 'current-active-maps saved))))
 
+;; Autoload keymaps retain their function marker after unintern.
+(qa (let* ((autoload-symbol 'autoload)
+           (keymap-symbol 'keymap)
+           (function (make-symbol "qa-uninterned-autoload-keymap"))
+           (definition (list autoload-symbol "missing" nil nil keymap-symbol)))
+      (fset function definition)
+      (unintern autoload-symbol obarray)
+      (keymapp function))
+    t)
+
+;; `map-keymap' still skips the keymap marker after its name is uninterned.
+(qa (let* ((keymap-marker 'keymap)
+           (map (make-sparse-keymap))
+           (seen nil))
+      (unintern keymap-marker obarray)
+      (map-keymap (lambda (key _definition) (push key seen)) map)
+      seen)
+    nil)
+
 (princ (qa--done))

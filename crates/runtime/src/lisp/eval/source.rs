@@ -27,8 +27,7 @@ impl Interp {
         // Sample lexical-binding once, then restore the caller's lexical
         // environment and compiled provenance even when reading/eval fails.
         let lexical = self
-            .obarray
-            .intern_soft("lexical-binding")
+            .q_soft("lexical-binding")
             .map(|id| self.symbol_value(id).truthy())
             .unwrap_or(false);
         let saved = std::mem::replace(&mut self.lexenv, if lexical { lexenv_root() } else { None });
@@ -279,6 +278,8 @@ mod tests {
                          (add-variable-watcher 'lexical-binding #'eval-forms-watcher)",
                     )
                     .unwrap();
+                let lexical_binding = interp.q("lexical-binding");
+                assert!(interp.obarray.unintern_symbol(lexical_binding));
 
                 let mark = interp.specbind_depth();
                 let result = interp.eval_forms("(setq eval-forms-watcher-ran t)");

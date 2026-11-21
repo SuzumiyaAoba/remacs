@@ -9,6 +9,20 @@
 ;;   - minibufferp returns t inside the minibuffer.
 ;;   - minibuffer-window is a live window.
 
+;; `completing-read' checks PROMPT and INITIAL-INPUT before dispatching to a
+;; replacement reader or reading from batch stdin.
+(qa-err-data
+ (let ((completing-read-function (lambda (&rest _args) 'called)))
+   (completing-read 'bad-prompt nil))
+ 'wrong-type-argument '(stringp bad-prompt))
+(qa-err-data
+ (let ((completing-read-function (lambda (&rest _args) 'called)))
+   (completing-read "Prompt: " nil nil nil 'bad-initial))
+ 'wrong-type-argument '(stringp bad-initial))
+(qa (let ((completing-read-function (lambda (&rest args) (length args))))
+      (completing-read "Prompt: " nil))
+    8)
+
 ;; == minibuffer vars (bound) ==
 (qa (boundp 'minibuffer-completion-table) t)
 (qa (boundp 'minibuffer-completion-predicate) t)

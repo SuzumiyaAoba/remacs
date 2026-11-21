@@ -426,9 +426,9 @@ fn unibyte(i: &mut Interp, bytes: &[u8]) -> Value {
 fn gnutls_make_error(i: &mut Interp, err: i32) -> Value {
     match err {
         GNUTLS_E_SUCCESS => Value::t(),
-        GNUTLS_E_AGAIN => Value::Sym(intern(i, "gnutls-e-again")),
-        GNUTLS_E_INTERRUPTED => Value::Sym(intern(i, "gnutls-e-interrupted")),
-        GNUTLS_E_INVALID_SESSION => Value::Sym(intern(i, "gnutls-e-invalid-session")),
+        GNUTLS_E_AGAIN => Value::Sym(i.q("gnutls-e-again")),
+        GNUTLS_E_INTERRUPTED => Value::Sym(i.q("gnutls-e-interrupted")),
+        GNUTLS_E_INVALID_SESSION => Value::Sym(i.q("gnutls-e-invalid-session")),
         _ => Value::Int(err as i128),
     }
 }
@@ -768,23 +768,23 @@ fn f_ciphers(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             let tag_size = (g.cipher_get_tag_size)(gca);
             let entry = Value::list(vec![
                 Value::Sym(intern(i, &name)),
-                Value::Sym(intern(i, ":cipher-id")),
+            Value::Sym(i.q(":cipher-id")),
                 Value::Int(gca as i128),
-                Value::Sym(intern(i, ":type")),
-                Value::Sym(intern(i, "gnutls-symmetric-cipher")),
-                Value::Sym(intern(i, ":cipher-aead-capable")),
+            Value::Sym(i.q(":type")),
+            Value::Sym(i.q("gnutls-symmetric-cipher")),
+            Value::Sym(i.q(":cipher-aead-capable")),
                 if tag_size == 0 {
                     Value::Nil
                 } else {
                     Value::t()
                 },
-                Value::Sym(intern(i, ":cipher-tagsize")),
+            Value::Sym(i.q(":cipher-tagsize")),
                 Value::Int(tag_size as i128),
-                Value::Sym(intern(i, ":cipher-blocksize")),
+            Value::Sym(i.q(":cipher-blocksize")),
                 Value::Int((g.cipher_get_block_size)(gca) as i128),
-                Value::Sym(intern(i, ":cipher-keysize")),
+            Value::Sym(i.q(":cipher-keysize")),
                 Value::Int((g.cipher_get_key_size)(gca) as i128),
-                Value::Sym(intern(i, ":cipher-ivsize")),
+            Value::Sym(i.q(":cipher-ivsize")),
                 Value::Int((g.cipher_get_iv_size)(gca) as i128),
             ]);
             out = Value::cons(entry, out);
@@ -811,15 +811,15 @@ fn f_macs(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             let nonce = g.mac_get_nonce_size.map(|f| f(gma)).unwrap_or(0);
             let entry = Value::list(vec![
                 Value::Sym(intern(i, &name)),
-                Value::Sym(intern(i, ":mac-algorithm-id")),
+            Value::Sym(i.q(":mac-algorithm-id")),
                 Value::Int(gma as i128),
-                Value::Sym(intern(i, ":type")),
-                Value::Sym(intern(i, "gnutls-mac-algorithm")),
-                Value::Sym(intern(i, ":mac-algorithm-length")),
+            Value::Sym(i.q(":type")),
+            Value::Sym(i.q("gnutls-mac-algorithm")),
+            Value::Sym(i.q(":mac-algorithm-length")),
                 Value::Int((g.hmac_get_len)(gma) as i128),
-                Value::Sym(intern(i, ":mac-algorithm-keysize")),
+            Value::Sym(i.q(":mac-algorithm-keysize")),
                 Value::Int((g.mac_get_key_size)(gma) as i128),
-                Value::Sym(intern(i, ":mac-algorithm-noncesize")),
+            Value::Sym(i.q(":mac-algorithm-noncesize")),
                 Value::Int(nonce as i128),
             ]);
             out = Value::cons(entry, out);
@@ -845,11 +845,11 @@ fn f_digests(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             let name = cstr((g.digest_get_name)(gda));
             let entry = Value::list(vec![
                 Value::Sym(intern(i, &name)),
-                Value::Sym(intern(i, ":digest-algorithm-id")),
+            Value::Sym(i.q(":digest-algorithm-id")),
                 Value::Int(gda as i128),
-                Value::Sym(intern(i, ":type")),
-                Value::Sym(intern(i, "gnutls-digest-algorithm")),
-                Value::Sym(intern(i, ":digest-algorithm-length")),
+            Value::Sym(i.q(":type")),
+            Value::Sym(i.q("gnutls-digest-algorithm")),
+            Value::Sym(i.q(":digest-algorithm-length")),
                 Value::Int((g.hash_get_len)(gda) as i128),
             ]);
             out = Value::cons(entry, out);
@@ -1019,7 +1019,7 @@ fn iv_auto_size(i: &mut Interp, iv: &Value) -> Result<Option<usize>, Flow> {
         let cell = cell.borrow();
         (cell.car.clone(), cell.cdr.clone())
     };
-    if !matches!(head, Value::Sym(id) if i.intern_soft("iv-auto") == Some(id)) {
+    if !matches!(head, Value::Sym(id) if i.q_soft("iv-auto") == Some(id)) {
         return Ok(None);
     }
     let length = match tail {
@@ -1247,7 +1247,7 @@ fn f_errorp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // error (including plain integers and unrelated objects).
     match &a[0] {
         Value::Sym(s) if *s == crate::lisp::obarray::sym::T => Ok(Value::Nil),
-        Value::Sym(s) if *s == intern(i, "gnutls-e-again") => Ok(Value::Nil),
+            Value::Sym(s) if *s == i.q("gnutls-e-again") => Ok(Value::Nil),
         _ => Ok(Value::t()),
     }
 }
@@ -1256,7 +1256,7 @@ fn f_error_fatalp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let err = match &a[0] {
         Value::Sym(s) if *s == crate::lisp::obarray::sym::T => return Ok(Value::Nil),
         Value::Sym(s) => {
-            let prop = intern(i, "gnutls-code");
+            let prop = i.q("gnutls-code");
             let code = i.get_prop(*s, prop);
             match code {
                 Value::Int(_) => code,
@@ -1281,7 +1281,7 @@ fn f_error_string(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Ok(Value::string("Not an error"));
         }
         Value::Sym(s) => {
-            let prop = intern(i, "gnutls-code");
+            let prop = i.q("gnutls-code");
             let code = i.get_prop(*s, prop);
             match code {
                 Value::Int(_) => code,
@@ -1552,7 +1552,7 @@ fn f_peer_status(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut result = if warnings.is_nil() {
         Value::Nil
     } else {
-        Value::list(vec![Value::Sym(intern(i, ":warnings")), warnings])
+            Value::list(vec![Value::Sym(i.q(":warnings")), warnings])
     };
     let mut kv = |i: &mut Interp, k: &str, v: Value| {
         let key = Value::Sym(intern(i, k));
@@ -2824,14 +2824,33 @@ mod wide_crypto_input_tests {
     use crate::lisp::obarray::Obarray;
 
     #[test]
+    fn gnutls_error_code_keeps_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let condition = interp.q("gnutls-e-again");
+        assert!(interp.obarray.unintern_symbol(condition));
+        let replacement = interp.intern("gnutls-e-again");
+
+        let value = gnutls_make_error(&mut interp, GNUTLS_E_AGAIN);
+
+        assert_ne!(condition, replacement);
+        assert!(matches!(value, Value::Sym(symbol) if symbol == condition));
+    }
+
+    #[test]
     fn iv_auto_marker_requires_the_interned_symbol() {
         let mut interp = Interp::vacant();
         interp.obarray = Obarray::new();
-        let canonical = interp.intern("iv-auto");
+        let canonical = interp.q("iv-auto");
         let uninterned = interp.make_symbol("iv-auto");
         let canonical_spec = Value::list(vec![Value::Sym(canonical), Value::Int(12)]);
         let uninterned_spec = Value::list(vec![Value::Sym(uninterned), Value::Int(12)]);
 
+        assert!(matches!(
+            iv_auto_size(&mut interp, &canonical_spec),
+            Ok(Some(12))
+        ));
+        assert!(interp.obarray.unintern_symbol(canonical));
         assert!(matches!(
             iv_auto_size(&mut interp, &canonical_spec),
             Ok(Some(12))

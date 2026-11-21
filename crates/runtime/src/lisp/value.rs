@@ -185,13 +185,13 @@ pub(crate) enum HashWeakness {
 impl HashWeakness {
     pub(crate) fn from_value(i: &crate::lisp::Interp, value: &Option<Value>) -> Option<Self> {
         let id = value.as_ref().and_then(|value| i.sym_id(value))?;
-        if Some(id) == i.intern_soft("key") {
+        if Some(id) == i.q_soft("key") {
             Some(Self::Key)
-        } else if Some(id) == i.intern_soft("value") {
+        } else if Some(id) == i.q_soft("value") {
             Some(Self::Value)
-        } else if id == crate::lisp::obarray::sym::T || Some(id) == i.intern_soft("key-and-value") {
+        } else if id == crate::lisp::obarray::sym::T || Some(id) == i.q_soft("key-and-value") {
             Some(Self::KeyAndValue)
-        } else if Some(id) == i.intern_soft("key-or-value") {
+        } else if Some(id) == i.q_soft("key-or-value") {
             Some(Self::KeyOrValue)
         } else {
             None
@@ -507,6 +507,16 @@ impl Lambda {
             Some(items) => Ok(matches!(items.try_borrow()?.get(1), Some(Value::Str(_)))),
             None => Ok(false),
         }
+    }
+
+    /// GNU's native-compiled function identity is distinct from an `.elc'
+    /// byte-code object even when both execute through a compiled Lambda.
+    pub fn try_is_native_compiled(&self) -> Result<bool, std::cell::BorrowError> {
+        Ok(self.compiled && !self.try_is_bytecode()?)
+    }
+
+    pub fn is_native_compiled(&self) -> bool {
+        self.try_is_native_compiled().unwrap_or(false)
     }
 }
 

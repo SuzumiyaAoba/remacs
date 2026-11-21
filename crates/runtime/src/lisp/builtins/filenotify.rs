@@ -230,7 +230,7 @@ fn is_dir(p: &EmacsStr) -> bool {
 // ---------------------------------------------------------------------------
 
 fn intern(i: &mut crate::lisp::eval::Interp, s: &str) -> SymId {
-    i.intern(s)
+    i.q(s)
 }
 
 fn file_notify_error(i: &mut crate::lisp::eval::Interp, data: crate::lisp::Argv) -> Flow {
@@ -781,6 +781,21 @@ fn _unused(_: HashMap<i32, i32>, _: Mutex<()>) {}
 #[cfg(test)]
 mod wide_watch_path_tests {
     use super::*;
+
+    #[test]
+    fn file_notify_error_keeps_its_original_condition_after_unintern() {
+        let mut interp = crate::lisp::Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let condition = interp.q("file-notify-error");
+        assert!(interp.obarray.unintern_symbol(condition));
+        let replacement = interp.intern("file-notify-error");
+
+        let flow = file_notify_error(&mut interp, Vec::<Value>::new().into());
+
+        assert_ne!(condition, replacement);
+        assert!(matches!(flow, Flow::Signal(ref signal) if signal.is_symbol(condition)));
+    }
+
     #[test]
     fn directory_spelling_keeps_root_and_extended_components() {
         assert_eq!(directory_file_name("//"), "//");

@@ -224,9 +224,21 @@ Native literal symbol references use `Interp::q`/`q_soft`, backed by the
 bootstrap symbol objects, so uninterning or clearing a namespace does not
 retarget C-style Q references. Public interning and reader lookup stay in the
 mutable obarray. Fixed references are GC roots and serialized as graph symbol
-references, including uninterned originals. The current static-call migration
-has compile, focused QA, image and isolated GNU clear-table verification;
-the full regression suite still needs to run after that migration.
+references, including uninterned originals. If a fixed reference is first
+resolved after uninterning and re-interning, the Obarray historical index
+recovers the earliest default-obarray symbol for that key. Rebuild that index
+after portable-image restoration. The migration has compile checks, focused QA,
+image round-trips and targeted GNU differential checks. A full `qa` run stopped
+at its 1800-second supervisor limit after 18 of 958 cases, so it still needs a
+longer staged run.
+
+Runtime-defined charset and coding-system aliases retain their original
+symbol IDs separately from the name-based lookup tables. Their symbol lists
+and portable-image metadata must use those IDs so uninterned definitions and
+same-name replacements remain distinct. Custom charset plists and alias
+targets are symbol-keyed too: `charsetp`, `charset-plist`, encode/decode,
+`make-char`, and `unify-charset` must keep same-name descriptors separate.
+Portable images preserve those plist and target-symbol references.
 
 `gensym` follows dumped subr.el's native order: read the counter, inline 1+,
 set it through ordinary variable handling, then call format and make-symbol

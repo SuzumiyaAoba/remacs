@@ -331,4 +331,49 @@
       (list (macroexpand '(qa153-defined-macro 5))
             (get 'qa153-defined-macro 'lisp-indent-function))) '(5 1))
 
+;; Defun declaration handlers remain available after uninterning their alist.
+(qa (let ((declarations 'defun-declarations-alist))
+      (unintern declarations obarray)
+      (eval '(defun qa154-uninterned-declaration (x)
+               (declare (indent 1))
+               x))
+      (list (qa154-uninterned-declaration 7)
+            (get 'qa154-uninterned-declaration 'lisp-indent-function)))
+    '(7 1))
+(qa (let ((declarations 'macro-declarations-alist))
+      (unintern declarations obarray)
+      (eval '(defmacro qa154-uninterned-macro-declaration (x)
+               (declare (indent 1))
+               x))
+      (list (macroexpand '(qa154-uninterned-macro-declaration 7))
+            (get 'qa154-uninterned-macro-declaration 'lisp-indent-function)))
+    '(7 1))
+
+;; Declaration recognition uses the original `declare' symbol even after
+;; its public obarray name is removed.
+(qa (let* ((declare-symbol 'declare)
+           (form (list 'lambda '(x)
+                       (list declare-symbol '(indent 1)) 'x))
+           (before (macroexpand-all form)))
+      (unintern declare-symbol obarray)
+      (equal before (macroexpand-all form)))
+    t)
+
+;; Syntax scanning keeps the original parser flag cell after unintern.
+(qa (let ((parse-sexp-ignore-comments t)
+          (option 'parse-sexp-ignore-comments))
+      (with-temp-buffer
+        (insert "(a ; comment\n b)")
+        (goto-char (point-min))
+        (unintern option obarray)
+        (forward-sexp)
+        (= (point) (point-max))))
+    t)
+
+;; Evaluator dispatch keeps the original special-form subr after unintern.
+(qa (let ((if-symbol 'if))
+      (unintern if-symbol obarray)
+      (eval (list if-symbol t (list 'quote 'yes) (list 'quote 'no))))
+    'yes)
+
 (princ (qa--done))

@@ -153,4 +153,12 @@
          (qa203-output process-environment 'pipe)
          process-environment))
  '("<x>|<inner>" "<x>|<outer>" ("REMACS_AUDIT_CHILD=outer")))
+
+;; Child processes keep using the original environment cell after unintern.
+(qa (let ((environment-symbol 'process-environment)
+          (process-environment '("REMACS_AUDIT_CHILD=survives")))
+      (unintern environment-symbol obarray)
+      (qa203-output process-environment 'call))
+    "<x>|<survives>")
+
 (princ (qa--done)) (terpri)

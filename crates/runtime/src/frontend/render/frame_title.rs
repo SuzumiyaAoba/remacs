@@ -803,7 +803,7 @@ pub(super) fn prepare(
         .map(|w| w.borrow().id)
         .collect();
     let frames = i.frames.clone();
-    let cache = i.intern(TITLE_CACHE);
+    let cache = i.q(TITLE_CACHE);
     for frame in frames {
         let (window, dead) = {
             let f = frame.borrow();
@@ -868,4 +868,25 @@ pub(super) fn prepare(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod cache_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::{Interp, obarray::Obarray};
+
+    #[test]
+    fn frame_title_cache_uses_its_first_interned_symbol() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.intern(TITLE_CACHE);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern(TITLE_CACHE);
+        let mut remote_seen = HashSet::new();
+
+        prepare(&mut interp, &[], &mut remote_seen).unwrap();
+
+        assert_ne!(original, replacement);
+        assert_eq!(interp.fixed_symbols.get(TITLE_CACHE), Some(&original));
+    }
 }

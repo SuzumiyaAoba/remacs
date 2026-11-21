@@ -1040,4 +1040,15 @@
 )
 
 
+;; Frame configuration keeps the canonical menu-bar parameter key after
+;; uninterning its public name.
+(qa (let ((parameter 'menu-bar-lines))
+      (set-frame-parameter nil parameter 5)
+      (and (= (frame-parameter nil parameter) 5)
+           (let ((before (current-window-configuration)))
+             (unintern parameter obarray)
+             (window-configuration-equal-p before
+                                           (current-window-configuration)))))
+    t)
+
 (princ (qa--done)) (terpri)

@@ -110,7 +110,6 @@ fn tui_multiple_completion_completes_each_element() {
         assert_eq!(i.prin1_to_string(&value), "(\"alpha\" \"beta\")");
     });
 }
-
 fn keys(script: &mut Vec<i128>, s: &str) {
     script.extend(s.chars().map(|c| c as i128));
 }
@@ -240,6 +239,8 @@ fn tui_session_find_file_mx_switch_save_quit() {
         let file = std::env::temp_dir().join("remacs_tui_session.txt");
         let _ = std::fs::remove_file(&file);
         let mut i = Interp::new();
+        i.eval_str("(progn (unintern 'self-insert-command obarray) (unintern 'commandp obarray))")
+            .unwrap();
 
         let mut script = Vec::new();
         // C-x C-f <abs path> RET — visits the file.
@@ -518,6 +519,35 @@ fn tui_scroll_up_command_scrolls_and_moves_point() {
     })
 }
 
+#[test]
+fn tui_scroll_preserve_screen_position_survives_unintern() {
+    run_on_big_stack(|| {
+        let mut i = Interp::new();
+        i.eval_str(
+            "(with-current-buffer \"*scratch*\"
+           (erase-buffer)
+           (dotimes (n 100) (insert (format \"line-%03d\\n\" n)))
+           (goto-char (point-min))
+           (forward-line 10)
+           (setq-local scroll-preserve-screen-position 'always)
+           (set-buffer-modified-p nil))",
+        )
+        .expect("fill scratch");
+        i.eval_str("(unintern 'scroll-preserve-screen-position obarray)")
+            .expect("unintern scroll-preserve-screen-position");
+
+        let script = vec![21, b'5' as i128, 22, C_X, 3]; // C-u 5 C-v, quit
+        let (_, grids) = run_capture(script, &mut i);
+        let state = i
+            .eval_str("(list (line-number-at-pos) (line-number-at-pos (window-start)))")
+            .unwrap();
+        assert_eq!(i.prin1_to_string(&state), "(16 6)");
+        let last = grids.borrow().last().expect("a rendered grid").clone();
+        assert_eq!(last.rows[0].trim(), "line-005");
+        assert_eq!(last.cursor, Some((0, 10)), "cursor: {:?}", last.cursor);
+    })
+}
+
 /// `scroll-left'/`scroll-right'/`set-window-hscroll' must not be
 /// undone by the point-visible snap: GNU sets
 /// `suspend_auto_hscroll', which holds auto-hscroll until point
@@ -650,7 +680,7 @@ fn tui_isearch_highlights_matches() {
         .expect("fill scratch");
         let mut script = vec![19];
         keys(&mut script, "zz");
-        script.push(7); // C-g
+        script.extend([7, 7]); // C-g cancels the failed query, then aborts.
         script.extend([C_X, 3]);
         let (_, grids) = run_capture(script, &mut i);
         let last = grids.borrow().last().unwrap().clone();

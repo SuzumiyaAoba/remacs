@@ -105,4 +105,12 @@
       (qa92-load "(setq qa92-kind (list (symbolp standard-input) (symbol-name standard-input) (fboundp standard-input) (eq standard-input (intern \"get-file-char\"))))\n" ".elc")
       qa92-kind) '(t "get-file-char" nil nil))
 
+;; The default reader remains the default after its public name is removed.
+(qa (let ((read-symbol 'read)
+          (load-read-function 'read))
+      (unintern read-symbol obarray)
+      (qa92-load "; comment-only tail\n" ".el")
+      t)
+    t)
+
 (princ (qa--done)) (terpri)

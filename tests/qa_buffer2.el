@@ -750,4 +750,34 @@
   (qa (byte-to-position 0) nil)
   (qa (byte-to-position 3) 3))
 
+;; `filter-buffer-substring' retains its hook binding after unintern.
+(qa (let ((filter-symbol 'filter-buffer-substring-function)
+          (filter-buffer-substring-function
+           (lambda (_begin _end _delete) "hook")))
+      (with-temp-buffer
+        (insert "abc")
+        (unintern filter-symbol obarray)
+        (filter-buffer-substring 1 3)))
+    "hook")
+
+;; Self-insert still observes both auto-fill cells after unintern.
+(qa (let* ((auto-fill-symbol 'auto-fill-function)
+           (chars-symbol 'auto-fill-chars)
+           (internal-symbol 'internal-auto-fill)
+           (old-function (symbol-function internal-symbol))
+           (called nil))
+      (unwind-protect
+          (with-temp-buffer
+            (let ((auto-fill-function t)
+                  (auto-fill-chars (make-char-table nil nil))
+                  (last-command-event ?x))
+              (set-char-table-range auto-fill-chars ?x t)
+              (unintern auto-fill-symbol obarray)
+              (unintern chars-symbol obarray)
+              (fset internal-symbol (lambda () (setq called t)))
+              (self-insert-command 1)
+              (list called (buffer-string))))
+        (fset internal-symbol old-function)))
+    '(t "x"))
+
 (princ (qa--done))

@@ -591,5 +591,19 @@
 '(t nil)
 )
 
+(qa
+(with-temp-buffer
+  (let* ((table (copy-case-table (standard-case-table)))
+         (option 'enable-multibyte-characters))
+    (set-case-syntax-pair 4194176 4194177 table)
+    (set-case-table table)
+    (set-buffer-multibyte nil)
+    (unintern option obarray)
+    (list (char-equal 128 129)
+          (compare-strings (unibyte-string 128) nil nil
+                           (unibyte-string 129) nil nil t))))
+'(t t)
+)
+
 
 (princ (qa--done)) (terpri)

@@ -130,6 +130,11 @@
                             '(interactive "P"))) nil)
 (qa (interactive-form (list (make-symbol "closure") nil nil
                             '(interactive "P"))) nil)
+(qa (let* ((closure-symbol 'closure)
+           (form (list closure-symbol '(t) nil '(interactive "P"))))
+      (unintern closure-symbol obarray)
+      (interactive-form form))
+    '(interactive "P"))
 (qa (called-interactively-p 'any) nil)
 (qa (interactive-p) nil)
 

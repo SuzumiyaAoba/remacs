@@ -428,4 +428,32 @@
       (list (eq vector result) collected (mapcar #'car (append result nil))))
     (list t t (number-sequence 0 255)))
 
+;; The native comparator/key markers survive uninterning and void function cells.
+(qa (let* ((less-symbol 'value<)
+           (identity-symbol 'identity)
+           (less-function (symbol-function less-symbol))
+           (identity-function (symbol-function identity-symbol)))
+      (unwind-protect
+          (progn
+            (unintern less-symbol obarray)
+            (unintern identity-symbol obarray)
+            (fmakunbound less-symbol)
+            (fmakunbound identity-symbol)
+            (sort '(3 1 2) :lessp less-symbol :key identity-symbol))
+        (fset less-symbol less-function)
+        (fset identity-symbol identity-function)))
+    '(1 2 3))
+
+;; Comparator autoloads keep the normal load error after uninterning the tag.
+(qa (let* ((autoload-symbol 'autoload)
+           (predicate (make-symbol "qa-sort-lazy-predicate"))
+           (autoload-cell
+            (list autoload-symbol "qa-sort-no-such-library" nil nil nil)))
+      (fset predicate autoload-cell)
+      (unintern autoload-symbol obarray)
+      (condition-case err
+          (sort '(3 1 2) :lessp predicate)
+        (error (car err))))
+    'file-missing)
+
 (princ (qa--done)) (terpri)

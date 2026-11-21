@@ -72,7 +72,7 @@ pub(super) fn f_help_function_arglist(i: &mut Interp, a: crate::lisp::Argv) -> E
                 // (MIN . unevalled); the arglist is `arg1..argN &rest
                 // rest' — e.g. `if' → (arg1 arg2 &rest rest).
                 Arity::Unevalled => {
-                    let min = crate::lisp::special::special_form_min_args(i.intern(s.name));
+                    let min = crate::lisp::special::special_form_min_args(i.q(s.name));
                     let mut v: Vec<Value> = (0..min)
                         .map(|k| Value::Sym(i.intern(&format!("arg{}", k + 1))))
                         .collect();
@@ -114,4 +114,39 @@ fn doc_arglist(i: &mut Interp, doc: &str) -> Option<Value> {
         .map(|t| Value::Sym(i.intern(&t.to_lowercase())))
         .collect();
     Some(Value::list(names))
+}
+
+#[cfg(test)]
+mod special_subr_identity_tests {
+    use super::*;
+    use crate::lisp::{
+        obarray::Obarray,
+        value::{Argv, Subr},
+    };
+
+    fn unevalled_special(_: &mut Interp, _: Argv) -> EvalResult {
+        Ok(Value::Nil)
+    }
+
+    static IF_SUBR: Subr = Subr {
+        name: "if",
+        arity: Arity::Unevalled,
+        func: unevalled_special,
+        doc: "",
+    };
+
+    #[test]
+    fn help_arglist_keeps_the_original_special_form_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let special = interp.q("if");
+        assert!(interp.obarray.unintern_symbol(special));
+        let replacement = interp.intern("if");
+
+        let arglist =
+            f_help_function_arglist(&mut interp, vec![Value::Subr(&IF_SUBR)].into()).unwrap();
+
+        assert_ne!(special, replacement);
+        assert_eq!(interp.prin1_to_string(&arglist), "(arg1 arg2 &rest rest)");
+    }
 }

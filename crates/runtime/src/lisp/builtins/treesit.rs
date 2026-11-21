@@ -136,7 +136,7 @@ impl TsState {
 // ---------------------------------------------------------------------------
 
 fn sname(i: &mut Interp, name: &str) -> SymId {
-    i.intern(name)
+    i.q(name)
 }
 
 fn sig(i: &mut Interp, name: &str, data: Vec<Value>) -> Flow {
@@ -154,7 +154,7 @@ fn tag_record(tag: SymId, rest: Vec<Value>) -> Value {
 
 /// If `v' is a tagged record `[TAG ...]', return the rest of the slots.
 fn tagged(i: &mut Interp, v: &Value, tag_name: &str) -> Option<Vec<Value>> {
-    let tag = i.intern_soft(tag_name)?;
+    let tag = i.q_soft(tag_name)?;
     if let Value::Record(r) = v {
         let rr = r.borrow();
         if let Some(Value::Sym(s)) = rr.first() {
@@ -3718,3 +3718,28 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Return the current buffer's linecol cache."
     ),
 ];
+
+#[cfg(test)]
+mod symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn treesit_record_tags_keep_identity_after_unintern_and_reintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let tag = sname(&mut interp, "treesit-parser");
+        let original = tag_record(tag, vec![Value::Int(1)]);
+        assert!(interp.obarray.unintern_symbol(tag));
+
+        let replacement = interp.intern("treesit-parser");
+        let replacement_record = tag_record(replacement, vec![Value::Int(2)]);
+
+        assert_ne!(tag, replacement);
+        assert!(matches!(
+            tagged(&mut interp, &original, "treesit-parser"),
+            Some(rest) if matches!(rest.as_slice(), [Value::Int(1)])
+        ));
+        assert!(tagged(&mut interp, &replacement_record, "treesit-parser").is_none());
+    }
+}

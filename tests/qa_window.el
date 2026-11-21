@@ -199,9 +199,14 @@
               (list nil t 'visible 0 'bogus (selected-frame)))) '(t t t t t t))
 (qa-err-data (next-window 5 t) 'wrong-type-argument '(window-live-p 5))
 (qa-err-data (previous-window 5 t) 'wrong-type-argument '(window-live-p 5))
+(qa-err-data (window-display-table "a")
+             'wrong-type-argument '(window-live-p "a"))
+(qa-err-data (window-absolute-pixel-position nil "a\\b")
+             'error '("a\\b is not a live window"))
 (qa (window-text-pixel-size nil nil nil nil nil t) '(0 . 1))
 (qa (window-text-pixel-size nil nil nil nil nil 'mode-line) '(0 . 1))
 (qa (window-text-pixel-size (minibuffer-window) nil nil nil nil t) '(0 . 0))
+
 (qa (let ((mode-line-format nil) (header-line-format "H") (tab-line-format "T"))
       (mapcar (lambda (mode) (window-text-pixel-size nil nil nil nil nil mode))
               '(nil t mode-line header-line tab-line bogus)))
@@ -410,5 +415,16 @@
        (list (- body-lines (window-body-height window))
              (- body-pixels (window-body-height window t))))))
  '(1 8))
+
+;; Text measurement keeps the buffer's TAB width after the variable is uninterned.
+(qa (let ((window (selected-window)))
+      (with-temp-buffer
+        (setq-local tab-width 4)
+        (set-window-buffer window (current-buffer))
+        (insert "\t")
+        (let ((before (window-text-pixel-size window)))
+          (unintern 'tab-width obarray)
+          (equal before (window-text-pixel-size window)))))
+    t)
 
 (princ (qa--done))

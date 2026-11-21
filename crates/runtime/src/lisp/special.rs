@@ -1168,7 +1168,7 @@ fn defun_declaration_actions(
     } else {
         "defun-declarations-alist"
     };
-    let alist_id = match i.intern_soft(alist_name) {
+    let alist_id = match i.q_soft(alist_name) {
         Some(id) => id,
         None => return Ok(Vec::new()),
     };

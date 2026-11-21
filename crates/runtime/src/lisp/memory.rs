@@ -473,7 +473,7 @@ pub fn report(i: &mut super::Interp) -> Value {
     let s = heap_stats();
     let mut row = |name: &str, size: usize, used: usize, free: Option<usize>| {
         let mut values = vec![
-            Value::Sym(i.intern(name)),
+            Value::Sym(i.q(name)),
             Value::Int(size as i128),
             Value::Int(used as i128),
         ];
@@ -597,6 +597,24 @@ impl Drop for IntervalMut<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_count_labels_keep_their_original_symbols_after_unintern() {
+        let mut interp = super::super::Interp::vacant();
+        interp.obarray = super::super::obarray::Obarray::new();
+        let label = interp.q("conses");
+        assert!(interp.obarray.unintern_symbol(label));
+        let replacement = interp.intern("conses");
+
+        let rows = report(&mut interp).list_to_vec().unwrap();
+        let Value::Cons(first) = &rows[0] else {
+            panic!("expected the first report row to be a list");
+        };
+        let key = first.borrow().car.clone();
+
+        assert_ne!(label, replacement);
+        assert!(matches!(key, Value::Sym(symbol) if symbol == label));
+    }
 
     #[test]
     fn accounting_observer_preserves_unique_closure_updates() {

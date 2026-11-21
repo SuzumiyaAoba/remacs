@@ -45,8 +45,8 @@ impl Interp {
             return false;
         }
         let (Some(variable), Some(default_function)) = (
-            self.intern_soft("completing-read-function"),
-            self.intern_soft("completing-read-default"),
+            self.q_soft("completing-read-function"),
+            self.q_soft("completing-read-default"),
         ) else {
             return false;
         };
@@ -532,7 +532,7 @@ impl Interp {
                     } else {
                         "eval-minibuffer"
                     };
-                    let f = self.intern(fname);
+                    let f = self.q(fname);
                     arguments
                         .values
                         .push(self.apply(&Value::Sym(f), vec![Value::string(prompt)])?);
@@ -675,7 +675,7 @@ impl Interp {
             .apply(&predicate_symbol, vec![symbol.clone()])?
             .is_nil()
         {
-            let condition = self.intern("user-error");
+            let condition = self.q("user-error");
             return Err(self.signal_data(condition, vec![Value::string("No match")]));
         }
         Ok(symbol)
@@ -903,5 +903,67 @@ mod borrowed_interactive_input_tests {
             result,
             Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::ERROR)
         ));
+    }
+
+    #[test]
+    fn interactive_symbol_validation_keeps_user_error_identity_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new_with_noninteractive(false);
+                interp.minibuf_reader = Some(std::rc::Rc::new(|_, _, _| {
+                    Ok(crate::lisp::eval::MinibufInput::Text(
+                        "not-a-command".into(),
+                    ))
+                }));
+                let user_error = interp.q("user-error");
+                assert!(interp.completing_read_requires_manual_validation());
+                assert!(matches!(
+                    interp.read_interactive_symbol("Command: ".into(), "commandp"),
+                    Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::USER_ERROR)
+                ));
+                assert!(interp.obarray.unintern_symbol(user_error));
+
+                let result = interp.read_interactive_symbol("Command: ".into(), "commandp");
+
+                assert!(
+                    matches!(
+                        result,
+                        Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::USER_ERROR)
+                    ),
+                    "unexpected flow after unintern: {result:?}"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn expression_argument_reader_keeps_its_function_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new_with_noninteractive(false);
+                interp.minibuf_reader = Some(std::rc::Rc::new(|_, _, _| {
+                    Ok(crate::lisp::eval::MinibufInput::Text("42".into()))
+                }));
+                for (code, name) in [('x', "read-minibuffer"), ('X', "eval-minibuffer")] {
+                    let function = interp.q(name);
+                    assert!(interp.obarray.unintern_symbol(function));
+                    let result = interp.read_interactive_arguments(
+                        vec![crate::lisp::value::EmacsChar::from(code)],
+                        &Value::Nil,
+                        &[],
+                    );
+                    assert!(
+                        matches!(&result, Ok(values) if values.len() == 1),
+                        "unexpected interactive argument result for {name}: {result:?}"
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

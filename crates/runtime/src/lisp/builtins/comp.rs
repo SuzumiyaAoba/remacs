@@ -1318,7 +1318,7 @@ impl<'a> Emitter<'a> {
                         })
                         .collect(),
                 );
-                let head = Value::Sym(self.i.intern(if star { "let*" } else { "let" }));
+                let head = Value::Sym(self.i.q(if star { "let*" } else { "let" }));
                 Value::cons(head, Value::cons(normalized, Value::list(a[1..].to_vec())))
             } else {
                 whole.clone()
@@ -2671,12 +2671,15 @@ fn collect_el_files(dir: &str, rec: bool, out: &mut Vec<String>) {
     }
 }
 
-fn f_native_comp_function_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+fn f_native_comp_function_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(match &a[0] {
         Value::Subr(s) => is_native(s).is_some(),
         // `compiled' Lambdas stand in for GNU's native-compiled defuns
-        // (see `subrp') — macros and user `#[...]' objects stay nil.
-        Value::Lambda(l) => l.compiled && !l.is_macro,
+        // (see `subrp') — macros and `.elc' byte-code objects stay nil.
+        Value::Lambda(l) => l
+            .try_is_native_compiled()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?
+            && !l.is_macro,
         _ => false,
     }))
 }
@@ -2690,11 +2693,19 @@ fn f_subr_native_lambda_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                 Ok(Value::t())
             }
         }
-        // `compiled' Lambdas stand in for GNU's native-compiled defuns
-        // (`subrp' t), but carry no stored native arglist — answer t
-        // (opaque) like a non-native subr.  User `#[...]' objects are
-        // not `subrp' in GNU and fall through to the type error.
-        Value::Lambda(l) if l.compiled && !l.is_macro => Ok(Value::t()),
+        // Dumped source definitions stand in for native-compiled defuns
+        // (`subrp' t), but carry no stored native arglist. Byte-code objects
+        // are not subrs and retain the type error.
+        Value::Lambda(l) => {
+            let native = l
+                .try_is_native_compiled()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
+            if native && !l.is_macro {
+                Ok(Value::t())
+            } else {
+                Err(i.wrong_type_mut("subrp", &a[0]))
+            }
+        }
         other => Err(i.wrong_type_mut("subrp", &other)),
     }
 }
@@ -2713,9 +2724,18 @@ fn f_subr_native_comp_unit(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 Ok(Value::Nil)
             }
         }
-        // `compiled' Lambdas are `subrp' t (native-compiled in GNU) but
+        // Dumped source definitions stand in for native-compiled subrs but
         // have no comp-unit of their own here — answer nil.
-        Value::Lambda(l) if l.compiled && !l.is_macro => Ok(Value::Nil),
+        Value::Lambda(l) => {
+            let native = l
+                .try_is_native_compiled()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?;
+            if native && !l.is_macro {
+                Ok(Value::Nil)
+            } else {
+                Err(i.wrong_type_mut("subrp", &a[0]))
+            }
+        }
         other => Err(i.wrong_type_mut("subrp", &other)),
     }
 }
@@ -2754,11 +2774,15 @@ fn f_comp_libgccjit_version(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResul
 fn f_comp_subr_signature(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let (name, arity) = match &a[0] {
         Value::Subr(s) => (s.name.to_string(), s.arity),
-        // Native-compiled Lisp functions report `subrp' t in GNU;
-        // remacs marks dumped definitions `compiled' (see `subrp'), so
-        // they get a signature here too.  Macros and `#[...]' objects
-        // are not subrs.
-        Value::Lambda(l) if l.compiled && !l.is_macro => {
+        // Native-compiled Lisp functions report `subrp' t in GNU; dumped
+        // source definitions stand in for those. Byte-code functions and
+        // macros are not subrs.
+        Value::Lambda(l)
+            if l
+                .try_is_native_compiled()
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed byte-code object"))?
+                && !l.is_macro =>
+        {
             let name = i
                 .lambda_name(l)
                 .map(|s| s.to_unicode_lossy())
@@ -2771,7 +2795,7 @@ fn f_comp_subr_signature(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Arity::Range { min, max } => (min.to_string(), max.to_string()),
         Arity::Many { min } => (min.to_string(), "many".to_string()),
         Arity::Unevalled => (
-            crate::lisp::special::special_form_min_args(i.intern(&name)).to_string(),
+            crate::lisp::special::special_form_min_args(i.q(&name)).to_string(),
             "unevalled".to_string(),
         ),
     };
@@ -3839,3 +3863,41 @@ const TRAMPS: [SubrFn; 8192] = [
     t8170, t8171, t8172, t8173, t8174, t8175, t8176, t8177, t8178, t8179, t8180, t8181, t8182,
     t8183, t8184, t8185, t8186, t8187, t8188, t8189, t8190, t8191,
 ];
+
+#[cfg(test)]
+mod subr_signature_identity_tests {
+    use super::*;
+    use crate::lisp::{
+        obarray::Obarray,
+        value::{Argv, Arity, Subr},
+    };
+
+    fn unevalled_special(_: &mut Interp, _: Argv) -> EvalResult {
+        Ok(Value::Nil)
+    }
+
+    static IF_SUBR: Subr = Subr {
+        name: "if",
+        arity: Arity::Unevalled,
+        func: unevalled_special,
+        doc: "",
+    };
+
+    #[test]
+    fn special_subr_signature_keeps_the_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let special = interp.q("if");
+        assert!(interp.obarray.unintern_symbol(special));
+        let replacement = interp.intern("if");
+
+        let signature =
+            f_comp_subr_signature(&mut interp, vec![Value::Subr(&IF_SUBR)].into()).unwrap();
+        let Value::Str(signature) = signature else {
+            panic!("expected a signature string");
+        };
+
+        assert_ne!(special, replacement);
+        assert_eq!(signature.borrow().to_unicode_lossy(), "if(2 . unevalled)");
+    }
+}

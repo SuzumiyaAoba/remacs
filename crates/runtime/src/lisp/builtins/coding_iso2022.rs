@@ -8,7 +8,7 @@ use crate::lisp::{
 };
 
 fn prop(i: &Interp, pl: &Value, key: &str) -> Value {
-    i.intern_soft(key)
+    i.q_soft(key)
         .map(|s| crate::lisp::eval::plist_get(pl, s))
         .unwrap_or(Value::Nil)
 }
@@ -623,4 +623,24 @@ fn decode_inner(
     stream.gr = Some(gr);
     stream.pending = bytes[p..].to_vec();
     Some((out, spans))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn iso_2022_property_lookup_keeps_keyword_identity_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.q(":dimension");
+        let plist = Value::list(vec![Value::Sym(key), Value::Int(2)]);
+        assert!(interp.obarray.unintern_symbol(key));
+
+        let replacement = interp.intern(":dimension");
+
+        assert_ne!(key, replacement);
+        assert!(matches!(prop(&interp, &plist, ":dimension"), Value::Int(2)));
+    }
 }

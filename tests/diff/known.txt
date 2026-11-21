@@ -135,6 +135,10 @@ occur--set-arrow
 # -- mouse/menu primitives: GNU batch has no real mouse; coordinates,
 # -- menu maps, and tool-bar paths are tty-dependent and diverge by
 # -- design.
+# GNU's dumb batch frame reports a default (0 . 0) pointer position;
+# Remacs' headless CLI has no pointer-position sample.
+mouse-position-for-drag-line
+mouse-position-in-root-frame
 menu-bar-menu-at-x-y
 menu-bar-select-yank
 menu-bar-open
@@ -837,6 +841,28 @@ help-quick-toggle
 internal-lisp-face-equal-p
 internal-temp-output-buffer-show
 frame-or-buffer-changed-p
+dump-emacs-portable
+eldoc--invoke-strategy
+eldoc-print-current-symbol-info
+elisp--annotate-symbol-with-help-echo
+kill-matching-buffers-no-ask
+last-buffer
+next-error
+next-error-no-select
+next-error-this-buffer-no-select
+ns-open-file-service
+other-buffer
+previous-error
+previous-error-no-select
+previous-error-this-buffer-no-select
+recenter-current-error
+rename-auto-save-file
+rename-visited-file
+revert-buffer-insert-file-contents--default-function
+revert-buffer-insert-file-contents-delicately
+scroll-other-window-down
+startup--xdg-or-homedot
+vc-make-version-backup
 
 # -- remaining verified-state/noise rows.
 defined-colors

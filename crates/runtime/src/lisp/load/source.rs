@@ -185,7 +185,7 @@ impl LoadRequest<'_> {
             let cleanup_mark = i.specbind_depth();
             let cleanup = (|| {
                 for name in ["kill-buffer-hook", "kill-buffer-query-functions"] {
-                    let symbol = i.intern(name);
+                    let symbol = i.q(name);
                     i.specbind(symbol, Value::Nil)?;
                 }
                 let kill = Value::Sym(i.q("kill-buffer"));
@@ -475,6 +475,44 @@ impl LoadCaller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_buffer_cleanup_keeps_kill_hook_identity_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let kill_hook = interp.q("kill-buffer-hook");
+                let kill_queries = interp.q("kill-buffer-query-functions");
+                if let Some(buffer) = interp.buffers.get(interp.current_buffer) {
+                    let mut buffer = buffer.borrow_mut();
+                    buffer.locals.shift_remove(&kill_hook);
+                    buffer.locals.shift_remove(&kill_queries);
+                }
+
+                let result = eval_src(
+                    &mut interp,
+                    "/tmp/qa-load-buffer-unintern-hook.el",
+                    "(setq-default kill-buffer-hook (list (lambda () (error \"load buffer kill hook ran\")))) (unintern 'kill-buffer-hook obarray)",
+                    false,
+                );
+
+                let description = match &result {
+                    Err(crate::lisp::Flow::Signal(signal)) => {
+                        interp.prin1_to_string(&signal.condition).to_unicode_lossy()
+                    }
+                    Err(flow) => format!("{flow:?}"),
+                    Ok(_) => "ok".to_owned(),
+                };
+                assert!(result.is_ok(), "load cleanup failed: {description}");
+                interp
+                    .set_symbol_default(kill_hook, Value::Nil)
+                    .expect("restore the test's global kill hook");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn after_load_hook_errors_propagate_after_source_evaluation() {

@@ -128,10 +128,10 @@ fn ct_raw(i: &Interp, cb: &[Value], c: u32, uniprop: bool) -> Value {
 /// GNU `UNIPROP_TABLE_P': purpose `char-code-property-table' with
 /// exactly five extra slots.
 pub(crate) fn is_uniprop_table(i: &Interp, v: &Value) -> bool {
-    let Some(char_table_tag) = i.intern_soft("char-table") else {
+    let Some(char_table_tag) = i.q_soft("char-table") else {
         return false;
     };
-    let Some(char_code_property_table) = i.intern_soft("char-code-property-table") else {
+    let Some(char_code_property_table) = i.q_soft("char-code-property-table") else {
         return false;
     };
     match v {
@@ -685,7 +685,7 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> EvalResult {
         return Ok(sub.clone());
     };
     let n = CHARTAB_SIZE[depth];
-    let eq_test = matches!(test, Value::Sym(s) if i.intern_soft("eq") == Some(*s));
+    let eq_test = matches!(test, Value::Sym(s) if i.q_soft("eq") == Some(*s));
     let test_fn = test.clone();
     let mut first = {
         let b = r.borrow();
@@ -1889,6 +1889,24 @@ mod char_table_range_borrow_tests {
         let mut interp = Interp::vacant();
         interp.obarray = Obarray::new();
         interp
+    }
+
+    #[test]
+    fn uniprop_table_tags_keep_their_identity_after_unintern() {
+        let mut interp = interp();
+        let tag = interp.q("char-table");
+        let purpose = interp.q("char-code-property-table");
+        let table = make_ct(
+            &mut interp,
+            Value::Sym(purpose),
+            Value::Nil,
+            vec![Value::Nil; 5],
+        );
+        assert!(is_uniprop_table(&interp, &table));
+
+        assert!(interp.obarray.unintern_symbol(tag));
+        assert!(interp.obarray.unintern_symbol(purpose));
+        assert!(is_uniprop_table(&interp, &table));
     }
 
     fn table(interp: &mut Interp) -> Value {

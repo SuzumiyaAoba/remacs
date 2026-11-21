@@ -691,4 +691,24 @@
       (let ((overlay (make-overlay 2 4))) (overlay-put overlay 'x 'v)
         (list (previous-single-char-property-change 6 'x)
               (previous-single-char-property-change 4 'x)))) '(4 2))
+
+;; Default nonstickiness still applies after the option is uninterned.
+(qa (with-temp-buffer
+      (insert "ab")
+      (put-text-property 1 3 'x 5)
+      (let ((text-property-default-nonsticky '((x . t)))
+            (option 'text-property-default-nonsticky))
+        (unintern option obarray)
+        (get-pos-property 2 'x)))
+    nil)
+
+;; Field motion inhibition keeps its bound value after unintern.
+(qa (let ((option 'inhibit-field-text-motion))
+      (with-temp-buffer
+        (insert (propertize "abc" 'field 'qa-field) "d")
+        (let ((inhibit-field-text-motion t))
+          (unintern option obarray)
+          (constrain-to-field 5 2 nil nil))))
+    5)
+
 (princ (qa--done))

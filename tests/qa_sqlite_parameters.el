@@ -167,5 +167,24 @@
             (sqlite-close db) (funcall fn db "select ?"))
           'sqlite-error))
 
+;; sqlite-select keeps the original result mode symbols after unintern.
+(qa (let* ((set-symbol 'set)
+           (full-symbol 'full)
+           (db (sqlite-open))
+           (set nil))
+      (unwind-protect
+          (progn
+            (unintern set-symbol obarray)
+            (unintern full-symbol obarray)
+            (setq set (sqlite-select db "select 7 as n" nil set-symbol))
+            (list (type-of set)
+                  (sqlite-columns set)
+                  (sqlite-next set)
+                  (sqlite-more-p set)
+                  (sqlite-select db "select 8 as n" nil full-symbol)))
+        (when set (sqlite-finalize set))
+        (sqlite-close db)))
+    '(sqlite ("n") (7) t (("n") (8))))
+
 (princ (qa--done))
 (terpri)

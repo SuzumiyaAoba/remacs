@@ -79,7 +79,7 @@ impl Interp {
         run: impl FnOnce(&mut Self) -> EvalResult,
     ) -> EvalResult {
         self.with_lisp_eval_depth(false, |i| {
-            let function = Value::Sym(i.intern(name));
+            let function = Value::Sym(i.q(name));
             let depth = i.lisp_stack.len();
             i.profiler_checkpoint();
             i.lisp_stack.push((function, Argv::new(arguments)));
@@ -89,5 +89,32 @@ impl Interp {
             i.lisp_stack.truncate(depth);
             result
         })
+    }
+}
+
+#[cfg(test)]
+mod symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn host_call_frame_keeps_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.q("eval");
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern("eval");
+
+        let result = interp
+            .with_call_frame("eval", Vec::new(), |interp| {
+                Ok(Value::from_bool(matches!(
+                    interp.lisp_stack.last(),
+                    Some((Value::Sym(id), _)) if *id == original
+                )))
+            })
+            .unwrap();
+
+        assert_ne!(original, replacement);
+        assert!(result.truthy());
     }
 }

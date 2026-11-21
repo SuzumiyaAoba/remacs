@@ -229,7 +229,7 @@ impl DbusState {
 // ---------------------------------------------------------------------------
 
 fn intern(i: &mut Interp, s: &str) -> SymId {
-    i.intern(s)
+    i.q(s)
 }
 
 fn symv(i: &mut Interp, s: &str) -> Value {
@@ -306,12 +306,12 @@ fn cstr<T: TextSource + ?Sized>(text: &T) -> std::ffi::CString {
 }
 
 fn call_lisp(i: &mut Interp, f: &str, args: Vec<Value>) -> EvalResult {
-    let fun = Value::Sym(i.intern(f));
+    let fun = Value::Sym(i.q(f));
     i.apply(&fun, args)
 }
 
 fn fboundp(i: &mut Interp, name: &str) -> bool {
-    match i.intern_soft(name) {
+    match i.q_soft(name) {
         Some(s) => {
             let f = i.symbol_function(s);
             !(f.is_nil() || matches!(f, Value::Sym(x) if x == sym::UNBOUND))
@@ -2195,6 +2195,55 @@ mod tests {
 #[cfg(test)]
 mod wide_dbus_boundary_tests {
     use super::*;
+    use crate::lisp::{
+        obarray::Obarray,
+        value::{Argv, Arity, Subr},
+    };
+
+    fn dbus_lisp_stub(_: &mut Interp, _: Argv) -> EvalResult {
+        Ok(Value::Int(9))
+    }
+
+    static DBUS_GET_NAME_OWNER_STUB: Subr = Subr {
+        name: "qa-dbus-get-name-owner-stub",
+        arity: Arity::Range { min: 0, max: 0 },
+        func: dbus_lisp_stub,
+        doc: "",
+    };
+
+    #[test]
+    fn dbus_error_keeps_its_original_condition_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let condition = interp.q("dbus-error");
+        assert!(interp.obarray.unintern_symbol(condition));
+        let replacement = interp.intern("dbus-error");
+
+        let flow = dbus_error(&mut interp, "qa D-Bus error");
+
+        assert_ne!(condition, replacement);
+        assert!(matches!(flow, Flow::Signal(ref signal) if signal.is_symbol(condition)));
+    }
+
+    #[test]
+    fn lisp_function_lookup_keeps_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.q("dbus-get-name-owner");
+        interp.obarray.symbol_mut(original).function = Value::Subr(&DBUS_GET_NAME_OWNER_STUB);
+        assert!(interp.obarray.unintern_symbol(original));
+
+        let replacement = interp.intern("dbus-get-name-owner");
+        interp.obarray.symbol_mut(replacement).function = Value::Nil;
+
+        assert_ne!(original, replacement);
+        assert!(fboundp(&mut interp, "dbus-get-name-owner"));
+        assert!(matches!(
+            call_lisp(&mut interp, "dbus-get-name-owner", Vec::new()),
+            Ok(Value::Int(9))
+        ));
+    }
+
     #[test]
     fn c_string_boundary_preserves_unicode_and_byte8_octets() {
         let text = EmacsText::from_codes([0xf0080, 0xf0c80, 0x3fff80]).unwrap();

@@ -333,6 +333,14 @@
       (qa (bufferp b) t)
       (qa (buffer-name b) "*.txt")
       (kill-buffer b)))
+  (let ((wildcard-symbol 'find-file-wildcards)
+        (find-file-wildcards nil))
+    (unintern wildcard-symbol obarray)
+    (let ((b (find-file-noselect (expand-file-name "*.txt" qabf-dir)
+                                 nil nil t)))
+      (qa (bufferp b) t)
+      (qa (buffer-name b) "*.txt")
+      (kill-buffer b)))
   (delete-directory qabf-dir t))
 
 ;; == find-file-visit-truename / buffer-file-truename ==
@@ -605,5 +613,23 @@
 ;; buffer-file-name/truename nil in a non-visiting buffer
 (qa (with-temp-buffer buffer-file-name) nil)
 (qa (with-temp-buffer buffer-file-truename) nil)
+
+;; save-buffer keeps the final-newline policy after its name is uninterned.
+(qa (let* ((file (make-temp-file "qa-rfn-unintern-"))
+           (option 'require-final-newline))
+      (unwind-protect
+          (with-temp-buffer
+            (insert "wf")
+            (set-visited-file-name file t)
+            (set-buffer-modified-p t)
+            (let ((require-final-newline t))
+              (unintern option obarray)
+              (save-buffer))
+            (list (buffer-string)
+                  (with-temp-buffer
+                    (insert-file-contents file)
+                    (buffer-string))))
+        (delete-file file)))
+    '("wf\n" "wf\n"))
 
 (princ (qa--done))

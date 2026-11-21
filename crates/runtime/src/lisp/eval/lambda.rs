@@ -597,7 +597,7 @@ impl Interp {
                 body = rest;
             } else if let Value::Cons(form) = first {
                 let (head, tail) = super::cons_parts(self, &form)?;
-                if matches!(head, Value::Sym(sym) if self.intern_soft(":documentation") == Some(sym))
+                if matches!(head, Value::Sym(sym) if self.q_soft(":documentation") == Some(sym))
                 {
                     let (expression, site) = match tail {
                         Value::Cons(cell) => (
@@ -861,7 +861,7 @@ impl Interp {
             // its type symbol there).
             let (head, tail) = super::cons_parts(self, c)?;
             if matches!(&head, Value::Sym(s)
-                if self.intern_soft(":documentation") == Some(*s))
+                if self.q_soft(":documentation") == Some(*s))
             {
                 let (form, site) = match tail {
                     Value::Cons(args) => (

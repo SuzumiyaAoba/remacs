@@ -87,7 +87,7 @@ impl Sources {
                 file(&Value::string(filename.clone()), encoder)?;
             }
             for name in ["buffer-file-name", "buffer-file-truename"] {
-                if let Some(id) = i.intern_soft(name) {
+                if let Some(id) = i.q_soft(name) {
                     if let Some(value) = buffer.locals.get(&id) {
                         file(value, encoder)?;
                     }
@@ -117,7 +117,7 @@ impl Sources {
             Ok(())
         };
         for name in ["load-path", "find-function-source-path"] {
-            if let Some(id) = i.intern_soft(name) {
+            if let Some(id) = i.q_soft(name) {
                 for path in i.symbol_value(id).list_to_vec().unwrap_or_default() {
                     directory(&path, encoder)?;
                 }
@@ -187,5 +187,50 @@ impl Sources {
             *text = new.to_vec();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::{obarray::Obarray, value::Value};
+
+    #[test]
+    fn source_capture_uses_the_original_buffer_file_variable_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let variable = interp.q("buffer-file-truename");
+        assert!(interp.obarray.unintern_symbol(variable));
+        let replacement = interp.intern("buffer-file-truename");
+        assert_ne!(variable, replacement);
+
+        let path = Path::new(env!("REMACS_SOURCE_ROOT")).join("lisp/simple.el");
+        let load_path = interp.q("load-path");
+        let lisp_directory = path.parent().unwrap();
+        interp.obarray.symbol_mut(load_path).value = Value::list(vec![Value::string(
+            crate::lisp::text::EmacsText::from_os_str(lisp_directory.as_os_str()),
+        )]);
+        assert!(interp.obarray.unintern_symbol(load_path));
+        let load_path_replacement = interp.intern("load-path");
+        interp.obarray.symbol_mut(load_path_replacement).value = Value::Nil;
+
+        let buffer_id = interp.create_buffer("qa-dump-source-unintern");
+        interp
+            .buffers
+            .get(buffer_id)
+            .unwrap()
+            .borrow_mut()
+            .locals
+            .insert(
+                variable,
+                Value::string(crate::lisp::text::EmacsText::from_os_str(path.as_os_str())),
+            );
+
+        let mut encoder = Encoder::new(&interp);
+        let sources = Sources::capture(&interp, &mut encoder).unwrap();
+
+        assert_eq!(sources.files.len(), 1);
+        assert_eq!(sources.files[0].key, "simple");
+        assert_eq!(sources.directories.len(), 1);
     }
 }

@@ -12,7 +12,7 @@ use crate::editor::{
     terminal_token, w_parent, w_siblings, win_any, win_err_live, win_err_valid, win_live, win_of,
     win_valid,
 };
-use crate::lisp::builtins::{S, arg, want_int, want_list};
+use crate::lisp::builtins::{S, arg, want_int};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::sym;
 use crate::lisp::text::EmacsText;
@@ -689,12 +689,22 @@ fn f_nil(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_display_supports_face_attributes_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let frame = crate::lisp::builtins::misc::decode_display(i, &arg(&a, 1))?;
+    let attributes = arg(&a, 0);
+    // This is a predicate: malformed attributes and unresolved display
+    // names mean that the requested attributes are not supported.  Check
+    // the attributes before resolving DISPLAY, as GNU does, and treat an
+    // unresolved display-name string as unsupported.
+    if attributes.list_to_vec().is_err() {
+        return Ok(Value::Nil);
+    }
+    let display = arg(&a, 1);
+    if matches!(display, Value::Str(_)) {
+        return Ok(Value::Nil);
+    }
+    let frame = crate::lisp::builtins::misc::decode_display(i, &display)?;
     if !crate::editor::frame_is_graphical(i, &frame) {
         return Ok(Value::Nil);
     }
-    let attributes = arg(&a, 0);
-    let _ = want_list(i, &attributes)?;
     Ok(Value::from_bool(
         crate::frontend::gui_face_attributes_supported(i, &frame, &attributes),
     ))
@@ -1316,15 +1326,15 @@ fn f_window_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         match vertical {
             VerticalScrollBarType::FrameDefault => Value::t(),
             VerticalScrollBarType::Disabled => Value::Nil,
-            VerticalScrollBarType::Left => Value::Sym(i.intern("left")),
-            VerticalScrollBarType::Right => Value::Sym(i.intern("right")),
+            VerticalScrollBarType::Left => Value::Sym(i.q("left")),
+            VerticalScrollBarType::Right => Value::Sym(i.q("right")),
         },
         height.map_or(Value::Nil, |height| Value::Int(height as i128)),
         Value::Int(lines as i128),
         match horizontal {
             HorizontalScrollBarType::FrameDefault => Value::t(),
             HorizontalScrollBarType::Disabled => Value::Nil,
-            HorizontalScrollBarType::Bottom => Value::Sym(i.intern("bottom")),
+            HorizontalScrollBarType::Bottom => Value::Sym(i.q("bottom")),
         },
         Value::from_bool(persistent),
     ]))
@@ -1410,10 +1420,10 @@ fn f_window_current_scroll_bars(i: &mut Interp, a: crate::lisp::Argv) -> EvalRes
     let (_, vertical, _, horizontal, _) = window_scroll_bar_settings(i, &window);
     Ok(Value::cons(
         vertical.map_or(Value::Nil, |left| {
-            Value::Sym(i.intern(if left { "left" } else { "right" }))
+            Value::Sym(i.q(if left { "left" } else { "right" }))
         }),
         if horizontal.is_some() {
-            Value::Sym(i.intern("bottom"))
+        Value::Sym(i.q("bottom"))
         } else {
             Value::Nil
         },
@@ -1886,7 +1896,7 @@ fn f_window_safe_min_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         ref other => return Err(err_not_valid_window(i, other)),
     }
     let horiz = arg(&a, 1).truthy();
-    let symbol = i.intern(if horiz {
+    let symbol = i.q(if horiz {
         "window-safe-min-width"
     } else {
         "window-safe-min-height"
@@ -2883,11 +2893,30 @@ fn f_posn_at_xy(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_posn_pair(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let wv = match arg(&a, 1) {
-        Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
-        v => v.clone(),
+    let window_value = arg(&a, 1);
+    let window = match &window_value {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(window) => {
+            let live = {
+                let window = window.borrow();
+                !window.dead && window.horiz.is_none()
+            };
+            if live {
+                window.clone()
+            } else {
+                return Err(i.error(format!(
+                    "{} is not a live window",
+                    i.princ_to_string(&window_value)
+                )));
+            }
+        }
+        _ => {
+            return Err(i.error(format!(
+                "{} is not a live window",
+                i.princ_to_string(&window_value)
+            )));
+        }
     };
-    let window = win_live(i, &wv)?;
     let position = a.first().cloned().unwrap_or(Value::Nil);
     let posn = f_posn_at_point(i, vec![position, Value::Window(window.clone())].into())?;
     let Value::Cons(posn) = posn else {
@@ -3534,8 +3563,8 @@ fn f_set_frame_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let h = want_int(i, &a[2])?;
     let width = w.max(1);
     let height = h.max(1);
-    let width_parameter = Value::Sym(i.intern("width"));
-    let height_parameter = Value::Sym(i.intern("height"));
+    let width_parameter = Value::Sym(i.q("width"));
+    let height_parameter = Value::Sym(i.q("height"));
     let mut fb = f.borrow_mut();
     fb.width = usize::try_from(width).unwrap_or(usize::MAX);
     fb.height = usize::try_from(height).unwrap_or(usize::MAX);
@@ -3743,8 +3772,8 @@ fn f_set_frame_position(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     let left = want_int(i, &a[1])?;
     let top = want_int(i, &a[2])?;
-    let left_parameter = Value::Sym(i.intern("left"));
-    let top_parameter = Value::Sym(i.intern("top"));
+    let left_parameter = Value::Sym(i.q("left"));
+    let top_parameter = Value::Sym(i.q("top"));
     let mut parameters = frame.borrow().params.clone();
     parameters = crate::lisp::eval::plist_put_front(&parameters, &left_parameter, Value::Int(left));
     parameters = crate::lisp::eval::plist_put_front(&parameters, &top_parameter, Value::Int(top));
@@ -4042,8 +4071,8 @@ fn f_window_discard_buffer_from_window(i: &mut Interp, a: crate::lisp::Argv) -> 
                 _ => false,
             }
         };
-        let quit_restore = i.intern("quit-restore");
-        let quit_restore_prev = i.intern("quit-restore-prev");
+    let quit_restore = i.q("quit-restore");
+    let quit_restore_prev = i.q("quit-restore-prev");
         let params = w.borrow().params.clone();
         let restore = crate::lisp::eval::plist_get(&params, quit_restore);
         let restore_prev = crate::lisp::eval::plist_get(&params, quit_restore_prev);
@@ -4514,7 +4543,7 @@ fn f_frame_face_hash_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         .flatten()
         {
             for (si, attr) in SLOTS.iter().enumerate() {
-                let kw = i.intern(attr);
+                let kw = i.q(attr);
                 let val = crate::lisp::eval::plist_get(&src_plist, kw);
                 if !val.is_nil() || crate::lisp::eval::plist_lookup(&src_plist, kw).is_some() {
                     v[si + 1] = val;
@@ -4603,7 +4632,7 @@ fn window_line_display_metrics(i: &Interp, window: &WindowRef, row: usize) -> (u
         return (0, 0);
     };
     let tab_width = i
-        .intern_soft("tab-width")
+        .q_soft("tab-width")
         .and_then(|symbol| {
             i.buffer_local_toplevel_value(symbol, buffer.borrow().id)
                 .or_else(|| i.default_toplevel_value(symbol))
@@ -4906,7 +4935,7 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         .get(buffer)
         .map(|buffer| buffer.borrow().text.substring(start0, end0))
         .unwrap_or_default();
-    let tab_symbol = i.intern("tab-width");
+    let tab_symbol = i.q("tab-width");
     let tab_width = i
         .buffer_local_toplevel_value(tab_symbol, buffer)
         .or_else(|| i.default_toplevel_value(tab_symbol))
@@ -4992,7 +5021,7 @@ fn f_window_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     i.set_current_buffer(buffer);
     let mut formats = Vec::new();
     for name in ["mode-line-format", "header-line-format", "tab-line-format"] {
-        let symbol = i.intern(name);
+        let symbol = i.q(name);
         let parameter = crate::lisp::eval::plist_get(&params, symbol);
         let enabled = if i
             .sym_id(&parameter)
@@ -5099,7 +5128,7 @@ fn f_reconsider_frame_fonts(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         return Err(i.error("Window system frame should be used"));
     }
 
-    let font_parameter_key = i.intern("font-parameter");
+    let font_parameter_key = i.q("font-parameter");
     let frame_id = frame.borrow().id;
     let font_parameter = crate::lisp::eval::plist_get_v(
         &frame.borrow().params,
@@ -5108,7 +5137,7 @@ fn f_reconsider_frame_fonts(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let parameters = if font_parameter.is_nil() {
         Value::Nil
     } else {
-        let font_key = i.intern("font");
+        let font_key = i.q("font");
         Value::list(vec![Value::cons(
             Value::Sym(font_key),
             font_parameter.clone(),
@@ -5121,7 +5150,7 @@ fn f_reconsider_frame_fonts(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
             .map_err(|message| i.error(message))?;
     }
 
-    let function = Value::Sym(i.intern("face-set-after-frame-default"));
+    let function = Value::Sym(i.q("face-set-after-frame-default"));
     i.apply(&function, vec![Value::Frame(frame.clone()), parameters])?;
 
     // `face-set-after-frame-default' may update this parameter while applying
@@ -5317,7 +5346,7 @@ pub(crate) fn run_pre_redisplay_function(
         .filter(|window| !window.borrow().dead)
         .collect();
     let function = i
-        .intern_soft("pre-redisplay-function")
+        .q_soft("pre-redisplay-function")
         .filter(|symbol| i.bound_p(*symbol))
         .map(|symbol| i.symbol_value(symbol))
         .filter(|function| function.truthy());
@@ -5329,6 +5358,54 @@ pub(crate) fn run_pre_redisplay_function(
         run_window_fontification_functions(i, &window)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod fontification_symbol_tests {
+    use super::*;
+
+    #[test]
+    fn redisplay_fontification_keeps_hook_and_property_symbols_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                interp
+                    .eval_str(
+                        "(progn
+                           (defvar qa-fontification-ran nil)
+                           (defvar qa-pre-redisplay-ran nil)
+                           (with-current-buffer \"*scratch*\"
+                             (erase-buffer)
+                             (insert \"abc\")
+                             (setq pre-redisplay-function
+                               (lambda (_windows)
+                                 (setq qa-pre-redisplay-ran t)))
+                             (setq-local fontification-functions
+                               (list (lambda (_position)
+                                       (setq qa-fontification-ran t))))
+                             (unintern 'pre-redisplay-function obarray)
+                             (unintern 'fontification-functions obarray)
+                             (unintern 'fontified obarray)))",
+                    )
+                    .unwrap();
+                let window = interp
+                    .selected_frame
+                    .as_ref()
+                    .unwrap()
+                    .borrow()
+                    .selected
+                    .clone();
+
+                run_pre_redisplay_function(&mut interp, vec![window]).unwrap();
+
+                assert!(interp.eval_str("qa-fontification-ran").unwrap().truthy());
+                assert!(interp.eval_str("qa-pre-redisplay-ran").unwrap().truthy());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 
 fn fontified_interval_end(
@@ -5364,7 +5441,7 @@ fn run_window_fontification_functions(i: &mut Interp, window: &WindowRef) -> Res
         return Ok(());
     }
     let Some(fontification_functions) = i
-        .intern_soft("fontification-functions")
+        .q_soft("fontification-functions")
         .filter(|symbol| i.bound_p(*symbol))
     else {
         return Ok(());
@@ -5376,7 +5453,7 @@ fn run_window_fontification_functions(i: &mut Interp, window: &WindowRef) -> Res
     if functions.is_nil() {
         return Ok(());
     }
-    let Some(fontified) = i.intern_soft("fontified") else {
+    let Some(fontified) = i.q_soft("fontified") else {
         return Ok(());
     };
 
@@ -5447,7 +5524,7 @@ fn run_window_fontification_functions(i: &mut Interp, window: &WindowRef) -> Res
 fn f_frame_scale_factor(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = frame_live(i, &arg(&a, 0))?;
     let scale = i
-        .intern_soft("scale-factor")
+        .q_soft("scale-factor")
         .map(|parameter| {
             crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(parameter))
         })

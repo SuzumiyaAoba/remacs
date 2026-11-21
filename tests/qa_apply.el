@@ -732,4 +732,33 @@
       (functionp (cadr v)))
     t)
 
+;; `macroexpand-all' keeps the same closure scope after the public marker is
+;; uninterned; literal closure symbols remain identity-stable.
+(qa (let* ((closure-symbol 'closure)
+           (form (list closure-symbol '(t) nil '(when t 1)))
+           (before nil)
+           (after nil))
+      (add-variable-watcher 'macroexp--dynvars #'qaap-dynvars-watch)
+      (unwind-protect
+          (progn
+            (setq qaap-dynvars-events nil)
+            (macroexpand-all form)
+            (setq before (nreverse qaap-dynvars-events))
+            (unintern closure-symbol obarray)
+            (setq qaap-dynvars-events nil)
+            (macroexpand-all form)
+            (setq after (nreverse qaap-dynvars-events))
+            (equal before after))
+        (remove-variable-watcher 'macroexp--dynvars #'qaap-dynvars-watch)))
+    t)
+
+;; Macroexpansion keeps the original dynamic-variable cell after uninterning.
+(qa (let* ((dynvars-symbol 'macroexp--dynvars)
+           (form '(funcall #'(lambda (qaap-dynarg) qaap-dynarg) 5))
+           (macroexp--dynvars '(qaap-dynarg))
+           (before (macroexpand-all form)))
+      (unintern dynvars-symbol obarray)
+      (equal before (macroexpand-all form)))
+    t)
+
 (princ (qa--done))

@@ -235,7 +235,7 @@ impl Interp {
             ("print-level", Value::Nil),
             ("print-circle", Value::t()),
         ] {
-            if let Some(symbol) = self.intern_soft(name)
+            if let Some(symbol) = self.q_soft(name)
                 && let Err(error) = self.specbind(symbol, value)
             {
                 self.unbind_to(mark)?;
@@ -272,7 +272,7 @@ impl Interp {
             if !matches!(subr.arity, Arity::Unevalled) {
                 return None;
             }
-            let id = self.intern_soft(subr.name)?;
+            let id = self.q_soft(subr.name)?;
             return super::special::special_form(id).map(|_| id);
         }
 
@@ -897,7 +897,7 @@ impl Interp {
             Value::Subr(s) => match s.arity {
                 Arity::Unevalled => {
                     let special_id = self
-                        .intern_soft(s.name)
+                        .q_soft(s.name)
                         .filter(|id| super::special::special_form(*id).is_some());
                     if let Some(special_id) = special_id {
                         let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
@@ -1560,6 +1560,31 @@ impl Interp {
 #[cfg(test)]
 mod macro_cache_eval_tests {
     use super::*;
+
+    #[test]
+    fn special_macro_repr_binds_print_limits_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let print_length = interp.q("print-length");
+                interp.obarray.symbol_mut(print_length).value = Value::Int(1);
+                assert!(interp.obarray.unintern_symbol(print_length));
+
+                let function = Value::list(vec![
+                    Value::Sym(sym::MACRO),
+                    Value::Int(1),
+                    Value::Int(2),
+                    Value::Int(3),
+                ]);
+                let printed = interp.special_macro_cell_repr(&function).unwrap();
+
+                assert_eq!(printed.to_unicode_lossy(), "(macro 1 2 3)");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn cached_macro_comparison_reports_a_mutably_borrowed_old_cell() {

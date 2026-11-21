@@ -15,7 +15,7 @@ pub(crate) fn apply(i: &mut Interp, command: &mut Command) -> Result<(), Flow> {
     // interpreters may be spawning children with different environments.
     command.env_clear();
     let mut environment = i
-        .intern_soft("process-environment")
+        .q_soft("process-environment")
         .map(|symbol| i.symbol_value(symbol))
         .unwrap_or(Value::Nil);
     let mut seen_names = HashSet::new();

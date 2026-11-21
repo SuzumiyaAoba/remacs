@@ -428,4 +428,17 @@
     (set-char-table-range table ?! (expt 2 64))
     (set-case-table table)
     (qa (skip-chars-backward "[:upper:]") 0)))
+
+;; Character classification keeps the bound Unicode category table after unintern.
+(qa (let* ((table-symbol 'unicode-category-table)
+           (table (copy-sequence unicode-category-table)))
+      (set-char-table-range table ?α 0)
+      (let ((unicode-category-table table))
+        (unintern table-symbol obarray)
+        (with-temp-buffer
+          (insert (string ?α))
+          (goto-char (point-min))
+          (skip-chars-forward "[:alpha:]"))))
+    0)
+
 (princ (qa--done)) (terpri)

@@ -81,4 +81,12 @@
 (with-category-table (make-category-table)
   (qa (category-set-mnemonics (aref (copy-category-table) ?a)) ".Lalr")
   (qa (category-set-mnemonics (aref (copy-category-table nil) ?a)) ".Lalr"))
+
+;; Category tables keep their subtype identity after unintern.
+(qa (let ((purpose 'category-table)
+          (table (make-category-table)))
+      (unintern purpose obarray)
+      (category-table-p table))
+    t)
+
 (princ (qa--done)) (terpri)

@@ -455,4 +455,29 @@
       (prin1-to-string (point-min-marker)))
     "#<marker at 1 in qarp-m>")
 
+;; Printed hash-table fields also use their fixed symbol identities.
+(qa (let ((field 'data))
+      (unintern field obarray)
+      (let ((table (qarp-r "#s(hash-table test eq data (a 1))")))
+        (list (hash-table-p table) (hash-table-test table)
+              (hash-table-count table))))
+    '(t eq 0))
+(qa (let ((field 'test))
+      (unintern field obarray)
+      (hash-table-test (qarp-r "#s(hash-table test equal data ())")))
+    'eql)
+(qa (let ((weakness 'key))
+      (unintern weakness obarray)
+      (condition-case nil
+          (progn (qarp-r "#s(hash-table test eq weakness key data nil)") 'accepted)
+        (error 'error)))
+    'error)
+
+;; A re-interned same-name tag is not the reader's fixed hash-table type.
+(qa (let ((tag 'hash-table))
+      (unintern tag obarray)
+      (let ((value (qarp-r "#s(hash-table test eq data (a 1))")))
+        (list (recordp value) (hash-table-p value))))
+    '(t nil))
+
 (princ (qa--done))

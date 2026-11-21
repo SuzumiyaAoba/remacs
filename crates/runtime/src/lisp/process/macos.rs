@@ -1,5 +1,5 @@
 //! Native Darwin process metadata, with the SDK's kinfo_proc layout isolated in C.
-use super::{EvalResult, Interp, Value, symv};
+use super::{EvalResult, Interp, Value, q_symv};
 
 #[repr(C)]
 struct ProcessInfo {
@@ -77,7 +77,7 @@ pub(super) fn process_attributes(i: &mut Interp, pid: i32) -> EvalResult {
         .unwrap_or(0);
     let start = i128::from(info.start_sec) * 1_000_000_000 + i128::from(info.start_usec) * 1000;
     let mut attributes = Vec::new();
-    let mut add = |key: &str, value: Value| attributes.push(Value::cons(symv(i, key), value));
+    let mut add = |key: &str, value: Value| attributes.push(Value::cons(q_symv(i, key), value));
     if info.flags & 32 != 0 {
         add("args", string(&args));
     }

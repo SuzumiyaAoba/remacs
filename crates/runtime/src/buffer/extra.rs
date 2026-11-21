@@ -3224,7 +3224,7 @@ pub(crate) fn f_constrain_to_field(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     let fwd = new_v > old_v;
     let mut result = new_v;
     let inhibit_motion = i
-        .intern_soft("inhibit-field-text-motion")
+        .q_soft("inhibit-field-text-motion")
         .map(|id| i.symbol_value(id).truthy())
         .unwrap_or(false);
     // GNU order: gcp runs only when motion isn't inhibited and

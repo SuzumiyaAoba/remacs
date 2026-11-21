@@ -1,7 +1,5 @@
 //! Face, font, colour and fringe compatibility primitives.
 
-use super::display::decode_display;
-
 use super::compat::desc_rgb3;
 
 use super::display::want_opt_frame;
@@ -47,7 +45,7 @@ pub(super) fn f_face_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => None,
     };
     if let Some(frame) = frame.filter(|frame| crate::editor::frame_is_graphical(i, frame)) {
-        let font = i.intern_soft("font");
+        let font = i.q_soft("font");
         let font = font
             .map(|font| crate::lisp::eval::plist_get_v(&frame.borrow().params, &Value::Sym(font)))
             .filter(|font| !font.is_nil());
@@ -438,7 +436,7 @@ fn font_property_value(i: &Interp, value: &Value, kind: FontValueKind, property:
     match (kind, value) {
         (FontValueKind::Spec, Value::Record(record)) => {
             let properties = record.borrow().get(1).cloned().unwrap_or(Value::Nil);
-            i.intern_soft(property)
+            i.q_soft(property)
                 .map(|key| crate::lisp::eval::plist_get_v(&properties, &Value::Sym(key)))
                 .unwrap_or(Value::Nil)
         }
@@ -701,7 +699,7 @@ pub(super) fn f_font_face_attributes(i: &mut Interp, a: crate::lisp::Argv) -> Ev
                         // GNU interns string values of the name slots into
                         // symbols... no: :family stays a string, as in
                         // `(:family "a")'.  Symbols pass through.
-                        out.push(Value::Sym(i.intern(k2)));
+                        out.push(Value::Sym(i.q(k2)));
                         out.push(v2);
                     }
                     cur = next;
@@ -849,7 +847,7 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     };
     let (family, height) = font_name_family_and_height(&font_name, &families);
 
-    let default = Value::Sym(i.intern("default"));
+    let default = Value::Sym(i.q("default"));
     let family = Value::string(family);
     let inhibit_customize = a.get(3).is_some_and(Value::truthy);
     let face_frame = if !frames.is_nil() && !inhibit_customize {
@@ -860,24 +858,24 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     let mut attributes = vec![
         default,
         face_frame,
-        Value::Sym(i.intern(":width")),
-        Value::Sym(i.intern("normal")),
-        Value::Sym(i.intern(":weight")),
-        Value::Sym(i.intern("normal")),
-        Value::Sym(i.intern(":slant")),
-        Value::Sym(i.intern("normal")),
-        Value::Sym(i.intern(":family")),
+        Value::Sym(i.q(":width")),
+        Value::Sym(i.q("normal")),
+        Value::Sym(i.q(":weight")),
+        Value::Sym(i.q("normal")),
+        Value::Sym(i.q(":slant")),
+        Value::Sym(i.q("normal")),
+        Value::Sym(i.q(":family")),
         family.clone(),
-        Value::Sym(i.intern(":font")),
+        Value::Sym(i.q(":font")),
         family,
     ];
     if let Some(height) = height {
-        attributes.push(Value::Sym(i.intern(":height")));
+        attributes.push(Value::Sym(i.q(":height")));
         attributes.push(Value::Int(i128::from(height)));
     }
     crate::editor::f_set_face_attribute(i, attributes.into())?;
 
-    let font_parameter = Value::Sym(i.intern("font"));
+    let font_parameter = Value::Sym(i.q("font"));
     for frame in target_frames {
         let params = crate::lisp::eval::plist_put_front(
             &frame.borrow().params,
@@ -1189,7 +1187,7 @@ pub(crate) fn parse_color_16_with_name_alist(
         return None;
     };
     let name = name.borrow().to_lowercase().replace(' ', "");
-    let symbol = i.intern_soft("color-name-rgb-alist")?;
+    let symbol = i.q_soft("color-name-rgb-alist")?;
     let Value::Cons(entries) = i.symbol_value(symbol) else {
         return None;
     };
@@ -1503,7 +1501,26 @@ pub(super) fn f_face_attributes_as_vector(i: &mut Interp, a: crate::lisp::Argv) 
 #[cfg(test)]
 mod wide_color_hex_tests {
     use super::*;
+    use crate::lisp::obarray::Obarray;
     use crate::lisp::text::{EmacsChar, EmacsText};
+
+    #[test]
+    fn color_name_alist_cell_survives_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let symbol = interp.q("color-name-rgb-alist");
+        interp.obarray.symbol_mut(symbol).value = Value::list(vec![Value::cons(
+            Value::string("qa-uninterned-color"),
+            Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        )]);
+        assert!(interp.obarray.unintern_symbol(symbol));
+
+        assert_eq!(
+            parse_color_16_with_name_alist(&interp, &Value::string("qa-uninterned-color")),
+            Some((1, 2, 3))
+        );
+    }
+
     #[test]
     fn ascii_hex_is_checked_without_narrowing_character_codes() {
         assert_eq!(color_hex_value(&EmacsText::from("aF09")), Some(0xaf09));
@@ -1516,5 +1533,51 @@ mod wide_color_hex_tests {
             color_hex_value(&EmacsText::from("ffffffffffffffffffff")),
             None
         );
+    }
+
+    #[test]
+    fn font_spec_property_lookup_keeps_the_original_keyword_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let family = interp.q(":family");
+        assert!(interp.obarray.unintern_symbol(family));
+        let replacement = interp.intern(":family");
+        assert_ne!(family, replacement);
+
+        let spec = Value::record_with_kind(
+            vec![
+                Value::Nil,
+                Value::list(vec![Value::Sym(family), Value::string("QA Family")]),
+            ],
+            crate::lisp::value::RecordKind::FontSpec,
+        );
+        let actual = font_property_value(&interp, &spec, FontValueKind::Spec, ":family");
+
+        assert!(matches!(actual, Value::Str(ref text) if text.borrow().to_unicode_lossy() == "QA Family"));
+    }
+
+    #[test]
+    fn font_face_attributes_keeps_the_original_output_keyword_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let size = interp.q(":size");
+        let height = interp.q(":height");
+        assert!(interp.obarray.unintern_symbol(height));
+        let replacement = interp.intern(":height");
+        assert_ne!(height, replacement);
+
+        let spec = Value::record_with_kind(
+            vec![
+                Value::Nil,
+                Value::list(vec![Value::Sym(size), Value::Int(12)]),
+            ],
+            crate::lisp::value::RecordKind::FontSpec,
+        );
+        let attributes = f_font_face_attributes(&mut interp, vec![spec].into())
+            .unwrap()
+            .list_to_vec()
+            .unwrap();
+
+        assert!(matches!(attributes.as_slice(), [Value::Sym(key), Value::Int(120)] if *key == height));
     }
 }

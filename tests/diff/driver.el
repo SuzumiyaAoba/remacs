@@ -369,14 +369,23 @@ so subjects can mutate them freely without poisoning later rows."
   ;; stdout pollution that callees (princ &co) may emit.
   (message "DIF|%s|%s|%s|%s" name seq tag val))
 
+(defun dif--norm-error (error-data)
+  "Normalize ERROR-DATA for errors whose payload embeds a function object."
+  (if (and (consp error-data)
+           (eq (car error-data) 'wrong-number-of-arguments)
+           (integerp (caddr error-data)))
+      ;; GNU includes the function object. Remacs' byte-code expanders may
+      ;; expose an argdesc cons instead; callers observe the argument count.
+      (list 'wrong-number-of-arguments (caddr error-data))
+    (dif--norm (cons (car error-data) (cdr error-data)))))
+
 (defun dif--run (name seq f args)
   (condition-case e
       (dif--emit name seq 'ok
                  (if (member name dif--norm-type)
                      (list 'type (type-of (apply f args)))
                    (dif--norm (apply f args))))
-    (error (dif--emit name seq 'err
-                      (dif--norm (cons (car e) (cdr e))))))
+    (error (dif--emit name seq 'err (dif--norm-error e))))
   ;; `function'/`test.foo' cell tracker — DIFF_WATCH=1.
   (when (getenv "DIFF_WATCH")
     (dif--emit "ZZwatch" seq 'ok

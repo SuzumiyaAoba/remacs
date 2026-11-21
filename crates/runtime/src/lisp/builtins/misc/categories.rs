@@ -177,7 +177,7 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
 }
 
 fn is_category_table(i: &Interp, v: &Value) -> bool {
-    let Some(category_table) = i.intern_soft("category-table") else {
+    let Some(category_table) = i.q_soft("category-table") else {
         return false;
     };
     is_char_table(i, v) && matches!(char_table_subtype_of(v), Value::Sym(s) if s == category_table)

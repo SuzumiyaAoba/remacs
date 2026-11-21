@@ -380,10 +380,10 @@ fn f_ns_badge(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
     if !ns_window_system_in_use(i) {
-        return Err(winsys(i));
+        return Ok(Value::Nil);
     }
     let Some(backend) = i.application_visibility_backend.clone() else {
-        return Err(winsys(i));
+        return Ok(Value::Nil);
     };
     let badge = match &a[0] {
         Value::Str(string) => Some(string.borrow().to_unicode_lossy()),
@@ -397,10 +397,10 @@ fn f_ns_badge(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 
 fn f_ns_request_user_attention(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !ns_window_system_in_use(i) {
-        return Err(winsys(i));
-    };
+        return Ok(Value::Nil);
+    }
     let Some(backend) = i.application_visibility_backend.clone() else {
-        return Err(winsys(i));
+        return Ok(Value::Nil);
     };
     let urgency = match &a[0] {
         Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
@@ -527,7 +527,7 @@ macro_rules! winsys_fn {
 }
 
 fn ns_frame_parameter(i: &Interp, frame: &crate::editor::FrameRef, name: &str) -> Value {
-    let Some(symbol) = i.intern_soft(name) else {
+    let Some(symbol) = i.q_soft(name) else {
         return Value::Nil;
     };
     let params = frame.borrow().params.clone();
@@ -591,7 +591,7 @@ fn ns_frame_geometry_value(i: &mut Interp, frame: &crate::editor::FrameRef) -> V
 }
 
 fn ns_geometry_attribute(i: &Interp, geometry: &Value, name: &str) -> Value {
-    let Some(key) = i.intern_soft(name) else {
+    let Some(key) = i.q_soft(name) else {
         return Value::Nil;
     };
     let mut tail = geometry.clone();
@@ -884,6 +884,9 @@ fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
     }
 
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
+    }
     let prompt = super::want_string(i, &a[0])?.to_unicode_lossy();
     let directory = optional_string(i, a.get(1))?;
     let must_match = a.get(2).is_some_and(Value::truthy);
@@ -911,6 +914,9 @@ fn f_ns_read_file_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_ns_popup_color_panel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
+    }
     let frame = crate::editor::frame_live(i, &a.first().cloned().unwrap_or(Value::Nil))?;
     if !crate::editor::frame_is_graphical(i, &frame) {
         return Err(winsys(i));
@@ -1012,9 +1018,9 @@ impl HostSelection {
 }
 
 fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let backend = require_selection_backend(i)?;
     let selection = selection_symbol(i, &a[0])?;
     let value = a[1].clone();
-    let backend = require_selection_backend(i)?;
     let change_count = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection)
         && let Some(text) = selection_data_text(&value)
     {
@@ -1041,8 +1047,8 @@ fn f_ns_own_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
 }
 
 fn f_ns_disown_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let selection = selection_symbol(i, &a[0])?;
     let backend = require_selection_backend(i)?;
+    let selection = selection_symbol(i, &a[0])?;
     let change_count = i.nsgui_selection_change_counts.get(&selection).copied();
     if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
         if matches!(&host, HostSelection::Clipboard) {
@@ -1089,12 +1095,12 @@ fn f_ns_disown_selection_internal(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
 }
 
 fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let backend = require_selection_backend(i)?;
     let selection = selection_symbol(i, &a[0])?;
     let target = match &a[1] {
         Value::Sym(target) => *target,
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
-    let backend = require_selection_backend(i)?;
     let target_name = i.symbol_name(target);
     if target_name == "TIMESTAMP" {
         return Ok(Value::Nil);
@@ -1145,10 +1151,10 @@ fn f_ns_get_selection(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_ns_selection_exists_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
     let Some(backend) = i.clipboard_backend.clone() else {
         return Ok(Value::Nil);
     };
+    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
     let exists = if let Some(host) = HostSelection::for_symbol(i, backend.as_ref(), selection) {
         if matches!(&host, HostSelection::Clipboard) {
             if let Some(info) = backend
@@ -1205,8 +1211,8 @@ fn nsgui_selection_is_owned(
 }
 
 fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
     let backend = require_selection_backend(i)?;
+    let selection = selection_symbol(i, a.first().unwrap_or(&Value::Nil))?;
     let owns = nsgui_selection_is_owned(i, selection, backend.as_ref())?;
     Ok(Value::from_bool(owns))
 }
@@ -1394,16 +1400,16 @@ fn f_ns_begin_drag(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         }
         crate::frontend::DragResult::ReturnFrame(_) => Value::Nil,
         crate::frontend::DragResult::Action(crate::frontend::DragAction::Copy) => {
-            Value::Sym(i.intern("XdndActionCopy"))
+            Value::Sym(i.q("XdndActionCopy"))
         }
         crate::frontend::DragResult::Action(crate::frontend::DragAction::Move) => {
-            Value::Sym(i.intern("XdndActionMove"))
+            Value::Sym(i.q("XdndActionMove"))
         }
         crate::frontend::DragResult::Action(crate::frontend::DragAction::Link) => {
-            Value::Sym(i.intern("XdndActionLink"))
+            Value::Sym(i.q("XdndActionLink"))
         }
         crate::frontend::DragResult::Action(crate::frontend::DragAction::Private) => {
-            Value::Sym(i.intern("XdndActionPrivate"))
+            Value::Sym(i.q("XdndActionPrivate"))
         }
     };
     Ok(result)
@@ -1527,7 +1533,7 @@ fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         order
     };
 
-    let parent_key = Value::Sym(i.intern("parent-frame"));
+        let parent_key = Value::Sym(i.q("parent-frame"));
     let frames = i.frames.clone();
     let frames = order
         .into_iter()
@@ -1820,3 +1826,26 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Apply session resources."
     ),
 ];
+
+#[cfg(test)]
+mod symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn ns_geometry_lookup_keeps_key_identity_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.q("outer-position");
+        let geometry = Value::list(vec![Value::cons(Value::Sym(key), Value::Int(42))]);
+        assert!(interp.obarray.unintern_symbol(key));
+
+        let replacement = interp.intern("outer-position");
+
+        assert_ne!(key, replacement);
+        assert!(matches!(
+            ns_geometry_attribute(&interp, &geometry, "outer-position"),
+            Value::Int(42)
+        ));
+    }
+}

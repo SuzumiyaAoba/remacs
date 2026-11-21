@@ -46,7 +46,7 @@ pub(super) fn f_keymap_canonicalize(i: &mut Interp, a: crate::lisp::Argv) -> Eva
             bindings.push(Value::cons(k, def));
         }
     }
-    let mk = Value::Sym(i.intern(if ranges.is_empty() {
+    let mk = Value::Sym(i.q(if ranges.is_empty() {
         "make-sparse-keymap"
     } else {
         "make-keymap"
@@ -315,7 +315,7 @@ fn map_keymap_impl(i: &mut Interp, args: &[Value], own_only: bool) -> EvalResult
     } else {
         crate::editor::keymap_all_bindings(i, &v)
     };
-    let keymap_tag = i.intern_soft("keymap");
+    let keymap_tag = i.q_soft("keymap");
     for (k, def) in pairs {
         if matches!(&k, Value::Sym(s) if Some(*s) == keymap_tag) {
             continue;
@@ -490,7 +490,7 @@ pub(super) fn f_describe_bindings(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         ),
         ("input-decode-map", "\x0c\nInput decoding map translations"),
     ] {
-        let m = i.symbol_value(i.intern_soft(var).unwrap_or(u32::MAX));
+        let m = translation_map_value(i, var);
         if crate::editor::is_keymap(i, &m) {
             call_tree!(
                 m,
@@ -504,6 +504,12 @@ pub(super) fn f_describe_bindings(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         }
     }
     Ok(Value::Nil)
+}
+
+fn translation_map_value(i: &Interp, name: &str) -> Value {
+    i.q_soft(name)
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil)
 }
 
 // ---------- keymaps ----------
@@ -803,4 +809,28 @@ pub(super) fn f_set_this_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> E
     i.command_key_events = keys.clone();
     i.command_key_start = 0;
     Ok(Value::Nil)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn translation_map_value_keeps_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.q("input-decode-map");
+        interp.obarray.symbol_mut(original).value = Value::Int(7);
+        assert!(interp.obarray.unintern_symbol(original));
+
+        let replacement = interp.intern("input-decode-map");
+        interp.obarray.symbol_mut(replacement).value = Value::Nil;
+
+        assert_ne!(original, replacement);
+        assert!(matches!(
+            translation_map_value(&interp, "input-decode-map"),
+            Value::Int(7)
+        ));
+    }
 }

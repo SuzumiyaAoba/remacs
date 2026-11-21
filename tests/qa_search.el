@@ -248,6 +248,18 @@
       (match-data))
     nil)
 
+;; Search still honors the same inhibition cell after its name is uninterned.
+(qa (with-temp-buffer
+      (insert "abc")
+      (goto-char 1)
+      (let ((inhibit-changing-match-data t)
+            (inhibit-symbol 'inhibit-changing-match-data))
+        (unintern inhibit-symbol obarray)
+        (set-match-data nil)
+        (re-search-forward "b")
+        (match-data)))
+    nil)
+
 ;; == word-search: own whitespace folding + strict boundaries ==
 ;; spaces in STRING become \\W+ — any non-word run separates words
 (qa (word-search-regexp "a b") "\\<a\\W+b\\>")

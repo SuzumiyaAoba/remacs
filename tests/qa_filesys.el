@@ -660,4 +660,43 @@
       (when (buffer-live-p buffer) (kill-buffer buffer))
       (delete-file file))))
 
+;; Filename abbreviation still uses its bound alist after unintern.
+(qa (let ((directory-abbrev-alist '(("\\`/qa-abbrev-zz" . "/tmp")))
+          (option 'directory-abbrev-alist))
+      (unintern option obarray)
+      (abbreviate-file-name "/qa-abbrev-zz/x"))
+    "/tmp/x")
+
+;; File change policy reads its original Lisp variable cells after unintern.
+(qa
+ (let* ((file (make-temp-file "qa-query-changed-unintern-" nil ".el"))
+        (buffer (find-file-noselect file))
+        (query-about-changed-file nil))
+   (unwind-protect
+       (progn
+         (with-current-buffer buffer
+           (set-visited-file-modtime (seconds-to-time 0)))
+         (unintern 'query-about-changed-file obarray)
+         (eq buffer (find-file-noselect file)))
+     (when (buffer-live-p buffer) (kill-buffer buffer))
+     (delete-file file)))
+ t)
+
+(qa
+ (let* ((file (make-temp-file "qa-revert-without-query-unintern-" nil ".el"))
+        (_ (write-region "old" nil file nil 'silent))
+        (buffer (find-file-noselect file))
+        (revert-without-query '(".*")))
+   (unwind-protect
+       (progn
+         (write-region "new" nil file nil 'silent)
+         (with-current-buffer buffer
+           (set-visited-file-modtime (seconds-to-time 0)))
+         (unintern 'revert-without-query obarray)
+         (find-file-noselect file)
+         (with-current-buffer buffer (buffer-string)))
+     (when (buffer-live-p buffer) (kill-buffer buffer))
+     (delete-file file)))
+ "new")
+
 (princ (qa--done))

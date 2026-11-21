@@ -586,8 +586,8 @@ fn f_sqlite_select(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sql = want_string(i, &a[1])?;
     let vals = bind_args(i, &arg(&a, 2))?;
     let rtype = arg(&a, 3);
-    let set_type = i.intern_soft("set");
-    let full_type = i.intern_soft("full");
+    let set_type = i.q_soft("set");
+    let full_type = i.q_soft("full");
     let is_set = matches!(&rtype, Value::Sym(s) if Some(*s) == set_type);
     let is_full = matches!(&rtype, Value::Sym(s) if Some(*s) == full_type);
     let conn = connection(i, id)?;

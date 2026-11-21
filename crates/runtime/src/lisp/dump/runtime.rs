@@ -100,6 +100,48 @@ impl Runtime {
                 .map(|(key, value)| Ok((key.clone(), e.value(value)?)))
                 .collect::<Result<Vec<_>>>()?,
         )?;
+        saved.put(
+            "extra_coding_alias_symbols",
+            i.extra_coding_alias_symbols
+                .iter()
+                .map(|symbol| e.symbol(*symbol))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        saved.put(
+            "extra_coding_system_symbols",
+            i.extra_coding_system_symbols
+                .iter()
+                .map(|symbol| e.symbol(*symbol))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        saved.put(
+            "charset_symbols",
+            i.charset_symbols
+                .iter()
+                .map(|(symbol, name)| Ok((e.symbol(*symbol)?, name.clone())))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        saved.put(
+            "charset_alias_symbols",
+            i.charset_alias_symbols
+                .iter()
+                .map(|(symbol, name)| Ok((e.symbol(*symbol)?, name.clone())))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        saved.put(
+            "charset_symbol_plists",
+            i.charset_symbol_plists
+                .iter()
+                .map(|(symbol, plist)| Ok((e.symbol(*symbol)?, e.value(plist)?)))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        saved.put(
+            "charset_alias_symbol_targets",
+            i.charset_alias_symbol_targets
+                .iter()
+                .map(|(alias, target)| Ok((e.symbol(*alias)?, e.symbol(*target)?)))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
         macro_rules! scalar { ($($field:ident),* $(,)?) => { $(saved.put(stringify!($field), &i.$field)?;)* }; }
         scalar!(
             max_lisp_eval_depth,
@@ -118,6 +160,21 @@ impl Runtime {
             color_db_init
         );
         saved.put("charset_order", &*i.charset_order.borrow())?;
+        let charset_priority_symbols = i
+            .charset_priority_symbols
+            .borrow()
+            .as_ref()
+            .map(|(symbols, boundary)| -> Result<(Vec<Ref>, usize)> {
+                Ok((
+                    symbols
+                        .iter()
+                        .map(|symbol| e.symbol(*symbol))
+                        .collect::<Result<Vec<_>>>()?,
+                    *boundary,
+                ))
+            })
+            .transpose()?;
+        saved.put("charset_priority_symbols", charset_priority_symbols)?;
         let maps = i.charset_maps.borrow();
         saved.put(
             "charset_maps",
@@ -349,6 +406,60 @@ impl Runtime {
                 i.native_lisp_literals.insert(key, value);
             }
         }
+        if self.0.contains_key("extra_coding_alias_symbols") {
+            let symbols: Vec<Ref> = self.get("extra_coding_alias_symbols")?;
+            i.extra_coding_alias_symbols = symbols
+                .iter()
+                .map(|reference| d.symbol(reference))
+                .collect::<Result<_>>()?;
+        } else {
+            i.extra_coding_alias_symbols.clear();
+        }
+        if self.0.contains_key("extra_coding_system_symbols") {
+            let symbols: Vec<Ref> = self.get("extra_coding_system_symbols")?;
+            i.extra_coding_system_symbols = symbols
+                .iter()
+                .map(|reference| d.symbol(reference))
+                .collect::<Result<_>>()?;
+        } else {
+            i.extra_coding_system_symbols.clear();
+        }
+        if self.0.contains_key("charset_symbols") {
+            let symbols: Vec<(Ref, String)> = self.get("charset_symbols")?;
+            i.charset_symbols = symbols
+                .into_iter()
+                .map(|(reference, name)| Ok((d.symbol(&reference)?, name)))
+                .collect::<Result<_>>()?;
+        } else {
+            i.charset_symbols.clear();
+        }
+        if self.0.contains_key("charset_alias_symbols") {
+            let symbols: Vec<(Ref, String)> = self.get("charset_alias_symbols")?;
+            i.charset_alias_symbols = symbols
+                .into_iter()
+                .map(|(reference, name)| Ok((d.symbol(&reference)?, name)))
+                .collect::<Result<_>>()?;
+        } else {
+            i.charset_alias_symbols.clear();
+        }
+        if self.0.contains_key("charset_symbol_plists") {
+            let entries: Vec<(Ref, Ref)> = self.get("charset_symbol_plists")?;
+            i.charset_symbol_plists = entries
+                .into_iter()
+                .map(|(symbol, plist)| Ok((d.symbol(&symbol)?, d.value(i, &plist)?)))
+                .collect::<Result<_>>()?;
+        } else {
+            i.charset_symbol_plists.clear();
+        }
+        if self.0.contains_key("charset_alias_symbol_targets") {
+            let entries: Vec<(Ref, Ref)> = self.get("charset_alias_symbol_targets")?;
+            i.charset_alias_symbol_targets = entries
+                .into_iter()
+                .map(|(alias, target)| Ok((d.symbol(&alias)?, d.symbol(&target)?)))
+                .collect::<Result<_>>()?;
+        } else {
+            i.charset_alias_symbol_targets.clear();
+        }
         macro_rules! scalar { ($($field:ident),* $(,)?) => { $(i.$field = self.get(stringify!($field))?;)* }; }
         scalar!(
             max_lisp_eval_depth,
@@ -367,6 +478,20 @@ impl Runtime {
             color_db_init
         );
         *i.charset_order.borrow_mut() = self.get("charset_order")?;
+        if self.0.contains_key("charset_priority_symbols") {
+            let symbols: Option<(Vec<Ref>, usize)> = self.get("charset_priority_symbols")?;
+            *i.charset_priority_symbols.borrow_mut() = symbols
+                .map(|(symbols, boundary)| {
+                    symbols
+                        .iter()
+                        .map(|reference| d.symbol(reference))
+                        .collect::<Result<Vec<_>>>()
+                        .map(|symbols| (symbols, boundary))
+                })
+                .transpose()?;
+        } else {
+            *i.charset_priority_symbols.borrow_mut() = None;
+        }
         i.char_charset_cache.borrow_mut().clear();
         let maps: Vec<(String, crate::lisp::builtins::charset::CharsetTable)> =
             self.get("charset_maps")?;
@@ -564,6 +689,81 @@ impl Runtime {
 #[cfg(test)]
 mod wide_metadata_tests {
     use super::*;
+
+    #[test]
+    fn coding_alias_symbol_ids_roundtrip_as_symbol_references() {
+        let mut source = Interp::vacant();
+        source.obarray = crate::lisp::obarray::Obarray::new();
+        let alias = source.make_symbol("qa-dump-coding-alias");
+        source.extra_coding_alias_symbols.push(alias);
+        let coding_system = source.make_symbol("qa-dump-coding-system");
+        source
+            .extra_coding_system_symbols
+            .push(coding_system);
+        let charset = source.make_symbol("qa-dump-charset");
+        source
+            .charset_symbols
+            .push((charset, "qa-dump-charset".to_owned()));
+        source
+            .charset_symbol_plists
+            .push((charset, Value::list(vec![Value::Int(41)])));
+        let charset_alias = source.make_symbol("qa-dump-charset-alias");
+        source
+            .charset_alias_symbols
+            .push((charset_alias, "ascii".to_owned()));
+        let charset_target = source.make_symbol("qa-dump-charset-target");
+        source
+            .charset_alias_symbol_targets
+            .push((charset_alias, charset_target));
+        *source.charset_priority_symbols.borrow_mut() = Some((vec![charset_alias, charset], 1));
+
+        let mut encoder = Encoder::new(&source);
+        let mut runtime = Runtime::capture(&source, &mut encoder).unwrap();
+        runtime.capture_weak(&source, &mut encoder).unwrap();
+        let nodes = encoder.finish().unwrap();
+        let mut restored = Interp::vacant();
+        restored.obarray = crate::lisp::obarray::Obarray::new();
+        let externals = rustc_hash::FxHashMap::default();
+        let mut decoder = Decoder::new(&mut restored, &nodes, &externals).unwrap();
+
+        runtime.restore(&mut restored, &mut decoder).unwrap();
+
+        let restored_alias = restored.extra_coding_alias_symbols[0];
+        assert!(restored.obarray.symbol(restored_alias).uninterned);
+        assert_eq!(restored.symbol_name(restored_alias), "qa-dump-coding-alias");
+        let restored_coding_system = restored.extra_coding_system_symbols[0];
+        assert!(restored.obarray.symbol(restored_coding_system).uninterned);
+        assert_eq!(
+            restored.symbol_name(restored_coding_system),
+            "qa-dump-coding-system"
+        );
+        let restored_charset = restored.charset_symbols[0].0;
+        let restored_charset_alias = restored.charset_alias_symbols[0].0;
+        let restored_charset_target = restored.charset_alias_symbol_targets[0].1;
+        assert!(restored.obarray.symbol(restored_charset).uninterned);
+        assert!(restored.obarray.symbol(restored_charset_alias).uninterned);
+        assert_eq!(restored.symbol_name(restored_charset), "qa-dump-charset");
+        assert!(matches!(
+            restored.charset_symbol_plists[0].1.list_to_vec().unwrap().as_slice(),
+            [Value::Int(41)]
+        ));
+        assert_eq!(
+            restored.symbol_name(restored_charset_target),
+            "qa-dump-charset-target"
+        );
+        let priority = restored.charset_priority_symbols.borrow();
+        let (priority_symbols, boundary) = priority.as_ref().unwrap();
+        assert_eq!(
+            priority_symbols.as_slice(),
+            &[restored_charset_alias, restored_charset]
+        );
+        assert_eq!(*boundary, 1);
+        assert_eq!(
+            restored.symbol_name(restored_charset_alias),
+            "qa-dump-charset-alias"
+        );
+    }
+
     #[test]
     fn native_private_use_strings_and_map_keys_roundtrip_without_aliases() {
         let original = serde_json::json!({"\u{f0080}": ["\u{f0100}", "\u{f0b00}"]});

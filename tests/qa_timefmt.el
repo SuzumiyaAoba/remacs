@@ -389,4 +389,11 @@
 ;; format-message exists and matches format on plain specs.
 (qa (format-message "%s %s" "a" "b") "a b")
 
+;; LC_TIME reads the original system-time-locale binding after unintern.
+(qa (let ((system-time-locale "fr_FR.UTF-8")
+          (locale-symbol 'system-time-locale))
+      (unintern locale-symbol obarray)
+      (format-time-string "%B" 0))
+    "janvier")
+
 (princ (qa--done))

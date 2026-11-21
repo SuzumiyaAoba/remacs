@@ -84,4 +84,23 @@
       (error (car e)))
     'wrong-type-argument)
 
+;; Buffer-local tab-width remains visible after its public name is removed.
+(qa (with-temp-buffer
+      (setq-local tab-width 4)
+      (insert "\t")
+      (unintern 'tab-width obarray)
+      (buffer-text-pixel-size nil nil t))
+    '(4 . 1))
+
+;; `glyphless-char-display' retains its buffer-local table after unintern.
+(qa (let* ((glyphless-symbol 'glyphless-char-display)
+           (table (make-char-table 'glyphless-char-display nil)))
+      (set-char-table-range table 8203 (cons nil 'thin-space))
+      (let ((glyphless-char-display table))
+        (unintern glyphless-symbol obarray)
+        (with-temp-buffer
+          (insert (string 8203))
+          (buffer-text-pixel-size nil nil t))))
+    '(1 . 1))
+
 (princ (qa--done))

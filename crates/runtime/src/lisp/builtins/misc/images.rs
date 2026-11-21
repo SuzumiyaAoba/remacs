@@ -16,7 +16,7 @@ pub(super) fn f_image_transforms_p(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     if crate::editor::frame_is_graphical(i, &frame) {
         // GPUI applies image width/height descriptors, but has no image
         // rotation transform.
-        Ok(Value::list(vec![Value::Sym(i.intern("scale"))]))
+        Ok(Value::list(vec![Value::Sym(i.q("scale"))]))
     } else {
         Ok(Value::Nil)
     }
@@ -281,11 +281,11 @@ pub(super) fn f_image_metadata(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     };
     let mut metadata = Vec::new();
     if let Some(delay) = info.frame_delay.filter(|delay| *delay > 0.0) {
-        metadata.extend([Value::Sym(i.intern("delay")), Value::float(delay)]);
+        metadata.extend([Value::Sym(i.q("delay")), Value::float(delay)]);
     }
     if info.frame_count > 1 {
         metadata.extend([
-            Value::Sym(i.intern("count")),
+            Value::Sym(i.q("count")),
             Value::Int(info.frame_count as i128),
         ]);
     }
@@ -323,7 +323,7 @@ pub(super) fn f_image_type(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         None
     };
     match ty {
-        Some(t) => Ok(Value::Sym(i.intern(t))),
+        Some(t) => Ok(Value::Sym(i.q(t))),
         None => {
             let unk = i.q("unknown-image-type");
             Err(i.signal_data(unk, vec![Value::string("Cannot determine image type")]))
@@ -352,7 +352,7 @@ pub(super) fn known_image_type(i: &Interp, v: &Value) -> bool {
         "heic",
     ]
     .iter()
-    .any(|name| i.intern_soft(name) == Some(*s))
+    .any(|name| i.q_soft(name) == Some(*s))
 }
 
 /// `image-type-available-p' — the image formats the GUI renderer can decode.
@@ -371,10 +371,10 @@ pub(super) fn valid_image_spec(i: &Interp, v: &Value) -> bool {
     let Value::Cons(c) = v else {
         return false;
     };
-    if !matches!(&c.borrow().car, Value::Sym(s) if i.intern_soft("image") == Some(*s)) {
+    if !matches!(&c.borrow().car, Value::Sym(s) if i.q_soft("image") == Some(*s)) {
         return false;
     }
-    let type_key = i.intern_soft(":type");
+    let type_key = i.q_soft(":type");
     let mut ty = false;
     let mut src = false;
     let mut cur = c.borrow().cdr.clone();
@@ -511,10 +511,56 @@ fn renderer_supports_image_type(i: &Interp, value: &Value) -> bool {
     };
     ["png", "gif", "jpeg", "webp", "bmp", "pbm", "tiff", "svg"]
         .iter()
-        .any(|name| i.intern_soft(name) == Some(*symbol))
+        .any(|name| i.q_soft(name) == Some(*symbol))
 }
 
 pub(super) fn f_bitmap_spec_p(_i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU treats a string as a bitmap spec (file name / data form).
     Ok(Value::from_bool(matches!(&a[0], Value::Str(_))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn image_transforms_keep_scale_symbol_identity_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let scale = interp.q("scale");
+        let window_system = interp.q("window-system");
+        let gpui = interp.q("gpui");
+        let frame = crate::editor::Frame::new_tty(0, 0, 80, 24);
+        frame.borrow_mut().params = Value::list(vec![
+            Value::Sym(window_system),
+            Value::Sym(gpui),
+        ]);
+        assert!(interp.obarray.unintern_symbol(scale));
+
+        let result = f_image_transforms_p(
+            &mut interp,
+            vec![Value::Frame(frame)].into(),
+        )
+        .unwrap()
+        .list_to_vec()
+        .unwrap();
+
+        assert!(matches!(result.as_slice(), [Value::Sym(symbol)] if *symbol == scale));
+    }
+
+    #[test]
+    fn image_type_keeps_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let png = interp.q("png");
+        assert!(interp.obarray.unintern_symbol(png));
+        let replacement = interp.intern("png");
+        assert_ne!(png, replacement);
+
+        let image_type = f_image_type(&mut interp, vec![Value::string("image.png")].into())
+            .unwrap();
+
+        assert!(matches!(image_type, Value::Sym(symbol) if symbol == png));
+    }
 }

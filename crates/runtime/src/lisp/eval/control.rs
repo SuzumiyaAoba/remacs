@@ -277,7 +277,7 @@ impl Interp {
     }
 
     pub(super) fn synchronize_quit_symbol(&mut self, symbol: SymId) {
-        if self.quit_flag && self.intern_soft("quit-flag") == Some(symbol) {
+        if self.quit_flag && self.q_soft("quit-flag") == Some(symbol) {
             self.synchronize_quit_request();
         }
     }

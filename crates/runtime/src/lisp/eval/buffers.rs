@@ -42,7 +42,7 @@ impl Interp {
         let buffer = self.buffers.get(id).expect("new buffer");
         let undo = buffer.borrow().undo_list();
         for name in crate::buffer::primitives::ALWAYS_LOCAL_VARIABLES {
-            let symbol = self.intern(name);
+            let symbol = self.q(name);
             let value = match *name {
                 "default-directory" => dir.clone(),
                 "enable-multibyte-characters" => multi.clone(),
@@ -262,7 +262,7 @@ impl Interp {
         ];
         let mut alist = Vec::with_capacity(specs.len());
         for &(prop, file) in specs {
-            let psym = Value::Sym(self.intern(prop));
+            let psym = Value::Sym(self.q(prop));
             let backing = Value::string(file);
             self.char_code_prop_tables
                 .push((prop.to_string(), backing.clone()));
@@ -311,5 +311,39 @@ mod buffer_initialization_tests {
         let buffer = buffer.borrow();
         assert!(buffer.locals.get(&multibyte).is_some_and(Value::is_nil));
         assert!(!buffer.text.is_multibyte());
+    }
+
+    #[test]
+    fn always_local_slots_keep_their_original_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.q("buffer-read-only");
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern("buffer-read-only");
+
+        let id = interp.create_buffer("qa-buffer-local-symbol-unintern");
+        let buffer = interp.buffers.get(id).unwrap();
+        let buffer = buffer.borrow();
+
+        assert_ne!(original, replacement);
+        assert!(buffer.locals.contains_key(&original));
+        assert!(!buffer.locals.contains_key(&replacement));
+    }
+
+    #[test]
+    fn char_code_property_seed_keeps_original_property_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let original = interp.q("bracket-type");
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern("bracket-type");
+
+        let entries = interp.seed_char_code_property_alist().list_to_vec().unwrap();
+        let Value::Cons(first) = &entries[0] else {
+            panic!("expected the first property entry to be a cons");
+        };
+
+        assert_ne!(original, replacement);
+        assert!(matches!(first.borrow().car, Value::Sym(symbol) if symbol == original));
     }
 }

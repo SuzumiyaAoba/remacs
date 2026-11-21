@@ -86,7 +86,7 @@ impl Log {
 
 fn config(i: &Interp) -> Log {
     let setting = |name: &str, default: usize| {
-        i.intern_soft(name)
+        i.q_soft(name)
             .and_then(|id| i.symbol_value(id).int())
             .map_or(default, |n| n.clamp(0, i32::MAX as i128) as usize)
     };
@@ -292,6 +292,32 @@ impl Interp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn profiler_configuration_keeps_its_original_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let size = interp.q("profiler-log-size");
+        let depth = interp.q("profiler-max-stack-depth");
+        interp.obarray.symbol_mut(size).value = Value::Int(23);
+        interp.obarray.symbol_mut(depth).value = Value::Int(7);
+        assert!(interp.obarray.unintern_symbol(size));
+        assert!(interp.obarray.unintern_symbol(depth));
+
+        let size_replacement = interp.intern("profiler-log-size");
+        let depth_replacement = interp.intern("profiler-max-stack-depth");
+        interp.obarray.symbol_mut(size_replacement).value = Value::Nil;
+        interp.obarray.symbol_mut(depth_replacement).value = Value::Nil;
+
+        let settings = config(&interp);
+
+        assert_ne!(size, size_replacement);
+        assert_ne!(depth, depth_replacement);
+        assert_eq!(settings.size, 23);
+        assert_eq!(settings.depth, 7);
+    }
+
     #[test]
     fn bounded_logs_preserve_evicted_weight_and_pad_traces() {
         let mut log = Log {

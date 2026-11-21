@@ -140,8 +140,8 @@ use positions::{
 mod coding;
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use coding::{
-    CODING_ALIASES, CODING_SYSTEMS, add_to_coding_system_list, check_coding, coding_alias_group,
-    coding_known, coding_mode_line, f_coding_system_plist,
+    CODING_ALIASES, CODING_SYSTEMS, add_coding_system_symbol_to_list,
+    check_coding, coding_alias_group, coding_known, coding_mode_line, f_coding_system_plist,
 };
 use coding::{
     f_check_coding_system, f_coding_system_aliases, f_coding_system_base, f_coding_system_eol_type,
@@ -2190,6 +2190,15 @@ fn f_zero(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn f_tool_bar_height(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if !i
+        .frames
+        .iter()
+        .any(|frame| crate::editor::frame_is_graphical(i, frame))
+    {
+        // GNU returns zero without decoding FRAME when no graphical frame
+        // can have a tool bar (including batch mode).
+        return Ok(Value::Int(0));
+    }
     let frame = crate::editor::frame_any(i, &arg(&a, 0))?;
     let frame_height = frame.borrow().height;
     let rows = crate::frontend::tool_bar_rows_for_frame(i, &frame, frame_height);

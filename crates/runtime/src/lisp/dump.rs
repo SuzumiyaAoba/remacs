@@ -83,7 +83,7 @@ fn io_error<T: super::text::TextSource + ?Sized>(
             std::io::ErrorKind::PermissionDenied => "permission-denied",
             _ => "file-error",
         };
-        let symbol = i.intern(name);
+        let symbol = i.q(name);
         i.signal_data(
             symbol,
             vec![
@@ -219,6 +219,13 @@ const STARTUP_VALUES: &[&str] = &[
     "last-event-frame",
 ];
 
+fn restore_startup_values(i: &mut Interp, values: Vec<(String, Value)>) {
+    for (name, value) in values {
+        let id = i.q(&name);
+        i.obarray.symbol_mut(id).value = value;
+    }
+}
+
 /// Restore a fresh interpreter. Images never mutate an already executing
 /// Lisp stack, and no raw heap/function addresses are read from the file.
 pub fn load(path: &Path) -> std::result::Result<Interp, LoadError> {
@@ -291,7 +298,7 @@ pub fn load_with_arguments(
     let fresh: Vec<_> = STARTUP_VALUES
         .iter()
         .filter_map(|name| {
-            i.intern_soft(name)
+            i.q_soft(name)
                 .map(|id| ((*name).to_owned(), i.obarray.symbol(id).value.clone()))
         })
         .collect();
@@ -301,10 +308,7 @@ pub fn load_with_arguments(
     );
     i.reset_dump_execution();
     archive.image.restore(&mut i).map_err(&fail)?;
-    for (name, value) in fresh {
-        let id = i.intern(&name);
-        i.obarray.symbol_mut(id).value = value;
-    }
+    restore_startup_values(&mut i, fresh);
     if std::env::var_os("EMACSLOADPATH").is_some() {
         let id = i.q("load-path");
         i.obarray.symbol_mut(id).value = fresh_path;
@@ -336,6 +340,42 @@ pub fn load_with_arguments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dump_startup_value_restore_keeps_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let original = interp.q("load-path");
+        interp.obarray.symbol_mut(original).value = Value::Int(17);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern("load-path");
+        interp.obarray.symbol_mut(replacement).value = Value::Int(23);
+
+        restore_startup_values(&mut interp, vec![("load-path".to_owned(), Value::Int(31))]);
+
+        assert_ne!(original, replacement);
+        assert!(matches!(interp.symbol_value(original), Value::Int(31)));
+        assert!(matches!(interp.symbol_value(replacement), Value::Int(23)));
+    }
+
+    #[test]
+    fn dump_io_errors_keep_their_original_condition_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let condition = interp.q("permission-denied");
+        assert!(interp.obarray.unintern_symbol(condition));
+        let replacement = interp.intern("permission-denied");
+
+        let flow = io_error(
+            &mut interp,
+            "Opening dump output",
+            "/tmp/remacs-portable-dump",
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "qa denied"),
+        );
+
+        assert_ne!(condition, replacement);
+        assert!(matches!(flow, Flow::Signal(ref signal) if signal.is_symbol(condition)));
+    }
 
     #[test]
     fn dump_save_unwinds_failed_command_line_binding() {

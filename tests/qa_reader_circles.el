@@ -291,4 +291,20 @@
                 (wrong-type-argument 'wrong-type-argument)))))
     '(t wrong-type-argument))
 
+;; The reader still honors the bound flag after its public name is removed.
+(qa (let ((read-circle nil)
+          (circle-symbol 'read-circle))
+      (unintern circle-symbol obarray)
+      (condition-case nil
+          (progn (read "#1=[a #1#]") 'accepted)
+        (invalid-read-syntax 'rejected)))
+    'rejected)
+
+;; The `#$' reader syntax retains the bound load-file-name cell.
+(qa (let ((load-file-name "reader-source.el")
+          (name-symbol 'load-file-name))
+      (unintern name-symbol obarray)
+      (read "#$"))
+    "reader-source.el")
+
 (princ (qa--done)) (terpri)

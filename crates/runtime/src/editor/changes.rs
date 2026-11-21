@@ -70,7 +70,7 @@ fn local(i: &mut Interp, hook: &str, buffer: usize, window: &WindowRef) -> Resul
     if !i.buffer_live(buffer) {
         return Ok(());
     }
-    let symbol = i.intern(hook);
+    let symbol = i.q(hook);
     let functions = i
         .buffers
         .get(buffer)
@@ -88,7 +88,7 @@ fn local(i: &mut Interp, hook: &str, buffer: usize, window: &WindowRef) -> Resul
 }
 
 fn global(i: &mut Interp, hook: &str, frame: &FrameRef) -> Result<(), Flow> {
-    let symbol = i.intern(hook);
+    let symbol = i.q(hook);
     let functions = i.obarray.symbol(symbol).value.clone();
     call_list(i, functions, &[Value::Frame(frame.clone())], true)
 }
@@ -319,6 +319,39 @@ pub fn run(i: &mut Interp) -> Result<bool, Flow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mark_global_hook(i: &mut Interp, _args: crate::lisp::Argv) -> crate::lisp::EvalResult {
+        let marker = i.q("qa-static-window-hook-fired");
+        i.obarray.symbol_mut(marker).value = Value::t();
+        Ok(Value::Nil)
+    }
+
+    static MARK_GLOBAL_HOOK: crate::lisp::value::Subr = crate::lisp::builtins::S!(
+        "qa-static-window-hook",
+        1,
+        1,
+        mark_global_hook,
+        ""
+    );
+
+    #[test]
+    fn global_window_hook_keeps_its_original_symbol_after_unintern() {
+        let mut i = Interp::vacant();
+        i.obarray = crate::lisp::obarray::Obarray::new();
+        let name = "window-size-change-functions";
+        let hook = i.q(name);
+        i.obarray.symbol_mut(hook).value = Value::list(vec![Value::Subr(&MARK_GLOBAL_HOOK)]);
+        assert!(i.obarray.unintern_symbol(hook));
+        let replacement = i.intern(name);
+        i.obarray.symbol_mut(replacement).value = Value::Nil;
+
+        let frame = crate::editor::Frame::new_tty(0, 0, 80, 24);
+        global(&mut i, name, &frame).unwrap();
+
+        assert_ne!(hook, replacement);
+        let marker = i.q("qa-static-window-hook-fired");
+        assert!(i.symbol_value(marker).truthy());
+    }
 
     fn notify(i: &mut Interp, _args: crate::lisp::Argv) -> crate::lisp::EvalResult {
         run(i)?;

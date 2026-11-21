@@ -195,7 +195,7 @@ pub(super) fn f_x_show_tip(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 }
 
 fn tooltip_parameter(i: &mut Interp, parameters: &Value, name: &str) -> Option<i128> {
-    let key = i.intern(name);
+    let key = i.q_soft(name)?;
     parameters
         .list_to_vec()
         .ok()?
@@ -434,7 +434,7 @@ fn parse_nextstep_geometry(i: &mut Interp, text: &crate::lisp::text::EmacsStr) -
         ["top", "left", "height", "width"]
             .into_iter()
             .zip(values)
-            .map(|(name, value)| Value::cons(Value::Sym(i.intern(name)), value))
+            .map(|(name, value)| Value::cons(Value::Sym(i.q(name)), value))
             .collect(),
     )
 }
@@ -487,7 +487,7 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     for (name, v) in [("height", h), ("width", w)] {
         if let Some(n) = v {
             items.push(Value::cons(
-                Value::Sym(i.intern(name)),
+                Value::Sym(i.q(name)),
                 Value::Int(i128::from(n)),
             ));
         }
@@ -495,11 +495,11 @@ pub(super) fn f_x_parse_geometry(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
     for (name, v) in [("top", top), ("left", left)] {
         if let Some((n, negative_zero)) = v {
             let value = if negative_zero {
-                Value::list(vec![Value::Sym(i.intern("-")), Value::Int(0)])
+                Value::list(vec![Value::Sym(i.q("-")), Value::Int(0)])
             } else {
                 Value::Int(i128::from(n))
             };
-            items.push(Value::cons(Value::Sym(i.intern(name)), value));
+            items.push(Value::cons(Value::Sym(i.q(name)), value));
         }
     }
     Ok(Value::list(items))
@@ -878,4 +878,57 @@ pub(super) fn f_profiler_cpu_running_p(i: &mut Interp, _a: crate::lisp::Argv) ->
     } else {
         Value::Nil
     })
+}
+
+#[cfg(test)]
+mod geometry_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn tooltip_parameter_keeps_its_original_key_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let key = interp.q("top");
+        let parameters = Value::list(vec![Value::cons(Value::Sym(key), Value::Int(7))]);
+        assert!(interp.obarray.unintern_symbol(key));
+        let replacement = interp.intern("top");
+
+        assert_ne!(key, replacement);
+        assert_eq!(tooltip_parameter(&mut interp, &parameters, "top"), Some(7));
+    }
+
+    #[test]
+    fn parsed_geometry_uses_the_original_keyword_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let originals: Vec<_> = ["height", "width", "top", "left"]
+            .into_iter()
+            .map(|name| interp.q(name))
+            .collect();
+        for (name, original) in ["height", "width", "top", "left"]
+            .into_iter()
+            .zip(&originals)
+        {
+            assert!(interp.obarray.unintern_symbol(*original));
+            let _ = interp.intern(name);
+        }
+
+        let geometry =
+            f_x_parse_geometry(&mut interp, vec![Value::string("80x24+3+5")].into()).unwrap();
+        let keys: Vec<_> = geometry
+            .list_to_vec()
+            .unwrap()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Value::Cons(cell) => match cell.borrow().car.clone() {
+                    Value::Sym(symbol) => Some(symbol),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        assert!(originals.iter().all(|symbol| keys.contains(symbol)));
+    }
 }

@@ -148,9 +148,9 @@ const BQ_VECTOR: u8 = 1;
 
 fn bq_syms(i: &mut Interp) -> BqSyms {
     BqSyms {
-        backquote: i.intern("backquote-backquote-symbol"),
-        unquote: i.intern("backquote-unquote-symbol"),
-        splice: i.intern("backquote-splice-symbol"),
+        backquote: i.q("backquote-backquote-symbol"),
+        unquote: i.q("backquote-unquote-symbol"),
+        splice: i.q("backquote-splice-symbol"),
     }
 }
 
@@ -179,7 +179,7 @@ fn quote_sym(i: &mut Interp) -> Value {
 }
 
 fn named_sym(i: &mut Interp, name: &str) -> Value {
-    let id = i.intern(name);
+    let id = i.q(name);
     i.sym(id)
 }
 
@@ -686,8 +686,27 @@ pub(crate) static SUBRS: &[Subr] = &[
 /// and the expander survives `(fmakunbound 'car)'-style voiding
 /// exactly like GNU's bytecompiled backquote.el does.
 pub fn install_macros(i: &mut Interp) {
+    // These are literal symbol references in GNU's byte-compiled source.
+    // Cache them before user code can unintern them; later lookups must keep
+    // using the original cells rather than interning a same-name replacement.
+    for name in [
+        "backquote-backquote-symbol",
+        "backquote-unquote-symbol",
+        "backquote-splice-symbol",
+        "quote",
+        "vconcat",
+        "vector",
+        "function",
+        "apply",
+        "append",
+        "backquote-list*",
+        "cons",
+        "list",
+    ] {
+        i.q(name);
+    }
     for s in SUBRS {
-        let id = i.intern(s.name);
+        let id = i.q(s.name);
         i.fset(id, Value::Subr(s));
     }
     let macro_sym = Value::Sym(sym::MACRO);
@@ -696,7 +715,7 @@ pub fn install_macros(i: &mut Interp) {
         ("`", &BQ_MACRO),
         ("backquote-list*", &BQ_LISTSTAR_MACRO),
     ] {
-        let id = i.intern(name);
+        let id = i.q(name);
         i.fset(id, Value::cons(macro_sym.clone(), Value::Subr(subr)));
     }
 }

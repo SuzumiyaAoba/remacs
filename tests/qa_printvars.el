@@ -202,4 +202,10 @@
 (let ((print-quoted nil))
   (qa (prin1-to-string "a") "\"a\""))
 
+;; C's fixed print-length variable remains visible after its public name is removed.
+(qa (let ((print-length 1))
+      (unintern 'print-length obarray)
+      (prin1-to-string '(one two three)))
+    "(one ...)")
+
 (princ (qa--done))

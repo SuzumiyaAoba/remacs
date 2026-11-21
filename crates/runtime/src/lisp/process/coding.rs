@@ -10,7 +10,9 @@ pub(super) struct State {
 }
 
 fn variable(i: &mut Interp, name: &str) -> Value {
-    let id = i.intern(name);
+    // These names are native references to fixed Lisp variables. Keep the
+    // original cells if Lisp removes their public names from the obarray.
+    let id = i.q(name);
     i.symbol_value(id)
 }
 
@@ -82,4 +84,35 @@ pub(super) fn encoding_name(i: &mut Interp, coding: &Value) -> Result<String, Fl
     name(i, coding)?;
     let resolved = super::super::builtins::misc::coding_inherit_file_eol(i, coding, &Value::Nil)?;
     name(i, &resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn native_coding_variables_keep_their_original_cells_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+
+        for name in [
+            "default-process-coding-system",
+            "coding-system-for-read",
+            "coding-system-for-write",
+        ] {
+            let original = interp.q(name);
+            interp.obarray.symbol_mut(original).value = Value::Int(17);
+            assert!(interp.obarray.unintern_symbol(original));
+
+            let replacement = interp.intern(name);
+            interp.obarray.symbol_mut(replacement).value = Value::Int(23);
+
+            assert_ne!(original, replacement);
+            assert!(
+                matches!(variable(&mut interp, name), Value::Int(17)),
+                "{name} resolved to the replacement cell"
+            );
+        }
+    }
 }

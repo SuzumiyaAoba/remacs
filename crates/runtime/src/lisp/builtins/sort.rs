@@ -31,7 +31,7 @@ fn resolve_function(i: &mut Interp, function: &Value) -> Result<Value, Flow> {
         return Ok(function.clone());
     }
     let resolved = super::data::f_indirect_function(i, vec![function.clone()].into())?;
-    let autoload_symbol = i.intern_soft("autoload");
+    let autoload_symbol = i.q_soft("autoload");
     let autoload = matches!(&resolved, Value::Cons(cell)
         if matches!(&cell.borrow().car, Value::Sym(s) if Some(*s) == autoload_symbol));
     Ok(if resolved.is_nil() || autoload {
@@ -619,8 +619,8 @@ pub(super) fn tim_sort(
     if length < 2 {
         return Ok(());
     }
-    let value_lt = i.intern_soft("value<");
-    let identity = i.intern_soft("identity");
+    let value_lt = i.q_soft("value<");
+    let identity = i.q_soft("identity");
     let default = predicate.is_nil() || matches!(predicate, Value::Sym(s) if Some(*s) == value_lt);
     let function = if default {
         Value::Nil

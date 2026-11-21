@@ -980,9 +980,9 @@ Interactively, prompt for REGISTER using `register-read-with-preview'."
 If DELETE-FLAG is non-nil (interactively, prefix arg), delete the region
 after copying.
 Called from Lisp, takes five args: REGISTER, START, END, DELETE-FLAG,
-and REGION.  START and END are buffer positions indicating what to copy.
-The optional argument REGION, if non-nil, means START..END denotes the
-region.
+and REGION.  START and END are buffer positions indicating what to copy
+when REGION is nil.  If REGION is non-nil, use `region-extract-function'
+on the current mark and point instead.
 
 Interactively, prompt for REGISTER using `register-read-with-preview'
 and use mark and point as START and END; REGION is always non-nil in
@@ -993,11 +993,7 @@ this case."
 		     current-prefix-arg
 		     t))
   (set-register register (if region
-			     (save-mark-and-excursion
-			       (goto-char start)
-			       (set-mark end)
-			       (setq mark-active t)
-			       (funcall region-extract-function delete-flag))
+			     (funcall region-extract-function delete-flag)
 			   (prog1 (filter-buffer-substring start end)
 			     (if delete-flag (delete-region start end)))))
   (setq deactivate-mark t)

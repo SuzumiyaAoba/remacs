@@ -227,4 +227,21 @@
       (equal (macroexpand form) (list 'quote template)))
     t)
 
+;; The byte-compiled GNU source keeps literal symbol identities after
+;; uninterning their names from the default obarray.
+(qa (let* ((marker 'backquote-unquote-symbol)
+           (append-symbol 'append)
+           (cons-symbol 'cons)
+           (template (list 'a (list backquote-splice-symbol 'xs) 'b))
+           (backquote-unquote-symbol 'other))
+      (unintern marker obarray)
+      (unintern append-symbol obarray)
+      (unintern cons-symbol obarray)
+      (let ((unquoted (backquote-process (list 'other 'x)))
+            (spliced (backquote-process template)))
+        (list unquoted
+              (eq (cadr spliced) cons-symbol)
+              (eq (caar (cdddr spliced)) append-symbol))))
+    '((1 . x) t t))
+
 (princ (qa--done))

@@ -106,7 +106,7 @@ pub(super) fn f_buffer_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> 
     let (text, tab_width, ctl_arrow) = {
         let bb = b.borrow();
         let local = |name: &str| {
-            let id = i.intern_soft(name)?;
+            let id = i.q_soft(name)?;
             match bb.locals.get(&id) {
                 Some(v) if !matches!(v, Value::Sym(s) if *s == sym::UNBOUND) => Some(v.clone()),
                 _ => Some(i.obarray.symbol(id).value.clone()),
@@ -129,7 +129,7 @@ pub(super) fn f_buffer_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> 
     // controls and variation selectors) takes one column.  A cons
     // entry is (GRAPHICAL . TEXT).
     let glyphless = i
-        .intern_soft("glyphless-char-display")
+        .q_soft("glyphless-char-display")
         .map(|id| i.obarray.symbol(id).value.clone())
         .filter(|t| is_char_table(i, t));
     let thin_space = i.q_soft("thin-space");

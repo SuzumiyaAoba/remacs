@@ -990,7 +990,7 @@ fn case_unibyte_str(
 ) -> EmacsText {
     let syntax = crate::editor::syntax_table_entries(i);
     let symbols_as_words = i
-        .intern_soft("case-symbols-as-words")
+        .q_soft("case-symbols-as-words")
         .is_some_and(|id| i.symbol_value(id).truthy());
     let mut in_word = false;
     let mut output = EmacsText::new();
@@ -1059,7 +1059,7 @@ fn case_str_impl(
     let chars: Vec<EmacsChar> = src.chars().collect();
     let syn = crate::editor::syntax_table_entries(i);
     let symbols_as_words = i
-        .intern_soft("case-symbols-as-words")
+        .q_soft("case-symbols-as-words")
         .is_some_and(|id| i.symbol_value(id).truthy());
     let wordp = |c: EmacsChar| {
         let syntax = crate::editor::syntax_entry_code(syn.as_ref(), c);
@@ -1544,7 +1544,7 @@ fn split_string_match(
     start: usize,
     preserve_data: bool,
 ) -> EvalResult {
-    let id = i.intern(if preserve_data {
+    let id = i.q(if preserve_data {
         "string-match-p"
     } else {
         "string-match"
@@ -1583,6 +1583,58 @@ fn split_trim_item(i: &mut Interp, item: Value, trim: &Option<(Value, Value)>) -
         )
     } else {
         Ok(item)
+    }
+}
+
+#[cfg(test)]
+mod split_match_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::{obarray::Obarray, value::Arity};
+
+    fn original_match(_: &mut Interp, _: crate::lisp::value::Argv) -> EvalResult {
+        Ok(Value::Int(1))
+    }
+
+    fn replacement_match(_: &mut Interp, _: crate::lisp::value::Argv) -> EvalResult {
+        Ok(Value::Int(2))
+    }
+
+    static ORIGINAL_MATCH: Subr = Subr {
+        name: "qa-original-match",
+        arity: Arity::Many { min: 0 },
+        func: original_match,
+        doc: "",
+    };
+    static REPLACEMENT_MATCH: Subr = Subr {
+        name: "qa-replacement-match",
+        arity: Arity::Many { min: 0 },
+        func: replacement_match,
+        doc: "",
+    };
+
+    #[test]
+    fn split_string_match_uses_the_original_subr_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        for (name, preserve_data) in [("string-match", false), ("string-match-p", true)] {
+            let original = interp.q(name);
+            interp.obarray.symbol_mut(original).function = Value::Subr(&ORIGINAL_MATCH);
+            assert!(interp.obarray.unintern_symbol(original));
+            let replacement = interp.intern(name);
+            interp.obarray.symbol_mut(replacement).function = Value::Subr(&REPLACEMENT_MATCH);
+
+            let result = split_string_match(
+                &mut interp,
+                &Value::string("needle"),
+                &Value::string("needle"),
+                0,
+                preserve_data,
+            )
+            .unwrap();
+
+            assert_ne!(original, replacement);
+            assert!(matches!(result, Value::Int(1)));
+        }
     }
 }
 /// A callback-free scan can read the source once and retain GNU's concat pieces.
@@ -2266,7 +2318,7 @@ fn f_char_equal(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         return Ok(Value::Nil);
     }
     let multibyte = i
-        .intern_soft("enable-multibyte-characters")
+        .q_soft("enable-multibyte-characters")
         .map(|id| i.symbol_value(id).truthy())
         .unwrap_or(true);
     let char_code = |code: i128| {
@@ -5835,7 +5887,7 @@ fn f_compare_strings(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU upcases differing characters through the buffer's table,
     // without full string expansions (sharp-s must not become S).
     let multibyte = i
-        .intern_soft("enable-multibyte-characters")
+        .q_soft("enable-multibyte-characters")
         .map(|id| i.symbol_value(id).truthy())
         .unwrap_or(true);
     let upcase = |i: &Interp, table: &Value, code: u32| {
@@ -6288,8 +6340,8 @@ fn f_make_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (make-char CHARSET &optional CODE1 CODE2 CODE3 CODE4)
     // GNU Fmake_char: the codes are positions inside CHARSET's
     // code-space; the mapped char = DECODE_CHAR(charset, packed).
-    let name = super::charset::want_charset(i, &args[0])?;
-    match super::charset::make_char(i, &name, &args[1..]) {
+    let charset = super::charset::want_charset_ref(i, &args[0])?;
+    match super::charset::make_char_for_symbol(i, charset.symbol, &charset.name, &args[1..]) {
         Ok(c) => Ok(Value::Int(c.into())),
         Err(f) => Err(f),
     }
@@ -6303,12 +6355,16 @@ fn f_split_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as i64,
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
-    let name = super::charset::char_charset(i, ch, &[]).unwrap_or_else(|| "emacs".to_string());
-    let Some(code) = super::charset::charset_encode(i, &name, ch) else {
+    let Some(symbol) = super::charset::char_charset(i, ch, &[]).or_else(|| i.q_soft("emacs")) else {
         return Ok(Value::Nil);
     };
-    let dim = super::charset::charset_dimension_of(i, &name).max(1);
-    let mut out = vec![Value::Sym(i.intern(&name))];
+    let name = super::charset::charset_name_for_symbol(i, symbol)
+        .unwrap_or_else(|| i.symbol_name(symbol));
+    let Some(code) = super::charset::charset_encode_for_symbol(i, symbol, &name, ch) else {
+        return Ok(Value::Nil);
+    };
+    let dim = super::charset::charset_dimension_of_symbol(i, symbol, &name).max(1);
+    let mut out = vec![Value::Sym(symbol)];
     for k in (0..dim).rev() {
         out.push(Value::Int(((code >> (8 * k)) & 0xFF).into()));
     }
@@ -6317,12 +6373,12 @@ fn f_split_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_encode_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU Fencode_char: CHECK_CHARSET_GET_ID runs before CHECK_CHARACTER.
-    let name = super::charset::want_charset(i, &args[1])?;
+    let charset = super::charset::want_charset_ref(i, &args[1])?;
     let ch = match &args[0] {
         Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n as i64,
         _ => return Err(i.wrong_type_mut("characterp", &args[0])),
     };
-    match super::charset::charset_encode(i, &name, ch) {
+    match super::charset::charset_encode_for_symbol(i, charset.symbol, &charset.name, ch) {
         Some(c) => Ok(Value::Int(c.into())),
         None => Ok(Value::Nil),
     }
@@ -6333,12 +6389,12 @@ fn f_decode_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // an integer, an integral float in range, or a cons pair
     // (HIGH . LOW) packing a >16-bit code-point; anything else signals
     // "Not an in-range integer, integral float, or cons of integers".
-    let name = super::charset::want_charset(i, &args[0])?;
+    let charset = super::charset::want_charset_ref(i, &args[0])?;
     let code = match super::charset::cons_to_u64(&args[1]) {
         Some(c) => c,
         None => return Err(i.error("Not an in-range integer, integral float, or cons of integers")),
     };
-    match super::charset::charset_decode(i, &name, code as i64) {
+    match super::charset::charset_decode_for_symbol(i, charset.symbol, &charset.name, code as i64) {
         Some(c) => Ok(Value::Int(c.into())),
         None => Ok(Value::Nil),
     }
@@ -6435,7 +6491,7 @@ fn f_char_charset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     }
     match args.get(1) {
         None | Some(Value::Nil) => match super::charset::char_charset(i, ch as i64, &[]) {
-            Some(name) => Ok(Value::Sym(i.intern(&name))),
+            Some(symbol) => Ok(Value::Sym(symbol)),
             None => Ok(Value::Nil),
         },
         Some(v) => charset_restricted_charset(i, ch as i64, v),
@@ -6571,15 +6627,16 @@ fn charset_restricted_charset(i: &mut Interp, ch: i64, v: &Value) -> EvalResult 
     match v {
         Value::Cons(_) => {
             for item in v.list_to_vec().unwrap_or_default() {
-                let name = match &item {
-                    Value::Sym(s) => i.symbol_name(*s),
-                    _ => return Err(i.wrong_type_mut("charsetp", &item)),
-                };
-                if !super::charset::charset_defined(i, &name) {
-                    return Err(i.wrong_type_mut("charsetp", &item));
-                }
-                if super::charset::charset_encode(i, &name, ch).is_some() {
-                    return Ok(Value::Sym(i.intern(&name)));
+                let charset = super::charset::want_charset_ref(i, &item)?;
+                if super::charset::charset_encode_for_symbol(
+                    i,
+                    charset.symbol,
+                    &charset.name,
+                    ch,
+                )
+                .is_some()
+                {
+                    return Ok(item);
                 }
             }
             Ok(Value::Nil)
@@ -6601,10 +6658,17 @@ fn charset_restricted_charset(i: &mut Interp, ch: i64, v: &Value) -> EvalResult 
                 return Ok(Value::Nil);
             };
             for item in names {
-                if let Value::Sym(s) = &item {
-                    let name = i.symbol_name(*s);
-                    if super::charset::charset_encode(i, &name, ch).is_some() {
-                        return Ok(item.clone());
+                if let Value::Sym(_) = &item {
+                    let charset = super::charset::want_charset_ref(i, &item)?;
+                    if super::charset::charset_encode_for_symbol(
+                        i,
+                        charset.symbol,
+                        &charset.name,
+                        ch,
+                    )
+                    .is_some()
+                    {
+                        return Ok(item);
                     }
                 }
             }

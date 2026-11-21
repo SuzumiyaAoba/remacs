@@ -122,8 +122,8 @@ impl Interp {
             self.output_buffer.push_str(&Self::sink_text(s));
             return Ok(());
         }
-        let lambda = self.intern_soft("lambda");
-        let closure = self.intern_soft("closure");
+        let lambda = self.q_soft("lambda");
+        let closure = self.q_soft("closure");
         let cons_function = match &dest {
             Value::Cons(cell) => {
                 let head = cell

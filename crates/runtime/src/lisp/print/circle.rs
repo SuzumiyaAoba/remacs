@@ -197,9 +197,9 @@ fn push_print_children(i: &Interp, value: &Value, stack: &mut Vec<Value>) {
             }
         }
         Value::Lambda(lambda) => {
-            // Named compiled functions print as unreadable subr names without
-            // visiting their slots.
-            if lambda.compiled && i.lambda_name(lambda).is_some() {
+            // Named native-compiled functions print as unreadable subr names
+            // without visiting their slots. Byte-code objects stay readable.
+            if lambda.is_native_compiled() && i.lambda_name(lambda).is_some() {
                 return;
             }
             if let Some(items) = &lambda.bc_items {

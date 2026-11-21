@@ -259,6 +259,10 @@ const CORE_SYMBOLS: &[&str] = &[
 /// The obarray: interned symbol table.
 pub struct Obarray {
     map: HashMap<InternKey, Vec<SymId>>,
+    /// First default-obarray symbol ever interned for each name. Unlike
+    /// `map', this survives `unintern' and namespace clears so lazy native
+    /// Q references can recover their original symbol object.
+    historical: HashMap<InternKey, SymId>,
     /// Derived index for the frequent internal ASCII lookups. Borrowing &str
     /// here avoids allocating a storage-byte key at every evaluator poll.
     ascii: HashMap<String, SymId>,
@@ -273,6 +277,7 @@ impl Obarray {
     pub(crate) fn empty() -> Self {
         Self {
             map: HashMap::default(),
+            historical: HashMap::default(),
             ascii: HashMap::default(),
             symbols: Vec::new(),
             gensym_counter: 0,
@@ -283,6 +288,10 @@ impl Obarray {
     pub fn new() -> Self {
         let mut ob = Obarray {
             map: HashMap::with_capacity_and_hasher(4096, rustc_hash::FxBuildHasher::default()),
+            historical: HashMap::with_capacity_and_hasher(
+                4096,
+                rustc_hash::FxBuildHasher::default(),
+            ),
             ascii: HashMap::with_capacity_and_hasher(4096, rustc_hash::FxBuildHasher::default()),
             symbols: Vec::with_capacity(4096),
             gensym_counter: 0,
@@ -336,6 +345,7 @@ impl Obarray {
     ) -> SymId {
         name.with_text(|name| {
             let id = self.symbols.len() as SymId;
+            self.historical.entry(key.clone()).or_insert(id);
             self.map.entry(key.clone()).or_default().push(id);
             self.refresh_ascii(&key);
             let old_capacity = self.symbols.capacity();
@@ -386,6 +396,18 @@ impl Obarray {
 
     pub(crate) fn lookup_key(&self, key: &InternKey) -> Option<SymId> {
         self.map.get(key).and_then(|ids| ids.last()).copied()
+    }
+
+    /// Return the first symbol object ever interned under KEY, even after
+    /// `unintern' removed it from the public name map. C-style Q references
+    /// can be initialized lazily, so they must still recover the bootstrap
+    /// symbol if Lisp uninterned and re-interned its name first.
+    pub(crate) fn first_interned_symbol<T: super::text::TextSource + ?Sized>(
+        &self,
+        name: &T,
+    ) -> Option<SymId> {
+        let key = InternKey::from_text(name);
+        self.historical.get(&key).copied()
     }
 
     pub(crate) fn key_candidates(&self, key: &InternKey) -> &[SymId] {
@@ -564,6 +586,12 @@ impl Obarray {
             }
         }
         self.map = map;
+        self.historical.clear();
+        for (id, symbol) in self.symbols.iter().enumerate() {
+            if let Some(key) = &symbol.internment_key {
+                self.historical.entry(key.clone()).or_insert(id as SymId);
+            }
+        }
         self.ascii = self
             .map
             .iter()
@@ -589,5 +617,25 @@ impl Obarray {
 impl Default for Obarray {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod historical_identity_tests {
+    use super::*;
+
+    #[test]
+    fn restored_obarray_keeps_the_first_ever_interned_symbol() {
+        let mut obarray = Obarray::new();
+        let original = obarray.intern("qa-portable-native-q");
+        assert!(obarray.unintern_symbol(original));
+        let replacement = obarray.intern("qa-portable-native-q");
+
+        obarray
+            .restore_dump_membership(&[replacement], &[original, replacement], (0, 0))
+            .unwrap();
+
+        assert_eq!(obarray.first_interned_symbol("qa-portable-native-q"), Some(original));
+        assert_eq!(obarray.intern_soft("qa-portable-native-q"), Some(replacement));
     }
 }

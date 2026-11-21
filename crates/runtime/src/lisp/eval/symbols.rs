@@ -18,7 +18,10 @@ impl Interp {
         if let Some(&symbol) = self.fixed_symbols.get(name) {
             return symbol;
         }
-        let symbol = self.obarray.intern(name);
+        let symbol = self
+            .obarray
+            .first_interned_symbol(name)
+            .unwrap_or_else(|| self.obarray.intern(name));
         self.fixed_symbols.insert(name.to_owned(), symbol);
         symbol
     }
@@ -31,6 +34,7 @@ impl Interp {
         self.fixed_symbols
             .get(name)
             .copied()
+            .or_else(|| self.obarray.first_interned_symbol(name))
             .or_else(|| self.obarray.intern_soft(name))
     }
 
@@ -170,7 +174,7 @@ impl Interp {
         if id == u32::MAX {
             return Value::Nil; // intern_soft miss — unbound is nil
         }
-        if self.quit_flag && self.intern_soft("quit-flag") == Some(id) {
+        if self.quit_flag && self.q_soft("quit-flag") == Some(id) {
             return Value::t();
         }
         if let Some(b) = self.buffers.get(buffer) {
@@ -548,7 +552,10 @@ impl Interp {
             .map(|(_, f)| f.clone())
             .collect();
         let where_ = buf.and_then(|b| self.buffer_value(b)).unwrap_or(Value::Nil);
-        let op_id = self.intern(op);
+        // OP is a C-style literal (`Qset', `Qlet', ...), not a request to
+        // intern in the current public namespace. Preserve the canonical
+        // symbol cell if Lisp has removed its name from the obarray.
+        let op_id = self.q(op);
         let op_sym = self.sym(op_id);
         for f in watchers {
             self.apply(
@@ -629,5 +636,68 @@ mod quit_flag_identity_tests {
         interp.synchronize_quit_symbol(quit_flag);
         assert!(!interp.quit_flag);
         assert!(matches!(interp.symbol_value(quit_flag), Value::Sym(id) if id == sym::T));
+    }
+
+    #[test]
+    fn pending_quit_tracks_the_canonical_symbol_after_uninterning() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let quit_flag = interp.q("quit-flag");
+        assert!(interp.obarray.unintern_symbol(quit_flag));
+
+        interp.quit_flag = true;
+        assert!(matches!(interp.symbol_value(quit_flag), Value::Sym(id) if id == sym::T));
+
+        interp.synchronize_quit_symbol(quit_flag);
+        assert!(!interp.quit_flag);
+        assert!(matches!(interp.symbol_value(quit_flag), Value::Sym(id) if id == sym::T));
+    }
+}
+
+#[cfg(test)]
+mod lazy_fixed_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn first_fixed_lookup_recovers_the_original_interned_symbol() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let name = "qa-lazy-native-q-symbol";
+        let same_name_uninterned = interp.make_symbol(name);
+        let original = interp.intern(name);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern(name);
+
+        let fixed = interp.q(name);
+
+        assert_ne!(same_name_uninterned, original);
+        assert_ne!(original, replacement);
+        assert_eq!(fixed, original);
+        assert_eq!(interp.q(name), original);
+    }
+
+    #[test]
+    fn first_fixed_lookup_recovers_a_symbol_after_namespace_clear() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let name = "qa-cleared-native-q-symbol";
+        let original = interp.intern(name);
+        interp.obarray.clear_namespace();
+
+        assert_eq!(interp.q(name), original);
+    }
+
+    #[test]
+    fn first_fixed_soft_lookup_recovers_the_original_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let name = "qa-lazy-native-q-soft-symbol";
+        let original = interp.intern(name);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern(name);
+
+        assert_ne!(original, replacement);
+        assert_eq!(interp.q_soft(name), Some(original));
     }
 }

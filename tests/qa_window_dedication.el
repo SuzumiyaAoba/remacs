@@ -59,6 +59,18 @@
                (list (cons (make-symbol "bump-use-time") t)))
               (qa calls 0))
           (fset 'window-bump-use-time old-bump)))
+      (let ((option 'bump-use-time)
+            (old-bump (symbol-function 'window-bump-use-time))
+            (calls 0))
+        (unwind-protect
+            (progn
+              (fset 'window-bump-use-time
+                    (lambda (_window) (setq calls (1+ calls))))
+              (unintern option obarray)
+              (window--display-buffer
+               original window 'window (list (cons option t)))
+              (qa calls 1))
+          (fset 'window-bump-use-time old-bump)))
         (qa-err-data (set-window-dedicated-p 5 'x) 'wrong-type-argument '(window-live-p 5))
         (qa-err-data (window-dedicated-p 5) 'wrong-type-argument '(window-live-p 5)))
     (set-window-dedicated-p window nil)
@@ -75,4 +87,47 @@
           (set-window-configuration configuration)
           (qa (eq (window-dedicated-p window) flag) t)))
     (set-window-dedicated-p window old)))
+
+;; The `reuse' display-buffer type remains the canonical marker after unintern.
+(qa (let* ((reuse 'reuse)
+           (window (selected-window))
+           (old (window-dedicated-p window)))
+      (unwind-protect
+          (progn
+            (set-window-dedicated-p window nil)
+            (unintern reuse obarray)
+            (window--display-buffer
+             (window-buffer window) window reuse '((dedicated . t)))
+            (window-dedicated-p window))
+        (set-window-dedicated-p window old)))
+    nil)
+
+;; The C-backed default dedication flag remains visible after unintern.
+(qa (let* ((option 'display-buffer-mark-dedicated)
+           (window (selected-window))
+           (old (window-dedicated-p window)))
+      (unwind-protect
+          (let ((display-buffer-mark-dedicated t))
+            (set-window-dedicated-p window nil)
+            (unintern option obarray)
+            (window--display-buffer (window-buffer window) window 'window nil)
+            (window-dedicated-p window))
+        (set-window-dedicated-p window old)))
+    t)
+
+;; The original action-alist key remains recognized after unintern.
+(qa (let* ((key 'dedicated)
+           (window (selected-window))
+           (old (window-dedicated-p window))
+           (flag 'qa-dedicated-unintern-flag))
+      (unwind-protect
+          (progn
+            (set-window-dedicated-p window nil)
+            (unintern key obarray)
+            (window--display-buffer
+             (window-buffer window) window 'window (list (cons key flag)))
+            (eq (window-dedicated-p window) flag))
+        (set-window-dedicated-p window old)))
+    t)
+
 (princ (qa--done))

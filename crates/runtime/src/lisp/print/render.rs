@@ -484,7 +484,7 @@ impl Printer<'_> {
             | Value::Mutex(_)
             | Value::CondVar(_)
             | Value::Finalizer(_) => true,
-            Value::Lambda(lambda) => lambda.compiled && self.lambda_name(lambda).is_some(),
+            Value::Lambda(lambda) => lambda.is_native_compiled() && self.lambda_name(lambda).is_some(),
             Value::Vec(items) => self.overlay_repr(items).is_some(),
             Value::Record(items) => {
                 let record = Value::Record(items.clone());

@@ -8,4 +8,13 @@
 (qa (imagep (list 'image :type (make-symbol "png") :data "bytes")) nil)
 ;; GNU's image predicate recognizes source keys by their symbol names.
 (qa (imagep (list 'image :type 'png (make-symbol ":data") "bytes")) t)
+(qa (let* ((image-tag 'image)
+           (type-key :type)
+           (png-type 'png)
+           (spec (list image-tag type-key png-type :data "bytes")))
+      (unintern image-tag obarray)
+      (unintern type-key obarray)
+      (unintern png-type obarray)
+      (list (imagep spec) (image-type-available-p png-type)))
+    '(t t))
 (princ (qa--done)) (terpri)

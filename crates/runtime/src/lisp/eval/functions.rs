@@ -57,7 +57,7 @@ impl Interp {
                 }
                 match f {
                     Value::Subr(s) => self
-                        .intern_soft(s.name)
+                        .q_soft(s.name)
                         .and_then(|x| crate::lisp::special::special_form(x))
                         .is_none(),
                     Value::Lambda(l) => !l.is_macro,
@@ -224,7 +224,7 @@ impl Interp {
             // `symbol-function'.
             for s in crate::lisp::builtins::dump_subrs() {
                 if is_byte_op_primitive(s.name) {
-                    let id = self.intern(s.name);
+                    let id = self.q(s.name);
                     m.insert(id, s);
                     by_name.insert(s.name, s);
                     let alias = match s.name {
@@ -233,7 +233,7 @@ impl Interp {
                         _ => None,
                     };
                     if let Some(alias) = alias {
-                        m.insert(self.intern(alias), s);
+                        m.insert(self.q(alias), s);
                         by_name.insert(alias, s);
                     }
                 }
@@ -488,5 +488,20 @@ mod tests {
         assert!(i.form_function(symbol).is_nil());
         assert!(i.symbol_function(symbol).is_nil());
         assert!(!i.fbound_p(symbol));
+    }
+
+    #[test]
+    fn byte_opcode_lookup_keeps_the_original_primitive_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = crate::lisp::obarray::Obarray::new();
+        let primitive = interp.q("car");
+        assert!(interp.obarray.unintern_symbol(primitive));
+        let replacement = interp.intern("car");
+
+        assert_ne!(primitive, replacement);
+        assert_eq!(
+            interp.byte_op_subr(primitive).map(|subr| subr.name),
+            Some("car")
+        );
     }
 }

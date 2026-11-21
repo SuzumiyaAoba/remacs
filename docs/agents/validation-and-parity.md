@@ -294,6 +294,11 @@ each call.  A hang/crash autoskips the in-flight name (appended to
 `--no-resume') and resumes after it via DIFF_FROM.
 `tests/diff/report.txt' lists `DIVERG'/`KNOWN' names (remacs-only
 autoskips count as DIVERG); exit 1 iff a non-known divergence remains.
+
+The 2026-11 release sweep completed 22,916 rows on each side: 351 known
+divergence names, zero new divergences. It supplied the current GNU/Remacs
+autoskip names through `DIFF_AUTOSKIP` with `--no-resume`, leaving the tracked
+autoskip files unchanged.
 `known.txt' lines are a whole NAME or `NAME|SUBSTRING' (matched
 against `TAG|PAYLOAD' on both sides) — no `*' wildcards, so entries
 like `registerv-*' are inert.  Never-called names (exit/hang/
@@ -367,22 +372,18 @@ Fixed divergences so far (all regression-covered in qa_*.el):
   expansion (e.g. `cl--copy-slot-descriptor`'s
   `(cl-callf copy-alist ...)').
 
-Open divergence classes under triage:
-
-- `.elc`-twin objects print `#[...]` where GNU prints `#<subr>` and
-  `(macro . #[...])` where GNU's `when` cell is `(macro . byte-code)`.
-  `subrp`/`type-of`/`byte-code-function-p` on `when`'s cdr can't be
-  t AND nil — one cell can't split into two kinds; wna datum was
-  still normalized to the argdesc cons since that's the observable
-  datum GNU callers see.
-- `describe-register-1` sweep rows signal `symbolp (null byte-not)`
-  inside remacs only — some `.elc`-consts path evaluates the
-  `(null byte-not)` datum; unreproducible in isolation, parked.
+- `.elc` byte-code functions were misclassified as native subrs when
+  `Lambda.compiled` was set for compiled-equivalent callsites. Type and
+  subr predicates now also inspect the byte-code slots, preserving GNU's
+  `byte-code-function` / `subrp=nil` / `byte-code-function-p=t` result.
+  Regressions: `qa_bytecode_subr_unintern_identity`, `qa_types2`,
+  `qa_subrinfo`, and the native-function checks in `qa_native_comp_load`.
+- `describe-register-1` had a prior full-sweep-only `symbolp (null byte-not)`
+  report. A fresh standalone differential run (2026-11) matched GNU; keep
+  tracking it only if a future full sweep reproduces it.
 - `describe-buffer-case-table`, `describe-key--helper`,
-  `search-emacs-glossary`: *previously* listed as remacs hangs inside
-  the full sweep — re-verified clean standalone at 60-120 s (2026-10);
-  the apparent hangs were the stale `autoskip-remacs.txt` masking
-  slow-but-finite targets.  The autoskip file was purged (it had
-  collected ~840 entries from before the `cl--loop-expand`/`equal`
-  fixes); the harness re-records genuine offenders.
+  `search-emacs-glossary`: prior timeouts were stale `autoskip-remacs.txt`
+  entries masking slow-but-finite targets. They were re-verified standalone
+  at 60-120 s (2026-10); the autoskip file was purged, and the harness
+  re-records genuine offenders.
 

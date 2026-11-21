@@ -10,7 +10,7 @@ use crate::lisp::{
 type Spans = Vec<(usize, usize, String)>;
 type CharsetSpec = (String, usize, Vec<(i64, i64)>);
 fn prop(i: &mut Interp, p: &Value, key: &str) -> Value {
-    let k = i.intern(key);
+    let k = i.q(key);
     crate::lisp::eval::plist_get(p, k)
 }
 fn attrs(i: &mut Interp, coding: &Value) -> Option<(String, String, Value)> {
@@ -55,6 +55,26 @@ fn raw(b: u8) -> EmacsChar {
         EmacsChar::from(b as char)
     } else {
         scalar(0x3fff00 + b as u32)
+    }
+}
+
+#[cfg(test)]
+mod static_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn coding_property_lookup_keeps_the_original_keyword_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+
+        let key = interp.q(":coding-type");
+        let plist = Value::list(vec![Value::Sym(key), Value::Int(23)]);
+        assert!(interp.obarray.unintern_symbol(key));
+        let replacement = interp.intern(":coding-type");
+
+        assert_ne!(key, replacement);
+        assert!(matches!(prop(&mut interp, &plist, ":coding-type"), Value::Int(23)));
     }
 }
 fn sjis_encode(i: &Interp, c: i64) -> Option<Vec<u8>> {

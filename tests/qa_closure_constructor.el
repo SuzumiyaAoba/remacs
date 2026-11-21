@@ -130,4 +130,21 @@
 (qa-err (let ((internal-make-interpreted-closure-function 'qa31-absent-constructor))
           (eval '(lambda () 1) t)) 'void-function)
 
+;; The lambda constructor compares its literal marker by identity after
+;; the keyword's public name has been removed from the obarray.
+(qa (let* ((tag :documentation)
+           (form (list 'function (list 'lambda nil (list tag "doc") 42))))
+      (unintern tag obarray)
+      (let ((function (eval form t)))
+        (list (funcall function) (documentation function))))
+    '(42 "doc"))
+
+;; `function-put' recognizes its built-in closure marker by identity after
+;; the public name has been removed from the obarray.
+(qa (let* ((closure-symbol 'closure)
+           (function (list closure-symbol '(t) nil nil)))
+      (unintern closure-symbol obarray)
+      (function-put function 'qa-closure-property 'recorded))
+    'recorded)
+
 (princ (qa--done)) (terpri)

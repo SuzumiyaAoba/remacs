@@ -388,9 +388,12 @@ pub struct Interp {
     /// `set-charset-priority' rebuilds both; `define-charset-internal'
     /// appends non-supplementary charsets before supplementary ones.
     pub charset_order: std::cell::RefCell<(Vec<String>, usize)>,
+    /// Exact ordered charset symbols when Lisp explicitly changes priority.
+    /// The name list above remains an index for native name-based helpers.
+    pub charset_priority_symbols: std::cell::RefCell<Option<(Vec<SymId>, usize)>>,
     /// Memoized `char-charset' winners for the default order
     /// (invalidated when the order or any charset definition changes).
-    pub char_charset_cache: std::cell::RefCell<HashMap<i64, String>>,
+    pub char_charset_cache: std::cell::RefCell<HashMap<i64, SymId>>,
     /// Interned ID of the ordinary plist property `variable-alias'. This is
     /// kept separate from `Symbol::var_alias`, GNU's C-level indirection.
     pub var_alias_prop: SymId,
@@ -401,6 +404,17 @@ pub struct Interp {
     pub charsets: Vec<(String, Value)>,
     /// Charset alias → canonical name (`define-charset-alias`).
     pub charset_aliases: Vec<(String, String)>,
+    /// Exact symbols used to define custom charsets and charset aliases.
+    /// The name tables above serve internal lookups; Lisp validity remains
+    /// keyed by symbol identity, as in GNU's charset hash table.
+    pub charset_symbols: Vec<(SymId, String)>,
+    pub charset_alias_symbols: Vec<(SymId, String)>,
+    /// Per-symbol charset plists. Names can be uninterned and re-interned,
+    /// yielding distinct charset objects with the same printed name.
+    pub charset_symbol_plists: Vec<(SymId, Value)>,
+    /// Alias symbol → exact target charset symbol. The name table remains
+    /// useful for name-based native charset lookups.
+    pub charset_alias_symbol_targets: Vec<(SymId, SymId)>,
     /// GNU `iso_charset_table' overrides installed by `set-iso-charset'
     /// — (dimension, chars-96-flag, final-char) → charset name.
     pub iso_charset_overrides: Vec<(i64, bool, i64, String)>,
@@ -411,10 +425,18 @@ pub struct Interp {
     >,
     /// Coding systems defined via `define-coding-system-internal`.
     pub extra_coding_systems: Vec<String>,
+    /// Exact symbols registered by `define-coding-system-internal'.
+    /// The string table validates names; Lisp coding-system membership is
+    /// keyed by symbol identity.
+    pub extra_coding_system_symbols: Vec<SymId>,
     /// Coding-system aliases added via `define-coding-system-alias'
     /// at runtime: (ALIAS, CANONICAL-NAME) pairs; `coding-system-base'
     /// resolves ALIAS to CANONICAL's group head.
     pub extra_coding_aliases: Vec<(String, String)>,
+    /// Exact symbol identities registered as coding-system aliases.
+    /// Names alone cannot distinguish an uninterned alias from a same-name
+    /// symbol, while GNU's coding hash table keys aliases by symbol identity.
+    pub extra_coding_alias_symbols: Vec<SymId>,
     /// Exact selected category members for detection; the public priority
     /// list exposes base names instead (aliases retain distinct IDs in GNU).
     pub coding_detection_members: HashMap<String, String>,

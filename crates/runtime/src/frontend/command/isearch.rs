@@ -77,7 +77,7 @@ struct LazyHighlightScan {
 }
 
 fn isearch_delay_seconds(i: &mut Interp, name: &str, default: f64) -> f64 {
-    let Some(symbol) = i.intern_soft(name).filter(|symbol| i.bound_p(*symbol)) else {
+    let Some(symbol) = i.q_soft(name).filter(|symbol| i.bound_p(*symbol)) else {
         return default;
     };
     match i.symbol_value(symbol) {
@@ -167,7 +167,7 @@ fn isearch_search_pattern(
     lax_whitespace: bool,
 ) -> Option<(String, bool)> {
     let (mut pattern, mut regexp) = if char_fold {
-        let function = Value::Sym(i.intern("char-fold-to-regexp"));
+        let function = Value::Sym(i.q("char-fold-to-regexp"));
         match i.apply(&function, vec![Value::string(query)]) {
             Ok(Value::Str(pattern)) => (pattern.borrow().to_unicode_lossy(), true),
             _ => return None,
@@ -311,7 +311,7 @@ fn isearch_search(
 }
 
 fn isearch_span_invisible(i: &mut Interp, beg: usize, end: usize) -> bool {
-    let invisible_p = Value::Sym(i.intern("invisible-p"));
+    let invisible_p = Value::Sym(i.q("invisible-p"));
     (beg..end).any(|position| {
         i.apply(&invisible_p, vec![Value::Int(position as i128 + 1)])
             .is_ok_and(|value| value.truthy())
@@ -320,7 +320,7 @@ fn isearch_span_invisible(i: &mut Interp, beg: usize, end: usize) -> bool {
 
 fn isearch_lax_whitespace_pattern(i: &mut Interp, query: &str, regexp: bool) -> Option<String> {
     let whitespace = i
-        .intern_soft("search-whitespace-regexp")
+        .q_soft("search-whitespace-regexp")
         .filter(|symbol| i.bound_p(*symbol))
         .map(|symbol| i.symbol_value(symbol))?;
     let Value::Str(whitespace) = whitespace else {
@@ -359,7 +359,7 @@ fn isearch_lax_whitespace_pattern(i: &mut Interp, query: &str, regexp: bool) -> 
         return replaced.then_some(pattern);
     }
 
-    let regexp_quote = Value::Sym(i.intern("regexp-quote"));
+    let regexp_quote = Value::Sym(i.q("regexp-quote"));
     let mut pattern = String::new();
     let mut literal = String::new();
     for ch in query.chars() {
@@ -473,20 +473,20 @@ fn prepare_isearch_yanked_text(
 ) -> String {
     let mut value = Value::string(text);
     let not_yanks = i
-        .intern_soft("search-upper-case")
+        .q_soft("search-upper-case")
         .map(|symbol| i.symbol_value(symbol))
         .is_some_and(
             |value| matches!(value, Value::Sym(symbol) if i.symbol_name(symbol) == "not-yanks"),
         );
     if case_fold.truthy()
         && not_yanks
-        && let Some(downcase) = i.intern_soft("downcase")
+        && let Some(downcase) = i.q_soft("downcase")
         && let Ok(downcased) = i.apply(&Value::Sym(downcase), vec![value.clone()])
     {
         value = downcased;
     }
     if regexp
-        && let Some(regexp_quote) = i.intern_soft("regexp-quote")
+        && let Some(regexp_quote) = i.q_soft("regexp-quote")
         && let Ok(quoted) = i.apply(&Value::Sym(regexp_quote), vec![value.clone()])
     {
         value = quoted;
@@ -498,7 +498,7 @@ fn prepare_isearch_yanked_text(
 }
 
 fn isearch_current_kill(i: &mut Interp, rotation: i128) -> Option<String> {
-    let current_kill = Value::Sym(i.intern("current-kill"));
+    let current_kill = Value::Sym(i.q("current-kill"));
     match i.apply(&current_kill, vec![Value::Int(rotation)]) {
         Ok(Value::Str(text)) => Some(text.borrow().to_unicode_lossy()),
         Ok(other) => {
@@ -532,7 +532,7 @@ fn isearch_input_method_text(
     key: i128,
 ) -> Result<Option<String>, crate::lisp::error::Flow> {
     let method = i
-        .intern_soft("current-input-method")
+        .q_soft("current-input-method")
         .filter(|symbol| i.bound_p(*symbol))
         .map(|symbol| i.symbol_value(symbol))
         .unwrap_or(Value::Nil);
@@ -568,10 +568,10 @@ fn isearch_input_method_text(
 
 fn finish_transient_input_method(i: &mut Interp) {
     let active = i
-        .intern_soft("current-transient-input-method")
+        .q_soft("current-transient-input-method")
         .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy());
     if active {
-        let command = Value::Sym(i.intern("deactivate-transient-input-method"));
+        let command = Value::Sym(i.q("deactivate-transient-input-method"));
         if let Err(flow) = i.apply(&command, Vec::new()) {
             report_flow(i, flow);
         }
@@ -624,7 +624,7 @@ fn read_nonincremental_search(
 }
 
 fn read_isearch_character_by_name(i: &mut Interp) -> Result<String, crate::lisp::error::Flow> {
-    let read_char = Value::Sym(i.intern("read-char-by-name"));
+    let read_char = Value::Sym(i.q("read-char-by-name"));
     let value = i.apply(
         &read_char,
         vec![Value::string(
@@ -642,12 +642,12 @@ fn read_isearch_character_by_name(i: &mut Interp) -> Result<String, crate::lisp:
 }
 
 fn read_isearch_emoji(i: &mut Interp) -> Result<String, crate::lisp::error::Flow> {
-    let require = Value::Sym(i.intern("require"));
-    let emoji_feature = Value::Sym(i.intern("emoji"));
+    let require = Value::Sym(i.q("require"));
+    let emoji_feature = Value::Sym(i.q("emoji"));
     i.apply(&require, vec![emoji_feature])?;
-    let initialize = Value::Sym(i.intern("emoji--init"));
+    let initialize = Value::Sym(i.q("emoji--init"));
     i.apply(&initialize, Vec::new())?;
-    let read_emoji = Value::Sym(i.intern("emoji--read-emoji"));
+    let read_emoji = Value::Sym(i.q("emoji--read-emoji"));
     let result = i.apply(&read_emoji, Vec::new())?;
     let Value::Cons(result) = result else {
         return Err(i.wrong_type_mut("consp", &result));
@@ -663,7 +663,7 @@ fn read_isearch_emoji(i: &mut Interp) -> Result<String, crate::lisp::error::Flow
         if let Ok(derived) = derived.list_to_vec() {
             choices.extend(derived);
         }
-        let completing_read = Value::Sym(i.intern("completing-read"));
+        let completing_read = Value::Sym(i.q("completing-read"));
         i.apply(
             &completing_read,
             vec![
@@ -707,7 +707,7 @@ impl Isearch {
             .map(|b| b.borrow().point())
             .unwrap_or(0);
         let search_default_mode = i
-            .intern_soft("search-default-mode")
+            .q_soft("search-default-mode")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
@@ -725,22 +725,22 @@ impl Isearch {
         };
         let regexp = regexp || default_regexp;
         let case_fold = i
-            .intern_soft("case-fold-search")
+            .q_soft("case-fold-search")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
         let invisible = i
-            .intern_soft("search-invisible")
+            .q_soft("search-invisible")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
         let lax_whitespace = i
-            .intern_soft("isearch-lax-whitespace")
+            .q_soft("isearch-lax-whitespace")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol).truthy())
             .unwrap_or(true);
         let regexp_lax_whitespace = i
-            .intern_soft("isearch-regexp-lax-whitespace")
+            .q_soft("isearch-regexp-lax-whitespace")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol).truthy())
             .unwrap_or(false);
@@ -849,9 +849,9 @@ impl Isearch {
 
     fn case_fold_for_search(&mut self, i: &mut Interp) -> bool {
         if matches!(&self.case_fold, Value::Sym(symbol) if *symbol == crate::lisp::obarray::sym::T)
-            && i.intern_soft("search-upper-case")
+            && i.q_soft("search-upper-case")
                 .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy())
-            && let Some(no_upper_case) = i.intern_soft("isearch-no-upper-case-p")
+            && let Some(no_upper_case) = i.q_soft("isearch-no-upper-case-p")
             && let Ok(result) = i.apply(
                 &Value::Sym(no_upper_case),
                 vec![
@@ -870,7 +870,7 @@ impl Isearch {
     }
 
     fn use_previous_search(&mut self, i: &mut Interp) -> bool {
-        let ring_symbol = i.intern(if self.regexp {
+        let ring_symbol = i.q(if self.regexp {
             "regexp-search-ring"
         } else {
             "search-ring"
@@ -884,12 +884,12 @@ impl Isearch {
         };
         self.query = text.borrow().to_unicode_lossy();
         if let Some(symbol) = i
-            .intern_soft("isearch-last-case-fold-search")
+            .q_soft("isearch-last-case-fold-search")
             .filter(|symbol| i.bound_p(*symbol))
         {
             self.case_fold = i.symbol_value(symbol);
         }
-        let pointer = i.intern(if self.regexp {
+        let pointer = i.q(if self.regexp {
             "regexp-search-ring-yank-pointer"
         } else {
             "search-ring-yank-pointer"
@@ -902,14 +902,14 @@ impl Isearch {
         &self,
         i: &mut Interp,
     ) -> Result<Option<String>, crate::lisp::error::Flow> {
-        let ring_symbol = i.intern(if self.regexp {
+        let ring_symbol = i.q(if self.regexp {
             "regexp-search-ring"
         } else {
             "search-ring"
         });
         let ring = i.symbol_value(ring_symbol);
-        let completion_ignore_case = i.intern("completion-ignore-case");
-        let try_completion = Value::Sym(i.intern("try-completion"));
+        let completion_ignore_case = i.q("completion-ignore-case");
+        let try_completion = Value::Sym(i.q("try-completion"));
         let depth = i.specbind_depth();
         let result = i
             .specbind(completion_ignore_case, self.case_fold.clone())
@@ -937,22 +937,22 @@ impl Isearch {
         } else {
             ("search-ring", "search-ring-max")
         };
-        let ring = i.intern(ring_name);
+        let ring = i.q(ring_name);
         if !i.bound_p(ring)
             && let Err(flow) = i.set_symbol(ring, Value::Nil)
         {
             report_flow(i, flow);
             return;
         }
-        let max_symbol = i.intern(max_name);
+        let max_symbol = i.q(max_name);
         let max = if i.bound_p(max_symbol) {
             i.symbol_value(max_symbol)
         } else {
             Value::Int(16)
         };
         let value = Value::string(self.query.clone());
-        let add_to_history = Value::Sym(i.intern("add-to-history"));
-        let delete_duplicates = i.intern("history-delete-duplicates");
+        let add_to_history = Value::Sym(i.q("add-to-history"));
+        let delete_duplicates = i.q("history-delete-duplicates");
         let depth = i.specbind_depth();
         let result = i.specbind(delete_duplicates, Value::t()).and_then(|()| {
             i.apply(
@@ -964,7 +964,7 @@ impl Isearch {
             Ok(_) => {}
             Err(flow) => report_flow(i, flow),
         }
-        let last_case_fold = i.intern("isearch-last-case-fold-search");
+        let last_case_fold = i.q("isearch-last-case-fold-search");
         if let Err(flow) = i.set_symbol(last_case_fold, self.case_fold.clone()) {
             report_flow(i, flow);
         }
@@ -1105,7 +1105,7 @@ impl Isearch {
     }
 
     fn call_lisp_command(&self, i: &mut Interp, name: &str) {
-        let command = Value::Sym(i.intern(name));
+        let command = Value::Sym(i.q(name));
         if let Err(flow) = self.with_lisp_state(i, |i| i.apply(&command, Vec::new())) {
             report_flow(i, flow);
         }
@@ -1240,7 +1240,7 @@ impl Isearch {
         if regexp {
             return Some(pattern);
         }
-        let quote = Value::Sym(i.intern("regexp-quote"));
+        let quote = Value::Sym(i.q("regexp-quote"));
         match i.apply(&quote, vec![Value::string(pattern)]).ok()? {
             Value::Str(pattern) => Some(pattern.borrow().to_unicode_lossy()),
             _ => None,
@@ -1326,11 +1326,11 @@ impl Isearch {
         self.invisible = if self.invisible.truthy() {
             Value::Nil
         } else {
-            i.intern_soft("search-invisible")
+            i.q_soft("search-invisible")
                 .filter(|symbol| i.bound_p(*symbol))
                 .map(|symbol| i.symbol_value(symbol))
                 .filter(Value::truthy)
-                .unwrap_or_else(|| Value::Sym(i.intern("open")))
+                .unwrap_or_else(|| Value::Sym(i.q("open")))
         };
         self.failing = false;
         self.fail_pos = None;
@@ -1425,7 +1425,7 @@ impl Isearch {
         if self.help_prefix {
             self.help_prefix = false;
             if key == 8 || key == (CHAR_CTL | 'h' as i128) {
-                let help = Value::Sym(i.intern("isearch-help-for-help"));
+                let help = Value::Sym(i.q("isearch-help-for-help"));
                 if let Err(flow) = self.with_lisp_state(i, |i| i.apply(&help, Vec::new())) {
                     report_flow(i, flow);
                 }
@@ -1519,7 +1519,7 @@ impl Isearch {
             return IsearchAction::ReDispatch(key);
         }
         let isearch_allow_prefix = i
-            .intern_soft("isearch-allow-prefix")
+            .q_soft("isearch-allow-prefix")
             .map(|symbol| !i.bound_p(symbol) || i.symbol_value(symbol).truthy())
             .unwrap_or(true);
         if isearch_allow_prefix && (key == 21 || key == (CHAR_CTL | 'u' as i128)) {
@@ -1567,7 +1567,7 @@ impl Isearch {
             // RET: accept; mark goes at the entry position.
             13 => {
                 if self.query.is_empty()
-                    && i.intern_soft("search-nonincremental-instead")
+                    && i.q_soft("search-nonincremental-instead")
                         .map(|symbol| i.symbol_value(symbol).truthy())
                         .unwrap_or(true)
                 {
@@ -1616,7 +1616,7 @@ impl Isearch {
                         .unwrap_or(usize::MAX);
                 let same_direction = back == self.backward;
                 let repeat_on_direction_change = i
-                    .intern_soft("isearch-repeat-on-direction-change")
+                    .q_soft("isearch-repeat-on-direction-change")
                     .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy());
                 if !same_direction && !repeat_on_direction_change {
                     self.save_history();
@@ -1655,7 +1655,7 @@ impl Isearch {
                 }
                 self.backward = back;
                 let wrap_enabled = i
-                    .intern_soft("isearch-wrap-pause")
+                    .q_soft("isearch-wrap-pause")
                     .map(|symbol| {
                         if i.bound_p(symbol) {
                             i.symbol_value(symbol).truthy()
@@ -1821,7 +1821,7 @@ impl Isearch {
             c if c == (CHAR_META | CHAR_CTL | '%' as i128) => IsearchAction::QueryReplace(true),
             c if c == (CHAR_META | 'p' as i128) || c == (CHAR_META | 'n' as i128) => {
                 let advance = c == (CHAR_META | 'n' as i128);
-                let ring_symbol = i.intern(if self.regexp {
+                let ring_symbol = i.q(if self.regexp {
                     "regexp-search-ring"
                 } else {
                     "search-ring"
@@ -1831,7 +1831,7 @@ impl Isearch {
                     .list_to_vec()
                     .unwrap_or_default();
                 if !ring.is_empty() {
-                    let pointer_symbol = i.intern(if self.regexp {
+                    let pointer_symbol = i.q(if self.regexp {
                         "regexp-search-ring-yank-pointer"
                     } else {
                         "search-ring-yank-pointer"
@@ -1848,7 +1848,7 @@ impl Isearch {
                         let _ = i.set_symbol(pointer_symbol, Value::Int(index));
                         self.query = text.borrow().to_unicode_lossy();
                         if let Some(symbol) = i
-                            .intern_soft("isearch-last-case-fold-search")
+                            .q_soft("isearch-last-case-fold-search")
                             .filter(|symbol| i.bound_p(*symbol))
                         {
                             self.case_fold = i.symbol_value(symbol);
@@ -1899,7 +1899,7 @@ impl Isearch {
                 self.case_fold = if self.case_fold.truthy() {
                     Value::Nil
                 } else {
-                    Value::Sym(i.intern("yes"))
+                    Value::Sym(i.q("yes"))
                 };
                 self.failing = false;
                 self.fail_pos = None;
@@ -1934,7 +1934,7 @@ impl Isearch {
             }
             other => {
                 let option = i
-                    .intern_soft("search-exit-option")
+                    .q_soft("search-exit-option")
                     .map(|symbol| i.symbol_value(symbol))
                     .unwrap_or(Value::t());
                 if matches!(&option, Value::Sym(symbol) if i.symbol_name(*symbol) == "append") {
@@ -2008,7 +2008,7 @@ impl Isearch {
     /// Call a user-supplied `isearch-message-function' with the Lisp-visible
     /// search state bound for the duration of the callback.
     pub(super) fn call_message_function(&self, i: &mut Interp) -> bool {
-        let Some(symbol) = i.intern_soft("isearch-message-function") else {
+        let Some(symbol) = i.q_soft("isearch-message-function") else {
             return false;
         };
         if !i.bound_p(symbol) {
@@ -2037,7 +2037,7 @@ impl Isearch {
 
     pub(super) fn run_end_hook(&self, i: &mut Interp, quit: bool) {
         let mark = i.specbind_depth();
-        if let Some(symbol) = i.intern_soft("isearch-mode-end-hook-quit")
+        if let Some(symbol) = i.q_soft("isearch-mode-end-hook-quit")
             && i.bound_p(symbol)
             && let Err(flow) = i.specbind(symbol, if quit { Value::t() } else { Value::Nil })
         {
@@ -2063,16 +2063,16 @@ impl Isearch {
             .copied()
             .unwrap_or((self.start, self.start));
         let regexp_function = if self.word_search {
-            Value::Sym(i.intern("word-search-regexp"))
+            Value::Sym(i.q("word-search-regexp"))
         } else if self.char_fold {
-            Value::Sym(i.intern("char-fold-to-regexp"))
+            Value::Sym(i.q("char-fold-to-regexp"))
         } else if self.symbol_search {
-            Value::Sym(i.intern("isearch-symbol-regexp"))
+            Value::Sym(i.q("isearch-symbol-regexp"))
         } else {
             self.regexp_function.clone()
         };
         let input_method_function = i
-            .intern_soft("input-method-function")
+            .q_soft("input-method-function")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or(Value::Nil);
@@ -2159,9 +2159,9 @@ impl Isearch {
                     | "isearch-lazy-count-invisible"
             );
             let symbol = if forced_variable {
-                i.intern(name)
+                i.q(name)
             } else {
-                let Some(symbol) = i.intern_soft(name) else {
+                let Some(symbol) = i.q_soft(name) else {
                     continue;
                 };
                 symbol
@@ -2183,7 +2183,7 @@ impl Isearch {
     /// One `apply' of a Lisp helper; errors are ignored (highlighting
     /// must never break the search itself).
     pub(super) fn call(i: &mut Interp, name: &str, args: Vec<Value>) {
-        let f = match i.intern_soft(name) {
+        let f = match i.q_soft(name) {
             Some(s) => Value::Sym(s),
             None => return,
         };
@@ -2222,7 +2222,7 @@ impl Isearch {
         backward: bool,
     ) -> String {
         let format_value = i
-            .intern_soft(format_name)
+            .q_soft(format_name)
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol))
             .unwrap_or_else(|| default_format.map(Value::string).unwrap_or(Value::Nil));
@@ -2230,7 +2230,7 @@ impl Isearch {
             return String::new();
         }
 
-        let format_function = Value::Sym(i.intern("format"));
+        let format_function = Value::Sym(i.q("format"));
         let current = if backward && current > 0 {
             total.saturating_sub(current).saturating_add(1)
         } else {
@@ -2239,7 +2239,7 @@ impl Isearch {
         let mut total_value = Value::Int(total as i128);
         if let Some(invisible) = invisible {
             let invisible_format = i
-                .intern_soft("lazy-count-invisible-format")
+                .q_soft("lazy-count-invisible-format")
                 .filter(|symbol| i.bound_p(*symbol))
                 .map(|symbol| i.symbol_value(symbol))
                 .unwrap_or_else(|| Value::string(" (invisible %s)"));
@@ -2266,7 +2266,7 @@ impl Isearch {
     fn update_lazy_count(&mut self, i: &mut Interp, span: (usize, usize), restore: usize) {
         self.clear_lazy_count();
         let count_enabled = i
-            .intern_soft("isearch-lazy-count")
+            .q_soft("isearch-lazy-count")
             .filter(|symbol| i.bound_p(*symbol))
             .map(|symbol| i.symbol_value(symbol).truthy())
             .unwrap_or(false);
@@ -2379,11 +2379,11 @@ impl Isearch {
         // the current match, `isearch-lazy-highlight' the rest —
         // both unbound → default t.
         let hl_on = i
-            .intern_soft("search-highlight")
+            .q_soft("search-highlight")
             .map(|s| i.symbol_value(s).truthy())
             .unwrap_or(true);
         let lazy_on = i
-            .intern_soft("isearch-lazy-highlight")
+            .q_soft("isearch-lazy-highlight")
             .map(|s| i.symbol_value(s).truthy())
             .unwrap_or(true);
         let active = !self.query.is_empty() && span.0 < span.1 && hl_on;
@@ -2433,7 +2433,7 @@ impl Isearch {
         // search state because the lazy-highlight scan below performs more
         // regexp searches and overwrites Lisp's live match-data.
         let submatches_on = i
-            .intern_soft("search-highlight-submatches")
+            .q_soft("search-highlight-submatches")
             .map(|s| i.symbol_value(s).truthy())
             .unwrap_or(true);
         let groups_match_span = self
@@ -2443,12 +2443,12 @@ impl Isearch {
             .flatten()
             .is_some_and(|group_zero| group_zero == span);
         if self.regexp && submatches_on && groups_match_span {
-            let facep = Value::Sym(i.intern("facep"));
+            let facep = Value::Sym(i.q("facep"));
             let mut group = 0usize;
             for (beg, end) in self.match_groups.iter().skip(1).flatten() {
                 group += 1;
                 let face_name = format!("isearch-group-{group}");
-                let face = i.intern_soft(&face_name).filter(|face| {
+                let face = i.q_soft(&face_name).filter(|face| {
                     i.apply(&facep, vec![Value::Sym(*face)])
                         .is_ok_and(|value| value.truthy())
                 });
@@ -2458,7 +2458,7 @@ impl Isearch {
                         // Like GNU, recycle the known group faces when a
                         // higher-numbered face has not been defined.
                         group = 1;
-                        i.intern("isearch-group-1")
+                        i.q("isearch-group-1")
                     }
                 };
                 let make_overlay = Value::Sym(i.q("make-overlay"));
@@ -2506,13 +2506,13 @@ impl Isearch {
             .map(|n| n.max(1) as usize)
             .unwrap_or(usize::MAX);
         let max_at_a_time = i
-            .intern_soft("lazy-highlight-max-at-a-time")
+            .q_soft("lazy-highlight-max-at-a-time")
             .map(|symbol| i.symbol_value(symbol))
             .and_then(|value| value.int())
             .map(|limit| usize::try_from(limit.max(1)).unwrap_or(usize::MAX))
             .unwrap_or(usize::MAX);
         let no_delay_length = i
-            .intern_soft("lazy-highlight-no-delay-length")
+            .q_soft("lazy-highlight-no-delay-length")
             .filter(|symbol| i.bound_p(*symbol))
             .and_then(|symbol| i.symbol_value(symbol).int())
             .unwrap_or(3)
@@ -2641,16 +2641,16 @@ impl Isearch {
 fn run_isearch_highlight(i: &mut Interp, pattern: String, case_fold: Value, lines: bool) {
     let depth = i.specbind_depth();
     let result = (|| {
-        let case_fold_search = i.intern("case-fold-search");
+        let case_fold_search = i.q("case-fold-search");
         i.specbind(case_fold_search, case_fold)?;
-        let search_upper_case = i.intern("search-upper-case");
+        let search_upper_case = i.q("search-upper-case");
         i.specbind(search_upper_case, Value::Nil)?;
-        let require = Value::Sym(i.intern("require"));
-        let hi_lock = Value::Sym(i.intern("hi-lock"));
+        let require = Value::Sym(i.q("require"));
+        let hi_lock = Value::Sym(i.q("hi-lock"));
         i.apply(&require, vec![hi_lock])?;
-        let read_face = Value::Sym(i.intern("hi-lock-read-face-name"));
+        let read_face = Value::Sym(i.q("hi-lock-read-face-name"));
         let face = i.apply(&read_face, Vec::new())?;
-        let highlight = Value::Sym(i.intern(if lines {
+        let highlight = Value::Sym(i.q(if lines {
             "highlight-lines-matching-regexp"
         } else {
             "highlight-regexp"
@@ -2671,7 +2671,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
     regexp: bool,
 ) -> io::Result<()> {
     let mut st = Isearch::new(i, backward, regexp);
-    let mode_symbol = i.intern("isearch-mode");
+    let mode_symbol = i.q("isearch-mode");
     if let Err(flow) = i.set_symbol(mode_symbol, Value::string(" Isearch")) {
         if i.macro_replaying || i.macro_strict {
             i.macro_replay.clear();
@@ -2720,8 +2720,8 @@ pub(super) fn isearch_loop<T: KeyIo>(
                                 start,
                                 end,
                                 vec![
-                                    Value::Sym(i.intern("face")),
-                                    Value::Sym(i.intern("isearch-fail")),
+                                    Value::Sym(i.q("face")),
+                                    Value::Sym(i.q("isearch-fail")),
                                 ],
                             )]
                         })
@@ -2871,7 +2871,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     st.update_search_ring(i);
                 }
                 st.clear(i);
-                let mode_symbol = i.intern("isearch-mode");
+                let mode_symbol = i.q("isearch-mode");
                 let _ = i.set_symbol(mode_symbol, Value::Nil);
                 st.run_end_hook(i, false);
                 let seq = Value::vector(vec![Value::Int(other)]);
@@ -2885,7 +2885,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
             IsearchAction::QueryReplace(regexp) => {
                 st.update_search_ring(i);
                 st.clear(i);
-                let command = Value::Sym(i.intern(if regexp {
+                let command = Value::Sym(i.q(if regexp {
                     "isearch-query-replace-regexp"
                 } else {
                     "isearch-query-replace"
@@ -2893,7 +2893,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                 if let Err(flow) = st.with_lisp_state(i, |i| i.apply(&command, Vec::new())) {
                     report_flow(i, flow);
                 }
-                let mode_symbol = i.intern("isearch-mode");
+                let mode_symbol = i.q("isearch-mode");
                 if !i.symbol_value(mode_symbol).is_nil() {
                     let _ = i.set_symbol(mode_symbol, Value::Nil);
                     st.run_end_hook(i, false);
@@ -2905,14 +2905,14 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     st.update_search_ring(i);
                 }
                 st.clear(i);
-                let mode_symbol = i.intern("isearch-mode");
+                let mode_symbol = i.q("isearch-mode");
                 let _ = i.set_symbol(mode_symbol, Value::Nil);
                 st.run_end_hook(i, false);
 
                 let depth = i.specbind_depth();
-                let case_fold_search = i.intern("case-fold-search");
-                let search_upper_case = i.intern("search-upper-case");
-                let occur = Value::Sym(i.intern("occur"));
+                let case_fold_search = i.q("case-fold-search");
+                let search_upper_case = i.q("search-upper-case");
+                let occur = Value::Sym(i.q("occur"));
                 let result = i
                     .specbind(case_fold_search, st.case_fold.clone())
                     .and_then(|()| i.specbind(search_upper_case, Value::Nil))
@@ -2930,7 +2930,7 @@ pub(super) fn isearch_loop<T: KeyIo>(
                     st.update_search_ring(i);
                 }
                 st.clear(i);
-                let mode_symbol = i.intern("isearch-mode");
+                let mode_symbol = i.q("isearch-mode");
                 let _ = i.set_symbol(mode_symbol, Value::Nil);
                 st.run_end_hook(i, false);
                 run_isearch_highlight(i, pattern, st.case_fold.clone(), lines);
@@ -2939,8 +2939,38 @@ pub(super) fn isearch_loop<T: KeyIo>(
         }
     }
     st.clear(i);
-    let mode_symbol = i.intern("isearch-mode");
+    let mode_symbol = i.q("isearch-mode");
     let _ = i.set_symbol(mode_symbol, Value::Nil);
     st.run_end_hook(i, end_hook_quit);
     Ok(())
+}
+
+#[cfg(test)]
+mod static_symbol_tests {
+    use crate::lisp::{Interp, Value};
+
+    #[test]
+    fn regexp_quote_remains_the_bootstrapped_symbol_after_unintern() {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let mut interp = Interp::new();
+                let symbol = interp
+                    .obarray
+                    .intern_soft("regexp-quote")
+                    .expect("regexp-quote is loaded during bootstrap");
+                assert_eq!(interp.fixed_symbols.get("regexp-quote"), Some(&symbol));
+                assert!(interp.fbound_p(symbol));
+                assert!(interp.obarray.unintern_symbol(symbol));
+
+                let function = Value::Sym(interp.q("regexp-quote"));
+                let result = interp
+                    .apply(&function, vec![Value::string("a.b")])
+                    .expect("regexp-quote after unintern");
+                assert!(matches!(result, Value::Str(_)));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }

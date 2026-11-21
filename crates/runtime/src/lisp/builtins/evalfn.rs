@@ -782,7 +782,7 @@ fn is_declare_form(i: &Interp, form: &Value) -> Result<bool, Flow> {
     if let Value::Cons(c) = form {
         let car = crate::lisp::eval::cons_parts(i, c)?.0;
         if let Some(id) = i.sym_id(&car) {
-            return Ok(i.intern_soft("declare") == Some(id));
+            return Ok(i.q_soft("declare") == Some(id));
         }
     }
     Ok(false)
@@ -917,7 +917,7 @@ fn macroexp_dynbound_p(i: &mut Interp, var: SymId) -> Result<bool, Flow> {
         return Ok(true);
     }
     for name in ["macroexp--dynvars", "byte-compile-bound-variables"] {
-        let vid = i.intern(name);
+        let vid = i.q(name);
         let v = i.symbol_value(vid);
         if let Some(items) = macroexpand_list_to_vec(i, &v)? {
             if items.iter().any(|x| i.sym_is(x, var)) {
@@ -1326,7 +1326,7 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
         }
     }
     let mark = i.specbind_depth();
-    let closure_id = i.intern_soft("closure");
+    let closure_id = i.q_soft("closure");
     let scoped = match &expanded {
         Value::Cons(c) => {
             let car = crate::lisp::eval::cons_parts(i, c)?.0;
@@ -2025,7 +2025,7 @@ pub(crate) enum QuoteStyle {
 /// as `; every other value is curve.
 pub(crate) fn text_quoting_style(i: &Interp) -> QuoteStyle {
     let var = |name: &str| {
-        i.intern_soft(name)
+        i.q_soft(name)
             .map(|id| i.symbol_value(id))
             .unwrap_or(Value::Nil)
     };
@@ -2050,8 +2050,8 @@ pub(crate) fn text_quoting_style(i: &Interp) -> QuoteStyle {
                 QuoteStyle::Curve
             }
         }
-        Value::Sym(s) if i.intern_soft("grave") == Some(s) => QuoteStyle::Grave,
-        Value::Sym(s) if i.intern_soft("straight") == Some(s) => QuoteStyle::Straight,
+        Value::Sym(s) if i.q_soft("grave") == Some(s) => QuoteStyle::Grave,
+        Value::Sym(s) if i.q_soft("straight") == Some(s) => QuoteStyle::Straight,
         _ => QuoteStyle::Curve,
     }
 }
@@ -2544,7 +2544,9 @@ pub(crate) fn mod_hooks_inhibited(i: &Interp) -> bool {
 /// else fall back through the `category' symbol's own plist like
 /// `Foverlay_get'.
 fn overlay_prop(i: &mut Interp, plist: &Value, prop: &str) -> Value {
-    let pid = i.intern(prop);
+    let Some(pid) = i.q_soft(prop) else {
+        return Value::Nil;
+    };
     match crate::lisp::eval::plist_lookup_v(plist, &Value::Sym(pid)) {
         Some(v) => v,
         None => {
@@ -3095,7 +3097,7 @@ pub(crate) fn signal_after_change(
 /// GNU `run_hook_with_args' with no args: apply each function bound
 /// on the hook variable NAME (buffer-local `t' splicing included).
 pub(crate) fn call_hook(i: &mut Interp, name: &str) -> EvalResult {
-    let id = i.intern(name);
+    let id = i.q(name);
     run_hook_functions(i, &Value::Sym(id), |i, f| {
         i.apply(&f, vec![])?;
         Ok(Value::Nil)
@@ -3136,7 +3138,7 @@ pub(crate) fn safe_call_hook(i: &mut Interp, name: &str) -> EvalResult {
         let result = i.offer_flow(Err(f));
         return i.unbind_to(mark).and(result);
     }
-    let hook_id = i.intern(name);
+    let hook_id = i.q(name);
     let result = run_hook_functions(i, &Value::Sym(hook_id), |i, f| {
         let case_depth = i.case_handlers.len();
         i.case_handlers
@@ -3748,7 +3750,9 @@ fn locate_library_in(
 /// `get-load-suffixes' (NOSUFFIX drops it) then `load-file-rep-suffixes'.
 fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Result<Vec<String>, Flow> {
     let str_list = |i: &mut Interp, var: &str| -> Result<Vec<String>, Flow> {
-        let id = i.intern(var);
+        let Some(id) = i.q_soft(var) else {
+            return Ok(Vec::new());
+        };
         let values = i.symbol_value(id).list_to_vec().unwrap_or_default();
         let mut strings = Vec::new();
         for value in values {
@@ -4535,7 +4539,7 @@ fn eval_buffer_source(
                 let old = i.symbol_value(values);
                 i.set_symbol(values, Value::cons(value.clone(), old))?;
                 let destination = i.symbol_value(output);
-                let printer = i.intern(if matches!(destination, Value::Sym(s) if s == sym::T) {
+                let printer = i.q(if matches!(destination, Value::Sym(s) if s == sym::T) {
                     "prin1"
                 } else {
                     "print"
@@ -5274,7 +5278,7 @@ fn f_format_time_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // `system-time-locale' overrides LC_TIME for this call, falling
     // back to "C" for names the C library rejects (like GNU).
     let locale: Option<String> = match i
-        .intern_soft("system-time-locale")
+        .q_soft("system-time-locale")
         .filter(|id| i.bound_p(*id))
         .map(|id| i.symbol_value(id))
     {
@@ -6635,5 +6639,58 @@ mod macroexpand_list_poll_tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod overlay_property_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn overlay_property_lookup_keeps_its_original_symbol_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let property = interp.q("insert-in-front-hooks");
+        let plist = Value::list(vec![Value::Sym(property), Value::Int(7)]);
+        assert!(interp.obarray.unintern_symbol(property));
+
+        let replacement = interp.intern("insert-in-front-hooks");
+
+        assert_ne!(property, replacement);
+        assert!(matches!(
+            overlay_prop(&mut interp, &plist, "insert-in-front-hooks"),
+            Value::Int(7)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod locate_library_suffix_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn suffix_lookup_keeps_original_option_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let suffixes = interp.q("load-suffixes");
+        let representations = interp.q("load-file-rep-suffixes");
+        interp.obarray.symbol_mut(suffixes).value = Value::list(vec![Value::string(".el")]);
+        interp.obarray.symbol_mut(representations).value = Value::list(vec![Value::string(".gz")]);
+        assert!(interp.obarray.unintern_symbol(suffixes));
+        assert!(interp.obarray.unintern_symbol(representations));
+
+        let suffix_replacement = interp.intern("load-suffixes");
+        let representation_replacement = interp.intern("load-file-rep-suffixes");
+        interp.obarray.symbol_mut(suffix_replacement).value = Value::Nil;
+        interp.obarray.symbol_mut(representation_replacement).value = Value::Nil;
+
+        assert_ne!(suffixes, suffix_replacement);
+        assert_ne!(representations, representation_replacement);
+        assert_eq!(
+            locate_library_suffixes(&mut interp, false).unwrap(),
+            vec![".el.gz".to_owned(), ".gz".to_owned()]
+        );
     }
 }

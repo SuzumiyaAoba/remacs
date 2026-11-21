@@ -360,11 +360,44 @@ pub(super) fn f_buffer_hash(i: &mut Interp, args: crate::lisp::Argv) -> EvalResu
 }
 
 pub(super) fn f_secure_hash_algorithms(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    let names = [
-        "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256", "sha3-384",
-        "sha3-512",
-    ];
-    Ok(Value::list(
-        names.iter().map(|n| Value::Sym(i.intern(n))).collect(),
-    ))
+    Ok(Value::list(vec![
+        Value::Sym(i.q("md5")),
+        Value::Sym(i.q("sha1")),
+        Value::Sym(i.q("sha224")),
+        Value::Sym(i.q("sha256")),
+        Value::Sym(i.q("sha384")),
+        Value::Sym(i.q("sha512")),
+        Value::Sym(i.q("sha3-224")),
+        Value::Sym(i.q("sha3-256")),
+        Value::Sym(i.q("sha3-384")),
+        Value::Sym(i.q("sha3-512")),
+    ]))
+}
+
+#[cfg(test)]
+mod symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn secure_hash_algorithms_keep_original_symbols_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let sha1 = interp.q("sha1");
+        assert!(interp.obarray.unintern_symbol(sha1));
+        let replacement = interp.intern("sha1");
+
+        let algorithms = f_secure_hash_algorithms(&mut interp, Vec::new().into())
+            .unwrap()
+            .list_to_vec()
+            .unwrap();
+
+        assert_ne!(sha1, replacement);
+        assert!(algorithms
+            .iter()
+            .any(|algorithm| matches!(algorithm, Value::Sym(symbol) if *symbol == sha1)));
+        assert!(!algorithms
+            .iter()
+            .any(|algorithm| matches!(algorithm, Value::Sym(symbol) if *symbol == replacement)));
+    }
 }

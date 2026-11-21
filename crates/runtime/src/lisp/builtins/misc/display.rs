@@ -323,8 +323,8 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
     // (window-bump-use-time WINDOW) when ALIST has `bump-use-time'.
     {
         let alist = arg(&a, 3);
-        let bump_key = i.intern_soft("bump-use-time");
-        let dedicated_key = i.intern_soft("dedicated");
+        let bump_key = i.q_soft("bump-use-time");
+        let dedicated_key = i.q_soft("dedicated");
         // NOTE: collect the interesting ALIST entries eagerly so the
         // closure borrow of `i' doesn't fight the mutable intern below.
         let bump = {
@@ -358,10 +358,10 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
         // on a non-side window; else ALIST's `dedicated' wins, else
         // `display-buffer-mark-dedicated'.
         let ty = i.sym_id(&arg(&a, 2));
-        let reuse_type = i.intern_soft("reuse");
-        let window_type = i.intern_soft("window");
-        let frame_type = i.intern_soft("frame");
-        let tab_type = i.intern_soft("tab");
+        let reuse_type = i.q_soft("reuse");
+        let window_type = i.q_soft("window");
+        let frame_type = i.q_soft("frame");
+        let tab_type = i.q_soft("tab");
         let win_side = {
             let side_sym = i.q("window-side");
             let wb = w.borrow();
@@ -374,8 +374,7 @@ pub(super) fn f_window_display_buffer(i: &mut Interp, a: crate::lisp::Argv) -> E
             w.borrow_mut().dedicated = v;
         } else {
             let flag = i
-                .obarray
-                .intern_soft("display-buffer-mark-dedicated")
+                .q_soft("display-buffer-mark-dedicated")
                 .map(|id| i.symbol_value(id))
                 .unwrap_or(Value::Nil);
             w.borrow_mut().dedicated = flag;

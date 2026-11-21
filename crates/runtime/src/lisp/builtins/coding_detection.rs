@@ -6,7 +6,7 @@
 use super::{charset, coding_detect, misc};
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
-use crate::lisp::value::Value;
+use crate::lisp::value::{SymId, Value};
 
 const ISO7: u32 = 1;
 const ISO7_TIGHT: u32 = 1 << 1;
@@ -54,7 +54,7 @@ fn category(name: &str) -> u32 {
         .unwrap_or(0)
 }
 fn prop(i: &mut Interp, plist: &Value, name: &str) -> Value {
-    let key = i.intern(name);
+    let key = i.q(name);
     crate::lisp::eval::plist_get(plist, key)
 }
 fn symbol_names(i: &Interp, list: &Value) -> Vec<String> {
@@ -74,6 +74,7 @@ struct Candidate {
     fixed_eol: bool,
     flags: Vec<String>,
     charsets: Vec<String>,
+    charset_symbols: Vec<SymId>,
     plist: Value,
 }
 impl Candidate {
@@ -82,7 +83,7 @@ impl Candidate {
     }
 }
 fn variable(i: &mut Interp, name: &str) -> Value {
-    let s = i.intern(name);
+    let s = i.q(name);
     i.symbol_value(s)
 }
 fn latin_extra(i: &mut Interp) -> Vec<bool> {
@@ -171,7 +172,7 @@ fn detect_iso(
                 };
                 rejected |= ISO8BIT;
                 for candidate in candidates.iter().filter(|c| c.bit & ISO_ESCAPE != 0) {
-                    if candidate.charsets.contains(&charset) {
+                    if candidate.charset_symbols.contains(&charset) {
                         found |= candidate.bit;
                     } else {
                         rejected |= candidate.bit;
@@ -460,15 +461,21 @@ fn detect_internal(
                 .any(|suffix| resolved.ends_with(suffix));
         let flags = prop(i, &plist, ":flags");
         let charsets = charset::coding_system_charset_names(i, &value);
+        let charset_values = charsets.list_to_vec().unwrap_or_default();
         candidates.push(Candidate {
             bit,
             name,
             eol_base,
             fixed_eol,
             flags: symbol_names(i, &flags),
-            charsets: symbol_names(i, &charsets)
+            charsets: charset_values
                 .iter()
-                .map(|name| charset::canonical_charset(i, name))
+                .filter_map(|value| i.sym_id(value).map(|symbol| i.symbol_name(symbol)))
+                .map(|name| charset::canonical_charset(i, &name))
+                .collect(),
+            charset_symbols: charset_values
+                .iter()
+                .filter_map(|value| i.sym_id(value))
                 .collect(),
             plist,
         });
@@ -663,4 +670,108 @@ fn detect_internal(
     } else {
         Value::list(symbols)
     })
+}
+
+#[cfg(test)]
+mod static_symbol_identity_tests {
+    use super::*;
+    use crate::lisp::obarray::Obarray;
+
+    #[test]
+    fn native_coding_lookup_keeps_fixed_keys_and_variables_after_unintern() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+
+        let key = interp.q(":ascii-compatible-p");
+        let plist = Value::list(vec![Value::Sym(key), Value::t()]);
+        assert!(interp.obarray.unintern_symbol(key));
+        let key_replacement = interp.intern(":ascii-compatible-p");
+        assert_ne!(key, key_replacement);
+        assert!(prop(&mut interp, &plist, ":ascii-compatible-p").truthy());
+
+        let variable_name = "inhibit-null-byte-detection";
+        let variable_id = interp.q(variable_name);
+        interp.obarray.symbol_mut(variable_id).value = Value::Int(17);
+        assert!(interp.obarray.unintern_symbol(variable_id));
+        let variable_replacement = interp.intern(variable_name);
+        interp.obarray.symbol_mut(variable_replacement).value = Value::Nil;
+
+        assert_ne!(variable_id, variable_replacement);
+        assert!(matches!(
+            variable(&mut interp, variable_name),
+            Value::Int(17)
+        ));
+    }
+
+    #[test]
+    fn iso_designation_matches_charset_symbol_identity() {
+        let mut interp = Interp::vacant();
+        interp.obarray = Obarray::new();
+        let name = "qa-duplicate-iso-charset";
+        let original = interp.intern(name);
+        assert!(interp.obarray.unintern_symbol(original));
+        let replacement = interp.intern(name);
+        let charset_name = interp.q(":name");
+        let dimension = interp.q(":dimension");
+        let code_space = interp.q(":code-space");
+        let final_char = interp.q(":iso-final-char");
+        let plist = |symbol, final_char_value| {
+            Value::list(vec![
+                Value::Sym(charset_name),
+                Value::Sym(symbol),
+                Value::Sym(dimension),
+                Value::Int(1),
+                Value::Sym(code_space),
+                Value::vector(vec![
+                    Value::Int(33),
+                    Value::Int(126),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                    Value::Int(0),
+                ]),
+                Value::Sym(final_char),
+                Value::Int(final_char_value),
+            ])
+        };
+        let original_plist = plist(original, 33);
+        let replacement_plist = plist(replacement, 35);
+        interp.charsets.push((name.to_owned(), original_plist.clone()));
+        interp.charset_symbols.push((original, name.to_owned()));
+        interp.charset_symbols.push((replacement, name.to_owned()));
+        interp.charset_symbol_plists.push((original, original_plist));
+        interp
+            .charset_symbol_plists
+            .push((replacement, replacement_plist));
+        let candidate = Candidate {
+            bit: ISO7,
+            name: "qa-iso-candidate".to_owned(),
+            eol_base: "qa-iso-candidate".to_owned(),
+            fixed_eol: true,
+            flags: Vec::new(),
+            charsets: vec![name.to_owned()],
+            charset_symbols: vec![replacement],
+            plist: Value::Nil,
+        };
+
+        let (old_found, _) = detect_iso(
+            &mut interp,
+            &[27, 40, 33],
+            std::slice::from_ref(&candidate),
+            &[],
+            false,
+        );
+        let (new_found, _) = detect_iso(
+            &mut interp,
+            &[27, 40, 35],
+            std::slice::from_ref(&candidate),
+            &[],
+            false,
+        );
+
+        assert_eq!(old_found & ISO7, 0);
+        assert_ne!(new_found & ISO7, 0);
+    }
 }

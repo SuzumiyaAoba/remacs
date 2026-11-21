@@ -2,7 +2,7 @@
 
 use crate::lisp::{Interp, value::Value};
 use remacs_libraries::embedded_elc;
-use std::{path::Path, rc::Rc};
+use std::rc::Rc;
 
 mod command;
 mod compat;
@@ -30,7 +30,7 @@ use policy::{POSTBOOT_AOT_LIBRARIES, STANDALONE_POSTBOOT_AOT_LIBRARIES};
 use source::{eval_src, eval_src_opts};
 
 fn is_org_load_modules_maybe(i: &Interp, function: &Value) -> bool {
-    matches!(function, Value::Sym(id) if i.intern_soft("org-load-modules-maybe") == Some(*id))
+    matches!(function, Value::Sym(id) if i.q_soft("org-load-modules-maybe") == Some(*id))
 }
 
 /// Consuming input for direct/compiled loads, exposed as GNU's private
@@ -382,10 +382,15 @@ mod org_aot_caller_tests {
     fn aot_caller_gate_uses_the_canonical_function_symbol() {
         let mut interp = Interp::vacant();
         interp.obarray = Obarray::new();
-        let canonical = interp.intern("org-load-modules-maybe");
+        let canonical = interp.q("org-load-modules-maybe");
         let uninterned = interp.make_symbol("org-load-modules-maybe");
 
         assert!(is_org_load_modules_maybe(&interp, &Value::Sym(canonical)));
+        assert!(interp.obarray.unintern_symbol(canonical));
+        assert!(is_org_load_modules_maybe(
+            &interp,
+            &Value::Sym(canonical)
+        ));
         assert!(!is_org_load_modules_maybe(&interp, &Value::Sym(uninterned)));
         assert!(!is_org_load_modules_maybe(&interp, &Value::Nil));
     }
