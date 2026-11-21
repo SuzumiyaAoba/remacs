@@ -136,7 +136,7 @@ impl Reader<'_> {
                         break;
                     }
                 }
-                if digits == 2 && n == 0 {
+                if digits > 0 && n == 0 {
                     if matches!(&self.source, super::ReadSource::Function { .. }) {
                         while self.next()?.is_some() {}
                     } else {
@@ -150,10 +150,10 @@ impl Reader<'_> {
                         break;
                     }
                 }
-                if self.skip_layout()? {
-                    return Err(eof_err(self.interp));
-                }
-                self.read_object()
+                // In-memory readers treat the 0x1f record separator as the
+                // end of this input object.  Bytes after it belong to the
+                // surrounding load protocol and are not a new Lisp form.
+                Err(eof_err(self.interp))
             }
             Some('(') => {
                 // `#("str" BEG END (plist) ...)' — propertized string
@@ -513,7 +513,7 @@ impl Reader<'_> {
         let mut n = num_bigint::BigInt::from(0);
         let mut any = false;
         while let Some(c) = self.peek()? {
-            if c.is_alphanumeric() {
+            if c.is_ascii_alphanumeric() {
                 match c.to_digit(radix) {
                     Some(d) => {
                         n = n * radix + d;

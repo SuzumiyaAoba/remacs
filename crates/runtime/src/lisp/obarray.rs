@@ -532,6 +532,15 @@ impl Obarray {
             .collect()
     }
 
+    /// Find the next currently interned symbol at or after START.  Unlike
+    /// `all_ids', this supports callbacks that mutate the obarray while
+    /// `mapatoms' is walking it: removed IDs disappear from the scan and
+    /// newly allocated IDs remain visible to later calls.
+    pub(crate) fn next_interned_id_from(&self, start: SymId) -> Option<SymId> {
+        let end = self.symbols.len().min(SymId::MAX as usize) as SymId;
+        (start..end).find(|id| self.is_initial_symbol(*id))
+    }
+
     pub(crate) fn is_core_symbol(&self, id: SymId) -> bool {
         (id as usize) < CORE_SYMBOLS.len()
     }

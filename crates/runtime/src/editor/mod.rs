@@ -21378,9 +21378,9 @@ fn f_commandp(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             return Ok(Value::from_bool(has_interactive));
         }
     }
-    let mut cmd = match v {
-        Value::Sym(id) => i.symbol_function(*id),
-        other => other.clone(),
+    let mut cmd = match i.sym_id(v) {
+        Some(id) => i.symbol_function(id),
+        None => v.clone(),
     };
     // Advised command: peel the trampoline layers to the base, then
     // resolve a possible symbol-alias tail (GNU reaches the innermost

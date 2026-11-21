@@ -260,6 +260,23 @@ fn f_terpri(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
             i.write_output_to("\n", &stream)?;
             return Ok(Value::Sym(sym::T));
         }
+        let valid_stream_kind = matches!(
+            stream,
+            Value::Nil
+                | Value::Sym(_)
+                | Value::Buffer(_)
+                | Value::Marker(_)
+                | Value::Lambda(_)
+                | Value::Subr(_)
+        ) || i.sym_id(&stream).is_some();
+        if !valid_stream_kind {
+            // Non-callable values are invalid even when the output sink is
+            // already at beginning-of-line.  Applying them produces GNU's
+            // `invalid-function' datum without writing any output.
+            return i
+                .apply(&stream, vec![Value::Int('\n' as i128)])
+                .map(|_| Value::Sym(sym::T));
+        }
     }
     if ensure && i.output_at_bol_checked(&stream)? {
         return Ok(Value::Nil);

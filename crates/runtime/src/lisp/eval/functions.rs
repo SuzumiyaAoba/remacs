@@ -12,7 +12,10 @@ impl Interp {
     /// Follow a symbol's function-alias chain; return the final
     /// non-symbol value (or UNBOUND sym).
     pub fn indirect_function_value(&self, v: &Value) -> Value {
-        let mut cur = crate::lisp::builtins::misc::unpos(self, v);
+        let mut cur = self
+            .sym_id(v)
+            .map(Value::Sym)
+            .unwrap_or_else(|| crate::lisp::builtins::misc::unpos(self, v));
         let mut seen = std::collections::HashSet::new();
         loop {
             match cur {
@@ -43,12 +46,15 @@ impl Interp {
             Value::Cons(c) => c
                 .try_borrow()
                 .is_ok_and(|cell| self.sym_is(&cell.car, sym::LAMBDA)),
-            Value::Sym(id) => {
+            _ => {
+                let Some(id) = self.sym_id(v) else {
+                    return false;
+                };
                 // GNU resolves `defalias' chains: the alias's final
                 // target decides.
-                let mut f = self.symbol_function(*id);
+                let mut f = self.symbol_function(id);
                 let mut seen = std::collections::HashSet::new();
-                seen.insert(*id);
+                seen.insert(id);
                 while let Value::Sym(next) = f {
                     if next == sym::UNBOUND || !seen.insert(next) {
                         return false;
@@ -174,9 +180,25 @@ impl Interp {
     }
     /// GNU permits function definitions on t and keywords, but nil must
     /// retain a nil function cell. Check before replacing definitions or advice.
-    pub(crate) fn check_function_assignment(&mut self, id: SymId, def: &Value) -> Result<(), Flow> {
-        if id == sym::NIL && !def.is_nil() {
-            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![Value::Nil]));
+    pub(crate) fn check_function_assignment_as(
+        &mut self,
+        id: SymId,
+        def: &Value,
+        reported_symbol: &Value,
+    ) -> Result<(), Flow> {
+        // An enabled positioned view is a distinct Lisp symbol object.  GNU
+        // permits updating that view of nil even though bare nil stays
+        // protected; its condition data also retains the positioned object.
+        let positioned_nil = crate::lisp::builtins::misc::active_sympos_parts(
+            self,
+            reported_symbol,
+        )
+        .is_some_and(|(symbol, _)| symbol == sym::NIL);
+        if id == sym::NIL && !def.is_nil() && !positioned_nil {
+            return Err(self.signal_data(
+                sym::SETTING_CONSTANT,
+                vec![reported_symbol.clone()],
+            ));
         }
         Ok(())
     }
@@ -350,7 +372,17 @@ impl Interp {
     /// advice, the new definition substitutes the chain's base (GNU's
     /// `advice--defalias-fset'); otherwise a plain `fset'.
     pub fn fset_defalias(&mut self, id: SymId, def: Value) -> Result<(), Flow> {
-        self.check_function_assignment(id, &def)?;
+        let symbol = self.sym(id);
+        self.fset_defalias_as(id, def, &symbol)
+    }
+
+    pub(crate) fn fset_defalias_as(
+        &mut self,
+        id: SymId,
+        def: Value,
+        reported_symbol: &Value,
+    ) -> Result<(), Flow> {
+        self.check_function_assignment_as(id, &def, reported_symbol)?;
         if self.definition_history_enabled {
             self.record_function_history(id)?;
         }

@@ -243,7 +243,21 @@ impl Interp {
     /// Set a variable the way `set`/`setq` does: local binding if the
     /// current buffer has one or the symbol is "automatically local".
     pub fn set_symbol(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
-        let result = self.set_symbol_position_inner(id, val, true);
+        let reported_symbol = self.sym(id);
+        let result = self.set_symbol_position_inner(id, val, true, &reported_symbol);
+        self.sync_symbol_position_view();
+        result
+    }
+
+    /// `set`/`setq` variant that retains the Lisp symbol object supplied by
+    /// the caller for errors such as `setting-constant'.
+    pub(crate) fn set_symbol_as(
+        &mut self,
+        id: SymId,
+        val: Value,
+        reported_symbol: &Value,
+    ) -> Result<(), Flow> {
+        let result = self.set_symbol_position_inner(id, val, true, reported_symbol);
         self.sync_symbol_position_view();
         result
     }
@@ -252,7 +266,8 @@ impl Interp {
     /// watchers. Use only for C paths whose GNU implementation directly
     /// updates the variable cell, such as `reset_var_on_error'.
     pub(crate) fn set_symbol_no_watchers(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
-        let result = self.set_symbol_position_inner(id, val, false);
+        let reported_symbol = self.sym(id);
+        let result = self.set_symbol_position_inner(id, val, false, &reported_symbol);
         self.sync_symbol_position_view();
         result
     }
@@ -263,6 +278,7 @@ impl Interp {
         id: SymId,
         val: Value,
         notify_watchers: bool,
+        reported_symbol: &Value,
     ) -> Result<(), Flow> {
         let id = self.var_alias_target(id);
         self.synchronize_quit_symbol(id);
@@ -292,11 +308,17 @@ impl Interp {
             }
         }
         if constant && id != sym::NIL && id != sym::T {
-            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
+            return Err(self.signal_data(
+                sym::SETTING_CONSTANT,
+                vec![reported_symbol.clone()],
+            ));
         }
         if constant {
             // nil/t can't be set at all.
-            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
+            return Err(self.signal_data(
+                sym::SETTING_CONSTANT,
+                vec![reported_symbol.clone()],
+            ));
         }
         let sym = self.obarray.symbol(id);
         let automatic = sym.make_local_if_set;
@@ -325,7 +347,7 @@ impl Interp {
             // GNU's forwarded per-buffer path also writes the default
             // cell, notifying its watchers separately with WHERE=nil.
             if notify_watchers {
-                return self.set_symbol_default(id, val);
+                return self.set_symbol_default_as(id, val, reported_symbol);
             }
             self.obarray.symbol_mut(id).value = val.clone();
             self.sync_undo_inhibit(id, &val);
@@ -374,7 +396,21 @@ impl Interp {
 
     /// Set the global (default) value regardless of buffer-local bindings.
     pub fn set_symbol_default(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
-        let result = self.set_symbol_default_position_inner(id, val, true);
+        let reported_symbol = self.sym(id);
+        let result = self.set_symbol_default_position_inner(id, val, true, &reported_symbol);
+        self.sync_symbol_position_view();
+        result
+    }
+
+    /// `set-default` variant retaining the caller's symbol object in errors.
+    pub(crate) fn set_symbol_default_as(
+        &mut self,
+        id: SymId,
+        val: Value,
+        reported_symbol: &Value,
+    ) -> Result<(), Flow> {
+        let result =
+            self.set_symbol_default_position_inner(id, val, true, reported_symbol);
         self.sync_symbol_position_view();
         result
     }
@@ -386,7 +422,8 @@ impl Interp {
         id: SymId,
         val: Value,
     ) -> Result<(), Flow> {
-        let result = self.set_symbol_default_position_inner(id, val, false);
+        let reported_symbol = self.sym(id);
+        let result = self.set_symbol_default_position_inner(id, val, false, &reported_symbol);
         self.sync_symbol_position_view();
         result
     }
@@ -397,6 +434,7 @@ impl Interp {
         id: SymId,
         val: Value,
         notify_watchers: bool,
+        reported_symbol: &Value,
     ) -> Result<(), Flow> {
         // GNU `Fset_default' walks the variable-alias chain first:
         // `(set-default 'alias v)' writes BASE's default cell, leaving
@@ -404,7 +442,10 @@ impl Interp {
         let id = self.var_alias_target(id);
         self.synchronize_quit_symbol(id);
         if self.obarray.symbol(id).constant {
-            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
+            return Err(self.signal_data(
+                sym::SETTING_CONSTANT,
+                vec![reported_symbol.clone()],
+            ));
         }
         if self.dbg_flags & 0x40000 != 0 && self.symbol_name(id) == "default-terminal-coding-system"
         {
@@ -436,7 +477,7 @@ impl Interp {
         let name = self.symbol_name(id);
         // C forwarding belongs to the canonical interned variable, not to
         // an uninterned symbol that merely shares its printed name.
-        if self.intern_soft(&name) != Some(id) {
+        if self.q_soft(&name) != Some(id) {
             return Ok(());
         }
         if ![
@@ -545,23 +586,55 @@ impl Interp {
                 return Ok(());
             }
         }
-        let watchers: Vec<Value> = self
-            .var_watchers
-            .iter()
-            .filter(|(s, _)| *s == id)
-            .map(|(_, f)| f.clone())
-            .collect();
         let where_ = buf.and_then(|b| self.buffer_value(b)).unwrap_or(Value::Nil);
         // OP is a C-style literal (`Qset', `Qlet', ...), not a request to
         // intern in the current public namespace. Preserve the canonical
         // symbol cell if Lisp has removed its name from the obarray.
         let op_id = self.q(op);
         let op_sym = self.sym(op_id);
-        for f in watchers {
+        let mut cursor = 0;
+        loop {
+            // Keep the next live list cell, not a snapshot of callbacks.  A
+            // callback may remove later entries; insertions at the list head
+            // do not restart the walk, matching GNU's list traversal.
+            let selected = self
+                .var_watchers
+                .iter()
+                .enumerate()
+                .skip(cursor)
+                .find(|(_, (symbol, _))| *symbol == id)
+                .map(|(index, (_, watcher))| (index, watcher.clone()));
+            let Some((index, f)) = selected else { break };
+            let following: Vec<Value> = self.var_watchers[index + 1..]
+                .iter()
+                .filter(|(symbol, _)| *symbol == id)
+                .map(|(_, watcher)| watcher.clone())
+                .collect();
             self.apply(
                 &f,
                 vec![self.sym(id), newval.clone(), op_sym.clone(), where_.clone()],
             )?;
+            let mut current_index = None;
+            for (index, (symbol, watcher)) in self.var_watchers.iter().enumerate() {
+                if *symbol == id && crate::lisp::builtins::equal_values(self, watcher, &f)? {
+                    current_index = Some(index);
+                    break;
+                }
+            }
+            let start = current_index.map_or(0, |index| index + 1);
+            let mut next = None;
+            'following: for expected in following {
+                for (index, (symbol, watcher)) in self.var_watchers.iter().enumerate().skip(start) {
+                    if *symbol == id
+                        && crate::lisp::builtins::equal_values(self, watcher, &expected)?
+                    {
+                        next = Some(index);
+                        break 'following;
+                    }
+                }
+            }
+            let Some(next) = next else { break };
+            cursor = next;
         }
         Ok(())
     }

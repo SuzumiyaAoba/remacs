@@ -4766,7 +4766,7 @@ fn f_set_default_toplevel(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_set_default(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
     let sid = i.var_alias_target(sid);
-    i.set_symbol_default(sid, a[1].clone())?;
+    i.set_symbol_default_as(sid, a[1].clone(), &a[0])?;
     Ok(a[1].clone())
 }
 

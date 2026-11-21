@@ -542,8 +542,11 @@ pub(crate) fn functionp_val(i: &mut Interp, arg: &Value) -> bool {
 }
 
 pub(crate) fn functionp_checked(i: &mut Interp, arg: &Value) -> Result<bool, Flow> {
-    let mut value = crate::lisp::builtins::misc::unpos(i, arg);
-    let symbol = matches!(value, Value::Sym(_));
+    let symbol_id = i.sym_id(arg);
+    let mut value = symbol_id
+        .map(Value::Sym)
+        .unwrap_or_else(|| crate::lisp::builtins::misc::unpos(i, arg));
+    let symbol = symbol_id.is_some();
     if let Value::Sym(id) = value {
         value = i.symbol_function(id);
         if let Value::Sym(next) = value {
@@ -705,10 +708,10 @@ fn f_sequencep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         _ => false,
     }))
 }
-fn f_booleanp(_i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+fn f_booleanp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Nil | Value::Sym(1) // t
+        i.sym_id(&args[0]),
+        Some(sym::NIL | sym::T)
     )))
 }
 fn f_characterp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -874,7 +877,7 @@ fn f_fboundp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 }
 fn f_set(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    i.set_symbol(id, args[1].clone())?;
+    i.set_symbol_as(id, args[1].clone(), &args[0])?;
     Ok(args[1].clone())
 }
 fn f_add_variable_watcher(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
@@ -919,16 +922,28 @@ fn f_remove_variable_watcher(i: &mut Interp, args: crate::lisp::Argv) -> EvalRes
     Ok(Value::Nil)
 }
 
-fn check_function_alias_cycle(i: &mut Interp, id: SymId, definition: &Value) -> Result<(), Flow> {
-    let Value::Sym(start) = definition else {
-        return Ok(());
+fn check_function_alias_cycle(
+    i: &mut Interp,
+    id: SymId,
+    definition: &Value,
+    reported_symbol: &Value,
+) -> Result<(), Flow> {
+    let start = match definition {
+        Value::Sym(start) => *start,
+        Value::Record(_) => match i.sym_id(definition) {
+            Some(start) => start,
+            None => return Ok(()),
+        },
+        // A bare nil function definition is the nil value, not an alias to
+        // the nil symbol.  Positioned symbol views remain symbol aliases.
+        _ => return Ok(()),
     };
     let mut seen = std::collections::HashSet::new();
-    let mut cur = *start;
+    let mut cur = start;
     loop {
         if cur == id {
             let signal = i.q("cyclic-function-indirection");
-            return Err(i.signal_data(signal, vec![Value::Sym(id)]));
+            return Err(i.signal_data(signal, vec![reported_symbol.clone()]));
         }
         if !seen.insert(cur) {
             break;
@@ -943,9 +958,9 @@ fn check_function_alias_cycle(i: &mut Interp, id: SymId, definition: &Value) -> 
 
 fn f_fset(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    i.check_function_assignment(id, &args[1])?;
+    i.check_function_assignment_as(id, &args[1], &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
-    check_function_alias_cycle(i, id, &def)?;
+    check_function_alias_cycle(i, id, &def, &args[0])?;
     // GNU's fset writes the cell raw — an advice chain on SYM is
     // discarded entirely (only `defalias' substitutes the base).
     i.advices.retain(|(s, _)| *s != id);
@@ -959,7 +974,7 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
     // GNU's `Fdefalias' chases the alias chain before installing: a
     // definition that resolves back to SYMBOL signals
     // `cyclic-function-indirection' with the symbol, at defalias time.
-    check_function_alias_cycle(i, id, &def)?;
+    check_function_alias_cycle(i, id, &def, &args[0])?;
     // GNU data.c `defalias' LOADHIST_ATTACHes `(defun . SYM)' when the
     // definition is installed — source `defun'/`defmacro' forms and
     // `.elc' defalias calls alike (an `(autoload ...)' cell counts too).
@@ -968,7 +983,7 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
         i,
         Value::cons(i.sym(defun_id), args[0].clone()),
     );
-    i.fset_defalias(id, def)?;
+    i.fset_defalias_as(id, def, &args[0])?;
     // GNU: a non-nil DOCSTRING goes on SYMBOL's `function-documentation'
     // property — what `documentation' reads through the alias.
     if let Some(doc) = args.get(2) {
@@ -1074,9 +1089,9 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 
 fn f_indirect_variable(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU: non-symbol args pass through unchanged (no type check).
-    let id = match &args[0] {
-        Value::Sym(s) => *s,
-        other => return Ok(other.clone()),
+    let id = match i.sym_id(&args[0]) {
+        Some(id) => id,
+        None => return Ok(args[0].clone()),
     };
     Ok(i.sym(i.var_alias_target(id)))
 }
@@ -1213,6 +1228,7 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         ),
         _ => None,
     };
+    crate::lisp::special::check_dynamic_variable_declaration(i, id, &args[0])?;
     i.obarray.symbol_mut(id).special = true;
     // GNU `defvar': install INIT only when the DEFAULT binding is void.
     // `bound_p' sees the live cell (a let binding counts), so when bound
@@ -1220,7 +1236,7 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // slot — the let is shadowing a void default.
     if let Some(v) = args.get(1) {
         if !i.bound_p(id) {
-            i.set_symbol_default(id, v.clone())?;
+            i.set_symbol_default_as(id, v.clone(), &args[0])?;
         } else if i.specbind_outermost_unbound(id) {
             i.set_specbind_outermost_old(id, v.clone());
         }
@@ -1246,8 +1262,9 @@ fn f_defconst_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         ),
         _ => None,
     };
+    crate::lisp::special::check_dynamic_variable_declaration(i, id, &args[0])?;
     i.obarray.symbol_mut(id).special = true;
-    i.set_symbol_default(id, args[1].clone())?;
+    i.set_symbol_default_as(id, args[1].clone(), &args[0])?;
     if let Some(docstring) = docstring {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
@@ -1275,6 +1292,7 @@ fn f_define_uninitialized_variable(i: &mut Interp, args: crate::lisp::Argv) -> E
             return Ok(Value::Nil);
         }
     };
+    crate::lisp::special::check_dynamic_variable_declaration(i, id, &args[0])?;
     i.obarray.symbol_mut(id).special = true;
     if let Some(doc) = args.get(1) {
         if !doc.is_nil() {
@@ -1389,8 +1407,12 @@ fn f_text_quoting_style(i: &mut Interp, _args: crate::lisp::Argv) -> EvalResult 
 fn f_fmakunbound(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     // Unlike fset, GNU refuses even a nil definition through fmakunbound.
-    // Keyword function cells remain mutable.
-    if id == sym::NIL || id == sym::T {
+    // Keyword function cells remain mutable.  GNU's enabled positioned nil
+    // view is a distinct writable symbol object even though its symbol ID is
+    // nil; a bare nil argument remains constant.
+    let positioned_nil = crate::lisp::builtins::misc::active_sympos_parts(i, &args[0])
+        .is_some_and(|(symbol, _)| symbol == sym::NIL);
+    if (id == sym::NIL && !positioned_nil) || id == sym::T {
         return Err(i.signal_data(sym::SETTING_CONSTANT, vec![args[0].clone()]));
     }
     i.macro_gen += 1;
@@ -1930,20 +1952,33 @@ fn f_mapatoms(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     let ob = resolve_obarray(i, args.get(1))?;
     if let Some(ob) = &ob {
         if !is_default_obarray(i, ob) {
-            for sym in obarray_syms(i, ob)? {
-                i.apply(&fun, vec![sym])?;
+            let mut visited = std::collections::HashSet::new();
+            loop {
+                let next = obarray_syms(i, ob)?.into_iter().find(|symbol| {
+                    i.sym_id(symbol)
+                        .is_some_and(|id| !visited.contains(&id))
+                });
+                let Some(symbol) = next else { break };
+                if let Some(id) = i.sym_id(&symbol) {
+                    visited.insert(id);
+                }
+                i.apply(&fun, vec![symbol])?;
             }
             return Ok(Value::Nil);
         }
     }
-    let ids = i.obarray.all_ids();
-    for id in ids {
+    let mut next_id = 0;
+    while let Some(id) = i.obarray.next_interned_id_from(next_id) {
+        next_id = id.saturating_add(1);
         i.apply(&fun, vec![i.sym(id)])?;
     }
     Ok(Value::Nil)
 }
 pub(crate) fn f_indirect_function(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    let mut cur = crate::lisp::builtins::misc::unpos(i, &args[0]);
+    let mut cur = i
+        .sym_id(&args[0])
+        .map(Value::Sym)
+        .unwrap_or_else(|| crate::lisp::builtins::misc::unpos(i, &args[0]));
     let mut seen: std::collections::HashSet<crate::lisp::value::SymId> =
         std::collections::HashSet::new();
     let mut until_quit = 1024usize;
@@ -1987,7 +2022,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
     }
     let property = i.q("interactive-form");
     let mut f = args[0].clone();
-    while let Value::Sym(id) = f {
+    while let Some(id) = i.sym_id(&f) {
         let form = i.get_prop(id, property);
         if !form.is_nil() {
             return Ok(form);
@@ -2005,7 +2040,7 @@ pub(crate) fn f_interactive_form(i: &mut Interp, args: crate::lisp::Argv) -> Eva
     };
     if is_autoload {
         // GNU passes CMD as FUNNAME; a bare autoload cons is not a symbol.
-        if !matches!(args[0], Value::Sym(_)) {
+        if i.sym_id(&args[0]).is_none() {
             return Err(i.wrong_type_mut("symbolp", &args[0]));
         }
         let loaded = super::evalfn::autoload_do_load(i, f, false)?;
@@ -2154,9 +2189,10 @@ fn interactive_form_list(i: &mut Interp, f: &Value) -> EvalResult {
         return Ok(Value::Nil);
     };
     let (head, mut body) = cons_parts(i, head_cell)?;
+    // Callable lexical closures are represented as Lambda values and were
+    // handled above.  A raw `(closure ENV ...)' cons is only data in GNU.
     let body_at = match i.sym_id(&head) {
         Some(sym::LAMBDA) => 2,
-        Some(id) if i.q_soft("closure") == Some(id) => 3,
         _ => return Ok(Value::Nil),
     };
     // Only step through the fixed header before scanning body forms. GNU
@@ -2241,52 +2277,21 @@ fn f_function_get(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     Ok(i.get_prop(id, prop))
 }
 fn f_function_put(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
-    // GNU's FUNCTION arg is resolved through `indirect-function':
-    // function objects (subrs, lambdas, closures) are accepted as-is
-    // and the call returns VALUE without storing anywhere; only a
-    // bare non-function atom signals the symbol-with-pos predicate.
+    // FUNCTION is a symbol, not an arbitrary function object.  The
+    // symbol-with-pos predicate is accepted alongside symbolp by GNU.
     let id = match i.sym_id(&args[0]) {
-        Some(s) => s,
-        None => match &args[0] {
-            Value::Subr(_) | Value::Lambda(_) => {
-                return Ok(args[2].clone());
-            }
-            // A (lambda ...) / (closure ...) form is a function too.
-            Value::Cons(c) => {
-                let head = c
-                    .try_borrow()
-                    .map(|cell| cell.car.clone())
-                    .map_err(|_| i.error("Cannot inspect a mutably borrowed function form"))?;
-                let closure = i.q_soft("closure");
-                match i.sym_id(&head) {
-                    Some(s) if s == sym::LAMBDA || Some(s) == closure => {
-                        return Ok(args[2].clone());
-                    }
-                    _ => {
-                        let swp = i.q("symbol-with-pos-p");
-                        let symbolp = i.q("symbolp");
-                        return Err(i.signal_data(
-                            sym::WRONG_TYPE_ARGUMENT,
-                            vec![
-                                Value::list(vec![Value::Sym(symbolp), Value::Sym(swp)]),
-                                args[0].clone(),
-                            ],
-                        ));
-                    }
-                }
-            }
-            _ => {
-                let swp = i.q("symbol-with-pos-p");
-                let symbolp = i.q("symbolp");
-                return Err(i.signal_data(
-                    sym::WRONG_TYPE_ARGUMENT,
-                    vec![
-                        Value::list(vec![Value::Sym(symbolp), Value::Sym(swp)]),
-                        args[0].clone(),
-                    ],
-                ));
-            }
-        },
+        Some(id) => id,
+        None => {
+            let swp = i.q("symbol-with-pos-p");
+            let symbolp = i.q("symbolp");
+            return Err(i.signal_data(
+                sym::WRONG_TYPE_ARGUMENT,
+                vec![
+                    Value::list(vec![Value::Sym(symbolp), Value::Sym(swp)]),
+                    args[0].clone(),
+                ],
+            ));
+        }
     };
     // PROP is any symbol-or-atom per GNU's get/put lookup semantics.
     match i.sym_id(&args[1]) {

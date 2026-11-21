@@ -1084,6 +1084,71 @@ fn macroexpand_list_to_vec(i: &mut Interp, list: &Value) -> Result<Option<Vec<Va
     }
 }
 
+/// Expand a general call form while walking its live cons spine.  Reading
+/// each car immediately before expansion lets an earlier macro expander's
+/// edits to later cells affect the result.  If every car is unchanged, keep
+/// the original cons cells instead of rebuilding an equal list.
+fn macroexpand_live_form_spine(
+    i: &mut Interp,
+    form: &Value,
+    compiler_macro: Option<Value>,
+) -> EvalResult {
+    let mut cursor = form.clone();
+    let mut cars = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut unchanged = true;
+    let mut first = true;
+    let mut until_quit = 4096usize;
+    let tail = loop {
+        match cursor {
+            Value::Nil => break Value::Nil,
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    // Keep existing circular-list behavior.  The old helper
+                    // left circular input untouched rather than diagnosing it.
+                    return Ok(form.clone());
+                }
+                let original = crate::lisp::eval::cons_parts(i, &cell)?.0;
+                let expanded = if first {
+                    first = false;
+                    original.clone()
+                } else {
+                    macroexpand_all_recur(i, &original)?
+                };
+                if !crate::lisp::builtins::eq_values_with_interp(i, &original, &expanded) {
+                    unchanged = false;
+                }
+                cars.push(expanded);
+                // Fetch cdr after expanding this car.  A macro expander may
+                // have changed this cell or a later part of the spine.
+                cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
+                until_quit -= 1;
+                if until_quit == 0 {
+                    i.maybe_quit()?;
+                    until_quit = 4096;
+                }
+            }
+            other => break other,
+        }
+    };
+    let result = if unchanged {
+        form.clone()
+    } else {
+        cars.into_iter()
+            .rev()
+            .fold(tail, |tail, car| Value::cons(car, tail))
+    };
+    if let Some(handler) = &compiler_macro {
+        if super::equal_values(i, form, &result)? {
+            return Ok(form.clone());
+        }
+        if let Some(expanded) = expand_compiler_macro(i, handler, &result)? {
+            return macroexpand_all_recur(i, &expanded);
+        }
+    }
+    Ok(result)
+}
+
 /// Look up SYM_ID in ENV's `(:cl-symbol-macros . BINDINGS)' entry.
 /// BINDINGS are `(SYM EXP)' pairs (GNU `cl-symbol-macrolet'), where
 /// `cl--sm-macroexpand-1' alpha-renaming also pushes `(VAR . NVAR)'
@@ -1382,7 +1447,10 @@ fn macroexpand_all_expanded(
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
             let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
-                return Ok(expanded);
+                if i.sym_id(&car).is_none() {
+                    return Ok(expanded);
+                }
+                return macroexpand_live_form_spine(i, &expanded, compiler_macro);
             };
             let _ = cdr;
             // Special forms whose non-code positions must not be
@@ -1952,24 +2020,10 @@ fn macroexpand_all_expanded(
                 // arguments included — passes through unexpanded.
                 return Ok(expanded);
             }
-            let mut out = Vec::with_capacity(items.len());
             // The head position is a function/macro name, not a variable:
             // symbol macros never substitute it (GNU `cl--sm-subst'
             // parity — a bound `car' in `(car x)' stays `car').
-            out.push(items[0].clone());
-            for it in &items[1..] {
-                out.push(macroexpand_all_recur(i, it)?);
-            }
-            let result = Value::list(out);
-            if let Some(handler) = &compiler_macro {
-                if super::equal_values(i, &expanded, &result)? {
-                    return Ok(expanded);
-                }
-                if let Some(newf) = expand_compiler_macro(i, handler, &result)? {
-                    return macroexpand_all_recur(i, &newf);
-                }
-            }
-            Ok(result)
+            macroexpand_live_form_spine(i, &expanded, compiler_macro)
         }
         _ => Ok(expanded),
     }
@@ -2086,13 +2140,21 @@ pub(crate) fn f_throw(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // Emacs: Fthrow scans the catch chain; with no matching catch it
     // signals `no-catch' at the throw site (so condition-case can catch
     // it, but an outer matching catch would have won instead).
-    if !args[0].is_nil()
-        && i.catch_tags
+    let target = if args[0].is_nil() {
+        None
+    } else {
+        i.catch_tags
             .iter()
-            .any(|t| crate::lisp::eq_values(t, &args[0]))
-    {
+            .rev()
+            .find(|tag| crate::lisp::builtins::eq_values_with_interp(i, tag, &args[0]))
+            .cloned()
+    };
+    if let Some(target) = target {
         i.begin_quit_unwind();
-        Err(Flow::Throw(args[0].clone(), args[1].clone()))
+        // Carry the exact matching tag through unwind.  Re-comparing a
+        // positioned symbol after its dynamic comparison mode was restored
+        // can select a different catch frame.
+        Err(Flow::Throw(target, args[1].clone()))
     } else {
         let nc = i.q("no-catch");
         Err(i.signal_data(nc, vec![args[0].clone(), args[1].clone()]))
@@ -2270,7 +2332,7 @@ fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // the never-loaded file would have defined).
     let prov_mark = i.q("remacs--provided");
     i.put_prop(id, prov_mark, Value::t());
-    let feat_v = i.sym(id);
+    let feat_v = args[0].clone();
     if !already_present {
         let fid = i.q("features");
         let cur = i.symbol_value(fid);
@@ -2294,8 +2356,8 @@ fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // when a file load is in progress.
     let alist_sym = i.q("after-load-alist");
     let alist = i.symbol_value(alist_sym);
-    let entries = match alist.list_to_vec() {
-        Ok(entries) => entries,
+    match alist.list_to_vec() {
+        Ok(_) => {}
         Err(crate::lisp::value::ListError::Circular(tail)) => {
             return Err(i.signal_data(sym::CIRCULAR_LIST, vec![tail]));
         }
@@ -2312,17 +2374,35 @@ fn f_provide(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
         .find(|subr| subr.name == "funcall")
         .map(|subr| Value::Subr(subr))
         .ok_or_else(|| i.error("funcall subr not registered"))?;
-    for entry in entries {
-        let Value::Cons(cell) = entry else {
-            continue;
+    // Walk the live alist spine.  A callback may remove or replace later
+    // entries by changing the current cons's cdr; fetching that cdr only
+    // after the callback makes those edits visible to the traversal.
+    let mut cursor = alist;
+    let mut seen = FxHashSet::default();
+    loop {
+        let Value::Cons(cell) = cursor else {
+            if cursor.is_nil() {
+                break;
+            }
+            return Err(i.wrong_type_mut("listp", &cursor));
         };
-        let (key, forms) = cell
-            .try_borrow()
-            .map(|entry| (entry.car.clone(), entry.cdr.clone()))
-            .map_err(|_| i.error("Cannot inspect a mutably borrowed after-load entry"))?;
-        if super::eq_values_with_interp(i, &key, &feat_v) {
-            crate::lisp::builtins::seq::f_mapc(i, vec![funcall.clone(), forms].into())?;
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            return Err(i.signal_data(
+                sym::CIRCULAR_LIST,
+                vec![Value::Cons(cell)],
+            ));
         }
+        let (entry, _) = crate::lisp::eval::cons_parts(i, &cell)?;
+        if let Value::Cons(entry_cell) = entry {
+            let (key, forms) = entry_cell
+                .try_borrow()
+                .map(|entry| (entry.car.clone(), entry.cdr.clone()))
+                .map_err(|_| i.error("Cannot inspect a mutably borrowed after-load entry"))?;
+            if super::eq_values_with_interp(i, &key, &feat_v) {
+                crate::lisp::builtins::seq::f_mapc(i, vec![funcall.clone(), forms].into())?;
+            }
+        }
+        cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
     }
     Ok(args[0].clone())
 }
@@ -2336,7 +2416,7 @@ fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // loaded file lands in load-history even though seq is dumped.
     let require_id = i.q("require");
     let cll = i.q("current-load-list");
-    let tem = Value::cons(i.sym(require_id), i.sym(id));
+    let tem = Value::cons(i.sym(require_id), args[0].clone());
     let cll_val = i.symbol_value(cll);
     let lip = i.q("load-in-progress");
     let from_file = i.symbol_value(lip).truthy()

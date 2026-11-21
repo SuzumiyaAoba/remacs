@@ -864,7 +864,7 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
                     .sym_id(&sym_v)
                     .ok_or_else(|| i.wrong_type_mut("symbolp", &sym_v))?;
                 if default {
-                    i.set_symbol_default(sid, last.clone())?;
+                    i.set_symbol_default_as(sid, last.clone(), &sym_v)?;
                 } else {
                     // GNU `set_internal': the lexical env is consulted
                     // via `Fassq' unconditionally — declared_special is
@@ -876,7 +876,7 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
                     let done = crate::lisp::eval::lexenv_set(&i.lexenv, sid, last.clone())
                         .map_err(|e| e.into_flow(i))?;
                     if !done {
-                        i.set_symbol(sid, last.clone())?;
+                        i.set_symbol_as(sid, last.clone(), &sym_v)?;
                     }
                 }
                 cur = next2;
@@ -896,6 +896,32 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
 
 fn sf_setq(i: &mut Interp, args: Value) -> EvalResult {
     setq_pairs(i, &args, false, sym::SETQ)
+}
+
+/// GNU refuses to turn a variable into a dynamic/special variable while its
+/// current lexical environment already contains a lexical binding for it.
+/// This check is shared by defvar, defconst and Custom's declaration helper.
+pub(crate) fn check_dynamic_variable_declaration(
+    i: &mut Interp,
+    id: SymId,
+    reported_symbol: &Value,
+) -> Result<(), Flow> {
+    if i.obarray.symbol(id).special || i.lexenv.is_none() {
+        return Ok(());
+    }
+    let already_lexical = crate::lisp::eval::lexenv_lookup_checked(&i.lexenv, id)
+        .map_err(|error| error.into_flow(i))?
+        .is_some();
+    if already_lexical {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![
+                Value::string("Defining as dynamic an already lexical var"),
+                reported_symbol.clone(),
+            ],
+        ));
+    }
+    Ok(())
 }
 
 fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
@@ -919,10 +945,11 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
         // the DEFAULT binding is currently void (Fdefvar_1 consults
         // `default_bound_p', not `boundp' — a buffer-local binding in
         // the current buffer must not suppress it).
+        check_dynamic_variable_declaration(i, sid, &name_v)?;
         i.obarray.symbol_mut(sid).special = true;
         if matches!(i.obarray.symbol(sid).value, Value::Sym(s) if s == sym::UNBOUND) {
             let v = eval_at_argument(i, &init, &args, 1)?;
-            i.set_symbol_default(sid, v)?;
+            i.set_symbol_default_as(sid, v, &name_v)?;
         }
     } else if i.lexenv.is_some() {
         // Bare `(defvar SYM)' in a lexical context is a scoped special
@@ -970,9 +997,10 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     // `risky-local-variable t'.  Constancy is NOT enforced at runtime
     // ("not actually enforced by Emacs Lisp") — only nil, t and
     // keywords are NOWRITE; defconst must never set `constant'.
+    check_dynamic_variable_declaration(i, sid, &name_v)?;
     i.obarray.symbol_mut(sid).special = true;
     let v = eval_argument(i, &args, 1)?;
-    i.set_symbol_default(sid, v)?;
+    i.set_symbol_default_as(sid, v, &name_v)?;
     let doc = nth_arg(i, &args, 2)?;
     if let Value::Str(s) = doc {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
@@ -1087,7 +1115,7 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
-    i.fset_defalias(sid, function)?;
+    i.fset_defalias_as(sid, function, &name_v)?;
     // GNU `defun' reaches `defalias' (eval.c), which
     // LOADHIST_ATTACHes `(defun . SYM)'.
     let defun_id = i.q("defun");
@@ -1139,7 +1167,7 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
-    i.fset_defalias(sid, function)?;
+    i.fset_defalias_as(sid, function, &name_v)?;
     // GNU `defmacro' reaches `defalias' the same way.
     let defun_id = i.q("defun");
     crate::lisp::builtins::evalfn::loadhist_attach(i, Value::cons(i.sym(defun_id), name_v.clone()));
@@ -1380,9 +1408,15 @@ fn bind_handler_var(
 fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
     let var_v = car(i, &args)?;
     // GNU Fcondition_case: VAR must be nil or a symbol.
-    if var_v.truthy() && i.sym_id(&var_v).is_none() {
+    let var_id = i.sym_id(&var_v);
+    if var_v.truthy() && var_id.is_none() {
         return Err(i.wrong_type_mut("symbolp", &var_v));
     }
+    // Capture the symbol identity before BODY runs.  The positioned-symbol
+    // mode may change dynamically during the body, but GNU keeps VAR's
+    // decoded symbol for the success/error handler binding.  Nil, including
+    // a positioned view of nil, means there is no handler variable.
+    let handler_var = var_id.filter(|id| *id != sym::NIL);
     let bodyform = cadr(i, &args)?;
     let handlers = cdr(i, &cdr(i, &args)?)?;
     // GNU internal_lisp_condition_case validates every handler spec
@@ -1483,7 +1517,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             Some(f) => std::mem::replace(&mut i.lexenv, Some(f.clone())),
                             None => None,
                         };
-                        if let Some(vid) = i.sym_id(&var_v).filter(|_| !var_v.is_nil()) {
+                        if let Some(vid) = handler_var {
                             if let Err(e) = bind_handler_var(i, lex_frame.as_ref(), vid, v.clone())
                             {
                                 if lex_frame.is_some() {
@@ -1541,7 +1575,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 None => None,
                             };
                             // GNU binds VAR only when it is non-nil.
-                            if let Some(vid) = i.sym_id(&var_v).filter(|_| !var_v.is_nil()) {
+                            if let Some(vid) = handler_var {
                                 if let Err(e) =
                                     bind_handler_var(i, lex_frame.as_ref(), vid, err_val)
                                 {

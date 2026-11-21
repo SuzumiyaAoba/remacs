@@ -466,10 +466,18 @@ impl<'a> Reader<'a> {
                 let tail = self.read_object()?;
                 if self.skip_layout()? || self.peek()? != Some(close) {
                     // Emacs: (invalid-read-syntax "expected )")
+                    // Function streams observe the character read to
+                    // diagnose the malformed dotted pair. Return that
+                    // lookahead before signalling, as GNU's reader does.
+                    self.unread_from(self.pos)?;
                     return Err(read_err(self.interp, "expected )"));
                 }
                 // A `. nil' tail is just a proper list end.
                 let tail = if tail.is_nil() { Value::Nil } else { tail };
+                // GNU's functional reader returns the closing delimiter
+                // once for the dotted-tail lookahead and again when the
+                // enclosing list consumes it.
+                self.unread_from(self.pos)?;
                 self.pos += 1;
                 let mut result = tail;
                 for item in items.into_iter().rev() {

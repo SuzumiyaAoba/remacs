@@ -387,7 +387,7 @@ impl Interp {
             }
         }
         match form {
-            Value::Nil => self.eval_symbol(sym::NIL),
+            Value::Nil => self.eval_symbol(sym::NIL, Value::Nil),
             Value::Int(_)
             | Value::BigInt(_)
             | Value::Float(_)
@@ -405,12 +405,12 @@ impl Interp {
             | Value::Mutex(_)
             | Value::CondVar(_)
             | Value::Finalizer(_) => Ok(form.clone()),
-            Value::Sym(id) => self.eval_symbol(*id),
+            Value::Sym(id) => self.eval_symbol(*id, Value::Sym(*id)),
             Value::Record(_) => {
                 // `symbols-with-pos-enabled' objects evaluate like
                 // their bare symbol (GNU: they are real symbols).
                 match crate::lisp::builtins::misc::active_sympos_parts(self, form) {
-                    Some((s, _)) => self.eval_symbol(s),
+                    Some((s, _)) => self.eval_symbol(s, form.clone()),
                     None => Ok(form.clone()),
                 }
             }
@@ -418,7 +418,7 @@ impl Interp {
         }
     }
 
-    fn eval_symbol(&mut self, id: SymId) -> EvalResult {
+    fn eval_symbol(&mut self, id: SymId, reported_symbol: Value) -> EvalResult {
         // Lexical lookup first — GNU `eval_sub' does `Fassq (form,
         // internal-interpreter-environment)' unconditionally ("we do not
         // pay attention to the declared_special flag here"): a closure
@@ -450,7 +450,7 @@ impl Interp {
                         eprintln!("   bt {} nargs={}", self.prin1_to_string(f), a.len());
                     }
                 }
-                return Err(self.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(id)]));
+                return Err(self.signal_data(sym::VOID_VARIABLE, vec![reported_symbol]));
             }
         }
         Ok(v)
@@ -462,8 +462,12 @@ impl Interp {
             unreachable!()
         };
         let (head, args) = cons_parts(self, cell)?;
-        let head = crate::lisp::builtins::misc::unpos(self, &head);
-        self.with_pending_frame(head, args, |i, frame| {
+        let displayed_head = if self.sym_id(&head).is_some() {
+            head.clone()
+        } else {
+            crate::lisp::builtins::misc::unpos(self, &head)
+        };
+        self.with_pending_frame(displayed_head, args, |i, frame| {
             let result = i.eval_form_inner(form, frame);
             i.offer_flow(result)
         })
@@ -496,10 +500,14 @@ impl Interp {
                 return self.eval_at_compiled_site(&expansion, (site_key as u128) << 1);
             }
         }
-        let (head, args) = cons_parts(self, cons)?;
+        let (head_value, args) = cons_parts(self, cons)?;
         // `symbols-with-pos-enabled' symbols in operator position are
         // real symbols (GNU parity): dispatch on the bare symbol.
-        let head = crate::lisp::builtins::misc::unpos(self, &head);
+        let sym_name = self.sym_id(&head_value).map(|_| head_value.clone());
+        let head = match self.sym_id(&head_value) {
+            Some(id) => Value::Sym(id),
+            None => crate::lisp::builtins::misc::unpos(self, &head_value),
+        };
         // Count the argument spine before dispatch. GNU checks an immediate
         // non-list tail before operator lookup, but after one or more
         // argument cells it resolves the operator first: void/invalid
@@ -543,7 +551,7 @@ impl Interp {
                         &args,
                         spine_len,
                         dotted_tail.clone(),
-                        Value::Sym(id),
+                        sym_name.clone().unwrap_or_else(|| self.sym(id)),
                     );
                 }
                 // A dedicated byte-op does not consult the function cell.
@@ -554,7 +562,7 @@ impl Interp {
                         return self.call_function_len(
                             &Value::Subr(s),
                             &args,
-                            Some(id),
+                            Some(sym_name.clone().unwrap_or_else(|| self.sym(id))),
                             spine_len,
                             dotted_tail.clone(),
                             frame,
@@ -578,7 +586,10 @@ impl Interp {
                                     .collect::<crate::lisp::text::EmacsText>()
                             );
                         }
-                        return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
+                        return Err(self.signal_data(
+                            sym::VOID_FUNCTION,
+                            vec![sym_name.clone().unwrap_or_else(|| self.sym(id))],
+                        ));
                     }
                 }
                 // Macro call: GNU's evaluator re-expands interpreted
@@ -680,7 +691,15 @@ impl Interp {
                     }
                     return self.eval_at_compiled_site(&expansion, (site_key as u128) << 1);
                 }
-                self.call_function_len(&fun, &args, Some(id), spine_len, dotted_tail, frame, true)
+                self.call_function_len(
+                    &fun,
+                    &args,
+                    Some(sym_name.clone().unwrap_or_else(|| self.sym(id))),
+                    spine_len,
+                    dotted_tail,
+                    frame,
+                    true,
+                )
             }
             Value::Cons(_) => {
                 // `((lambda (x) ...) a b)` — function position lambda is
@@ -693,13 +712,18 @@ impl Interp {
                     if let Some(tail) = &dotted_tail {
                         return Err(self.wrong_type_mut("listp", tail));
                     }
-                    // GNU `eval_sub': `((lambda ...) ARGS)' calls
-                    // `funcall_lambda' on the RAW form — dynamic
-                    // binding, no closure conversion, `invalid-
-                    // function'/`wna' data is the form itself.
+                    // Direct lambda calls capture the active interpreted
+                    // lexical environment, like evaluating the lambda and
+                    // then calling the resulting closure.  Keep the source
+                    // form as the displayed callee for its error data.
+                    let lambda_tail = cons_cdr(self, match &head {
+                        Value::Cons(cell) => cell,
+                        _ => unreachable!(),
+                    })?;
+                    let function = self.function_from_lambda(&lambda_tail)?;
                     let argv = self.eval_args_len(&args, spine_len)?;
                     self.finish_pending_frame(frame);
-                    return self.apply_resolved(&head, argv, head.clone());
+                    return self.apply_resolved(&function, argv, head.clone());
                 }
                 // GNU uses the cons HEAD itself as the function object:
                 // `(lambda ...)'/`(closure ...)'/`(macro . f)' are
@@ -775,7 +799,12 @@ impl Interp {
         args: &Value,
         sym_name: Option<SymId>,
     ) -> EvalResult {
-        let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+        let sym_name = self
+            .sym_id(fun)
+            .map(|_| fun.clone())
+            .or_else(|| sym_name.map(|id| self.sym(id)));
+        let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
+        let autoload_origin = self.sym_id(fun).is_some();
         self.with_pending_frame(shown, args.clone(), |i, frame| {
             let result = match argument_spine_shape(i, args) {
                 Ok((spine_len, dotted_tail)) => {
@@ -791,7 +820,7 @@ impl Interp {
                             spine_len,
                             dotted_tail,
                             frame,
-                            i.sym_id(fun).is_some(),
+                            autoload_origin,
                         )
                     }
                 }
@@ -807,13 +836,16 @@ impl Interp {
         &mut self,
         fun: &Value,
         args: &Value,
-        sym_name: Option<SymId>,
+        sym_name: Option<Value>,
         spine_len: i128,
         dotted_tail: Option<Value>,
         frame: usize,
         autoload_origin: bool,
     ) -> EvalResult {
-        let fun = crate::lisp::builtins::misc::unpos(self, fun);
+        let fun = match self.sym_id(fun) {
+            Some(id) => Value::Sym(id),
+            None => crate::lisp::builtins::misc::unpos(self, fun),
+        };
         match &fun {
             Value::Sym(id) => {
                 // Function alias chain: chase.  GNU's
@@ -832,7 +864,7 @@ impl Interp {
                         && matches!(&f, Value::Sym(next) if *next == sym::UNBOUND)
                         && super::special::special_form(cur).is_some()
                     {
-                        let shown = sym_name.map(Value::Sym).unwrap_or(Value::Sym(*id));
+                        let shown = sym_name.clone().unwrap_or_else(|| self.sym(*id));
                         return self.dispatch_special_form(
                             cur,
                             args,
@@ -844,7 +876,7 @@ impl Interp {
                     match f {
                         Value::Sym(next) => {
                             if next == sym::UNBOUND {
-                                let shown = sym_name.map(Value::Sym).unwrap_or(Value::Sym(*id));
+                                let shown = sym_name.clone().unwrap_or_else(|| self.sym(*id));
                                 return Err(self.signal_data(sym::VOID_FUNCTION, vec![shown]));
                             }
                             if seen.is_none() {
@@ -870,7 +902,7 @@ impl Interp {
                             // implementation table is not special after
                             // its cell is rebound to a lambda or macro.
                             if let Some(special_id) = self.special_form_for_cell(cur, &other) {
-                                let shown = sym_name.map(Value::Sym).unwrap_or(Value::Sym(*id));
+                                let shown = sym_name.clone().unwrap_or_else(|| self.sym(*id));
                                 return self.dispatch_special_form(
                                     special_id,
                                     args,
@@ -900,7 +932,7 @@ impl Interp {
                         .q_soft(s.name)
                         .filter(|id| super::special::special_form(*id).is_some());
                     if let Some(special_id) = special_id {
-                        let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                        let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                         return self.dispatch_special_form(
                             special_id,
                             args,
@@ -924,13 +956,13 @@ impl Interp {
                     } else {
                         self.raw_list_length(args)?
                     };
-                    self.check_arity_subr_n(s, n, sym_name)?;
+                    self.check_arity_subr_n(s, n, sym_name.as_ref())?;
                     let argv = self.eval_args_len(args, spine_len)?;
                     self.finish_pending_frame(frame);
                     // Record the frame like apply_resolved does — GNU's
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
-                    let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                     self.profiler_checkpoint();
                     self.lisp_stack.push((shown, argv.clone()));
                     let r = (s.func)(self, argv);
@@ -959,7 +991,7 @@ impl Interp {
                     } else {
                         self.raw_list_length(args)?
                     };
-                    let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                     self.check_arity_lambda_n(l, n, &shown)?;
                 }
                 // Dumped `#[ARGDESC ...]' twins (compiled, no parsed
@@ -978,7 +1010,7 @@ impl Interp {
                             } else {
                                 self.raw_list_length(args)?
                             };
-                            let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                            let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                             super::bytecode::check_argdesc(
                                 self,
                                 &items,
@@ -990,7 +1022,7 @@ impl Interp {
                 }
                 let argv = self.eval_args_len(args, spine_len)?;
                 self.finish_pending_frame(frame);
-                let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                 self.apply_resolved(&fun, argv, shown)
             }
             Value::Cons(_) => {
@@ -1018,7 +1050,7 @@ impl Interp {
                     // `invalid-function' on the cons.
                     let argv = self.eval_args_len(args, spine_len)?;
                     self.finish_pending_frame(frame);
-                    let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                     return self.apply_resolved(&fun, argv, shown);
                 }
                 let auto_id = self.q("autoload");
@@ -1052,21 +1084,24 @@ impl Interp {
                     eprintln!(
                         "[invfun {} head={:?} callform={}]",
                         self.princ_to_string(&fun),
-                        sym_name.map(|s| self.symbol_name(s)),
+                        sym_name
+                            .as_ref()
+                            .and_then(|name| self.sym_id(name))
+                            .map(|id| self.symbol_name(id)),
                         self.princ_to_string(&self.cur_head_form)
                             .chars()
                             .take(200)
                             .collect::<crate::lisp::text::EmacsText>(),
                     );
                 }
-                let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![shown]))
             }
             Value::Nil => {
                 // A nil function object is a void function in GNU's
                 // evaluator.  Preserve the called symbol for a named form;
                 // a computed nil operator reports nil itself.
-                let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                 Err(self.signal_data(sym::VOID_FUNCTION, vec![shown]))
             }
             _ => {
@@ -1074,14 +1109,17 @@ impl Interp {
                     eprintln!(
                         "[invfun_ {} head={:?} callform={}]",
                         self.princ_to_string(&fun),
-                        sym_name.map(|s| self.symbol_name(s)),
+                        sym_name
+                            .as_ref()
+                            .and_then(|name| self.sym_id(name))
+                            .map(|id| self.symbol_name(id)),
                         self.princ_to_string(&self.cur_head_form)
                             .chars()
                             .take(200)
                             .collect::<crate::lisp::text::EmacsText>(),
                     );
                 }
-                let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![shown]))
             }
         }
@@ -1159,18 +1197,19 @@ impl Interp {
         argv: &[Value],
         name: Option<SymId>,
     ) -> Result<(), Flow> {
-        self.check_arity_subr_n(s, argv.len() as i128, name)
+        let name = name.map(|id| self.sym(id));
+        self.check_arity_subr_n(s, argv.len() as i128, name.as_ref())
     }
 
     fn check_arity_subr_n(
         &self,
         s: &'static super::value::Subr,
         n: i128,
-        name: Option<SymId>,
+        name: Option<&Value>,
     ) -> Result<(), Flow> {
         // Emacs reports the calling symbol for eval'd calls, the subr
         // object itself for `funcall'/`apply'.
-        let who = name.map_or(Value::Subr(s), Value::Sym);
+        let who = name.cloned().unwrap_or(Value::Subr(s));
         let (min, max) = match s.arity {
             Arity::Range { min, max } => (min as i128, max as i128),
             Arity::Many { min } => {
@@ -1276,8 +1315,12 @@ impl Interp {
                 }
             }
         }
-        let fun = crate::lisp::builtins::misc::unpos(self, fun);
-        let shown = origin.unwrap_or_else(|| fun.clone());
+        let shown = origin.or_else(|| self.sym_id(fun).map(|_| fun.clone()));
+        let fun = match self.sym_id(fun) {
+            Some(id) => Value::Sym(id),
+            None => crate::lisp::builtins::misc::unpos(self, fun),
+        };
+        let shown = shown.unwrap_or_else(|| fun.clone());
         match &fun {
             Value::Sym(id) => {
                 // Most calls resolve in one hop — the cycle-detection set
