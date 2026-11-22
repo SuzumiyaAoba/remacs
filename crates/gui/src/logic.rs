@@ -142,6 +142,7 @@ pub(super) enum GuiEvent {
     OpenFiles(Vec<(String, Option<usize>)>),
     Resize(usize, usize),
     Geometry(GuiGeometry),
+    MouseMovePending(Arc<Mutex<CoalescedMouseMove>>),
     MouseMove {
         frame_id: Option<usize>,
         text_window_id: Option<usize>,
@@ -187,6 +188,33 @@ pub(super) enum GuiEvent {
     },
 }
 
+#[derive(Default)]
+struct CoalescedMouseMove {
+    pending: bool,
+    latest: Option<MouseMoveData>,
+}
+
+struct MouseMoveData {
+    frame_id: Option<usize>,
+    text_window_id: Option<usize>,
+    position: Option<MousePosition>,
+    absolute_position: Option<(i128, i128)>,
+    modifiers: i128,
+}
+
+impl CoalescedMouseMove {
+    fn take_event(&mut self) -> Option<GuiEvent> {
+        self.pending = false;
+        self.latest.take().map(|mouse| GuiEvent::MouseMove {
+            frame_id: mouse.frame_id,
+            text_window_id: mouse.text_window_id,
+            position: mouse.position,
+            absolute_position: mouse.absolute_position,
+            modifiers: mouse.modifiers,
+        })
+    }
+}
+
 fn discardable_gui_input(event: &GuiEvent) -> bool {
     match event {
         GuiEvent::ForFrame { event, .. } => discardable_gui_input(event),
@@ -203,6 +231,7 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
         | GuiEvent::ReplaceText { .. }
         | GuiEvent::Drop { .. }
         | GuiEvent::OpenFiles(_)
+        | GuiEvent::MouseMovePending(_)
         | GuiEvent::MouseMove { .. }
         | GuiEvent::MouseDragMove { .. }
         | GuiEvent::MouseDown { .. }
@@ -224,12 +253,22 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
     }
 }
 
+fn discard_mouse_move_batch(event: &GuiEvent) {
+    if let GuiEvent::MouseMovePending(batch) = event
+        && let Ok(mut batch) = batch.lock()
+    {
+        batch.pending = false;
+        batch.latest = None;
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct FrameEventSender {
     sender: Sender<GuiEvent>,
     frame_id: Rc<std::cell::Cell<Option<usize>>>,
     pending_delete_request: Rc<Cell<bool>>,
     quit_request: Option<Arc<QuitRequest>>,
+    mouse_move_batch: Rc<RefCell<Option<Arc<Mutex<CoalescedMouseMove>>>>>,
 }
 
 impl FrameEventSender {
@@ -243,7 +282,12 @@ impl FrameEventSender {
             frame_id: Rc::new(std::cell::Cell::new(frame_id)),
             pending_delete_request: Rc::new(Cell::new(false)),
             quit_request,
+            mouse_move_batch: Rc::new(RefCell::new(None)),
         }
+    }
+
+    fn close_mouse_move_batch(&self) {
+        self.mouse_move_batch.borrow_mut().take();
     }
 
     pub(super) fn set_frame_id(&self, frame_id: usize) {
@@ -262,6 +306,7 @@ impl FrameEventSender {
         frame_id: usize,
         visibility: FrameVisibility,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.close_mouse_move_batch();
         self.sender.send(GuiEvent::FrameVisibility {
             frame_id,
             visibility,
@@ -272,6 +317,7 @@ impl FrameEventSender {
         &self,
         frame_id: usize,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.close_mouse_move_batch();
         self.sender.send(GuiEvent::FrameDeleteRequest { frame_id })
     }
 
@@ -289,10 +335,12 @@ impl FrameEventSender {
         frame_id: usize,
         focused: bool,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.close_mouse_move_batch();
         self.sender.send(GuiEvent::FrameFocus { frame_id, focused })
     }
 
     pub(super) fn send(&self, event: GuiEvent) -> Result<(), mpsc::SendError<GuiEvent>> {
+        self.close_mouse_move_batch();
         if matches!(&event, GuiEvent::Key(7))
             && let Some(quit_request) = &self.quit_request
         {
@@ -323,13 +371,32 @@ impl FrameEventSender {
         text_window_id: Option<usize>,
         modifiers: i128,
     ) -> Result<(), mpsc::SendError<GuiEvent>> {
-        self.sender.send(GuiEvent::MouseMove {
-            frame_id: self.frame_id.get(),
-            text_window_id,
-            position,
-            absolute_position,
-            modifiers,
-        })
+        let mut notify = false;
+        let batch = {
+            let mut current = self.mouse_move_batch.borrow_mut();
+            let batch = current
+                .get_or_insert_with(|| Arc::new(Mutex::new(CoalescedMouseMove::default())))
+                .clone();
+            let mut batch_state = batch.lock().unwrap();
+            batch_state.latest = Some(MouseMoveData {
+                frame_id: self.frame_id.get(),
+                text_window_id,
+                position,
+                absolute_position,
+                modifiers,
+            });
+            if !batch_state.pending {
+                batch_state.pending = true;
+                notify = true;
+            }
+            drop(batch_state);
+            batch
+        };
+        if notify {
+            self.sender.send(GuiEvent::MouseMovePending(batch))
+        } else {
+            Ok(())
+        }
     }
 
     pub(super) fn send_mouse_drag_move(
@@ -2697,16 +2764,34 @@ impl ChanIo {
     }
 
     fn receive_event(&mut self, dur: Duration) -> io::Result<Option<GuiEvent>> {
-        if let Some(event) = self.pending_events.pop_front() {
-            return Ok(Some(self.unwrap_frame_event(event)));
-        }
-        match self.events.recv_timeout(dur) {
-            Ok(event) => Ok(Some(self.unwrap_frame_event(event))),
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "gui window closed",
-            )),
+        let started = Instant::now();
+        loop {
+            let event = if let Some(event) = self.pending_events.pop_front() {
+                event
+            } else {
+                let remaining = dur.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Ok(None);
+                }
+                match self.events.recv_timeout(remaining) {
+                    Ok(event) => event,
+                    Err(mpsc::RecvTimeoutError::Timeout) => return Ok(None),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "gui window closed",
+                        ));
+                    }
+                }
+            };
+            match event {
+                GuiEvent::MouseMovePending(batch) => {
+                    if let Ok(Some(event)) = batch.lock().map(|mut batch| batch.take_event()) {
+                        return Ok(Some(self.unwrap_frame_event(event)));
+                    }
+                }
+                event => return Ok(Some(self.unwrap_frame_event(event))),
+            }
         }
     }
 
@@ -3035,12 +3120,14 @@ impl KeyIo for ChanIo {
         while let Some(event) = self.pending_events.pop_front() {
             if !discardable_gui_input(&event) {
                 retained.push_back(event);
+            } else {
+                discard_mouse_move_batch(&event);
             }
         }
         loop {
             match self.events.try_recv() {
                 Ok(event) if !discardable_gui_input(&event) => retained.push_back(event),
-                Ok(_) => {}
+                Ok(event) => discard_mouse_move_batch(&event),
                 Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
             }
         }
@@ -3197,6 +3284,9 @@ impl KeyIo for ChanIo {
                 } else {
                     Ok(None)
                 }
+            }
+            GuiEvent::MouseMovePending(_) => {
+                unreachable!("coalesced mouse moves are expanded by receive_event")
             }
             GuiEvent::MouseMove {
                 frame_id,
@@ -3497,6 +3587,9 @@ impl KeyIo for ChanIo {
                         Some((frame_id, geometry.frame_left, geometry.frame_top));
                 }
                 Ok(None)
+            }
+            GuiEvent::MouseMovePending(_) => {
+                unreachable!("coalesced mouse moves are expanded by receive_event")
             }
             GuiEvent::MouseMove {
                 frame_id,
