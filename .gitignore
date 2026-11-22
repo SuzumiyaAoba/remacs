@@ -9,6 +9,18 @@ remacs-*.profraw
 *~
 \#*\#
 .DS_Store
+
+# Python bytecode and cache directories
+__pycache__/
+*.py[cod]
+
+# Local verification helper
+/tools/.remacs_watch_tmp.py
+
+# Build artifacts and standalone lockfile for the vendored GPUI crate
+/vendor/gpui/target/
+/vendor/gpui/Cargo.lock
+
 tests/diff/sandbox/
 tests/diff/*.out
 tests/diff/*.err
