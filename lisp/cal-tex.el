@@ -1626,8 +1626,7 @@ informative header, and run HOOK."
         (when (search-forward "documentclass" nil t)
           (forward-line 1)
           ;; E.g., for some Bahá’í holidays.
-          ;; FIXME latin1 might not always be right.
-          (insert "\\usepackage[latin1]{inputenc}\n"))))
+          (insert "\\usepackage[utf8]{inputenc}\n"))))
   (latex-mode)
   (pop-to-buffer (current-buffer))
   (goto-char (point-min))
