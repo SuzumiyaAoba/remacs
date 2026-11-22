@@ -219,6 +219,15 @@ in the mode line.  See the variable `timeclock-mode-line-display'."
   "A list containing the last event that was recorded.
 The format of this list is (CODE TIME PROJECT).")
 
+(defvar timeclock--log-initialized nil
+  "Non-nil after the timeclock log has been read for this session.")
+
+(defun timeclock--ensure-log-initialized ()
+  "Read the timeclock log the first time a command needs its state."
+  (unless timeclock--log-initialized
+    (setq timeclock--log-initialized t)
+    (timeclock-reread-log)))
+
 (defvar timeclock-last-event-workday nil
   "The number of seconds in the workday of `timeclock-last-event'.")
 
@@ -330,10 +339,9 @@ discover the name of the project."
 	      (if (numberp current-prefix-arg)
 		  (* current-prefix-arg 60 60)
 		0))))
+  (timeclock--ensure-log-initialized)
   (if (equal (car timeclock-last-event) "i")
       (error "You've already clocked in!")
-    (unless timeclock-last-event
-      (timeclock-reread-log))
     ;; Either no log file, or day has rolled over.
     (unless (and timeclock-last-event
                  (equal (timeclock-time-to-date
@@ -371,6 +379,7 @@ FIND-REASON is non-nil -- or the user calls `timeclock-out'
 interactively -- call the function `timeclock-get-reason-function' to
 discover the reason."
   (interactive "P")
+  (timeclock--ensure-log-initialized)
   (or timeclock-last-event
       (error "You haven't clocked in!"))
   (if (equal (downcase (car timeclock-last-event)) "o")
@@ -441,7 +450,7 @@ working on."
 (defun timeclock-query-out ()
   "Ask the user whether to clock out.
 This is a useful function for adding to `kill-emacs-query-functions'."
-  (and (equal (car timeclock-last-event) "i")
+  (and (timeclock-currently-in-p)
        (y-or-n-p "You're currently clocking time, clock out? ")
        (timeclock-out))
   ;; Unconditionally return t for `kill-emacs-query-functions'.
@@ -452,7 +461,8 @@ This is a useful function for adding to `kill-emacs-query-functions'."
   "Re-read the timeclock, to account for external changes.
 Returns the new value of `timeclock-discrepancy'."
   (interactive)
-  (setq timeclock-discrepancy nil)
+  (setq timeclock--log-initialized t
+        timeclock-discrepancy nil)
   (timeclock-find-discrep)
   (if (and timeclock-discrepancy timeclock-mode-line-display)
       (timeclock-update-mode-line))
@@ -473,6 +483,7 @@ as with time remaining, where negative time really means overtime)."
 
 (defsubst timeclock-currently-in-p ()
   "Return non-nil if the user is currently clocked in."
+  (timeclock--ensure-log-initialized)
   (equal (car timeclock-last-event) "i"))
 
 ;;;###autoload
@@ -638,6 +649,7 @@ that variable's documentation."
   "Log the event CODE to the timeclock log, at the time of call.
 If PROJECT is a string, it represents the project which the event is
 being logged for.  Normally only \"in\" events specify a project."
+  (timeclock--ensure-log-initialized)
   (let ((extant-timelog (find-buffer-visiting timeclock-file)))
     (with-current-buffer (find-file-noselect timeclock-file t)
       (save-excursion
@@ -691,6 +703,7 @@ growing every second.  Otherwise, it is a fixed amount which has been
 recorded to disk.  If MOMENT is non-nil, use that as the current time.
 This is only provided for coherency when used by
 `timeclock-discrepancy'."
+  (timeclock--ensure-log-initialized)
   (if (equal (car timeclock-last-event) "i")
       (float-time (time-subtract moment (cadr timeclock-last-event)))
     timeclock-last-period))
@@ -1082,6 +1095,7 @@ discrepancy, today's discrepancy, and the time worked today."
   ;;                              (timeclock-day-required (cdar days))))
   ;;            days (cdr days)))
   ;;    total)
+  (setq timeclock--log-initialized t)
   (let* ((now (current-time))
 	 (todays-date (timeclock-time-to-date now))
 	 (first t) (accum 0) (elapsed 0)
@@ -1190,6 +1204,7 @@ If optional argument TIME is non-nil, use that instead of the current time."
 By default, the report is in plain text, but if the optional argument
 HTML-P is non-nil, HTML markup is added."
   (interactive "P")
+  (timeclock--ensure-log-initialized)
   (let ((log (timeclock-log-data))
 	(today (timeclock-day-base)))
     (if html-p (insert "<p>"))
@@ -1358,11 +1373,5 @@ HTML-P is non-nil, HTML markup is added."
 (provide 'timeclock)
 
 (run-hooks 'timeclock-load-hook)
-
-;; make sure we know the list of reasons, projects, and have computed
-;; the last event and current discrepancy.
-(if (file-readable-p timeclock-file)
-    ;; FIXME: Loading a file should not have these kinds of side-effects.
-    (timeclock-reread-log))
 
 ;;; timeclock.el ends here
