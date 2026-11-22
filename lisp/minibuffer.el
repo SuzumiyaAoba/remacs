@@ -539,6 +539,41 @@ obeys predicates."
                   (complete-with-action action table string pred))
                 tables)))))
 
+(defun completion--unquote-requote-data (table unquote requote string qpos)
+  "Return STRING, TABLE, unquoted QPOS, and requoting function.
+UNQUOTE and REQUOTE are the functions passed to
+`completion-table-with-quoting'."
+  (let* ((ustring (funcall unquote string))
+         (uprefix (funcall unquote (substring string 0 qpos)))
+         ;; FIXME: we really should pass `qpos' to `unquote' and have that
+         ;; function give us the corresponding `uqpos'.  But for now we
+         ;; presume (more or less) that `concat' and `unquote' commute.
+         (uqpos (if (string-prefix-p uprefix ustring)
+                    (length uprefix)
+                  (let ((usuffix (funcall unquote (substring string qpos))))
+                    (if (string-suffix-p usuffix ustring)
+                        (- (length ustring) (length usuffix))
+                      (/ (+ (min (length uprefix) (length ustring))
+                            (max (- (length ustring) (length usuffix)) 0))
+                         2))))))
+    (list ustring table uqpos
+          (lambda (unquoted-result op)
+            (pcase op
+              (1
+               (if (not (stringp (car-safe unquoted-result)))
+                   unquoted-result
+                 (completion--twq-try
+                  string ustring
+                  (car unquoted-result) (cdr unquoted-result)
+                  unquote requote)))
+              (2
+               (let* ((last (last unquoted-result))
+                      (base (or (cdr last) 0)))
+                 (when last
+                   (setcdr last nil)
+                   (completion--twq-all
+                    string ustring unquoted-result base unquote requote)))))))))
+
 (defun completion-table-with-quoting (table unquote requote)
   ;; A difficult part of completion-with-quoting is to map positions in the
   ;; quoted string to equivalent positions in the unquoted string and
@@ -566,8 +601,11 @@ one-argument QFUNs remain supported."
   (lambda (string pred action)
     (cond
      ((eq action 'metadata)
-      (append (completion-metadata string table pred)
-              '((completion--unquote-requote . t))))
+      (cons (cons 'completion--unquote-requote
+                  (lambda (string point)
+                    (completion--unquote-requote-data
+                     table unquote requote string point)))
+            (completion-metadata string table pred)))
 
      ((eq action 'lambda) ;;test-completion
       (let ((ustring (funcall unquote string)))
@@ -643,45 +681,7 @@ one-argument QFUNs remain supported."
       ;; should reverse the unquoting, (i.e. it receives the completion result
       ;; of using the new TABLE and should turn it into the corresponding
       ;; quoted result).
-      (let* ((qpos pred)
-	     (ustring (funcall unquote string))
-	     (uprefix (funcall unquote (substring string 0 qpos)))
-	     ;; FIXME: we really should pass `qpos' to `unquote' and have that
-	     ;; function give us the corresponding `uqpos'.  But for now we
-	     ;; presume (more or less) that `concat' and `unquote' commute.
-	     (uqpos (if (string-prefix-p uprefix ustring)
-			;; Yay!!  They do seem to commute!
-			(length uprefix)
-		      ;; They don't commute this time!  :-(
-		      ;; Maybe qpos is in some text that disappears in the
-		      ;; ustring (bug#17239).  Let's try a second chance guess.
-		      (let ((usuffix (funcall unquote (substring string qpos))))
-			(if (string-suffix-p usuffix ustring)
-			    ;; Yay!!  They still "commute" in a sense!
-			    (- (length ustring) (length usuffix))
-			  ;; Still no luck!  Let's just choose *some* position
-			  ;; within ustring.
-			  (/ (+ (min (length uprefix) (length ustring))
-				(max (- (length ustring) (length usuffix)) 0))
-			     2))))))
-        (list ustring table uqpos
-              (lambda (unquoted-result op)
-                (pcase op
-                  (1 ;;try
-                   (if (not (stringp (car-safe unquoted-result)))
-                       unquoted-result
-                     (completion--twq-try
-                      string ustring
-                      (car unquoted-result) (cdr unquoted-result)
-                      unquote requote)))
-                  (2 ;;all
-                   (let* ((last (last unquoted-result))
-                          (base (or (cdr last) 0)))
-                     (when last
-                       (setcdr last nil)
-                       (completion--twq-all string ustring
-                                            unquoted-result base
-                                            unquote requote))))))))))))
+      (completion--unquote-requote-data table unquote requote string pred)))))
 
 (defun completion--twq-try (string ustring completion point
                                    unquote requote)
@@ -1404,17 +1404,16 @@ overrides the default specified in `completion-category-defaults'."
   (let* ((md (or metadata
                  (completion-metadata (substring string 0 point) table pred)))
          (requote
-          (when (and
-                 (completion-metadata-get md 'completion--unquote-requote)
-                 ;; Sometimes a table's metadata is used on another
-                 ;; table (typically that other table is just a list taken
-                 ;; from the output of `all-completions' or something
-                 ;; equivalent, for progressive refinement).
-                 ;; See bug#28898 and bug#16274.
-                 ;; FIXME: Rather than do nothing, we should somehow call
-                 ;; the original table, in that case!
-                 (functionp table))
-            (let ((new (funcall table string point 'completion--unquote)))
+          ;; The callback is in metadata because progressive refinement may
+          ;; replace TABLE with a candidate list.
+          (let* ((unquote-requote
+                  (completion-metadata-get md 'completion--unquote-requote))
+                 (new (cond
+                       ((functionp unquote-requote)
+                        (funcall unquote-requote string point))
+                       ((and unquote-requote (functionp table))
+                        (funcall table string point 'completion--unquote)))))
+            (when new
               (setq string (pop new))
               (setq table (pop new))
               (setq point (pop new))
