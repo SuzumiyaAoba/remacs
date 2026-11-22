@@ -33,17 +33,30 @@
 (declare-function calendar-absolute-from-gregorian "calendar" (date))
 (declare-function dst-in-effect "cal-dst" (date))
 
+(defun math-time-to-calc-number (time)
+  "Convert TIME to a Calc number without discarding fractional seconds."
+  (cond
+   ((and (consp time) (integerp (car time)) (integerp (cdr time)))
+    (math-div (car time) (cdr time)))
+   ((Math-numberp time) time)
+   (t
+    (let ((ticks (time-convert time t)))
+      (if (and (consp ticks) (integerp (car ticks)) (integerp (cdr ticks)))
+          (math-div (car ticks) (cdr ticks))
+        ticks))))
+
 
 (defun calc-time ()
   (interactive)
   (calc-wrapper
-   (let ((time (decode-time nil nil 'integer))) ;; FIXME: Support subseconds.
+   (let ((time (decode-time nil nil t)))
      (calc-enter-result 0 "time"
 			(list 'mod
 			      (list 'hms
 				    (decoded-time-hour time)
                                     (decoded-time-minute time)
-                                    (decoded-time-second time))
+                                    (math-time-to-calc-number
+                                     (decoded-time-second time)))
 			      (list 'hms 24 0 0))))))
 
 (defun calc-to-hms (arg)
@@ -499,8 +512,7 @@ in the Gregorian calendar and the remaining part determines the time."
 	(math-add (math-float date)
 		  (math-div (math-add (+ (* (nth 3 dt) 3600)
 					 (* (nth 4 dt) 60))
-				      ;; FIXME: Support subseconds.
-				      (time-convert (nth 5 dt) 'integer))
+				      (math-time-to-calc-number (nth 5 dt)))
 			    '(float 864 2)))
       date)))
 
@@ -1340,8 +1352,7 @@ This is measured in the integer number of days from December 31,
           (math-parse-iso-date-validate isoyear isoweek isoweekday hour minute second)))))
 
 (defun calcFunc-now (&optional zone)
-  ;; FIXME: Support subseconds.
-  (let ((date (let ((now (decode-time nil nil 'integer)))
+  (let ((date (let ((now (decode-time nil nil t)))
 		(list 'date (math-dt-to-date
 			     (list (decoded-time-year now)
                                    (decoded-time-month now)
