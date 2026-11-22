@@ -66,13 +66,25 @@ In case you want to use a different screen than one selected by your $PATH")
          (terminal (cdr (assq :terminal params)))
          (screenrc (cdr (assq :screenrc params)))
          (process-name (concat "org-babel: terminal (" session ")")))
-    (apply 'start-process process-name "*Messages*"
-           terminal `("-T" ,(concat "org-babel: " session) "-e" ,org-babel-screen-location
-		      "-c" ,screenrc "-mS" ,session ,cmd))
-    ;; XXX: Is there a better way than the following?
-    (while (not (org-babel-screen-session-socketname session))
-      ;; wait until screen session is available before returning
-      )))
+    (let* ((process
+            (apply 'start-process process-name "*Messages*"
+                   terminal `("-T" ,(concat "org-babel: " session)
+                              "-e" ,org-babel-screen-location
+                              "-c" ,screenrc "-mS" ,session ,cmd)))
+           (deadline (+ (float-time) 10))
+           socket)
+      (while (and (not socket)
+                  (process-live-p process)
+                  (< (float-time) deadline))
+        (setq socket (org-babel-screen-session-socketname session))
+        (unless socket
+          (accept-process-output nil 0.1)))
+      (unless (or socket
+                  (setq socket (org-babel-screen-session-socketname session)))
+        (when (process-live-p process)
+          (delete-process process))
+        (error "org-babel-screen: Could not start session %s" session))
+      socket)))
 
 ;; helper functions
 
@@ -127,19 +139,24 @@ The terminal should shortly flicker."
          (tmpfile (org-babel-temp-file "ob-screen-test-"))
          (body (concat "echo '" random-string "' > " tmpfile "\nexit\n"))
          tmp-string)
-    (org-babel-execute:screen body org-babel-default-header-args:screen)
-    ;; XXX: need to find a better way to do the following
-    (while (not (file-readable-p tmpfile))
-      ;; do something, otherwise this will be optimized away
-      (message "org-babel-screen: File not readable yet."))
-    (setq tmp-string (with-temp-buffer
-                       (insert-file-contents-literally tmpfile)
-                       (buffer-substring (point-min) (point-max))))
-    (delete-file tmpfile)
-    (message (concat "org-babel-screen: Setup "
-                     (if (string-match random-string tmp-string)
-                         "WORKS."
-		       "DOESN'T work.")))))
+    (unwind-protect
+        (progn
+          (org-babel-execute:screen body org-babel-default-header-args:screen)
+          (let ((deadline (+ (float-time) 10)))
+            (while (and (not (file-readable-p tmpfile))
+                        (< (float-time) deadline))
+              (accept-process-output nil 0.1)))
+          (unless (file-readable-p tmpfile)
+            (error "org-babel-screen: Timed out waiting for output"))
+          (setq tmp-string (with-temp-buffer
+                             (insert-file-contents-literally tmpfile)
+                             (buffer-substring (point-min) (point-max))))
+          (message (concat "org-babel-screen: Setup "
+                           (if (string-match random-string tmp-string)
+                               "WORKS."
+                             "DOESN'T work."))))
+      (when (file-exists-p tmpfile)
+        (delete-file tmpfile))))
 
 (provide 'ob-screen)
 
