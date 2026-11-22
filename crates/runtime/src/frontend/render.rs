@@ -2220,6 +2220,9 @@ pub(crate) fn position_display_cell(
         if position < bb.begv || position > bb.zv || position < start {
             return None;
         }
+        if visibility_at_window_position(i, window, buffer_id, position) == Visibility::Hidden {
+            return None;
+        }
         let row = display_row_index_from_window(
             i,
             window,
@@ -10670,6 +10673,67 @@ fn visibility_at_pos(i: &Interp, faces: &WindowFaces, pos: usize) -> Visibility 
         .find(|(start, end, _)| pos >= *start && pos < *end)
     {
         return invisibility_for_property(property, &faces.invisibility_spec);
+    }
+    Visibility::Visible
+}
+
+fn visibility_at_window_position(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+    buffer_id: usize,
+    position: usize,
+) -> Visibility {
+    let Some(invisible) = i.q_soft("invisible") else {
+        return Visibility::Visible;
+    };
+    let property = Value::Sym(invisible);
+    let spec = buffer_setting(i, "buffer-invisibility-spec", buffer_id);
+    let win = Value::Window(window.clone());
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return Visibility::Visible;
+    };
+    let (invisible_overlays, invisible_props) = {
+        let bb = buffer.borrow();
+        let invisible_overlays = bb
+            .overlays
+            .iter()
+            .enumerate()
+            .filter(|(_, overlay)| {
+                overlay.buffer == Some(buffer_id)
+                    && position >= overlay.start
+                    && position < overlay.end
+                    && overlay.matches_window(i, &win)
+            })
+            .filter_map(|(index, overlay)| {
+                let value = overlay.property(i, &property);
+                (!value.is_nil()).then(|| (overlay.clone(), value, index))
+            })
+            .collect::<Vec<_>>();
+        let invisible_props = bb
+            .text
+            .props
+            .borrow()
+            .iter()
+            .filter(|text_property| {
+                text_property.prop == invisible
+                    && position >= text_property.start
+                    && position < text_property.end
+            })
+            .map(|text_property| text_property.value.clone())
+            .collect::<Vec<_>>();
+        (invisible_overlays, invisible_props)
+    };
+    let mut overlay_order = invisible_overlays
+        .iter()
+        .enumerate()
+        .map(|(index, (overlay, _, _))| (overlay, index))
+        .collect::<Vec<_>>();
+    crate::buffer::sort_overlays_by_priority(i, &mut overlay_order);
+    if let Some((_, index)) = overlay_order.into_iter().next_back() {
+        return invisibility_for_property(&invisible_overlays[index].1, &spec);
+    }
+    if let Some(property) = invisible_props.last() {
+        return invisibility_for_property(property, &spec);
     }
     Visibility::Visible
 }
