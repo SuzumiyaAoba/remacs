@@ -2270,6 +2270,11 @@ pub(crate) fn position_display_cell(
             };
             column = column.saturating_add(width);
         }
+        if !wrap_lines
+            && (column < hscroll || column >= hscroll.saturating_add(width))
+        {
+            return None;
+        }
         Some((row, column.saturating_sub(hscroll)))
     } else {
         None
