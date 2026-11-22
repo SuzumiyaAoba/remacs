@@ -151,9 +151,11 @@ ENCODING can be: nil (do nothing); one of `quoted-printable', `base64';
    ((null encoding)
     ;; Do nothing.
     )
-   ;; Fixme: Ignoring errors here looks bogus.
    ((functionp encoding)
-    (ignore-errors (funcall encoding (point-min) (point-max))))
+    ;; Do not let a failed encoder leave partial output or let callers
+    ;; continue as if the encoding had succeeded.
+    (atomic-change-group
+      (funcall encoding (point-min) (point-max))))
    (t
     (error "Unknown encoding %s" encoding))))
 
