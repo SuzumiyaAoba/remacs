@@ -8863,10 +8863,7 @@ fn image_dimension(i: &Interp, value: Value, default_font_height: u16) -> Option
             let Value::Sym(unit) = unit else {
                 return None;
             };
-            if i.symbol_name(unit) != "em" {
-                return None;
-            }
-            let ems = match value {
+            let amount = match value {
                 Value::Int(value) if value > 0 => value as f64,
                 Value::Float(value) if value.is_finite() && *value > 0.0 => *value,
                 _ => return None,
@@ -8876,7 +8873,28 @@ fn image_dimension(i: &Interp, value: Value, default_font_height: u16) -> Option
             } else {
                 1.0
             };
-            let pixels = ems * (f64::from(default_font_height) / 10.0) * points_to_logical_pixels;
+            let unit_pixels = match i.symbol_name(unit).as_str() {
+                "em" => f64::from(default_font_height) / 10.0 * points_to_logical_pixels,
+                "cw" => i
+                    .selected_frame
+                    .as_ref()
+                    .map(|frame| {
+                        i.frame_font_metrics
+                            .get(&frame.borrow().id)
+                            .map(|metrics| f64::from(metrics.default_cell_width_64) / 64.0)
+                            .unwrap_or_else(|| {
+                                crate::editor::frame_char_width(i, frame) as f64
+                            })
+                    })
+                    .unwrap_or(8.0),
+                "ch" => i
+                    .selected_frame
+                    .as_ref()
+                    .map(|frame| crate::editor::frame_char_height(i, frame) as f64)
+                    .unwrap_or(19.0),
+                _ => return None,
+            };
+            let pixels = amount * unit_pixels;
             (pixels.is_finite() && pixels > 0.0 && pixels <= usize::MAX as f64)
                 .then_some(pixels.ceil() as usize)
         }
