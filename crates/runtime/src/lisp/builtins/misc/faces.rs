@@ -180,7 +180,7 @@ pub(super) fn f_select_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
         });
     let family = family.or(frame_font).unwrap_or_else(|| "Menlo".to_owned());
     let size = match selected_face_attribute(i, &frame_value, ":height")? {
-        Value::Int(height) if *height > 1 => *height as f64 / 10.0,
+        Value::Int(height) if height > 1 => height as f64 / 10.0,
         _ => 14.0,
     };
     let weight_attribute = selected_face_attribute(i, &frame_value, ":weight")?;
