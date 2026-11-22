@@ -434,10 +434,9 @@ FORMAT and ARGS are passed to `message'."
               (org-persist--display-time
                (- (float-time) start-time)
                "Reading from %S" buffer-or-file)))
-        ;; Recover gracefully if index file is corrupted.
+        ;; Recover gracefully if a persisted file is corrupted, but keep it
+        ;; on disk so the data can be recovered after fixing the reader.
         (error
-         ;; Remove problematic file.
-         (unless (bufferp buffer-or-file) (delete-file buffer-or-file))
          ;; Do not report the known error to user.
          (if (string-match-p "Invalid read syntax" (error-message-string err))
              (message "Emacs reader failed to read data in %S. The error was: %S"
