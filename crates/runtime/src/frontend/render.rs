@@ -2183,6 +2183,281 @@ fn display_row_index_from_window(
     Some(row.saturating_sub(1))
 }
 
+enum DisplayTextPosition {
+    NotApplicable,
+    Position(Option<(usize, usize)>),
+}
+
+fn position_display_text_cell(
+    i: &Interp,
+    window: &crate::editor::WindowRef,
+    position: usize,
+) -> DisplayTextPosition {
+    let (buffer_id, start, height, hscroll) = {
+        let window = window.borrow();
+        (window.buffer, window.start, window.height, window.hscroll)
+    };
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return DisplayTextPosition::NotApplicable;
+    };
+    let (begv, zv) = {
+        let buffer = buffer.borrow();
+        (buffer.begv, buffer.zv)
+    };
+    if position <= start.max(begv) || position > zv {
+        return DisplayTextPosition::NotApplicable;
+    }
+    if !window_has_visible_display_property(i, window) {
+        return DisplayTextPosition::NotApplicable;
+    }
+
+    let width = crate::editor::win_body_width(i, window).max(1);
+    let tab_width = buffer_tab_width(i, buffer_id);
+    let ctl_arrow = buffer_setting(i, "ctl-arrow", buffer_id).truthy();
+    let wrap_lines = !buffer_setting(i, "truncate-lines", buffer_id).truthy();
+    let text_rows = height
+        .saturating_sub(if buffer_setting(i, "mode-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .saturating_sub(if buffer_setting(i, "header-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .saturating_sub(if buffer_setting(i, "tab-line-format", buffer_id).is_nil() {
+            0
+        } else {
+            1
+        })
+        .max(1);
+
+    let frame = crate::editor::frame_of_window(i, window);
+    let cell_width = frame
+        .as_ref()
+        .map_or(8, |frame| crate::editor::frame_char_width(i, frame).max(1));
+    let graphical = frame
+        .as_ref()
+        .is_some_and(|frame| crate::editor::frame_is_graphical(i, frame));
+    let mut face_ctx = FaceCtx::new(i, frame.as_ref());
+    let default_style = face_ctx.builtin(i, "default", 0).finish();
+    face_ctx.default_style = Some(default_style);
+    let window_value = Value::Window(window.clone());
+    let faces = window_faces(i, &mut face_ctx, &buffer, &window_value, None);
+    let has_prior_text_replacement = faces.display_props.iter().any(|(from, to, replacement, _)| {
+        *from < position
+            && *to > start.max(begv)
+            && replacement.as_ref().is_some_and(DisplayReplacement::is_text)
+    });
+    if !has_prior_text_replacement {
+        return DisplayTextPosition::NotApplicable;
+    }
+    if visibility_at_pos(i, &faces, position) == Visibility::Hidden {
+        return DisplayTextPosition::Position(None);
+    }
+
+    let row_start = start.max(begv);
+    let mut row = 0usize;
+    let first_line = buffer.borrow().text.line_of_pos(row_start);
+    let target_line = buffer.borrow().text.line_of_pos(position);
+    let nobreak_char_display = buffer_setting(i, "nobreak-char-display", buffer_id);
+    for line_number in first_line..=target_line {
+        let (line_start, line) = {
+            let buffer = buffer.borrow();
+            let line_start = buffer.text.line_start(line_number).max(begv);
+            let line_end = buffer.text.line_end(line_start).min(zv);
+            (line_start, buffer.text.substring(line_start, line_end))
+        };
+        if line_start > zv {
+            break;
+        }
+        let line_len = line.chars().count();
+        let start_offset = if line_number == first_line {
+            row_start.saturating_sub(line_start).min(line_len)
+        } else {
+            0
+        };
+        let target_offset = position.saturating_sub(line_start).min(line_len);
+        let ranges = if wrap_lines {
+            wrap_ranges_for_window(
+                i, buffer_id, window, &line, line_start, width, tab_width, ctl_arrow,
+            )
+        } else {
+            vec![0..line_len]
+        };
+
+        let line_prefix =
+            prefix_value_at_pos(i, buffer_id, &window_value, line_start, "line-prefix");
+        let requested_prefix_width =
+            display_prefix_value_width(i, &line_prefix, tab_width, cell_width).min(width);
+        let first_character_width = line.chars().next().map_or(0, |character| {
+            let code = character.code();
+            let unicode = character.unicode().unwrap_or('\u{fffd}');
+            if unicode == '\t' {
+                tab_width.max(1) - requested_prefix_width % tab_width.max(1)
+            } else if character.byte8().is_some() {
+                4
+            } else if ctl_arrow && (code < 0x20 || code == 0x7f) {
+                2
+            } else {
+                display_char_width(unicode)
+            }
+        });
+        let first_prefix_width = if wrap_lines
+            && line_len > 0
+            && requested_prefix_width.saturating_add(first_character_width) > width
+        {
+            0
+        } else {
+            requested_prefix_width
+        };
+        let wrap_prefix_width = if wrap_lines {
+            let wrap_prefix =
+                prefix_value_at_pos(i, buffer_id, &window_value, line_start, "wrap-prefix");
+            display_prefix_value_width(i, &wrap_prefix, tab_width, cell_width)
+                .min(width.saturating_sub(first_character_width.min(width)))
+        } else {
+            0
+        };
+
+        for mut range in ranges {
+            if line_number == first_line
+                && (range.end < start_offset || (range.end == start_offset && range.end < line_len))
+            {
+                continue;
+            }
+            range.start = range.start.max(start_offset);
+            let plans = display_row_plans(
+                i,
+                Some(&faces),
+                &line,
+                buffer_id,
+                line_start,
+                range,
+                line_len,
+                text_rows.saturating_sub(row),
+                width,
+                first_prefix_width,
+                wrap_prefix_width,
+                tab_width,
+                cell_width,
+                ctl_arrow,
+                wrap_lines,
+            );
+            for plan in plans {
+                if row >= text_rows {
+                    return DisplayTextPosition::Position(None);
+                }
+                let segment_start = plan.range.start.max(start_offset);
+                let segment_end = plan.range.end;
+                let point_index = (target_offset >= segment_start
+                    && !(plan.repeated_start && target_offset == plan.range.start)
+                    && (target_offset < segment_end
+                        || (target_offset == segment_end
+                            && segment_end == line_len
+                            && !plan.hard_break)))
+                    .then(|| target_offset - segment_start);
+                if let Some(point_index) = point_index {
+                    let prefix_width = if segment_start > 0 || plan.continued || plan.repeated_start
+                    {
+                        wrap_prefix_width
+                    } else if segment_start == 0 {
+                        first_prefix_width
+                    } else {
+                        0
+                    };
+                    let segment_chars = line
+                        .chars()
+                        .skip(segment_start)
+                        .take(segment_end.saturating_sub(segment_start))
+                        .collect::<Vec<_>>();
+                    let segment_pos = line_start + segment_start;
+                    let mut column = prefix_width;
+                    let mut hidden_run = false;
+                    for index in 0..=point_index {
+                        let char_position = segment_pos + index;
+                        let strings = plan
+                            .boundaries
+                            .get(&(segment_start + index))
+                            .cloned()
+                            .unwrap_or_else(|| overlay_strings_at(&faces, char_position));
+                        for string in strings {
+                            column = string.columns_after(column, tab_width);
+                        }
+                        if index == point_index {
+                            break;
+                        }
+
+                        let visibility = visibility_at_pos(i, &faces, char_position);
+                        if visibility != Visibility::Visible {
+                            if visibility == Visibility::Ellipsis && !hidden_run {
+                                column = column.saturating_add(1);
+                            }
+                            hidden_run = true;
+                            continue;
+                        }
+                        hidden_run = false;
+
+                        let character = segment_chars[index];
+                        let replacement = plan
+                            .replacements
+                            .get(&(segment_start + index))
+                            .cloned()
+                            .or_else(|| display_replacement_at(&faces, char_position))
+                            .or_else(|| {
+                                display_table_replacement(i, buffer_id, &faces, character)
+                            })
+                            .or_else(|| {
+                                nobreak_char_replacement(&nobreak_char_display, character)
+                            })
+                            .or_else(|| {
+                                (!(graphical && emoji_zwj_joiner(&segment_chars, index)))
+                                    .then(|| {
+                                        glyphless_display_replacement(
+                                            i,
+                                            buffer_id,
+                                            character,
+                                            graphical,
+                                            default_style,
+                                        )
+                                    })?
+                            })
+                            .or_else(|| c1_control_replacement(character, default_style))
+                            .or_else(|| raw_byte_replacement(i, buffer_id, character))
+                            .or_else(|| ctl_arrow_replacement(character, ctl_arrow));
+                        if let Some(replacement) = replacement {
+                            column = replacement.columns_after(column, tab_width, cell_width);
+                        } else {
+                            let unicode = character.unicode().unwrap_or('\u{fffd}');
+                            let columns = if unicode == '\t' {
+                                tab_width.max(1) - column % tab_width.max(1)
+                            } else if character.byte8().is_some() {
+                                4
+                            } else if ctl_arrow
+                                && (character.code() < 0x20 || character.code() == 0x7f)
+                            {
+                                2
+                            } else {
+                                display_char_width(unicode)
+                            };
+                            column = column.saturating_add(columns);
+                        }
+                    }
+                    let column = column.saturating_sub(hscroll);
+                    if !wrap_lines && (column < hscroll || column >= hscroll.saturating_add(width))
+                    {
+                        return DisplayTextPosition::Position(None);
+                    }
+                    return DisplayTextPosition::Position(Some((row, column)));
+                }
+                row = row.saturating_add(1);
+            }
+        }
+    }
+    DisplayTextPosition::Position(None)
+}
+
 /// Return the display row and column for a buffer position relative to a
 /// window's text area, or None when it is outside the visible rows.
 pub(crate) fn position_display_cell(
@@ -2190,6 +2465,11 @@ pub(crate) fn position_display_cell(
     window: &crate::editor::WindowRef,
     position: usize,
 ) -> Option<(usize, usize)> {
+    if let DisplayTextPosition::Position(position) =
+        position_display_text_cell(i, window, position)
+    {
+        return position;
+    }
     let (buffer_id, start, height, hscroll) = {
         let window = window.borrow();
         (window.buffer, window.start, window.height, window.hscroll)
