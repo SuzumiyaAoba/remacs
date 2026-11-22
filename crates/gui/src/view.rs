@@ -4951,13 +4951,43 @@ fn grid_image_element(
     let image_column = image.column;
     let image_top =
         border + grid_row_top_for_cell(grid, image.row, image.column, line_height);
+    // Images are painted above the frame canvas, so clip each one to its
+    // window body instead of letting it cover neighboring windows.
+    let window_clip = grid
+        .window_text_areas
+        .iter()
+        .find(|area| {
+            image.row >= area.top
+                && image.row < area.top.saturating_add(area.rows)
+                && image.column >= area.left
+                && image.column < area.left.saturating_add(area.width)
+        })
+        .map(|area| {
+            let top = border + grid_window_row_top(grid, area.window_id, area.top, line_height);
+            let bottom = border
+                + grid_window_row_top(
+                    grid,
+                    area.window_id,
+                    area.top.saturating_add(area.rows),
+                    line_height,
+                );
+            (
+                border + cell_width * area.left as f32,
+                top,
+                cell_width * area.width as f32,
+                bottom - top,
+            )
+        });
+    let has_window_clip = window_clip.is_some();
+    let (window_left, window_top, window_width, window_height) =
+        window_clip.unwrap_or((px(0.0), px(0.0), px(0.0), px(0.0)));
     let scroll = grid.vscrolls.iter().find(|scroll| {
         image.row >= scroll.top
             && image.row < scroll.top.saturating_add(scroll.rows)
             && image.column >= scroll.left
             && image.column < scroll.left.saturating_add(scroll.width)
     });
-    if let Some(scroll) = scroll {
+    let image_element = if let Some(scroll) = scroll {
         let first_row = scroll.top.min(grid.row_heights.len());
         let end_row = scroll
             .top
@@ -4968,6 +4998,7 @@ fn grid_image_element(
             border + grid_window_row_top(grid, scroll.window_id, first_row, line_height);
         let region_bottom =
             border + grid_window_row_top(grid, scroll.window_id, end_row, line_height);
+        let region_width = cell_width * scroll.width as f32;
         let mut image_element = div()
             .absolute()
             .left(image_left - region_left)
@@ -4984,9 +5015,9 @@ fn grid_image_element(
         }
         div()
             .absolute()
-            .left(region_left)
-            .top(region_top)
-            .w(cell_width * scroll.width as f32)
+            .left(region_left - window_left)
+            .top(region_top - window_top)
+            .w(region_width)
             .h(region_bottom - region_top)
             .overflow_hidden()
             .child(image_element)
@@ -4994,8 +5025,8 @@ fn grid_image_element(
     } else {
         let mut image_element = div()
             .absolute()
-            .left(image_left)
-            .top(image_top)
+            .left(image_left - window_left)
+            .top(image_top - window_top)
             .child(source);
         for cursor in cursors {
             image_element = image_element.child(grid_image_cursor_overlay(
@@ -5007,6 +5038,19 @@ fn grid_image_element(
             ));
         }
         image_element.into_any_element()
+    };
+    if has_window_clip {
+        div()
+            .absolute()
+            .left(window_left)
+            .top(window_top)
+            .w(window_width)
+            .h(window_height)
+            .overflow_hidden()
+            .child(image_element)
+            .into_any_element()
+    } else {
+        image_element
     }
 }
 
