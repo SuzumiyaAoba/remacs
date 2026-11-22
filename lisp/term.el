@@ -1418,17 +1418,14 @@ Entry to this mode runs the hooks on `term-mode-hook'."
 	 (format "\e%c"
 		 (event-convert-list (append mods (list base)))))))))
 
-(defun term-mouse-paste (click)
-  "Insert the primary selection at the position clicked on."
+(defun term-mouse-paste (_click)
+  "Send the primary selection to the terminal."
   (interactive "e")
   ;; Give temporary modes such as isearch a chance to turn off.
   (run-hooks 'mouse-leave-buffer-hook)
-  (mouse-set-point click)
-  ;; As we have moved point, bind `select-active-regions' to prevent
-  ;; the `deactivate-mark' call in `term-send-raw-string' from
-  ;; changing the primary selection (resulting in consecutive calls to
-  ;; `term-mouse-paste' each sending different text). (bug#58608).
-  ;; FIXME: Why does this command change point at all?
+  ;; Keep deactivate-mark from changing the primary selection while sending
+  ;; it to the terminal; otherwise repeated mouse-2 events may send different
+  ;; text. (bug#58608).
   (let ((select-active-regions nil))
     (term-send-raw-string (gui-get-primary-selection))))
 
