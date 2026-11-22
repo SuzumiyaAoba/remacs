@@ -962,6 +962,7 @@ impl PlatformWindow for WaylandWindow {
             size.width.0.max(0.0).ceil() as i32,
             size.height.0.max(0.0).ceil() as i32,
         );
+        state.surface.commit();
     }
 
     fn scale_factor(&self) -> f32 {
