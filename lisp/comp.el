@@ -1199,46 +1199,191 @@ Return value is the fall-through block name."
         (`(TAG ,target . ,_label-sp)
          (= target (car targets)))))))
 
+(defconst comp--switch-dispatch-minimum-cases 16
+  "Minimum number of cases before building a tree for a jump table.")
+
+(defconst comp--switch-dispatch-minimum-groups 8
+  "Minimum number of distinct ordered keys before building a switch tree.")
+
+(defun comp--switch-dispatch-type (cases)
+  "Return the homogeneous ordered type of CASES, or nil.
+Each element of CASES is a (KEY . TARGET) pair.  The ordered comparison only
+narrows the candidates; the final match still uses the table's test function."
+  (cond
+   ((cl-every (lambda (case) (integerp (car case))) cases) 'integer)
+   ((cl-every (lambda (case) (symbolp (car case))) cases) 'symbol)
+   ((cl-every (lambda (case) (stringp (car case))) cases) 'string)))
+
+(defun comp--switch-ordered-groups (cases type)
+  "Group CASES by their ordered value for TYPE.
+Return a sorted list of (ORDERED-KEY CASE...)."
+  (let* ((key-function (pcase type
+                         ('integer #'identity)
+                         ('symbol #'symbol-name)
+                         ('string #'identity)))
+         (less-function (if (eq type 'integer) #'< #'string-lessp))
+         (equal-function (if (eq type 'integer) #'= #'string=))
+         (ordered (sort (mapcar (lambda (case)
+                                  (cons (funcall key-function (car case)) case))
+                                cases)
+                        (lambda (a b)
+                          (funcall less-function (car a) (car b)))))
+         groups)
+    (while ordered
+      (let ((key (caar ordered))
+            group-cases)
+        (while (and ordered
+                    (funcall equal-function key (caar ordered)))
+          (push (cdar ordered) group-cases)
+          (setq ordered (cdr ordered)))
+        (push (cons key (nreverse group-cases)) groups)))
+    (nreverse groups)))
+
+(defun comp--switch-new-block ()
+  "Create and register a synthetic block for a jump-table dispatch."
+  (let ((bb (make--comp-block-lap nil (comp--sp)
+                                  (comp--new-block-sym "switch"))))
+    (puthash (comp-block-name bb) bb (comp-func-blocks comp-func))
+    bb))
+
+(defun comp--switch-build-tree (groups)
+  "Build a balanced dispatch tree from sorted GROUPS."
+  (when groups
+    (let* ((middle (/ (length groups) 2))
+           (node (comp--switch-new-block))
+           (match (comp--switch-new-block))
+           (range (comp--switch-new-block))
+           (group (nth middle groups))
+           (left (comp--switch-build-tree (cl-subseq groups 0 middle)))
+           (right (comp--switch-build-tree (nthcdr (1+ middle) groups))))
+      (list node group match range left right))))
+
+(defun comp--switch-emit-linear (var cases test-func default-bb)
+  "Emit linear comparisons for CASES, falling through to DEFAULT-BB."
+  (let ((remaining cases)
+        (scratch (make--comp-mvar :slot 'scratch))
+        (nil-mvar (make--comp-mvar :constant nil)))
+    (while remaining
+      (let* ((case (pop remaining))
+             (test (car case))
+             (target-label (cdr case))
+             (last (null remaining))
+             (next-bb (if last default-bb (comp--switch-new-block)))
+             (next-name (comp-block-name next-bb))
+             (target-name
+              (comp-block-name
+               (comp--bb-maybe-add (comp--label-to-addr target-label)
+                                   (comp--sp))))
+             (m-test (make--comp-mvar :constant test)))
+        (if (eq test-func 'eq)
+            (comp--emit `(cond-jump ,var ,m-test ,target-name ,next-name))
+          ;; Store the result of the comparison into the scratch slot before
+          ;; emitting the conditional jump.
+          (comp--emit `(set ,scratch ,(comp--call test-func var m-test)))
+          (comp--emit `(cond-jump ,scratch ,nil-mvar ,next-name ,target-name)))
+        (comp--mark-curr-bb-closed)
+        (unless last
+          (setf (comp-limplify-curr-block comp-pass) next-bb))))))
+
+(defun comp--switch-emit-tree (var test-func type tree default-bb)
+  "Emit TREE's ordered comparisons for VAR using TEST-FUNC and TYPE."
+  (when tree
+    (pcase-let* ((`(,node ,group ,match ,range ,left ,right) tree)
+                 (pivot (car group))
+                 (pivot-mvar (make--comp-mvar :constant pivot))
+                 (scratch (make--comp-mvar :slot 'scratch))
+                 (nil-mvar (make--comp-mvar :constant nil))
+                 (default-name (comp-block-name default-bb)))
+      (setf (comp-limplify-curr-block comp-pass) node)
+      (pcase type
+        ('integer
+         (comp--emit `(set ,scratch ,(comp--call '= var pivot-mvar)))
+         (comp--emit `(cond-jump ,scratch ,nil-mvar
+                                 ,(comp-block-name range)
+                                 ,(comp-block-name match))))
+        ('symbol
+         (comp--emit `(set ,scratch ,(comp--call 'symbol-name var)))
+         (comp--emit `(set ,scratch
+                           ,(comp--call 'string= scratch pivot-mvar)))
+         (comp--emit `(cond-jump ,scratch ,nil-mvar
+                                 ,(comp-block-name range)
+                                 ,(comp-block-name match))))
+        ('string
+         (comp--emit `(set ,scratch ,(comp--call 'string= var pivot-mvar)))
+         (comp--emit `(cond-jump ,scratch ,nil-mvar
+                                 ,(comp-block-name range)
+                                 ,(comp-block-name match)))))
+      (comp--mark-curr-bb-closed)
+
+      (setf (comp-limplify-curr-block comp-pass) match)
+      ;; Keep the table's exact equality semantics for keys that share the
+      ;; same ordered value (such as distinct strings tested with `eq').
+      (comp--switch-emit-linear var (cdr group) test-func default-bb)
+
+      (setf (comp-limplify-curr-block comp-pass) range)
+      (pcase type
+        ('integer
+         (comp--emit `(set ,scratch ,(comp--call '< var pivot-mvar))))
+        ('symbol
+         (comp--emit `(set ,scratch ,(comp--call 'symbol-name var)))
+         (comp--emit `(set ,scratch
+                           ,(comp--call 'string-lessp scratch pivot-mvar))))
+        ('string
+         (comp--emit `(set ,scratch
+                           ,(comp--call 'string-lessp var pivot-mvar)))))
+      (let ((left-name (if left
+                           (comp-block-name (car left))
+                         default-name))
+            (right-name (if right
+                            (comp-block-name (car right))
+                          default-name)))
+        ;; A non-nil comparison result falls through to the second target.
+        (comp--emit `(cond-jump ,scratch ,nil-mvar ,right-name ,left-name)))
+      (comp--mark-curr-bb-closed)
+      (comp--switch-emit-tree var test-func type left default-bb)
+      (comp--switch-emit-tree var test-func type right default-bb))))
+
+(defun comp--emit-switch-tree (var test-func type groups default-bb)
+  "Emit a balanced dispatch tree for ordered GROUPS."
+  (let* ((tree (comp--switch-build-tree groups))
+         (root (car tree))
+         (scratch (make--comp-mvar :slot 'scratch))
+         (nil-mvar (make--comp-mvar :constant nil))
+         (type-predicate (pcase type
+                           ('integer 'integerp)
+                           ('symbol 'symbolp)
+                           ('string 'stringp))))
+    (comp--emit `(set ,scratch ,(comp--call type-predicate var)))
+    ;; Type mismatch goes directly to the bytecode's default successor.
+    (comp--emit `(cond-jump ,scratch ,nil-mvar
+                            ,(comp-block-name default-bb)
+                            ,(comp-block-name root)))
+    (comp--mark-curr-bb-closed)
+    (comp--switch-emit-tree var test-func type tree default-bb)
+    (setf (comp-limplify-curr-block comp-pass) default-bb)))
+
 (defun comp--emit-switch (var last-insn)
   "Emit a Limple for a lap jump table given VAR and LAST-INSN."
-  ;; FIXME this not efficient for big jump tables. We should have a second
-  ;; strategy for this case.
   (pcase last-insn
     (`(setimm ,_ ,jmp-table)
      (unless (comp--jump-table-optimizable jmp-table)
-       (cl-loop
-        for test being each hash-keys of jmp-table
-        using (hash-value target-label)
-        with len = (hash-table-count jmp-table)
-        with test-func = (hash-table-test jmp-table)
-        for n from 1
-        for last = (= n len)
-        for m-test = (make--comp-mvar :constant test)
-        for target-name = (comp-block-name (comp--bb-maybe-add
-                                            (comp--label-to-addr target-label)
-                                            (comp--sp)))
-        for ff-bb = (if last
-                        (comp--bb-maybe-add (1+ (comp-limplify-pc comp-pass))
-                                           (comp--sp))
-                      (make--comp-block-lap nil
-                                            (comp--sp)
-                                            (comp--new-block-sym)))
-        for ff-bb-name = (comp-block-name ff-bb)
-        if (eq test-func 'eq)
-          do (comp--emit (list 'cond-jump var m-test target-name ff-bb-name))
-        else
-        ;; Store the result of the comparison into the scratch slot before
-        ;; emitting the conditional jump.
-          do (comp--emit (list 'set (make--comp-mvar :slot 'scratch)
-                              (comp--call test-func var m-test)))
-             (comp--emit (list 'cond-jump
-                              (make--comp-mvar :slot 'scratch)
-                              (make--comp-mvar :constant nil)
-                              ff-bb-name target-name))
-        unless last
-        ;; All fall through are artificially created here except the last one.
-          do (puthash ff-bb-name ff-bb (comp-func-blocks comp-func))
-             (setf (comp-limplify-curr-block comp-pass) ff-bb))))
+       (let* ((test-func (hash-table-test jmp-table))
+              (cases (let (cases)
+                       (maphash (lambda (key target)
+                                  (push (cons key target) cases))
+                                jmp-table)
+                       cases))
+              (type (and (memq test-func '(eq eql))
+                         (comp--switch-dispatch-type cases)))
+              (groups (when type (comp--switch-ordered-groups cases type)))
+              (default-bb (comp--bb-maybe-add
+                           (1+ (comp-limplify-pc comp-pass))
+                           (comp--sp))))
+         (if (and (>= (length cases) comp--switch-dispatch-minimum-cases)
+                  (>= (length groups) comp--switch-dispatch-minimum-groups))
+             (comp--emit-switch-tree var test-func type groups default-bb)
+           (comp--switch-emit-linear var cases test-func default-bb))
+         (setf (comp-limplify-curr-block comp-pass) default-bb))))
     (_ (signal 'native-ice
                '("missing previous setimm while creating a switch")))))
 
