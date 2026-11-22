@@ -794,17 +794,14 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
             .find(|frame| frame.borrow().id == frame_id)
             .cloned()
     {
-        let visibility = match frame_visibility {
-            FrameVisibility::Visible => Value::t(),
-            FrameVisibility::Hidden => Value::Nil,
-            FrameVisibility::Iconified => Value::Sym(i.q("icon")),
+        let result = match frame_visibility {
+            FrameVisibility::Visible => crate::editor::set_frame_visibility(i, &frame, true),
+            FrameVisibility::Hidden => crate::editor::set_frame_invisible(i, &frame),
+            FrameVisibility::Iconified => crate::editor::set_frame_visibility(i, &frame, false),
         };
-        let visibility_key = Value::Sym(i.q("visibility"));
-        let known_key = Value::Sym(i.q("remacs--visibility-known"));
-        let params =
-            crate::lisp::eval::plist_put_front(&frame.borrow().params, &visibility_key, visibility);
-        frame.borrow_mut().params =
-            crate::lisp::eval::plist_put_front(&params, &known_key, Value::t());
+        if let Err(flow) = result {
+            report_flow(i, flow);
+        }
     }
 
     if let Some((frame_id, fullscreen)) = term.borrow_mut().take_frame_fullscreen_update() {

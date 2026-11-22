@@ -7040,21 +7040,57 @@ fn set_frame_visibility_value(
 ) -> Result<(), Flow> {
     let visibility_key = Value::Sym(i.q("visibility"));
     let known_key = Value::Sym(i.q("remacs--visibility-known"));
-    let params = crate::lisp::eval::plist_put_front(&frame.borrow().params, &visibility_key, value);
-    frame.borrow_mut().params = crate::lisp::eval::plist_put_front(&params, &known_key, Value::t());
-    if frame_is_graphical(i, frame)
-        && let Some(backend) = i.frame_window_backend.clone()
-    {
-        let visibility = if visible {
-            crate::frontend::FrameVisibility::Visible
-        } else if frame_parameter_value(i, frame, "visibility").is_nil() {
-            crate::frontend::FrameVisibility::Hidden
+    let parent_key = Value::Sym(i.q("parent-frame"));
+    let frames = i.frames.clone();
+    let mut pending = vec![(frame.clone(), value, visible)];
+    let mut visited = std::collections::HashSet::new();
+    while let Some((current, current_value, current_visible)) = pending.pop() {
+        let current_id = current.borrow().id;
+        if current.borrow().dead || !visited.insert(current_id) {
+            continue;
+        }
+        let params = crate::lisp::eval::plist_put_front(
+            &current.borrow().params,
+            &visibility_key,
+            current_value.clone(),
+        );
+        current.borrow_mut().params = crate::lisp::eval::plist_put_front(
+            &params,
+            &known_key,
+            Value::t(),
+        );
+        if frame_is_graphical(i, &current)
+            && let Some(backend) = i.frame_window_backend.clone()
+        {
+            let native_visibility = if current_visible {
+                crate::frontend::FrameVisibility::Visible
+            } else if current_value.is_nil() {
+                crate::frontend::FrameVisibility::Hidden
+            } else {
+                crate::frontend::FrameVisibility::Iconified
+            };
+            backend
+                .set_visibility(current_id, native_visibility)
+                .map_err(|error| i.error(format!("Frame visibility failed: {error}")))?;
+        }
+
+        // GNU propagates visibility through child frames and descendants:
+        // they disappear with a hidden/iconified parent and return with it.
+        let child_value = if current_visible {
+            Value::t()
         } else {
-            crate::frontend::FrameVisibility::Iconified
+            Value::Nil
         };
-        backend
-            .set_visibility(frame.borrow().id, visibility)
-            .map_err(|error| i.error(format!("Frame visibility failed: {error}")))?;
+        for candidate in &frames {
+            let candidate_id = candidate.borrow().id;
+            if candidate_id == current_id || candidate.borrow().dead {
+                continue;
+            }
+            let parent = crate::lisp::eval::plist_get_v(&candidate.borrow().params, &parent_key);
+            if matches!(parent, Value::Frame(parent) if parent.borrow().id == current_id) {
+                pending.push((candidate.clone(), child_value.clone(), current_visible));
+            }
+        }
     }
     Ok(())
 }
