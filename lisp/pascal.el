@@ -1153,6 +1153,39 @@ indent of the current line in parameterlist."
 
     pascal-all))
 
+(defun pascal-get-completion-parameters (prefix)
+  "Return parameter names matching PREFIX in the list at point.
+Point must be just after the opening parenthesis."
+  (save-excursion
+    (let* ((open (1- (point)))
+           (depth (1+ (car (syntax-ppss open))))
+           (end (or (condition-case nil
+                        (scan-sexps open 1)
+                      (scan-error nil))
+                    (line-end-position)))
+           (beg (point))
+           (keywords '("var" "const" "out" "constref"))
+           names)
+      ;; A parameter declaration ends at a top-level semicolon; its names are
+      ;; the symbols before the following top-level colon.  Ignore delimiters
+      ;; nested in function types, strings, or comments.
+      (while (re-search-forward "[:;]" end t)
+        (let* ((delimiter-position (1- (point)))
+               (state (syntax-ppss delimiter-position)))
+          (when (and (= (car state) depth)
+                     (not (nth 3 state))
+                     (not (nth 4 state)))
+            (when (eq (char-after delimiter-position) ?:)
+              (save-excursion
+                (goto-char beg)
+                (while (re-search-forward pascal-symbol-re delimiter-position t)
+                  (let ((name (match-string-no-properties 0)))
+                    (when (and (not (member (downcase name) keywords))
+                               (string-prefix-p prefix name t))
+                      (push name names))))))
+            (setq beg (point)))))
+      (nreverse names))))
+
 (defun pascal-type-completion (pascal-str)
   "Calculate all possible completions for types."
   (save-excursion
@@ -1192,10 +1225,8 @@ indent of the current line in parameterlist."
               ()                        ; Declarations not reachable
             (if (search-forward "(" (line-end-position) t)
                 ;; Check parameterlist
-                ;; FIXME: pascal-get-completion-decl doesn't understand
-                ;; the var declarations in parameter lists :-(
                 (setq pascal-all
-                      (nconc (pascal-get-completion-decl prefix)
+                      (nconc (pascal-get-completion-parameters prefix)
                              pascal-all)))
             (setq twice 2)
             (while (>= (setq twice (1- twice)) 0)
