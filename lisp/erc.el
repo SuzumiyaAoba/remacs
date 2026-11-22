@@ -6735,7 +6735,6 @@ See also: `erc-echo-notice-in-user-buffers',
 
 (defun erc-banlist-update (proc parsed)
   "Check MODE commands for bans and update the banlist appropriately."
-  ;; FIXME: Possibly incorrect. -- Lawrence 2004-05-11
   (declare (obsolete "continual syncing via `erc--banlist-update'" "31.1"))
   (let* ((tgt (car (erc-response.command-args parsed)))
          (mode (erc-response.contents parsed))
@@ -6743,27 +6742,25 @@ See also: `erc-echo-notice-in-user-buffers',
          (buffer (erc-get-buffer tgt proc)))
     (when buffer
       (with-current-buffer buffer
-        (cond ((not (get 'erc-channel-banlist 'received-from-server)) nil)
-              ((string-match "^\\([+-]\\)b" mode)
-               ;; This is a ban
-               (cond
-                ((string-match "^-" mode)
-                 ;; Remove the unbanned masks from the ban list
-                 (setq erc-channel-banlist
-                       (cl-delete-if
-                        (lambda (y)
-                          (member (upcase (cdr y))
-                                  (mapcar #'upcase
-                                          (cdr (split-string mode)))))
-                        erc-channel-banlist)))
-                ((string-match "^\\+" mode)
-                 ;; Add the banned mask(s) to the ban list
-                 (mapc
-                  (lambda (mask)
-                    (unless (member (cons whoset mask) erc-channel-banlist)
-                      (setq erc-channel-banlist
-                            (cons (cons whoset mask) erc-channel-banlist))))
-                  (cdr (split-string mode))))))))))
+        (when (get 'erc-channel-banlist 'received-from-server)
+          (let ((arg-modes
+                 (nth 2 (with-suppressed-warnings ((obsolete erc-parse-modes))
+                          (erc-parse-modes mode)))))
+            ;; Process each ban change with its own sign and argument.
+            (dolist (arg-mode arg-modes)
+              (pcase arg-mode
+                (`("b" ,state ,mask)
+                 (when mask
+                   (if (eq state 'on)
+                       (unless (member (cons whoset mask)
+                                       erc-channel-banlist)
+                         (push (cons whoset mask) erc-channel-banlist))
+                     (let ((upcased (upcase mask)))
+                       (setq erc-channel-banlist
+                             (cl-delete-if
+                              (lambda (entry)
+                                (equal (upcase (cdr entry)) upcased))
+                              erc-channel-banlist))))))))))))
   nil)
 
 ;; used for the banlist cmds
