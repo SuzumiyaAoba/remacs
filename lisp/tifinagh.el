@@ -11,10 +11,12 @@
  "tifinagh" "Tininagh" "ⵣ" nil "Tifinagh input method.
 
 Based on Tifinagh table in X Keyboard Configuration DB.
+To enter any assigned character in the Unicode Tifinagh block, type a
+semicolon followed by its four-digit code point in hexadecimal, such as ;2d66.
 " nil t t t t nil nil nil nil nil t)
 
-;; FIXME: This doesn't cover all of the codepoints that Unicode has
-;; defined for the Tifinagh script.
+;; The XKB-derived table is supplemented below with a Unicode code-point
+;; fallback for every assigned character in the Tifinagh block.
 (quail-define-rules
  ("Q" ?ⵈ)
  ("W" ?ⵯ)
@@ -63,5 +65,15 @@ Based on Tifinagh table in X Keyboard Configuration DB.
  ("n" ?ⵏ)
  ("m" ?ⵎ)
  )
+
+;; Keep a code-point entry path for every assigned character in the block,
+;; including characters that have no key in the XKB-derived table.
+(dolist (codepoint
+         (append (number-sequence #x2d30 #x2d67)
+                 '(#x2d6f #x2d70 #x2d7f)))
+  (let ((character (decode-char 'ucs codepoint)))
+    (when character
+      (quail-defrule (format ";%04x" codepoint) character)
+      (quail-defrule (format ";%04X" codepoint) character))))
 
 ;;; tifinagh.el ends here
