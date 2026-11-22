@@ -1260,6 +1260,52 @@ fn send_scroll_bar_event(
     });
 }
 
+fn mouse_release_hit(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    window: &mut Window,
+) -> Option<MousePosition> {
+    if let Some((bar, pointer_offset)) = scroll_bar_hit(grid, point) {
+        return Some(scroll_bar_mouse_position(
+            &bar,
+            point,
+            pointer_offset,
+            window.scale_factor(),
+        ));
+    }
+    input::mouse_position_for_point_with_cell_width(grid, point, cell_width, window).or_else(|| {
+        input::mode_line_mouse_position_with_window(
+            grid,
+            point,
+            cell_width,
+            window.scale_factor(),
+            window,
+        )
+    })
+}
+
+fn mouse_release_position(
+    grid: &Grid,
+    hit: Option<MousePosition>,
+    down: Option<MousePosition>,
+    release_point: Point<Pixels>,
+    cell_width: Pixels,
+    scale_factor: f32,
+) -> Option<MousePosition> {
+    hit.or_else(|| {
+        down.map(|down| {
+            input::mouse_position_for_unmapped_point(
+                grid,
+                release_point,
+                cell_width,
+                scale_factor,
+                down,
+            )
+        })
+    })
+}
+
 fn gpui_cursor_style(shape: Option<GridPointerShape>) -> CursorStyle {
     match shape {
         Some(GridPointerShape::Text) => CursorStyle::IBeam,
@@ -3348,30 +3394,25 @@ impl Render for EditorView {
                                 window.viewport_size(),
                                 border,
                             );
+                            let release_point = point.unwrap_or_else(|| {
+                                gpui::point(event.position.x - border, event.position.y - border)
+                            });
                             let hit = point
                                 .and_then(|point| {
-                                    input::mouse_position_for_point_with_cell_width(
+                                    mouse_release_hit(
                                         &left_mouse_up_grid,
                                         point,
                                         cell_width,
                                         window,
                                     )
-                                    .or_else(|| {
-                                        input::mode_line_mouse_position_with_window(
-                                            &left_mouse_up_grid,
-                                            point,
-                                            cell_width,
-                                            window.scale_factor(),
-                                            window,
-                                        )
-                                    })
                                 });
-                            let scale_factor = window.scale_factor();
-                            if let Some(position) = input::mouse_up_position(
+                            if let Some(position) = mouse_release_position(
+                                &left_mouse_up_grid,
                                 hit,
                                 Some(down_position),
-                                device_pixels(event.position.x - border, scale_factor),
-                                device_pixels(event.position.y - border, scale_factor),
+                                release_point,
+                                cell_width,
+                                window.scale_factor(),
                             ) {
                                 let _ = left_mouse_up_tx.send(GuiEvent::MouseDown {
                                     button: RemacsMouseButton::Left,
@@ -3477,30 +3518,25 @@ impl Render for EditorView {
                         return;
                     }
                     let point = frame_content_point(event.position, window.viewport_size(), border);
+                    let release_point = point.unwrap_or_else(|| {
+                        gpui::point(event.position.x - border, event.position.y - border)
+                    });
                     let hit = point
                         .and_then(|point| {
-                            input::mouse_position_for_point_with_cell_width(
+                            mouse_release_hit(
                                 &left_mouse_up_grid,
                                 point,
                                 cell_width,
                                 window,
                             )
-                            .or_else(|| {
-                                input::mode_line_mouse_position_with_window(
-                                    &left_mouse_up_grid,
-                                    point,
-                                    cell_width,
-                                    window.scale_factor(),
-                                    window,
-                                )
-                            })
                         });
-                    let scale_factor = window.scale_factor();
-                    let position = input::mouse_up_position(
+                    let position = mouse_release_position(
+                        &left_mouse_up_grid,
                         hit,
                         down_position,
-                        device_pixels(event.position.x - border, scale_factor),
-                        device_pixels(event.position.y - border, scale_factor),
+                        release_point,
+                        cell_width,
+                        window.scale_factor(),
                     );
                     if let Some(position) = position {
                         let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
@@ -3695,26 +3731,19 @@ impl Render for EditorView {
                             }
                             let point =
                                 frame_content_point(event.position, window.viewport_size(), border);
-                            let hit = point.and_then(|point| {
-                                input::mouse_position_for_point_with_cell_width(
-                                    &up_grid, point, cell_width, window,
-                                )
-                                .or_else(|| {
-                                    input::mode_line_mouse_position_with_window(
-                                        &up_grid,
-                                        point,
-                                        cell_width,
-                                        window.scale_factor(),
-                                        window,
-                                    )
-                                })
+                            let release_point = point.unwrap_or_else(|| {
+                                gpui::point(event.position.x - border, event.position.y - border)
                             });
-                            let scale_factor = window.scale_factor();
-                            if let Some(position) = input::mouse_up_position(
+                            let hit = point.and_then(|point| {
+                                mouse_release_hit(&up_grid, point, cell_width, window)
+                            });
+                            if let Some(position) = mouse_release_position(
+                                &up_grid,
                                 hit,
                                 down_position,
-                                device_pixels(event.position.x - border, scale_factor),
-                                device_pixels(event.position.y - border, scale_factor),
+                                release_point,
+                                cell_width,
+                                window.scale_factor(),
                             ) {
                                 let _ = up_tx.send(GuiEvent::MouseUp {
                                     button: remacs_button,

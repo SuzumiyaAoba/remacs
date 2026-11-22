@@ -3036,6 +3036,8 @@ fn mouse_event_position(event: &Value) -> Option<Value> {
 
 fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value> {
     let frame = i.selected_frame.as_ref()?;
+    let no_buffer_position =
+        position.buffer_position == super::MOUSE_POSITION_NO_BUFFER;
     let window = {
         let frame = frame.borrow();
         let selected = frame.selected.clone();
@@ -3050,6 +3052,9 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                     .cloned()
             })
             .or_else(|| {
+                if no_buffer_position {
+                    return Some(selected.clone());
+                }
                 // Prefer the selected window when several windows show the
                 // same buffer and the front-end did not supply a window id.
                 let same_buffer = selected.borrow().buffer == position.buffer_id;
@@ -3070,6 +3075,11 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
         Value::Int(position.column as i128),
         Value::Int(position.row as i128),
     );
+    let point = if no_buffer_position {
+        Value::Nil
+    } else {
+        Value::Int(position.buffer_position.saturating_add(1) as i128)
+    };
     let object = position
         .object
         .and_then(|object| mouse_object_value(i, position.buffer_id, object));
@@ -3127,7 +3137,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                     | super::MouseArea::LeftMargin
                     | super::MouseArea::RightMargin
             ) {
-                Value::Int(position.buffer_position.saturating_add(1) as i128)
+                point.clone()
             } else {
                 Value::Nil
             },
@@ -3162,7 +3172,7 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
     } else {
         Some(Value::list(vec![
             Value::Window(window),
-            Value::Int(position.buffer_position.saturating_add(1) as i128),
+            point,
             coordinates,
             Value::Int(position.timestamp),
             Value::Nil,

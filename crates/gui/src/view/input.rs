@@ -17,7 +17,7 @@ use gpui::{
 };
 use remacs_runtime::frontend::{
     CellStyle, Grid, GridInput, GridPointerShape, GridWindowTextArea, MouseArea, MouseObject,
-    MousePosition,
+    MousePosition, MOUSE_POSITION_NO_BUFFER,
 };
 
 pub(super) fn mouse_timestamp_ms() -> i128 {
@@ -480,6 +480,49 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     })
 }
 
+pub(super) fn mouse_position_for_unmapped_point(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    scale_factor: f32,
+    mut position: MousePosition,
+) -> MousePosition {
+    let column = (f32::from(point.x) / f32::from(cell_width))
+        .floor()
+        .max(0.0) as usize;
+    let window_id = text_window_at_point(grid, point, cell_width);
+    let row = window_id
+        .and_then(|window_id| grid_row_at_y_for_window(grid, window_id, point.y))
+        .unwrap_or_else(|| grid_row_at_y(grid, point.y));
+    let area = window_id.and_then(|window_id| {
+        grid.window_text_areas
+            .iter()
+            .find(|area| area.window_id == window_id)
+    });
+    let (origin_x, origin_y, text_left) = area.map_or(
+        (px(0.0), px(0.0), 0),
+        |area| {
+            (
+                px(f32::from(cell_width) * area.left as f32),
+                grid_row_top(grid, area.top, px(LINE_HEIGHT)),
+                area.text_left,
+            )
+        },
+    );
+    position.buffer_position = MOUSE_POSITION_NO_BUFFER;
+    position.utf16_offset = 0;
+    position.x = super::device_pixels(point.x - origin_x, scale_factor);
+    position.y = super::device_pixels(point.y - origin_y, scale_factor);
+    position.row = row;
+    position.column = column.saturating_sub(text_left);
+    position.window_id = window_id;
+    position.area = None;
+    position.object = None;
+    position.mode_line_buffer_name = false;
+    position.timestamp = mouse_timestamp_ms();
+    position
+}
+
 pub(super) fn tab_bar_mouse_position(
     grid: &Grid,
     point: Point<Pixels>,
@@ -782,6 +825,7 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         .flatten()
 }
 
+#[cfg(test)]
 pub(super) fn mouse_up_position(
     hit: Option<MousePosition>,
     down: Option<MousePosition>,

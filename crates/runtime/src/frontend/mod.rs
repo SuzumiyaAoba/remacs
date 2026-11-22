@@ -727,12 +727,16 @@ pub enum MouseObject {
     },
 }
 
+/// Sentinel for mouse locations that are outside buffer text.
+pub const MOUSE_POSITION_NO_BUFFER: usize = usize::MAX;
+
 /// A text position mapped from the front-end's most recent grid snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MousePosition {
     pub buffer_id: usize,
-    /// Zero-based position in BUFFER, or in the mode-line identification
-    /// string when `mode_line_buffer_name` is true.
+    /// Zero-based position in BUFFER, or `MOUSE_POSITION_NO_BUFFER` if the
+    /// mouse location is not in buffer text.  Mode-line position is in its
+    /// identification string when `mode_line_buffer_name` is true.
     pub buffer_position: usize,
     /// UTF-16 offset used by the native text input APIs.
     pub utf16_offset: usize,
